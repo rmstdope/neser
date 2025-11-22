@@ -232,713 +232,721 @@ impl Cpu {
     /// Run the CPU emulation loop
     pub fn run(&mut self) {
         loop {
-            let opcode = self.memory[self.pc as usize];
-            self.pc += 1;
-
-            match opcode {
-                ADC_IMM => {
-                    let value = self.read_byte();
-                    self.adc(value);
-                }
-                ADC_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.adc(value);
-                }
-                ADC_ZPX => {
-                    let base = self.read_byte();
-                    let addr = base.wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.adc(value);
-                }
-                ADC_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.adc(value);
-                }
-                ADC_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.adc(value);
-                }
-                ADC_ABSY => {
-                    let addr = self.read_word().wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.adc(value);
-                }
-                ADC_INDX => {
-                    let base = self.read_byte();
-                    let ptr = base.wrapping_add(self.x);
-                    let addr = self.read_word_from_zp(ptr);
-                    let value = self.memory[addr as usize];
-                    self.adc(value);
-                }
-                ADC_INDY => {
-                    let ptr = self.read_byte();
-                    let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.adc(value);
-                }
-                AND_IMM => {
-                    let value = self.read_byte();
-                    self.and(value);
-                }
-                AND_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.and(value);
-                }
-                AND_ZPX => {
-                    let base = self.read_byte();
-                    let addr = base.wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.and(value);
-                }
-                AND_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.and(value);
-                }
-                AND_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.and(value);
-                }
-                AND_ABSY => {
-                    let addr = self.read_word().wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.and(value);
-                }
-                AND_INDX => {
-                    let base = self.read_byte();
-                    let ptr = base.wrapping_add(self.x);
-                    let addr = self.read_word_from_zp(ptr);
-                    let value = self.memory[addr as usize];
-                    self.and(value);
-                }
-                AND_INDY => {
-                    let ptr = self.read_byte();
-                    let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.and(value);
-                }
-                ASL_A => {
-                    self.a = self.asl(self.a);
-                }
-                ASL_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.asl(value);
-                }
-                ASL_ZPX => {
-                    let base = self.read_byte();
-                    let addr = base.wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.asl(value);
-                }
-                ASL_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.asl(value);
-                }
-                ASL_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.asl(value);
-                }
-                BIT_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.bit(value);
-                }
-                BIT_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.bit(value);
-                }
-                BCC => {
-                    let offset = self.read_byte() as i8;
-                    if self.p & FLAG_CARRY == 0 {
-                        self.branch(offset);
-                    }
-                }
-                BCS => {
-                    let offset = self.read_byte() as i8;
-                    if self.p & FLAG_CARRY != 0 {
-                        self.branch(offset);
-                    }
-                }
-                BEQ => {
-                    let offset = self.read_byte() as i8;
-                    if self.p & FLAG_ZERO != 0 {
-                        self.branch(offset);
-                    }
-                }
-                BMI => {
-                    let offset = self.read_byte() as i8;
-                    if self.p & FLAG_NEGATIVE != 0 {
-                        self.branch(offset);
-                    }
-                }
-                BNE => {
-                    let offset = self.read_byte() as i8;
-                    if self.p & FLAG_ZERO == 0 {
-                        self.branch(offset);
-                    }
-                }
-                BPL => {
-                    let offset = self.read_byte() as i8;
-                    if self.p & FLAG_NEGATIVE == 0 {
-                        self.branch(offset);
-                    }
-                }
-                BVC => {
-                    let offset = self.read_byte() as i8;
-                    if self.p & FLAG_OVERFLOW == 0 {
-                        self.branch(offset);
-                    }
-                }
-                BVS => {
-                    let offset = self.read_byte() as i8;
-                    if self.p & FLAG_OVERFLOW != 0 {
-                        self.branch(offset);
-                    }
-                }
-                BRK => {
-                    return;
-                }
-                CMP_IMM => {
-                    let value = self.read_byte();
-                    self.cmp(value);
-                }
-                CMP_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.cmp(value);
-                }
-                CMP_ZPX => {
-                    let base = self.read_byte();
-                    let addr = base.wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.cmp(value);
-                }
-                CMP_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.cmp(value);
-                }
-                CMP_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.cmp(value);
-                }
-                CMP_ABSY => {
-                    let addr = self.read_word().wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.cmp(value);
-                }
-                CMP_INDX => {
-                    let base = self.read_byte();
-                    let ptr = base.wrapping_add(self.x);
-                    let addr = self.read_word_from_zp(ptr);
-                    let value = self.memory[addr as usize];
-                    self.cmp(value);
-                }
-                CMP_INDY => {
-                    let ptr = self.read_byte();
-                    let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.cmp(value);
-                }
-                CPX_IMM => {
-                    let value = self.read_byte();
-                    self.cpx(value);
-                }
-                CPX_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.cpx(value);
-                }
-                CPX_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.cpx(value);
-                }
-                CPY_IMM => {
-                    let value = self.read_byte();
-                    self.cpy(value);
-                }
-                CPY_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.cpy(value);
-                }
-                CPY_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.cpy(value);
-                }
-                DEC_ZP => {
-                    let addr = self.read_byte() as usize;
-                    self.memory[addr] = self.dec(self.memory[addr]);
-                }
-                DEC_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as usize;
-                    self.memory[addr] = self.dec(self.memory[addr]);
-                }
-                DEC_ABS => {
-                    let addr = self.read_word() as usize;
-                    self.memory[addr] = self.dec(self.memory[addr]);
-                }
-                DEC_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16) as usize;
-                    self.memory[addr] = self.dec(self.memory[addr]);
-                }
-                EOR_IMM => {
-                    let value = self.read_byte();
-                    self.eor(value);
-                }
-                EOR_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.eor(value);
-                }
-                EOR_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.eor(value);
-                }
-                EOR_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.eor(value);
-                }
-                EOR_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.eor(value);
-                }
-                EOR_ABSY => {
-                    let addr = self.read_word().wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.eor(value);
-                }
-                EOR_INDX => {
-                    let ptr = self.read_byte().wrapping_add(self.x);
-                    let addr = self.read_word_from_zp(ptr);
-                    let value = self.memory[addr as usize];
-                    self.eor(value);
-                }
-                EOR_INDY => {
-                    let ptr = self.read_byte();
-                    let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.eor(value);
-                }
-                CLC => {
-                    self.p &= !FLAG_CARRY;
-                }
-                CLD => {
-                    self.p &= !FLAG_DECIMAL;
-                }
-                CLI => {
-                    self.p &= !FLAG_INTERRUPT;
-                }
-                CLV => {
-                    self.p &= !FLAG_OVERFLOW;
-                }
-                SEC => {
-                    self.p |= FLAG_CARRY;
-                }
-                SED => {
-                    self.p |= FLAG_DECIMAL;
-                }
-                SEI => {
-                    self.p |= FLAG_INTERRUPT;
-                }
-                INC_ZP => {
-                    let addr = self.read_byte() as usize;
-                    self.memory[addr] = self.inc(self.memory[addr]);
-                }
-                INC_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as usize;
-                    self.memory[addr] = self.inc(self.memory[addr]);
-                }
-                INC_ABS => {
-                    let addr = self.read_word() as usize;
-                    self.memory[addr] = self.inc(self.memory[addr]);
-                }
-                INC_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16) as usize;
-                    self.memory[addr] = self.inc(self.memory[addr]);
-                }
-                JMP_ABS => {
-                    let addr = self.read_word();
-                    self.pc = addr;
-                }
-                JMP_IND => {
-                    let ptr = self.read_word();
-                    let addr = self.read_word_indirect(ptr);
-                    self.pc = addr;
-                }
-                JSR => {
-                    let addr = self.read_word();
-                    let return_addr = self.pc - 1; // Address of last byte of JSR instruction
-                    self.push_word(return_addr);
-                    self.pc = addr;
-                }
-                LDA_IMM => {
-                    let value = self.read_byte();
-                    self.lda(value);
-                }
-                LDA_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.lda(value);
-                }
-                LDA_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.lda(value);
-                }
-                LDA_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.lda(value);
-                }
-                LDA_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.lda(value);
-                }
-                LDA_ABSY => {
-                    let addr = self.read_word().wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.lda(value);
-                }
-                LDA_INDX => {
-                    let ptr = self.read_byte().wrapping_add(self.x);
-                    let addr = self.read_word_from_zp(ptr);
-                    let value = self.memory[addr as usize];
-                    self.lda(value);
-                }
-                LDA_INDY => {
-                    let ptr = self.read_byte();
-                    let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.lda(value);
-                }
-                LDX_IMM => {
-                    let value = self.read_byte();
-                    self.ldx(value);
-                }
-                LDX_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.ldx(value);
-                }
-                LDX_ZPY => {
-                    let addr = self.read_byte().wrapping_add(self.y) as u16;
-                    let value = self.memory[addr as usize];
-                    self.ldx(value);
-                }
-                LDX_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.ldx(value);
-                }
-                LDX_ABSY => {
-                    let addr = self.read_word().wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.ldx(value);
-                }
-                LDY_IMM => {
-                    let value = self.read_byte();
-                    self.ldy(value);
-                }
-                LDY_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.ldy(value);
-                }
-                LDY_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.ldy(value);
-                }
-                LDY_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.ldy(value);
-                }
-                LDY_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.ldy(value);
-                }
-                LSR_ACC => {
-                    self.a = self.lsr(self.a);
-                }
-                LSR_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.lsr(value);
-                }
-                LSR_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.lsr(value);
-                }
-                LSR_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.lsr(value);
-                }
-                LSR_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.lsr(value);
-                }
-                NOP => {
-                    // No operation - do nothing
-                }
-                ORA_IMM => {
-                    let value = self.read_byte();
-                    self.ora(value);
-                }
-                ORA_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.ora(value);
-                }
-                ORA_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.ora(value);
-                }
-                ORA_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.ora(value);
-                }
-                ORA_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.ora(value);
-                }
-                ORA_ABSY => {
-                    let addr = self.read_word().wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.ora(value);
-                }
-                ORA_INDX => {
-                    let ptr = self.read_byte().wrapping_add(self.x);
-                    let addr = self.read_word_from_zp(ptr);
-                    let value = self.memory[addr as usize];
-                    self.ora(value);
-                }
-                ORA_INDY => {
-                    let ptr = self.read_byte();
-                    let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.ora(value);
-                }
-                DEX => {
-                    self.dex();
-                }
-                DEY => {
-                    self.dey();
-                }
-                INY => {
-                    self.iny();
-                }
-                INX => {
-                    self.inx();
-                }
-                TAX => {
-                    self.tax();
-                }
-                TAY => {
-                    self.tay();
-                }
-                TXA => {
-                    self.txa();
-                }
-                TYA => {
-                    self.tya();
-                }
-                ROL_ACC => {
-                    self.a = self.rol(self.a);
-                }
-                ROL_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.rol(value);
-                }
-                ROL_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.rol(value);
-                }
-                ROL_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.rol(value);
-                }
-                ROL_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.rol(value);
-                }
-                ROR_ACC => {
-                    self.a = self.ror(self.a);
-                }
-                ROR_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.ror(value);
-                }
-                ROR_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.ror(value);
-                }
-                ROR_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.ror(value);
-                }
-                ROR_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.memory[addr as usize] = self.ror(value);
-                }
-                RTI => {
-                    self.p = self.pop_byte();
-                    self.pc = self.pop_word();
-                }
-                RTS => {
-                    self.pc = self.pop_word();
-                    self.pc = self.pc.wrapping_add(1);
-                }
-                SBC_IMM => {
-                    let value = self.read_byte();
-                    self.sbc(value);
-                }
-                SBC_ZP => {
-                    let addr = self.read_byte() as u16;
-                    let value = self.memory[addr as usize];
-                    self.sbc(value);
-                }
-                SBC_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as u16;
-                    let value = self.memory[addr as usize];
-                    self.sbc(value);
-                }
-                SBC_ABS => {
-                    let addr = self.read_word();
-                    let value = self.memory[addr as usize];
-                    self.sbc(value);
-                }
-                SBC_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    let value = self.memory[addr as usize];
-                    self.sbc(value);
-                }
-                SBC_ABSY => {
-                    let addr = self.read_word().wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.sbc(value);
-                }
-                SBC_INDX => {
-                    let ptr = self.read_byte().wrapping_add(self.x);
-                    let addr = self.read_word_from_zp(ptr);
-                    let value = self.memory[addr as usize];
-                    self.sbc(value);
-                }
-                SBC_INDY => {
-                    let ptr = self.read_byte();
-                    let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                    let value = self.memory[addr as usize];
-                    self.sbc(value);
-                }
-                STA_ZP => {
-                    let addr = self.read_byte() as u16;
-                    self.memory[addr as usize] = self.a;
-                }
-                STA_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as u16;
-                    self.memory[addr as usize] = self.a;
-                }
-                STA_ABS => {
-                    let addr = self.read_word();
-                    self.memory[addr as usize] = self.a;
-                }
-                STA_ABSX => {
-                    let addr = self.read_word().wrapping_add(self.x as u16);
-                    self.memory[addr as usize] = self.a;
-                }
-                STA_ABSY => {
-                    let addr = self.read_word().wrapping_add(self.y as u16);
-                    self.memory[addr as usize] = self.a;
-                }
-                STA_INDX => {
-                    let ptr = self.read_byte().wrapping_add(self.x);
-                    let addr = self.read_word_from_zp(ptr);
-                    self.memory[addr as usize] = self.a;
-                }
-                STA_INDY => {
-                    let ptr = self.read_byte();
-                    let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                    self.memory[addr as usize] = self.a;
-                }
-                TXS => {
-                    self.sp = self.x;
-                }
-                TSX => {
-                    self.x = self.sp;
-                    self.update_zero_and_negative_flags(self.x);
-                }
-                PHA => {
-                    self.push_byte(self.a);
-                }
-                PLA => {
-                    self.a = self.pop_byte();
-                    self.update_zero_and_negative_flags(self.a);
-                }
-                PHP => {
-                    self.push_byte(self.p);
-                }
-                PLP => {
-                    self.p = self.pop_byte();
-                }
-                STX_ZP => {
-                    let addr = self.read_byte() as u16;
-                    self.memory[addr as usize] = self.x;
-                }
-                STX_ZPY => {
-                    let addr = self.read_byte().wrapping_add(self.y) as u16;
-                    self.memory[addr as usize] = self.x;
-                }
-                STX_ABS => {
-                    let addr = self.read_word();
-                    self.memory[addr as usize] = self.x;
-                }
-                STY_ZP => {
-                    let addr = self.read_byte() as u16;
-                    self.memory[addr as usize] = self.y;
-                }
-                STY_ZPX => {
-                    let addr = self.read_byte().wrapping_add(self.x) as u16;
-                    self.memory[addr as usize] = self.y;
-                }
-                STY_ABS => {
-                    let addr = self.read_word();
-                    self.memory[addr as usize] = self.y;
-                }
-                _ => todo!(),
+            if !self.run_opcode() {
+                break;
             }
         }
+    }
+
+    /// Execute a single opcode. Returns false if execution should stop (BRK), true otherwise.
+    pub fn run_opcode(&mut self) -> bool {
+        let opcode = self.memory[self.pc as usize];
+        self.pc += 1;
+
+        match opcode {
+            ADC_IMM => {
+                let value = self.read_byte();
+                self.adc(value);
+            }
+            ADC_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.adc(value);
+            }
+            ADC_ZPX => {
+                let base = self.read_byte();
+                let addr = base.wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.adc(value);
+            }
+            ADC_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.adc(value);
+            }
+            ADC_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.adc(value);
+            }
+            ADC_ABSY => {
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.adc(value);
+            }
+            ADC_INDX => {
+                let base = self.read_byte();
+                let ptr = base.wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                let value = self.memory[addr as usize];
+                self.adc(value);
+            }
+            ADC_INDY => {
+                let ptr = self.read_byte();
+                let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.adc(value);
+            }
+            AND_IMM => {
+                let value = self.read_byte();
+                self.and(value);
+            }
+            AND_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.and(value);
+            }
+            AND_ZPX => {
+                let base = self.read_byte();
+                let addr = base.wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.and(value);
+            }
+            AND_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.and(value);
+            }
+            AND_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.and(value);
+            }
+            AND_ABSY => {
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.and(value);
+            }
+            AND_INDX => {
+                let base = self.read_byte();
+                let ptr = base.wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                let value = self.memory[addr as usize];
+                self.and(value);
+            }
+            AND_INDY => {
+                let ptr = self.read_byte();
+                let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.and(value);
+            }
+            ASL_A => {
+                self.a = self.asl(self.a);
+            }
+            ASL_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.asl(value);
+            }
+            ASL_ZPX => {
+                let base = self.read_byte();
+                let addr = base.wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.asl(value);
+            }
+            ASL_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.asl(value);
+            }
+            ASL_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.asl(value);
+            }
+            BIT_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.bit(value);
+            }
+            BIT_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.bit(value);
+            }
+            BCC => {
+                let offset = self.read_byte() as i8;
+                if self.p & FLAG_CARRY == 0 {
+                    self.branch(offset);
+                }
+            }
+            BCS => {
+                let offset = self.read_byte() as i8;
+                if self.p & FLAG_CARRY != 0 {
+                    self.branch(offset);
+                }
+            }
+            BEQ => {
+                let offset = self.read_byte() as i8;
+                if self.p & FLAG_ZERO != 0 {
+                    self.branch(offset);
+                }
+            }
+            BMI => {
+                let offset = self.read_byte() as i8;
+                if self.p & FLAG_NEGATIVE != 0 {
+                    self.branch(offset);
+                }
+            }
+            BNE => {
+                let offset = self.read_byte() as i8;
+                if self.p & FLAG_ZERO == 0 {
+                    self.branch(offset);
+                }
+            }
+            BPL => {
+                let offset = self.read_byte() as i8;
+                if self.p & FLAG_NEGATIVE == 0 {
+                    self.branch(offset);
+                }
+            }
+            BVC => {
+                let offset = self.read_byte() as i8;
+                if self.p & FLAG_OVERFLOW == 0 {
+                    self.branch(offset);
+                }
+            }
+            BVS => {
+                let offset = self.read_byte() as i8;
+                if self.p & FLAG_OVERFLOW != 0 {
+                    self.branch(offset);
+                }
+            }
+            BRK => {
+                return false;
+            }
+            CMP_IMM => {
+                let value = self.read_byte();
+                self.cmp(value);
+            }
+            CMP_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.cmp(value);
+            }
+            CMP_ZPX => {
+                let base = self.read_byte();
+                let addr = base.wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.cmp(value);
+            }
+            CMP_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.cmp(value);
+            }
+            CMP_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.cmp(value);
+            }
+            CMP_ABSY => {
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.cmp(value);
+            }
+            CMP_INDX => {
+                let base = self.read_byte();
+                let ptr = base.wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                let value = self.memory[addr as usize];
+                self.cmp(value);
+            }
+            CMP_INDY => {
+                let ptr = self.read_byte();
+                let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.cmp(value);
+            }
+            CPX_IMM => {
+                let value = self.read_byte();
+                self.cpx(value);
+            }
+            CPX_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.cpx(value);
+            }
+            CPX_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.cpx(value);
+            }
+            CPY_IMM => {
+                let value = self.read_byte();
+                self.cpy(value);
+            }
+            CPY_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.cpy(value);
+            }
+            CPY_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.cpy(value);
+            }
+            DEC_ZP => {
+                let addr = self.read_byte() as usize;
+                self.memory[addr] = self.dec(self.memory[addr]);
+            }
+            DEC_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as usize;
+                self.memory[addr] = self.dec(self.memory[addr]);
+            }
+            DEC_ABS => {
+                let addr = self.read_word() as usize;
+                self.memory[addr] = self.dec(self.memory[addr]);
+            }
+            DEC_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16) as usize;
+                self.memory[addr] = self.dec(self.memory[addr]);
+            }
+            EOR_IMM => {
+                let value = self.read_byte();
+                self.eor(value);
+            }
+            EOR_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.eor(value);
+            }
+            EOR_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.eor(value);
+            }
+            EOR_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.eor(value);
+            }
+            EOR_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.eor(value);
+            }
+            EOR_ABSY => {
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.eor(value);
+            }
+            EOR_INDX => {
+                let ptr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                let value = self.memory[addr as usize];
+                self.eor(value);
+            }
+            EOR_INDY => {
+                let ptr = self.read_byte();
+                let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.eor(value);
+            }
+            CLC => {
+                self.p &= !FLAG_CARRY;
+            }
+            CLD => {
+                self.p &= !FLAG_DECIMAL;
+            }
+            CLI => {
+                self.p &= !FLAG_INTERRUPT;
+            }
+            CLV => {
+                self.p &= !FLAG_OVERFLOW;
+            }
+            SEC => {
+                self.p |= FLAG_CARRY;
+            }
+            SED => {
+                self.p |= FLAG_DECIMAL;
+            }
+            SEI => {
+                self.p |= FLAG_INTERRUPT;
+            }
+            INC_ZP => {
+                let addr = self.read_byte() as usize;
+                self.memory[addr] = self.inc(self.memory[addr]);
+            }
+            INC_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as usize;
+                self.memory[addr] = self.inc(self.memory[addr]);
+            }
+            INC_ABS => {
+                let addr = self.read_word() as usize;
+                self.memory[addr] = self.inc(self.memory[addr]);
+            }
+            INC_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16) as usize;
+                self.memory[addr] = self.inc(self.memory[addr]);
+            }
+            JMP_ABS => {
+                let addr = self.read_word();
+                self.pc = addr;
+            }
+            JMP_IND => {
+                let ptr = self.read_word();
+                let addr = self.read_word_indirect(ptr);
+                self.pc = addr;
+            }
+            JSR => {
+                let addr = self.read_word();
+                let return_addr = self.pc - 1; // Address of last byte of JSR instruction
+                self.push_word(return_addr);
+                self.pc = addr;
+            }
+            LDA_IMM => {
+                let value = self.read_byte();
+                self.lda(value);
+            }
+            LDA_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.lda(value);
+            }
+            LDA_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.lda(value);
+            }
+            LDA_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.lda(value);
+            }
+            LDA_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.lda(value);
+            }
+            LDA_ABSY => {
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.lda(value);
+            }
+            LDA_INDX => {
+                let ptr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                let value = self.memory[addr as usize];
+                self.lda(value);
+            }
+            LDA_INDY => {
+                let ptr = self.read_byte();
+                let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.lda(value);
+            }
+            LDX_IMM => {
+                let value = self.read_byte();
+                self.ldx(value);
+            }
+            LDX_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.ldx(value);
+            }
+            LDX_ZPY => {
+                let addr = self.read_byte().wrapping_add(self.y) as u16;
+                let value = self.memory[addr as usize];
+                self.ldx(value);
+            }
+            LDX_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.ldx(value);
+            }
+            LDX_ABSY => {
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.ldx(value);
+            }
+            LDY_IMM => {
+                let value = self.read_byte();
+                self.ldy(value);
+            }
+            LDY_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.ldy(value);
+            }
+            LDY_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.ldy(value);
+            }
+            LDY_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.ldy(value);
+            }
+            LDY_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.ldy(value);
+            }
+            LSR_ACC => {
+                self.a = self.lsr(self.a);
+            }
+            LSR_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.lsr(value);
+            }
+            LSR_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.lsr(value);
+            }
+            LSR_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.lsr(value);
+            }
+            LSR_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.lsr(value);
+            }
+            NOP => {
+                // No operation - do nothing
+            }
+            ORA_IMM => {
+                let value = self.read_byte();
+                self.ora(value);
+            }
+            ORA_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.ora(value);
+            }
+            ORA_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.ora(value);
+            }
+            ORA_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.ora(value);
+            }
+            ORA_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.ora(value);
+            }
+            ORA_ABSY => {
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.ora(value);
+            }
+            ORA_INDX => {
+                let ptr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                let value = self.memory[addr as usize];
+                self.ora(value);
+            }
+            ORA_INDY => {
+                let ptr = self.read_byte();
+                let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.ora(value);
+            }
+            DEX => {
+                self.dex();
+            }
+            DEY => {
+                self.dey();
+            }
+            INY => {
+                self.iny();
+            }
+            INX => {
+                self.inx();
+            }
+            TAX => {
+                self.tax();
+            }
+            TAY => {
+                self.tay();
+            }
+            TXA => {
+                self.txa();
+            }
+            TYA => {
+                self.tya();
+            }
+            ROL_ACC => {
+                self.a = self.rol(self.a);
+            }
+            ROL_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.rol(value);
+            }
+            ROL_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.rol(value);
+            }
+            ROL_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.rol(value);
+            }
+            ROL_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.rol(value);
+            }
+            ROR_ACC => {
+                self.a = self.ror(self.a);
+            }
+            ROR_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.ror(value);
+            }
+            ROR_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.ror(value);
+            }
+            ROR_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.ror(value);
+            }
+            ROR_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.memory[addr as usize] = self.ror(value);
+            }
+            RTI => {
+                self.p = self.pop_byte();
+                self.pc = self.pop_word();
+            }
+            RTS => {
+                self.pc = self.pop_word();
+                self.pc = self.pc.wrapping_add(1);
+            }
+            SBC_IMM => {
+                let value = self.read_byte();
+                self.sbc(value);
+            }
+            SBC_ZP => {
+                let addr = self.read_byte() as u16;
+                let value = self.memory[addr as usize];
+                self.sbc(value);
+            }
+            SBC_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                let value = self.memory[addr as usize];
+                self.sbc(value);
+            }
+            SBC_ABS => {
+                let addr = self.read_word();
+                let value = self.memory[addr as usize];
+                self.sbc(value);
+            }
+            SBC_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                let value = self.memory[addr as usize];
+                self.sbc(value);
+            }
+            SBC_ABSY => {
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.sbc(value);
+            }
+            SBC_INDX => {
+                let ptr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                let value = self.memory[addr as usize];
+                self.sbc(value);
+            }
+            SBC_INDY => {
+                let ptr = self.read_byte();
+                let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
+                let value = self.memory[addr as usize];
+                self.sbc(value);
+            }
+            STA_ZP => {
+                let addr = self.read_byte() as u16;
+                self.memory[addr as usize] = self.a;
+            }
+            STA_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                self.memory[addr as usize] = self.a;
+            }
+            STA_ABS => {
+                let addr = self.read_word();
+                self.memory[addr as usize] = self.a;
+            }
+            STA_ABSX => {
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                self.memory[addr as usize] = self.a;
+            }
+            STA_ABSY => {
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                self.memory[addr as usize] = self.a;
+            }
+            STA_INDX => {
+                let ptr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                self.memory[addr as usize] = self.a;
+            }
+            STA_INDY => {
+                let ptr = self.read_byte();
+                let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
+                self.memory[addr as usize] = self.a;
+            }
+            TXS => {
+                self.sp = self.x;
+            }
+            TSX => {
+                self.x = self.sp;
+                self.update_zero_and_negative_flags(self.x);
+            }
+            PHA => {
+                self.push_byte(self.a);
+            }
+            PLA => {
+                self.a = self.pop_byte();
+                self.update_zero_and_negative_flags(self.a);
+            }
+            PHP => {
+                self.push_byte(self.p);
+            }
+            PLP => {
+                self.p = self.pop_byte();
+            }
+            STX_ZP => {
+                let addr = self.read_byte() as u16;
+                self.memory[addr as usize] = self.x;
+            }
+            STX_ZPY => {
+                let addr = self.read_byte().wrapping_add(self.y) as u16;
+                self.memory[addr as usize] = self.x;
+            }
+            STX_ABS => {
+                let addr = self.read_word();
+                self.memory[addr as usize] = self.x;
+            }
+            STY_ZP => {
+                let addr = self.read_byte() as u16;
+                self.memory[addr as usize] = self.y;
+            }
+            STY_ZPX => {
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                self.memory[addr as usize] = self.y;
+            }
+            STY_ABS => {
+                let addr = self.read_word();
+                self.memory[addr as usize] = self.y;
+            }
+            _ => todo!(),
+        }
+        true
     }
 
     /// Read a byte from memory at PC and increment PC
