@@ -79,15 +79,6 @@ impl Cpu {
     //     self.run();
     // }
 
-    /// Run the CPU emulation loop
-    pub fn run(&mut self) {
-        loop {
-            if !self.run_opcode() {
-                break;
-            }
-        }
-    }
-
     /// Execute a single opcode. Returns false if execution should stop (BRK), true otherwise.
     pub fn run_opcode(&mut self) -> bool {
         let opcode = self.memory.read(self.pc);
@@ -1226,6 +1217,15 @@ impl Default for Cpu {
 mod tests {
     use super::*;
 
+    // Test helper function to run the CPU until BRK
+    fn run(cpu: &mut Cpu) {
+        loop {
+            if !cpu.run_opcode() {
+                break;
+            }
+        }
+    }
+
     #[test]
     fn test_cpu_new() {
         let cpu = Cpu::new();
@@ -1262,7 +1262,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x10;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x30);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // Carry flag should be clear
         assert_eq!(cpu.p & FLAG_ZERO, 0); // Zero flag should be clear
@@ -1278,7 +1278,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x10;
         cpu.p |= FLAG_CARRY; // Set carry flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x31); // 0x10 + 0x20 + 1 (carry)
         assert_eq!(cpu.p & FLAG_CARRY, 0); // Carry flag should be clear
     }
@@ -1290,7 +1290,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0xFF;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x00); // Wraps around
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry flag should be set
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Zero flag should be set
@@ -1303,7 +1303,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x50; // Positive number
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0xA0); // Result is negative in two's complement
         assert_eq!(cpu.p & FLAG_OVERFLOW, FLAG_OVERFLOW); // Overflow flag should be set
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Negative flag should be set
@@ -1316,7 +1316,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x80; // -128 in two's complement
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_OVERFLOW, FLAG_OVERFLOW); // Overflow flag should be set
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry flag should be set
@@ -1331,7 +1331,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x10;
         cpu.memory.write(0x42, 0x33);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x43);
     }
 
@@ -1343,7 +1343,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x20;
         cpu.memory.write(0x1234, 0x55);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x75);
     }
 
@@ -1356,7 +1356,7 @@ mod tests {
         cpu.a = 0x10;
         cpu.x = 0x05;
         cpu.memory.write(0x1239, 0x44); // 0x1234 + 0x05
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x54);
     }
 
@@ -1369,7 +1369,7 @@ mod tests {
         cpu.a = 0x15;
         cpu.x = 0x03;
         cpu.memory.write(0x45, 0x22); // 0x42 + 0x03
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x37);
     }
 
@@ -1382,7 +1382,7 @@ mod tests {
         cpu.a = 0x08;
         cpu.y = 0x10;
         cpu.memory.write(0x2010, 0x17); // 0x2000 + 0x10
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x1F);
     }
 
@@ -1397,7 +1397,7 @@ mod tests {
         cpu.memory.write(0x24, 0x74); // Pointer at 0x20 + 0x04: low byte
         cpu.memory.write(0x25, 0x20); // Pointer at 0x20 + 0x04: high byte
         cpu.memory.write(0x2074, 0x33); // Value at address 0x2074
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x38);
     }
 
@@ -1412,7 +1412,7 @@ mod tests {
         cpu.memory.write(0x86, 0x28); // Pointer at 0x86: low byte
         cpu.memory.write(0x87, 0x10); // Pointer at 0x86: high byte
         cpu.memory.write(0x1038, 0x06); // Value at 0x1028 + 0x10
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x10);
     }
 
@@ -1423,7 +1423,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b1111_0000;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b1010_0000);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -1436,7 +1436,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b1111_0000;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -1450,7 +1450,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1111_1111;
         cpu.p = FLAG_NEGATIVE; // Set negative flag initially
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b0111_1111);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -1464,7 +1464,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1100_1100;
         cpu.memory.write(0x42, 0b1010_1010);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b1000_1000);
     }
 
@@ -1477,7 +1477,7 @@ mod tests {
         cpu.a = 0b1111_0000;
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0b0011_1111); // 0x42 + 0x05
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b0011_0000);
     }
 
@@ -1489,7 +1489,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1010_1010;
         cpu.memory.write(0x1234, 0b1100_1100);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b1000_1000);
     }
 
@@ -1502,7 +1502,7 @@ mod tests {
         cpu.a = 0b1111_1111;
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0b0101_0101); // 0x1234 + 0x10
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b0101_0101);
     }
 
@@ -1515,7 +1515,7 @@ mod tests {
         cpu.a = 0b1100_0011;
         cpu.y = 0x20;
         cpu.memory.write(0x2020, 0b0011_1100); // 0x2000 + 0x20
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b0000_0000);
     }
 
@@ -1530,7 +1530,7 @@ mod tests {
         cpu.memory.write(0x24, 0x74); // Pointer at 0x20 + 0x04: low byte
         cpu.memory.write(0x25, 0x20); // Pointer at 0x20 + 0x04: high byte
         cpu.memory.write(0x2074, 0b0000_1111); // Value at address 0x2074
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b0000_0000);
     }
 
@@ -1545,7 +1545,7 @@ mod tests {
         cpu.memory.write(0x86, 0x28); // Pointer at 0x86: low byte
         cpu.memory.write(0x87, 0x30); // Pointer at 0x86: high byte
         cpu.memory.write(0x3038, 0b1111_0000); // Value at 0x3028 + 0x10
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b1010_0000);
     }
 
@@ -1556,7 +1556,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b0100_0010;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b1000_0100);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -1570,7 +1570,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b1000_0001;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b0000_0010);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -1584,7 +1584,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b1000_0000;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -1598,7 +1598,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0b0011_0011);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x42), 0b0110_0110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
@@ -1611,7 +1611,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0b1010_0101); // 0x42 + 0x05
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x47), 0b0100_1010);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -1623,7 +1623,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x1234, 0b0100_0001);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1234), 0b1000_0010);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -1636,7 +1636,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0b0000_0001); // 0x1234 + 0x10
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1244), 0b0000_0010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -1650,7 +1650,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1111_0000;
         cpu.memory.write(0x42, 0b1100_0011);
-        cpu.run();
+        run(&mut cpu);
         // A & memory = 0b1111_0000 & 0b1100_0011 = 0b1100_0000 (not zero)
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         // Bit 7 of memory is 1
@@ -1667,7 +1667,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b0000_1111;
         cpu.memory.write(0x42, 0b1111_0000);
-        cpu.run();
+        run(&mut cpu);
         // A & memory = 0b0000_1111 & 0b1111_0000 = 0b0000_0000 (zero)
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         // Bit 7 of memory is 1
@@ -1684,7 +1684,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1111_1111;
         cpu.memory.write(0x42, 0b0011_1111);
-        cpu.run();
+        run(&mut cpu);
         // A & memory = 0b1111_1111 & 0b0011_1111 = 0b0011_1111 (not zero)
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         // Bit 7 of memory is 0
@@ -1701,7 +1701,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1010_1010;
         cpu.memory.write(0x1234, 0b0101_1010);
-        cpu.run();
+        run(&mut cpu);
         // A & memory = 0b1010_1010 & 0b0101_1010 = 0b0000_1010 (not zero)
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         // Bit 7 of memory is 0
@@ -1717,7 +1717,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p &= !FLAG_CARRY; // Ensure carry is clear
-        cpu.run();
+        run(&mut cpu);
         // PC should be at 0x0600 + 2 (after reading BCC and offset) + 2 (offset) + 1 (BRK) = 0x0605
         assert_eq!(cpu.pc, 0x0605);
     }
@@ -1729,7 +1729,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p |= FLAG_CARRY; // Set carry flag
-        cpu.run();
+        run(&mut cpu);
         // PC should be at 0x0600 + 2 (instruction) + 1 (BRK) = 0x0603
         assert_eq!(cpu.pc, 0x0603);
     }
@@ -1743,7 +1743,7 @@ mod tests {
         cpu.p &= !FLAG_CARRY; // Ensure carry is clear
         // Put BRK at 0x0600, then BCC at 0x0603 that branches back to BRK
         cpu.memory.write(0x0600, BRK);
-        cpu.run();
+        run(&mut cpu);
         // PC should be at 0x0601 (BRK at 0x0600 + 1)
         assert_eq!(cpu.pc, 0x0601);
     }
@@ -1755,7 +1755,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p |= FLAG_CARRY; // Set carry flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0604);
     }
 
@@ -1766,7 +1766,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p &= !FLAG_CARRY; // Clear carry flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0603);
     }
 
@@ -1777,7 +1777,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p |= FLAG_ZERO; // Set zero flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0604);
     }
 
@@ -1788,7 +1788,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p &= !FLAG_ZERO; // Clear zero flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0603);
     }
 
@@ -1799,7 +1799,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0604);
     }
 
@@ -1810,7 +1810,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0603);
     }
 
@@ -1821,7 +1821,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p &= !FLAG_ZERO; // Clear zero flag (not equal)
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0604);
     }
 
@@ -1832,7 +1832,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p |= FLAG_ZERO; // Set zero flag (equal)
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0603);
     }
 
@@ -1843,7 +1843,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag (positive)
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0604);
     }
 
@@ -1854,7 +1854,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0603);
     }
 
@@ -1865,7 +1865,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0604);
     }
 
@@ -1876,7 +1876,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0603);
     }
 
@@ -1887,7 +1887,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0604);
     }
 
@@ -1898,7 +1898,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x0603);
     }
 
@@ -1909,7 +1909,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // A == value
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // A >= value
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0); // Result is 0, bit 7 = 0
@@ -1922,7 +1922,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x50;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0); // A != value
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // A >= value
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0); // Result is positive
@@ -1935,7 +1935,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x30;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0); // A != value
         assert_eq!(cpu.p & FLAG_CARRY, 0); // A < value
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Result is negative (0x30 - 0x50 = 0xE0)
@@ -1949,7 +1949,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x80;
         cpu.memory.write(0x42, 0x80);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -1963,7 +1963,7 @@ mod tests {
         cpu.a = 0x10;
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0x05); // 0x42 + 0x05
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // 0x10 >= 0x05
     }
 
@@ -1975,7 +1975,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x20;
         cpu.memory.write(0x1234, 0x30);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x20 < 0x30
     }
 
@@ -1988,7 +1988,7 @@ mod tests {
         cpu.a = 0xFF;
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0xFF);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
 
@@ -2001,7 +2001,7 @@ mod tests {
         cpu.a = 0x55;
         cpu.y = 0x20;
         cpu.memory.write(0x2020, 0x44);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // 0x55 >= 0x44
     }
 
@@ -2016,7 +2016,7 @@ mod tests {
         cpu.memory.write(0x24, 0x74);
         cpu.memory.write(0x25, 0x20);
         cpu.memory.write(0x2074, 0x33);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
 
@@ -2031,7 +2031,7 @@ mod tests {
         cpu.memory.write(0x86, 0x28);
         cpu.memory.write(0x87, 0x30);
         cpu.memory.write(0x3038, 0x88);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x77 < 0x88
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2043,7 +2043,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2056,7 +2056,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0x50;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2069,7 +2069,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0x30;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -2083,7 +2083,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x80;
         cpu.memory.write(0x42, 0x80);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -2096,7 +2096,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x20;
         cpu.memory.write(0x1234, 0x30);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x20 < 0x30
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2108,7 +2108,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.y = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2121,7 +2121,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.y = 0x50;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2134,7 +2134,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.y = 0x30;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -2148,7 +2148,7 @@ mod tests {
         cpu.reset();
         cpu.y = 0x80;
         cpu.memory.write(0x42, 0x80);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -2161,7 +2161,7 @@ mod tests {
         cpu.reset();
         cpu.y = 0x20;
         cpu.memory.write(0x1234, 0x30);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x20 < 0x30
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2173,7 +2173,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0x50);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x42), 0x4F);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2186,7 +2186,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0x01);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x42), 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2199,7 +2199,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0x00);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x42), 0xFF);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -2213,7 +2213,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0x80);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x47), 0x7F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -2225,7 +2225,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x1234, 0x30);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1234), 0x2F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -2238,7 +2238,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0x90);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1244), 0x8F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2250,7 +2250,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b1010_1010;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b0101_1010);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2263,7 +2263,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b1010_1010;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -2275,7 +2275,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b0101_0101;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b1010_0101);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2288,7 +2288,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0xFF;
         cpu.memory.write(0x42, 0x0F);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0xF0);
     }
 
@@ -2301,7 +2301,7 @@ mod tests {
         cpu.a = 0xFF;
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0x55);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0xAA);
     }
 
@@ -2313,7 +2313,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x12;
         cpu.memory.write(0x1234, 0x34);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x26);
     }
 
@@ -2326,7 +2326,7 @@ mod tests {
         cpu.a = 0xAA;
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0x55);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0xFF);
     }
 
@@ -2339,7 +2339,7 @@ mod tests {
         cpu.a = 0xF0;
         cpu.y = 0x20;
         cpu.memory.write(0x1254, 0x0F);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0xFF);
     }
 
@@ -2354,7 +2354,7 @@ mod tests {
         cpu.memory.write(0x24, 0x74);
         cpu.memory.write(0x25, 0x20);
         cpu.memory.write(0x2074, 0b0011_1100);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b1111_1111);
     }
 
@@ -2369,7 +2369,7 @@ mod tests {
         cpu.memory.write(0x86, 0x28);
         cpu.memory.write(0x87, 0x30);
         cpu.memory.write(0x3038, 0b0101_1010);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0xFF);
     }
 
@@ -2380,7 +2380,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p = FLAG_CARRY;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -2391,7 +2391,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p = FLAG_DECIMAL;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_DECIMAL, 0);
     }
 
@@ -2402,7 +2402,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p = FLAG_INTERRUPT;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_INTERRUPT, 0);
     }
 
@@ -2413,7 +2413,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p = FLAG_OVERFLOW;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_OVERFLOW, 0);
     }
 
@@ -2424,7 +2424,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p = 0;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -2435,7 +2435,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p = 0;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_DECIMAL, FLAG_DECIMAL);
     }
 
@@ -2446,7 +2446,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.p = 0;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p & FLAG_INTERRUPT, FLAG_INTERRUPT);
     }
 
@@ -2457,7 +2457,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0x50);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x42), 0x51);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2470,7 +2470,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0xFF);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x42), 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2483,7 +2483,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0x7F);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x42), 0x80);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -2497,7 +2497,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0x20);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x47), 0x21);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -2509,7 +2509,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x1234, 0x30);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1234), 0x31);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -2522,7 +2522,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0x8F);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1244), 0x90);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2537,7 +2537,7 @@ mod tests {
         cpu.memory.write(0x0602, 0x12);
         cpu.memory.write(0x1234, BRK);
         cpu.pc = 0x0600;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK at 0x1234
     }
 
@@ -2553,7 +2553,7 @@ mod tests {
         cpu.memory.write(0x3021, 0x38);
         cpu.memory.write(0x3856, BRK);
         cpu.pc = 0x0600;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x3857); // PC after BRK at 0x3856
     }
 
@@ -2572,7 +2572,7 @@ mod tests {
         cpu.memory.write(0x1000, 0x12); // Wraps to start of page, not 0x1100
         cpu.memory.write(0x1234, BRK);
         cpu.pc = 0x0600;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // Should jump to 0x1234 (low=0x34, high=0x12)
     }
 
@@ -2587,7 +2587,7 @@ mod tests {
         cpu.memory.write(0x1234, BRK);
         cpu.pc = 0x0600;
         cpu.sp = 0xFF;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK at 0x1234
         assert_eq!(cpu.sp, 0xFD); // SP decremented by 2 (pushed 2 bytes)
         // Return address should be 0x0602 (address of last byte of JSR instruction)
@@ -2601,7 +2601,7 @@ mod tests {
         let program = vec![LDA_IMM, 0x42, BRK];
         cpu.load_program(&program, 0x0600);
         cpu.reset();
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2613,7 +2613,7 @@ mod tests {
         let program = vec![LDA_IMM, 0x00, BRK];
         cpu.load_program(&program, 0x0600);
         cpu.reset();
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -2624,7 +2624,7 @@ mod tests {
         let program = vec![LDA_IMM, 0x80, BRK];
         cpu.load_program(&program, 0x0600);
         cpu.reset();
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2636,7 +2636,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0x55);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x55);
     }
 
@@ -2648,7 +2648,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0xAA);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0xAA);
     }
 
@@ -2659,7 +2659,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x1234, 0x77);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x77);
     }
 
@@ -2671,7 +2671,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0x88);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x88);
     }
 
@@ -2683,7 +2683,7 @@ mod tests {
         cpu.reset();
         cpu.y = 0x20;
         cpu.memory.write(0x1254, 0x99);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x99);
     }
 
@@ -2697,7 +2697,7 @@ mod tests {
         cpu.memory.write(0x24, 0x74);
         cpu.memory.write(0x25, 0x20);
         cpu.memory.write(0x2074, 0xCC);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0xCC);
     }
 
@@ -2711,7 +2711,7 @@ mod tests {
         cpu.memory.write(0x86, 0x28);
         cpu.memory.write(0x87, 0x30);
         cpu.memory.write(0x3038, 0xDD);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0xDD);
     }
 
@@ -2721,7 +2721,7 @@ mod tests {
         let program = vec![LDX_IMM, 0x42, BRK];
         cpu.load_program(&program, 0x0600);
         cpu.reset();
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x42);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2733,7 +2733,7 @@ mod tests {
         let program = vec![LDX_IMM, 0x00, BRK];
         cpu.load_program(&program, 0x0600);
         cpu.reset();
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -2744,7 +2744,7 @@ mod tests {
         let program = vec![LDX_IMM, 0x80, BRK];
         cpu.load_program(&program, 0x0600);
         cpu.reset();
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2756,7 +2756,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0x55);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x55);
     }
 
@@ -2768,7 +2768,7 @@ mod tests {
         cpu.reset();
         cpu.y = 0x05;
         cpu.memory.write(0x47, 0xAA);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0xAA);
     }
 
@@ -2779,7 +2779,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x1234, 0x77);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x77);
     }
 
@@ -2791,7 +2791,7 @@ mod tests {
         cpu.reset();
         cpu.y = 0x20;
         cpu.memory.write(0x1254, 0x99);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x99);
     }
 
@@ -2801,7 +2801,7 @@ mod tests {
         let program = vec![LDY_IMM, 0x42, BRK];
         cpu.load_program(&program, 0x0600);
         cpu.reset();
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.y, 0x42);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -2813,7 +2813,7 @@ mod tests {
         let program = vec![LDY_IMM, 0x00, BRK];
         cpu.load_program(&program, 0x0600);
         cpu.reset();
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.y, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -2824,7 +2824,7 @@ mod tests {
         let program = vec![LDY_IMM, 0x80, BRK];
         cpu.load_program(&program, 0x0600);
         cpu.reset();
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.y, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2836,7 +2836,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0x55);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.y, 0x55);
     }
 
@@ -2848,7 +2848,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0xAA);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.y, 0xAA);
     }
 
@@ -2859,7 +2859,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x1234, 0x77);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.y, 0x77);
     }
 
@@ -2871,7 +2871,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0x88);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.y, 0x88);
     }
 
@@ -2882,7 +2882,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b10110101;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b01011010);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -2896,7 +2896,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b00000001;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -2909,7 +2909,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x42, 0b11001100);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x42), 0b01100110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
@@ -2922,7 +2922,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0b10101011);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x47), 0b01010101);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -2934,7 +2934,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.memory.write(0x1234, 0b01010100);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1234), 0b00101010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
@@ -2947,7 +2947,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0b00000011);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1244), 0b00000001);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -2962,7 +2962,7 @@ mod tests {
         cpu.x = 0x33;
         cpu.y = 0x24;
         cpu.p = 0xFF;
-        cpu.run();
+        run(&mut cpu);
         // NOP should not affect any registers or flags
         assert_eq!(cpu.a, 0x42);
         assert_eq!(cpu.x, 0x33);
@@ -2977,7 +2977,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0b10101010;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -2990,7 +2990,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x00;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -3003,7 +3003,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b11110000;
         cpu.memory.write(0x42, 0b00001111);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
 
@@ -3016,7 +3016,7 @@ mod tests {
         cpu.a = 0b10000000;
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0b01000000);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b11000000);
     }
 
@@ -3028,7 +3028,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b00110011;
         cpu.memory.write(0x1234, 0b11001100);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
 
@@ -3041,7 +3041,7 @@ mod tests {
         cpu.a = 0b00001111;
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0b11110000);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
 
@@ -3054,7 +3054,7 @@ mod tests {
         cpu.a = 0b01010101;
         cpu.y = 0x20;
         cpu.memory.write(0x1254, 0b10101010);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
 
@@ -3069,7 +3069,7 @@ mod tests {
         cpu.memory.write(0x86, 0x34);
         cpu.memory.write(0x87, 0x12);
         cpu.memory.write(0x1234, 0b11001100);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
 
@@ -3084,7 +3084,7 @@ mod tests {
         cpu.memory.write(0x86, 0x28);
         cpu.memory.write(0x87, 0x30);
         cpu.memory.write(0x3038, 0b01010101);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
 
@@ -3095,7 +3095,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x00;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3108,7 +3108,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x41);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -3121,7 +3121,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0x01;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -3133,7 +3133,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0x00;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0xFF);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -3145,7 +3145,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.y = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.y, 0x41);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -3158,7 +3158,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x43);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -3171,7 +3171,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0xFF;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -3183,7 +3183,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.y = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.y, 0x43);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -3196,7 +3196,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x42);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -3209,7 +3209,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x00;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -3221,7 +3221,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x80;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -3233,7 +3233,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.y, 0x42);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -3246,7 +3246,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -3259,7 +3259,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.y = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -3273,7 +3273,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b10110101;
         cpu.p = 0; // Clear carry
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b01101010);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3288,7 +3288,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b01010101;
         cpu.p = FLAG_CARRY; // Set carry
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b10101011);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -3302,7 +3302,7 @@ mod tests {
         cpu.reset();
         cpu.memory.write(0x42, 0b11001100);
         cpu.p = 0;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x42), 0b10011000);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -3316,7 +3316,7 @@ mod tests {
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0b10101011);
         cpu.p = FLAG_CARRY;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x47), 0b01010111);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -3329,7 +3329,7 @@ mod tests {
         cpu.reset();
         cpu.memory.write(0x1234, 0b01010100);
         cpu.p = 0;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1234), 0b10101000);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
@@ -3343,7 +3343,7 @@ mod tests {
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0b00000011);
         cpu.p = 0;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1244), 0b00000110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
@@ -3356,7 +3356,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b10110101;
         cpu.p = 0; // Clear carry
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b01011010);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3371,7 +3371,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b01010101;
         cpu.p = FLAG_CARRY; // Set carry
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0b10101010);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -3385,7 +3385,7 @@ mod tests {
         cpu.reset();
         cpu.memory.write(0x42, 0b11001100);
         cpu.p = 0;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x42), 0b01100110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
@@ -3399,7 +3399,7 @@ mod tests {
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0b10101011);
         cpu.p = FLAG_CARRY;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x47), 0b11010101);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -3412,7 +3412,7 @@ mod tests {
         cpu.reset();
         cpu.memory.write(0x1234, 0b01010100);
         cpu.p = 0;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1234), 0b00101010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
@@ -3426,7 +3426,7 @@ mod tests {
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0b00000011);
         cpu.p = 0;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x1244), 0b00000001);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -3443,7 +3443,7 @@ mod tests {
         cpu.memory.write(0x01FE, 0x34); // PC low byte
         cpu.memory.write(0x01FF, 0x12); // PC high byte
         cpu.memory.write(0x1234, BRK); // BRK at return address
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p, 0b11010011);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK instruction
         assert_eq!(cpu.sp, 0xFF);
@@ -3460,7 +3460,7 @@ mod tests {
         cpu.memory.write(0x01FE, 0x33); // PC-1 low byte (0x1233)
         cpu.memory.write(0x01FF, 0x12); // PC-1 high byte
         cpu.memory.write(0x1234, BRK); // BRK at return address
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK instruction (0x1234 + 1)
         assert_eq!(cpu.sp, 0xFF);
     }
@@ -3473,7 +3473,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x20);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3488,7 +3488,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x50;
         cpu.p &= !FLAG_CARRY; // Clear carry (borrow)
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x1F);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
@@ -3502,7 +3502,7 @@ mod tests {
         cpu.a = 0x80;
         cpu.p |= FLAG_CARRY;
         cpu.memory.write(0x42, 0x40);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
 
@@ -3516,7 +3516,7 @@ mod tests {
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
         cpu.memory.write(0x47, 0x10);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
 
@@ -3529,7 +3529,7 @@ mod tests {
         cpu.a = 0x60;
         cpu.p |= FLAG_CARRY;
         cpu.memory.write(0x1234, 0x20);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
 
@@ -3543,7 +3543,7 @@ mod tests {
         cpu.x = 0x10;
         cpu.p |= FLAG_CARRY;
         cpu.memory.write(0x1244, 0x30);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
 
@@ -3557,7 +3557,7 @@ mod tests {
         cpu.y = 0x20;
         cpu.p |= FLAG_CARRY;
         cpu.memory.write(0x1254, 0x50);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
 
@@ -3573,7 +3573,7 @@ mod tests {
         cpu.memory.write(0x86, 0x34);
         cpu.memory.write(0x87, 0x12);
         cpu.memory.write(0x1234, 0x60);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
 
@@ -3589,7 +3589,7 @@ mod tests {
         cpu.memory.write(0x86, 0x28);
         cpu.memory.write(0x87, 0x30);
         cpu.memory.write(0x3038, 0x70);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
 
@@ -3601,7 +3601,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0xA0);
         assert_eq!(cpu.p & FLAG_OVERFLOW, FLAG_OVERFLOW);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -3614,7 +3614,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x10), 0x42);
     }
 
@@ -3626,7 +3626,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x42;
         cpu.x = 0x05;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x15), 0x42);
     }
 
@@ -3637,7 +3637,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.a = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x2000), 0x42);
     }
 
@@ -3649,7 +3649,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x42;
         cpu.x = 0x05;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x2005), 0x42);
     }
 
@@ -3661,7 +3661,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x42;
         cpu.y = 0x05;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x2005), 0x42);
     }
 
@@ -3675,7 +3675,7 @@ mod tests {
         cpu.x = 0x05;
         cpu.memory.write(0x15, 0x00);
         cpu.memory.write(0x16, 0x20);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x2000), 0x42);
     }
 
@@ -3689,7 +3689,7 @@ mod tests {
         cpu.y = 0x05;
         cpu.memory.write(0x10, 0x00);
         cpu.memory.write(0x11, 0x20);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x2005), 0x42);
     }
 
@@ -3700,7 +3700,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0xFF;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.sp, 0xFF);
     }
 
@@ -3711,7 +3711,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.sp = 0xAB;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0xAB);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -3724,7 +3724,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.sp = 0x00;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.x, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -3738,7 +3738,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x42;
         cpu.sp = 0xFD;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.sp, 0xFC);
         assert_eq!(cpu.memory.read(0x01FD), 0x42);
     }
@@ -3751,7 +3751,7 @@ mod tests {
         cpu.reset();
         cpu.sp = 0xFC;
         cpu.memory.write(0x01FD, 0x42);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
         assert_eq!(cpu.sp, 0xFD);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3766,7 +3766,7 @@ mod tests {
         cpu.reset();
         cpu.sp = 0xFC;
         cpu.memory.write(0x01FD, 0x00);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -3779,7 +3779,7 @@ mod tests {
         cpu.reset();
         cpu.sp = 0xFC;
         cpu.memory.write(0x01FD, 0x80);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -3792,7 +3792,7 @@ mod tests {
         cpu.reset();
         cpu.p = 0xFF;
         cpu.sp = 0xFD;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.sp, 0xFC);
         assert_eq!(cpu.memory.read(0x01FD), 0xFF);
     }
@@ -3805,7 +3805,7 @@ mod tests {
         cpu.reset();
         cpu.sp = 0xFC;
         cpu.memory.write(0x01FD, 0xC3);
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.p, 0xC3);
         assert_eq!(cpu.sp, 0xFD);
     }
@@ -3817,7 +3817,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x10), 0x42);
     }
 
@@ -3829,7 +3829,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x42;
         cpu.y = 0x05;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x15), 0x42);
     }
 
@@ -3840,7 +3840,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.x = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x2000), 0x42);
     }
 
@@ -3851,7 +3851,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.y = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x10), 0x42);
     }
 
@@ -3863,7 +3863,7 @@ mod tests {
         cpu.reset();
         cpu.y = 0x42;
         cpu.x = 0x05;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x15), 0x42);
     }
 
@@ -3874,7 +3874,7 @@ mod tests {
         cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.y = 0x42;
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.memory.read(0x2000), 0x42);
     }
 
@@ -3909,7 +3909,7 @@ mod tests {
         let program = vec![LDA_IMM, 0x42, BRK];
         cpu.load_program(&program, 0x0600);
         cpu.reset();
-        cpu.run();
+        run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
         // Verify program was loaded at 0x0600
         assert_eq!(cpu.memory.read(0x0600), LDA_IMM);
