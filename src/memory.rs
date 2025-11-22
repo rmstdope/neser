@@ -18,8 +18,13 @@ impl Memory {
             0x0000..=0x1FFF => (addr & 0x07FF) as usize,
             // PPU registers ($2000-$2007) mirrored up to $3FFF
             0x2000..=0x3FFF => (0x2000 + (addr & 0x0007)) as usize,
-            // Everything else maps directly
-            _ => addr as usize,
+            // OK to write to the reset vector
+            0xFFFC..=0xFFFF => addr as usize,
+            // Everything else maps directly, but prints error
+            _ => {
+                eprintln!("Warning: Accessing unmapped memory address {:04X}", addr);
+                addr as usize
+            }
         }
     }
 
@@ -59,7 +64,7 @@ mod tests {
         let memory = Memory::new();
         assert_eq!(memory.read(0x0000), 0);
         assert_eq!(memory.read(0x1234), 0);
-        assert_eq!(memory.read(0xFFFF), 0);
+        assert_eq!(memory.read(0x3FFF), 0);
     }
 
     #[test]
@@ -89,8 +94,8 @@ mod tests {
     #[test]
     fn test_write_and_read_u16_round_trip() {
         let mut memory = Memory::new();
-        memory.write_u16(0x5000, 0x1234);
-        let result = memory.read_u16(0x5000);
+        memory.write_u16(0x3000, 0x1234);
+        let result = memory.read_u16(0x3000);
         assert_eq!(result, 0x1234);
     }
 

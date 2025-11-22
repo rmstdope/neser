@@ -1,5 +1,6 @@
 mod cpu;
 mod memory;
+mod opcode;
 
 use pixels::{Pixels, SurfaceTexture};
 use winit::{
@@ -113,25 +114,25 @@ fn render(cpu: &cpu::Cpu, pixels: &mut Pixels) {
     }
 }
 
-fn draw(pixels: &mut Pixels, texture: &[u8]) {
-    let frame = pixels.frame_mut();
+// fn draw(pixels: &mut Pixels, texture: &[u8]) {
+//     let frame = pixels.frame_mut();
 
-    // Scale and blit the 32x32 texture to fill the entire window
-    for y in 0..HEIGHT {
-        for x in 0..WIDTH {
-            // Map window coordinates to texture coordinates
-            let tx = (x * TEXTURE_WIDTH / WIDTH) as usize;
-            let ty = (y * TEXTURE_HEIGHT / HEIGHT) as usize;
-            let texture_index = (ty * TEXTURE_WIDTH as usize + tx) * 4;
-            let frame_index = (y * WIDTH + x) as usize * 4;
+//     // Scale and blit the 32x32 texture to fill the entire window
+//     for y in 0..HEIGHT {
+//         for x in 0..WIDTH {
+//             // Map window coordinates to texture coordinates
+//             let tx = (x * TEXTURE_WIDTH / WIDTH) as usize;
+//             let ty = (y * TEXTURE_HEIGHT / HEIGHT) as usize;
+//             let texture_index = (ty * TEXTURE_WIDTH as usize + tx) * 4;
+//             let frame_index = (y * WIDTH + x) as usize * 4;
 
-            frame[frame_index] = texture[texture_index]; // R
-            frame[frame_index + 1] = texture[texture_index + 1]; // G
-            frame[frame_index + 2] = texture[texture_index + 2]; // B
-            frame[frame_index + 3] = texture[texture_index + 3]; // A
-        }
-    }
-}
+//             frame[frame_index] = texture[texture_index]; // R
+//             frame[frame_index + 1] = texture[texture_index + 1]; // G
+//             frame[frame_index + 2] = texture[texture_index + 2]; // B
+//             frame[frame_index + 3] = texture[texture_index + 3]; // A
+//         }
+//     }
+// }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let game_code = vec![
