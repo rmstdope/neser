@@ -216,18 +216,17 @@ impl Cpu {
         self.pc = self.read_reset_vector();
     }
 
-    /// Load a program into memory at the specified address and set PC
-    pub fn load_program(&mut self, program: &[u8], address: Option<u16>) {
-        let addr = address.unwrap_or(0x8000);
+    /// Load a program into memory at the specified address and set reset vector
+    pub fn load_program(&mut self, program: &[u8], address: u16) {
         for (i, &byte) in program.iter().enumerate() {
-            self.memory.write(addr + i as u16, byte);
+            self.memory.write(address + i as u16, byte);
         }
-        self.write_reset_vector(addr);
+        self.write_reset_vector(address);
     }
 
     /// Load a program and run the CPU emulation
     pub fn load_and_run(&mut self, program: Vec<u8>) {
-        self.load_program(&program, None);
+        self.load_program(&program, 0x8000);
         // Reset CPU
         self.reset();
         self.run();
@@ -1413,7 +1412,7 @@ mod tests {
     fn test_adc_immediate() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_IMM, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x10;
         cpu.run();
@@ -1428,7 +1427,7 @@ mod tests {
     fn test_adc_immediate_with_carry() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_IMM, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x10;
         cpu.p |= FLAG_CARRY; // Set carry flag
@@ -1441,7 +1440,7 @@ mod tests {
     fn test_adc_immediate_carry_flag() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_IMM, 0x01, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0xFF;
         cpu.run();
@@ -1454,7 +1453,7 @@ mod tests {
     fn test_adc_immediate_overflow_flag() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_IMM, 0x50, BRK]; // Add another positive
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x50; // Positive number
         cpu.run();
@@ -1467,7 +1466,7 @@ mod tests {
     fn test_adc_immediate_negative_overflow() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_IMM, 0x80, BRK]; // Add -128
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x80; // -128 in two's complement
         cpu.run();
@@ -1481,7 +1480,7 @@ mod tests {
     fn test_adc_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x10;
         cpu.memory.write(0x42, 0x33);
@@ -1493,7 +1492,7 @@ mod tests {
     fn test_adc_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_ABS, 0x34, 0x12, BRK]; // Little-endian
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x20;
         cpu.memory.write(0x1234, 0x55);
@@ -1505,7 +1504,7 @@ mod tests {
     fn test_adc_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x10;
         cpu.x = 0x05;
@@ -1518,7 +1517,7 @@ mod tests {
     fn test_adc_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x15;
         cpu.x = 0x03;
@@ -1531,7 +1530,7 @@ mod tests {
     fn test_adc_absolute_y() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_ABSY, 0x00, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x08;
         cpu.y = 0x10;
@@ -1544,7 +1543,7 @@ mod tests {
     fn test_adc_indirect_x() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_INDX, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x05;
         cpu.x = 0x04;
@@ -1559,7 +1558,7 @@ mod tests {
     fn test_adc_indirect_y() {
         let mut cpu = Cpu::new();
         let program = vec![ADC_INDY, 0x86, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x0A;
         cpu.y = 0x10;
@@ -1574,7 +1573,7 @@ mod tests {
     fn test_and_immediate() {
         let mut cpu = Cpu::new();
         let program = vec![AND_IMM, 0b1010_1010, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1111_0000;
         cpu.run();
@@ -1587,7 +1586,7 @@ mod tests {
     fn test_and_immediate_zero_flag() {
         let mut cpu = Cpu::new();
         let program = vec![AND_IMM, 0b0000_1111, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1111_0000;
         cpu.run();
@@ -1600,7 +1599,7 @@ mod tests {
     fn test_and_immediate_clears_negative_flag() {
         let mut cpu = Cpu::new();
         let program = vec![AND_IMM, 0b0111_1111, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1111_1111;
         cpu.p = FLAG_NEGATIVE; // Set negative flag initially
@@ -1614,7 +1613,7 @@ mod tests {
     fn test_and_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![AND_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1100_1100;
         cpu.memory.write(0x42, 0b1010_1010);
@@ -1626,7 +1625,7 @@ mod tests {
     fn test_and_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![AND_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1111_0000;
         cpu.x = 0x05;
@@ -1639,7 +1638,7 @@ mod tests {
     fn test_and_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![AND_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1010_1010;
         cpu.memory.write(0x1234, 0b1100_1100);
@@ -1651,7 +1650,7 @@ mod tests {
     fn test_and_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![AND_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1111_1111;
         cpu.x = 0x10;
@@ -1664,7 +1663,7 @@ mod tests {
     fn test_and_absolute_y() {
         let mut cpu = Cpu::new();
         let program = vec![AND_ABSY, 0x00, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1100_0011;
         cpu.y = 0x20;
@@ -1677,7 +1676,7 @@ mod tests {
     fn test_and_indirect_x() {
         let mut cpu = Cpu::new();
         let program = vec![AND_INDX, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1111_0000;
         cpu.x = 0x04;
@@ -1692,7 +1691,7 @@ mod tests {
     fn test_and_indirect_y() {
         let mut cpu = Cpu::new();
         let program = vec![AND_INDY, 0x86, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1010_1010;
         cpu.y = 0x10;
@@ -1707,7 +1706,7 @@ mod tests {
     fn test_asl_accumulator() {
         let mut cpu = Cpu::new();
         let program = vec![ASL_A, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b0100_0010;
         cpu.run();
@@ -1721,7 +1720,7 @@ mod tests {
     fn test_asl_accumulator_sets_carry() {
         let mut cpu = Cpu::new();
         let program = vec![ASL_A, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1000_0001;
         cpu.run();
@@ -1735,7 +1734,7 @@ mod tests {
     fn test_asl_accumulator_sets_zero() {
         let mut cpu = Cpu::new();
         let program = vec![ASL_A, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1000_0000;
         cpu.run();
@@ -1749,7 +1748,7 @@ mod tests {
     fn test_asl_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![ASL_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0b0011_0011);
         cpu.run();
@@ -1761,7 +1760,7 @@ mod tests {
     fn test_asl_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![ASL_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0b1010_0101); // 0x42 + 0x05
@@ -1774,7 +1773,7 @@ mod tests {
     fn test_asl_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![ASL_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x1234, 0b0100_0001);
         cpu.run();
@@ -1786,7 +1785,7 @@ mod tests {
     fn test_asl_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![ASL_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0b0000_0001); // 0x1234 + 0x10
@@ -1800,7 +1799,7 @@ mod tests {
     fn test_bit_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![BIT_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1111_0000;
         cpu.memory.write(0x42, 0b1100_0011);
@@ -1817,7 +1816,7 @@ mod tests {
     fn test_bit_zero_page_sets_zero() {
         let mut cpu = Cpu::new();
         let program = vec![BIT_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b0000_1111;
         cpu.memory.write(0x42, 0b1111_0000);
@@ -1834,7 +1833,7 @@ mod tests {
     fn test_bit_zero_page_clears_flags() {
         let mut cpu = Cpu::new();
         let program = vec![BIT_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1111_1111;
         cpu.memory.write(0x42, 0b0011_1111);
@@ -1851,7 +1850,7 @@ mod tests {
     fn test_bit_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![BIT_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1010_1010;
         cpu.memory.write(0x1234, 0b0101_1010);
@@ -1868,7 +1867,7 @@ mod tests {
     fn test_bcc_branch_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BCC, 0x02, 0x00, 0x00, BRK]; // Branch forward 2 bytes to skip padding
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p &= !FLAG_CARRY; // Ensure carry is clear
         cpu.run();
@@ -1880,7 +1879,7 @@ mod tests {
     fn test_bcc_branch_not_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BCC, 0x05, BRK]; // Should not branch
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p |= FLAG_CARRY; // Set carry flag
         cpu.run();
@@ -1892,7 +1891,7 @@ mod tests {
     fn test_bcc_branch_backward() {
         let mut cpu = Cpu::new();
         let program = vec![0x00, 0x00, 0x00, BCC, 0xFB]; // Branch backward -5 to hit BRK at 0x8000
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p &= !FLAG_CARRY; // Ensure carry is clear
         // Put BRK at 0x8000, then BCC at 0x8003 that branches back to BRK
@@ -1906,7 +1905,7 @@ mod tests {
     fn test_bcs_branch_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BCS, 0x01, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p |= FLAG_CARRY; // Set carry flag
         cpu.run();
@@ -1917,7 +1916,7 @@ mod tests {
     fn test_bcs_branch_not_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BCS, 0x03, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p &= !FLAG_CARRY; // Clear carry flag
         cpu.run();
@@ -1928,7 +1927,7 @@ mod tests {
     fn test_beq_branch_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BEQ, 0x01, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p |= FLAG_ZERO; // Set zero flag
         cpu.run();
@@ -1939,7 +1938,7 @@ mod tests {
     fn test_beq_branch_not_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BEQ, 0x02, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p &= !FLAG_ZERO; // Clear zero flag
         cpu.run();
@@ -1950,7 +1949,7 @@ mod tests {
     fn test_bmi_branch_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BMI, 0x01, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
         cpu.run();
@@ -1961,7 +1960,7 @@ mod tests {
     fn test_bmi_branch_not_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BMI, 0x04, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
         cpu.run();
@@ -1972,7 +1971,7 @@ mod tests {
     fn test_bne_branch_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BNE, 0x01, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p &= !FLAG_ZERO; // Clear zero flag (not equal)
         cpu.run();
@@ -1983,7 +1982,7 @@ mod tests {
     fn test_bne_branch_not_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BNE, 0x06, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p |= FLAG_ZERO; // Set zero flag (equal)
         cpu.run();
@@ -1994,7 +1993,7 @@ mod tests {
     fn test_bpl_branch_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BPL, 0x01, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag (positive)
         cpu.run();
@@ -2005,7 +2004,7 @@ mod tests {
     fn test_bpl_branch_not_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BPL, 0x07, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
         cpu.run();
@@ -2016,7 +2015,7 @@ mod tests {
     fn test_bvc_branch_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BVC, 0x01, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
         cpu.run();
@@ -2027,7 +2026,7 @@ mod tests {
     fn test_bvc_branch_not_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BVC, 0x05, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
         cpu.run();
@@ -2038,7 +2037,7 @@ mod tests {
     fn test_bvs_branch_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BVS, 0x01, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
         cpu.run();
@@ -2049,7 +2048,7 @@ mod tests {
     fn test_bvs_branch_not_taken() {
         let mut cpu = Cpu::new();
         let program = vec![BVS, 0x08, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
         cpu.run();
@@ -2060,7 +2059,7 @@ mod tests {
     fn test_cmp_immediate_equal() {
         let mut cpu = Cpu::new();
         let program = vec![CMP_IMM, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.run();
@@ -2073,7 +2072,7 @@ mod tests {
     fn test_cmp_immediate_greater() {
         let mut cpu = Cpu::new();
         let program = vec![CMP_IMM, 0x30, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x50;
         cpu.run();
@@ -2086,7 +2085,7 @@ mod tests {
     fn test_cmp_immediate_less() {
         let mut cpu = Cpu::new();
         let program = vec![CMP_IMM, 0x50, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x30;
         cpu.run();
@@ -2099,7 +2098,7 @@ mod tests {
     fn test_cmp_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![CMP_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x80;
         cpu.memory.write(0x42, 0x80);
@@ -2112,7 +2111,7 @@ mod tests {
     fn test_cmp_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![CMP_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x10;
         cpu.x = 0x05;
@@ -2125,7 +2124,7 @@ mod tests {
     fn test_cmp_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![CMP_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x20;
         cpu.memory.write(0x1234, 0x30);
@@ -2137,7 +2136,7 @@ mod tests {
     fn test_cmp_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![CMP_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0xFF;
         cpu.x = 0x10;
@@ -2150,7 +2149,7 @@ mod tests {
     fn test_cmp_absolute_y() {
         let mut cpu = Cpu::new();
         let program = vec![CMP_ABSY, 0x00, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x55;
         cpu.y = 0x20;
@@ -2163,7 +2162,7 @@ mod tests {
     fn test_cmp_indirect_x() {
         let mut cpu = Cpu::new();
         let program = vec![CMP_INDX, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x33;
         cpu.x = 0x04;
@@ -2178,7 +2177,7 @@ mod tests {
     fn test_cmp_indirect_y() {
         let mut cpu = Cpu::new();
         let program = vec![CMP_INDY, 0x86, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x77;
         cpu.y = 0x10;
@@ -2194,7 +2193,7 @@ mod tests {
     fn test_cpx_immediate_equal() {
         let mut cpu = Cpu::new();
         let program = vec![CPX_IMM, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x42;
         cpu.run();
@@ -2207,7 +2206,7 @@ mod tests {
     fn test_cpx_immediate_greater() {
         let mut cpu = Cpu::new();
         let program = vec![CPX_IMM, 0x30, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x50;
         cpu.run();
@@ -2220,7 +2219,7 @@ mod tests {
     fn test_cpx_immediate_less() {
         let mut cpu = Cpu::new();
         let program = vec![CPX_IMM, 0x50, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x30;
         cpu.run();
@@ -2233,7 +2232,7 @@ mod tests {
     fn test_cpx_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![CPX_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x80;
         cpu.memory.write(0x42, 0x80);
@@ -2246,7 +2245,7 @@ mod tests {
     fn test_cpx_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![CPX_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x20;
         cpu.memory.write(0x1234, 0x30);
@@ -2259,7 +2258,7 @@ mod tests {
     fn test_cpy_immediate_equal() {
         let mut cpu = Cpu::new();
         let program = vec![CPY_IMM, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x42;
         cpu.run();
@@ -2272,7 +2271,7 @@ mod tests {
     fn test_cpy_immediate_greater() {
         let mut cpu = Cpu::new();
         let program = vec![CPY_IMM, 0x30, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x50;
         cpu.run();
@@ -2285,7 +2284,7 @@ mod tests {
     fn test_cpy_immediate_less() {
         let mut cpu = Cpu::new();
         let program = vec![CPY_IMM, 0x50, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x30;
         cpu.run();
@@ -2298,7 +2297,7 @@ mod tests {
     fn test_cpy_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![CPY_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x80;
         cpu.memory.write(0x42, 0x80);
@@ -2311,7 +2310,7 @@ mod tests {
     fn test_cpy_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![CPY_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x20;
         cpu.memory.write(0x1234, 0x30);
@@ -2324,7 +2323,7 @@ mod tests {
     fn test_dec_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![DEC_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0x50);
         cpu.run();
@@ -2337,7 +2336,7 @@ mod tests {
     fn test_dec_zero_page_zero() {
         let mut cpu = Cpu::new();
         let program = vec![DEC_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0x01);
         cpu.run();
@@ -2350,7 +2349,7 @@ mod tests {
     fn test_dec_zero_page_negative() {
         let mut cpu = Cpu::new();
         let program = vec![DEC_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0x00);
         cpu.run();
@@ -2363,7 +2362,7 @@ mod tests {
     fn test_dec_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![DEC_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0x80);
@@ -2376,7 +2375,7 @@ mod tests {
     fn test_dec_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![DEC_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x1234, 0x30);
         cpu.run();
@@ -2388,7 +2387,7 @@ mod tests {
     fn test_dec_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![DEC_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0x90);
@@ -2401,7 +2400,7 @@ mod tests {
     fn test_eor_immediate() {
         let mut cpu = Cpu::new();
         let program = vec![EOR_IMM, 0b1111_0000, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1010_1010;
         cpu.run();
@@ -2414,7 +2413,7 @@ mod tests {
     fn test_eor_immediate_zero() {
         let mut cpu = Cpu::new();
         let program = vec![EOR_IMM, 0b1010_1010, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1010_1010;
         cpu.run();
@@ -2426,7 +2425,7 @@ mod tests {
     fn test_eor_immediate_negative() {
         let mut cpu = Cpu::new();
         let program = vec![EOR_IMM, 0b1111_0000, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b0101_0101;
         cpu.run();
@@ -2438,7 +2437,7 @@ mod tests {
     fn test_eor_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![EOR_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0xFF;
         cpu.memory.write(0x42, 0x0F);
@@ -2450,7 +2449,7 @@ mod tests {
     fn test_eor_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![EOR_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0xFF;
         cpu.x = 0x05;
@@ -2463,7 +2462,7 @@ mod tests {
     fn test_eor_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![EOR_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x12;
         cpu.memory.write(0x1234, 0x34);
@@ -2475,7 +2474,7 @@ mod tests {
     fn test_eor_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![EOR_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0xAA;
         cpu.x = 0x10;
@@ -2488,7 +2487,7 @@ mod tests {
     fn test_eor_absolute_y() {
         let mut cpu = Cpu::new();
         let program = vec![EOR_ABSY, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0xF0;
         cpu.y = 0x20;
@@ -2501,7 +2500,7 @@ mod tests {
     fn test_eor_indexed_indirect() {
         let mut cpu = Cpu::new();
         let program = vec![EOR_INDX, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1100_0011;
         cpu.x = 0x04;
@@ -2516,7 +2515,7 @@ mod tests {
     fn test_eor_indirect_indexed() {
         let mut cpu = Cpu::new();
         let program = vec![EOR_INDY, 0x86, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b1010_0101;
         cpu.y = 0x10;
@@ -2531,7 +2530,7 @@ mod tests {
     fn test_clc() {
         let mut cpu = Cpu::new();
         let program = vec![CLC, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p = FLAG_CARRY;
         cpu.run();
@@ -2542,7 +2541,7 @@ mod tests {
     fn test_cld() {
         let mut cpu = Cpu::new();
         let program = vec![CLD, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p = FLAG_DECIMAL;
         cpu.run();
@@ -2553,7 +2552,7 @@ mod tests {
     fn test_cli() {
         let mut cpu = Cpu::new();
         let program = vec![CLI, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p = FLAG_INTERRUPT;
         cpu.run();
@@ -2564,7 +2563,7 @@ mod tests {
     fn test_clv() {
         let mut cpu = Cpu::new();
         let program = vec![CLV, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p = FLAG_OVERFLOW;
         cpu.run();
@@ -2575,7 +2574,7 @@ mod tests {
     fn test_sec() {
         let mut cpu = Cpu::new();
         let program = vec![SEC, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p = 0;
         cpu.run();
@@ -2586,7 +2585,7 @@ mod tests {
     fn test_sed() {
         let mut cpu = Cpu::new();
         let program = vec![SED, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p = 0;
         cpu.run();
@@ -2597,7 +2596,7 @@ mod tests {
     fn test_sei() {
         let mut cpu = Cpu::new();
         let program = vec![SEI, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p = 0;
         cpu.run();
@@ -2608,7 +2607,7 @@ mod tests {
     fn test_inc_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![INC_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0x50);
         cpu.run();
@@ -2621,7 +2620,7 @@ mod tests {
     fn test_inc_zero_page_zero() {
         let mut cpu = Cpu::new();
         let program = vec![INC_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0xFF);
         cpu.run();
@@ -2634,7 +2633,7 @@ mod tests {
     fn test_inc_zero_page_negative() {
         let mut cpu = Cpu::new();
         let program = vec![INC_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0x7F);
         cpu.run();
@@ -2647,7 +2646,7 @@ mod tests {
     fn test_inc_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![INC_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0x20);
@@ -2660,7 +2659,7 @@ mod tests {
     fn test_inc_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![INC_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x1234, 0x30);
         cpu.run();
@@ -2672,7 +2671,7 @@ mod tests {
     fn test_inc_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![INC_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0x8F);
@@ -2684,7 +2683,7 @@ mod tests {
     #[test]
     fn test_jmp_absolute() {
         let mut cpu = Cpu::new();
-        cpu.load_program(&vec![], None);
+        cpu.load_program(&vec![], 0x8000);
         cpu.reset();
         cpu.memory.write(0x8000, JMP_ABS);
         cpu.memory.write(0x8001, 0x34);
@@ -2698,7 +2697,7 @@ mod tests {
     #[test]
     fn test_jmp_indirect() {
         let mut cpu = Cpu::new();
-        cpu.load_program(&vec![], None);
+        cpu.load_program(&vec![], 0x8000);
         cpu.reset();
         cpu.memory.write(0x8000, JMP_IND);
         cpu.memory.write(0x8001, 0x20);
@@ -2717,7 +2716,7 @@ mod tests {
         // (e.g., 0x10FF), it doesn't cross the page boundary to read the high byte
         // Instead of reading from 0x1100, it wraps around to 0x1000
         let mut cpu = Cpu::new();
-        cpu.load_program(&vec![], None);
+        cpu.load_program(&vec![], 0x8000);
         cpu.reset();
         cpu.memory.write(0x8000, JMP_IND);
         cpu.memory.write(0x8001, 0xFF);
@@ -2733,7 +2732,7 @@ mod tests {
     #[test]
     fn test_jsr() {
         let mut cpu = Cpu::new();
-        cpu.load_program(&vec![], None);
+        cpu.load_program(&vec![], 0x8000);
         cpu.reset();
         cpu.memory.write(0x8000, JSR);
         cpu.memory.write(0x8001, 0x34);
@@ -2753,7 +2752,7 @@ mod tests {
     fn test_lda_immediate() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_IMM, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.run();
         assert_eq!(cpu.a, 0x42);
@@ -2765,7 +2764,7 @@ mod tests {
     fn test_lda_immediate_zero() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_IMM, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.run();
         assert_eq!(cpu.a, 0x00);
@@ -2776,7 +2775,7 @@ mod tests {
     fn test_lda_immediate_negative() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_IMM, 0x80, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.run();
         assert_eq!(cpu.a, 0x80);
@@ -2787,7 +2786,7 @@ mod tests {
     fn test_lda_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0x55);
         cpu.run();
@@ -2798,7 +2797,7 @@ mod tests {
     fn test_lda_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0xAA);
@@ -2810,7 +2809,7 @@ mod tests {
     fn test_lda_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x1234, 0x77);
         cpu.run();
@@ -2821,7 +2820,7 @@ mod tests {
     fn test_lda_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0x88);
@@ -2833,7 +2832,7 @@ mod tests {
     fn test_lda_absolute_y() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_ABSY, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x20;
         cpu.memory.write(0x1254, 0x99);
@@ -2845,7 +2844,7 @@ mod tests {
     fn test_lda_indexed_indirect() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_INDX, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x04;
         cpu.memory.write(0x24, 0x74);
@@ -2859,7 +2858,7 @@ mod tests {
     fn test_lda_indirect_indexed() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_INDY, 0x86, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x10;
         cpu.memory.write(0x86, 0x28);
@@ -2873,7 +2872,7 @@ mod tests {
     fn test_ldx_immediate() {
         let mut cpu = Cpu::new();
         let program = vec![LDX_IMM, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.run();
         assert_eq!(cpu.x, 0x42);
@@ -2885,7 +2884,7 @@ mod tests {
     fn test_ldx_immediate_zero() {
         let mut cpu = Cpu::new();
         let program = vec![LDX_IMM, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.run();
         assert_eq!(cpu.x, 0x00);
@@ -2896,7 +2895,7 @@ mod tests {
     fn test_ldx_immediate_negative() {
         let mut cpu = Cpu::new();
         let program = vec![LDX_IMM, 0x80, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.run();
         assert_eq!(cpu.x, 0x80);
@@ -2907,7 +2906,7 @@ mod tests {
     fn test_ldx_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![LDX_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0x55);
         cpu.run();
@@ -2918,7 +2917,7 @@ mod tests {
     fn test_ldx_zero_page_y() {
         let mut cpu = Cpu::new();
         let program = vec![LDX_ZPY, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x05;
         cpu.memory.write(0x47, 0xAA);
@@ -2930,7 +2929,7 @@ mod tests {
     fn test_ldx_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![LDX_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x1234, 0x77);
         cpu.run();
@@ -2941,7 +2940,7 @@ mod tests {
     fn test_ldx_absolute_y() {
         let mut cpu = Cpu::new();
         let program = vec![LDX_ABSY, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x20;
         cpu.memory.write(0x1254, 0x99);
@@ -2953,7 +2952,7 @@ mod tests {
     fn test_ldy_immediate() {
         let mut cpu = Cpu::new();
         let program = vec![LDY_IMM, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.run();
         assert_eq!(cpu.y, 0x42);
@@ -2965,7 +2964,7 @@ mod tests {
     fn test_ldy_immediate_zero() {
         let mut cpu = Cpu::new();
         let program = vec![LDY_IMM, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.run();
         assert_eq!(cpu.y, 0x00);
@@ -2976,7 +2975,7 @@ mod tests {
     fn test_ldy_immediate_negative() {
         let mut cpu = Cpu::new();
         let program = vec![LDY_IMM, 0x80, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.run();
         assert_eq!(cpu.y, 0x80);
@@ -2987,7 +2986,7 @@ mod tests {
     fn test_ldy_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![LDY_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0x55);
         cpu.run();
@@ -2998,7 +2997,7 @@ mod tests {
     fn test_ldy_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![LDY_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0xAA);
@@ -3010,7 +3009,7 @@ mod tests {
     fn test_ldy_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![LDY_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x1234, 0x77);
         cpu.run();
@@ -3021,7 +3020,7 @@ mod tests {
     fn test_ldy_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![LDY_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0x88);
@@ -3033,7 +3032,7 @@ mod tests {
     fn test_lsr_accumulator() {
         let mut cpu = Cpu::new();
         let program = vec![LSR_ACC, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b10110101;
         cpu.run();
@@ -3047,7 +3046,7 @@ mod tests {
     fn test_lsr_accumulator_zero() {
         let mut cpu = Cpu::new();
         let program = vec![LSR_ACC, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b00000001;
         cpu.run();
@@ -3060,7 +3059,7 @@ mod tests {
     fn test_lsr_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![LSR_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0b11001100);
         cpu.run();
@@ -3072,7 +3071,7 @@ mod tests {
     fn test_lsr_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![LSR_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0b10101011);
@@ -3085,7 +3084,7 @@ mod tests {
     fn test_lsr_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![LSR_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x1234, 0b01010100);
         cpu.run();
@@ -3097,7 +3096,7 @@ mod tests {
     fn test_lsr_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![LSR_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0b00000011);
@@ -3110,7 +3109,7 @@ mod tests {
     fn test_nop() {
         let mut cpu = Cpu::new();
         let program = vec![NOP, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.x = 0x33;
@@ -3128,7 +3127,7 @@ mod tests {
     fn test_ora_immediate() {
         let mut cpu = Cpu::new();
         let program = vec![ORA_IMM, 0b01010101, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b10101010;
         cpu.run();
@@ -3141,7 +3140,7 @@ mod tests {
     fn test_ora_immediate_zero() {
         let mut cpu = Cpu::new();
         let program = vec![ORA_IMM, 0x00, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x00;
         cpu.run();
@@ -3153,7 +3152,7 @@ mod tests {
     fn test_ora_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![ORA_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b11110000;
         cpu.memory.write(0x42, 0b00001111);
@@ -3165,7 +3164,7 @@ mod tests {
     fn test_ora_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![ORA_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b10000000;
         cpu.x = 0x05;
@@ -3178,7 +3177,7 @@ mod tests {
     fn test_ora_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![ORA_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b00110011;
         cpu.memory.write(0x1234, 0b11001100);
@@ -3190,7 +3189,7 @@ mod tests {
     fn test_ora_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![ORA_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b00001111;
         cpu.x = 0x10;
@@ -3203,7 +3202,7 @@ mod tests {
     fn test_ora_absolute_y() {
         let mut cpu = Cpu::new();
         let program = vec![ORA_ABSY, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b01010101;
         cpu.y = 0x20;
@@ -3216,7 +3215,7 @@ mod tests {
     fn test_ora_indexed_indirect() {
         let mut cpu = Cpu::new();
         let program = vec![ORA_INDX, 0x82, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b00110011;
         cpu.x = 0x04;
@@ -3231,7 +3230,7 @@ mod tests {
     fn test_ora_indirect_indexed() {
         let mut cpu = Cpu::new();
         let program = vec![ORA_INDY, 0x86, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b10101010;
         cpu.y = 0x10;
@@ -3246,7 +3245,7 @@ mod tests {
     fn test_ora_negative_flag() {
         let mut cpu = Cpu::new();
         let program = vec![ORA_IMM, 0x80, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x00;
         cpu.run();
@@ -3259,7 +3258,7 @@ mod tests {
     fn test_dex() {
         let mut cpu = Cpu::new();
         let program = vec![DEX, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x42;
         cpu.run();
@@ -3272,7 +3271,7 @@ mod tests {
     fn test_dex_zero() {
         let mut cpu = Cpu::new();
         let program = vec![DEX, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x01;
         cpu.run();
@@ -3284,7 +3283,7 @@ mod tests {
     fn test_dex_wrap() {
         let mut cpu = Cpu::new();
         let program = vec![DEX, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x00;
         cpu.run();
@@ -3296,7 +3295,7 @@ mod tests {
     fn test_dey() {
         let mut cpu = Cpu::new();
         let program = vec![DEY, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x42;
         cpu.run();
@@ -3309,7 +3308,7 @@ mod tests {
     fn test_inx() {
         let mut cpu = Cpu::new();
         let program = vec![INX, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x42;
         cpu.run();
@@ -3322,7 +3321,7 @@ mod tests {
     fn test_inx_wrap() {
         let mut cpu = Cpu::new();
         let program = vec![INX, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0xFF;
         cpu.run();
@@ -3334,7 +3333,7 @@ mod tests {
     fn test_iny() {
         let mut cpu = Cpu::new();
         let program = vec![INY, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x42;
         cpu.run();
@@ -3347,7 +3346,7 @@ mod tests {
     fn test_tax() {
         let mut cpu = Cpu::new();
         let program = vec![TAX, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.run();
@@ -3360,7 +3359,7 @@ mod tests {
     fn test_tax_zero() {
         let mut cpu = Cpu::new();
         let program = vec![TAX, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x00;
         cpu.run();
@@ -3372,7 +3371,7 @@ mod tests {
     fn test_tax_negative() {
         let mut cpu = Cpu::new();
         let program = vec![TAX, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x80;
         cpu.run();
@@ -3384,7 +3383,7 @@ mod tests {
     fn test_tay() {
         let mut cpu = Cpu::new();
         let program = vec![TAY, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.run();
@@ -3397,7 +3396,7 @@ mod tests {
     fn test_txa() {
         let mut cpu = Cpu::new();
         let program = vec![TXA, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x42;
         cpu.run();
@@ -3410,7 +3409,7 @@ mod tests {
     fn test_tya() {
         let mut cpu = Cpu::new();
         let program = vec![TYA, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x42;
         cpu.run();
@@ -3423,7 +3422,7 @@ mod tests {
     fn test_rol_accumulator() {
         let mut cpu = Cpu::new();
         let program = vec![ROL_ACC, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b10110101;
         cpu.p = 0; // Clear carry
@@ -3438,7 +3437,7 @@ mod tests {
     fn test_rol_accumulator_with_carry() {
         let mut cpu = Cpu::new();
         let program = vec![ROL_ACC, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b01010101;
         cpu.p = FLAG_CARRY; // Set carry
@@ -3452,7 +3451,7 @@ mod tests {
     fn test_rol_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![ROL_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0b11001100);
         cpu.p = 0;
@@ -3465,7 +3464,7 @@ mod tests {
     fn test_rol_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![ROL_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0b10101011);
@@ -3479,7 +3478,7 @@ mod tests {
     fn test_rol_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![ROL_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x1234, 0b01010100);
         cpu.p = 0;
@@ -3492,7 +3491,7 @@ mod tests {
     fn test_rol_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![ROL_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0b00000011);
@@ -3506,7 +3505,7 @@ mod tests {
     fn test_ror_accumulator() {
         let mut cpu = Cpu::new();
         let program = vec![ROR_ACC, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b10110101;
         cpu.p = 0; // Clear carry
@@ -3521,7 +3520,7 @@ mod tests {
     fn test_ror_accumulator_with_carry() {
         let mut cpu = Cpu::new();
         let program = vec![ROR_ACC, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0b01010101;
         cpu.p = FLAG_CARRY; // Set carry
@@ -3535,7 +3534,7 @@ mod tests {
     fn test_ror_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![ROR_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x42, 0b11001100);
         cpu.p = 0;
@@ -3548,7 +3547,7 @@ mod tests {
     fn test_ror_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![ROR_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x05;
         cpu.memory.write(0x47, 0b10101011);
@@ -3562,7 +3561,7 @@ mod tests {
     fn test_ror_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![ROR_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.memory.write(0x1234, 0b01010100);
         cpu.p = 0;
@@ -3575,7 +3574,7 @@ mod tests {
     fn test_ror_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![ROR_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x10;
         cpu.memory.write(0x1244, 0b00000011);
@@ -3589,7 +3588,7 @@ mod tests {
     fn test_rti() {
         let mut cpu = Cpu::new();
         let program = vec![RTI, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         // Set up stack with saved processor status and return address
         cpu.sp = 0xFC;
@@ -3607,7 +3606,7 @@ mod tests {
     fn test_rts() {
         let mut cpu = Cpu::new();
         let program = vec![RTS, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         // Set up stack with saved return address (PC-1)
         cpu.sp = 0xFD;
@@ -3623,7 +3622,7 @@ mod tests {
     fn test_sbc_immediate() {
         let mut cpu = Cpu::new();
         let program = vec![SBC_IMM, 0x30, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
@@ -3638,7 +3637,7 @@ mod tests {
     fn test_sbc_immediate_with_borrow() {
         let mut cpu = Cpu::new();
         let program = vec![SBC_IMM, 0x30, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x50;
         cpu.p &= !FLAG_CARRY; // Clear carry (borrow)
@@ -3651,7 +3650,7 @@ mod tests {
     fn test_sbc_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![SBC_ZP, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x80;
         cpu.p |= FLAG_CARRY;
@@ -3664,7 +3663,7 @@ mod tests {
     fn test_sbc_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![SBC_ZPX, 0x42, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x50;
         cpu.x = 0x05;
@@ -3678,7 +3677,7 @@ mod tests {
     fn test_sbc_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![SBC_ABS, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x60;
         cpu.p |= FLAG_CARRY;
@@ -3691,7 +3690,7 @@ mod tests {
     fn test_sbc_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![SBC_ABSX, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x70;
         cpu.x = 0x10;
@@ -3705,7 +3704,7 @@ mod tests {
     fn test_sbc_absolute_y() {
         let mut cpu = Cpu::new();
         let program = vec![SBC_ABSY, 0x34, 0x12, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x90;
         cpu.y = 0x20;
@@ -3719,7 +3718,7 @@ mod tests {
     fn test_sbc_indexed_indirect() {
         let mut cpu = Cpu::new();
         let program = vec![SBC_INDX, 0x82, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0xA0;
         cpu.x = 0x04;
@@ -3735,7 +3734,7 @@ mod tests {
     fn test_sbc_indirect_indexed() {
         let mut cpu = Cpu::new();
         let program = vec![SBC_INDY, 0x86, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0xB0;
         cpu.y = 0x10;
@@ -3751,7 +3750,7 @@ mod tests {
     fn test_sbc_overflow() {
         let mut cpu = Cpu::new();
         let program = vec![SBC_IMM, 0xB0, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
@@ -3765,7 +3764,7 @@ mod tests {
     fn test_sta_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![STA_ZP, 0x10, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.run();
@@ -3776,7 +3775,7 @@ mod tests {
     fn test_sta_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![STA_ZPX, 0x10, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.x = 0x05;
@@ -3788,7 +3787,7 @@ mod tests {
     fn test_sta_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![STA_ABS, 0x00, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.run();
@@ -3799,7 +3798,7 @@ mod tests {
     fn test_sta_absolute_x() {
         let mut cpu = Cpu::new();
         let program = vec![STA_ABSX, 0x00, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.x = 0x05;
@@ -3811,7 +3810,7 @@ mod tests {
     fn test_sta_absolute_y() {
         let mut cpu = Cpu::new();
         let program = vec![STA_ABSY, 0x00, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.y = 0x05;
@@ -3823,7 +3822,7 @@ mod tests {
     fn test_sta_indexed_indirect() {
         let mut cpu = Cpu::new();
         let program = vec![STA_INDX, 0x10, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.x = 0x05;
@@ -3837,7 +3836,7 @@ mod tests {
     fn test_sta_indirect_indexed() {
         let mut cpu = Cpu::new();
         let program = vec![STA_INDY, 0x10, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.y = 0x05;
@@ -3851,7 +3850,7 @@ mod tests {
     fn test_txs() {
         let mut cpu = Cpu::new();
         let program = vec![TXS, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0xFF;
         cpu.run();
@@ -3862,7 +3861,7 @@ mod tests {
     fn test_tsx() {
         let mut cpu = Cpu::new();
         let program = vec![TSX, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.sp = 0xAB;
         cpu.run();
@@ -3875,7 +3874,7 @@ mod tests {
     fn test_tsx_zero_flag() {
         let mut cpu = Cpu::new();
         let program = vec![TSX, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.sp = 0x00;
         cpu.run();
@@ -3888,7 +3887,7 @@ mod tests {
     fn test_pha() {
         let mut cpu = Cpu::new();
         let program = vec![PHA, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.a = 0x42;
         cpu.sp = 0xFD;
@@ -3901,7 +3900,7 @@ mod tests {
     fn test_pla() {
         let mut cpu = Cpu::new();
         let program = vec![PLA, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.sp = 0xFC;
         cpu.memory.write(0x01FD, 0x42);
@@ -3916,7 +3915,7 @@ mod tests {
     fn test_pla_zero_flag() {
         let mut cpu = Cpu::new();
         let program = vec![PLA, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.sp = 0xFC;
         cpu.memory.write(0x01FD, 0x00);
@@ -3929,7 +3928,7 @@ mod tests {
     fn test_pla_negative_flag() {
         let mut cpu = Cpu::new();
         let program = vec![PLA, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.sp = 0xFC;
         cpu.memory.write(0x01FD, 0x80);
@@ -3942,7 +3941,7 @@ mod tests {
     fn test_php() {
         let mut cpu = Cpu::new();
         let program = vec![PHP, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.p = 0xFF;
         cpu.sp = 0xFD;
@@ -3955,7 +3954,7 @@ mod tests {
     fn test_plp() {
         let mut cpu = Cpu::new();
         let program = vec![PLP, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.sp = 0xFC;
         cpu.memory.write(0x01FD, 0xC3);
@@ -3968,7 +3967,7 @@ mod tests {
     fn test_stx_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![STX_ZP, 0x10, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x42;
         cpu.run();
@@ -3979,7 +3978,7 @@ mod tests {
     fn test_stx_zero_page_y() {
         let mut cpu = Cpu::new();
         let program = vec![STX_ZPY, 0x10, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x42;
         cpu.y = 0x05;
@@ -3991,7 +3990,7 @@ mod tests {
     fn test_stx_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![STX_ABS, 0x00, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.x = 0x42;
         cpu.run();
@@ -4002,7 +4001,7 @@ mod tests {
     fn test_sty_zero_page() {
         let mut cpu = Cpu::new();
         let program = vec![STY_ZP, 0x10, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x42;
         cpu.run();
@@ -4013,7 +4012,7 @@ mod tests {
     fn test_sty_zero_page_x() {
         let mut cpu = Cpu::new();
         let program = vec![STY_ZPX, 0x10, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x42;
         cpu.x = 0x05;
@@ -4025,7 +4024,7 @@ mod tests {
     fn test_sty_absolute() {
         let mut cpu = Cpu::new();
         let program = vec![STY_ABS, 0x00, 0x20, BRK];
-        cpu.load_program(&program, None);
+        cpu.load_program(&program, 0x8000);
         cpu.reset();
         cpu.y = 0x42;
         cpu.run();
@@ -4061,7 +4060,7 @@ mod tests {
     fn test_load_program_at_custom_address() {
         let mut cpu = Cpu::new();
         let program = vec![LDA_IMM, 0x42, BRK];
-        cpu.load_program(&program, Some(0x0600));
+        cpu.load_program(&program, 0x0600);
         cpu.reset();
         cpu.run();
         assert_eq!(cpu.a, 0x42);

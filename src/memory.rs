@@ -11,14 +11,27 @@ impl Memory {
         }
     }
 
+    /// Map address to physical memory location accounting for mirroring
+    fn map_address(&self, addr: u16) -> usize {
+        match addr {
+            // 2KB internal RAM ($0000-$07FF) mirrored 4 times up to $1FFF
+            0x0000..=0x1FFF => (addr & 0x07FF) as usize,
+            // PPU registers ($2000-$2007) mirrored up to $3FFF
+            0x2000..=0x3FFF => (0x2000 + (addr & 0x0007)) as usize,
+            // Everything else maps directly
+            _ => addr as usize,
+        }
+    }
+
     /// Read a byte from memory
     pub fn read(&self, addr: u16) -> u8 {
-        self.data[addr as usize]
+        self.data[self.map_address(addr)]
     }
 
     /// Write a byte to memory
     pub fn write(&mut self, addr: u16, value: u8) {
-        self.data[addr as usize] = value;
+        let mapped_addr = self.map_address(addr);
+        self.data[mapped_addr] = value;
     }
 
     /// Read a 16-bit word from memory (little-endian)
@@ -79,5 +92,50 @@ mod tests {
         memory.write_u16(0x5000, 0x1234);
         let result = memory.read_u16(0x5000);
         assert_eq!(result, 0x1234);
+    }
+
+    #[test]
+    fn test_ram_mirror_0800() {
+        let mut memory = Memory::new();
+        memory.write(0x0000, 0x42);
+        assert_eq!(memory.read(0x0800), 0x42);
+        assert_eq!(memory.read(0x1000), 0x42);
+        assert_eq!(memory.read(0x1800), 0x42);
+    }
+
+    #[test]
+    fn test_ram_mirror_write_to_mirror() {
+        let mut memory = Memory::new();
+        memory.write(0x0800, 0x55);
+        assert_eq!(memory.read(0x0000), 0x55);
+        assert_eq!(memory.read(0x1000), 0x55);
+        assert_eq!(memory.read(0x1800), 0x55);
+    }
+
+    #[test]
+    fn test_ram_mirror_different_addresses() {
+        let mut memory = Memory::new();
+        memory.write(0x01FF, 0xAA);
+        assert_eq!(memory.read(0x09FF), 0xAA);
+        assert_eq!(memory.read(0x11FF), 0xAA);
+        assert_eq!(memory.read(0x19FF), 0xAA);
+    }
+
+    #[test]
+    fn test_ppu_register_mirror() {
+        let mut memory = Memory::new();
+        memory.write(0x2000, 0x33);
+        assert_eq!(memory.read(0x2008), 0x33);
+        assert_eq!(memory.read(0x2010), 0x33);
+        assert_eq!(memory.read(0x3FF8), 0x33);
+    }
+
+    #[test]
+    fn test_ppu_register_mirror_different_register() {
+        let mut memory = Memory::new();
+        memory.write(0x2007, 0x77);
+        assert_eq!(memory.read(0x200F), 0x77);
+        assert_eq!(memory.read(0x2017), 0x77);
+        assert_eq!(memory.read(0x3FFF), 0x77);
     }
 }

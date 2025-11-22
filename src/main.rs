@@ -158,7 +158,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         0x60, 0xa2, 0x00, 0xea, 0xea, 0xca, 0xd0, 0xfb, 0x60,
     ];
     let mut cpu = cpu::Cpu::new();
-    cpu.load_program(&game_code, Some(0x0600));
+    cpu.load_program(&game_code, 0x0600);
     cpu.reset();
     let event_loop = EventLoop::new();
 
