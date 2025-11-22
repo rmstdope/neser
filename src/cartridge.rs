@@ -1,0 +1,152 @@
+use std::io;
+
+/// Represents an NES cartridge containing PRG ROM and CHR ROM
+pub struct Cartridge {
+    /// Program ROM - contains the game code
+    pub prg_rom: Vec<u8>,
+    /// Character ROM - contains the graphics data
+    pub chr_rom: Vec<u8>,
+}
+
+impl Cartridge {
+    /// Create a new cartridge by parsing iNES v1 file data
+    pub fn new(data: &[u8]) -> io::Result<Self> {
+        // Validate iNES header (first 4 bytes should be "NES\x1A")
+        if data.len() < 16 || &data[0..4] != b"NES\x1A" {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid iNES file format",
+            ));
+        }
+
+        // Parse iNES header
+        let prg_rom_size = data[4] as usize * 16384; // 16 KB units
+        let chr_rom_size = data[5] as usize * 8192; // 8 KB units
+        let flags6 = data[6];
+
+        // Check if trainer is present (bit 2 of flags6)
+        let has_trainer = (flags6 & 0x04) != 0;
+        let trainer_offset = if has_trainer { 512 } else { 0 };
+
+        // Calculate ROM positions
+        let prg_rom_start = 16 + trainer_offset;
+        let prg_rom_end = prg_rom_start + prg_rom_size;
+        let chr_rom_start = prg_rom_end;
+        let chr_rom_end = chr_rom_start + chr_rom_size;
+
+        // Validate buffer size
+        if data.len() < chr_rom_end {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "File too small for specified ROM sizes",
+            ));
+        }
+
+        // Extract PRG ROM and CHR ROM
+        let prg_rom = data[prg_rom_start..prg_rom_end].to_vec();
+        let chr_rom = data[chr_rom_start..chr_rom_end].to_vec();
+
+        Ok(Self { prg_rom, chr_rom })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_rom(
+        prg_rom_banks: u8,
+        chr_rom_banks: u8,
+        flags6: u8,
+        include_trainer: bool,
+    ) -> Vec<u8> {
+        let mut rom = vec![
+            b'N',
+            b'E',
+            b'S',
+            0x1A,          // iNES header
+            prg_rom_banks, // PRG ROM size (16KB units)
+            chr_rom_banks, // CHR ROM size (8KB units)
+            flags6,        // Flags 6
+            0,             // Flags 7
+            0,             // Flags 8 (PRG RAM size)
+            0,             // Flags 9
+            0,             // Flags 10
+            0,
+            0,
+            0,
+            0,
+            0, // Reserved (unused)
+        ];
+
+        // Add trainer if requested
+        if include_trainer {
+            rom.extend(vec![0x00; 512]);
+        }
+
+        // Add PRG ROM data
+        let prg_size = prg_rom_banks as usize * 16384;
+        rom.extend(vec![0xAA; prg_size]);
+
+        // Add CHR ROM data
+        let chr_size = chr_rom_banks as usize * 8192;
+        rom.extend(vec![0xBB; chr_size]);
+
+        rom
+    }
+
+    #[test]
+    fn test_load_simple_rom() {
+        let rom_data = create_test_rom(1, 1, 0, false);
+
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert_eq!(cartridge.prg_rom.len(), 16384);
+        assert_eq!(cartridge.chr_rom.len(), 8192);
+        assert_eq!(cartridge.prg_rom[0], 0xAA);
+        assert_eq!(cartridge.chr_rom[0], 0xBB);
+    }
+
+    #[test]
+    fn test_load_rom_with_trainer() {
+        let rom_data = create_test_rom(1, 1, 0x04, true);
+
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert_eq!(cartridge.prg_rom.len(), 16384);
+        assert_eq!(cartridge.chr_rom.len(), 8192);
+        assert_eq!(cartridge.prg_rom[0], 0xAA);
+        assert_eq!(cartridge.chr_rom[0], 0xBB);
+    }
+
+    #[test]
+    fn test_load_rom_multiple_banks() {
+        let rom_data = create_test_rom(2, 4, 0, false);
+
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert_eq!(cartridge.prg_rom.len(), 32768); // 2 * 16KB
+        assert_eq!(cartridge.chr_rom.len(), 32768); // 4 * 8KB
+    }
+
+    #[test]
+    fn test_invalid_header() {
+        let mut rom_data = vec![b'X', b'Y', b'Z', 0x1A];
+        rom_data.extend(vec![0; 12]); // Rest of header
+
+        let result = Cartridge::new(&rom_data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_file_too_small() {
+        let rom_data = create_test_rom(2, 1, 0, false);
+        let truncated = &rom_data[0..100]; // Truncate to only 100 bytes
+
+        let result = Cartridge::new(truncated);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_empty_data() {
+        let result = Cartridge::new(&[]);
+        assert!(result.is_err());
+    }
+}
