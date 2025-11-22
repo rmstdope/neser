@@ -1,3 +1,5 @@
+use crate::memory::Memory;
+
 /// NES 6502 CPU
 pub struct Cpu {
     /// Accumulator
@@ -21,7 +23,7 @@ pub struct Cpu {
     /// Bit 0: C (Carry)
     pub p: u8,
     /// Memory
-    pub memory: Vec<u8>,
+    pub memory: Memory,
 }
 
 // Status register flags
@@ -197,10 +199,10 @@ impl Cpu {
             a: 0,
             x: 0,
             y: 0,
-            sp: 0xFD,                 // Stack pointer starts at 0xFD
-            pc: 0,                    // Program counter will be loaded from reset vector
-            p: 0x24,                  // Status: IRQ disabled, unused bit set
-            memory: vec![0; 0x10000], // 64KB of memory
+            sp: 0xFD,              // Stack pointer starts at 0xFD
+            pc: 0,                 // Program counter will be loaded from reset vector
+            p: 0x24,               // Status: IRQ disabled, unused bit set
+            memory: Memory::new(), // 64KB of memory
         }
     }
 
@@ -217,7 +219,9 @@ impl Cpu {
     /// Load a program into memory at the specified address and set PC
     pub fn load_program(&mut self, program: &[u8], address: Option<u16>) {
         let addr = address.unwrap_or(0x8000);
-        self.memory[addr as usize..addr as usize + program.len()].copy_from_slice(program);
+        for (i, &byte) in program.iter().enumerate() {
+            self.memory.write(addr + i as u16, byte);
+        }
         self.write_reset_vector(addr);
     }
 
@@ -240,7 +244,7 @@ impl Cpu {
 
     /// Execute a single opcode. Returns false if execution should stop (BRK), true otherwise.
     pub fn run_opcode(&mut self) -> bool {
-        let opcode = self.memory[self.pc as usize];
+        let opcode = self.memory.read(self.pc);
         self.pc += 1;
 
         match opcode {
@@ -250,41 +254,41 @@ impl Cpu {
             }
             ADC_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.adc(value);
             }
             ADC_ZPX => {
                 let base = self.read_byte();
                 let addr = base.wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.adc(value);
             }
             ADC_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.adc(value);
             }
             ADC_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.adc(value);
             }
             ADC_ABSY => {
                 let addr = self.read_word().wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.adc(value);
             }
             ADC_INDX => {
                 let base = self.read_byte();
                 let ptr = base.wrapping_add(self.x);
                 let addr = self.read_word_from_zp(ptr);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.adc(value);
             }
             ADC_INDY => {
                 let ptr = self.read_byte();
                 let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.adc(value);
             }
             AND_IMM => {
@@ -293,41 +297,41 @@ impl Cpu {
             }
             AND_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.and(value);
             }
             AND_ZPX => {
                 let base = self.read_byte();
                 let addr = base.wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.and(value);
             }
             AND_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.and(value);
             }
             AND_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.and(value);
             }
             AND_ABSY => {
                 let addr = self.read_word().wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.and(value);
             }
             AND_INDX => {
                 let base = self.read_byte();
                 let ptr = base.wrapping_add(self.x);
                 let addr = self.read_word_from_zp(ptr);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.and(value);
             }
             AND_INDY => {
                 let ptr = self.read_byte();
                 let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.and(value);
             }
             ASL_A => {
@@ -335,33 +339,37 @@ impl Cpu {
             }
             ASL_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.asl(value);
+                let value = self.memory.read(addr);
+                let result = self.asl(value);
+                self.memory.write(addr, result);
             }
             ASL_ZPX => {
                 let base = self.read_byte();
                 let addr = base.wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.asl(value);
+                let value = self.memory.read(addr);
+                let result = self.asl(value);
+                self.memory.write(addr, result);
             }
             ASL_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.asl(value);
+                let value = self.memory.read(addr);
+                let result = self.asl(value);
+                self.memory.write(addr, result);
             }
             ASL_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.asl(value);
+                let value = self.memory.read(addr);
+                let result = self.asl(value);
+                self.memory.write(addr, result);
             }
             BIT_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.bit(value);
             }
             BIT_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.bit(value);
             }
             BCC => {
@@ -421,41 +429,41 @@ impl Cpu {
             }
             CMP_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cmp(value);
             }
             CMP_ZPX => {
                 let base = self.read_byte();
                 let addr = base.wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cmp(value);
             }
             CMP_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cmp(value);
             }
             CMP_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cmp(value);
             }
             CMP_ABSY => {
                 let addr = self.read_word().wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cmp(value);
             }
             CMP_INDX => {
                 let base = self.read_byte();
                 let ptr = base.wrapping_add(self.x);
                 let addr = self.read_word_from_zp(ptr);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cmp(value);
             }
             CMP_INDY => {
                 let ptr = self.read_byte();
                 let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cmp(value);
             }
             CPX_IMM => {
@@ -464,12 +472,12 @@ impl Cpu {
             }
             CPX_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cpx(value);
             }
             CPX_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cpx(value);
             }
             CPY_IMM => {
@@ -478,29 +486,37 @@ impl Cpu {
             }
             CPY_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cpy(value);
             }
             CPY_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.cpy(value);
             }
             DEC_ZP => {
-                let addr = self.read_byte() as usize;
-                self.memory[addr] = self.dec(self.memory[addr]);
+                let addr = self.read_byte() as u16;
+                let value = self.memory.read(addr as u16);
+                let result = self.dec(value);
+                self.memory.write(addr, result);
             }
             DEC_ZPX => {
-                let addr = self.read_byte().wrapping_add(self.x) as usize;
-                self.memory[addr] = self.dec(self.memory[addr]);
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                let value = self.memory.read(addr as u16);
+                let result = self.dec(value);
+                self.memory.write(addr, result);
             }
             DEC_ABS => {
-                let addr = self.read_word() as usize;
-                self.memory[addr] = self.dec(self.memory[addr]);
+                let addr = self.read_word() as u16;
+                let value = self.memory.read(addr as u16);
+                let result = self.dec(value);
+                self.memory.write(addr, result);
             }
             DEC_ABSX => {
-                let addr = self.read_word().wrapping_add(self.x as u16) as usize;
-                self.memory[addr] = self.dec(self.memory[addr]);
+                let addr = self.read_word().wrapping_add(self.x as u16) as u16;
+                let value = self.memory.read(addr as u16);
+                let result = self.dec(value);
+                self.memory.write(addr, result);
             }
             EOR_IMM => {
                 let value = self.read_byte();
@@ -508,39 +524,39 @@ impl Cpu {
             }
             EOR_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.eor(value);
             }
             EOR_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.eor(value);
             }
             EOR_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.eor(value);
             }
             EOR_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.eor(value);
             }
             EOR_ABSY => {
                 let addr = self.read_word().wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.eor(value);
             }
             EOR_INDX => {
                 let ptr = self.read_byte().wrapping_add(self.x);
                 let addr = self.read_word_from_zp(ptr);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.eor(value);
             }
             EOR_INDY => {
                 let ptr = self.read_byte();
                 let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.eor(value);
             }
             CLC => {
@@ -565,20 +581,28 @@ impl Cpu {
                 self.p |= FLAG_INTERRUPT;
             }
             INC_ZP => {
-                let addr = self.read_byte() as usize;
-                self.memory[addr] = self.inc(self.memory[addr]);
+                let addr = self.read_byte() as u16;
+                let value = self.memory.read(addr as u16);
+                let result = self.inc(value);
+                self.memory.write(addr, result);
             }
             INC_ZPX => {
-                let addr = self.read_byte().wrapping_add(self.x) as usize;
-                self.memory[addr] = self.inc(self.memory[addr]);
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                let value = self.memory.read(addr as u16);
+                let result = self.inc(value);
+                self.memory.write(addr, result);
             }
             INC_ABS => {
-                let addr = self.read_word() as usize;
-                self.memory[addr] = self.inc(self.memory[addr]);
+                let addr = self.read_word() as u16;
+                let value = self.memory.read(addr as u16);
+                let result = self.inc(value);
+                self.memory.write(addr, result);
             }
             INC_ABSX => {
-                let addr = self.read_word().wrapping_add(self.x as u16) as usize;
-                self.memory[addr] = self.inc(self.memory[addr]);
+                let addr = self.read_word().wrapping_add(self.x as u16) as u16;
+                let value = self.memory.read(addr as u16);
+                let result = self.inc(value);
+                self.memory.write(addr, result);
             }
             JMP_ABS => {
                 let addr = self.read_word();
@@ -601,39 +625,39 @@ impl Cpu {
             }
             LDA_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.lda(value);
             }
             LDA_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.lda(value);
             }
             LDA_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.lda(value);
             }
             LDA_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.lda(value);
             }
             LDA_ABSY => {
                 let addr = self.read_word().wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.lda(value);
             }
             LDA_INDX => {
                 let ptr = self.read_byte().wrapping_add(self.x);
                 let addr = self.read_word_from_zp(ptr);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.lda(value);
             }
             LDA_INDY => {
                 let ptr = self.read_byte();
                 let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.lda(value);
             }
             LDX_IMM => {
@@ -642,22 +666,22 @@ impl Cpu {
             }
             LDX_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ldx(value);
             }
             LDX_ZPY => {
                 let addr = self.read_byte().wrapping_add(self.y) as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ldx(value);
             }
             LDX_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ldx(value);
             }
             LDX_ABSY => {
                 let addr = self.read_word().wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ldx(value);
             }
             LDY_IMM => {
@@ -666,22 +690,22 @@ impl Cpu {
             }
             LDY_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ldy(value);
             }
             LDY_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ldy(value);
             }
             LDY_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ldy(value);
             }
             LDY_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ldy(value);
             }
             LSR_ACC => {
@@ -689,23 +713,27 @@ impl Cpu {
             }
             LSR_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.lsr(value);
+                let value = self.memory.read(addr);
+                let result = self.lsr(value);
+                self.memory.write(addr, result);
             }
             LSR_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.lsr(value);
+                let value = self.memory.read(addr);
+                let result = self.lsr(value);
+                self.memory.write(addr, result);
             }
             LSR_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.lsr(value);
+                let value = self.memory.read(addr);
+                let result = self.lsr(value);
+                self.memory.write(addr, result);
             }
             LSR_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.lsr(value);
+                let value = self.memory.read(addr);
+                let result = self.lsr(value);
+                self.memory.write(addr, result);
             }
             NOP => {
                 // No operation - do nothing
@@ -716,39 +744,39 @@ impl Cpu {
             }
             ORA_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ora(value);
             }
             ORA_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ora(value);
             }
             ORA_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ora(value);
             }
             ORA_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ora(value);
             }
             ORA_ABSY => {
                 let addr = self.read_word().wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ora(value);
             }
             ORA_INDX => {
                 let ptr = self.read_byte().wrapping_add(self.x);
                 let addr = self.read_word_from_zp(ptr);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ora(value);
             }
             ORA_INDY => {
                 let ptr = self.read_byte();
                 let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.ora(value);
             }
             DEX => {
@@ -780,46 +808,54 @@ impl Cpu {
             }
             ROL_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.rol(value);
+                let value = self.memory.read(addr);
+                let result = self.rol(value);
+                self.memory.write(addr, result);
             }
             ROL_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.rol(value);
+                let value = self.memory.read(addr);
+                let result = self.rol(value);
+                self.memory.write(addr, result);
             }
             ROL_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.rol(value);
+                let value = self.memory.read(addr);
+                let result = self.rol(value);
+                self.memory.write(addr, result);
             }
             ROL_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.rol(value);
+                let value = self.memory.read(addr);
+                let result = self.rol(value);
+                self.memory.write(addr, result);
             }
             ROR_ACC => {
                 self.a = self.ror(self.a);
             }
             ROR_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.ror(value);
+                let value = self.memory.read(addr);
+                let result = self.ror(value);
+                self.memory.write(addr, result);
             }
             ROR_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.ror(value);
+                let value = self.memory.read(addr);
+                let result = self.ror(value);
+                self.memory.write(addr, result);
             }
             ROR_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.ror(value);
+                let value = self.memory.read(addr);
+                let result = self.ror(value);
+                self.memory.write(addr, result);
             }
             ROR_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
-                self.memory[addr as usize] = self.ror(value);
+                let value = self.memory.read(addr);
+                let result = self.ror(value);
+                self.memory.write(addr, result);
             }
             RTI => {
                 self.p = self.pop_byte();
@@ -835,70 +871,70 @@ impl Cpu {
             }
             SBC_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.sbc(value);
             }
             SBC_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.sbc(value);
             }
             SBC_ABS => {
                 let addr = self.read_word();
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.sbc(value);
             }
             SBC_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.sbc(value);
             }
             SBC_ABSY => {
                 let addr = self.read_word().wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.sbc(value);
             }
             SBC_INDX => {
                 let ptr = self.read_byte().wrapping_add(self.x);
                 let addr = self.read_word_from_zp(ptr);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.sbc(value);
             }
             SBC_INDY => {
                 let ptr = self.read_byte();
                 let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                let value = self.memory[addr as usize];
+                let value = self.memory.read(addr);
                 self.sbc(value);
             }
             STA_ZP => {
                 let addr = self.read_byte() as u16;
-                self.memory[addr as usize] = self.a;
+                self.memory.write(addr, self.a);
             }
             STA_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                self.memory[addr as usize] = self.a;
+                self.memory.write(addr, self.a);
             }
             STA_ABS => {
                 let addr = self.read_word();
-                self.memory[addr as usize] = self.a;
+                self.memory.write(addr, self.a);
             }
             STA_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
-                self.memory[addr as usize] = self.a;
+                self.memory.write(addr, self.a);
             }
             STA_ABSY => {
                 let addr = self.read_word().wrapping_add(self.y as u16);
-                self.memory[addr as usize] = self.a;
+                self.memory.write(addr, self.a);
             }
             STA_INDX => {
                 let ptr = self.read_byte().wrapping_add(self.x);
                 let addr = self.read_word_from_zp(ptr);
-                self.memory[addr as usize] = self.a;
+                self.memory.write(addr, self.a);
             }
             STA_INDY => {
                 let ptr = self.read_byte();
                 let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
-                self.memory[addr as usize] = self.a;
+                self.memory.write(addr, self.a);
             }
             TXS => {
                 self.sp = self.x;
@@ -922,27 +958,27 @@ impl Cpu {
             }
             STX_ZP => {
                 let addr = self.read_byte() as u16;
-                self.memory[addr as usize] = self.x;
+                self.memory.write(addr, self.x);
             }
             STX_ZPY => {
                 let addr = self.read_byte().wrapping_add(self.y) as u16;
-                self.memory[addr as usize] = self.x;
+                self.memory.write(addr, self.x);
             }
             STX_ABS => {
                 let addr = self.read_word();
-                self.memory[addr as usize] = self.x;
+                self.memory.write(addr, self.x);
             }
             STY_ZP => {
                 let addr = self.read_byte() as u16;
-                self.memory[addr as usize] = self.y;
+                self.memory.write(addr, self.y);
             }
             STY_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                self.memory[addr as usize] = self.y;
+                self.memory.write(addr, self.y);
             }
             STY_ABS => {
                 let addr = self.read_word();
-                self.memory[addr as usize] = self.y;
+                self.memory.write(addr, self.y);
             }
             _ => todo!(),
         }
@@ -951,7 +987,7 @@ impl Cpu {
 
     /// Read a byte from memory at PC and increment PC
     fn read_byte(&mut self) -> u8 {
-        let value = self.memory[self.pc as usize];
+        let value = self.memory.read(self.pc);
         self.pc += 1;
         value
     }
@@ -965,8 +1001,8 @@ impl Cpu {
 
     /// Write a 16-bit word to memory at the specified address (little-endian)
     fn write_u16_to_addr(&mut self, addr: u16, value: u16) {
-        self.memory[addr as usize] = (value & 0x00FF) as u8;
-        self.memory[addr as usize + 1] = (value >> 8) as u8;
+        self.memory.write(addr, (value & 0x00FF) as u8);
+        self.memory.write(addr + 1, (value >> 8) as u8);
     }
 
     /// Write a 16-bit address to the reset vector at 0xFFFC-0xFFFD
@@ -976,8 +1012,8 @@ impl Cpu {
 
     /// Read a 16-bit word from memory at the specified address (little-endian)
     fn read_u16_from_addr(&self, addr: u16) -> u16 {
-        let lo = self.memory[addr as usize] as u16;
-        let hi = self.memory[addr as usize + 1] as u16;
+        let lo = self.memory.read(addr) as u16;
+        let hi = self.memory.read(addr + 1) as u16;
         (hi << 8) | lo
     }
 
@@ -988,8 +1024,8 @@ impl Cpu {
 
     /// Read a 16-bit word from zero page (wraps at page boundary)
     fn read_word_from_zp(&self, addr: u8) -> u16 {
-        let lo = self.memory[addr as usize] as u16;
-        let hi = self.memory[addr.wrapping_add(1) as usize] as u16;
+        let lo = self.memory.read(addr as u16) as u16;
+        let hi = self.memory.read(addr.wrapping_add(1) as u16) as u16;
         (hi << 8) | lo
     }
 
@@ -997,21 +1033,21 @@ impl Cpu {
     /// If the address is at a page boundary (e.g., 0x10FF), the high byte
     /// is read from the start of the same page (0x1000) instead of the next page (0x1100)
     fn read_word_indirect(&self, addr: u16) -> u16 {
-        let lo = self.memory[addr as usize] as u16;
+        let lo = self.memory.read(addr) as u16;
         let hi_addr = if addr & 0xFF == 0xFF {
             // Page boundary bug: wrap within the same page
             addr & 0xFF00
         } else {
             addr + 1
         };
-        let hi = self.memory[hi_addr as usize] as u16;
+        let hi = self.memory.read(hi_addr) as u16;
         (hi << 8) | lo
     }
 
     /// Push a byte onto the stack
     fn push_byte(&mut self, value: u8) {
         let addr = 0x0100 | (self.sp as u16);
-        self.memory[addr as usize] = value;
+        self.memory.write(addr, value);
         self.sp = self.sp.wrapping_sub(1);
     }
 
@@ -1025,7 +1061,7 @@ impl Cpu {
     fn pop_byte(&mut self) -> u8 {
         self.sp = self.sp.wrapping_add(1);
         let addr = 0x0100 | (self.sp as u16);
-        self.memory[addr as usize]
+        self.memory.read(addr)
     }
 
     /// Pull a word from the stack (low byte first)
@@ -1448,7 +1484,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0x10;
-        cpu.memory[0x42] = 0x33;
+        cpu.memory.write(0x42, 0x33);
         cpu.run();
         assert_eq!(cpu.a, 0x43);
     }
@@ -1460,7 +1496,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0x20;
-        cpu.memory[0x1234] = 0x55;
+        cpu.memory.write(0x1234, 0x55);
         cpu.run();
         assert_eq!(cpu.a, 0x75);
     }
@@ -1473,7 +1509,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x10;
         cpu.x = 0x05;
-        cpu.memory[0x1239] = 0x44; // 0x1234 + 0x05
+        cpu.memory.write(0x1239, 0x44); // 0x1234 + 0x05
         cpu.run();
         assert_eq!(cpu.a, 0x54);
     }
@@ -1486,7 +1522,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x15;
         cpu.x = 0x03;
-        cpu.memory[0x45] = 0x22; // 0x42 + 0x03
+        cpu.memory.write(0x45, 0x22); // 0x42 + 0x03
         cpu.run();
         assert_eq!(cpu.a, 0x37);
     }
@@ -1499,7 +1535,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x08;
         cpu.y = 0x10;
-        cpu.memory[0x2010] = 0x17; // 0x2000 + 0x10
+        cpu.memory.write(0x2010, 0x17); // 0x2000 + 0x10
         cpu.run();
         assert_eq!(cpu.a, 0x1F);
     }
@@ -1512,9 +1548,9 @@ mod tests {
         cpu.reset();
         cpu.a = 0x05;
         cpu.x = 0x04;
-        cpu.memory[0x24] = 0x74; // Pointer at 0x20 + 0x04: low byte
-        cpu.memory[0x25] = 0x20; // Pointer at 0x20 + 0x04: high byte
-        cpu.memory[0x2074] = 0x33; // Value at address 0x2074
+        cpu.memory.write(0x24, 0x74); // Pointer at 0x20 + 0x04: low byte
+        cpu.memory.write(0x25, 0x20); // Pointer at 0x20 + 0x04: high byte
+        cpu.memory.write(0x2074, 0x33); // Value at address 0x2074
         cpu.run();
         assert_eq!(cpu.a, 0x38);
     }
@@ -1527,9 +1563,9 @@ mod tests {
         cpu.reset();
         cpu.a = 0x0A;
         cpu.y = 0x10;
-        cpu.memory[0x86] = 0x28; // Pointer at 0x86: low byte
-        cpu.memory[0x87] = 0x40; // Pointer at 0x86: high byte
-        cpu.memory[0x4038] = 0x06; // Value at 0x4028 + 0x10
+        cpu.memory.write(0x86, 0x28); // Pointer at 0x86: low byte
+        cpu.memory.write(0x87, 0x40); // Pointer at 0x86: high byte
+        cpu.memory.write(0x4038, 0x06); // Value at 0x4028 + 0x10
         cpu.run();
         assert_eq!(cpu.a, 0x10);
     }
@@ -1581,7 +1617,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0b1100_1100;
-        cpu.memory[0x42] = 0b1010_1010;
+        cpu.memory.write(0x42, 0b1010_1010);
         cpu.run();
         assert_eq!(cpu.a, 0b1000_1000);
     }
@@ -1594,7 +1630,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1111_0000;
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0b0011_1111; // 0x42 + 0x05
+        cpu.memory.write(0x47, 0b0011_1111); // 0x42 + 0x05
         cpu.run();
         assert_eq!(cpu.a, 0b0011_0000);
     }
@@ -1606,7 +1642,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0b1010_1010;
-        cpu.memory[0x1234] = 0b1100_1100;
+        cpu.memory.write(0x1234, 0b1100_1100);
         cpu.run();
         assert_eq!(cpu.a, 0b1000_1000);
     }
@@ -1619,7 +1655,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1111_1111;
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0b0101_0101; // 0x1234 + 0x10
+        cpu.memory.write(0x1244, 0b0101_0101); // 0x1234 + 0x10
         cpu.run();
         assert_eq!(cpu.a, 0b0101_0101);
     }
@@ -1632,7 +1668,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1100_0011;
         cpu.y = 0x20;
-        cpu.memory[0x2020] = 0b0011_1100; // 0x2000 + 0x20
+        cpu.memory.write(0x2020, 0b0011_1100); // 0x2000 + 0x20
         cpu.run();
         assert_eq!(cpu.a, 0b0000_0000);
     }
@@ -1645,9 +1681,9 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1111_0000;
         cpu.x = 0x04;
-        cpu.memory[0x24] = 0x74; // Pointer at 0x20 + 0x04: low byte
-        cpu.memory[0x25] = 0x20; // Pointer at 0x20 + 0x04: high byte
-        cpu.memory[0x2074] = 0b0000_1111; // Value at address 0x2074
+        cpu.memory.write(0x24, 0x74); // Pointer at 0x20 + 0x04: low byte
+        cpu.memory.write(0x25, 0x20); // Pointer at 0x20 + 0x04: high byte
+        cpu.memory.write(0x2074, 0b0000_1111); // Value at address 0x2074
         cpu.run();
         assert_eq!(cpu.a, 0b0000_0000);
     }
@@ -1660,9 +1696,9 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1010_1010;
         cpu.y = 0x10;
-        cpu.memory[0x86] = 0x28; // Pointer at 0x86: low byte
-        cpu.memory[0x87] = 0x40; // Pointer at 0x86: high byte
-        cpu.memory[0x4038] = 0b1111_0000; // Value at 0x4028 + 0x10
+        cpu.memory.write(0x86, 0x28); // Pointer at 0x86: low byte
+        cpu.memory.write(0x87, 0x40); // Pointer at 0x86: high byte
+        cpu.memory.write(0x4038, 0b1111_0000); // Value at 0x4028 + 0x10
         cpu.run();
         assert_eq!(cpu.a, 0b1010_0000);
     }
@@ -1715,9 +1751,9 @@ mod tests {
         let program = vec![ASL_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0b0011_0011;
+        cpu.memory.write(0x42, 0b0011_0011);
         cpu.run();
-        assert_eq!(cpu.memory[0x42], 0b0110_0110);
+        assert_eq!(cpu.memory.read(0x42), 0b0110_0110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -1728,9 +1764,9 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0b1010_0101; // 0x42 + 0x05
+        cpu.memory.write(0x47, 0b1010_0101); // 0x42 + 0x05
         cpu.run();
-        assert_eq!(cpu.memory[0x47], 0b0100_1010);
+        assert_eq!(cpu.memory.read(0x47), 0b0100_1010);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -1740,9 +1776,9 @@ mod tests {
         let program = vec![ASL_ABS, 0x34, 0x12, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x1234] = 0b0100_0001;
+        cpu.memory.write(0x1234, 0b0100_0001);
         cpu.run();
-        assert_eq!(cpu.memory[0x1234], 0b1000_0010);
+        assert_eq!(cpu.memory.read(0x1234), 0b1000_0010);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 
@@ -1753,9 +1789,9 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0b0000_0001; // 0x1234 + 0x10
+        cpu.memory.write(0x1244, 0b0000_0001); // 0x1234 + 0x10
         cpu.run();
-        assert_eq!(cpu.memory[0x1244], 0b0000_0010);
+        assert_eq!(cpu.memory.read(0x1244), 0b0000_0010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
     }
@@ -1767,7 +1803,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0b1111_0000;
-        cpu.memory[0x42] = 0b1100_0011;
+        cpu.memory.write(0x42, 0b1100_0011);
         cpu.run();
         // A & memory = 0b1111_0000 & 0b1100_0011 = 0b1100_0000 (not zero)
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -1784,7 +1820,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0b0000_1111;
-        cpu.memory[0x42] = 0b1111_0000;
+        cpu.memory.write(0x42, 0b1111_0000);
         cpu.run();
         // A & memory = 0b0000_1111 & 0b1111_0000 = 0b0000_0000 (zero)
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -1801,7 +1837,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0b1111_1111;
-        cpu.memory[0x42] = 0b0011_1111;
+        cpu.memory.write(0x42, 0b0011_1111);
         cpu.run();
         // A & memory = 0b1111_1111 & 0b0011_1111 = 0b0011_1111 (not zero)
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -1818,7 +1854,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0b1010_1010;
-        cpu.memory[0x1234] = 0b0101_1010;
+        cpu.memory.write(0x1234, 0b0101_1010);
         cpu.run();
         // A & memory = 0b1010_1010 & 0b0101_1010 = 0b0000_1010 (not zero)
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -1860,7 +1896,7 @@ mod tests {
         cpu.reset();
         cpu.p &= !FLAG_CARRY; // Ensure carry is clear
         // Put BRK at 0x8000, then BCC at 0x8003 that branches back to BRK
-        cpu.memory[0x8000] = BRK;
+        cpu.memory.write(0x8000, BRK);
         cpu.run();
         // PC should be at 0x8001 (BRK at 0x8000 + 1)
         assert_eq!(cpu.pc, 0x8001);
@@ -2066,7 +2102,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0x80;
-        cpu.memory[0x42] = 0x80;
+        cpu.memory.write(0x42, 0x80);
         cpu.run();
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
@@ -2080,7 +2116,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x10;
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0x05; // 0x42 + 0x05
+        cpu.memory.write(0x47, 0x05); // 0x42 + 0x05
         cpu.run();
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // 0x10 >= 0x05
     }
@@ -2092,7 +2128,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0x20;
-        cpu.memory[0x1234] = 0x30;
+        cpu.memory.write(0x1234, 0x30);
         cpu.run();
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x20 < 0x30
     }
@@ -2105,7 +2141,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0xFF;
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0xFF;
+        cpu.memory.write(0x1244, 0xFF);
         cpu.run();
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -2118,7 +2154,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x55;
         cpu.y = 0x20;
-        cpu.memory[0x2020] = 0x44;
+        cpu.memory.write(0x2020, 0x44);
         cpu.run();
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // 0x55 >= 0x44
     }
@@ -2131,9 +2167,9 @@ mod tests {
         cpu.reset();
         cpu.a = 0x33;
         cpu.x = 0x04;
-        cpu.memory[0x24] = 0x74;
-        cpu.memory[0x25] = 0x20;
-        cpu.memory[0x2074] = 0x33;
+        cpu.memory.write(0x24, 0x74);
+        cpu.memory.write(0x25, 0x20);
+        cpu.memory.write(0x2074, 0x33);
         cpu.run();
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -2146,9 +2182,9 @@ mod tests {
         cpu.reset();
         cpu.a = 0x77;
         cpu.y = 0x10;
-        cpu.memory[0x86] = 0x28;
-        cpu.memory[0x87] = 0x40;
-        cpu.memory[0x4038] = 0x88;
+        cpu.memory.write(0x86, 0x28);
+        cpu.memory.write(0x87, 0x40);
+        cpu.memory.write(0x4038, 0x88);
         cpu.run();
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x77 < 0x88
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -2200,7 +2236,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x80;
-        cpu.memory[0x42] = 0x80;
+        cpu.memory.write(0x42, 0x80);
         cpu.run();
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
@@ -2213,7 +2249,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x20;
-        cpu.memory[0x1234] = 0x30;
+        cpu.memory.write(0x1234, 0x30);
         cpu.run();
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x20 < 0x30
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -2265,7 +2301,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.y = 0x80;
-        cpu.memory[0x42] = 0x80;
+        cpu.memory.write(0x42, 0x80);
         cpu.run();
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
@@ -2278,7 +2314,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.y = 0x20;
-        cpu.memory[0x1234] = 0x30;
+        cpu.memory.write(0x1234, 0x30);
         cpu.run();
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x20 < 0x30
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -2290,9 +2326,9 @@ mod tests {
         let program = vec![DEC_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0x50;
+        cpu.memory.write(0x42, 0x50);
         cpu.run();
-        assert_eq!(cpu.memory[0x42], 0x4F);
+        assert_eq!(cpu.memory.read(0x42), 0x4F);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -2303,9 +2339,9 @@ mod tests {
         let program = vec![DEC_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0x01;
+        cpu.memory.write(0x42, 0x01);
         cpu.run();
-        assert_eq!(cpu.memory[0x42], 0x00);
+        assert_eq!(cpu.memory.read(0x42), 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -2316,9 +2352,9 @@ mod tests {
         let program = vec![DEC_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0x00;
+        cpu.memory.write(0x42, 0x00);
         cpu.run();
-        assert_eq!(cpu.memory[0x42], 0xFF);
+        assert_eq!(cpu.memory.read(0x42), 0xFF);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2330,9 +2366,9 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0x80;
+        cpu.memory.write(0x47, 0x80);
         cpu.run();
-        assert_eq!(cpu.memory[0x47], 0x7F);
+        assert_eq!(cpu.memory.read(0x47), 0x7F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -2342,9 +2378,9 @@ mod tests {
         let program = vec![DEC_ABS, 0x34, 0x12, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x1234] = 0x30;
+        cpu.memory.write(0x1234, 0x30);
         cpu.run();
-        assert_eq!(cpu.memory[0x1234], 0x2F);
+        assert_eq!(cpu.memory.read(0x1234), 0x2F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -2355,9 +2391,9 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0x90;
+        cpu.memory.write(0x1244, 0x90);
         cpu.run();
-        assert_eq!(cpu.memory[0x1244], 0x8F);
+        assert_eq!(cpu.memory.read(0x1244), 0x8F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 
@@ -2405,7 +2441,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0xFF;
-        cpu.memory[0x42] = 0x0F;
+        cpu.memory.write(0x42, 0x0F);
         cpu.run();
         assert_eq!(cpu.a, 0xF0);
     }
@@ -2418,7 +2454,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0xFF;
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0x55;
+        cpu.memory.write(0x47, 0x55);
         cpu.run();
         assert_eq!(cpu.a, 0xAA);
     }
@@ -2430,7 +2466,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0x12;
-        cpu.memory[0x1234] = 0x34;
+        cpu.memory.write(0x1234, 0x34);
         cpu.run();
         assert_eq!(cpu.a, 0x26);
     }
@@ -2443,7 +2479,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0xAA;
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0x55;
+        cpu.memory.write(0x1244, 0x55);
         cpu.run();
         assert_eq!(cpu.a, 0xFF);
     }
@@ -2456,7 +2492,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0xF0;
         cpu.y = 0x20;
-        cpu.memory[0x1254] = 0x0F;
+        cpu.memory.write(0x1254, 0x0F);
         cpu.run();
         assert_eq!(cpu.a, 0xFF);
     }
@@ -2469,9 +2505,9 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1100_0011;
         cpu.x = 0x04;
-        cpu.memory[0x24] = 0x74;
-        cpu.memory[0x25] = 0x20;
-        cpu.memory[0x2074] = 0b0011_1100;
+        cpu.memory.write(0x24, 0x74);
+        cpu.memory.write(0x25, 0x20);
+        cpu.memory.write(0x2074, 0b0011_1100);
         cpu.run();
         assert_eq!(cpu.a, 0b1111_1111);
     }
@@ -2484,9 +2520,9 @@ mod tests {
         cpu.reset();
         cpu.a = 0b1010_0101;
         cpu.y = 0x10;
-        cpu.memory[0x86] = 0x28;
-        cpu.memory[0x87] = 0x40;
-        cpu.memory[0x4038] = 0b0101_1010;
+        cpu.memory.write(0x86, 0x28);
+        cpu.memory.write(0x87, 0x40);
+        cpu.memory.write(0x4038, 0b0101_1010);
         cpu.run();
         assert_eq!(cpu.a, 0xFF);
     }
@@ -2574,9 +2610,9 @@ mod tests {
         let program = vec![INC_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0x50;
+        cpu.memory.write(0x42, 0x50);
         cpu.run();
-        assert_eq!(cpu.memory[0x42], 0x51);
+        assert_eq!(cpu.memory.read(0x42), 0x51);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -2587,9 +2623,9 @@ mod tests {
         let program = vec![INC_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0xFF;
+        cpu.memory.write(0x42, 0xFF);
         cpu.run();
-        assert_eq!(cpu.memory[0x42], 0x00);
+        assert_eq!(cpu.memory.read(0x42), 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -2600,9 +2636,9 @@ mod tests {
         let program = vec![INC_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0x7F;
+        cpu.memory.write(0x42, 0x7F);
         cpu.run();
-        assert_eq!(cpu.memory[0x42], 0x80);
+        assert_eq!(cpu.memory.read(0x42), 0x80);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -2614,9 +2650,9 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0x20;
+        cpu.memory.write(0x47, 0x20);
         cpu.run();
-        assert_eq!(cpu.memory[0x47], 0x21);
+        assert_eq!(cpu.memory.read(0x47), 0x21);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -2626,9 +2662,9 @@ mod tests {
         let program = vec![INC_ABS, 0x34, 0x12, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x1234] = 0x30;
+        cpu.memory.write(0x1234, 0x30);
         cpu.run();
-        assert_eq!(cpu.memory[0x1234], 0x31);
+        assert_eq!(cpu.memory.read(0x1234), 0x31);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -2639,9 +2675,9 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0x8F;
+        cpu.memory.write(0x1244, 0x8F);
         cpu.run();
-        assert_eq!(cpu.memory[0x1244], 0x90);
+        assert_eq!(cpu.memory.read(0x1244), 0x90);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 
@@ -2650,10 +2686,10 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.load_program(&vec![], None);
         cpu.reset();
-        cpu.memory[0x8000] = JMP_ABS;
-        cpu.memory[0x8001] = 0x34;
-        cpu.memory[0x8002] = 0x12;
-        cpu.memory[0x1234] = BRK;
+        cpu.memory.write(0x8000, JMP_ABS);
+        cpu.memory.write(0x8001, 0x34);
+        cpu.memory.write(0x8002, 0x12);
+        cpu.memory.write(0x1234, BRK);
         cpu.pc = 0x8000;
         cpu.run();
         assert_eq!(cpu.pc, 0x1235); // PC after BRK at 0x1234
@@ -2664,12 +2700,12 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.load_program(&vec![], None);
         cpu.reset();
-        cpu.memory[0x8000] = JMP_IND;
-        cpu.memory[0x8001] = 0x20;
-        cpu.memory[0x8002] = 0x40;
-        cpu.memory[0x4020] = 0x56;
-        cpu.memory[0x4021] = 0x78;
-        cpu.memory[0x7856] = BRK;
+        cpu.memory.write(0x8000, JMP_IND);
+        cpu.memory.write(0x8001, 0x20);
+        cpu.memory.write(0x8002, 0x40);
+        cpu.memory.write(0x4020, 0x56);
+        cpu.memory.write(0x4021, 0x78);
+        cpu.memory.write(0x7856, BRK);
         cpu.pc = 0x8000;
         cpu.run();
         assert_eq!(cpu.pc, 0x7857); // PC after BRK at 0x7856
@@ -2683,12 +2719,12 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.load_program(&vec![], None);
         cpu.reset();
-        cpu.memory[0x8000] = JMP_IND;
-        cpu.memory[0x8001] = 0xFF;
-        cpu.memory[0x8002] = 0x10;
-        cpu.memory[0x10FF] = 0x34;
-        cpu.memory[0x1000] = 0x12; // Wraps to start of page, not 0x1100
-        cpu.memory[0x1234] = BRK;
+        cpu.memory.write(0x8000, JMP_IND);
+        cpu.memory.write(0x8001, 0xFF);
+        cpu.memory.write(0x8002, 0x10);
+        cpu.memory.write(0x10FF, 0x34);
+        cpu.memory.write(0x1000, 0x12); // Wraps to start of page, not 0x1100
+        cpu.memory.write(0x1234, BRK);
         cpu.pc = 0x8000;
         cpu.run();
         assert_eq!(cpu.pc, 0x1235); // Should jump to 0x1234 (low=0x34, high=0x12)
@@ -2699,18 +2735,18 @@ mod tests {
         let mut cpu = Cpu::new();
         cpu.load_program(&vec![], None);
         cpu.reset();
-        cpu.memory[0x8000] = JSR;
-        cpu.memory[0x8001] = 0x34;
-        cpu.memory[0x8002] = 0x12;
-        cpu.memory[0x1234] = BRK;
+        cpu.memory.write(0x8000, JSR);
+        cpu.memory.write(0x8001, 0x34);
+        cpu.memory.write(0x8002, 0x12);
+        cpu.memory.write(0x1234, BRK);
         cpu.pc = 0x8000;
         cpu.sp = 0xFF;
         cpu.run();
         assert_eq!(cpu.pc, 0x1235); // PC after BRK at 0x1234
         assert_eq!(cpu.sp, 0xFD); // SP decremented by 2 (pushed 2 bytes)
         // Return address should be 0x8002 (address of last byte of JSR instruction)
-        assert_eq!(cpu.memory[0x01FF], 0x80); // High byte of return address
-        assert_eq!(cpu.memory[0x01FE], 0x02); // Low byte of return address
+        assert_eq!(cpu.memory.read(0x01FF), 0x80); // High byte of return address
+        assert_eq!(cpu.memory.read(0x01FE), 0x02); // Low byte of return address
     }
 
     #[test]
@@ -2753,7 +2789,7 @@ mod tests {
         let program = vec![LDA_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0x55;
+        cpu.memory.write(0x42, 0x55);
         cpu.run();
         assert_eq!(cpu.a, 0x55);
     }
@@ -2765,7 +2801,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0xAA;
+        cpu.memory.write(0x47, 0xAA);
         cpu.run();
         assert_eq!(cpu.a, 0xAA);
     }
@@ -2776,7 +2812,7 @@ mod tests {
         let program = vec![LDA_ABS, 0x34, 0x12, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x1234] = 0x77;
+        cpu.memory.write(0x1234, 0x77);
         cpu.run();
         assert_eq!(cpu.a, 0x77);
     }
@@ -2788,7 +2824,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0x88;
+        cpu.memory.write(0x1244, 0x88);
         cpu.run();
         assert_eq!(cpu.a, 0x88);
     }
@@ -2800,7 +2836,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.y = 0x20;
-        cpu.memory[0x1254] = 0x99;
+        cpu.memory.write(0x1254, 0x99);
         cpu.run();
         assert_eq!(cpu.a, 0x99);
     }
@@ -2812,9 +2848,9 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x04;
-        cpu.memory[0x24] = 0x74;
-        cpu.memory[0x25] = 0x20;
-        cpu.memory[0x2074] = 0xCC;
+        cpu.memory.write(0x24, 0x74);
+        cpu.memory.write(0x25, 0x20);
+        cpu.memory.write(0x2074, 0xCC);
         cpu.run();
         assert_eq!(cpu.a, 0xCC);
     }
@@ -2826,9 +2862,9 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.y = 0x10;
-        cpu.memory[0x86] = 0x28;
-        cpu.memory[0x87] = 0x40;
-        cpu.memory[0x4038] = 0xDD;
+        cpu.memory.write(0x86, 0x28);
+        cpu.memory.write(0x87, 0x40);
+        cpu.memory.write(0x4038, 0xDD);
         cpu.run();
         assert_eq!(cpu.a, 0xDD);
     }
@@ -2873,7 +2909,7 @@ mod tests {
         let program = vec![LDX_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0x55;
+        cpu.memory.write(0x42, 0x55);
         cpu.run();
         assert_eq!(cpu.x, 0x55);
     }
@@ -2885,7 +2921,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.y = 0x05;
-        cpu.memory[0x47] = 0xAA;
+        cpu.memory.write(0x47, 0xAA);
         cpu.run();
         assert_eq!(cpu.x, 0xAA);
     }
@@ -2896,7 +2932,7 @@ mod tests {
         let program = vec![LDX_ABS, 0x34, 0x12, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x1234] = 0x77;
+        cpu.memory.write(0x1234, 0x77);
         cpu.run();
         assert_eq!(cpu.x, 0x77);
     }
@@ -2908,7 +2944,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.y = 0x20;
-        cpu.memory[0x1254] = 0x99;
+        cpu.memory.write(0x1254, 0x99);
         cpu.run();
         assert_eq!(cpu.x, 0x99);
     }
@@ -2953,7 +2989,7 @@ mod tests {
         let program = vec![LDY_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0x55;
+        cpu.memory.write(0x42, 0x55);
         cpu.run();
         assert_eq!(cpu.y, 0x55);
     }
@@ -2965,7 +3001,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0xAA;
+        cpu.memory.write(0x47, 0xAA);
         cpu.run();
         assert_eq!(cpu.y, 0xAA);
     }
@@ -2976,7 +3012,7 @@ mod tests {
         let program = vec![LDY_ABS, 0x34, 0x12, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x1234] = 0x77;
+        cpu.memory.write(0x1234, 0x77);
         cpu.run();
         assert_eq!(cpu.y, 0x77);
     }
@@ -2988,7 +3024,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0x88;
+        cpu.memory.write(0x1244, 0x88);
         cpu.run();
         assert_eq!(cpu.y, 0x88);
     }
@@ -3026,9 +3062,9 @@ mod tests {
         let program = vec![LSR_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0b11001100;
+        cpu.memory.write(0x42, 0b11001100);
         cpu.run();
-        assert_eq!(cpu.memory[0x42], 0b01100110);
+        assert_eq!(cpu.memory.read(0x42), 0b01100110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -3039,9 +3075,9 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0b10101011;
+        cpu.memory.write(0x47, 0b10101011);
         cpu.run();
-        assert_eq!(cpu.memory[0x47], 0b01010101);
+        assert_eq!(cpu.memory.read(0x47), 0b01010101);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -3051,9 +3087,9 @@ mod tests {
         let program = vec![LSR_ABS, 0x34, 0x12, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x1234] = 0b01010100;
+        cpu.memory.write(0x1234, 0b01010100);
         cpu.run();
-        assert_eq!(cpu.memory[0x1234], 0b00101010);
+        assert_eq!(cpu.memory.read(0x1234), 0b00101010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -3064,9 +3100,9 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0b00000011;
+        cpu.memory.write(0x1244, 0b00000011);
         cpu.run();
-        assert_eq!(cpu.memory[0x1244], 0b00000001);
+        assert_eq!(cpu.memory.read(0x1244), 0b00000001);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -3120,7 +3156,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0b11110000;
-        cpu.memory[0x42] = 0b00001111;
+        cpu.memory.write(0x42, 0b00001111);
         cpu.run();
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -3133,7 +3169,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b10000000;
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0b01000000;
+        cpu.memory.write(0x47, 0b01000000);
         cpu.run();
         assert_eq!(cpu.a, 0b11000000);
     }
@@ -3145,7 +3181,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.a = 0b00110011;
-        cpu.memory[0x1234] = 0b11001100;
+        cpu.memory.write(0x1234, 0b11001100);
         cpu.run();
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -3158,7 +3194,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b00001111;
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0b11110000;
+        cpu.memory.write(0x1244, 0b11110000);
         cpu.run();
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -3171,7 +3207,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0b01010101;
         cpu.y = 0x20;
-        cpu.memory[0x1254] = 0b10101010;
+        cpu.memory.write(0x1254, 0b10101010);
         cpu.run();
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -3184,9 +3220,9 @@ mod tests {
         cpu.reset();
         cpu.a = 0b00110011;
         cpu.x = 0x04;
-        cpu.memory[0x86] = 0x34;
-        cpu.memory[0x87] = 0x12;
-        cpu.memory[0x1234] = 0b11001100;
+        cpu.memory.write(0x86, 0x34);
+        cpu.memory.write(0x87, 0x12);
+        cpu.memory.write(0x1234, 0b11001100);
         cpu.run();
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -3199,9 +3235,9 @@ mod tests {
         cpu.reset();
         cpu.a = 0b10101010;
         cpu.y = 0x10;
-        cpu.memory[0x86] = 0x28;
-        cpu.memory[0x87] = 0x40;
-        cpu.memory[0x4038] = 0b01010101;
+        cpu.memory.write(0x86, 0x28);
+        cpu.memory.write(0x87, 0x40);
+        cpu.memory.write(0x4038, 0b01010101);
         cpu.run();
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -3418,10 +3454,10 @@ mod tests {
         let program = vec![ROL_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0b11001100;
+        cpu.memory.write(0x42, 0b11001100);
         cpu.p = 0;
         cpu.run();
-        assert_eq!(cpu.memory[0x42], 0b10011000);
+        assert_eq!(cpu.memory.read(0x42), 0b10011000);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -3432,10 +3468,10 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0b10101011;
+        cpu.memory.write(0x47, 0b10101011);
         cpu.p = FLAG_CARRY;
         cpu.run();
-        assert_eq!(cpu.memory[0x47], 0b01010111);
+        assert_eq!(cpu.memory.read(0x47), 0b01010111);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -3445,10 +3481,10 @@ mod tests {
         let program = vec![ROL_ABS, 0x34, 0x12, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x1234] = 0b01010100;
+        cpu.memory.write(0x1234, 0b01010100);
         cpu.p = 0;
         cpu.run();
-        assert_eq!(cpu.memory[0x1234], 0b10101000);
+        assert_eq!(cpu.memory.read(0x1234), 0b10101000);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -3459,10 +3495,10 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0b00000011;
+        cpu.memory.write(0x1244, 0b00000011);
         cpu.p = 0;
         cpu.run();
-        assert_eq!(cpu.memory[0x1244], 0b00000110);
+        assert_eq!(cpu.memory.read(0x1244), 0b00000110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -3501,10 +3537,10 @@ mod tests {
         let program = vec![ROR_ZP, 0x42, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x42] = 0b11001100;
+        cpu.memory.write(0x42, 0b11001100);
         cpu.p = 0;
         cpu.run();
-        assert_eq!(cpu.memory[0x42], 0b01100110);
+        assert_eq!(cpu.memory.read(0x42), 0b01100110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -3515,10 +3551,10 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x05;
-        cpu.memory[0x47] = 0b10101011;
+        cpu.memory.write(0x47, 0b10101011);
         cpu.p = FLAG_CARRY;
         cpu.run();
-        assert_eq!(cpu.memory[0x47], 0b11010101);
+        assert_eq!(cpu.memory.read(0x47), 0b11010101);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -3528,10 +3564,10 @@ mod tests {
         let program = vec![ROR_ABS, 0x34, 0x12, BRK];
         cpu.load_program(&program, None);
         cpu.reset();
-        cpu.memory[0x1234] = 0b01010100;
+        cpu.memory.write(0x1234, 0b01010100);
         cpu.p = 0;
         cpu.run();
-        assert_eq!(cpu.memory[0x1234], 0b00101010);
+        assert_eq!(cpu.memory.read(0x1234), 0b00101010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -3542,10 +3578,10 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.x = 0x10;
-        cpu.memory[0x1244] = 0b00000011;
+        cpu.memory.write(0x1244, 0b00000011);
         cpu.p = 0;
         cpu.run();
-        assert_eq!(cpu.memory[0x1244], 0b00000001);
+        assert_eq!(cpu.memory.read(0x1244), 0b00000001);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -3557,10 +3593,10 @@ mod tests {
         cpu.reset();
         // Set up stack with saved processor status and return address
         cpu.sp = 0xFC;
-        cpu.memory[0x01FD] = 0b11010011; // Saved status flags
-        cpu.memory[0x01FE] = 0x34; // PC low byte
-        cpu.memory[0x01FF] = 0x12; // PC high byte
-        cpu.memory[0x1234] = BRK; // BRK at return address
+        cpu.memory.write(0x01FD, 0b11010011); // Saved status flags
+        cpu.memory.write(0x01FE, 0x34); // PC low byte
+        cpu.memory.write(0x01FF, 0x12); // PC high byte
+        cpu.memory.write(0x1234, BRK); // BRK at return address
         cpu.run();
         assert_eq!(cpu.p, 0b11010011);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK instruction
@@ -3575,9 +3611,9 @@ mod tests {
         cpu.reset();
         // Set up stack with saved return address (PC-1)
         cpu.sp = 0xFD;
-        cpu.memory[0x01FE] = 0x33; // PC-1 low byte (0x1233)
-        cpu.memory[0x01FF] = 0x12; // PC-1 high byte
-        cpu.memory[0x1234] = BRK; // BRK at return address
+        cpu.memory.write(0x01FE, 0x33); // PC-1 low byte (0x1233)
+        cpu.memory.write(0x01FF, 0x12); // PC-1 high byte
+        cpu.memory.write(0x1234, BRK); // BRK at return address
         cpu.run();
         assert_eq!(cpu.pc, 0x1235); // PC after BRK instruction (0x1234 + 1)
         assert_eq!(cpu.sp, 0xFF);
@@ -3619,7 +3655,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x80;
         cpu.p |= FLAG_CARRY;
-        cpu.memory[0x42] = 0x40;
+        cpu.memory.write(0x42, 0x40);
         cpu.run();
         assert_eq!(cpu.a, 0x40);
     }
@@ -3633,7 +3669,7 @@ mod tests {
         cpu.a = 0x50;
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory[0x47] = 0x10;
+        cpu.memory.write(0x47, 0x10);
         cpu.run();
         assert_eq!(cpu.a, 0x40);
     }
@@ -3646,7 +3682,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x60;
         cpu.p |= FLAG_CARRY;
-        cpu.memory[0x1234] = 0x20;
+        cpu.memory.write(0x1234, 0x20);
         cpu.run();
         assert_eq!(cpu.a, 0x40);
     }
@@ -3660,7 +3696,7 @@ mod tests {
         cpu.a = 0x70;
         cpu.x = 0x10;
         cpu.p |= FLAG_CARRY;
-        cpu.memory[0x1244] = 0x30;
+        cpu.memory.write(0x1244, 0x30);
         cpu.run();
         assert_eq!(cpu.a, 0x40);
     }
@@ -3674,7 +3710,7 @@ mod tests {
         cpu.a = 0x90;
         cpu.y = 0x20;
         cpu.p |= FLAG_CARRY;
-        cpu.memory[0x1254] = 0x50;
+        cpu.memory.write(0x1254, 0x50);
         cpu.run();
         assert_eq!(cpu.a, 0x40);
     }
@@ -3688,9 +3724,9 @@ mod tests {
         cpu.a = 0xA0;
         cpu.x = 0x04;
         cpu.p |= FLAG_CARRY;
-        cpu.memory[0x86] = 0x34;
-        cpu.memory[0x87] = 0x12;
-        cpu.memory[0x1234] = 0x60;
+        cpu.memory.write(0x86, 0x34);
+        cpu.memory.write(0x87, 0x12);
+        cpu.memory.write(0x1234, 0x60);
         cpu.run();
         assert_eq!(cpu.a, 0x40);
     }
@@ -3704,9 +3740,9 @@ mod tests {
         cpu.a = 0xB0;
         cpu.y = 0x10;
         cpu.p |= FLAG_CARRY;
-        cpu.memory[0x86] = 0x28;
-        cpu.memory[0x87] = 0x40;
-        cpu.memory[0x4038] = 0x70;
+        cpu.memory.write(0x86, 0x28);
+        cpu.memory.write(0x87, 0x40);
+        cpu.memory.write(0x4038, 0x70);
         cpu.run();
         assert_eq!(cpu.a, 0x40);
     }
@@ -3733,7 +3769,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x42;
         cpu.run();
-        assert_eq!(cpu.memory[0x10], 0x42);
+        assert_eq!(cpu.memory.read(0x10), 0x42);
     }
 
     #[test]
@@ -3745,7 +3781,7 @@ mod tests {
         cpu.a = 0x42;
         cpu.x = 0x05;
         cpu.run();
-        assert_eq!(cpu.memory[0x15], 0x42);
+        assert_eq!(cpu.memory.read(0x15), 0x42);
     }
 
     #[test]
@@ -3756,7 +3792,7 @@ mod tests {
         cpu.reset();
         cpu.a = 0x42;
         cpu.run();
-        assert_eq!(cpu.memory[0x2000], 0x42);
+        assert_eq!(cpu.memory.read(0x2000), 0x42);
     }
 
     #[test]
@@ -3768,7 +3804,7 @@ mod tests {
         cpu.a = 0x42;
         cpu.x = 0x05;
         cpu.run();
-        assert_eq!(cpu.memory[0x2005], 0x42);
+        assert_eq!(cpu.memory.read(0x2005), 0x42);
     }
 
     #[test]
@@ -3780,7 +3816,7 @@ mod tests {
         cpu.a = 0x42;
         cpu.y = 0x05;
         cpu.run();
-        assert_eq!(cpu.memory[0x2005], 0x42);
+        assert_eq!(cpu.memory.read(0x2005), 0x42);
     }
 
     #[test]
@@ -3791,10 +3827,10 @@ mod tests {
         cpu.reset();
         cpu.a = 0x42;
         cpu.x = 0x05;
-        cpu.memory[0x15] = 0x00;
-        cpu.memory[0x16] = 0x20;
+        cpu.memory.write(0x15, 0x00);
+        cpu.memory.write(0x16, 0x20);
         cpu.run();
-        assert_eq!(cpu.memory[0x2000], 0x42);
+        assert_eq!(cpu.memory.read(0x2000), 0x42);
     }
 
     #[test]
@@ -3805,10 +3841,10 @@ mod tests {
         cpu.reset();
         cpu.a = 0x42;
         cpu.y = 0x05;
-        cpu.memory[0x10] = 0x00;
-        cpu.memory[0x11] = 0x20;
+        cpu.memory.write(0x10, 0x00);
+        cpu.memory.write(0x11, 0x20);
         cpu.run();
-        assert_eq!(cpu.memory[0x2005], 0x42);
+        assert_eq!(cpu.memory.read(0x2005), 0x42);
     }
 
     #[test]
@@ -3858,7 +3894,7 @@ mod tests {
         cpu.sp = 0xFD;
         cpu.run();
         assert_eq!(cpu.sp, 0xFC);
-        assert_eq!(cpu.memory[0x01FD], 0x42);
+        assert_eq!(cpu.memory.read(0x01FD), 0x42);
     }
 
     #[test]
@@ -3868,7 +3904,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.sp = 0xFC;
-        cpu.memory[0x01FD] = 0x42;
+        cpu.memory.write(0x01FD, 0x42);
         cpu.run();
         assert_eq!(cpu.a, 0x42);
         assert_eq!(cpu.sp, 0xFD);
@@ -3883,7 +3919,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.sp = 0xFC;
-        cpu.memory[0x01FD] = 0x00;
+        cpu.memory.write(0x01FD, 0x00);
         cpu.run();
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -3896,7 +3932,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.sp = 0xFC;
-        cpu.memory[0x01FD] = 0x80;
+        cpu.memory.write(0x01FD, 0x80);
         cpu.run();
         assert_eq!(cpu.a, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -3912,7 +3948,7 @@ mod tests {
         cpu.sp = 0xFD;
         cpu.run();
         assert_eq!(cpu.sp, 0xFC);
-        assert_eq!(cpu.memory[0x01FD], 0xFF);
+        assert_eq!(cpu.memory.read(0x01FD), 0xFF);
     }
 
     #[test]
@@ -3922,7 +3958,7 @@ mod tests {
         cpu.load_program(&program, None);
         cpu.reset();
         cpu.sp = 0xFC;
-        cpu.memory[0x01FD] = 0xC3;
+        cpu.memory.write(0x01FD, 0xC3);
         cpu.run();
         assert_eq!(cpu.p, 0xC3);
         assert_eq!(cpu.sp, 0xFD);
@@ -3936,7 +3972,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x42;
         cpu.run();
-        assert_eq!(cpu.memory[0x10], 0x42);
+        assert_eq!(cpu.memory.read(0x10), 0x42);
     }
 
     #[test]
@@ -3948,7 +3984,7 @@ mod tests {
         cpu.x = 0x42;
         cpu.y = 0x05;
         cpu.run();
-        assert_eq!(cpu.memory[0x15], 0x42);
+        assert_eq!(cpu.memory.read(0x15), 0x42);
     }
 
     #[test]
@@ -3959,7 +3995,7 @@ mod tests {
         cpu.reset();
         cpu.x = 0x42;
         cpu.run();
-        assert_eq!(cpu.memory[0x2000], 0x42);
+        assert_eq!(cpu.memory.read(0x2000), 0x42);
     }
 
     #[test]
@@ -3970,7 +4006,7 @@ mod tests {
         cpu.reset();
         cpu.y = 0x42;
         cpu.run();
-        assert_eq!(cpu.memory[0x10], 0x42);
+        assert_eq!(cpu.memory.read(0x10), 0x42);
     }
 
     #[test]
@@ -3982,7 +4018,7 @@ mod tests {
         cpu.y = 0x42;
         cpu.x = 0x05;
         cpu.run();
-        assert_eq!(cpu.memory[0x15], 0x42);
+        assert_eq!(cpu.memory.read(0x15), 0x42);
     }
 
     #[test]
@@ -3993,22 +4029,22 @@ mod tests {
         cpu.reset();
         cpu.y = 0x42;
         cpu.run();
-        assert_eq!(cpu.memory[0x2000], 0x42);
+        assert_eq!(cpu.memory.read(0x2000), 0x42);
     }
 
     #[test]
     fn test_write_u16_to_addr() {
         let mut cpu = Cpu::new();
         cpu.write_u16_to_addr(0x1234, 0xABCD);
-        assert_eq!(cpu.memory[0x1234], 0xCD); // Low byte
-        assert_eq!(cpu.memory[0x1235], 0xAB); // High byte
+        assert_eq!(cpu.memory.read(0x1234), 0xCD); // Low byte
+        assert_eq!(cpu.memory.read(0x1235), 0xAB); // High byte
     }
 
     #[test]
     fn test_read_u16_from_addr() {
         let mut cpu = Cpu::new();
-        cpu.memory[0x1234] = 0xCD; // Low byte
-        cpu.memory[0x1235] = 0xAB; // High byte
+        cpu.memory.write(0x1234, 0xCD); // Low byte
+        cpu.memory.write(0x1235, 0xAB); // High byte
         let result = cpu.read_u16_from_addr(0x1234);
         assert_eq!(result, 0xABCD);
     }
@@ -4030,8 +4066,8 @@ mod tests {
         cpu.run();
         assert_eq!(cpu.a, 0x42);
         // Verify program was loaded at 0x0600
-        assert_eq!(cpu.memory[0x0600], LDA_IMM);
-        assert_eq!(cpu.memory[0x0601], 0x42);
-        assert_eq!(cpu.memory[0x0602], BRK);
+        assert_eq!(cpu.memory.read(0x0600), LDA_IMM);
+        assert_eq!(cpu.memory.read(0x0601), 0x42);
+        assert_eq!(cpu.memory.read(0x0602), BRK);
     }
 }
