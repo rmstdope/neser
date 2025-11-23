@@ -923,6 +923,48 @@ impl Cpu {
                 self.x = result;
                 self.update_zero_and_negative_flags(self.x);
             }
+            DCP_INDX => {
+                // Undocumented: Decrement memory then compare with A
+                let ptr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                self.dcp(addr);
+            }
+            DCP_ZP => {
+                // Undocumented: Decrement memory then compare with A
+                let addr = self.read_byte() as u16;
+                self.dcp(addr);
+            }
+            DCP_ABS => {
+                // Undocumented: Decrement memory then compare with A
+                let addr = self.read_word();
+                self.dcp(addr);
+            }
+            DCP_INDY => {
+                // Undocumented: Decrement memory then compare with A
+                let ptr = self.read_byte();
+                let base_addr = self.read_word_from_zp(ptr);
+                let addr = base_addr.wrapping_add(self.y as u16);
+                self.dcp(addr);
+            }
+            DCP_ZPX => {
+                // Undocumented: Decrement memory then compare with A
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                self.dcp(addr);
+            }
+            DCP_ABSY => {
+                // Undocumented: Decrement memory then compare with A
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                self.dcp(addr);
+            }
+            DCP_ABSX => {
+                // Undocumented: Decrement memory then compare with A
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                self.dcp(addr);
+            }
+            DOP_ZP | DOP_ZP2 | DOP_ZP3 | DOP_ZPX | DOP_ZPX2 | DOP_ZPX3 | DOP_ZPX4 | DOP_ZPX5 | DOP_ZPX6 | DOP_IMM | DOP_IMM2 | DOP_IMM3 | DOP_IMM4 | DOP_IMM5 => {
+                // Undocumented: Double NOP - read operand byte and discard
+                let _ = self.read_byte();
+            }
             _ => todo!(),
         }
         true
@@ -1131,6 +1173,14 @@ impl Cpu {
         let result = value.wrapping_sub(1);
         self.update_zero_and_negative_flags(result);
         result
+    }
+
+    /// Decrement and Compare - DCP undocumented operation
+    fn dcp(&mut self, addr: u16) {
+        let value = self.memory.borrow().read(addr);
+        let result = self.dec(value);
+        self.memory.borrow_mut().write(addr, result);
+        self.cmp(result);
     }
 
     /// Exclusive OR - EOR operation
@@ -4609,5 +4659,124 @@ mod tests {
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // No borrow
+    }
+
+    #[test]
+    fn test_dcp_zero_page() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![DCP_ZP, 0x42, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.memory.borrow_mut().write(0x42, 0x10);
+        cpu.a = 0x0F;
+        run(&mut cpu);
+        // Memory at 0x42: 0x10 - 1 = 0x0F
+        assert_eq!(cpu.memory.borrow().read(0x42), 0x0F);
+        // Compare A (0x0F) with memory (0x0F)
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Equal
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // A >= memory
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_dcp_absolute_x() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![DCP_ABSX, 0x00, 0x30, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x3005, 0x20);
+        cpu.a = 0x30;
+        run(&mut cpu);
+        // Memory at 0x3005: 0x20 - 1 = 0x1F
+        assert_eq!(cpu.memory.borrow().read(0x3005), 0x1F);
+        // Compare A (0x30) with memory (0x1F): 0x30 > 0x1F
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // A >= memory
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_dcp_indirect_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        cpu.memory.borrow_mut().write(0x20, 0x00);
+        cpu.memory.borrow_mut().write(0x21, 0x40);
+        let program = vec![DCP_INDY, 0x20, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x4010, 0x05);
+        cpu.a = 0x03;
+        run(&mut cpu);
+        // Memory at 0x4010: 0x05 - 1 = 0x04
+        assert_eq!(cpu.memory.borrow().read(0x4010), 0x04);
+        // Compare A (0x03) with memory (0x04): 0x03 < 0x04
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+        assert_eq!(cpu.p & FLAG_CARRY, 0); // A < memory (borrow)
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Result would be negative
+    }
+
+    #[test]
+    fn test_dop_zero_page() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![DOP_ZP, 0x42, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.memory.borrow_mut().write(0x42, 0xFF);
+        cpu.a = 0x10;
+        cpu.x = 0x20;
+        cpu.y = 0x30;
+        let saved_status = cpu.p;
+        run(&mut cpu);
+        // DOP does nothing - just reads memory and discards
+        assert_eq!(cpu.memory.borrow().read(0x42), 0xFF); // Memory unchanged
+        assert_eq!(cpu.a, 0x10); // A unchanged
+        assert_eq!(cpu.x, 0x20); // X unchanged
+        assert_eq!(cpu.y, 0x30); // Y unchanged
+        assert_eq!(cpu.p, saved_status); // Status unchanged
+    }
+
+    #[test]
+    fn test_dop_zero_page_x() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![DOP_ZPX, 0x40, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x45, 0xAA);
+        cpu.a = 0x10;
+        cpu.y = 0x30;
+        let saved_status = cpu.p;
+        run(&mut cpu);
+        // DOP does nothing - just reads memory at 0x40 + X = 0x45 and discards
+        assert_eq!(cpu.memory.borrow().read(0x45), 0xAA); // Memory unchanged
+        assert_eq!(cpu.a, 0x10); // A unchanged
+        assert_eq!(cpu.x, 0x05); // X unchanged
+        assert_eq!(cpu.y, 0x30); // Y unchanged
+        assert_eq!(cpu.p, saved_status); // Status unchanged
+    }
+
+    #[test]
+    fn test_dop_immediate() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![DOP_IMM, 0x42, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0x10;
+        cpu.x = 0x20;
+        cpu.y = 0x30;
+        let saved_status = cpu.p;
+        run(&mut cpu);
+        // DOP does nothing - just reads immediate value and discards
+        assert_eq!(cpu.a, 0x10); // A unchanged
+        assert_eq!(cpu.x, 0x20); // X unchanged
+        assert_eq!(cpu.y, 0x30); // Y unchanged
+        assert_eq!(cpu.p, saved_status); // Status unchanged
     }
 }

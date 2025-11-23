@@ -201,6 +201,27 @@ pub const AAX_ZPY: u8 = 0x97;
 pub const AXA_INDY: u8 = 0x93;
 pub const AXA_ABSY: u8 = 0x9F;
 pub const AXS_IMM: u8 = 0xCB;
+pub const DCP_INDX: u8 = 0xC3;
+pub const DCP_ZP: u8 = 0xC7;
+pub const DCP_ABS: u8 = 0xCF;
+pub const DCP_INDY: u8 = 0xD3;
+pub const DCP_ZPX: u8 = 0xD7;
+pub const DCP_ABSY: u8 = 0xDB;
+pub const DCP_ABSX: u8 = 0xDF;
+pub const DOP_ZP: u8 = 0x04;
+pub const DOP_ZPX: u8 = 0x14;
+pub const DOP_ZPX2: u8 = 0x34;
+pub const DOP_ZP2: u8 = 0x44;
+pub const DOP_ZPX3: u8 = 0x54;
+pub const DOP_ZP3: u8 = 0x64;
+pub const DOP_ZPX4: u8 = 0x74;
+pub const DOP_IMM: u8 = 0x80;
+pub const DOP_IMM2: u8 = 0x82;
+pub const DOP_IMM3: u8 = 0x89;
+pub const DOP_IMM4: u8 = 0xC2;
+pub const DOP_ZPX5: u8 = 0xD4;
+pub const DOP_IMM5: u8 = 0xE2;
+pub const DOP_ZPX6: u8 = 0xF4;
 
 // Complete NES 6502 opcode table
 pub static OPCODE_TABLE: &[OpCode] = &[
@@ -208,6 +229,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(ORA_INDX, "ORA", "INDX"),
     OpCode::new(ORA_ZP, "ORA", "ZP"),
     OpCode::new(ASL_ZP, "ASL", "ZP"),
+    OpCode::new(DOP_ZP, "DOP", "ZP"),
     OpCode::new(PHP, "PHP", "IMP"),
     OpCode::new(ORA_IMM, "ORA", "IMM"),
     OpCode::new(ASL_A, "ASL", "ACC"),
@@ -219,6 +241,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(ORA_ZPX, "ORA", "ZPX"),
     OpCode::new(ASL_ZPX, "ASL", "ZPX"),
     OpCode::new(CLC, "CLC", "IMP"),
+    OpCode::new(DOP_ZPX, "DOP", "ZPX"),
     OpCode::new(ORA_ABSY, "ORA", "ABSY"),
     OpCode::new(ORA_ABSX, "ORA", "ABSX"),
     OpCode::new(ASL_ABSX, "ASL", "ABSX"),
@@ -239,6 +262,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(AND_ZPX, "AND", "ZPX"),
     OpCode::new(ROL_ZPX, "ROL", "ZPX"),
     OpCode::new(SEC, "SEC", "IMP"),
+    OpCode::new(DOP_ZPX2, "DOP", "ZPX"),
     OpCode::new(AND_ABSY, "AND", "ABSY"),
     OpCode::new(AND_ABSX, "AND", "ABSX"),
     OpCode::new(ROL_ABSX, "ROL", "ABSX"),
@@ -247,6 +271,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(EOR_ZP, "EOR", "ZP"),
     OpCode::new(LSR_ZP, "LSR", "ZP"),
     OpCode::new(PHA, "PHA", "IMP"),
+    OpCode::new(DOP_ZP2, "DOP", "ZP"),
     OpCode::new(EOR_IMM, "EOR", "IMM"),
     OpCode::new(ASR_IMM, "ASR", "IMM"),
     OpCode::new(LSR_ACC, "LSR", "ACC"),
@@ -258,6 +283,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(EOR_ZPX, "EOR", "ZPX"),
     OpCode::new(LSR_ZPX, "LSR", "ZPX"),
     OpCode::new(CLI, "CLI", "IMP"),
+    OpCode::new(DOP_ZPX3, "DOP", "ZPX"),
     OpCode::new(EOR_ABSY, "EOR", "ABSY"),
     OpCode::new(EOR_ABSX, "EOR", "ABSX"),
     OpCode::new(LSR_ABSX, "LSR", "ABSX"),
@@ -266,6 +292,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(ADC_ZP, "ADC", "ZP"),
     OpCode::new(ROR_ZP, "ROR", "ZP"),
     OpCode::new(PLA, "PLA", "IMP"),
+    OpCode::new(DOP_ZP3, "DOP", "ZP"),
     OpCode::new(ADC_IMM, "ADC", "IMM"),
     OpCode::new(ARR_IMM, "ARR", "IMM"),
     OpCode::new(ROR_ACC, "ROR", "ACC"),
@@ -277,16 +304,20 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(ADC_ZPX, "ADC", "ZPX"),
     OpCode::new(ROR_ZPX, "ROR", "ZPX"),
     OpCode::new(SEI, "SEI", "IMP"),
+    OpCode::new(DOP_ZPX4, "DOP", "ZPX"),
     OpCode::new(ADC_ABSY, "ADC", "ABSY"),
     OpCode::new(ADC_ABSX, "ADC", "ABSX"),
     OpCode::new(ROR_ABSX, "ROR", "ABSX"),
+    OpCode::new(DOP_IMM, "DOP", "IMM"),
     OpCode::new(STA_INDX, "STA", "INDX"),
+    OpCode::new(DOP_IMM2, "DOP", "IMM"),
     OpCode::new(AAX_INDX, "AAX", "INDX"),
     OpCode::new(STY_ZP, "STY", "ZP"),
     OpCode::new(STA_ZP, "STA", "ZP"),
     OpCode::new(STX_ZP, "STX", "ZP"),
     OpCode::new(AAX_ZP, "AAX", "ZP"),
     OpCode::new(DEY, "DEY", "IMP"),
+    OpCode::new(DOP_IMM3, "DOP", "IMM"),
     OpCode::new(TXA, "TXA", "IMP"),
     OpCode::new(STY_ABS, "STY", "ABS"),
     OpCode::new(STA_ABS, "STA", "ABS"),
@@ -330,9 +361,12 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(LDX_ABSY, "LDX", "ABSY"),
     OpCode::new(CPY_IMM, "CPY", "IMM"),
     OpCode::new(CMP_INDX, "CMP", "INDX"),
+    OpCode::new(DOP_IMM4, "DOP", "IMM"),
+    OpCode::new(DCP_INDX, "DCP", "INDX"),
     OpCode::new(CPY_ZP, "CPY", "ZP"),
     OpCode::new(CMP_ZP, "CMP", "ZP"),
     OpCode::new(DEC_ZP, "DEC", "ZP"),
+    OpCode::new(DCP_ZP, "DCP", "ZP"),
     OpCode::new(INY, "INY", "IMP"),
     OpCode::new(CMP_IMM, "CMP", "IMM"),
     OpCode::new(DEX, "DEX", "IMP"),
@@ -340,16 +374,23 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(CPY_ABS, "CPY", "ABS"),
     OpCode::new(CMP_ABS, "CMP", "ABS"),
     OpCode::new(DEC_ABS, "DEC", "ABS"),
+    OpCode::new(DCP_ABS, "DCP", "ABS"),
     OpCode::new(BNE, "BNE", "REL"),
     OpCode::new(CMP_INDY, "CMP", "INDY"),
+    OpCode::new(DCP_INDY, "DCP", "INDY"),
+    OpCode::new(DOP_ZPX5, "DOP", "ZPX"),
     OpCode::new(CMP_ZPX, "CMP", "ZPX"),
     OpCode::new(DEC_ZPX, "DEC", "ZPX"),
+    OpCode::new(DCP_ZPX, "DCP", "ZPX"),
     OpCode::new(CLD, "CLD", "IMP"),
     OpCode::new(CMP_ABSY, "CMP", "ABSY"),
+    OpCode::new(DCP_ABSY, "DCP", "ABSY"),
     OpCode::new(CMP_ABSX, "CMP", "ABSX"),
     OpCode::new(DEC_ABSX, "DEC", "ABSX"),
+    OpCode::new(DCP_ABSX, "DCP", "ABSX"),
     OpCode::new(CPX_IMM, "CPX", "IMM"),
     OpCode::new(SBC_INDX, "SBC", "INDX"),
+    OpCode::new(DOP_IMM5, "DOP", "IMM"),
     OpCode::new(CPX_ZP, "CPX", "ZP"),
     OpCode::new(SBC_ZP, "SBC", "ZP"),
     OpCode::new(INC_ZP, "INC", "ZP"),
@@ -361,6 +402,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(INC_ABS, "INC", "ABS"),
     OpCode::new(BEQ, "BEQ", "REL"),
     OpCode::new(SBC_INDY, "SBC", "INDY"),
+    OpCode::new(DOP_ZPX6, "DOP", "ZPX"),
     OpCode::new(SBC_ZPX, "SBC", "ZPX"),
     OpCode::new(INC_ZPX, "INC", "ZPX"),
     OpCode::new(SED, "SED", "IMP"),
@@ -414,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_opcodes_table_count() {
-        assert_eq!(OPCODE_TABLE.len(), 163);
+        assert_eq!(OPCODE_TABLE.len(), 184);
     }
 
     #[test]
