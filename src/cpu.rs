@@ -126,13 +126,6 @@ impl Cpu {
                 let value = self.read_byte();
                 self.and(value);
             }
-            AAC_IMM | AAC_IMM2 => {
-                // Undocumented: AND with accumulator, then copy bit 7 to carry
-                let value = self.read_byte();
-                self.and(value);
-                let carry = if self.a & 0x80 != 0 { FLAG_CARRY } else { 0 };
-                self.p = (self.p & !FLAG_CARRY) | carry;
-            }
             AND_ZP => {
                 let addr = self.read_byte() as u16;
                 let value = self.memory.borrow().read(addr);
@@ -777,31 +770,6 @@ impl Cpu {
                 let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
                 self.memory.borrow_mut().write(addr, self.a);
             }
-            AAX_ZP => {
-                // Undocumented: Store A AND X
-                let addr = self.read_byte() as u16;
-                let value = self.a & self.x;
-                self.memory.borrow_mut().write(addr, value);
-            }
-            AAX_ZPY => {
-                // Undocumented: Store A AND X
-                let addr = self.read_byte().wrapping_add(self.y) as u16;
-                let value = self.a & self.x;
-                self.memory.borrow_mut().write(addr, value);
-            }
-            AAX_ABS => {
-                // Undocumented: Store A AND X
-                let addr = self.read_word();
-                let value = self.a & self.x;
-                self.memory.borrow_mut().write(addr, value);
-            }
-            AAX_INDX => {
-                // Undocumented: Store A AND X
-                let ptr = self.read_byte().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                let value = self.a & self.x;
-                self.memory.borrow_mut().write(addr, value);
-            }
             TXS => {
                 self.sp = self.x;
             }
@@ -849,6 +817,82 @@ impl Cpu {
             STY_ABS => {
                 let addr = self.read_word();
                 self.memory.borrow_mut().write(addr, self.y);
+            }
+            // Undocumented opcodes (alphabetical order)
+            AAC_IMM | AAC_IMM2 => {
+                // Undocumented: AND with accumulator, then copy bit 7 to carry
+                let value = self.read_byte();
+                self.and(value);
+                let carry = if self.a & 0x80 != 0 { FLAG_CARRY } else { 0 };
+                self.p = (self.p & !FLAG_CARRY) | carry;
+            }
+            AAX_INDX => {
+                // Undocumented: Store A AND X
+                let ptr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                let value = self.a & self.x;
+                self.memory.borrow_mut().write(addr, value);
+            }
+            AAX_ZP => {
+                // Undocumented: Store A AND X
+                let addr = self.read_byte() as u16;
+                let value = self.a & self.x;
+                self.memory.borrow_mut().write(addr, value);
+            }
+            AAX_ZPY => {
+                // Undocumented: Store A AND X
+                let addr = self.read_byte().wrapping_add(self.y) as u16;
+                let value = self.a & self.x;
+                self.memory.borrow_mut().write(addr, value);
+            }
+            AAX_ABS => {
+                // Undocumented: Store A AND X
+                let addr = self.read_word();
+                let value = self.a & self.x;
+                self.memory.borrow_mut().write(addr, value);
+            }
+            ARR_IMM => {
+                // Undocumented: AND then rotate right
+                let value = self.read_byte();
+                self.a &= value;
+
+                // Rotate right using current carry flag
+                let old_carry = if self.p & FLAG_CARRY != 0 { 0x80 } else { 0 };
+                let new_carry = if self.a & 0x01 != 0 { FLAG_CARRY } else { 0 };
+
+                self.a = (self.a >> 1) | old_carry;
+
+                // Set carry from bit 0 of AND result
+                self.p = (self.p & !FLAG_CARRY) | new_carry;
+
+                // Set overflow to bit 6 XOR bit 5 of result
+                let bit6 = (self.a >> 6) & 1;
+                let bit5 = (self.a >> 5) & 1;
+                let overflow = if bit6 ^ bit5 != 0 { FLAG_OVERFLOW } else { 0 };
+                self.p = (self.p & !FLAG_OVERFLOW) | overflow;
+
+                self.update_zero_and_negative_flags(self.a);
+            }
+            ASR_IMM => {
+                // Undocumented: AND then logical shift right (LSR)
+                let value = self.read_byte();
+                self.a &= value;
+
+                // Set carry from bit 0 before shift
+                let carry = if self.a & 0x01 != 0 { FLAG_CARRY } else { 0 };
+                self.p = (self.p & !FLAG_CARRY) | carry;
+
+                // Logical shift right (no carry involved in shift)
+                self.a >>= 1;
+
+                self.update_zero_and_negative_flags(self.a);
+            }
+            ATX_IMM => {
+                // Undocumented: AND then transfer to both A and X
+                let value = self.read_byte();
+                self.a &= value;
+                self.x = self.a;
+                self.update_zero_and_negative_flags(self.a);
             }
             _ => todo!(),
         }
@@ -4270,5 +4314,160 @@ mod tests {
         run(&mut cpu);
         // Should store A & X = 0b11111111 & 0b10101010 = 0b10101010 at 0x3000
         assert_eq!(cpu.memory.borrow().read(0x3000), 0b10101010);
+    }
+
+    #[test]
+    fn test_arr_basic() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ARR_IMM, 0b11110000, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11111111;
+        cpu.p = 0x00; // No carry
+        run(&mut cpu);
+        // A = 0b11111111 AND 0b11110000 = 0b11110000
+        // Then shift right: 0b11110000 >> 1 = 0b01111000
+        assert_eq!(cpu.a, 0b01111000);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0); // bit 7 is 0
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_arr_with_carry() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ARR_IMM, 0b11110000, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11111111;
+        cpu.p = FLAG_CARRY; // Carry set
+        run(&mut cpu);
+        // A = 0b11111111 AND 0b11110000 = 0b11110000
+        // Then shift right with carry: (0b11110000 >> 1) | 0b10000000 = 0b11111000
+        assert_eq!(cpu.a, 0b11111000);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // bit 7 is 1
+    }
+
+    #[test]
+    fn test_arr_sets_carry_and_overflow() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ARR_IMM, 0b01100001, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11111111;
+        cpu.p = 0x00;
+        run(&mut cpu);
+        // A = 0b11111111 AND 0b01100001 = 0b01100001
+        // Then shift right: 0b01100001 >> 1 = 0b00110000 (bit 0 was 1, sets carry)
+        assert_eq!(cpu.a, 0b00110000);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // bit 0 was 1
+        // Overflow is bit 6 XOR bit 5 of result
+        // Result is 0b00110000: bit 6 = 0, bit 5 = 1, so 0 XOR 1 = 1
+        assert_eq!(cpu.p & FLAG_OVERFLOW, FLAG_OVERFLOW);
+    }
+
+    #[test]
+    fn test_asr_basic() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ASR_IMM, 0b11110000, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11111111;
+        cpu.p = FLAG_CARRY; // Carry should be ignored for LSR
+        run(&mut cpu);
+        // A = 0b11111111 AND 0b11110000 = 0b11110000
+        // Then LSR (logical shift right): 0b11110000 >> 1 = 0b01111000
+        assert_eq!(cpu.a, 0b01111000);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0); // bit 7 is 0
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+        assert_eq!(cpu.p & FLAG_CARRY, 0); // bit 0 of AND result was 0
+    }
+
+    #[test]
+    fn test_asr_sets_carry() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ASR_IMM, 0b11110001, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11111111;
+        cpu.p = 0x00;
+        run(&mut cpu);
+        // A = 0b11111111 AND 0b11110001 = 0b11110001
+        // Then LSR: 0b11110001 >> 1 = 0b01111000
+        assert_eq!(cpu.a, 0b01111000);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // bit 0 of AND result was 1
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_asr_zero_result() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ASR_IMM, 0b00000001, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b00000001;
+        cpu.p = 0x00;
+        run(&mut cpu);
+        // A = 0b00000001 AND 0b00000001 = 0b00000001
+        // Then LSR: 0b00000001 >> 1 = 0b00000000
+        assert_eq!(cpu.a, 0b00000000);
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // bit 0 was 1
+    }
+
+    #[test]
+    fn test_atx_basic() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ATX_IMM, 0b11110000, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11111111;
+        cpu.x = 0x00;
+        run(&mut cpu);
+        // A = A AND immediate = 0b11111111 AND 0b11110000 = 0b11110000
+        // Then transfer to both A and X
+        assert_eq!(cpu.a, 0b11110000);
+        assert_eq!(cpu.x, 0b11110000);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_atx_zero() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ATX_IMM, 0b00001111, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11110000;
+        cpu.x = 0xFF;
+        run(&mut cpu);
+        // A = A AND immediate = 0b11110000 AND 0b00001111 = 0b00000000
+        assert_eq!(cpu.a, 0b00000000);
+        assert_eq!(cpu.x, 0b00000000);
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_atx_preserves_result() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ATX_IMM, 0b10101010, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11001100;
+        cpu.x = 0x33;
+        run(&mut cpu);
+        // A = A AND immediate = 0b11001100 AND 0b10101010 = 0b10001000
+        assert_eq!(cpu.a, 0b10001000);
+        assert_eq!(cpu.x, 0b10001000);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 }

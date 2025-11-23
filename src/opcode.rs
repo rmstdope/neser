@@ -191,6 +191,9 @@ pub const INC_ABSX: u8 = 0xFE;
 // Undocumented opcodes
 pub const AAC_IMM: u8 = 0x0B;
 pub const AAC_IMM2: u8 = 0x2B;
+pub const ARR_IMM: u8 = 0x6B;
+pub const ASR_IMM: u8 = 0x4B;
+pub const ATX_IMM: u8 = 0xAB;
 pub const AAX_INDX: u8 = 0x83;
 pub const AAX_ZP: u8 = 0x87;
 pub const AAX_ABS: u8 = 0x8F;
@@ -242,6 +245,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(LSR_ZP, "LSR", "ZP"),
     OpCode::new(PHA, "PHA", "IMP"),
     OpCode::new(EOR_IMM, "EOR", "IMM"),
+    OpCode::new(ASR_IMM, "ASR", "IMM"),
     OpCode::new(LSR_ACC, "LSR", "ACC"),
     OpCode::new(JMP_ABS, "JMP", "ABS"),
     OpCode::new(EOR_ABS, "EOR", "ABS"),
@@ -260,6 +264,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(ROR_ZP, "ROR", "ZP"),
     OpCode::new(PLA, "PLA", "IMP"),
     OpCode::new(ADC_IMM, "ADC", "IMM"),
+    OpCode::new(ARR_IMM, "ARR", "IMM"),
     OpCode::new(ROR_ACC, "ROR", "ACC"),
     OpCode::new(JMP_IND, "JMP", "IND"),
     OpCode::new(ADC_ABS, "ADC", "ABS"),
@@ -303,6 +308,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(TAY, "TAY", "IMP"),
     OpCode::new(LDA_IMM, "LDA", "IMM"),
     OpCode::new(TAX, "TAX", "IMP"),
+    OpCode::new(ATX_IMM, "ATX", "IMM"),
     OpCode::new(LDY_ABS, "LDY", "ABS"),
     OpCode::new(LDA_ABS, "LDA", "ABS"),
     OpCode::new(LDX_ABS, "LDX", "ABS"),
@@ -402,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_opcodes_table_count() {
-        assert_eq!(OPCODE_TABLE.len(), 157);
+        assert_eq!(OPCODE_TABLE.len(), 160);
     }
 
     #[test]
