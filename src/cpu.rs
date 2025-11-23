@@ -27,6 +27,8 @@ pub struct Cpu {
     pub p: u8,
     /// Memory
     pub memory: Rc<RefCell<Memory>>,
+    /// Halted state (set by KIL instruction)
+    pub halted: bool,
 }
 
 // Status register flags
@@ -52,6 +54,7 @@ impl Cpu {
             pc: 0,    // Program counter will be loaded from reset vector
             p: 0x24,  // Status: IRQ disabled, unused bit set
             memory,
+            halted: false,
         }
     }
 
@@ -62,6 +65,7 @@ impl Cpu {
         self.y = 0;
         self.sp = 0xFD;
         self.p = 0x24;
+        self.halted = false;
         self.pc = self.read_reset_vector();
     }
 
@@ -75,6 +79,10 @@ impl Cpu {
 
     /// Execute a single opcode. Returns false if execution should stop (BRK), true otherwise.
     pub fn run_opcode(&mut self) -> bool {
+        if self.halted {
+            return false;
+        }
+
         let opcode = self.memory.borrow().read(self.pc);
         self.pc += 1;
 
@@ -699,7 +707,8 @@ impl Cpu {
                 self.pc = self.pop_word();
                 self.pc = self.pc.wrapping_add(1);
             }
-            SBC_IMM => {
+            SBC_IMM | SBC_IMM2 => {
+                // SBC_IMM2 is undocumented but identical to SBC_IMM
                 let value = self.read_byte();
                 self.sbc(value);
             }
@@ -961,9 +970,252 @@ impl Cpu {
                 let addr = self.read_word().wrapping_add(self.x as u16);
                 self.dcp(addr);
             }
-            DOP_ZP | DOP_ZP2 | DOP_ZP3 | DOP_ZPX | DOP_ZPX2 | DOP_ZPX3 | DOP_ZPX4 | DOP_ZPX5 | DOP_ZPX6 | DOP_IMM | DOP_IMM2 | DOP_IMM3 | DOP_IMM4 | DOP_IMM5 => {
+            DOP_ZP | DOP_ZP2 | DOP_ZP3 | DOP_ZPX | DOP_ZPX2 | DOP_ZPX3 | DOP_ZPX4 | DOP_ZPX5
+            | DOP_ZPX6 | DOP_IMM | DOP_IMM2 | DOP_IMM3 | DOP_IMM4 | DOP_IMM5 => {
                 // Undocumented: Double NOP - read operand byte and discard
                 let _ = self.read_byte();
+            }
+            ISC_INDX => {
+                // Undocumented: Increment memory then subtract from A with borrow
+                let zp_addr = self.read_byte().wrapping_add(self.x);
+                let addr_lo = self.memory.borrow().read(zp_addr as u16);
+                let addr_hi = self.memory.borrow().read(zp_addr.wrapping_add(1) as u16);
+                let addr = u16::from_le_bytes([addr_lo, addr_hi]);
+                self.isc(addr);
+            }
+            ISC_ZP => {
+                // Undocumented: Increment memory then subtract from A with borrow
+                let addr = self.read_byte() as u16;
+                self.isc(addr);
+            }
+            ISC_ABS => {
+                // Undocumented: Increment memory then subtract from A with borrow
+                let addr = self.read_word();
+                self.isc(addr);
+            }
+            ISC_INDY => {
+                // Undocumented: Increment memory then subtract from A with borrow
+                let zp_addr = self.read_byte();
+                let addr_lo = self.memory.borrow().read(zp_addr as u16);
+                let addr_hi = self.memory.borrow().read(zp_addr.wrapping_add(1) as u16);
+                let base_addr = u16::from_le_bytes([addr_lo, addr_hi]);
+                let addr = base_addr.wrapping_add(self.y as u16);
+                self.isc(addr);
+            }
+            ISC_ZPX => {
+                // Undocumented: Increment memory then subtract from A with borrow
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                self.isc(addr);
+            }
+            ISC_ABSY => {
+                // Undocumented: Increment memory then subtract from A with borrow
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                self.isc(addr);
+            }
+            ISC_ABSX => {
+                // Undocumented: Increment memory then subtract from A with borrow
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                self.isc(addr);
+            }
+            KIL | KIL2 | KIL3 | KIL4 | KIL5 | KIL6 | KIL7 | KIL8 | KIL9 | KIL10 | KIL11 | KIL12 => {
+                // Undocumented: Halt the processor
+                self.halted = true;
+                return false;
+            }
+            LAR_ABSY => {
+                // Undocumented: AND memory with stack pointer, store in A, X, and SP
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                let value = self.memory.borrow().read(addr);
+                let result = self.sp & value;
+                self.a = result;
+                self.x = result;
+                self.sp = result;
+                // Set flags based on result
+                if result == 0 {
+                    self.p |= FLAG_ZERO;
+                } else {
+                    self.p &= !FLAG_ZERO;
+                }
+                if result & 0x80 != 0 {
+                    self.p |= FLAG_NEGATIVE;
+                } else {
+                    self.p &= !FLAG_NEGATIVE;
+                }
+            }
+            LAX_INDX => {
+                // Undocumented: Load A and X with memory value (LDA + LDX)
+                let base = self.read_byte();
+                let ptr = base.wrapping_add(self.x);
+                let lo = self.memory.borrow().read(ptr as u16) as u16;
+                let hi = self.memory.borrow().read(ptr.wrapping_add(1) as u16) as u16;
+                let addr = (hi << 8) | lo;
+                let value = self.memory.borrow().read(addr);
+                self.a = value;
+                self.x = value;
+                self.update_zero_and_negative_flags(value);
+            }
+            LAX_ZP => {
+                // Undocumented: Load A and X with memory value (LDA + LDX)
+                let addr = self.read_byte() as u16;
+                let value = self.memory.borrow().read(addr);
+                self.a = value;
+                self.x = value;
+                self.update_zero_and_negative_flags(value);
+            }
+            LAX_ABS => {
+                // Undocumented: Load A and X with memory value (LDA + LDX)
+                let addr = self.read_word();
+                let value = self.memory.borrow().read(addr);
+                self.a = value;
+                self.x = value;
+                self.update_zero_and_negative_flags(value);
+            }
+            LAX_INDY => {
+                // Undocumented: Load A and X with memory value (LDA + LDX)
+                let ptr = self.read_byte() as u16;
+                let lo = self.memory.borrow().read(ptr) as u16;
+                let hi = self.memory.borrow().read((ptr + 1) & 0xFF) as u16;
+                let base = (hi << 8) | lo;
+                let addr = base.wrapping_add(self.y as u16);
+                let value = self.memory.borrow().read(addr);
+                self.a = value;
+                self.x = value;
+                self.update_zero_and_negative_flags(value);
+            }
+            LAX_ZPY => {
+                // Undocumented: Load A and X with memory value (LDA + LDX)
+                let base = self.read_byte();
+                let addr = base.wrapping_add(self.y) as u16;
+                let value = self.memory.borrow().read(addr);
+                self.a = value;
+                self.x = value;
+                self.update_zero_and_negative_flags(value);
+            }
+            LAX_ABSY => {
+                // Undocumented: Load A and X with memory value (LDA + LDX)
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                let value = self.memory.borrow().read(addr);
+                self.a = value;
+                self.x = value;
+                self.update_zero_and_negative_flags(value);
+            }
+            NOP_IMP | NOP_IMP2 | NOP_IMP3 | NOP_IMP4 | NOP_IMP5 | NOP_IMP6 => {
+                // Undocumented: No operation (same as official NOP)
+                // Do nothing
+            }
+            RLA_INDX => {
+                // Undocumented: ROL memory, then AND with accumulator (Indirect,X)
+                let zp_addr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(zp_addr);
+                self.rla(addr);
+            }
+            RLA_ZP => {
+                // Undocumented: ROL memory, then AND with accumulator (Zero Page)
+                let addr = self.read_byte() as u16;
+                self.rla(addr);
+            }
+            RLA_ABS => {
+                // Undocumented: ROL memory, then AND with accumulator (Absolute)
+                let addr = self.read_word();
+                self.rla(addr);
+            }
+            RLA_INDY => {
+                // Undocumented: ROL memory, then AND with accumulator (Indirect,Y)
+                let zp_addr = self.read_byte();
+                let base_addr = self.read_word_from_zp(zp_addr);
+                let addr = base_addr.wrapping_add(self.y as u16);
+                self.rla(addr);
+            }
+            RLA_ZPX => {
+                // Undocumented: ROL memory, then AND with accumulator (Zero Page,X)
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                self.rla(addr);
+            }
+            RLA_ABSY => {
+                // Undocumented: ROL memory, then AND with accumulator (Absolute,Y)
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                self.rla(addr);
+            }
+            RLA_ABSX => {
+                // Undocumented: ROL memory, then AND with accumulator (Absolute,X)
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                self.rla(addr);
+            }
+            RRA_INDX => {
+                // Undocumented: ROR memory, then ADC with accumulator (Indirect,X)
+                let zp_addr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(zp_addr);
+                self.rra(addr);
+            }
+            RRA_ZP => {
+                // Undocumented: ROR memory, then ADC with accumulator (Zero Page)
+                let addr = self.read_byte() as u16;
+                self.rra(addr);
+            }
+            RRA_ABS => {
+                // Undocumented: ROR memory, then ADC with accumulator (Absolute)
+                let addr = self.read_word();
+                self.rra(addr);
+            }
+            RRA_INDY => {
+                // Undocumented: ROR memory, then ADC with accumulator (Indirect,Y)
+                let zp_addr = self.read_byte();
+                let base_addr = self.read_word_from_zp(zp_addr);
+                let addr = base_addr.wrapping_add(self.y as u16);
+                self.rra(addr);
+            }
+            RRA_ZPX => {
+                // Undocumented: ROR memory, then ADC with accumulator (Zero Page,X)
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                self.rra(addr);
+            }
+            RRA_ABSY => {
+                // Undocumented: ROR memory, then ADC with accumulator (Absolute,Y)
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                self.rra(addr);
+            }
+            RRA_ABSX => {
+                // Undocumented: ROR memory, then ADC with accumulator (Absolute,X)
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                self.rra(addr);
+            }
+            SLO_INDX => {
+                // Undocumented: ASL memory, then ORA with accumulator (Indirect,X)
+                let zp_addr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(zp_addr);
+                self.slo(addr);
+            }
+            SLO_ZP => {
+                // Undocumented: ASL memory, then ORA with accumulator (Zero Page)
+                let addr = self.read_byte() as u16;
+                self.slo(addr);
+            }
+            SLO_ABS => {
+                // Undocumented: ASL memory, then ORA with accumulator (Absolute)
+                let addr = self.read_word();
+                self.slo(addr);
+            }
+            SLO_INDY => {
+                // Undocumented: ASL memory, then ORA with accumulator (Indirect,Y)
+                let zp_addr = self.read_byte();
+                let base_addr = self.read_word_from_zp(zp_addr);
+                let addr = base_addr.wrapping_add(self.y as u16);
+                self.slo(addr);
+            }
+            SLO_ZPX => {
+                // Undocumented: ASL memory, then ORA with accumulator (Zero Page,X)
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                self.slo(addr);
+            }
+            SLO_ABSY => {
+                // Undocumented: ASL memory, then ORA with accumulator (Absolute,Y)
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                self.slo(addr);
+            }
+            SLO_ABSX => {
+                // Undocumented: ASL memory, then ORA with accumulator (Absolute,X)
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                self.slo(addr);
             }
             _ => todo!(),
         }
@@ -1194,6 +1446,39 @@ impl Cpu {
         let result = value.wrapping_add(1);
         self.update_zero_and_negative_flags(result);
         result
+    }
+
+    /// ISC - Undocumented opcode: Increment memory then subtract from A with borrow
+    fn isc(&mut self, addr: u16) {
+        let value = self.memory.borrow().read(addr);
+        let incremented = value.wrapping_add(1);
+        self.memory.borrow_mut().write(addr, incremented);
+        self.sbc(incremented);
+    }
+
+    /// RLA - Undocumented opcode: Rotate left memory then AND with accumulator
+    fn rla(&mut self, addr: u16) {
+        let value = self.memory.borrow().read(addr);
+        let rotated = self.rol(value);
+        self.memory.borrow_mut().write(addr, rotated);
+        self.a &= rotated;
+        self.update_zero_and_negative_flags(self.a);
+    }
+
+    /// RRA - Undocumented opcode: Rotate right memory then ADC with accumulator
+    fn rra(&mut self, addr: u16) {
+        let value = self.memory.borrow().read(addr);
+        let rotated = self.ror(value);
+        self.memory.borrow_mut().write(addr, rotated);
+        self.adc(rotated);
+    }
+
+    /// SLO - Undocumented opcode: Shift left memory then ORA with accumulator
+    fn slo(&mut self, addr: u16) {
+        let value = self.memory.borrow().read(addr);
+        let shifted = self.asl(value);
+        self.memory.borrow_mut().write(addr, shifted);
+        self.ora(shifted);
     }
 
     /// Load Accumulator - LDA operation
@@ -4575,18 +4860,18 @@ mod tests {
     fn test_axa_absolute_y() {
         let memory = Memory::new();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AXA_ABSY, 0x00, 0x40, BRK]; // Base address 0x4000
+        let program = vec![AXA_ABSY, 0x00, 0x30, BRK]; // Base address 0x3000
         load_program(&mut cpu, &program, 0x0600);
         cpu.reset();
         cpu.a = 0xFF;
         cpu.x = 0x3F;
-        cpu.y = 0x10; // Final address = 0x4010
+        cpu.y = 0x10; // Final address = 0x3010
         run(&mut cpu);
         // Value = A AND X AND (high byte of address + 1)
-        // high byte of final address 0x4010 is 0x40
-        // Value = 0xFF AND 0x3F AND (0x40 + 1) = 0xFF AND 0x3F AND 0x41 = 0x01
-        let stored_value = cpu.memory.borrow().read(0x4010);
-        assert_eq!(stored_value, 0x01);
+        // high byte of final address 0x3010 is 0x30
+        // Value = 0xFF AND 0x3F AND (0x30 + 1) = 0xFF AND 0x3F AND 0x31 = 0x31
+        let stored_value = cpu.memory.borrow().read(0x3010);
+        assert_eq!(stored_value, 0x31);
     }
 
     #[test]
@@ -4703,16 +4988,16 @@ mod tests {
         let memory = Memory::new();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00);
-        cpu.memory.borrow_mut().write(0x21, 0x40);
+        cpu.memory.borrow_mut().write(0x21, 0x30);
         let program = vec![DCP_INDY, 0x20, BRK];
         load_program(&mut cpu, &program, 0x0600);
         cpu.reset();
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x4010, 0x05);
+        cpu.memory.borrow_mut().write(0x3010, 0x05);
         cpu.a = 0x03;
         run(&mut cpu);
-        // Memory at 0x4010: 0x05 - 1 = 0x04
-        assert_eq!(cpu.memory.borrow().read(0x4010), 0x04);
+        // Memory at 0x3010: 0x05 - 1 = 0x04
+        assert_eq!(cpu.memory.borrow().read(0x3010), 0x04);
         // Compare A (0x03) with memory (0x04): 0x03 < 0x04
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // A < memory (borrow)
@@ -4778,5 +5063,426 @@ mod tests {
         assert_eq!(cpu.x, 0x20); // X unchanged
         assert_eq!(cpu.y, 0x30); // Y unchanged
         assert_eq!(cpu.p, saved_status); // Status unchanged
+    }
+
+    #[test]
+    fn test_isc_zero_page() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ISC_ZP, 0x42, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.memory.borrow_mut().write(0x42, 0x10);
+        cpu.a = 0x50;
+        cpu.p |= FLAG_CARRY; // Set carry (no borrow)
+        run(&mut cpu);
+        // Memory at 0x42: 0x10 + 1 = 0x11
+        assert_eq!(cpu.memory.borrow().read(0x42), 0x11);
+        // Then SBC: A = 0x50 - 0x11 - (1 - carry) = 0x50 - 0x11 - 0 = 0x3F
+        assert_eq!(cpu.a, 0x3F);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // No borrow
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_isc_absolute_x() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![ISC_ABSX, 0x00, 0x30, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x3005, 0xFF);
+        cpu.a = 0x00;
+        cpu.p |= FLAG_CARRY; // Set carry (no borrow)
+        run(&mut cpu);
+        // Memory at 0x3005: 0xFF + 1 = 0x00 (wraps)
+        assert_eq!(cpu.memory.borrow().read(0x3005), 0x00);
+        // Then SBC: A = 0x00 - 0x00 - 0 = 0x00
+        assert_eq!(cpu.a, 0x00);
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // No borrow
+    }
+
+    #[test]
+    fn test_isc_indirect_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        cpu.memory.borrow_mut().write(0x20, 0x00);
+        cpu.memory.borrow_mut().write(0x21, 0x30);
+        let program = vec![ISC_INDY, 0x20, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x3010, 0x05);
+        cpu.a = 0x10;
+        cpu.p |= FLAG_CARRY; // Set carry (no borrow)
+        run(&mut cpu);
+        // Memory at 0x3010: 0x05 + 1 = 0x06
+        assert_eq!(cpu.memory.borrow().read(0x3010), 0x06);
+        // Then SBC: A = 0x10 - 0x06 - 0 = 0x0A
+        assert_eq!(cpu.a, 0x0A);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_kil_opcode_0x02() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![KIL];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        // KIL should return false to indicate the CPU is halted
+        assert_eq!(cpu.run_opcode(), false);
+    }
+
+    #[test]
+    fn test_kil_opcode_0x12() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![KIL2];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        assert_eq!(cpu.run_opcode(), false);
+    }
+
+    #[test]
+    fn test_kil_opcode_0xf2() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![KIL12];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        assert_eq!(cpu.run_opcode(), false);
+    }
+
+    #[test]
+    fn test_kil_halts_until_reset() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![KIL, NOP, NOP];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        // Execute KIL - should halt
+        assert_eq!(cpu.run_opcode(), false);
+        assert!(cpu.halted);
+        // Try to execute next opcode - should still be halted
+        assert_eq!(cpu.run_opcode(), false);
+        assert!(cpu.halted);
+        // Reset should clear halt
+        cpu.reset();
+        assert!(!cpu.halted);
+        // Load a simple NOP program and verify we can execute it
+        let program2 = vec![NOP];
+        load_program(&mut cpu, &program2, 0x0600);
+        cpu.reset();
+        assert_eq!(cpu.run_opcode(), true);
+    }
+
+    #[test]
+    fn test_lar_absolute_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![LAR_ABSY, 0x00, 0x30, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.y = 0x05;
+        cpu.sp = 0xFD;
+        cpu.memory.borrow_mut().write(0x3005, 0xAB);
+        run(&mut cpu);
+        // LAR: SP & M -> A, X, SP
+        // 0xFD & 0xAB = 0xA9
+        assert_eq!(cpu.a, 0xA9);
+        assert_eq!(cpu.x, 0xA9);
+        assert_eq!(cpu.sp, 0xA9);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Bit 7 is set
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_lax_zero_page() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![LAX_ZP, 0x42, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.memory.borrow_mut().write(0x42, 0x55);
+        run(&mut cpu);
+        // LAX: Load both A and X with memory value
+        assert_eq!(cpu.a, 0x55);
+        assert_eq!(cpu.x, 0x55);
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_lax_absolute_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![LAX_ABSY, 0x00, 0x30, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x3010, 0x80);
+        run(&mut cpu);
+        // LAX: Load both A and X with memory value
+        assert_eq!(cpu.a, 0x80);
+        assert_eq!(cpu.x, 0x80);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Bit 7 is set
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_lax_indirect_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        cpu.memory.borrow_mut().write(0x20, 0x00);
+        cpu.memory.borrow_mut().write(0x21, 0x30);
+        let program = vec![LAX_INDY, 0x20, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.y = 0x05;
+        cpu.memory.borrow_mut().write(0x3005, 0x00);
+        run(&mut cpu);
+        // LAX: Load both A and X with memory value (0x00)
+        assert_eq!(cpu.a, 0x00);
+        assert_eq!(cpu.x, 0x00);
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Zero flag set
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_nop_undocumented_0x1a() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![NOP_IMP, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        let a_before = cpu.a;
+        let x_before = cpu.x;
+        let y_before = cpu.y;
+        let p_before = cpu.p;
+        run(&mut cpu);
+        // NOP should not change any registers or flags
+        assert_eq!(cpu.a, a_before);
+        assert_eq!(cpu.x, x_before);
+        assert_eq!(cpu.y, y_before);
+        assert_eq!(cpu.p, p_before);
+    }
+
+    #[test]
+    fn test_nop_undocumented_0xda() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![NOP_IMP5, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0x42;
+        cpu.x = 0x55;
+        let a_before = cpu.a;
+        let x_before = cpu.x;
+        run(&mut cpu);
+        // NOP should not change any registers
+        assert_eq!(cpu.a, a_before);
+        assert_eq!(cpu.x, x_before);
+    }
+
+    #[test]
+    fn test_rla_zero_page() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![RLA_ZP, 0x42, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.memory.borrow_mut().write(0x42, 0b0110_1010); // 0x6A
+        cpu.a = 0b1111_0000; // 0xF0
+        cpu.p &= !FLAG_CARRY; // Clear carry
+        run(&mut cpu);
+        // RLA: ROL memory (0x6A << 1 = 0xD4), then AND with A
+        // Memory should be 0xD4, A should be 0xF0 & 0xD4 = 0xD0
+        assert_eq!(cpu.memory.borrow().read(0x42), 0xD4);
+        assert_eq!(cpu.a, 0xD0);
+        assert_eq!(cpu.p & FLAG_CARRY, 0); // Carry clear (bit 7 was 0)
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Negative set
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_rla_absolute_x() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![RLA_ABSX, 0x00, 0x30, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x3005, 0b1000_0001); // 0x81
+        cpu.a = 0xFF;
+        cpu.p |= FLAG_CARRY; // Set carry
+        run(&mut cpu);
+        // RLA: ROL memory (0x81 << 1 + carry = 0x03), then AND with A
+        // Memory should be 0x03, A should be 0xFF & 0x03 = 0x03
+        assert_eq!(cpu.memory.borrow().read(0x3005), 0x03);
+        assert_eq!(cpu.a, 0x03);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry set (bit 7 was 1)
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_rla_indirect_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        cpu.memory.borrow_mut().write(0x20, 0x00);
+        cpu.memory.borrow_mut().write(0x21, 0x30);
+        let program = vec![RLA_INDY, 0x20, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x3010, 0x01);
+        cpu.a = 0x01;
+        cpu.p &= !FLAG_CARRY;
+        run(&mut cpu);
+        // RLA: ROL memory (0x01 << 1 = 0x02), then AND with A
+        // Memory should be 0x02, A should be 0x01 & 0x02 = 0x00
+        assert_eq!(cpu.memory.borrow().read(0x3010), 0x02);
+        assert_eq!(cpu.a, 0x00);
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Zero flag set
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_rra_zero_page() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![RRA_ZP, 0x10, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.memory.borrow_mut().write(0x10, 0b1010_1010); // 0xAA
+        cpu.a = 0x10;
+        cpu.p &= !FLAG_CARRY; // Clear carry
+        run(&mut cpu);
+        // RRA: ROR memory (0xAA >> 1 = 0x55), then ADC with A (0x10 + 0x55 = 0x65)
+        assert_eq!(cpu.memory.borrow().read(0x10), 0x55);
+        assert_eq!(cpu.a, 0x65);
+        assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry from addition
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_rra_absolute_x() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![RRA_ABSX, 0x00, 0x30, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x3005, 0b0000_0001); // 0x01
+        cpu.a = 0xFF;
+        cpu.p |= FLAG_CARRY; // Set carry
+        run(&mut cpu);
+        // RRA: ROR memory (0x01 >> 1 with carry = 0x80), then ADC with A (0xFF + 0x80 + carry=1)
+        // Memory rotates to 0x80 (carry goes into bit 7), bit 0 goes to carry
+        // Then: 0xFF + 0x80 + 1 (carry from ROR) = 0x180 = 0x80 with carry set
+        assert_eq!(cpu.memory.borrow().read(0x3005), 0x80);
+        assert_eq!(cpu.a, 0x80);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry from addition
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Result is negative
+    }
+
+    #[test]
+    fn test_rra_indirect_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        cpu.memory.borrow_mut().write(0x20, 0x00);
+        cpu.memory.borrow_mut().write(0x21, 0x30);
+        let program = vec![RRA_INDY, 0x20, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x3010, 0b0000_0010); // 0x02
+        cpu.a = 0x00;
+        cpu.p &= !FLAG_CARRY;
+        run(&mut cpu);
+        // RRA: ROR memory (0x02 >> 1 = 0x01), then ADC with A (0x00 + 0x01 = 0x01)
+        assert_eq!(cpu.memory.borrow().read(0x3010), 0x01);
+        assert_eq!(cpu.a, 0x01);
+        assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_sbc_immediate_undocumented() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![SBC_IMM2, 0x01, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0x05;
+        cpu.p |= FLAG_CARRY; // Set carry (no borrow)
+        run(&mut cpu);
+        // Undocumented SBC: same as legal SBC #byte
+        // 0x05 - 0x01 = 0x04
+        assert_eq!(cpu.a, 0x04);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // No borrow
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_slo_zero_page() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![SLO_ZP, 0x10, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.memory.borrow_mut().write(0x10, 0b0101_0101); // 0x55
+        cpu.a = 0b0000_1111; // 0x0F
+        run(&mut cpu);
+        // SLO: ASL memory (0x55 << 1 = 0xAA), then ORA with A (0x0F | 0xAA = 0xAF)
+        assert_eq!(cpu.memory.borrow().read(0x10), 0xAA);
+        assert_eq!(cpu.a, 0xAF);
+        assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry from shift
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Result is negative
+    }
+
+    #[test]
+    fn test_slo_absolute_x() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![SLO_ABSX, 0x00, 0x30, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x3005, 0b1000_0001); // 0x81
+        cpu.a = 0b0000_0010; // 0x02
+        run(&mut cpu);
+        // SLO: ASL memory (0x81 << 1 = 0x02, carry set), then ORA with A (0x02 | 0x02 = 0x02)
+        assert_eq!(cpu.memory.borrow().read(0x3005), 0x02);
+        assert_eq!(cpu.a, 0x02);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry from shift
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_slo_indirect_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        cpu.memory.borrow_mut().write(0x20, 0x00);
+        cpu.memory.borrow_mut().write(0x21, 0x30);
+        let program = vec![SLO_INDY, 0x20, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x3010, 0b0000_0001); // 0x01
+        cpu.a = 0b0000_0000; // 0x00
+        run(&mut cpu);
+        // SLO: ASL memory (0x01 << 1 = 0x02), then ORA with A (0x00 | 0x02 = 0x02)
+        assert_eq!(cpu.memory.borrow().read(0x3010), 0x02);
+        assert_eq!(cpu.a, 0x02);
+        assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
     }
 }
