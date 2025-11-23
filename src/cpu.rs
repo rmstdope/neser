@@ -689,7 +689,10 @@ impl Cpu {
                 self.memory.borrow_mut().write(addr, result);
             }
             RTI => {
-                self.p = self.pop_byte();
+                let value = self.pop_byte();
+                // RTI behaves like PLP - ignores B flag and unused bit
+                // Load bits 0-3 and 6-7 from stack, always set unused bit to 1, clear B flag
+                self.p = (value & !(FLAG_BREAK | FLAG_UNUSED)) | FLAG_UNUSED;
                 self.pc = self.pop_word();
             }
             RTS => {
@@ -3598,7 +3601,9 @@ mod tests {
         cpu.memory.borrow_mut().write(0x01FF, 0x12); // PC high byte
         cpu.memory.borrow_mut().write(0x1234, BRK); // BRK at return address
         run(&mut cpu);
-        assert_eq!(cpu.p, 0b11010011);
+        // RTI should behave like PLP - ignore B flag and unused bit, always set unused to 1
+        // 0b11010011 with B flag cleared and unused set: 0b11100011 = 0xE3
+        assert_eq!(cpu.p, 0b11100011);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK instruction
         assert_eq!(cpu.sp, 0xFF);
     }
