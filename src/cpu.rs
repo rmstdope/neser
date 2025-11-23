@@ -765,6 +765,22 @@ impl Cpu {
                 let addr = self.read_word().wrapping_add(self.x as u16);
                 self.memory.borrow_mut().write(addr, self.a);
             }
+            SXA_ABSY => {
+                // Undocumented: Store X AND (HIGH(addr) + 1) at addr,Y
+                let base_addr = self.read_word();
+                let addr = base_addr.wrapping_add(self.y as u16);
+                let high_byte = (base_addr >> 8) as u8;
+                let result = self.x & high_byte.wrapping_add(1);
+                self.memory.borrow_mut().write(addr, result);
+            }
+            SYA_ABSX => {
+                // Undocumented: Store Y AND (HIGH(addr) + 1) at addr,X
+                let base_addr = self.read_word();
+                let addr = base_addr.wrapping_add(self.x as u16);
+                let high_byte = (base_addr >> 8) as u8;
+                let result = self.y & high_byte.wrapping_add(1);
+                self.memory.borrow_mut().write(addr, result);
+            }
             STA_ABSY => {
                 let addr = self.read_word().wrapping_add(self.y as u16);
                 self.memory.borrow_mut().write(addr, self.a);
@@ -1217,7 +1233,66 @@ impl Cpu {
                 let addr = self.read_word().wrapping_add(self.x as u16);
                 self.slo(addr);
             }
-            _ => todo!(),
+            SRE_INDX => {
+                // Undocumented: LSR memory, then EOR with accumulator (Indirect,X)
+                let zp_addr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(zp_addr);
+                self.sre(addr);
+            }
+            SRE_ZP => {
+                // Undocumented: LSR memory, then EOR with accumulator (Zero Page)
+                let addr = self.read_byte() as u16;
+                self.sre(addr);
+            }
+            SRE_ABS => {
+                // Undocumented: LSR memory, then EOR with accumulator (Absolute)
+                let addr = self.read_word();
+                self.sre(addr);
+            }
+            SRE_INDY => {
+                // Undocumented: LSR memory, then EOR with accumulator (Indirect,Y)
+                let zp_addr = self.read_byte();
+                let base_addr = self.read_word_from_zp(zp_addr);
+                let addr = base_addr.wrapping_add(self.y as u16);
+                self.sre(addr);
+            }
+            SRE_ZPX => {
+                // Undocumented: LSR memory, then EOR with accumulator (Zero Page,X)
+                let addr = self.read_byte().wrapping_add(self.x) as u16;
+                self.sre(addr);
+            }
+            SRE_ABSY => {
+                // Undocumented: LSR memory, then EOR with accumulator (Absolute,Y)
+                let addr = self.read_word().wrapping_add(self.y as u16);
+                self.sre(addr);
+            }
+            SRE_ABSX => {
+                // Undocumented: LSR memory, then EOR with accumulator (Absolute,X)
+                let addr = self.read_word().wrapping_add(self.x as u16);
+                self.sre(addr);
+            }
+            TOP_ABS | TOP_ABSX | TOP_ABSX2 | TOP_ABSX3 | TOP_ABSX4 | TOP_ABSX5 | TOP_ABSX6 => {
+                // Undocumented: Triple NOP - 3-byte no operation
+                self.read_word(); // Read and discard the 2-byte argument
+            }
+            XAA_IMM => {
+                // Undocumented: Highly unstable opcode
+                // A = (A | MAGIC) & X & immediate
+                // MAGIC constant is typically 0xEE on most CPUs
+                let value = self.read_byte();
+                const MAGIC: u8 = 0xEE;
+                self.a = (self.a | MAGIC) & self.x & value;
+                self.update_zero_and_negative_flags(self.a);
+            }
+            XAS_ABSY => {
+                // Undocumented: Store A AND X in SP, then store SP AND (HIGH(addr) + 1) at addr,Y
+                let base_addr = self.read_word();
+                let addr = base_addr.wrapping_add(self.y as u16);
+                self.sp = self.a & self.x;
+                let high_byte = (base_addr >> 8) as u8;
+                let result = self.sp & high_byte.wrapping_add(1);
+                self.memory.borrow_mut().write(addr, result);
+            }
         }
         true
     }
@@ -1479,6 +1554,14 @@ impl Cpu {
         let shifted = self.asl(value);
         self.memory.borrow_mut().write(addr, shifted);
         self.ora(shifted);
+    }
+
+    /// SRE - Undocumented opcode: Shift right memory then EOR with accumulator
+    fn sre(&mut self, addr: u16) {
+        let value = self.memory.borrow().read(addr);
+        let shifted = self.lsr(value);
+        self.memory.borrow_mut().write(addr, shifted);
+        self.eor(shifted);
     }
 
     /// Load Accumulator - LDA operation
@@ -5484,5 +5567,170 @@ mod tests {
         assert_eq!(cpu.a, 0x02);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry
         assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_sre_zero_page() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        cpu.memory.borrow_mut().write(0x42, 0b0000_0110); // 0x06
+        let program = vec![SRE_ZP, 0x42, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b0000_0001; // 0x01
+        run(&mut cpu);
+        // SRE: LSR memory (0x06 >> 1 = 0x03), then EOR with A (0x01 ^ 0x03 = 0x02)
+        assert_eq!(cpu.memory.borrow().read(0x42), 0x03);
+        assert_eq!(cpu.a, 0x02);
+        assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry from shift
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_sre_absolute_x() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        cpu.memory.borrow_mut().write(0x20, 0x00);
+        cpu.memory.borrow_mut().write(0x21, 0x30);
+        let program = vec![SRE_ABSX, 0x00, 0x30, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.x = 0x10;
+        cpu.memory.borrow_mut().write(0x3010, 0b0000_0101); // 0x05
+        cpu.a = 0b0000_0011; // 0x03
+        run(&mut cpu);
+        // SRE: LSR memory (0x05 >> 1 = 0x02 with carry), then EOR with A (0x03 ^ 0x02 = 0x01)
+        assert_eq!(cpu.memory.borrow().read(0x3010), 0x02);
+        assert_eq!(cpu.a, 0x01);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry from LSR
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+    }
+
+    #[test]
+    fn test_sre_indirect_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        cpu.memory.borrow_mut().write(0x20, 0x00);
+        cpu.memory.borrow_mut().write(0x21, 0x30);
+        let program = vec![SRE_INDY, 0x20, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x3010, 0b0000_1000); // 0x08
+        cpu.a = 0b0000_0100; // 0x04
+        run(&mut cpu);
+        // SRE: LSR memory (0x08 >> 1 = 0x04), then EOR with A (0x04 ^ 0x04 = 0x00)
+        assert_eq!(cpu.memory.borrow().read(0x3010), 0x04);
+        assert_eq!(cpu.a, 0x00);
+        assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Result is zero
+    }
+
+    #[test]
+    fn test_sxa_absolute_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        // Test SXA with Absolute,Y addressing
+        // SXA stores X AND (HIGH(addr) + 1) at the target address
+        // If addr = 0x3000 and Y = 0x10, target = 0x3010
+        // HIGH(0x3000) + 1 = 0x30 + 1 = 0x31
+        // If X = 0xFF, result = 0xFF AND 0x31 = 0x31
+        let program = vec![SXA_ABSY, 0x00, 0x30, BRK]; // SXA $3000,Y
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.x = 0xFF;
+        cpu.y = 0x10;
+        run(&mut cpu);
+        assert_eq!(cpu.memory.borrow().read(0x3010), 0x31); // X AND (0x30 + 1)
+    }
+
+    #[test]
+    fn test_sya_absolute_x() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        // Test SYA with Absolute,X addressing
+        // SYA stores Y AND (HIGH(addr) + 1) at the target address
+        // If addr = 0x3000 and X = 0x10, target = 0x3010
+        // HIGH(0x3000) + 1 = 0x30 + 1 = 0x31
+        // If Y = 0xFF, result = 0xFF AND 0x31 = 0x31
+        let program = vec![SYA_ABSX, 0x00, 0x30, BRK]; // SYA $3000,X
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.y = 0xFF;
+        cpu.x = 0x10;
+        run(&mut cpu);
+        assert_eq!(cpu.memory.borrow().read(0x3010), 0x31); // Y AND (0x30 + 1)
+    }
+
+    #[test]
+    fn test_top_absolute() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        // Test TOP with Absolute addressing - should do nothing
+        let program = vec![TOP_ABS, 0x00, 0x30, BRK]; // TOP $3000
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0x42;
+        run(&mut cpu);
+        // TOP should not affect any registers or memory
+        assert_eq!(cpu.a, 0x42);
+    }
+
+    #[test]
+    fn test_top_absolute_x() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        // Test TOP with Absolute,X addressing - should do nothing
+        let program = vec![TOP_ABSX, 0x00, 0x30, BRK]; // TOP $3000,X
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.x = 0x10;
+        cpu.a = 0x42;
+        run(&mut cpu);
+        // TOP should not affect any registers or memory
+        assert_eq!(cpu.a, 0x42);
+        assert_eq!(cpu.x, 0x10);
+    }
+
+    #[test]
+    fn test_xaa_immediate() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        // XAA performs: A = (A | MAGIC) & X & immediate
+        // Using MAGIC = 0xEE (common value)
+        // A = 0xFF, X = 0xF0, immediate = 0x0F
+        // Result: (0xFF | 0xEE) & 0xF0 & 0x0F = 0xFF & 0xF0 & 0x0F = 0x00
+        let program = vec![XAA_IMM, 0x0F, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0xFF;
+        cpu.x = 0xF0;
+        run(&mut cpu);
+        assert_eq!(cpu.a, 0x00);
+        // Zero flag should be set
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
+        // Negative flag should be clear
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_xas_absolute_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        // XAS performs: SP = A & X, then M = SP & (HIGH(addr) + 1)
+        // A = 0xFF, X = 0xF0 -> SP = 0xF0
+        // addr = 0x3000, Y = 0x10 -> effective addr = 0x3010
+        // HIGH(0x3000) = 0x30, so result = 0xF0 & 0x31 = 0x30
+        let program = vec![XAS_ABSY, 0x00, 0x30, BRK]; // XAS $3000,Y
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0xFF;
+        cpu.x = 0xF0;
+        cpu.y = 0x10;
+        run(&mut cpu);
+        // SP should be A & X
+        assert_eq!(cpu.sp, 0xF0);
+        // Memory at $3010 should be SP & (HIGH(addr) + 1) = 0xF0 & 0x31 = 0x30
+        assert_eq!(cpu.memory.borrow().read(0x3010), 0x30);
     }
 }
