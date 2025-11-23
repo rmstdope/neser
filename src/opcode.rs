@@ -188,6 +188,14 @@ pub const SBC_ABSY: u8 = 0xF9;
 pub const SBC_ABSX: u8 = 0xFD;
 pub const INC_ABSX: u8 = 0xFE;
 
+// Undocumented opcodes
+pub const AAC_IMM: u8 = 0x0B;
+pub const AAC_IMM2: u8 = 0x2B;
+pub const AAX_INDX: u8 = 0x83;
+pub const AAX_ZP: u8 = 0x87;
+pub const AAX_ABS: u8 = 0x8F;
+pub const AAX_ZPY: u8 = 0x97;
+
 // Complete NES 6502 opcode table
 pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(BRK, "BRK", "IMP"),
@@ -197,6 +205,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(PHP, "PHP", "IMP"),
     OpCode::new(ORA_IMM, "ORA", "IMM"),
     OpCode::new(ASL_A, "ASL", "ACC"),
+    OpCode::new(AAC_IMM, "AAC", "IMM"),
     OpCode::new(ORA_ABS, "ORA", "ABS"),
     OpCode::new(ASL_ABS, "ASL", "ABS"),
     OpCode::new(BPL, "BPL", "REL"),
@@ -215,6 +224,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(PLP, "PLP", "IMP"),
     OpCode::new(AND_IMM, "AND", "IMM"),
     OpCode::new(ROL_ACC, "ROL", "ACC"),
+    OpCode::new(AAC_IMM2, "AAC", "IMM"),
     OpCode::new(BIT_ABS, "BIT", "ABS"),
     OpCode::new(AND_ABS, "AND", "ABS"),
     OpCode::new(ROL_ABS, "ROL", "ABS"),
@@ -263,19 +273,23 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(ADC_ABSX, "ADC", "ABSX"),
     OpCode::new(ROR_ABSX, "ROR", "ABSX"),
     OpCode::new(STA_INDX, "STA", "INDX"),
+    OpCode::new(AAX_INDX, "AAX", "INDX"),
     OpCode::new(STY_ZP, "STY", "ZP"),
     OpCode::new(STA_ZP, "STA", "ZP"),
     OpCode::new(STX_ZP, "STX", "ZP"),
+    OpCode::new(AAX_ZP, "AAX", "ZP"),
     OpCode::new(DEY, "DEY", "IMP"),
     OpCode::new(TXA, "TXA", "IMP"),
     OpCode::new(STY_ABS, "STY", "ABS"),
     OpCode::new(STA_ABS, "STA", "ABS"),
     OpCode::new(STX_ABS, "STX", "ABS"),
+    OpCode::new(AAX_ABS, "AAX", "ABS"),
     OpCode::new(BCC, "BCC", "REL"),
     OpCode::new(STA_INDY, "STA", "INDY"),
     OpCode::new(STY_ZPX, "STY", "ZPX"),
     OpCode::new(STA_ZPX, "STA", "ZPX"),
     OpCode::new(STX_ZPY, "STX", "ZPY"),
+    OpCode::new(AAX_ZPY, "AAX", "ZPY"),
     OpCode::new(TYA, "TYA", "IMP"),
     OpCode::new(STA_ABSY, "STA", "ABSY"),
     OpCode::new(TXS, "TXS", "IMP"),
@@ -388,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_opcodes_table_count() {
-        assert_eq!(OPCODE_TABLE.len(), 151);
+        assert_eq!(OPCODE_TABLE.len(), 157);
     }
 
     #[test]

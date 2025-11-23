@@ -126,6 +126,13 @@ impl Cpu {
                 let value = self.read_byte();
                 self.and(value);
             }
+            AAC_IMM | AAC_IMM2 => {
+                // Undocumented: AND with accumulator, then copy bit 7 to carry
+                let value = self.read_byte();
+                self.and(value);
+                let carry = if self.a & 0x80 != 0 { FLAG_CARRY } else { 0 };
+                self.p = (self.p & !FLAG_CARRY) | carry;
+            }
             AND_ZP => {
                 let addr = self.read_byte() as u16;
                 let value = self.memory.borrow().read(addr);
@@ -769,6 +776,31 @@ impl Cpu {
                 let ptr = self.read_byte();
                 let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
                 self.memory.borrow_mut().write(addr, self.a);
+            }
+            AAX_ZP => {
+                // Undocumented: Store A AND X
+                let addr = self.read_byte() as u16;
+                let value = self.a & self.x;
+                self.memory.borrow_mut().write(addr, value);
+            }
+            AAX_ZPY => {
+                // Undocumented: Store A AND X
+                let addr = self.read_byte().wrapping_add(self.y) as u16;
+                let value = self.a & self.x;
+                self.memory.borrow_mut().write(addr, value);
+            }
+            AAX_ABS => {
+                // Undocumented: Store A AND X
+                let addr = self.read_word();
+                let value = self.a & self.x;
+                self.memory.borrow_mut().write(addr, value);
+            }
+            AAX_INDX => {
+                // Undocumented: Store A AND X
+                let ptr = self.read_byte().wrapping_add(self.x);
+                let addr = self.read_word_from_zp(ptr);
+                let value = self.a & self.x;
+                self.memory.borrow_mut().write(addr, value);
             }
             TXS => {
                 self.sp = self.x;
@@ -4150,5 +4182,93 @@ mod tests {
         assert_eq!(cpu.memory.borrow().read(0x0600), LDA_IMM);
         assert_eq!(cpu.memory.borrow().read(0x0601), 0x42);
         assert_eq!(cpu.memory.borrow().read(0x0602), BRK);
+    }
+
+    #[test]
+    fn test_aac_sets_carry_when_bit7_set() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AAC_IMM, 0b11000000, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11111111;
+        cpu.p = 0x00;
+        run(&mut cpu);
+        assert_eq!(cpu.a, 0b11000000);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
+    }
+
+    #[test]
+    fn test_aac_clears_carry_when_bit7_clear() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AAC_IMM, 0b01000000, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11111111;
+        cpu.p = FLAG_CARRY;
+        run(&mut cpu);
+        assert_eq!(cpu.a, 0b01000000);
+        assert_eq!(cpu.p & FLAG_CARRY, 0);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+    }
+
+    #[test]
+    fn test_aax_zero_page() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AAX_ZP, 0x50, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11110000;
+        cpu.x = 0b10101010;
+        run(&mut cpu);
+        assert_eq!(cpu.memory.borrow().read(0x0050), 0b10100000);
+    }
+
+    #[test]
+    fn test_aax_zero_page_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AAX_ZPY, 0x50, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11110000;
+        cpu.x = 0b10101010;
+        cpu.y = 0x05;
+        run(&mut cpu);
+        assert_eq!(cpu.memory.borrow().read(0x0055), 0b10100000);
+    }
+
+    #[test]
+    fn test_aax_absolute() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AAX_ABS, 0x00, 0x20, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11110000;
+        cpu.x = 0b10101010;
+        run(&mut cpu);
+        assert_eq!(cpu.memory.borrow().read(0x2000), 0b10100000);
+    }
+
+    #[test]
+    fn test_aax_indexed_indirect() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AAX_INDX, 0x40, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0b11111111;
+        cpu.x = 0b10101010;
+        // The pointer is at 0x40 + X (wrapping in zero page)
+        // So we need to set up the pointer at 0x40 + 0xAA = 0xEA
+        cpu.memory.borrow_mut().write(0x00EA, 0x00);
+        cpu.memory.borrow_mut().write(0x00EB, 0x30);
+        run(&mut cpu);
+        // Should store A & X = 0b11111111 & 0b10101010 = 0b10101010 at 0x3000
+        assert_eq!(cpu.memory.borrow().read(0x3000), 0b10101010);
     }
 }
