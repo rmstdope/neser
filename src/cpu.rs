@@ -851,26 +851,26 @@ impl Cpu {
                 let carry = if self.a & 0x80 != 0 { FLAG_CARRY } else { 0 };
                 self.p = (self.p & !FLAG_CARRY) | carry;
             }
-            AAX_INDX => {
+            SAX_INDX => {
                 // Undocumented: Store A AND X
                 let ptr = self.read_byte().wrapping_add(self.x);
                 let addr = self.read_word_from_zp(ptr);
                 let value = self.a & self.x;
                 self.memory.borrow_mut().write(addr, value);
             }
-            AAX_ZP => {
+            SAX_ZP => {
                 // Undocumented: Store A AND X
                 let addr = self.read_byte() as u16;
                 let value = self.a & self.x;
                 self.memory.borrow_mut().write(addr, value);
             }
-            AAX_ZPY => {
+            SAX_ZPY => {
                 // Undocumented: Store A AND X
                 let addr = self.read_byte().wrapping_add(self.y) as u16;
                 let value = self.a & self.x;
                 self.memory.borrow_mut().write(addr, value);
             }
-            AAX_ABS => {
+            SAX_ABS => {
                 // Undocumented: Store A AND X
                 let addr = self.read_word();
                 let value = self.a & self.x;
@@ -991,7 +991,7 @@ impl Cpu {
                 // Undocumented: Double NOP - read operand byte and discard
                 let _ = self.read_byte();
             }
-            ISC_INDX => {
+            ISB_INDX => {
                 // Undocumented: Increment memory then subtract from A with borrow
                 let zp_addr = self.read_byte().wrapping_add(self.x);
                 let addr_lo = self.memory.borrow().read(zp_addr as u16);
@@ -999,17 +999,17 @@ impl Cpu {
                 let addr = u16::from_le_bytes([addr_lo, addr_hi]);
                 self.isc(addr);
             }
-            ISC_ZP => {
+            ISB_ZP => {
                 // Undocumented: Increment memory then subtract from A with borrow
                 let addr = self.read_byte() as u16;
                 self.isc(addr);
             }
-            ISC_ABS => {
+            ISB_ABS => {
                 // Undocumented: Increment memory then subtract from A with borrow
                 let addr = self.read_word();
                 self.isc(addr);
             }
-            ISC_INDY => {
+            ISB_INDY => {
                 // Undocumented: Increment memory then subtract from A with borrow
                 let zp_addr = self.read_byte();
                 let addr_lo = self.memory.borrow().read(zp_addr as u16);
@@ -1018,17 +1018,17 @@ impl Cpu {
                 let addr = base_addr.wrapping_add(self.y as u16);
                 self.isc(addr);
             }
-            ISC_ZPX => {
+            ISB_ZPX => {
                 // Undocumented: Increment memory then subtract from A with borrow
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
                 self.isc(addr);
             }
-            ISC_ABSY => {
+            ISB_ABSY => {
                 // Undocumented: Increment memory then subtract from A with borrow
                 let addr = self.read_word().wrapping_add(self.y as u16);
                 self.isc(addr);
             }
-            ISC_ABSX => {
+            ISB_ABSX => {
                 // Undocumented: Increment memory then subtract from A with borrow
                 let addr = self.read_word().wrapping_add(self.x as u16);
                 self.isc(addr);
@@ -4635,7 +4635,7 @@ mod tests {
     #[test]
     fn test_write_u16_to_addr() {
         let memory = Memory::new();
-        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write_u16(0x1234, 0xABCD);
         assert_eq!(cpu.memory.borrow().read(0x1234), 0xCD); // Low byte
         assert_eq!(cpu.memory.borrow().read(0x1235), 0xAB); // High byte
@@ -4644,7 +4644,7 @@ mod tests {
     #[test]
     fn test_read_u16_from_addr() {
         let memory = Memory::new();
-        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x1234, 0xCD); // Low byte
         cpu.memory.borrow_mut().write(0x1235, 0xAB); // High byte
         let result = cpu.memory.borrow().read_u16(0x1234);
@@ -4654,7 +4654,7 @@ mod tests {
     #[test]
     fn test_write_and_read_u16() {
         let memory = Memory::new();
-        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write_u16(0x3000, 0x1234);
         let result = cpu.memory.borrow().read_u16(0x3000);
         assert_eq!(result, 0x1234);
@@ -4706,10 +4706,10 @@ mod tests {
     }
 
     #[test]
-    fn test_aax_zero_page() {
+    fn test_sax_zero_page() {
         let memory = Memory::new();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AAX_ZP, 0x50, BRK];
+        let program = vec![SAX_ZP, 0x50, BRK];
         load_program(&mut cpu, &program, 0x0600);
         cpu.reset();
         cpu.a = 0b11110000;
@@ -4719,10 +4719,10 @@ mod tests {
     }
 
     #[test]
-    fn test_aax_zero_page_y() {
+    fn test_sax_zero_page_y() {
         let memory = Memory::new();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AAX_ZPY, 0x50, BRK];
+        let program = vec![SAX_ZPY, 0x50, BRK];
         load_program(&mut cpu, &program, 0x0600);
         cpu.reset();
         cpu.a = 0b11110000;
@@ -4733,10 +4733,10 @@ mod tests {
     }
 
     #[test]
-    fn test_aax_absolute() {
+    fn test_sax_absolute() {
         let memory = Memory::new();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AAX_ABS, 0x00, 0x20, BRK];
+        let program = vec![SAX_ABS, 0x00, 0x20, BRK];
         load_program(&mut cpu, &program, 0x0600);
         cpu.reset();
         cpu.a = 0b11110000;
@@ -4746,10 +4746,10 @@ mod tests {
     }
 
     #[test]
-    fn test_aax_indexed_indirect() {
+    fn test_sax_indexed_indirect() {
         let memory = Memory::new();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AAX_INDX, 0x40, BRK];
+        let program = vec![SAX_INDX, 0x40, BRK];
         load_program(&mut cpu, &program, 0x0600);
         cpu.reset();
         cpu.a = 0b11111111;
@@ -5149,10 +5149,10 @@ mod tests {
     }
 
     #[test]
-    fn test_isc_zero_page() {
+    fn test_isb_zero_page() {
         let memory = Memory::new();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ISC_ZP, 0x42, BRK];
+        let program = vec![ISB_ZP, 0x42, BRK];
         load_program(&mut cpu, &program, 0x0600);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x10);
@@ -5169,10 +5169,10 @@ mod tests {
     }
 
     #[test]
-    fn test_isc_absolute_x() {
+    fn test_isb_absolute_x() {
         let memory = Memory::new();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ISC_ABSX, 0x00, 0x30, BRK];
+        let program = vec![ISB_ABSX, 0x00, 0x30, BRK];
         load_program(&mut cpu, &program, 0x0600);
         cpu.reset();
         cpu.x = 0x05;
@@ -5189,12 +5189,12 @@ mod tests {
     }
 
     #[test]
-    fn test_isc_indirect_y() {
+    fn test_isb_indirect_y() {
         let memory = Memory::new();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00);
         cpu.memory.borrow_mut().write(0x21, 0x30);
-        let program = vec![ISC_INDY, 0x20, BRK];
+        let program = vec![ISB_INDY, 0x20, BRK];
         load_program(&mut cpu, &program, 0x0600);
         cpu.reset();
         cpu.y = 0x10;
