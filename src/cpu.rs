@@ -34,8 +34,8 @@ const FLAG_CARRY: u8 = 0b0000_0001;
 const FLAG_ZERO: u8 = 0b0000_0010;
 const FLAG_INTERRUPT: u8 = 0b0000_0100;
 const FLAG_DECIMAL: u8 = 0b0000_1000;
-//const FLAG_BREAK: u8 = 0b0001_0000;
-//const FLAG_UNUSED: u8 = 0b0010_0000;
+const FLAG_BREAK: u8 = 0b0001_0000;
+const FLAG_UNUSED: u8 = 0b0010_0000;
 const FLAG_OVERFLOW: u8 = 0b0100_0000;
 const FLAG_NEGATIVE: u8 = 0b1000_0000;
 
@@ -782,7 +782,8 @@ impl Cpu {
                 self.update_zero_and_negative_flags(self.a);
             }
             PHP => {
-                self.push_byte(self.p);
+                // PHP pushes P with B flag and unused bit set to 1
+                self.push_byte(self.p | FLAG_BREAK | FLAG_UNUSED);
             }
             PLP => {
                 self.p = self.pop_byte();
@@ -3970,7 +3971,24 @@ mod tests {
         cpu.sp = 0xFD;
         run(&mut cpu);
         assert_eq!(cpu.sp, 0xFC);
+        // PHP should push P with B flag (bit 4) and unused bit (bit 5) set to 1
         assert_eq!(cpu.memory.borrow().read(0x01FD), 0xFF);
+    }
+
+    #[test]
+    fn test_php_sets_break_and_unused_bits() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![PHP, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        // Set status to 0xC0 (only N and V flags set, B and unused are 0)
+        cpu.p = 0xC0;
+        cpu.sp = 0xFD;
+        run(&mut cpu);
+        assert_eq!(cpu.sp, 0xFC);
+        // Should push 0xF0 (0xC0 | 0x30) - B flag and unused bit both set
+        assert_eq!(cpu.memory.borrow().read(0x01FD), 0xF0);
     }
 
     #[test]
