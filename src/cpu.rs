@@ -786,7 +786,10 @@ impl Cpu {
                 self.push_byte(self.p | FLAG_BREAK | FLAG_UNUSED);
             }
             PLP => {
-                self.p = self.pop_byte();
+                let value = self.pop_byte();
+                // PLP ignores B flag (bit 4) and unused bit (bit 5)
+                // Load bits 0-3 and 6-7 from stack, always set unused bit to 1, clear B flag
+                self.p = (value & !(FLAG_BREAK | FLAG_UNUSED)) | FLAG_UNUSED;
             }
             STX_ZP => {
                 let addr = self.read_byte() as u16;
@@ -4001,7 +4004,29 @@ mod tests {
         cpu.sp = 0xFC;
         cpu.memory.borrow_mut().write(0x01FD, 0xC3);
         run(&mut cpu);
-        assert_eq!(cpu.p, 0xC3);
+        // PLP should load flags but ignore B flag and always set unused bit (bit 5)
+        // 0xC3 = 0b11000011, after PLP with unused bit set: 0b11100011 = 0xE3
+        assert_eq!(cpu.p, 0xE3);
+        assert_eq!(cpu.sp, 0xFD);
+    }
+
+    #[test]
+    fn test_plp_ignores_break_and_unused_bits() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![PLP, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.sp = 0xFC;
+        // Stack has 0xFF (all bits set including B and unused)
+        cpu.memory.borrow_mut().write(0x01FD, 0xFF);
+        // But P register starts with B and unused cleared
+        cpu.p = 0xC0; // Only N and V set
+        run(&mut cpu);
+        // After PLP, P should be 0xEF (all bits except B flag)
+        // B flag (bit 4) should remain at its previous state
+        // Unused bit (bit 5) should remain set (always 1)
+        assert_eq!(cpu.p, 0xEF);
         assert_eq!(cpu.sp, 0xFD);
     }
 
