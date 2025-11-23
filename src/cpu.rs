@@ -894,6 +894,35 @@ impl Cpu {
                 self.x = self.a;
                 self.update_zero_and_negative_flags(self.a);
             }
+            AXA_INDY => {
+                // Undocumented: Store A AND X AND (high byte of address + 1)
+                let ptr = self.read_byte();
+                let base_addr = self.read_word_from_zp(ptr);
+                let addr = base_addr.wrapping_add(self.y as u16);
+                let high_byte = (addr >> 8) as u8;
+                let value = self.a & self.x & high_byte.wrapping_add(1);
+                self.memory.borrow_mut().write(addr, value);
+            }
+            AXA_ABSY => {
+                // Undocumented: Store A AND X AND (high byte of address + 1)
+                let base_addr = self.read_word();
+                let addr = base_addr.wrapping_add(self.y as u16);
+                let high_byte = (addr >> 8) as u8;
+                let value = self.a & self.x & high_byte.wrapping_add(1);
+                self.memory.borrow_mut().write(addr, value);
+            }
+            AXS_IMM => {
+                // Undocumented: AND X with A, then subtract immediate (without borrow)
+                let value = self.read_byte();
+                let temp = self.a & self.x;
+                let result = temp.wrapping_sub(value);
+
+                // Set carry flag (like CMP: set if no borrow, clear if borrow)
+                self.p = (self.p & !FLAG_CARRY) | if temp >= value { FLAG_CARRY } else { 0 };
+
+                self.x = result;
+                self.update_zero_and_negative_flags(self.x);
+            }
             _ => todo!(),
         }
         true
@@ -4469,5 +4498,116 @@ mod tests {
         assert_eq!(cpu.a, 0b10001000);
         assert_eq!(cpu.x, 0b10001000);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
+    }
+
+    #[test]
+    fn test_axa_indirect_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        // Set up indirect address at ZP location 0x20
+        cpu.memory.borrow_mut().write(0x20, 0x00); // Low byte
+        cpu.memory.borrow_mut().write(0x21, 0x30); // High byte = 0x30, so address is 0x3000
+        let program = vec![AXA_INDY, 0x20, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0xFF;
+        cpu.x = 0x7F;
+        cpu.y = 0x05; // Add 5 to base address, final address = 0x3005
+        run(&mut cpu);
+        // Value = A AND X AND (high byte of address + 1)
+        // high byte of final address 0x3005 is 0x30
+        // Value = 0xFF AND 0x7F AND (0x30 + 1) = 0xFF AND 0x7F AND 0x31 = 0x31
+        let stored_value = cpu.memory.borrow().read(0x3005);
+        assert_eq!(stored_value, 0x31);
+    }
+
+    #[test]
+    fn test_axa_absolute_y() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AXA_ABSY, 0x00, 0x40, BRK]; // Base address 0x4000
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0xFF;
+        cpu.x = 0x3F;
+        cpu.y = 0x10; // Final address = 0x4010
+        run(&mut cpu);
+        // Value = A AND X AND (high byte of address + 1)
+        // high byte of final address 0x4010 is 0x40
+        // Value = 0xFF AND 0x3F AND (0x40 + 1) = 0xFF AND 0x3F AND 0x41 = 0x01
+        let stored_value = cpu.memory.borrow().read(0x4010);
+        assert_eq!(stored_value, 0x01);
+    }
+
+    #[test]
+    fn test_axa_page_boundary() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AXA_ABSY, 0xFF, 0x20, BRK]; // Base address 0x20FF
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0xFF;
+        cpu.x = 0xFF;
+        cpu.y = 0x01; // Final address = 0x2100
+        run(&mut cpu);
+        // Value = A AND X AND (high byte of address + 1)
+        // high byte of final address 0x2100 is 0x21
+        // Value = 0xFF AND 0xFF AND (0x21 + 1) = 0xFF AND 0xFF AND 0x22 = 0x22
+        let stored_value = cpu.memory.borrow().read(0x2100);
+        assert_eq!(stored_value, 0x22);
+    }
+
+    #[test]
+    fn test_axs_basic() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AXS_IMM, 0x05, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0x0F;
+        cpu.x = 0xFF;
+        run(&mut cpu);
+        // X = (A AND X) - immediate (without borrow)
+        // X = (0x0F AND 0xFF) - 0x05 = 0x0F - 0x05 = 0x0A
+        assert_eq!(cpu.x, 0x0A);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // No borrow occurred
+    }
+
+    #[test]
+    fn test_axs_with_borrow() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AXS_IMM, 0x10, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0x0F;
+        cpu.x = 0x0F;
+        run(&mut cpu);
+        // X = (A AND X) - immediate (without borrow)
+        // X = (0x0F AND 0x0F) - 0x10 = 0x0F - 0x10 = 0xFF (wraps around)
+        assert_eq!(cpu.x, 0xFF);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
+        assert_eq!(cpu.p & FLAG_CARRY, 0); // Borrow occurred
+    }
+
+    #[test]
+    fn test_axs_zero_result() {
+        let memory = Memory::new();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+        let program = vec![AXS_IMM, 0x08, BRK];
+        load_program(&mut cpu, &program, 0x0600);
+        cpu.reset();
+        cpu.a = 0x0F;
+        cpu.x = 0xF8;
+        run(&mut cpu);
+        // X = (A AND X) - immediate
+        // X = (0x0F AND 0xF8) - 0x08 = 0x08 - 0x08 = 0x00
+        assert_eq!(cpu.x, 0x00);
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // No borrow
     }
 }

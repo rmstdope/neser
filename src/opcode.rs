@@ -198,6 +198,9 @@ pub const AAX_INDX: u8 = 0x83;
 pub const AAX_ZP: u8 = 0x87;
 pub const AAX_ABS: u8 = 0x8F;
 pub const AAX_ZPY: u8 = 0x97;
+pub const AXA_INDY: u8 = 0x93;
+pub const AXA_ABSY: u8 = 0x9F;
+pub const AXS_IMM: u8 = 0xCB;
 
 // Complete NES 6502 opcode table
 pub static OPCODE_TABLE: &[OpCode] = &[
@@ -291,6 +294,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(AAX_ABS, "AAX", "ABS"),
     OpCode::new(BCC, "BCC", "REL"),
     OpCode::new(STA_INDY, "STA", "INDY"),
+    OpCode::new(AXA_INDY, "AXA", "INDY"),
     OpCode::new(STY_ZPX, "STY", "ZPX"),
     OpCode::new(STA_ZPX, "STA", "ZPX"),
     OpCode::new(STX_ZPY, "STX", "ZPY"),
@@ -298,6 +302,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(TYA, "TYA", "IMP"),
     OpCode::new(STA_ABSY, "STA", "ABSY"),
     OpCode::new(TXS, "TXS", "IMP"),
+    OpCode::new(AXA_ABSY, "AXA", "ABSY"),
     OpCode::new(STA_ABSX, "STA", "ABSX"),
     OpCode::new(LDY_IMM, "LDY", "IMM"),
     OpCode::new(LDA_INDX, "LDA", "INDX"),
@@ -331,6 +336,7 @@ pub static OPCODE_TABLE: &[OpCode] = &[
     OpCode::new(INY, "INY", "IMP"),
     OpCode::new(CMP_IMM, "CMP", "IMM"),
     OpCode::new(DEX, "DEX", "IMP"),
+    OpCode::new(AXS_IMM, "AXS", "IMM"),
     OpCode::new(CPY_ABS, "CPY", "ABS"),
     OpCode::new(CMP_ABS, "CMP", "ABS"),
     OpCode::new(DEC_ABS, "DEC", "ABS"),
@@ -408,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_opcodes_table_count() {
-        assert_eq!(OPCODE_TABLE.len(), 160);
+        assert_eq!(OPCODE_TABLE.len(), 163);
     }
 
     #[test]
