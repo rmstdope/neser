@@ -23,6 +23,16 @@ impl OpCode {
     pub fn name(&self) -> String {
         format!("{}_{}", self.mnemonic, self.mode)
     }
+
+    /// Get the number of bytes for this instruction based on its addressing mode
+    pub fn bytes(&self) -> u8 {
+        match self.mode {
+            "IMP" | "ACC" => 1,
+            "IMM" | "ZP" | "ZPX" | "ZPY" | "INDX" | "INDY" | "REL" => 2,
+            "ABS" | "ABSX" | "ABSY" | "IND" => 3,
+            _ => panic!("Unknown addressing mode"),
+        }
+    }
 }
 
 // Opcode constants for use in match patterns
@@ -413,5 +423,83 @@ mod tests {
                 opcode.code
             );
         }
+    }
+
+    #[test]
+    fn test_bytes_imp_mode() {
+        let opcode = OpCode::new(BRK, "BRK", "IMP");
+        assert_eq!(opcode.bytes(), 1);
+    }
+
+    #[test]
+    fn test_bytes_acc_mode() {
+        let opcode = OpCode::new(ASL_A, "ASL", "ACC");
+        assert_eq!(opcode.bytes(), 1);
+    }
+
+    #[test]
+    fn test_bytes_imm_mode() {
+        let opcode = OpCode::new(LDA_IMM, "LDA", "IMM");
+        assert_eq!(opcode.bytes(), 2);
+    }
+
+    #[test]
+    fn test_bytes_zp_mode() {
+        let opcode = OpCode::new(LDA_ZP, "LDA", "ZP");
+        assert_eq!(opcode.bytes(), 2);
+    }
+
+    #[test]
+    fn test_bytes_zpx_mode() {
+        let opcode = OpCode::new(LDA_ZPX, "LDA", "ZPX");
+        assert_eq!(opcode.bytes(), 2);
+    }
+
+    #[test]
+    fn test_bytes_zpy_mode() {
+        let opcode = OpCode::new(LDX_ZPY, "LDX", "ZPY");
+        assert_eq!(opcode.bytes(), 2);
+    }
+
+    #[test]
+    fn test_bytes_indx_mode() {
+        let opcode = OpCode::new(LDA_INDX, "LDA", "INDX");
+        assert_eq!(opcode.bytes(), 2);
+    }
+
+    #[test]
+    fn test_bytes_indy_mode() {
+        let opcode = OpCode::new(LDA_INDY, "LDA", "INDY");
+        assert_eq!(opcode.bytes(), 2);
+    }
+
+    #[test]
+    fn test_bytes_rel_mode() {
+        let opcode = OpCode::new(BPL, "BPL", "REL");
+        assert_eq!(opcode.bytes(), 2);
+    }
+
+    #[test]
+    fn test_bytes_abs_mode() {
+        let opcode = OpCode::new(LDA_ABS, "LDA", "ABS");
+        assert_eq!(opcode.bytes(), 3);
+    }
+
+    #[test]
+    fn test_bytes_absx_mode() {
+        let opcode = OpCode::new(LDA_ABSX, "LDA", "ABSX");
+        assert_eq!(opcode.bytes(), 3);
+    }
+
+    #[test]
+    fn test_bytes_absy_mode() {
+        let opcode = OpCode::new(LDA_ABSY, "LDA", "ABSY");
+        assert_eq!(opcode.bytes(), 3);
+    }
+
+    #[test]
+    fn test_bytes_ind_mode() {
+        let opcode = OpCode::new(JMP_IND, "JMP", "IND");
+        assert_eq!(opcode.bytes(), 3);
     }
 }
