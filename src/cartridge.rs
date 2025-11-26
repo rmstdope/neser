@@ -1,11 +1,20 @@
 use std::io;
 
+// Mirroring types for nametables
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirroringMode {
+    Vertical,
+    Horizontal,
+    FourScreen,
+}
 /// Represents an NES cartridge containing PRG ROM and CHR ROM
 pub struct Cartridge {
     /// Program ROM - contains the game code
     pub prg_rom: Vec<u8>,
     /// Character ROM - contains the graphics data
     pub chr_rom: Vec<u8>,
+    /// Nametable mirroring type
+    pub mirroring: MirroringMode,
 }
 
 impl Cartridge {
@@ -23,6 +32,17 @@ impl Cartridge {
         let prg_rom_size = data[4] as usize * 16384; // 16 KB units
         let chr_rom_size = data[5] as usize * 8192; // 8 KB units
         let flags6 = data[6];
+
+        // Parse mirroring from flags6
+        // Bit 0: Mirroring (0 = horizontal, 1 = vertical)
+        // Bit 3: Four-screen mode
+        let mirroring = if (flags6 & 0x08) != 0 {
+            MirroringMode::FourScreen
+        } else if (flags6 & 0x01) != 0 {
+            MirroringMode::Vertical
+        } else {
+            MirroringMode::Horizontal
+        };
 
         // Check if trainer is present (bit 2 of flags6)
         let has_trainer = (flags6 & 0x04) != 0;
@@ -46,7 +66,11 @@ impl Cartridge {
         let prg_rom = data[prg_rom_start..prg_rom_end].to_vec();
         let chr_rom = data[chr_rom_start..chr_rom_end].to_vec();
 
-        Ok(Self { prg_rom, chr_rom })
+        Ok(Self {
+            prg_rom,
+            chr_rom,
+            mirroring,
+        })
     }
 }
 
@@ -148,5 +172,74 @@ mod tests {
     fn test_empty_data() {
         let result = Cartridge::new(&[]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_horizontal_mirroring() {
+        let rom_data = create_test_rom(1, 1, 0x00, false); // Bit 0 = 0 = Horizontal
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert!(matches!(cartridge.mirroring, MirroringMode::Horizontal));
+    }
+
+    #[test]
+    fn test_vertical_mirroring() {
+        let rom_data = create_test_rom(1, 1, 0x01, false); // Bit 0 = 1 = Vertical
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert!(matches!(cartridge.mirroring, MirroringMode::Vertical));
+    }
+
+    #[test]
+    fn test_four_screen_mirroring() {
+        let rom_data = create_test_rom(1, 1, 0x08, false); // Bit 3 = 1 = Four-screen
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert!(matches!(cartridge.mirroring, MirroringMode::FourScreen));
+    }
+
+    #[test]
+    fn test_four_screen_overrides_vertical() {
+        let rom_data = create_test_rom(1, 1, 0x09, false); // Bit 3 and Bit 0 set
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        // Four-screen should take precedence
+        assert!(matches!(cartridge.mirroring, MirroringMode::FourScreen));
+    }
+
+    #[test]
+    fn test_mirroring_bit_0_horizontal() {
+        // Flags6 = 0b0000_0000: Bit 0 clear = Horizontal
+        let rom_data = create_test_rom(1, 1, 0b0000_0000, false);
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert!(matches!(cartridge.mirroring, MirroringMode::Horizontal));
+    }
+
+    #[test]
+    fn test_mirroring_bit_0_vertical() {
+        // Flags6 = 0b0000_0001: Bit 0 set = Vertical
+        let rom_data = create_test_rom(1, 1, 0b0000_0001, false);
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert!(matches!(cartridge.mirroring, MirroringMode::Vertical));
+    }
+
+    #[test]
+    fn test_mirroring_bit_3_four_screen() {
+        // Flags6 = 0b0000_1000: Bit 3 set = Four-screen
+        let rom_data = create_test_rom(1, 1, 0b0000_1000, false);
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert!(matches!(cartridge.mirroring, MirroringMode::FourScreen));
+    }
+
+    #[test]
+    fn test_mirroring_with_other_flags_set() {
+        // Flags6 = 0b1111_0110: Other flags set (including trainer bit 2), but bit 0 clear = Horizontal
+        let rom_data = create_test_rom(1, 1, 0b1111_0110, true);
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert!(matches!(cartridge.mirroring, MirroringMode::Horizontal));
+    }
+
+    #[test]
+    fn test_mirroring_with_trainer_and_vertical() {
+        // Flags6 = 0b0000_0101: Bit 2 (trainer) and Bit 0 (vertical) set
+        let rom_data = create_test_rom(1, 1, 0b0000_0101, true);
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert!(matches!(cartridge.mirroring, MirroringMode::Vertical));
     }
 }

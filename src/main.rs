@@ -1,8 +1,9 @@
 mod cartridge;
 mod cpu;
-mod memory;
+mod mem_controller;
 mod nes;
 mod opcode;
+mod ppu;
 
 use pixels::{Pixels, SurfaceTexture};
 use std::fs;
@@ -138,16 +139,21 @@ fn render(nes: &nes::Nes, pixels: &mut Pixels) {
 // }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let is_ntsc = true;
     // Load the ROM file
     let rom_data = fs::read("roms/snake.nes")?;
     let cartridge = cartridge::Cartridge::new(&rom_data)?;
 
     // Create NES and insert cartridge
-    let mut nes = nes::Nes::new();
+    let mut nes = nes::Nes::new(if is_ntsc {
+        nes::TvSystem::Ntsc
+    } else {
+        nes::TvSystem::Pal
+    });
     nes.insert_cartridge(cartridge);
 
-    // Reset CPU to start execution
-    nes.cpu.reset();
+    // Reset NES to start execution
+    nes.reset();
     let event_loop = EventLoop::new();
 
     let window = WindowBuilder::new()
@@ -222,10 +228,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Event::MainEventsCleared => {
-            // println!("Executing opcode at PC: {:04X}, OpCode: {:02X}", nes.cpu.pc, nes.memory.borrow().read(nes.cpu.pc as usize as u16));
-            // println!("A: {:02X}, X: {:02X}, Y: {:02X}, SP: {:02X}, P: {:08b}", nes.cpu.a, nes.cpu.x, nes.cpu.y, nes.cpu.sp, nes.cpu.p);
             for _ in 0..256 {
-                nes.cpu.run_opcode();
+                nes.run_cpu_tick();
                 nes.memory
                     .borrow_mut()
                     .write(0xfe as u16, rand::random::<u8>());

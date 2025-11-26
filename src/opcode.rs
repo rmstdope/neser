@@ -7,24 +7,29 @@ pub struct OpCode {
     pub mnemonic: &'static str,
     /// The addressing mode (e.g., "IMM", "ABS", "ZP")
     pub mode: &'static str,
+    /// The base number of cycles this instruction takes
+    pub cycles: u8,
 }
 
 impl OpCode {
     /// Create a new OpCode
-    pub const fn new(code: u8, mnemonic: &'static str, mode: &'static str) -> Self {
+    pub const fn new(code: u8, mnemonic: &'static str, mode: &'static str, cycles: u8) -> Self {
         Self {
             code,
             mnemonic,
             mode,
+            cycles,
         }
     }
 
     /// Get the full instruction name (e.g., "ADC_IMM")
+    #[cfg(test)]
     pub fn name(&self) -> String {
         format!("{}_{}", self.mnemonic, self.mode)
     }
 
     /// Get the number of bytes for this instruction based on its addressing mode
+    #[cfg(test)]
     pub fn bytes(&self) -> u8 {
         match self.mode {
             "IMP" | "ACC" => 1,
@@ -297,262 +302,262 @@ pub const XAS_ABSY: u8 = 0x9B;
 
 // Complete NES 6502 opcode table
 pub static OPCODE_TABLE: &[OpCode; 256] = &[
-    OpCode::new(BRK, "BRK", "IMP"),
-    OpCode::new(ORA_INDX, "ORA", "INDX"),
-    OpCode::new(KIL, "KIL", "IMP"),
-    OpCode::new(SLO_INDX, "*SLO", "INDX"),
-    OpCode::new(ORA_ZP, "ORA", "ZP"),
-    OpCode::new(ASL_ZP, "ASL", "ZP"),
-    OpCode::new(DOP_ZP, "*NOP", "ZP"),
-    OpCode::new(SLO_ZP, "*SLO", "ZP"),
-    OpCode::new(PHP, "PHP", "IMP"),
-    OpCode::new(ORA_IMM, "ORA", "IMM"),
-    OpCode::new(ASL_A, "ASL", "ACC"),
-    OpCode::new(AAC_IMM, "*AAC", "IMM"),
-    OpCode::new(ORA_ABS, "ORA", "ABS"),
-    OpCode::new(ASL_ABS, "ASL", "ABS"),
-    OpCode::new(TOP_ABS, "*NOP", "ABS"),
-    OpCode::new(SLO_ABS, "*SLO", "ABS"),
-    OpCode::new(BPL, "BPL", "REL"),
-    OpCode::new(ORA_INDY, "ORA", "INDY"),
-    OpCode::new(KIL2, "KIL", "IMP"),
-    OpCode::new(SLO_INDY, "*SLO", "INDY"),
-    OpCode::new(ORA_ZPX, "ORA", "ZPX"),
-    OpCode::new(ASL_ZPX, "ASL", "ZPX"),
-    OpCode::new(CLC, "CLC", "IMP"),
-    OpCode::new(DOP_ZPX, "*NOP", "ZPX"),
-    OpCode::new(SLO_ZPX, "*SLO", "ZPX"),
-    OpCode::new(ORA_ABSY, "ORA", "ABSY"),
-    OpCode::new(NOP_IMP, "*NOP", "IMP"),
-    OpCode::new(SLO_ABSY, "*SLO", "ABSY"),
-    OpCode::new(ORA_ABSX, "ORA", "ABSX"),
-    OpCode::new(ASL_ABSX, "ASL", "ABSX"),
-    OpCode::new(TOP_ABSX, "*NOP", "ABSX"),
-    OpCode::new(SLO_ABSX, "*SLO", "ABSX"),
-    OpCode::new(JSR, "JSR", "ABS"),
-    OpCode::new(AND_INDX, "AND", "INDX"),
-    OpCode::new(KIL3, "KIL", "IMP"),
-    OpCode::new(RLA_INDX, "*RLA", "INDX"),
-    OpCode::new(BIT_ZP, "BIT", "ZP"),
-    OpCode::new(AND_ZP, "AND", "ZP"),
-    OpCode::new(ROL_ZP, "ROL", "ZP"),
-    OpCode::new(RLA_ZP, "*RLA", "ZP"),
-    OpCode::new(PLP, "PLP", "IMP"),
-    OpCode::new(AND_IMM, "AND", "IMM"),
-    OpCode::new(ROL_ACC, "ROL", "ACC"),
-    OpCode::new(AAC_IMM2, "*AAC", "IMM"),
-    OpCode::new(BIT_ABS, "BIT", "ABS"),
-    OpCode::new(AND_ABS, "AND", "ABS"),
-    OpCode::new(ROL_ABS, "ROL", "ABS"),
-    OpCode::new(RLA_ABS, "*RLA", "ABS"),
-    OpCode::new(BMI, "BMI", "REL"),
-    OpCode::new(AND_INDY, "AND", "INDY"),
-    OpCode::new(KIL4, "KIL", "IMP"),
-    OpCode::new(RLA_INDY, "*RLA", "INDY"),
-    OpCode::new(AND_ZPX, "AND", "ZPX"),
-    OpCode::new(ROL_ZPX, "ROL", "ZPX"),
-    OpCode::new(RLA_ZPX, "*RLA", "ZPX"),
-    OpCode::new(SEC, "SEC", "IMP"),
-    OpCode::new(DOP_ZPX2, "*NOP", "ZPX"),
-    OpCode::new(AND_ABSY, "AND", "ABSY"),
-    OpCode::new(NOP_IMP2, "*NOP", "IMP"),
-    OpCode::new(RLA_ABSY, "*RLA", "ABSY"),
-    OpCode::new(AND_ABSX, "AND", "ABSX"),
-    OpCode::new(ROL_ABSX, "ROL", "ABSX"),
-    OpCode::new(TOP_ABSX2, "*NOP", "ABSX"),
-    OpCode::new(RLA_ABSX, "*RLA", "ABSX"),
-    OpCode::new(RTI, "RTI", "IMP"),
-    OpCode::new(EOR_INDX, "EOR", "INDX"),
-    OpCode::new(KIL5, "KIL", "IMP"),
-    OpCode::new(SRE_INDX, "*SRE", "INDX"),
-    OpCode::new(DOP_ZP2, "*NOP", "ZP"),
-    OpCode::new(EOR_ZP, "EOR", "ZP"),
-    OpCode::new(LSR_ZP, "LSR", "ZP"),
-    OpCode::new(SRE_ZP, "*SRE", "ZP"),
-    OpCode::new(PHA, "PHA", "IMP"),
-    OpCode::new(EOR_IMM, "EOR", "IMM"),
-    OpCode::new(ASR_IMM, "*ASR", "IMM"),
-    OpCode::new(LSR_ACC, "LSR", "ACC"),
-    OpCode::new(JMP_ABS, "JMP", "ABS"),
-    OpCode::new(EOR_ABS, "EOR", "ABS"),
-    OpCode::new(LSR_ABS, "LSR", "ABS"),
-    OpCode::new(SRE_ABS, "*SRE", "ABS"),
-    OpCode::new(BVC, "BVC", "REL"),
-    OpCode::new(EOR_INDY, "EOR", "INDY"),
-    OpCode::new(KIL6, "KIL", "IMP"),
-    OpCode::new(SRE_INDY, "*SRE", "INDY"),
-    OpCode::new(DOP_ZPX3, "*NOP", "ZPX"),
-    OpCode::new(EOR_ZPX, "EOR", "ZPX"),
-    OpCode::new(LSR_ZPX, "LSR", "ZPX"),
-    OpCode::new(SRE_ZPX, "*SRE", "ZPX"),
-    OpCode::new(CLI, "CLI", "IMP"),
-    OpCode::new(EOR_ABSY, "EOR", "ABSY"),
-    OpCode::new(NOP_IMP3, "*NOP", "IMP"),
-    OpCode::new(SRE_ABSY, "*SRE", "ABSY"),
-    OpCode::new(EOR_ABSX, "EOR", "ABSX"),
-    OpCode::new(LSR_ABSX, "LSR", "ABSX"),
-    OpCode::new(TOP_ABSX3, "*NOP", "ABSX"),
-    OpCode::new(SRE_ABSX, "*SRE", "ABSX"),
-    OpCode::new(RTS, "RTS", "IMP"),
-    OpCode::new(ADC_INDX, "ADC", "INDX"),
-    OpCode::new(KIL7, "KIL", "IMP"),
-    OpCode::new(RRA_INDX, "*RRA", "INDX"),
-    OpCode::new(ADC_ZP, "ADC", "ZP"),
-    OpCode::new(ROR_ZP, "ROR", "ZP"),
-    OpCode::new(PLA, "PLA", "IMP"),
-    OpCode::new(DOP_ZP3, "*NOP", "ZP"),
-    OpCode::new(RRA_ZP, "*RRA", "ZP"),
-    OpCode::new(ADC_IMM, "ADC", "IMM"),
-    OpCode::new(ARR_IMM, "*ARR", "IMM"),
-    OpCode::new(ROR_ACC, "ROR", "ACC"),
-    OpCode::new(JMP_IND, "JMP", "IND"),
-    OpCode::new(ADC_ABS, "ADC", "ABS"),
-    OpCode::new(ROR_ABS, "ROR", "ABS"),
-    OpCode::new(RRA_ABS, "*RRA", "ABS"),
-    OpCode::new(BVS, "BVS", "REL"),
-    OpCode::new(ADC_INDY, "ADC", "INDY"),
-    OpCode::new(KIL8, "KIL", "IMP"),
-    OpCode::new(RRA_INDY, "*RRA", "INDY"),
-    OpCode::new(ADC_ZPX, "ADC", "ZPX"),
-    OpCode::new(ROR_ZPX, "ROR", "ZPX"),
-    OpCode::new(SEI, "SEI", "IMP"),
-    OpCode::new(DOP_ZPX4, "*NOP", "ZPX"),
-    OpCode::new(RRA_ZPX, "*RRA", "ZPX"),
-    OpCode::new(ADC_ABSY, "ADC", "ABSY"),
-    OpCode::new(NOP_IMP4, "*NOP", "IMP"),
-    OpCode::new(RRA_ABSY, "*RRA", "ABSY"),
-    OpCode::new(ADC_ABSX, "ADC", "ABSX"),
-    OpCode::new(ROR_ABSX, "ROR", "ABSX"),
-    OpCode::new(TOP_ABSX4, "*NOP", "ABSX"),
-    OpCode::new(RRA_ABSX, "*RRA", "ABSX"),
-    OpCode::new(DOP_IMM, "*NOP", "IMM"),
-    OpCode::new(STA_INDX, "STA", "INDX"),
-    OpCode::new(DOP_IMM2, "*NOP", "IMM"),
-    OpCode::new(SAX_INDX, "*SAX", "INDX"),
-    OpCode::new(STY_ZP, "STY", "ZP"),
-    OpCode::new(STA_ZP, "STA", "ZP"),
-    OpCode::new(STX_ZP, "STX", "ZP"),
-    OpCode::new(SAX_ZP, "*SAX", "ZP"),
-    OpCode::new(DEY, "DEY", "IMP"),
-    OpCode::new(DOP_IMM3, "*NOP", "IMM"),
-    OpCode::new(TXA, "TXA", "IMP"),
-    OpCode::new(XAA_IMM, "*XAA", "IMM"),
-    OpCode::new(STY_ABS, "STY", "ABS"),
-    OpCode::new(STA_ABS, "STA", "ABS"),
-    OpCode::new(STX_ABS, "STX", "ABS"),
-    OpCode::new(SAX_ABS, "*SAX", "ABS"),
-    OpCode::new(BCC, "BCC", "REL"),
-    OpCode::new(STA_INDY, "STA", "INDY"),
-    OpCode::new(KIL9, "KIL", "IMP"),
-    OpCode::new(AXA_INDY, "*AXA", "INDY"),
-    OpCode::new(STY_ZPX, "STY", "ZPX"),
-    OpCode::new(STA_ZPX, "STA", "ZPX"),
-    OpCode::new(STX_ZPY, "STX", "ZPY"),
-    OpCode::new(SAX_ZPY, "*SAX", "ZPY"),
-    OpCode::new(TYA, "TYA", "IMP"),
-    OpCode::new(STA_ABSY, "STA", "ABSY"),
-    OpCode::new(TXS, "TXS", "IMP"),
-    OpCode::new(XAS_ABSY, "*XAS", "ABSY"),
-    OpCode::new(SYA_ABSX, "*SYA", "ABSX"),
-    OpCode::new(STA_ABSX, "STA", "ABSX"),
-    OpCode::new(SXA_ABSY, "*SXA", "ABSY"),
-    OpCode::new(AXA_ABSY, "*AXA", "ABSY"),
-    OpCode::new(LDY_IMM, "LDY", "IMM"),
-    OpCode::new(LDA_INDX, "LDA", "INDX"),
-    OpCode::new(LDX_IMM, "LDX", "IMM"),
-    OpCode::new(LAX_INDX, "*LAX", "INDX"),
-    OpCode::new(LDY_ZP, "LDY", "ZP"),
-    OpCode::new(LDA_ZP, "LDA", "ZP"),
-    OpCode::new(LDX_ZP, "LDX", "ZP"),
-    OpCode::new(LAX_ZP, "*LAX", "ZP"),
-    OpCode::new(TAY, "TAY", "IMP"),
-    OpCode::new(LDA_IMM, "LDA", "IMM"),
-    OpCode::new(TAX, "TAX", "IMP"),
-    OpCode::new(ATX_IMM, "*ATX", "IMM"),
-    OpCode::new(LDY_ABS, "LDY", "ABS"),
-    OpCode::new(LDA_ABS, "LDA", "ABS"),
-    OpCode::new(LDX_ABS, "LDX", "ABS"),
-    OpCode::new(LAX_ABS, "*LAX", "ABS"),
-    OpCode::new(BCS, "BCS", "REL"),
-    OpCode::new(LDA_INDY, "LDA", "INDY"),
-    OpCode::new(KIL10, "KIL", "IMP"),
-    OpCode::new(LAX_INDY, "*LAX", "INDY"),
-    OpCode::new(LDY_ZPX, "LDY", "ZPX"),
-    OpCode::new(LDA_ZPX, "LDA", "ZPX"),
-    OpCode::new(LDX_ZPY, "LDX", "ZPY"),
-    OpCode::new(LAX_ZPY, "*LAX", "ZPY"),
-    OpCode::new(CLV, "CLV", "IMP"),
-    OpCode::new(LDA_ABSY, "LDA", "ABSY"),
-    OpCode::new(TSX, "TSX", "IMP"),
-    OpCode::new(LAR_ABSY, "*LAR", "ABSY"),
-    OpCode::new(LDY_ABSX, "LDY", "ABSX"),
-    OpCode::new(LDA_ABSX, "LDA", "ABSX"),
-    OpCode::new(LDX_ABSY, "LDX", "ABSY"),
-    OpCode::new(LAX_ABSY, "*LAX", "ABSY"),
-    OpCode::new(CPY_IMM, "CPY", "IMM"),
-    OpCode::new(CMP_INDX, "CMP", "INDX"),
-    OpCode::new(DOP_IMM4, "*NOP", "IMM"),
-    OpCode::new(DCP_INDX, "*DCP", "INDX"),
-    OpCode::new(CPY_ZP, "CPY", "ZP"),
-    OpCode::new(CMP_ZP, "CMP", "ZP"),
-    OpCode::new(DEC_ZP, "DEC", "ZP"),
-    OpCode::new(DCP_ZP, "*DCP", "ZP"),
-    OpCode::new(INY, "INY", "IMP"),
-    OpCode::new(CMP_IMM, "CMP", "IMM"),
-    OpCode::new(DEX, "DEX", "IMP"),
-    OpCode::new(AXS_IMM, "*AXS", "IMM"),
-    OpCode::new(CPY_ABS, "CPY", "ABS"),
-    OpCode::new(CMP_ABS, "CMP", "ABS"),
-    OpCode::new(DEC_ABS, "DEC", "ABS"),
-    OpCode::new(DCP_ABS, "*DCP", "ABS"),
-    OpCode::new(BNE, "BNE", "REL"),
-    OpCode::new(CMP_INDY, "CMP", "INDY"),
-    OpCode::new(KIL11, "KIL", "IMP"),
-    OpCode::new(DCP_INDY, "*DCP", "INDY"),
-    OpCode::new(DOP_ZPX5, "*NOP", "ZPX"),
-    OpCode::new(CMP_ZPX, "CMP", "ZPX"),
-    OpCode::new(DEC_ZPX, "DEC", "ZPX"),
-    OpCode::new(DCP_ZPX, "*DCP", "ZPX"),
-    OpCode::new(CLD, "CLD", "IMP"),
-    OpCode::new(CMP_ABSY, "CMP", "ABSY"),
-    OpCode::new(NOP_IMP5, "*NOP", "IMP"),
-    OpCode::new(DCP_ABSY, "*DCP", "ABSY"),
-    OpCode::new(CMP_ABSX, "CMP", "ABSX"),
-    OpCode::new(DEC_ABSX, "DEC", "ABSX"),
-    OpCode::new(TOP_ABSX5, "*NOP", "ABSX"),
-    OpCode::new(DCP_ABSX, "*DCP", "ABSX"),
-    OpCode::new(CPX_IMM, "CPX", "IMM"),
-    OpCode::new(SBC_INDX, "SBC", "INDX"),
-    OpCode::new(DOP_IMM5, "*NOP", "IMM"),
-    OpCode::new(ISB_INDX, "*ISB", "INDX"),
-    OpCode::new(CPX_ZP, "CPX", "ZP"),
-    OpCode::new(SBC_ZP, "SBC", "ZP"),
-    OpCode::new(INC_ZP, "INC", "ZP"),
-    OpCode::new(ISB_ZP, "*ISB", "ZP"),
-    OpCode::new(INX, "INX", "IMP"),
-    OpCode::new(SBC_IMM, "SBC", "IMM"),
-    OpCode::new(NOP, "NOP", "IMP"),
-    OpCode::new(SBC_IMM2, "*SBC", "IMM"),
-    OpCode::new(CPX_ABS, "CPX", "ABS"),
-    OpCode::new(SBC_ABS, "SBC", "ABS"),
-    OpCode::new(INC_ABS, "INC", "ABS"),
-    OpCode::new(ISB_ABS, "*ISB", "ABS"),
-    OpCode::new(BEQ, "BEQ", "REL"),
-    OpCode::new(SBC_INDY, "SBC", "INDY"),
-    OpCode::new(KIL12, "KIL", "IMP"),
-    OpCode::new(DOP_ZPX6, "*NOP", "ZPX"),
-    OpCode::new(ISB_INDY, "*ISB", "INDY"),
-    OpCode::new(SBC_ZPX, "SBC", "ZPX"),
-    OpCode::new(INC_ZPX, "INC", "ZPX"),
-    OpCode::new(ISB_ZPX, "*ISB", "ZPX"),
-    OpCode::new(SED, "SED", "IMP"),
-    OpCode::new(SBC_ABSY, "SBC", "ABSY"),
-    OpCode::new(NOP_IMP6, "*NOP", "IMP"),
-    OpCode::new(ISB_ABSY, "*ISB", "ABSY"),
-    OpCode::new(SBC_ABSX, "SBC", "ABSX"),
-    OpCode::new(INC_ABSX, "INC", "ABSX"),
-    OpCode::new(TOP_ABSX6, "*NOP", "ABSX"),
-    OpCode::new(ISB_ABSX, "*ISB", "ABSX"),
+    OpCode::new(BRK, "BRK", "IMP", 7),
+    OpCode::new(ORA_INDX, "ORA", "INDX", 6),
+    OpCode::new(KIL, "KIL", "IMP", 2),
+    OpCode::new(SLO_INDX, "*SLO", "INDX", 8),
+    OpCode::new(ORA_ZP, "ORA", "ZP", 3),
+    OpCode::new(ASL_ZP, "ASL", "ZP", 5),
+    OpCode::new(DOP_ZP, "*NOP", "ZP", 3),
+    OpCode::new(SLO_ZP, "*SLO", "ZP", 5),
+    OpCode::new(PHP, "PHP", "IMP", 3),
+    OpCode::new(ORA_IMM, "ORA", "IMM", 2),
+    OpCode::new(ASL_A, "ASL", "ACC", 2),
+    OpCode::new(AAC_IMM, "*AAC", "IMM", 2),
+    OpCode::new(ORA_ABS, "ORA", "ABS", 4),
+    OpCode::new(ASL_ABS, "ASL", "ABS", 6),
+    OpCode::new(TOP_ABS, "*NOP", "ABS", 4),
+    OpCode::new(SLO_ABS, "*SLO", "ABS", 6),
+    OpCode::new(BPL, "BPL", "REL", 2),
+    OpCode::new(ORA_INDY, "ORA", "INDY", 5),
+    OpCode::new(KIL2, "KIL", "IMP", 2),
+    OpCode::new(SLO_INDY, "*SLO", "INDY", 8),
+    OpCode::new(ORA_ZPX, "ORA", "ZPX", 4),
+    OpCode::new(ASL_ZPX, "ASL", "ZPX", 6),
+    OpCode::new(CLC, "CLC", "IMP", 2),
+    OpCode::new(DOP_ZPX, "*NOP", "ZPX", 4),
+    OpCode::new(SLO_ZPX, "*SLO", "ZPX", 6),
+    OpCode::new(ORA_ABSY, "ORA", "ABSY", 4),
+    OpCode::new(NOP_IMP, "*NOP", "IMP", 2),
+    OpCode::new(SLO_ABSY, "*SLO", "ABSY", 7),
+    OpCode::new(ORA_ABSX, "ORA", "ABSX", 4),
+    OpCode::new(ASL_ABSX, "ASL", "ABSX", 7),
+    OpCode::new(TOP_ABSX, "*NOP", "ABSX", 4),
+    OpCode::new(SLO_ABSX, "*SLO", "ABSX", 7),
+    OpCode::new(JSR, "JSR", "ABS", 6),
+    OpCode::new(AND_INDX, "AND", "INDX", 6),
+    OpCode::new(KIL3, "KIL", "IMP", 2),
+    OpCode::new(RLA_INDX, "*RLA", "INDX", 8),
+    OpCode::new(BIT_ZP, "BIT", "ZP", 3),
+    OpCode::new(AND_ZP, "AND", "ZP", 3),
+    OpCode::new(ROL_ZP, "ROL", "ZP", 5),
+    OpCode::new(RLA_ZP, "*RLA", "ZP", 5),
+    OpCode::new(PLP, "PLP", "IMP", 4),
+    OpCode::new(AND_IMM, "AND", "IMM", 2),
+    OpCode::new(ROL_ACC, "ROL", "ACC", 2),
+    OpCode::new(AAC_IMM2, "*AAC", "IMM", 2),
+    OpCode::new(BIT_ABS, "BIT", "ABS", 4),
+    OpCode::new(AND_ABS, "AND", "ABS", 4),
+    OpCode::new(ROL_ABS, "ROL", "ABS", 6),
+    OpCode::new(RLA_ABS, "*RLA", "ABS", 6),
+    OpCode::new(BMI, "BMI", "REL", 2),
+    OpCode::new(AND_INDY, "AND", "INDY", 5),
+    OpCode::new(KIL4, "KIL", "IMP", 2),
+    OpCode::new(RLA_INDY, "*RLA", "INDY", 8),
+    OpCode::new(DOP_ZPX2, "*NOP", "ZPX", 4),
+    OpCode::new(AND_ZPX, "AND", "ZPX", 4),
+    OpCode::new(ROL_ZPX, "ROL", "ZPX", 6),
+    OpCode::new(RLA_ZPX, "*RLA", "ZPX", 6),
+    OpCode::new(SEC, "SEC", "IMP", 2),
+    OpCode::new(AND_ABSY, "AND", "ABSY", 4),
+    OpCode::new(NOP_IMP2, "*NOP", "IMP", 2),
+    OpCode::new(RLA_ABSY, "*RLA", "ABSY", 7),
+    OpCode::new(AND_ABSX, "AND", "ABSX", 4),
+    OpCode::new(ROL_ABSX, "ROL", "ABSX", 7),
+    OpCode::new(TOP_ABSX2, "*NOP", "ABSX", 4),
+    OpCode::new(RLA_ABSX, "*RLA", "ABSX", 7),
+    OpCode::new(RTI, "RTI", "IMP", 6),
+    OpCode::new(EOR_INDX, "EOR", "INDX", 6),
+    OpCode::new(KIL5, "KIL", "IMP", 2),
+    OpCode::new(SRE_INDX, "*SRE", "INDX", 8),
+    OpCode::new(DOP_ZP2, "*NOP", "ZP", 3),
+    OpCode::new(EOR_ZP, "EOR", "ZP", 3),
+    OpCode::new(LSR_ZP, "LSR", "ZP", 5),
+    OpCode::new(SRE_ZP, "*SRE", "ZP", 5),
+    OpCode::new(PHA, "PHA", "IMP", 3),
+    OpCode::new(EOR_IMM, "EOR", "IMM", 2),
+    OpCode::new(ASR_IMM, "*ASR", "IMM", 2),
+    OpCode::new(LSR_ACC, "LSR", "ACC", 2),
+    OpCode::new(JMP_ABS, "JMP", "ABS", 3),
+    OpCode::new(EOR_ABS, "EOR", "ABS", 4),
+    OpCode::new(LSR_ABS, "LSR", "ABS", 6),
+    OpCode::new(SRE_ABS, "*SRE", "ABS", 6),
+    OpCode::new(BVC, "BVC", "REL", 2),
+    OpCode::new(EOR_INDY, "EOR", "INDY", 5),
+    OpCode::new(KIL6, "KIL", "IMP", 2),
+    OpCode::new(SRE_INDY, "*SRE", "INDY", 8),
+    OpCode::new(DOP_ZPX3, "*NOP", "ZPX", 4),
+    OpCode::new(EOR_ZPX, "EOR", "ZPX", 4),
+    OpCode::new(LSR_ZPX, "LSR", "ZPX", 6),
+    OpCode::new(SRE_ZPX, "*SRE", "ZPX", 6),
+    OpCode::new(CLI, "CLI", "IMP", 2),
+    OpCode::new(EOR_ABSY, "EOR", "ABSY", 4),
+    OpCode::new(NOP_IMP3, "*NOP", "IMP", 2),
+    OpCode::new(SRE_ABSY, "*SRE", "ABSY", 7),
+    OpCode::new(EOR_ABSX, "EOR", "ABSX", 4),
+    OpCode::new(LSR_ABSX, "LSR", "ABSX", 7),
+    OpCode::new(TOP_ABSX3, "*NOP", "ABSX", 4),
+    OpCode::new(SRE_ABSX, "*SRE", "ABSX", 7),
+    OpCode::new(RTS, "RTS", "IMP", 6),
+    OpCode::new(ADC_INDX, "ADC", "INDX", 6),
+    OpCode::new(KIL7, "KIL", "IMP", 2),
+    OpCode::new(RRA_INDX, "*RRA", "INDX", 8),
+    OpCode::new(ADC_ZP, "ADC", "ZP", 3),
+    OpCode::new(ROR_ZP, "ROR", "ZP", 5),
+    OpCode::new(PLA, "PLA", "IMP", 4),
+    OpCode::new(DOP_ZP3, "*NOP", "ZP", 3),
+    OpCode::new(RRA_ZP, "*RRA", "ZP", 5),
+    OpCode::new(ADC_IMM, "ADC", "IMM", 2),
+    OpCode::new(ARR_IMM, "*ARR", "IMM", 2),
+    OpCode::new(ROR_ACC, "ROR", "ACC", 2),
+    OpCode::new(JMP_IND, "JMP", "IND", 5),
+    OpCode::new(ADC_ABS, "ADC", "ABS", 4),
+    OpCode::new(ROR_ABS, "ROR", "ABS", 6),
+    OpCode::new(RRA_ABS, "*RRA", "ABS", 6),
+    OpCode::new(BVS, "BVS", "REL", 2),
+    OpCode::new(ADC_INDY, "ADC", "INDY", 5),
+    OpCode::new(KIL8, "KIL", "IMP", 2),
+    OpCode::new(RRA_INDY, "*RRA", "INDY", 8),
+    OpCode::new(ADC_ZPX, "ADC", "ZPX", 4),
+    OpCode::new(ROR_ZPX, "ROR", "ZPX", 6),
+    OpCode::new(SEI, "SEI", "IMP", 2),
+    OpCode::new(DOP_ZPX4, "*NOP", "ZPX", 4),
+    OpCode::new(RRA_ZPX, "*RRA", "ZPX", 6),
+    OpCode::new(ADC_ABSY, "ADC", "ABSY", 4),
+    OpCode::new(NOP_IMP4, "*NOP", "IMP", 2),
+    OpCode::new(RRA_ABSY, "*RRA", "ABSY", 7),
+    OpCode::new(ADC_ABSX, "ADC", "ABSX", 4),
+    OpCode::new(ROR_ABSX, "ROR", "ABSX", 7),
+    OpCode::new(TOP_ABSX4, "*NOP", "ABSX", 4),
+    OpCode::new(RRA_ABSX, "*RRA", "ABSX", 7),
+    OpCode::new(DOP_IMM, "*NOP", "IMM", 2),
+    OpCode::new(STA_INDX, "STA", "INDX", 6),
+    OpCode::new(DOP_IMM2, "*NOP", "IMM", 2),
+    OpCode::new(SAX_INDX, "*SAX", "INDX", 6),
+    OpCode::new(STY_ZP, "STY", "ZP", 3),
+    OpCode::new(STA_ZP, "STA", "ZP", 3),
+    OpCode::new(STX_ZP, "STX", "ZP", 3),
+    OpCode::new(SAX_ZP, "*SAX", "ZP", 3),
+    OpCode::new(DEY, "DEY", "IMP", 2),
+    OpCode::new(DOP_IMM3, "*NOP", "IMM", 2),
+    OpCode::new(TXA, "TXA", "IMP", 2),
+    OpCode::new(XAA_IMM, "*XAA", "IMM", 2),
+    OpCode::new(STY_ABS, "STY", "ABS", 4),
+    OpCode::new(STA_ABS, "STA", "ABS", 4),
+    OpCode::new(STX_ABS, "STX", "ABS", 4),
+    OpCode::new(SAX_ABS, "*SAX", "ABS", 4),
+    OpCode::new(BCC, "BCC", "REL", 2),
+    OpCode::new(STA_INDY, "STA", "INDY", 6),
+    OpCode::new(KIL9, "KIL", "IMP", 2),
+    OpCode::new(AXA_INDY, "*AXA", "INDY", 6),
+    OpCode::new(STY_ZPX, "STY", "ZPX", 4),
+    OpCode::new(STA_ZPX, "STA", "ZPX", 4),
+    OpCode::new(STX_ZPY, "STX", "ZPY", 4),
+    OpCode::new(SAX_ZPY, "*SAX", "ZPY", 4),
+    OpCode::new(TYA, "TYA", "IMP", 2),
+    OpCode::new(STA_ABSY, "STA", "ABSY", 5),
+    OpCode::new(TXS, "TXS", "IMP", 2),
+    OpCode::new(XAS_ABSY, "*XAS", "ABSY", 5),
+    OpCode::new(SYA_ABSX, "*SYA", "ABSX", 5),
+    OpCode::new(STA_ABSX, "STA", "ABSX", 5),
+    OpCode::new(SXA_ABSY, "*SXA", "ABSY", 5),
+    OpCode::new(AXA_ABSY, "*AXA", "ABSY", 5),
+    OpCode::new(LDY_IMM, "LDY", "IMM", 2),
+    OpCode::new(LDA_INDX, "LDA", "INDX", 6),
+    OpCode::new(LDX_IMM, "LDX", "IMM", 2),
+    OpCode::new(LAX_INDX, "*LAX", "INDX", 6),
+    OpCode::new(LDY_ZP, "LDY", "ZP", 3),
+    OpCode::new(LDA_ZP, "LDA", "ZP", 3),
+    OpCode::new(LDX_ZP, "LDX", "ZP", 3),
+    OpCode::new(LAX_ZP, "*LAX", "ZP", 3),
+    OpCode::new(TAY, "TAY", "IMP", 2),
+    OpCode::new(LDA_IMM, "LDA", "IMM", 2),
+    OpCode::new(TAX, "TAX", "IMP", 2),
+    OpCode::new(ATX_IMM, "*ATX", "IMM", 2),
+    OpCode::new(LDY_ABS, "LDY", "ABS", 4),
+    OpCode::new(LDA_ABS, "LDA", "ABS", 4),
+    OpCode::new(LDX_ABS, "LDX", "ABS", 4),
+    OpCode::new(LAX_ABS, "*LAX", "ABS", 4),
+    OpCode::new(BCS, "BCS", "REL", 2),
+    OpCode::new(LDA_INDY, "LDA", "INDY", 5),
+    OpCode::new(KIL10, "KIL", "IMP", 2),
+    OpCode::new(LAX_INDY, "*LAX", "INDY", 5),
+    OpCode::new(LDY_ZPX, "LDY", "ZPX", 4),
+    OpCode::new(LDA_ZPX, "LDA", "ZPX", 4),
+    OpCode::new(LDX_ZPY, "LDX", "ZPY", 4),
+    OpCode::new(LAX_ZPY, "*LAX", "ZPY", 4),
+    OpCode::new(CLV, "CLV", "IMP", 2),
+    OpCode::new(LDA_ABSY, "LDA", "ABSY", 4),
+    OpCode::new(TSX, "TSX", "IMP", 2),
+    OpCode::new(LAR_ABSY, "*LAR", "ABSY", 4),
+    OpCode::new(LDY_ABSX, "LDY", "ABSX", 4),
+    OpCode::new(LDA_ABSX, "LDA", "ABSX", 4),
+    OpCode::new(LDX_ABSY, "LDX", "ABSY", 4),
+    OpCode::new(LAX_ABSY, "*LAX", "ABSY", 4),
+    OpCode::new(CPY_IMM, "CPY", "IMM", 2),
+    OpCode::new(CMP_INDX, "CMP", "INDX", 6),
+    OpCode::new(DOP_IMM4, "*NOP", "IMM", 2),
+    OpCode::new(DCP_INDX, "*DCP", "INDX", 8),
+    OpCode::new(CPY_ZP, "CPY", "ZP", 3),
+    OpCode::new(CMP_ZP, "CMP", "ZP", 3),
+    OpCode::new(DEC_ZP, "DEC", "ZP", 5),
+    OpCode::new(DCP_ZP, "*DCP", "ZP", 5),
+    OpCode::new(INY, "INY", "IMP", 2),
+    OpCode::new(CMP_IMM, "CMP", "IMM", 2),
+    OpCode::new(DEX, "DEX", "IMP", 2),
+    OpCode::new(AXS_IMM, "*AXS", "IMM", 2),
+    OpCode::new(CPY_ABS, "CPY", "ABS", 4),
+    OpCode::new(CMP_ABS, "CMP", "ABS", 4),
+    OpCode::new(DEC_ABS, "DEC", "ABS", 6),
+    OpCode::new(DCP_ABS, "*DCP", "ABS", 6),
+    OpCode::new(BNE, "BNE", "REL", 2),
+    OpCode::new(CMP_INDY, "CMP", "INDY", 5),
+    OpCode::new(KIL11, "KIL", "IMP", 2),
+    OpCode::new(DCP_INDY, "*DCP", "INDY", 8),
+    OpCode::new(DOP_ZPX5, "*NOP", "ZPX", 4),
+    OpCode::new(CMP_ZPX, "CMP", "ZPX", 4),
+    OpCode::new(DEC_ZPX, "DEC", "ZPX", 6),
+    OpCode::new(DCP_ZPX, "*DCP", "ZPX", 6),
+    OpCode::new(CLD, "CLD", "IMP", 2),
+    OpCode::new(CMP_ABSY, "CMP", "ABSY", 4),
+    OpCode::new(NOP_IMP5, "*NOP", "IMP", 2),
+    OpCode::new(DCP_ABSY, "*DCP", "ABSY", 7),
+    OpCode::new(CMP_ABSX, "CMP", "ABSX", 4),
+    OpCode::new(DEC_ABSX, "DEC", "ABSX", 7),
+    OpCode::new(TOP_ABSX5, "*NOP", "ABSX", 4),
+    OpCode::new(DCP_ABSX, "*DCP", "ABSX", 7),
+    OpCode::new(CPX_IMM, "CPX", "IMM", 2),
+    OpCode::new(SBC_INDX, "SBC", "INDX", 6),
+    OpCode::new(DOP_IMM5, "*NOP", "IMM", 2),
+    OpCode::new(ISB_INDX, "*ISB", "INDX", 8),
+    OpCode::new(CPX_ZP, "CPX", "ZP", 3),
+    OpCode::new(SBC_ZP, "SBC", "ZP", 3),
+    OpCode::new(INC_ZP, "INC", "ZP", 5),
+    OpCode::new(ISB_ZP, "*ISB", "ZP", 5),
+    OpCode::new(INX, "INX", "IMP", 2),
+    OpCode::new(SBC_IMM, "SBC", "IMM", 2),
+    OpCode::new(NOP, "NOP", "IMP", 2),
+    OpCode::new(SBC_IMM2, "*SBC", "IMM", 2),
+    OpCode::new(CPX_ABS, "CPX", "ABS", 4),
+    OpCode::new(SBC_ABS, "SBC", "ABS", 4),
+    OpCode::new(INC_ABS, "INC", "ABS", 6),
+    OpCode::new(ISB_ABS, "*ISB", "ABS", 6),
+    OpCode::new(BEQ, "BEQ", "REL", 2),
+    OpCode::new(SBC_INDY, "SBC", "INDY", 5),
+    OpCode::new(KIL12, "KIL", "IMP", 2),
+    OpCode::new(DOP_ZPX6, "*NOP", "ZPX", 4),
+    OpCode::new(ISB_INDY, "*ISB", "INDY", 8),
+    OpCode::new(SBC_ZPX, "SBC", "ZPX", 4),
+    OpCode::new(INC_ZPX, "INC", "ZPX", 6),
+    OpCode::new(ISB_ZPX, "*ISB", "ZPX", 6),
+    OpCode::new(SED, "SED", "IMP", 2),
+    OpCode::new(SBC_ABSY, "SBC", "ABSY", 4),
+    OpCode::new(NOP_IMP6, "*NOP", "IMP", 2),
+    OpCode::new(ISB_ABSY, "*ISB", "ABSY", 7),
+    OpCode::new(SBC_ABSX, "SBC", "ABSX", 4),
+    OpCode::new(INC_ABSX, "INC", "ABSX", 7),
+    OpCode::new(TOP_ABSX6, "*NOP", "ABSX", 4),
+    OpCode::new(ISB_ABSX, "*ISB", "ABSX", 7)
 ];
 
 /// Lookup an opcode by its byte value
@@ -566,7 +571,7 @@ mod tests {
 
     #[test]
     fn test_opcode_creation() {
-        let opcode = OpCode::new(0x69, "ADC", "IMM");
+        let opcode = OpCode::new(0x69, "ADC", "IMM", 2);
         assert_eq!(opcode.code, 0x69);
         assert_eq!(opcode.mnemonic, "ADC");
         assert_eq!(opcode.mode, "IMM");
@@ -574,27 +579,27 @@ mod tests {
 
     #[test]
     fn test_opcode_name() {
-        let opcode = OpCode::new(0x69, "ADC", "IMM");
+        let opcode = OpCode::new(0x69, "ADC", "IMM", 2);
         assert_eq!(opcode.name(), "ADC_IMM");
     }
 
     #[test]
     fn test_opcode_name_different_instruction() {
-        let opcode = OpCode::new(0xA9, "LDA", "IMM");
+        let opcode = OpCode::new(0xA9, "LDA", "IMM", 2);
         assert_eq!(opcode.name(), "LDA_IMM");
     }
 
     #[test]
     fn test_opcode_equality() {
-        let opcode1 = OpCode::new(0x69, "ADC", "IMM");
-        let opcode2 = OpCode::new(0x69, "ADC", "IMM");
+        let opcode1 = OpCode::new(0x69, "ADC", "IMM", 2);
+        let opcode2 = OpCode::new(0x69, "ADC", "IMM", 2);
         assert_eq!(opcode1, opcode2);
     }
 
     #[test]
     fn test_opcode_inequality() {
-        let opcode1 = OpCode::new(0x69, "ADC", "IMM");
-        let opcode2 = OpCode::new(0x6D, "ADC", "ABS");
+        let opcode1 = OpCode::new(0x69, "ADC", "IMM", 2);
+        let opcode2 = OpCode::new(0x6D, "ADC", "ABS", 4);
         assert_ne!(opcode1, opcode2);
     }
 
@@ -639,79 +644,79 @@ mod tests {
 
     #[test]
     fn test_bytes_imp_mode() {
-        let opcode = OpCode::new(BRK, "BRK", "IMP");
+        let opcode = OpCode::new(BRK, "BRK", "IMP", 7);
         assert_eq!(opcode.bytes(), 1);
     }
 
     #[test]
     fn test_bytes_acc_mode() {
-        let opcode = OpCode::new(ASL_A, "ASL", "ACC");
+        let opcode = OpCode::new(ASL_A, "ASL", "ACC", 2);
         assert_eq!(opcode.bytes(), 1);
     }
 
     #[test]
     fn test_bytes_imm_mode() {
-        let opcode = OpCode::new(LDA_IMM, "LDA", "IMM");
+        let opcode = OpCode::new(LDA_IMM, "LDA", "IMM", 2);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_zp_mode() {
-        let opcode = OpCode::new(LDA_ZP, "LDA", "ZP");
+        let opcode = OpCode::new(LDA_ZP, "LDA", "ZP", 3);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_zpx_mode() {
-        let opcode = OpCode::new(LDA_ZPX, "LDA", "ZPX");
+        let opcode = OpCode::new(LDA_ZPX, "LDA", "ZPX", 4);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_zpy_mode() {
-        let opcode = OpCode::new(LDX_ZPY, "LDX", "ZPY");
+        let opcode = OpCode::new(LDX_ZPY, "LDX", "ZPY", 4);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_indx_mode() {
-        let opcode = OpCode::new(LDA_INDX, "LDA", "INDX");
+        let opcode = OpCode::new(LDA_INDX, "LDA", "INDX", 6);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_indy_mode() {
-        let opcode = OpCode::new(LDA_INDY, "LDA", "INDY");
+        let opcode = OpCode::new(LDA_INDY, "LDA", "INDY", 5);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_rel_mode() {
-        let opcode = OpCode::new(BPL, "BPL", "REL");
+        let opcode = OpCode::new(BPL, "BPL", "REL", 2);
         assert_eq!(opcode.bytes(), 2);
     }
 
     #[test]
     fn test_bytes_abs_mode() {
-        let opcode = OpCode::new(LDA_ABS, "LDA", "ABS");
+        let opcode = OpCode::new(LDA_ABS, "LDA", "ABS", 4);
         assert_eq!(opcode.bytes(), 3);
     }
 
     #[test]
     fn test_bytes_absx_mode() {
-        let opcode = OpCode::new(LDA_ABSX, "LDA", "ABSX");
+        let opcode = OpCode::new(LDA_ABSX, "LDA", "ABSX", 4);
         assert_eq!(opcode.bytes(), 3);
     }
 
     #[test]
     fn test_bytes_absy_mode() {
-        let opcode = OpCode::new(LDA_ABSY, "LDA", "ABSY");
+        let opcode = OpCode::new(LDA_ABSY, "LDA", "ABSY", 4);
         assert_eq!(opcode.bytes(), 3);
     }
 
     #[test]
     fn test_bytes_ind_mode() {
-        let opcode = OpCode::new(JMP_IND, "JMP", "IND");
+        let opcode = OpCode::new(JMP_IND, "JMP", "IND", 5);
         assert_eq!(opcode.bytes(), 3);
     }
 }
