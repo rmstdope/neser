@@ -215,6 +215,55 @@ impl PPU {
         self.w = !self.w;
     }
 
+    /// Increment coarse X in the v register
+    /// Increments bits 0-4. If coarse X wraps from 31 to 0, toggle horizontal nametable bit (bit 10)
+    fn increment_coarse_x(&mut self) {
+        if (self.v & 0x001F) == 31 {
+            // Coarse X is 31, wrap to 0 and toggle horizontal nametable
+            self.v = (self.v & !0x001F) ^ 0x0400;
+        } else {
+            // Just increment coarse X
+            self.v += 1;
+        }
+    }
+
+    /// Increment fine Y (and potentially coarse Y) in the v register
+    /// Increments bits 12-14 (fine Y). If fine Y wraps from 7 to 0, increment coarse Y (bits 5-9).
+    /// If coarse Y is 29, wrap to 0 and toggle vertical nametable bit (bit 11).
+    /// If coarse Y is 31, wrap to 0 without toggling nametable (attribute table overflow).
+    fn increment_fine_y(&mut self) {
+        if (self.v & 0x7000) != 0x7000 {
+            // Fine Y < 7, just increment it
+            self.v += 0x1000;
+        } else {
+            // Fine Y = 7, wrap to 0 and increment coarse Y
+            self.v &= !0x7000; // Clear fine Y
+            let coarse_y = (self.v >> 5) & 0x1F;
+            if coarse_y == 29 {
+                // Coarse Y is 29, wrap to 0 and toggle vertical nametable
+                self.v = (self.v & !0x03E0) ^ 0x0800; // Clear coarse Y and toggle nametable
+            } else if coarse_y == 31 {
+                // Coarse Y is 31 (attribute table), wrap to 0 without toggling nametable
+                self.v &= !0x03E0; // Just clear coarse Y
+            } else {
+                // Just increment coarse Y
+                self.v = (self.v & !0x03E0) | ((coarse_y + 1) << 5);
+            }
+        }
+    }
+
+    /// Copy horizontal bits from t to v
+    /// Copies bits 0-4 (coarse X) and bit 10 (horizontal nametable select)
+    fn copy_horizontal_bits(&mut self) {
+        self.v = (self.v & !0x041F) | (self.t & 0x041F);
+    }
+
+    /// Copy vertical bits from t to v
+    /// Copies bits 5-9 (coarse Y), bit 11 (vertical nametable select), and bits 12-14 (fine Y)
+    fn copy_vertical_bits(&mut self) {
+        self.v = (self.v & !0x7BE0) | (self.t & 0x7BE0);
+    }
+
     /// Write to the PPU address register ($2006)
     /// First write sets high byte, second write sets low byte, then alternates
     /// High byte writes are masked with 0x3F to limit address range
@@ -1552,5 +1601,126 @@ mod tests {
         ppu.write_address(0x00); // Second write sets low byte to 0
         // High byte should be preserved
         assert_eq!((ppu.t_register() >> 8) & 0x3F, 0x3F);
+    }
+
+    // Scroll incrementation tests
+    #[test]
+    fn test_increment_coarse_x_basic() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x0000; // Coarse X = 0
+        ppu.increment_coarse_x();
+        assert_eq!(ppu.v_register() & 0x001F, 1); // Coarse X should be 1
+    }
+
+    #[test]
+    fn test_increment_coarse_x_wraparound() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x001F; // Coarse X = 31
+        ppu.increment_coarse_x();
+        // Coarse X wraps to 0, nametable bit 10 toggles
+        assert_eq!(ppu.v_register() & 0x001F, 0); // Coarse X = 0
+        assert_eq!(ppu.v_register() & 0x0400, 0x0400); // Nametable bit toggled
+    }
+
+    #[test]
+    fn test_increment_coarse_x_preserves_other_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x7FE0; // All bits except coarse X set
+        ppu.increment_coarse_x();
+        // All bits except coarse X should be preserved
+        assert_eq!(ppu.v_register() & 0x7FE0, 0x7FE0);
+        assert_eq!(ppu.v_register() & 0x001F, 1); // Coarse X incremented
+    }
+
+    #[test]
+    fn test_increment_fine_y_basic() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x0000; // Fine Y = 0
+        ppu.increment_fine_y();
+        assert_eq!((ppu.v_register() >> 12) & 0x07, 1); // Fine Y should be 1
+    }
+
+    #[test]
+    fn test_increment_fine_y_wraparound_to_coarse_y() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x7000; // Fine Y = 7, coarse Y = 0
+        ppu.increment_fine_y();
+        // Fine Y wraps to 0, coarse Y increments to 1
+        assert_eq!((ppu.v_register() >> 12) & 0x07, 0); // Fine Y = 0
+        assert_eq!((ppu.v_register() >> 5) & 0x1F, 1); // Coarse Y = 1
+    }
+
+    #[test]
+    fn test_increment_fine_y_coarse_y_wraparound() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x73A0; // Fine Y = 7, coarse Y = 29
+        ppu.increment_fine_y();
+        // Fine Y wraps to 0, coarse Y wraps to 0, vertical nametable toggles
+        assert_eq!((ppu.v_register() >> 12) & 0x07, 0); // Fine Y = 0
+        assert_eq!((ppu.v_register() >> 5) & 0x1F, 0); // Coarse Y = 0
+        assert_eq!(ppu.v_register() & 0x0800, 0x0800); // Vertical nametable toggled
+    }
+
+    #[test]
+    fn test_increment_fine_y_coarse_y_31_overflow() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x73E0; // Fine Y = 7, coarse Y = 31, nametable bit 11 = 0
+        ppu.increment_fine_y();
+        // Fine Y wraps, coarse Y wraps to 0 without toggling nametable (out of range)
+        assert_eq!((ppu.v_register() >> 12) & 0x07, 0); // Fine Y = 0
+        assert_eq!((ppu.v_register() >> 5) & 0x1F, 0); // Coarse Y = 0
+        assert_eq!(ppu.v_register() & 0x0800, 0); // Nametable still 0 (not toggled)
+    }
+
+    #[test]
+    fn test_increment_fine_y_preserves_other_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x041F; // Coarse X and horizontal nametable set, fine Y = 0
+        ppu.increment_fine_y();
+        // Coarse X and horizontal nametable should be preserved
+        assert_eq!(ppu.v_register() & 0x041F, 0x041F);
+        assert_eq!((ppu.v_register() >> 12) & 0x07, 1); // Fine Y incremented
+    }
+
+    #[test]
+    fn test_copy_horizontal_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x7FFF; // All bits set in v
+        ppu.t = 0x0410; // Horizontal nametable and coarse X = 16 in t
+        ppu.copy_horizontal_bits();
+        // Bits 0-4 (coarse X) and bit 10 (horizontal nametable) copied from t to v
+        assert_eq!(ppu.v_register() & 0x041F, 0x0410); // Coarse X = 16, H nametable = 1
+        assert_eq!(ppu.v_register() & 0x7BE0, 0x7BE0); // Other bits preserved
+    }
+
+    #[test]
+    fn test_copy_vertical_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x041F; // Only coarse X and horizontal nametable set in v
+        ppu.t = 0x7BE0; // Fine Y, coarse Y, and vertical nametable set in t
+        ppu.copy_vertical_bits();
+        // Bits 5-9 (coarse Y), bit 11 (vertical nametable), bits 12-14 (fine Y) copied from t to v
+        assert_eq!(ppu.v_register() & 0x7BE0, 0x7BE0); // Vertical bits copied
+        assert_eq!(ppu.v_register() & 0x041F, 0x041F); // Horizontal bits preserved
+    }
+
+    #[test]
+    fn test_copy_horizontal_bits_clears_destination() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x041F; // Horizontal nametable and coarse X = 31 in v
+        ppu.t = 0x0000; // All bits 0 in t
+        ppu.copy_horizontal_bits();
+        // Horizontal bits should be cleared
+        assert_eq!(ppu.v_register() & 0x041F, 0x0000);
+    }
+
+    #[test]
+    fn test_copy_vertical_bits_clears_destination() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x7BE0; // Vertical bits set in v
+        ppu.t = 0x0000; // All bits 0 in t
+        ppu.copy_vertical_bits();
+        // Vertical bits should be cleared
+        assert_eq!(ppu.v_register() & 0x7BE0, 0x0000);
     }
 }
