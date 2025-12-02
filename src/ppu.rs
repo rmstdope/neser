@@ -132,15 +132,63 @@ impl PPU {
     /// NTSC: 262 scanlines per frame
     /// PAL: 312 scanlines per frame
     pub fn run_ppu_cycles(&mut self, cycles: u64) {
-        self.total_cycles += cycles;
+        for _ in 0..cycles {
+            self.tick_ppu_cycle();
+        }
+    }
 
-        let total_position = self.pixel as u64 + cycles;
-        self.pixel = (total_position % PIXELS_PER_SCANLINE as u64) as u16;
+    /// Process a single PPU cycle and update scroll registers at appropriate times
+    fn tick_ppu_cycle(&mut self) {
+        self.total_cycles += 1;
 
-        let scanlines_advanced = total_position / PIXELS_PER_SCANLINE as u64;
-        let scanlines_per_frame = self.tv_system.scanlines_per_frame() as u64;
+        let _old_pixel = self.pixel;
         let old_scanline = self.scanline;
-        self.scanline = ((self.scanline as u64 + scanlines_advanced) % scanlines_per_frame) as u16;
+
+        // Advance pixel position
+        self.pixel += 1;
+        if self.pixel >= PIXELS_PER_SCANLINE {
+            self.pixel = 0;
+            self.scanline += 1;
+
+            let scanlines_per_frame = self.tv_system.scanlines_per_frame();
+            if self.scanline >= scanlines_per_frame {
+                self.scanline = 0;
+            }
+        }
+
+        // Handle scroll register updates during rendering
+        // Only update scroll registers when rendering is enabled
+        if self.is_rendering_enabled() {
+            let is_visible_scanline = self.scanline < 240;
+            let is_prerender_scanline = self.scanline == 261; // NTSC pre-render scanline
+
+            if is_visible_scanline || is_prerender_scanline {
+                // Increment coarse X during tile fetching (dots 8-256, every 8 dots)
+                if self.pixel >= 8 && self.pixel <= 256 && self.pixel % 8 == 0 {
+                    self.increment_coarse_x();
+                }
+
+                // Increment coarse X during pre-fetch (dots 328, 336)
+                if self.pixel == 328 || self.pixel == 336 {
+                    self.increment_coarse_x();
+                }
+
+                // Increment fine Y at dot 256
+                if self.pixel == 256 {
+                    self.increment_fine_y();
+                }
+
+                // Copy horizontal bits from t to v at dot 257
+                if self.pixel == 257 {
+                    self.copy_horizontal_bits();
+                }
+            }
+
+            // Copy vertical bits from t to v during pre-render scanline (dots 280-304)
+            if is_prerender_scanline && self.pixel >= 280 && self.pixel <= 304 {
+                self.copy_vertical_bits();
+            }
+        }
 
         // Check if we crossed into VBlank (scanline 241)
         if old_scanline < VBLANK_START && self.scanline >= VBLANK_START {
@@ -155,6 +203,14 @@ impl PPU {
             self.vblank_flag = false;
             self.nmi_enabled = false;
         }
+    }
+
+    /// Check if rendering is enabled (background or sprites)
+    /// 
+    /// TODO: This should check PPUMASK bits 3 (show background) and 4 (show sprites).
+    /// For now, returns false until PPUMASK is implemented (issue #10).
+    fn is_rendering_enabled(&self) -> bool {
+        false
     }
 
     /// Get the total number of ticks since reset
@@ -1722,5 +1778,17 @@ mod tests {
         ppu.copy_vertical_bits();
         // Vertical bits should be cleared
         assert_eq!(ppu.v_register() & 0x7BE0, 0x0000);
+    }
+
+    // Integration tests for scroll during rendering
+    #[test]
+    fn test_rendering_disabled_no_scroll_updates() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.v = 0x0000;
+        ppu.t = 0x7FFF;
+        // Rendering disabled, run through a scanline
+        ppu.run_ppu_cycles(341);
+        // v should not change when rendering is disabled
+        assert_eq!(ppu.v_register(), 0x0000);
     }
 }
