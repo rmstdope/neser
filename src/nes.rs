@@ -16,7 +16,6 @@ impl TvSystem {
     ///
     /// NTSC: 1.789773 MHz (1,789,773 Hz)
     /// PAL: 1.662607 MHz (1,662,607 Hz)
-    #[cfg(test)]
     pub fn cpu_clock_frequency(&self) -> u32 {
         match self {
             TvSystem::Ntsc => 1_789_773,
@@ -45,6 +44,21 @@ impl TvSystem {
             TvSystem::Pal => 312,
         }
     }
+
+    /// Returns the screen width for this TV system
+    ///
+    /// Both NTSC and PAL use 256 pixels width
+    pub fn screen_width(&self) -> u32 {
+        256
+    }
+
+    /// Returns the screen height for this TV system
+    ///
+    /// NTSC: 240 pixels
+    /// PAL: 240 pixels (visible area, though PAL has more scanlines)
+    pub fn screen_height(&self) -> u32 {
+        240
+    }
 }
 
 pub struct Nes {
@@ -53,6 +67,7 @@ pub struct Nes {
     pub cpu: cpu::Cpu,
     tv_system: TvSystem,
     fractional_ppu_cycles: f64,
+    ready_to_render: bool,
 }
 
 impl Nes {
@@ -68,6 +83,7 @@ impl Nes {
             cpu,
             tv_system,
             fractional_ppu_cycles: 0.0,
+            ready_to_render: false,
         }
     }
 
@@ -87,23 +103,30 @@ impl Nes {
         self.cpu.reset();
         self.ppu.borrow_mut().reset();
         self.fractional_ppu_cycles = 0.0;
+        self.ready_to_render = false;
     }
 
     /// Run one CPU "tick", executing one opcode and the corresponding PPU cycles
+    ///
+    /// Returns the number of CPU cycles consumed by the opcode.
     ///
     /// The PPU runs at a different rate than the CPU:
     /// - NTSC: 3 PPU cycles per CPU cycle
     /// - PAL: 3.2 PPU cycles per CPU cycle
     ///
     /// For PAL, fractional cycles are accumulated to maintain timing accuracy.
-    pub fn run_cpu_tick(&mut self) {
-        let cpu_cycles = self.cpu.run_opcode();
+    pub fn run_cpu_tick(&mut self) -> u8 {
+        let mut cpu_cycles = self.cpu.run_opcode();
         self.tick_ppu(cpu_cycles);
 
         if self.ppu.borrow_mut().poll_nmi() {
             self.cpu.trigger_nmi();
             self.tick_ppu(7);
+            cpu_cycles += 7;
+            self.ready_to_render = true;
         }
+
+        cpu_cycles
     }
 
     /// Run the PPU for the appropriate number of cycles based on CPU cycles
@@ -117,6 +140,25 @@ impl Nes {
         self.fractional_ppu_cycles -= ppu_cycles_to_run as f64;
 
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles_to_run);
+    }
+
+    /// NES system palette - 64 RGB color values (0x00-0x3F)
+    /// TODO Implement all known palettes and have the user be able to select system palette variant
+    #[rustfmt::skip]
+    const SYSTEM_PALETTE: [(u8, u8, u8); 0x40] = [
+        /* 0x00 */ (0x54, 0x54, 0x54), /* 0x01 */ (0x00, 0x1E, 0x74), /* 0x02 */ (0x08, 0x10, 0x90), /* 0x03 */ (0x30, 0x00, 0x88), /* 0x04 */ (0x44, 0x00, 0x64), /* 0x05 */ (0x5C, 0x00, 0x30), /* 0x06 */ (0x54, 0x04, 0x00), /* 0x07 */ (0x3C, 0x18, 0x00),
+        /* 0x08 */ (0x20, 0x2A, 0x00), /* 0x09 */ (0x08, 0x3A, 0x00), /* 0x0A */ (0x00, 0x40, 0x00), /* 0x0B */ (0x00, 0x3C, 0x00), /* 0x0C */ (0x00, 0x32, 0x3C), /* 0x0D */ (0x00, 0x00, 0x00), /* 0x0E */ (0x00, 0x00, 0x00), /* 0x0F */ (0x00, 0x00, 0x00),
+        /* 0x10 */ (0x98, 0x96, 0x98), /* 0x11 */ (0x08, 0x4C, 0xC4), /* 0x12 */ (0x30, 0x32, 0xEC), /* 0x13 */ (0x5C, 0x1E, 0xE4), /* 0x14 */ (0x88, 0x14, 0xB0), /* 0x15 */ (0xA0, 0x14, 0x64), /* 0x16 */ (0x98, 0x22, 0x20), /* 0x17 */ (0x78, 0x3C, 0x00),
+        /* 0x18 */ (0x54, 0x5A, 0x00), /* 0x19 */ (0x28, 0x72, 0x00), /* 0x1A */ (0x08, 0x7C, 0x00), /* 0x1B */ (0x00, 0x76, 0x28), /* 0x1C */ (0x00, 0x66, 0x78), /* 0x1D */ (0x00, 0x00, 0x00), /* 0x1E */ (0x00, 0x00, 0x00), /* 0x1F */ (0x00, 0x00, 0x00),
+        /* 0x20 */ (0xEC, 0xEE, 0xEC), /* 0x21 */ (0x4C, 0x9A, 0xEC), /* 0x22 */ (0x78, 0x7C, 0xEC), /* 0x23 */ (0xB0, 0x62, 0xEC), /* 0x24 */ (0xE4, 0x54, 0xEC), /* 0x25 */ (0xEC, 0x58, 0xB4), /* 0x26 */ (0xEC, 0x6A, 0x64), /* 0x27 */ (0xD4, 0x88, 0x20),
+        /* 0x28 */ (0xA0, 0xAA, 0x00), /* 0x29 */ (0x74, 0xC4, 0x00), /* 0x2A */ (0x4C, 0xD0, 0x20), /* 0x2B */ (0x38, 0xCC, 0x6C), /* 0x2C */ (0x38, 0xB4, 0xCC), /* 0x2D */ (0x3C, 0x3C, 0x3C), /* 0x2E */ (0x00, 0x00, 0x00), /* 0x2F */ (0x00, 0x00, 0x00),
+        /* 0x30 */ (0xEC, 0xEE, 0xEC), /* 0x31 */ (0xA8, 0xCC, 0xEC), /* 0x32 */ (0xBC, 0xBC, 0xEC), /* 0x33 */ (0xD4, 0xB2, 0xEC), /* 0x34 */ (0xEC, 0xAE, 0xEC), /* 0x35 */ (0xEC, 0xAE, 0xD4), /* 0x36 */ (0xEC, 0xB4, 0xB0), /* 0x37 */ (0xE4, 0xC4, 0x90),
+        /* 0x38 */ (0xCC, 0xD2, 0x78), /* 0x39 */ (0xB4, 0xDE, 0x78), /* 0x3A */ (0xA8, 0xE2, 0x90), /* 0x3B */ (0x98, 0xE2, 0xB4), /* 0x3C */ (0xA0, 0xD6, 0xE4), /* 0x3D */ (0xA0, 0xA2, 0xA0), /* 0x3E */ (0x00, 0x00, 0x00), /* 0x3F */ (0x00, 0x00, 0x00),
+    ];
+
+    /// Maps NES color palette index (0-63) to RGB values using direct array lookup
+    pub fn lookup_system_palette(color_index: u8) -> (u8, u8, u8) {
+        Self::SYSTEM_PALETTE[(color_index & 0x3F) as usize]
     }
 }
 
@@ -9445,5 +9487,20 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
         // Reset just the PPU to test the counter is cleared
         nes.ppu.borrow_mut().reset();
         assert_eq!(nes.ppu.borrow().total_cycles(), 0);
+    }
+
+    #[test]
+    fn test_nes_color_to_rgb() {
+        // Test a few key colors from the NES palette
+        assert_eq!(Nes::lookup_system_palette(0x00), (0x54, 0x54, 0x54)); // Gray
+        assert_eq!(Nes::lookup_system_palette(0x01), (0x00, 0x1E, 0x74)); // Blue
+        assert_eq!(Nes::lookup_system_palette(0x16), (0x98, 0x22, 0x20)); // Red
+        assert_eq!(Nes::lookup_system_palette(0x2A), (0x4C, 0xD0, 0x20)); // Green
+        assert_eq!(Nes::lookup_system_palette(0x30), (0xEC, 0xEE, 0xEC)); // White
+        assert_eq!(Nes::lookup_system_palette(0x0D), (0x00, 0x00, 0x00)); // Black
+
+        // Test that values above 0x3F are masked
+        assert_eq!(Nes::lookup_system_palette(0x40), (0x54, 0x54, 0x54)); // Same as 0x00
+        assert_eq!(Nes::lookup_system_palette(0xFF), (0x00, 0x00, 0x00)); // Same as 0x3F
     }
 }

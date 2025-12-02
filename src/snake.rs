@@ -1,0 +1,216 @@
+use crate::{cartridge, nes};
+use pixels::{Pixels, SurfaceTexture};
+use std::fs;
+use winit::{
+    dpi::LogicalSize,
+    event::{ElementState, Event, VirtualKeyCode, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    window::WindowBuilder,
+};
+
+const WIDTH: u32 = 720;
+const HEIGHT: u32 = 576;
+const TEXTURE_WIDTH: u32 = 32;
+const TEXTURE_HEIGHT: u32 = 32;
+
+fn render(nes: &nes::Nes, pixels: &mut Pixels) {
+    let frame = pixels.frame_mut();
+
+    // Convert 32x32 memory region (0x0200-0x0600) to RGBA bitmap
+    for y in 0..TEXTURE_HEIGHT {
+        for x in 0..TEXTURE_WIDTH {
+            let memory_index = 0x0200 + (y * TEXTURE_WIDTH + x) as usize;
+            let memory_value = nes.memory.borrow().read(memory_index as u16);
+
+            // Map texture coordinates to screen coordinates
+            let screen_x_start = x * WIDTH / TEXTURE_WIDTH;
+            let screen_y_start = y * HEIGHT / TEXTURE_HEIGHT;
+            let screen_x_end = (x + 1) * WIDTH / TEXTURE_WIDTH;
+            let screen_y_end = (y + 1) * HEIGHT / TEXTURE_HEIGHT;
+
+            // Set color based on memory value (1 = white, 0 = black)
+            // Map NES color palette (0-63) to RGB
+            let (r, g, b) = match memory_value & 0x3F {
+                0x00 => (0x54, 0x54, 0x54),
+                0x01 => (0x00, 0x1E, 0x74),
+                0x02 => (0x08, 0x10, 0x90),
+                0x03 => (0x30, 0x00, 0x88),
+                0x04 => (0x44, 0x00, 0x64),
+                0x05 => (0x5C, 0x00, 0x30),
+                0x06 => (0x54, 0x04, 0x00),
+                0x07 => (0x3C, 0x18, 0x00),
+                0x08 => (0x20, 0x2A, 0x00),
+                0x09 => (0x08, 0x3A, 0x00),
+                0x0A => (0x00, 0x40, 0x00),
+                0x0B => (0x00, 0x3C, 0x00),
+                0x0C => (0x00, 0x32, 0x3C),
+                0x0D => (0x00, 0x00, 0x00),
+                0x0E => (0x00, 0x00, 0x00),
+                0x0F => (0x00, 0x00, 0x00),
+                0x10 => (0x98, 0x96, 0x98),
+                0x11 => (0x08, 0x4C, 0xC4),
+                0x12 => (0x30, 0x32, 0xEC),
+                0x13 => (0x5C, 0x1E, 0xE4),
+                0x14 => (0x88, 0x14, 0xB0),
+                0x15 => (0xA0, 0x14, 0x64),
+                0x16 => (0x98, 0x22, 0x20),
+                0x17 => (0x78, 0x3C, 0x00),
+                0x18 => (0x54, 0x5A, 0x00),
+                0x19 => (0x28, 0x72, 0x00),
+                0x1A => (0x08, 0x7C, 0x00),
+                0x1B => (0x00, 0x76, 0x28),
+                0x1C => (0x00, 0x66, 0x78),
+                0x1D => (0x00, 0x00, 0x00),
+                0x1E => (0x00, 0x00, 0x00),
+                0x1F => (0x00, 0x00, 0x00),
+                0x20 => (0xEC, 0xEE, 0xEC),
+                0x21 => (0x4C, 0x9A, 0xEC),
+                0x22 => (0x78, 0x7C, 0xEC),
+                0x23 => (0xB0, 0x62, 0xEC),
+                0x24 => (0xE4, 0x54, 0xEC),
+                0x25 => (0xEC, 0x58, 0xB4),
+                0x26 => (0xEC, 0x6A, 0x64),
+                0x27 => (0xD4, 0x88, 0x20),
+                0x28 => (0xA0, 0xAA, 0x00),
+                0x29 => (0x74, 0xC4, 0x00),
+                0x2A => (0x4C, 0xD0, 0x20),
+                0x2B => (0x38, 0xCC, 0x6C),
+                0x2C => (0x38, 0xB4, 0xCC),
+                0x2D => (0x3C, 0x3C, 0x3C),
+                0x2E => (0x00, 0x00, 0x00),
+                0x2F => (0x00, 0x00, 0x00),
+                0x30 => (0xEC, 0xEE, 0xEC),
+                0x31 => (0xA8, 0xCC, 0xEC),
+                0x32 => (0xBC, 0xBC, 0xEC),
+                0x33 => (0xD4, 0xB2, 0xEC),
+                0x34 => (0xEC, 0xAE, 0xEC),
+                0x35 => (0xEC, 0xAE, 0xD4),
+                0x36 => (0xEC, 0xB4, 0xB0),
+                0x37 => (0xE4, 0xC4, 0x90),
+                0x38 => (0xCC, 0xD2, 0x78),
+                0x39 => (0xB4, 0xDE, 0x78),
+                0x3A => (0xA8, 0xE2, 0x90),
+                0x3B => (0x98, 0xE2, 0xB4),
+                0x3C => (0xA0, 0xD6, 0xE4),
+                0x3D => (0xA0, 0xA2, 0xA0),
+                0x3E => (0x00, 0x00, 0x00),
+                0x3F => (0x00, 0x00, 0x00),
+                _ => (0x00, 0x00, 0x00),
+            };
+
+            // Fill the corresponding screen pixels
+            for screen_y in screen_y_start..screen_y_end {
+                for screen_x in screen_x_start..screen_x_end {
+                    let frame_index = (screen_y * WIDTH + screen_x) as usize * 4;
+                    frame[frame_index] = r; // R
+                    frame[frame_index + 1] = g; // G
+                    frame[frame_index + 2] = b; // B
+                    frame[frame_index + 3] = 0xff; // A
+                }
+            }
+        }
+    }
+}
+
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let is_ntsc = true;
+    // Load the ROM file
+    let rom_data = fs::read("roms/snake.nes")?;
+    let cartridge = cartridge::Cartridge::new(&rom_data)?;
+
+    // Create NES and insert cartridge
+    let mut nes = nes::Nes::new(if is_ntsc {
+        nes::TvSystem::Ntsc
+    } else {
+        nes::TvSystem::Pal
+    });
+    nes.insert_cartridge(cartridge);
+
+    // Reset NES to start execution
+    nes.reset();
+    let event_loop = EventLoop::new();
+
+    let window = WindowBuilder::new()
+        .with_title("NESER - NES Emulator in Rust")
+        .with_inner_size(LogicalSize::new(WIDTH as f64, HEIGHT as f64))
+        .build(&event_loop)
+        .unwrap();
+
+    let mut pixels = {
+        let window_size = window.inner_size();
+        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
+        Pixels::new(WIDTH, HEIGHT, surface_texture)?
+    };
+
+    // Create a 32x32 texture (RGBA format)
+    let mut texture = vec![0u8; (TEXTURE_WIDTH * TEXTURE_HEIGHT * 4) as usize];
+    // Initialize texture with a simple pattern (white for now)
+    for pixel in texture.chunks_exact_mut(4) {
+        pixel[0] = 0xff; // R
+        pixel[1] = 0xff; // G
+        pixel[2] = 0xff; // B
+        pixel[3] = 0xff; // A
+    }
+
+    event_loop.run(move |event, _, control_flow| match event {
+        Event::WindowEvent {
+            event: WindowEvent::CloseRequested,
+            ..
+        } => {
+            *control_flow = ControlFlow::Exit;
+        }
+        Event::WindowEvent {
+            event:
+                WindowEvent::KeyboardInput {
+                    input:
+                        winit::event::KeyboardInput {
+                            virtual_keycode: Some(key),
+                            state: ElementState::Pressed,
+                            ..
+                        },
+                    ..
+                },
+            ..
+        } => match key {
+            VirtualKeyCode::Escape => *control_flow = ControlFlow::Exit,
+            VirtualKeyCode::Up => {
+                nes.memory.borrow_mut().write(0xff as u16, 0x77);
+            }
+            VirtualKeyCode::Down => {
+                nes.memory.borrow_mut().write(0xff as u16, 0x73);
+            }
+            VirtualKeyCode::Left => {
+                nes.memory.borrow_mut().write(0xff as u16, 0x61);
+            }
+            VirtualKeyCode::Right => {
+                nes.memory.borrow_mut().write(0xff as u16, 0x64);
+            }
+            _ => {}
+        },
+        Event::WindowEvent {
+            event: WindowEvent::Resized(size),
+            ..
+        } => {
+            if let Err(_err) = pixels.resize_surface(size.width, size.height) {
+                *control_flow = ControlFlow::Exit;
+            }
+        }
+        Event::RedrawRequested(_) => {
+            //draw(&mut pixels, &texture);
+            if let Err(_err) = pixels.render() {
+                *control_flow = ControlFlow::Exit;
+            }
+        }
+        Event::MainEventsCleared => {
+            for _ in 0..256 {
+                nes.run_cpu_tick();
+                nes.memory
+                    .borrow_mut()
+                    .write(0xfe as u16, rand::random::<u8>());
+            }
+            render(&nes, &mut pixels);
+            window.request_redraw();
+        }
+        _ => (),
+    });
+}

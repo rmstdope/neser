@@ -70,6 +70,15 @@ pub struct PPU {
     sprite_overflow: bool,
     /// NMI enabled flag
     nmi_enabled: bool,
+    // Loopy registers for scrolling
+    /// v: Current VRAM address (15 bits)
+    v: u16,
+    /// t: Temporary VRAM address (15 bits)
+    t: u16,
+    /// x: Fine X scroll (3 bits)
+    x: u8,
+    /// w: Write toggle (1 bit) - false=first write, true=second write
+    w: bool,
 }
 
 impl PPU {
@@ -94,6 +103,10 @@ impl PPU {
             sprite_0_hit: false,
             sprite_overflow: false,
             nmi_enabled: false,
+            v: 0,
+            t: 0,
+            x: 0,
+            w: false,
         }
     }
 
@@ -114,6 +127,10 @@ impl PPU {
         self.sprite_0_hit = false;
         self.sprite_overflow = false;
         self.nmi_enabled = false;
+        self.v = 0;
+        self.t = 0;
+        self.x = 0;
+        self.w = false;
     }
 
     /// Run the PPU for a specified number of ticks
@@ -155,7 +172,6 @@ impl PPU {
     }
 
     /// Get the current scanline
-    #[cfg(test)]
     pub fn scanline(&self) -> u16 {
         self.scanline
     }
@@ -164,6 +180,30 @@ impl PPU {
     #[cfg(test)]
     pub fn pixel(&self) -> u16 {
         self.pixel
+    }
+
+    /// Get the v register (current VRAM address)
+    #[cfg(test)]
+    pub fn v_register(&self) -> u16 {
+        self.v
+    }
+
+    /// Get the t register (temporary VRAM address)
+    #[cfg(test)]
+    pub fn t_register(&self) -> u16 {
+        self.t
+    }
+
+    /// Get the x register (fine X scroll)
+    #[cfg(test)]
+    pub fn x_register(&self) -> u8 {
+        self.x
+    }
+
+    /// Get the w register (write toggle)
+    #[cfg(test)]
+    pub fn w_register(&self) -> bool {
+        self.w
     }
 
     /// Write to the PPU address register ($2006)
@@ -239,7 +279,7 @@ impl PPU {
     }
 
     /// Read from PPU status register ($2002)
-    /// Reading this register clears the VBlank flag and resets the address latch
+    /// Reading this register clears the VBlank flag and resets the address latch (w register)
     pub fn get_status(&mut self) -> u8 {
         let mut status = 0u8;
 
@@ -255,8 +295,9 @@ impl PPU {
 
         // Reading status clears VBlank flag
         self.vblank_flag = false;
-        // Reading status also resets the address latch
+        // Reading status also resets the address latch (both old and new w register)
         self.high_byte_next = true;
+        self.w = false;
 
         status
     }
@@ -348,6 +389,60 @@ impl PPU {
         let ret = self.nmi_enabled;
         self.nmi_enabled = false;
         ret
+    }
+
+    /// Check if currently in vblank period
+    pub fn is_in_vblank(&self) -> bool {
+        self.vblank_flag
+    }
+
+    /// Renders the first nametable from PPU VRAM to the screen buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `screen_buffer` - Mutable reference to the screen buffer to render to
+    pub fn render(&self, screen_buffer: &mut crate::screen_buffer::ScreenBuffer) {
+        // NES nametable is 32x30 tiles, each tile is 8x8 pixels
+        // First nametable starts at 0x2000 in PPU address space
+        // Each tile is referenced by a byte that indexes into the pattern table
+
+        // Render 32x30 tiles (256x240 pixels)
+        for tile_y in 0..30 {
+            for tile_x in 0..32 {
+                // Get the tile index from nametable
+                let nametable_index = tile_y * 32 + tile_x;
+                let tile_index = self.ppu_ram[nametable_index] as usize;
+
+                // Each tile in CHR ROM is 16 bytes (8 bytes for low bit plane, 8 bytes for high bit plane)
+                let tile_addr = tile_index * 16;
+
+                // Render the 8x8 tile
+                for pixel_y in 0..8 {
+                    let low_byte = self.chr_rom[tile_addr + pixel_y];
+                    let high_byte = self.chr_rom[tile_addr + pixel_y + 8];
+
+                    for pixel_x in 0..8 {
+                        // Get the 2-bit color value for this pixel
+                        let bit = 7 - pixel_x;
+                        let low_bit = (low_byte >> bit) & 1;
+                        let high_bit = (high_byte >> bit) & 1;
+                        let color_index = (high_bit << 1) | low_bit;
+
+                        // For now, use the first background palette (indices 0-3)
+                        let palette_index = self.palette[color_index as usize];
+
+                        // Convert to RGB using system palette
+                        let (r, g, b) = crate::nes::Nes::lookup_system_palette(palette_index);
+
+                        // Calculate screen position
+                        let screen_x = tile_x * 8 + pixel_x;
+                        let screen_y = tile_y * 8 + pixel_y;
+
+                        screen_buffer.set_pixel(screen_x as u32, screen_y as u32, r, g, b);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1215,5 +1310,82 @@ mod tests {
         ppu.run_ppu_cycles(21 * 341); // 262 total scanlines, so 21 more to wrap
         // NMI should be cleared on new frame
         assert_eq!(ppu.poll_nmi(), false);
+    }
+
+    #[test]
+    fn test_render() {
+        use crate::screen_buffer::ScreenBuffer;
+
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        let mut screen_buffer = ScreenBuffer::new();
+
+        // Write some test data to the first nametable (0x2000-0x23FF)
+        // Each nametable is 32x30 tiles = 960 bytes
+        // Set a few tiles to different values
+        ppu.write_address(0x20); // High byte of 0x2000
+        ppu.write_address(0x00); // Low byte of 0x2000
+        ppu.write_data(0x01); // First tile
+
+        ppu.write_address(0x20); // High byte of 0x2001
+        ppu.write_address(0x01); // Low byte of 0x2001
+        ppu.write_data(0x02); // Second tile
+
+        // Render the PPU to the screen buffer
+        ppu.render(&mut screen_buffer);
+
+        // For now, just verify that the function exists and can be called
+        // We'll verify actual rendering in later iterations
+        assert_eq!(screen_buffer.width(), 256);
+        assert_eq!(screen_buffer.height(), 240);
+    }
+
+    // Tests for Loopy registers (v, t, x, w)
+    #[test]
+    fn test_v_register_initializes_to_zero() {
+        let ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.v_register(), 0);
+    }
+
+    #[test]
+    fn test_t_register_initializes_to_zero() {
+        let ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.t_register(), 0);
+    }
+
+    #[test]
+    fn test_x_register_initializes_to_zero() {
+        let ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.x_register(), 0);
+    }
+
+    #[test]
+    fn test_w_register_initializes_to_false() {
+        let ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.w_register(), false);
+    }
+
+    #[test]
+    fn test_reset_clears_loopy_registers() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Manually set registers to non-zero values
+        ppu.v = 0x1234;
+        ppu.t = 0x5678;
+        ppu.x = 0x07;
+        ppu.w = true;
+        
+        ppu.reset();
+        
+        assert_eq!(ppu.v_register(), 0);
+        assert_eq!(ppu.t_register(), 0);
+        assert_eq!(ppu.x_register(), 0);
+        assert_eq!(ppu.w_register(), false);
+    }
+
+    #[test]
+    fn test_get_status_clears_w_register() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.w = true;
+        ppu.get_status();
+        assert_eq!(ppu.w_register(), false);
     }
 }
