@@ -45,6 +45,7 @@ const FLAG_NEGATIVE: u8 = 0b1000_0000;
 
 const NMI_VECTOR: u16 = 0xFFFA;
 const RESET_VECTOR: u16 = 0xFFFC;
+const IRQ_VECTOR: u16 = 0xFFFE;
 
 impl Cpu {
     /// Create a new CPU with default register values
@@ -339,8 +340,20 @@ impl Cpu {
                 }
             }
             BRK => {
-                self.halted = true;
-                return cycles;
+                // BRK is a software interrupt instruction
+                // Push PC+2 to stack (PC has already been incremented past BRK opcode,
+                // so we push PC+1 which points to the byte after BRK's padding byte)
+                let return_addr = self.pc.wrapping_add(1);
+                self.push_word(return_addr);
+                
+                // Push P with B flag and unused flag set to distinguish BRK from IRQ
+                self.push_byte(self.p | FLAG_BREAK | FLAG_UNUSED);
+                
+                // Set Interrupt Disable flag to prevent further interrupts
+                self.p |= FLAG_INTERRUPT;
+                
+                // Load PC from IRQ/BRK vector
+                self.pc = self.memory.borrow().read_u16(IRQ_VECTOR);
             }
             CMP_IMM => {
                 let value = self.read_byte();
@@ -1908,11 +1921,13 @@ mod tests {
 
     // Test helper function to create a Memory instance with a PPU for testing
     fn create_test_memory() -> MemController {
-        let ppu = Rc::new(RefCell::new(crate::ppu::PPU::new(crate::nes::TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(crate::ppu::PPU::new(
+            crate::nes::TvSystem::Ntsc,
+        )));
         MemController::new(ppu)
     }
 
-    // Test helper function to run the CPU until BRK
+    // Test helper function to run the CPU until halted (KIL instruction)
     fn run(cpu: &mut Cpu) {
         while !cpu.halted {
             cpu.run_opcode();
@@ -1965,7 +1980,7 @@ mod tests {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // Load a minimal program so reset vector is set up
-        let program = vec![BRK];
+        let program = vec![KIL];
         fake_cartridge(&mut cpu, &program);
 
         cpu.a = 0xFF;
@@ -1987,7 +2002,7 @@ mod tests {
     fn test_adc_immediate() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_IMM, 0x20, BRK];
+        let program = vec![ADC_IMM, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x10;
@@ -2003,7 +2018,7 @@ mod tests {
     fn test_adc_immediate_with_carry() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_IMM, 0x20, BRK];
+        let program = vec![ADC_IMM, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x10;
@@ -2017,7 +2032,7 @@ mod tests {
     fn test_adc_immediate_carry_flag() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_IMM, 0x01, BRK];
+        let program = vec![ADC_IMM, 0x01, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xFF;
@@ -2031,7 +2046,7 @@ mod tests {
     fn test_adc_immediate_overflow_flag() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_IMM, 0x50, BRK]; // Add another positive
+        let program = vec![ADC_IMM, 0x50, KIL]; // Add another positive
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x50; // Positive number
@@ -2045,7 +2060,7 @@ mod tests {
     fn test_adc_immediate_negative_overflow() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_IMM, 0x80, BRK]; // Add -128
+        let program = vec![ADC_IMM, 0x80, KIL]; // Add -128
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x80; // -128 in two's complement
@@ -2060,7 +2075,7 @@ mod tests {
     fn test_adc_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_ZP, 0x42, BRK];
+        let program = vec![ADC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x10;
@@ -2073,7 +2088,7 @@ mod tests {
     fn test_adc_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_ABS, 0x34, 0x12, BRK]; // Little-endian
+        let program = vec![ADC_ABS, 0x34, 0x12, KIL]; // Little-endian
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x20;
@@ -2086,7 +2101,7 @@ mod tests {
     fn test_adc_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_ABSX, 0x34, 0x12, BRK];
+        let program = vec![ADC_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x10;
@@ -2100,7 +2115,7 @@ mod tests {
     fn test_adc_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_ZPX, 0x42, BRK];
+        let program = vec![ADC_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x15;
@@ -2114,7 +2129,7 @@ mod tests {
     fn test_adc_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_ABSY, 0x00, 0x10, BRK];
+        let program = vec![ADC_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x08;
@@ -2128,7 +2143,7 @@ mod tests {
     fn test_adc_indirect_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_INDX, 0x20, BRK];
+        let program = vec![ADC_INDX, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x05;
@@ -2144,7 +2159,7 @@ mod tests {
     fn test_adc_indirect_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ADC_INDY, 0x86, BRK];
+        let program = vec![ADC_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x0A;
@@ -2160,7 +2175,7 @@ mod tests {
     fn test_and_immediate() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AND_IMM, 0b1010_1010, BRK];
+        let program = vec![AND_IMM, 0b1010_1010, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1111_0000;
@@ -2174,7 +2189,7 @@ mod tests {
     fn test_and_immediate_zero_flag() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AND_IMM, 0b0000_1111, BRK];
+        let program = vec![AND_IMM, 0b0000_1111, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1111_0000;
@@ -2188,7 +2203,7 @@ mod tests {
     fn test_and_immediate_clears_negative_flag() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AND_IMM, 0b0111_1111, BRK];
+        let program = vec![AND_IMM, 0b0111_1111, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1111_1111;
@@ -2203,7 +2218,7 @@ mod tests {
     fn test_and_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AND_ZP, 0x42, BRK];
+        let program = vec![AND_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1100_1100;
@@ -2216,7 +2231,7 @@ mod tests {
     fn test_and_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AND_ZPX, 0x42, BRK];
+        let program = vec![AND_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1111_0000;
@@ -2230,7 +2245,7 @@ mod tests {
     fn test_and_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AND_ABS, 0x34, 0x12, BRK];
+        let program = vec![AND_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1010_1010;
@@ -2243,7 +2258,7 @@ mod tests {
     fn test_and_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AND_ABSX, 0x34, 0x12, BRK];
+        let program = vec![AND_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1111_1111;
@@ -2257,7 +2272,7 @@ mod tests {
     fn test_and_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AND_ABSY, 0x00, 0x10, BRK];
+        let program = vec![AND_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1100_0011;
@@ -2271,7 +2286,7 @@ mod tests {
     fn test_and_indirect_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AND_INDX, 0x20, BRK];
+        let program = vec![AND_INDX, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1111_0000;
@@ -2287,7 +2302,7 @@ mod tests {
     fn test_and_indirect_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AND_INDY, 0x86, BRK];
+        let program = vec![AND_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1010_1010;
@@ -2303,7 +2318,7 @@ mod tests {
     fn test_asl_accumulator() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASL_A, BRK];
+        let program = vec![ASL_A, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b0100_0010;
@@ -2318,7 +2333,7 @@ mod tests {
     fn test_asl_accumulator_sets_carry() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASL_A, BRK];
+        let program = vec![ASL_A, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1000_0001;
@@ -2333,7 +2348,7 @@ mod tests {
     fn test_asl_accumulator_sets_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASL_A, BRK];
+        let program = vec![ASL_A, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1000_0000;
@@ -2348,7 +2363,7 @@ mod tests {
     fn test_asl_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASL_ZP, 0x42, BRK];
+        let program = vec![ASL_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0b0011_0011);
@@ -2361,7 +2376,7 @@ mod tests {
     fn test_asl_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASL_ZPX, 0x42, BRK];
+        let program = vec![ASL_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -2375,7 +2390,7 @@ mod tests {
     fn test_asl_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASL_ABS, 0x34, 0x12, BRK];
+        let program = vec![ASL_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1234, 0b0100_0001);
@@ -2388,7 +2403,7 @@ mod tests {
     fn test_asl_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASL_ABSX, 0x34, 0x12, BRK];
+        let program = vec![ASL_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -2403,7 +2418,7 @@ mod tests {
     fn test_bit_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BIT_ZP, 0x42, BRK];
+        let program = vec![BIT_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1111_0000;
@@ -2421,7 +2436,7 @@ mod tests {
     fn test_bit_zero_page_sets_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BIT_ZP, 0x42, BRK];
+        let program = vec![BIT_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b0000_1111;
@@ -2439,7 +2454,7 @@ mod tests {
     fn test_bit_zero_page_clears_flags() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BIT_ZP, 0x42, BRK];
+        let program = vec![BIT_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1111_1111;
@@ -2457,7 +2472,7 @@ mod tests {
     fn test_bit_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BIT_ABS, 0x34, 0x12, BRK];
+        let program = vec![BIT_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1010_1010;
@@ -2475,7 +2490,7 @@ mod tests {
     fn test_bcc_branch_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BCC, 0x02, 0x00, 0x00, BRK]; // Branch forward 2 bytes to skip padding
+        let program = vec![BCC, 0x02, 0x00, 0x00, KIL]; // Branch forward 2 bytes to skip padding
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p &= !FLAG_CARRY; // Ensure carry is clear
@@ -2488,7 +2503,7 @@ mod tests {
     fn test_bcc_branch_not_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BCC, 0x05, BRK]; // Should not branch
+        let program = vec![BCC, 0x05, KIL]; // Should not branch
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p |= FLAG_CARRY; // Set carry flag
@@ -2502,7 +2517,7 @@ mod tests {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // BRK at start, then BCC at offset 3 that branches back -5 bytes to the BRK
-        let program = vec![BRK, 0x00, 0x00, BCC, 0xFB];
+        let program = vec![KIL, 0x00, 0x00, BCC, 0xFB];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p &= !FLAG_CARRY; // Ensure carry is clear
@@ -2516,7 +2531,7 @@ mod tests {
     fn test_bcs_branch_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BCS, 0x01, 0x00, BRK];
+        let program = vec![BCS, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p |= FLAG_CARRY; // Set carry flag
@@ -2528,7 +2543,7 @@ mod tests {
     fn test_bcs_branch_not_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BCS, 0x03, BRK];
+        let program = vec![BCS, 0x03, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p &= !FLAG_CARRY; // Clear carry flag
@@ -2540,7 +2555,7 @@ mod tests {
     fn test_beq_branch_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BEQ, 0x01, 0x00, BRK];
+        let program = vec![BEQ, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p |= FLAG_ZERO; // Set zero flag
@@ -2552,7 +2567,7 @@ mod tests {
     fn test_beq_branch_not_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BEQ, 0x02, BRK];
+        let program = vec![BEQ, 0x02, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p &= !FLAG_ZERO; // Clear zero flag
@@ -2564,7 +2579,7 @@ mod tests {
     fn test_bmi_branch_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BMI, 0x01, 0x00, BRK];
+        let program = vec![BMI, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
@@ -2576,7 +2591,7 @@ mod tests {
     fn test_bmi_branch_not_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BMI, 0x04, BRK];
+        let program = vec![BMI, 0x04, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
@@ -2588,7 +2603,7 @@ mod tests {
     fn test_bne_branch_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BNE, 0x01, 0x00, BRK];
+        let program = vec![BNE, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p &= !FLAG_ZERO; // Clear zero flag (not equal)
@@ -2600,7 +2615,7 @@ mod tests {
     fn test_bne_branch_not_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BNE, 0x06, BRK];
+        let program = vec![BNE, 0x06, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p |= FLAG_ZERO; // Set zero flag (equal)
@@ -2612,7 +2627,7 @@ mod tests {
     fn test_bpl_branch_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BPL, 0x01, 0x00, BRK];
+        let program = vec![BPL, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag (positive)
@@ -2624,7 +2639,7 @@ mod tests {
     fn test_bpl_branch_not_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BPL, 0x07, BRK];
+        let program = vec![BPL, 0x07, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
@@ -2636,7 +2651,7 @@ mod tests {
     fn test_bvc_branch_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BVC, 0x01, 0x00, BRK];
+        let program = vec![BVC, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
@@ -2648,7 +2663,7 @@ mod tests {
     fn test_bvc_branch_not_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BVC, 0x05, BRK];
+        let program = vec![BVC, 0x05, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
@@ -2660,7 +2675,7 @@ mod tests {
     fn test_bvs_branch_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BVS, 0x01, 0x00, BRK];
+        let program = vec![BVS, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
@@ -2672,7 +2687,7 @@ mod tests {
     fn test_bvs_branch_not_taken() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![BVS, 0x08, BRK];
+        let program = vec![BVS, 0x08, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
@@ -2684,7 +2699,7 @@ mod tests {
     fn test_cmp_immediate_equal() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CMP_IMM, 0x42, BRK];
+        let program = vec![CMP_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -2698,7 +2713,7 @@ mod tests {
     fn test_cmp_immediate_greater() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CMP_IMM, 0x30, BRK];
+        let program = vec![CMP_IMM, 0x30, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x50;
@@ -2712,7 +2727,7 @@ mod tests {
     fn test_cmp_immediate_less() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CMP_IMM, 0x50, BRK];
+        let program = vec![CMP_IMM, 0x50, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x30;
@@ -2726,7 +2741,7 @@ mod tests {
     fn test_cmp_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CMP_ZP, 0x42, BRK];
+        let program = vec![CMP_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x80;
@@ -2740,7 +2755,7 @@ mod tests {
     fn test_cmp_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CMP_ZPX, 0x42, BRK];
+        let program = vec![CMP_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x10;
@@ -2754,7 +2769,7 @@ mod tests {
     fn test_cmp_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CMP_ABS, 0x34, 0x12, BRK];
+        let program = vec![CMP_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x20;
@@ -2767,7 +2782,7 @@ mod tests {
     fn test_cmp_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CMP_ABSX, 0x34, 0x12, BRK];
+        let program = vec![CMP_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xFF;
@@ -2781,7 +2796,7 @@ mod tests {
     fn test_cmp_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CMP_ABSY, 0x00, 0x10, BRK];
+        let program = vec![CMP_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x55;
@@ -2795,7 +2810,7 @@ mod tests {
     fn test_cmp_indirect_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CMP_INDX, 0x20, BRK];
+        let program = vec![CMP_INDX, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x33;
@@ -2811,7 +2826,7 @@ mod tests {
     fn test_cmp_indirect_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CMP_INDY, 0x86, BRK];
+        let program = vec![CMP_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x77;
@@ -2828,7 +2843,7 @@ mod tests {
     fn test_cpx_immediate_equal() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CPX_IMM, 0x42, BRK];
+        let program = vec![CPX_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x42;
@@ -2842,7 +2857,7 @@ mod tests {
     fn test_cpx_immediate_greater() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CPX_IMM, 0x30, BRK];
+        let program = vec![CPX_IMM, 0x30, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x50;
@@ -2856,7 +2871,7 @@ mod tests {
     fn test_cpx_immediate_less() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CPX_IMM, 0x50, BRK];
+        let program = vec![CPX_IMM, 0x50, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x30;
@@ -2870,7 +2885,7 @@ mod tests {
     fn test_cpx_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CPX_ZP, 0x42, BRK];
+        let program = vec![CPX_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x80;
@@ -2884,7 +2899,7 @@ mod tests {
     fn test_cpx_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CPX_ABS, 0x34, 0x12, BRK];
+        let program = vec![CPX_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x20;
@@ -2898,7 +2913,7 @@ mod tests {
     fn test_cpy_immediate_equal() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CPY_IMM, 0x42, BRK];
+        let program = vec![CPY_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x42;
@@ -2912,7 +2927,7 @@ mod tests {
     fn test_cpy_immediate_greater() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CPY_IMM, 0x30, BRK];
+        let program = vec![CPY_IMM, 0x30, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x50;
@@ -2926,7 +2941,7 @@ mod tests {
     fn test_cpy_immediate_less() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CPY_IMM, 0x50, BRK];
+        let program = vec![CPY_IMM, 0x50, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x30;
@@ -2940,7 +2955,7 @@ mod tests {
     fn test_cpy_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CPY_ZP, 0x42, BRK];
+        let program = vec![CPY_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x80;
@@ -2954,7 +2969,7 @@ mod tests {
     fn test_cpy_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CPY_ABS, 0x34, 0x12, BRK];
+        let program = vec![CPY_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x20;
@@ -2968,7 +2983,7 @@ mod tests {
     fn test_dec_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEC_ZP, 0x42, BRK];
+        let program = vec![DEC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x50);
@@ -2982,7 +2997,7 @@ mod tests {
     fn test_dec_zero_page_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEC_ZP, 0x42, BRK];
+        let program = vec![DEC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x01);
@@ -2996,7 +3011,7 @@ mod tests {
     fn test_dec_zero_page_negative() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEC_ZP, 0x42, BRK];
+        let program = vec![DEC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x00);
@@ -3010,7 +3025,7 @@ mod tests {
     fn test_dec_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEC_ZPX, 0x42, BRK];
+        let program = vec![DEC_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -3024,7 +3039,7 @@ mod tests {
     fn test_dec_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEC_ABS, 0x34, 0x12, BRK];
+        let program = vec![DEC_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1234, 0x30);
@@ -3037,7 +3052,7 @@ mod tests {
     fn test_dec_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEC_ABSX, 0x34, 0x12, BRK];
+        let program = vec![DEC_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -3051,7 +3066,7 @@ mod tests {
     fn test_eor_immediate() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![EOR_IMM, 0b1111_0000, BRK];
+        let program = vec![EOR_IMM, 0b1111_0000, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1010_1010;
@@ -3065,7 +3080,7 @@ mod tests {
     fn test_eor_immediate_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![EOR_IMM, 0b1010_1010, BRK];
+        let program = vec![EOR_IMM, 0b1010_1010, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1010_1010;
@@ -3078,7 +3093,7 @@ mod tests {
     fn test_eor_immediate_negative() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![EOR_IMM, 0b1111_0000, BRK];
+        let program = vec![EOR_IMM, 0b1111_0000, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b0101_0101;
@@ -3091,7 +3106,7 @@ mod tests {
     fn test_eor_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![EOR_ZP, 0x42, BRK];
+        let program = vec![EOR_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xFF;
@@ -3104,7 +3119,7 @@ mod tests {
     fn test_eor_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![EOR_ZPX, 0x42, BRK];
+        let program = vec![EOR_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xFF;
@@ -3118,7 +3133,7 @@ mod tests {
     fn test_eor_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![EOR_ABS, 0x34, 0x12, BRK];
+        let program = vec![EOR_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x12;
@@ -3131,7 +3146,7 @@ mod tests {
     fn test_eor_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![EOR_ABSX, 0x34, 0x12, BRK];
+        let program = vec![EOR_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xAA;
@@ -3145,7 +3160,7 @@ mod tests {
     fn test_eor_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![EOR_ABSY, 0x34, 0x12, BRK];
+        let program = vec![EOR_ABSY, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xF0;
@@ -3159,7 +3174,7 @@ mod tests {
     fn test_eor_indexed_indirect() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![EOR_INDX, 0x20, BRK];
+        let program = vec![EOR_INDX, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1100_0011;
@@ -3175,7 +3190,7 @@ mod tests {
     fn test_eor_indirect_indexed() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![EOR_INDY, 0x86, BRK];
+        let program = vec![EOR_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b1010_0101;
@@ -3191,7 +3206,7 @@ mod tests {
     fn test_clc() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CLC, BRK];
+        let program = vec![CLC, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p = FLAG_CARRY;
@@ -3203,7 +3218,7 @@ mod tests {
     fn test_cld() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CLD, BRK];
+        let program = vec![CLD, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p = FLAG_DECIMAL;
@@ -3215,7 +3230,7 @@ mod tests {
     fn test_cli() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CLI, BRK];
+        let program = vec![CLI, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p = FLAG_INTERRUPT;
@@ -3227,7 +3242,7 @@ mod tests {
     fn test_clv() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![CLV, BRK];
+        let program = vec![CLV, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p = FLAG_OVERFLOW;
@@ -3239,7 +3254,7 @@ mod tests {
     fn test_sec() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SEC, BRK];
+        let program = vec![SEC, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p = 0;
@@ -3251,7 +3266,7 @@ mod tests {
     fn test_sed() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SED, BRK];
+        let program = vec![SED, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p = 0;
@@ -3263,7 +3278,7 @@ mod tests {
     fn test_sei() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SEI, BRK];
+        let program = vec![SEI, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p = 0;
@@ -3275,7 +3290,7 @@ mod tests {
     fn test_inc_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![INC_ZP, 0x42, BRK];
+        let program = vec![INC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x50);
@@ -3289,7 +3304,7 @@ mod tests {
     fn test_inc_zero_page_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![INC_ZP, 0x42, BRK];
+        let program = vec![INC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0xFF);
@@ -3303,7 +3318,7 @@ mod tests {
     fn test_inc_zero_page_negative() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![INC_ZP, 0x42, BRK];
+        let program = vec![INC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x7F);
@@ -3317,7 +3332,7 @@ mod tests {
     fn test_inc_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![INC_ZPX, 0x42, BRK];
+        let program = vec![INC_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -3331,7 +3346,7 @@ mod tests {
     fn test_inc_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![INC_ABS, 0x34, 0x12, BRK];
+        let program = vec![INC_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1234, 0x30);
@@ -3344,7 +3359,7 @@ mod tests {
     fn test_inc_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![INC_ABSX, 0x34, 0x12, BRK];
+        let program = vec![INC_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -3363,7 +3378,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x0600, JMP_ABS);
         cpu.memory.borrow_mut().write(0x0601, 0x34);
         cpu.memory.borrow_mut().write(0x0602, 0x12);
-        cpu.memory.borrow_mut().write(0x1234, BRK);
+        cpu.memory.borrow_mut().write(0x1234, KIL);
         cpu.pc = 0x0600;
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK at 0x1234
@@ -3380,7 +3395,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x0602, 0x10);
         cpu.memory.borrow_mut().write(0x1020, 0x56);
         cpu.memory.borrow_mut().write(0x1021, 0x18);
-        cpu.memory.borrow_mut().write(0x1856, BRK);
+        cpu.memory.borrow_mut().write(0x1856, KIL);
         cpu.pc = 0x0600;
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x1857); // PC after BRK at 0x1856
@@ -3400,7 +3415,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x0602, 0x10);
         cpu.memory.borrow_mut().write(0x10FF, 0x34);
         cpu.memory.borrow_mut().write(0x1000, 0x12); // Wraps to start of page, not 0x1100
-        cpu.memory.borrow_mut().write(0x1234, BRK);
+        cpu.memory.borrow_mut().write(0x1234, KIL);
         cpu.pc = 0x0600;
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // Should jump to 0x1234 (low=0x34, high=0x12)
@@ -3415,7 +3430,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x0600, JSR);
         cpu.memory.borrow_mut().write(0x0601, 0x34);
         cpu.memory.borrow_mut().write(0x0602, 0x12);
-        cpu.memory.borrow_mut().write(0x1234, BRK);
+        cpu.memory.borrow_mut().write(0x1234, KIL);
         cpu.pc = 0x0600;
         cpu.sp = 0xFF;
         run(&mut cpu);
@@ -3430,7 +3445,7 @@ mod tests {
     fn test_lda_immediate() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_IMM, 0x42, BRK];
+        let program = vec![LDA_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         run(&mut cpu);
@@ -3443,7 +3458,7 @@ mod tests {
     fn test_lda_immediate_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_IMM, 0x00, BRK];
+        let program = vec![LDA_IMM, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         run(&mut cpu);
@@ -3455,7 +3470,7 @@ mod tests {
     fn test_lda_immediate_negative() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_IMM, 0x80, BRK];
+        let program = vec![LDA_IMM, 0x80, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         run(&mut cpu);
@@ -3467,7 +3482,7 @@ mod tests {
     fn test_lda_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_ZP, 0x42, BRK];
+        let program = vec![LDA_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x55);
@@ -3479,7 +3494,7 @@ mod tests {
     fn test_lda_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_ZPX, 0x42, BRK];
+        let program = vec![LDA_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -3492,7 +3507,7 @@ mod tests {
     fn test_lda_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_ABS, 0x34, 0x12, BRK];
+        let program = vec![LDA_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1234, 0x77);
@@ -3504,7 +3519,7 @@ mod tests {
     fn test_lda_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_ABSX, 0x34, 0x12, BRK];
+        let program = vec![LDA_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -3517,7 +3532,7 @@ mod tests {
     fn test_lda_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_ABSY, 0x34, 0x12, BRK];
+        let program = vec![LDA_ABSY, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x20;
@@ -3530,7 +3545,7 @@ mod tests {
     fn test_lda_indexed_indirect() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_INDX, 0x20, BRK];
+        let program = vec![LDA_INDX, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x04;
@@ -3545,7 +3560,7 @@ mod tests {
     fn test_lda_indirect_indexed() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_INDY, 0x86, BRK];
+        let program = vec![LDA_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -3560,7 +3575,7 @@ mod tests {
     fn test_ldx_immediate() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDX_IMM, 0x42, BRK];
+        let program = vec![LDX_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         run(&mut cpu);
@@ -3573,7 +3588,7 @@ mod tests {
     fn test_ldx_immediate_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDX_IMM, 0x00, BRK];
+        let program = vec![LDX_IMM, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         run(&mut cpu);
@@ -3585,7 +3600,7 @@ mod tests {
     fn test_ldx_immediate_negative() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDX_IMM, 0x80, BRK];
+        let program = vec![LDX_IMM, 0x80, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         run(&mut cpu);
@@ -3597,7 +3612,7 @@ mod tests {
     fn test_ldx_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDX_ZP, 0x42, BRK];
+        let program = vec![LDX_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x55);
@@ -3609,7 +3624,7 @@ mod tests {
     fn test_ldx_zero_page_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDX_ZPY, 0x42, BRK];
+        let program = vec![LDX_ZPY, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x05;
@@ -3622,7 +3637,7 @@ mod tests {
     fn test_ldx_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDX_ABS, 0x34, 0x12, BRK];
+        let program = vec![LDX_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1234, 0x77);
@@ -3634,7 +3649,7 @@ mod tests {
     fn test_ldx_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDX_ABSY, 0x34, 0x12, BRK];
+        let program = vec![LDX_ABSY, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x20;
@@ -3647,7 +3662,7 @@ mod tests {
     fn test_ldy_immediate() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDY_IMM, 0x42, BRK];
+        let program = vec![LDY_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         run(&mut cpu);
@@ -3660,7 +3675,7 @@ mod tests {
     fn test_ldy_immediate_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDY_IMM, 0x00, BRK];
+        let program = vec![LDY_IMM, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         run(&mut cpu);
@@ -3672,7 +3687,7 @@ mod tests {
     fn test_ldy_immediate_negative() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDY_IMM, 0x80, BRK];
+        let program = vec![LDY_IMM, 0x80, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         run(&mut cpu);
@@ -3684,7 +3699,7 @@ mod tests {
     fn test_ldy_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDY_ZP, 0x42, BRK];
+        let program = vec![LDY_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x55);
@@ -3696,7 +3711,7 @@ mod tests {
     fn test_ldy_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDY_ZPX, 0x42, BRK];
+        let program = vec![LDY_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -3709,7 +3724,7 @@ mod tests {
     fn test_ldy_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDY_ABS, 0x34, 0x12, BRK];
+        let program = vec![LDY_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1234, 0x77);
@@ -3721,7 +3736,7 @@ mod tests {
     fn test_ldy_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDY_ABSX, 0x34, 0x12, BRK];
+        let program = vec![LDY_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -3734,7 +3749,7 @@ mod tests {
     fn test_lsr_accumulator() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LSR_ACC, BRK];
+        let program = vec![LSR_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b10110101;
@@ -3749,7 +3764,7 @@ mod tests {
     fn test_lsr_accumulator_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LSR_ACC, BRK];
+        let program = vec![LSR_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b00000001;
@@ -3763,7 +3778,7 @@ mod tests {
     fn test_lsr_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LSR_ZP, 0x42, BRK];
+        let program = vec![LSR_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0b11001100);
@@ -3776,7 +3791,7 @@ mod tests {
     fn test_lsr_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LSR_ZPX, 0x42, BRK];
+        let program = vec![LSR_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -3790,7 +3805,7 @@ mod tests {
     fn test_lsr_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LSR_ABS, 0x34, 0x12, BRK];
+        let program = vec![LSR_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1234, 0b01010100);
@@ -3803,7 +3818,7 @@ mod tests {
     fn test_lsr_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LSR_ABSX, 0x34, 0x12, BRK];
+        let program = vec![LSR_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -3817,7 +3832,7 @@ mod tests {
     fn test_nop() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![NOP, BRK];
+        let program = vec![NOP, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -3836,7 +3851,7 @@ mod tests {
     fn test_ora_immediate() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ORA_IMM, 0b01010101, BRK];
+        let program = vec![ORA_IMM, 0b01010101, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b10101010;
@@ -3850,7 +3865,7 @@ mod tests {
     fn test_ora_immediate_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ORA_IMM, 0x00, BRK];
+        let program = vec![ORA_IMM, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x00;
@@ -3863,7 +3878,7 @@ mod tests {
     fn test_ora_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ORA_ZP, 0x42, BRK];
+        let program = vec![ORA_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11110000;
@@ -3876,7 +3891,7 @@ mod tests {
     fn test_ora_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ORA_ZPX, 0x42, BRK];
+        let program = vec![ORA_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b10000000;
@@ -3890,7 +3905,7 @@ mod tests {
     fn test_ora_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ORA_ABS, 0x34, 0x12, BRK];
+        let program = vec![ORA_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b00110011;
@@ -3903,7 +3918,7 @@ mod tests {
     fn test_ora_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ORA_ABSX, 0x34, 0x12, BRK];
+        let program = vec![ORA_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b00001111;
@@ -3917,7 +3932,7 @@ mod tests {
     fn test_ora_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ORA_ABSY, 0x34, 0x12, BRK];
+        let program = vec![ORA_ABSY, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b01010101;
@@ -3931,7 +3946,7 @@ mod tests {
     fn test_ora_indexed_indirect() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ORA_INDX, 0x82, BRK];
+        let program = vec![ORA_INDX, 0x82, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b00110011;
@@ -3947,7 +3962,7 @@ mod tests {
     fn test_ora_indirect_indexed() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ORA_INDY, 0x86, BRK];
+        let program = vec![ORA_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b10101010;
@@ -3963,7 +3978,7 @@ mod tests {
     fn test_ora_negative_flag() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ORA_IMM, 0x80, BRK];
+        let program = vec![ORA_IMM, 0x80, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x00;
@@ -3977,7 +3992,7 @@ mod tests {
     fn test_dex() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEX, BRK];
+        let program = vec![DEX, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x42;
@@ -3991,7 +4006,7 @@ mod tests {
     fn test_dex_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEX, BRK];
+        let program = vec![DEX, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x01;
@@ -4004,7 +4019,7 @@ mod tests {
     fn test_dex_wrap() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEX, BRK];
+        let program = vec![DEX, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x00;
@@ -4017,7 +4032,7 @@ mod tests {
     fn test_dey() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEY, BRK];
+        let program = vec![DEY, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x42;
@@ -4031,7 +4046,7 @@ mod tests {
     fn test_inx() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![INX, BRK];
+        let program = vec![INX, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x42;
@@ -4045,7 +4060,7 @@ mod tests {
     fn test_inx_wrap() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![INX, BRK];
+        let program = vec![INX, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0xFF;
@@ -4058,7 +4073,7 @@ mod tests {
     fn test_iny() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![INY, BRK];
+        let program = vec![INY, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x42;
@@ -4072,7 +4087,7 @@ mod tests {
     fn test_tax() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![TAX, BRK];
+        let program = vec![TAX, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -4086,7 +4101,7 @@ mod tests {
     fn test_tax_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![TAX, BRK];
+        let program = vec![TAX, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x00;
@@ -4099,7 +4114,7 @@ mod tests {
     fn test_tax_negative() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![TAX, BRK];
+        let program = vec![TAX, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x80;
@@ -4112,7 +4127,7 @@ mod tests {
     fn test_tay() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![TAY, BRK];
+        let program = vec![TAY, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -4126,7 +4141,7 @@ mod tests {
     fn test_txa() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![TXA, BRK];
+        let program = vec![TXA, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x42;
@@ -4140,7 +4155,7 @@ mod tests {
     fn test_tya() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![TYA, BRK];
+        let program = vec![TYA, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x42;
@@ -4154,7 +4169,7 @@ mod tests {
     fn test_rol_accumulator() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROL_ACC, BRK];
+        let program = vec![ROL_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b10110101;
@@ -4170,7 +4185,7 @@ mod tests {
     fn test_rol_accumulator_with_carry() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROL_ACC, BRK];
+        let program = vec![ROL_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b01010101;
@@ -4185,7 +4200,7 @@ mod tests {
     fn test_rol_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROL_ZP, 0x42, BRK];
+        let program = vec![ROL_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0b11001100);
@@ -4199,7 +4214,7 @@ mod tests {
     fn test_rol_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROL_ZPX, 0x42, BRK];
+        let program = vec![ROL_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -4214,7 +4229,7 @@ mod tests {
     fn test_rol_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROL_ABS, 0x34, 0x12, BRK];
+        let program = vec![ROL_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1234, 0b01010100);
@@ -4228,7 +4243,7 @@ mod tests {
     fn test_rol_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROL_ABSX, 0x34, 0x12, BRK];
+        let program = vec![ROL_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -4243,7 +4258,7 @@ mod tests {
     fn test_ror_accumulator() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROR_ACC, BRK];
+        let program = vec![ROR_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b10110101;
@@ -4259,7 +4274,7 @@ mod tests {
     fn test_ror_accumulator_with_carry() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROR_ACC, BRK];
+        let program = vec![ROR_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b01010101;
@@ -4274,7 +4289,7 @@ mod tests {
     fn test_ror_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROR_ZP, 0x42, BRK];
+        let program = vec![ROR_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0b11001100);
@@ -4288,7 +4303,7 @@ mod tests {
     fn test_ror_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROR_ZPX, 0x42, BRK];
+        let program = vec![ROR_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -4303,7 +4318,7 @@ mod tests {
     fn test_ror_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROR_ABS, 0x34, 0x12, BRK];
+        let program = vec![ROR_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1234, 0b01010100);
@@ -4317,7 +4332,7 @@ mod tests {
     fn test_ror_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROR_ABSX, 0x34, 0x12, BRK];
+        let program = vec![ROR_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -4332,7 +4347,7 @@ mod tests {
     fn test_rti() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![RTI, BRK];
+        let program = vec![RTI, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         // Set up stack with saved processor status and return address
@@ -4340,7 +4355,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x01FD, 0b11010011); // Saved status flags
         cpu.memory.borrow_mut().write(0x01FE, 0x34); // PC low byte
         cpu.memory.borrow_mut().write(0x01FF, 0x12); // PC high byte
-        cpu.memory.borrow_mut().write(0x1234, BRK); // BRK at return address
+        cpu.memory.borrow_mut().write(0x1234, KIL); // BRK at return address
         run(&mut cpu);
         // RTI should behave like PLP - ignore B flag and unused bit, always set unused to 1
         // 0b11010011 with B flag cleared and unused set: 0b11100011 = 0xE3
@@ -4353,14 +4368,14 @@ mod tests {
     fn test_rts() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![RTS, BRK];
+        let program = vec![RTS, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         // Set up stack with saved return address (PC-1)
         cpu.sp = 0xFD;
         cpu.memory.borrow_mut().write(0x01FE, 0x33); // PC-1 low byte (0x1233)
         cpu.memory.borrow_mut().write(0x01FF, 0x12); // PC-1 high byte
-        cpu.memory.borrow_mut().write(0x1234, BRK); // BRK at return address
+        cpu.memory.borrow_mut().write(0x1234, KIL); // BRK at return address
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK instruction (0x1234 + 1)
         assert_eq!(cpu.sp, 0xFF);
@@ -4370,7 +4385,7 @@ mod tests {
     fn test_sbc_immediate() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_IMM, 0x30, BRK];
+        let program = vec![SBC_IMM, 0x30, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x50;
@@ -4386,7 +4401,7 @@ mod tests {
     fn test_sbc_immediate_with_borrow() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_IMM, 0x30, BRK];
+        let program = vec![SBC_IMM, 0x30, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x50;
@@ -4400,7 +4415,7 @@ mod tests {
     fn test_sbc_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_ZP, 0x42, BRK];
+        let program = vec![SBC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x80;
@@ -4414,7 +4429,7 @@ mod tests {
     fn test_sbc_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_ZPX, 0x42, BRK];
+        let program = vec![SBC_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x50;
@@ -4429,7 +4444,7 @@ mod tests {
     fn test_sbc_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_ABS, 0x34, 0x12, BRK];
+        let program = vec![SBC_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x60;
@@ -4443,7 +4458,7 @@ mod tests {
     fn test_sbc_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_ABSX, 0x34, 0x12, BRK];
+        let program = vec![SBC_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x70;
@@ -4458,7 +4473,7 @@ mod tests {
     fn test_sbc_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_ABSY, 0x34, 0x12, BRK];
+        let program = vec![SBC_ABSY, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x90;
@@ -4473,7 +4488,7 @@ mod tests {
     fn test_sbc_indexed_indirect() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_INDX, 0x82, BRK];
+        let program = vec![SBC_INDX, 0x82, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xA0;
@@ -4490,7 +4505,7 @@ mod tests {
     fn test_sbc_indirect_indexed() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_INDY, 0x86, BRK];
+        let program = vec![SBC_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xB0;
@@ -4507,7 +4522,7 @@ mod tests {
     fn test_sbc_overflow() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_IMM, 0xB0, BRK];
+        let program = vec![SBC_IMM, 0xB0, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x50;
@@ -4522,7 +4537,7 @@ mod tests {
     fn test_sta_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STA_ZP, 0x10, BRK];
+        let program = vec![STA_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -4534,7 +4549,7 @@ mod tests {
     fn test_sta_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STA_ZPX, 0x10, BRK];
+        let program = vec![STA_ZPX, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -4547,7 +4562,7 @@ mod tests {
     fn test_sta_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STA_ABS, 0x00, 0x10, BRK];
+        let program = vec![STA_ABS, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -4559,7 +4574,7 @@ mod tests {
     fn test_sta_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STA_ABSX, 0x00, 0x10, BRK];
+        let program = vec![STA_ABSX, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -4572,7 +4587,7 @@ mod tests {
     fn test_sta_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STA_ABSY, 0x00, 0x10, BRK];
+        let program = vec![STA_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -4585,7 +4600,7 @@ mod tests {
     fn test_sta_indexed_indirect() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STA_INDX, 0x10, BRK];
+        let program = vec![STA_INDX, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -4600,7 +4615,7 @@ mod tests {
     fn test_sta_indirect_indexed() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STA_INDY, 0x10, BRK];
+        let program = vec![STA_INDY, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -4615,7 +4630,7 @@ mod tests {
     fn test_txs() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![TXS, BRK];
+        let program = vec![TXS, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0xFF;
@@ -4627,7 +4642,7 @@ mod tests {
     fn test_tsx() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![TSX, BRK];
+        let program = vec![TSX, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.sp = 0xAB;
@@ -4641,7 +4656,7 @@ mod tests {
     fn test_tsx_zero_flag() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![TSX, BRK];
+        let program = vec![TSX, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.sp = 0x00;
@@ -4655,7 +4670,7 @@ mod tests {
     fn test_pha() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![PHA, BRK];
+        let program = vec![PHA, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -4669,7 +4684,7 @@ mod tests {
     fn test_pla() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![PLA, BRK];
+        let program = vec![PLA, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.sp = 0xFC;
@@ -4685,7 +4700,7 @@ mod tests {
     fn test_pla_zero_flag() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![PLA, BRK];
+        let program = vec![PLA, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.sp = 0xFC;
@@ -4699,7 +4714,7 @@ mod tests {
     fn test_pla_negative_flag() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![PLA, BRK];
+        let program = vec![PLA, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.sp = 0xFC;
@@ -4713,7 +4728,7 @@ mod tests {
     fn test_php() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![PHP, BRK];
+        let program = vec![PHP, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p = 0xFF;
@@ -4728,7 +4743,7 @@ mod tests {
     fn test_php_sets_break_and_unused_bits() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![PHP, BRK];
+        let program = vec![PHP, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         // Set status to 0xC0 (only N and V flags set, B and unused are 0)
@@ -4744,7 +4759,7 @@ mod tests {
     fn test_plp() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![PLP, BRK];
+        let program = vec![PLP, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.sp = 0xFC;
@@ -4760,7 +4775,7 @@ mod tests {
     fn test_plp_ignores_break_and_unused_bits() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![PLP, BRK];
+        let program = vec![PLP, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.sp = 0xFC;
@@ -4780,7 +4795,7 @@ mod tests {
     fn test_stx_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STX_ZP, 0x10, BRK];
+        let program = vec![STX_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x42;
@@ -4792,7 +4807,7 @@ mod tests {
     fn test_stx_zero_page_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STX_ZPY, 0x10, BRK];
+        let program = vec![STX_ZPY, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x42;
@@ -4805,7 +4820,7 @@ mod tests {
     fn test_stx_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STX_ABS, 0x00, 0x10, BRK];
+        let program = vec![STX_ABS, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x42;
@@ -4817,7 +4832,7 @@ mod tests {
     fn test_sty_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STY_ZP, 0x10, BRK];
+        let program = vec![STY_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x42;
@@ -4829,7 +4844,7 @@ mod tests {
     fn test_sty_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STY_ZPX, 0x10, BRK];
+        let program = vec![STY_ZPX, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x42;
@@ -4842,7 +4857,7 @@ mod tests {
     fn test_sty_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STY_ABS, 0x00, 0x10, BRK];
+        let program = vec![STY_ABS, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x42;
@@ -4882,7 +4897,7 @@ mod tests {
     fn test_load_program_at_custom_address() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_IMM, 0x42, BRK];
+        let program = vec![LDA_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         run(&mut cpu);
@@ -4890,14 +4905,14 @@ mod tests {
         // Verify program was loaded at 0x8000
         assert_eq!(cpu.memory.borrow().read(0x8000), LDA_IMM);
         assert_eq!(cpu.memory.borrow().read(0x8001), 0x42);
-        assert_eq!(cpu.memory.borrow().read(0x8002), BRK);
+        assert_eq!(cpu.memory.borrow().read(0x8002), KIL);
     }
 
     #[test]
     fn test_aac_sets_carry_when_bit7_set() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AAC_IMM, 0b11000000, BRK];
+        let program = vec![AAC_IMM, 0b11000000, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11111111;
@@ -4912,7 +4927,7 @@ mod tests {
     fn test_aac_clears_carry_when_bit7_clear() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AAC_IMM, 0b01000000, BRK];
+        let program = vec![AAC_IMM, 0b01000000, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11111111;
@@ -4927,7 +4942,7 @@ mod tests {
     fn test_sax_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SAX_ZP, 0x50, BRK];
+        let program = vec![SAX_ZP, 0x50, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11110000;
@@ -4940,7 +4955,7 @@ mod tests {
     fn test_sax_zero_page_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SAX_ZPY, 0x50, BRK];
+        let program = vec![SAX_ZPY, 0x50, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11110000;
@@ -4954,7 +4969,7 @@ mod tests {
     fn test_sax_absolute() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SAX_ABS, 0x00, 0x10, BRK];
+        let program = vec![SAX_ABS, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11110000;
@@ -4967,7 +4982,7 @@ mod tests {
     fn test_sax_indexed_indirect() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SAX_INDX, 0x40, BRK];
+        let program = vec![SAX_INDX, 0x40, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11111111;
@@ -4985,7 +5000,7 @@ mod tests {
     fn test_arr_basic() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ARR_IMM, 0b11110000, BRK];
+        let program = vec![ARR_IMM, 0b11110000, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11111111;
@@ -5002,7 +5017,7 @@ mod tests {
     fn test_arr_with_carry() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ARR_IMM, 0b11110000, BRK];
+        let program = vec![ARR_IMM, 0b11110000, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11111111;
@@ -5018,7 +5033,7 @@ mod tests {
     fn test_arr_sets_carry_and_overflow() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ARR_IMM, 0b01100001, BRK];
+        let program = vec![ARR_IMM, 0b01100001, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11111111;
@@ -5037,7 +5052,7 @@ mod tests {
     fn test_asr_basic() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASR_IMM, 0b11110000, BRK];
+        let program = vec![ASR_IMM, 0b11110000, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11111111;
@@ -5055,7 +5070,7 @@ mod tests {
     fn test_asr_sets_carry() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASR_IMM, 0b11110001, BRK];
+        let program = vec![ASR_IMM, 0b11110001, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11111111;
@@ -5072,7 +5087,7 @@ mod tests {
     fn test_asr_zero_result() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASR_IMM, 0b00000001, BRK];
+        let program = vec![ASR_IMM, 0b00000001, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b00000001;
@@ -5089,7 +5104,7 @@ mod tests {
     fn test_atx_basic() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ATX_IMM, 0b11110000, BRK];
+        let program = vec![ATX_IMM, 0b11110000, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11111111;
@@ -5107,7 +5122,7 @@ mod tests {
     fn test_atx_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ATX_IMM, 0b00001111, BRK];
+        let program = vec![ATX_IMM, 0b00001111, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11110000;
@@ -5124,7 +5139,7 @@ mod tests {
     fn test_atx_preserves_result() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ATX_IMM, 0b10101010, BRK];
+        let program = vec![ATX_IMM, 0b10101010, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b11001100;
@@ -5143,7 +5158,7 @@ mod tests {
         // Set up indirect address at ZP location 0x20
         cpu.memory.borrow_mut().write(0x20, 0x00); // Low byte
         cpu.memory.borrow_mut().write(0x21, 0x10); // High byte = 0x10, so address is 0x1000
-        let program = vec![AXA_INDY, 0x20, BRK];
+        let program = vec![AXA_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xFF;
@@ -5161,7 +5176,7 @@ mod tests {
     fn test_axa_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AXA_ABSY, 0x00, 0x10, BRK]; // Base address 0x1000
+        let program = vec![AXA_ABSY, 0x00, 0x10, KIL]; // Base address 0x1000
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xFF;
@@ -5179,7 +5194,7 @@ mod tests {
     fn test_axa_page_boundary() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AXA_ABSY, 0xFF, 0x10, BRK]; // Base address 0x10FF
+        let program = vec![AXA_ABSY, 0xFF, 0x10, KIL]; // Base address 0x10FF
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xFF;
@@ -5197,7 +5212,7 @@ mod tests {
     fn test_axs_basic() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AXS_IMM, 0x05, BRK];
+        let program = vec![AXS_IMM, 0x05, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x0F;
@@ -5215,7 +5230,7 @@ mod tests {
     fn test_axs_with_borrow() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AXS_IMM, 0x10, BRK];
+        let program = vec![AXS_IMM, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x0F;
@@ -5233,7 +5248,7 @@ mod tests {
     fn test_axs_zero_result() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![AXS_IMM, 0x08, BRK];
+        let program = vec![AXS_IMM, 0x08, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x0F;
@@ -5251,7 +5266,7 @@ mod tests {
     fn test_dcp_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DCP_ZP, 0x42, BRK];
+        let program = vec![DCP_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x10);
@@ -5269,7 +5284,7 @@ mod tests {
     fn test_dcp_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DCP_ABSX, 0x00, 0x10, BRK];
+        let program = vec![DCP_ABSX, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -5290,7 +5305,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00);
         cpu.memory.borrow_mut().write(0x21, 0x10);
-        let program = vec![DCP_INDY, 0x20, BRK];
+        let program = vec![DCP_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -5309,7 +5324,7 @@ mod tests {
     fn test_dop_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DOP_ZP, 0x42, BRK];
+        let program = vec![DOP_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0xFF);
@@ -5330,7 +5345,7 @@ mod tests {
     fn test_dop_zero_page_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DOP_ZPX, 0x40, BRK];
+        let program = vec![DOP_ZPX, 0x40, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -5351,7 +5366,7 @@ mod tests {
     fn test_dop_immediate() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DOP_IMM, 0x42, BRK];
+        let program = vec![DOP_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x10;
@@ -5370,7 +5385,7 @@ mod tests {
     fn test_isb_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ISB_ZP, 0x42, BRK];
+        let program = vec![ISB_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x10);
@@ -5390,7 +5405,7 @@ mod tests {
     fn test_isb_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ISB_ABSX, 0x00, 0x10, BRK];
+        let program = vec![ISB_ABSX, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -5412,7 +5427,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00);
         cpu.memory.borrow_mut().write(0x21, 0x10);
-        let program = vec![ISB_INDY, 0x20, BRK];
+        let program = vec![ISB_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -5490,7 +5505,7 @@ mod tests {
     fn test_lar_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LAR_ABSY, 0x00, 0x10, BRK];
+        let program = vec![LAR_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x05;
@@ -5510,7 +5525,7 @@ mod tests {
     fn test_lax_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LAX_ZP, 0x42, BRK];
+        let program = vec![LAX_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0x55);
@@ -5526,7 +5541,7 @@ mod tests {
     fn test_lax_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LAX_ABSY, 0x00, 0x10, BRK];
+        let program = vec![LAX_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -5545,7 +5560,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00);
         cpu.memory.borrow_mut().write(0x21, 0x10);
-        let program = vec![LAX_INDY, 0x20, BRK];
+        let program = vec![LAX_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x05;
@@ -5562,7 +5577,7 @@ mod tests {
     fn test_nop_undocumented_0x1a() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![NOP_IMP, BRK];
+        let program = vec![NOP_IMP, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         let a_before = cpu.a;
@@ -5581,7 +5596,7 @@ mod tests {
     fn test_nop_undocumented_0xda() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![NOP_IMP5, BRK];
+        let program = vec![NOP_IMP5, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -5598,7 +5613,7 @@ mod tests {
     fn test_rla_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![RLA_ZP, 0x42, BRK];
+        let program = vec![RLA_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x42, 0b0110_1010); // 0x6A
@@ -5618,7 +5633,7 @@ mod tests {
     fn test_rla_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![RLA_ABSX, 0x00, 0x10, BRK];
+        let program = vec![RLA_ABSX, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -5641,7 +5656,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00);
         cpu.memory.borrow_mut().write(0x21, 0x10);
-        let program = vec![RLA_INDY, 0x20, BRK];
+        let program = vec![RLA_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -5661,7 +5676,7 @@ mod tests {
     fn test_rra_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![RRA_ZP, 0x10, BRK];
+        let program = vec![RRA_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x10, 0b1010_1010); // 0xAA
@@ -5680,7 +5695,7 @@ mod tests {
     fn test_rra_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![RRA_ABSX, 0x00, 0x10, BRK];
+        let program = vec![RRA_ABSX, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -5703,7 +5718,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00);
         cpu.memory.borrow_mut().write(0x21, 0x10);
-        let program = vec![RRA_INDY, 0x20, BRK];
+        let program = vec![RRA_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -5722,7 +5737,7 @@ mod tests {
     fn test_sbc_immediate_undocumented() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SBC_IMM2, 0x01, BRK];
+        let program = vec![SBC_IMM2, 0x01, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x05;
@@ -5740,7 +5755,7 @@ mod tests {
     fn test_slo_zero_page() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SLO_ZP, 0x10, BRK];
+        let program = vec![SLO_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x10, 0b0101_0101); // 0x55
@@ -5757,7 +5772,7 @@ mod tests {
     fn test_slo_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SLO_ABSX, 0x00, 0x10, BRK];
+        let program = vec![SLO_ABSX, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -5777,7 +5792,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00);
         cpu.memory.borrow_mut().write(0x21, 0x10);
-        let program = vec![SLO_INDY, 0x20, BRK];
+        let program = vec![SLO_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -5796,7 +5811,7 @@ mod tests {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x42, 0b0000_0110); // 0x06
-        let program = vec![SRE_ZP, 0x42, BRK];
+        let program = vec![SRE_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0b0000_0001; // 0x01
@@ -5814,7 +5829,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00);
         cpu.memory.borrow_mut().write(0x21, 0x10);
-        let program = vec![SRE_ABSX, 0x00, 0x10, BRK];
+        let program = vec![SRE_ABSX, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -5834,7 +5849,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00);
         cpu.memory.borrow_mut().write(0x21, 0x10);
-        let program = vec![SRE_INDY, 0x20, BRK];
+        let program = vec![SRE_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -5857,7 +5872,7 @@ mod tests {
         // If addr = 0x1000 and Y = 0x10, target = 0x1010
         // HIGH(0x1000) + 1 = 0x10 + 1 = 0x11
         // If X = 0xFF, result = 0xFF AND 0x11 = 0x11
-        let program = vec![SXA_ABSY, 0x00, 0x10, BRK]; // SXA $1000,Y
+        let program = vec![SXA_ABSY, 0x00, 0x10, KIL]; // SXA $1000,Y
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0xFF;
@@ -5875,7 +5890,7 @@ mod tests {
         // If addr = 0x1000 and X = 0x10, target = 0x1010
         // HIGH(0x1000) + 1 = 0x10 + 1 = 0x11
         // If Y = 0xFF, result = 0xFF AND 0x11 = 0x11
-        let program = vec![SYA_ABSX, 0x00, 0x10, BRK]; // SYA $1000,X
+        let program = vec![SYA_ABSX, 0x00, 0x10, KIL]; // SYA $1000,X
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0xFF;
@@ -5889,7 +5904,7 @@ mod tests {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // Test TOP with Absolute addressing - should do nothing
-        let program = vec![TOP_ABS, 0x00, 0x30, BRK]; // TOP $3000
+        let program = vec![TOP_ABS, 0x00, 0x30, KIL]; // TOP $3000
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -5903,7 +5918,7 @@ mod tests {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // Test TOP with Absolute,X addressing - should do nothing
-        let program = vec![TOP_ABSX, 0x00, 0x30, BRK]; // TOP $3000,X
+        let program = vec![TOP_ABSX, 0x00, 0x30, KIL]; // TOP $3000,X
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -5922,7 +5937,7 @@ mod tests {
         // Using MAGIC = 0xEE (common value)
         // A = 0xFF, X = 0xF0, immediate = 0x0F
         // Result: (0xFF | 0xEE) & 0xF0 & 0x0F = 0xFF & 0xF0 & 0x0F = 0x00
-        let program = vec![XAA_IMM, 0x0F, BRK];
+        let program = vec![XAA_IMM, 0x0F, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xFF;
@@ -5943,7 +5958,7 @@ mod tests {
         // A = 0xFF, X = 0xF0 -> SP = 0xF0
         // addr = 0x1000, Y = 0x10 -> effective addr = 0x1010
         // HIGH(0x1000) = 0x10, so result = 0xF0 & 0x11 = 0x10
-        let program = vec![XAS_ABSY, 0x00, 0x10, BRK]; // XAS $1000,Y
+        let program = vec![XAS_ABSY, 0x00, 0x10, KIL]; // XAS $1000,Y
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0xFF;
@@ -5962,7 +5977,7 @@ mod tests {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // LDA #$42 - should take 2 cycles
-        let program = vec![LDA_IMM, 0x42, BRK];
+        let program = vec![LDA_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         let cycles = cpu.run_opcode();
@@ -5975,7 +5990,7 @@ mod tests {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // LDA $1234 - should take 4 cycles
-        let program = vec![LDA_ABS, 0x34, 0x12, BRK];
+        let program = vec![LDA_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1234, 0x55);
@@ -5990,7 +6005,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // LDA $1200,X with X=$05 -> $1205 (no page cross)
         // Should take 4 cycles (base)
-        let program = vec![LDA_ABSX, 0x00, 0x12, BRK];
+        let program = vec![LDA_ABSX, 0x00, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -6006,7 +6021,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // LDA $12FF,X with X=$05 -> $1304 (page cross from $12 to $13)
         // Should take 5 cycles (4 base + 1 for page cross)
-        let program = vec![LDA_ABSX, 0xFF, 0x12, BRK];
+        let program = vec![LDA_ABSX, 0xFF, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -6022,7 +6037,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // STA $12FF,X with X=$05 -> $1304 (page cross)
         // STA always takes 5 cycles regardless of page crossing
-        let program = vec![STA_ABSX, 0xFF, 0x12, BRK];
+        let program = vec![STA_ABSX, 0xFF, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x99;
@@ -6038,7 +6053,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // BEQ with Z flag clear - branch not taken
         // Should take 2 cycles
-        let program = vec![BEQ, 0x10, BRK];
+        let program = vec![BEQ, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p &= !FLAG_ZERO; // Clear zero flag
@@ -6052,7 +6067,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // BEQ +5 with Z flag set - branch taken, no page cross
         // Should take 3 cycles (2 base + 1 for branch taken)
-        let program = vec![BEQ, 0x05, BRK];
+        let program = vec![BEQ, 0x05, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p |= FLAG_ZERO; // Set zero flag
@@ -6068,7 +6083,7 @@ mod tests {
         // PC after instruction read: 0x8002
         // Branch to: 0x8002 + (-3) = 0x7FFF (crosses from page 0x80 to 0x7F)
         // Should take 4 cycles (2 base + 1 for branch + 1 for page cross)
-        let program = vec![BEQ, 0xFD, BRK]; // -3 offset (0xFD as i8)
+        let program = vec![BEQ, 0xFD, KIL]; // -3 offset (0xFD as i8)
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.p |= FLAG_ZERO; // Set zero flag
@@ -6089,7 +6104,7 @@ mod tests {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // LDA #$42 - should take 2 cycles
-        let program = vec![LDA_IMM, 0x42, BRK];
+        let program = vec![LDA_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         assert_eq!(cpu.total_cycles(), 0);
@@ -6102,7 +6117,7 @@ mod tests {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // LDA #$42 (2 cycles), LDX #$10 (2 cycles), LDY #$20 (2 cycles)
-        let program = vec![LDA_IMM, 0x42, LDX_IMM, 0x10, LDY_IMM, 0x20, BRK];
+        let program = vec![LDA_IMM, 0x42, LDX_IMM, 0x10, LDY_IMM, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.run_opcode(); // LDA - 2 cycles
@@ -6117,7 +6132,7 @@ mod tests {
     fn test_cycle_counter_resets_to_zero() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LDA_IMM, 0x42, BRK];
+        let program = vec![LDA_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.run_opcode();
@@ -6131,12 +6146,172 @@ mod tests {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // LDA $12FF,X with X=$05 - should take 5 cycles (4 base + 1 for page cross)
-        let program = vec![LDA_ABSX, 0xFF, 0x12, BRK];
+        let program = vec![LDA_ABSX, 0xFF, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.memory.borrow_mut().write(0x1304, 0x99);
         cpu.x = 0x05;
         cpu.run_opcode();
         assert_eq!(cpu.total_cycles(), 5);
+    }
+
+    #[test]
+    fn test_brk_interrupt() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
+
+        // Setup: BRK at 0x8000, with IRQ handler at 0x9000 that contains RTI
+        // We need to manually create a cartridge that has the IRQ vector set up
+        let mut prg_rom = vec![0; 0x4000]; // 16KB
+
+        // Place BRK at the beginning (0x8000)
+        prg_rom[0] = BRK;
+        // Place NOP at 0x8002 (where we should return after RTI)
+        prg_rom[2] = NOP;
+
+        // Place RTI at 0x9000 (IRQ handler)
+        // 0x9000 - 0x8000 = 0x1000
+        prg_rom[0x1000] = RTI;
+
+        // Set reset vector to point to 0x8000
+        prg_rom[0x3FFC] = 0x00; // Low byte of 0x8000
+        prg_rom[0x3FFD] = 0x80; // High byte of 0x8000
+
+        // Set IRQ/BRK vector to point to 0x9000
+        // IRQ vector is at 0xFFFE-0xFFFF
+        // For 16KB ROM: (0xFFFE - 0x8000) % 0x4000 = 0x7FFE % 0x4000 = 0x3FFE
+        prg_rom[0x3FFE] = 0x00; // Low byte of 0x9000
+        prg_rom[0x3FFF] = 0x90; // High byte of 0x9000
+
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = crate::cartridge::Cartridge {
+            prg_rom,
+            chr_rom,
+            mirroring: crate::cartridge::MirroringMode::Horizontal,
+        };
+
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.reset();
+
+        // Set initial status register to a known value (without I flag set, with carry, overflow, and zero set)
+        cpu.p = 0b0110_0011; // Overflow, unused, zero, and carry flags set (NO I flag - bit 2 is 0)
+        let initial_p = cpu.p;
+        let initial_sp = cpu.sp;
+
+        // Execute BRK
+        cpu.run_opcode();
+
+        // Verify PC was loaded from IRQ vector
+        assert_eq!(
+            cpu.pc, 0x9000,
+            "PC should be loaded from IRQ vector at 0xFFFE-0xFFFF"
+        );
+
+        // Verify stack: should have pushed PC+2 (high byte first), then P
+        // PC was at 0x8000, BRK is 1 byte, but we push PC+2 = 0x8002
+        let stack_base = 0x0100;
+        assert_eq!(
+            cpu.memory.borrow().read(stack_base + initial_sp as u16),
+            0x80,
+            "High byte of PC+2 should be pushed first"
+        );
+        assert_eq!(
+            cpu.memory
+                .borrow()
+                .read(stack_base + initial_sp.wrapping_sub(1) as u16),
+            0x02,
+            "Low byte of PC+2 should be pushed second"
+        );
+
+        // Verify P was pushed with B flag and unused flag set
+        let pushed_p = cpu
+            .memory
+            .borrow()
+            .read(stack_base + initial_sp.wrapping_sub(2) as u16);
+        assert_eq!(
+            pushed_p & FLAG_BREAK,
+            FLAG_BREAK,
+            "B flag should be set in pushed P"
+        );
+        assert_eq!(
+            pushed_p & FLAG_UNUSED,
+            FLAG_UNUSED,
+            "Unused flag should be set in pushed P"
+        );
+        // Verify the other flags from initial P are preserved in pushed P
+        assert_eq!(
+            pushed_p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "Overflow flag should be preserved in pushed P"
+        );
+        assert_eq!(
+            pushed_p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be preserved in pushed P"
+        );
+        assert_eq!(
+            pushed_p & FLAG_ZERO,
+            FLAG_ZERO,
+            "Zero flag should be preserved in pushed P"
+        );
+
+        // Verify stack pointer was decremented by 3
+        assert_eq!(
+            cpu.sp,
+            initial_sp.wrapping_sub(3),
+            "Stack pointer should be decremented by 3"
+        );
+
+        // Verify I flag is set in current P register
+        assert_eq!(
+            cpu.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "I flag should be set after BRK"
+        );
+
+        // Verify CPU is not halted (BRK should not halt like KIL)
+        assert_eq!(cpu.halted, false, "BRK should not halt the CPU");
+
+        // Now execute RTI to return from interrupt
+        let sp_before_rti = cpu.sp;
+        cpu.run_opcode();
+
+        // Verify PC was restored to 0x8002 (PC+2 from BRK)
+        assert_eq!(cpu.pc, 0x8002, "PC should be restored to 0x8002 after RTI");
+
+        // Verify stack pointer was incremented by 3
+        assert_eq!(
+            cpu.sp,
+            sp_before_rti.wrapping_add(3),
+            "Stack pointer should be incremented by 3 after RTI"
+        );
+        assert_eq!(
+            cpu.sp, initial_sp,
+            "Stack pointer should be back to initial value"
+        );
+
+        // Verify P was restored (RTI should restore P without B flag, but with original flags)
+        // RTI ignores the B flag from the stack, so we should get back initial_p without B flag
+        let expected_p = (initial_p & !FLAG_BREAK) | FLAG_UNUSED; // B cleared, unused always set
+        assert_eq!(
+            cpu.p, expected_p,
+            "P should be restored after RTI (without B flag)"
+        );
+        assert_eq!(
+            cpu.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "Overflow flag should be restored"
+        );
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be restored"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be restored");
+        assert_eq!(
+            cpu.p & FLAG_INTERRUPT,
+            0,
+            "I flag should be cleared after RTI"
+        );
     }
 }

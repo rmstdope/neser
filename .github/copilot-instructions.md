@@ -37,9 +37,9 @@ Always prefer simple design solutions. Avoid over-engineering. If unsure, ask th
 
 All code changes must be reviewed by at least one other person (the navigator) before being merged into the main codebase. This practice helps to catch potential issues, improve code quality, and ensure adherence to coding standards and best practices. No automatic merging of code changes without review is allowed.
 
-<!-- ### Issues and branches
+### Issues and branches
 
-When starting to work on any feature, assign that feature to the user that is working on it. Each feature should have a corresponding issue in the issue tracker that describes the work to be done.
+When starting to work on any feature that exists as a github issue, assign that feature to the user that is working on it. Each feature should have a corresponding issue in the issue tracker that describes the work to be done.
 
 All feature size issues should be broken down into smaller sub-issues where appropriate. This makes it easier to manage and track progress on complex tasks. Each sub-issue should represent a discrete piece of work that can be completed independently. Prefix the sub-issues with ""Sub-issue (<<issue-number>>):"" to clearly indicate their relationship to the main feature issue. <<issue-number>> should be replaced with the main issue number.
 
@@ -48,15 +48,15 @@ When working on a sub-issue, this is important:
 - ALWAYS assign the main issue and the sub-issue to the developer working on it.
 - ALWAYS create a new branch from main named after the sub-issue number and a short description of the work to be done, e.g., `42-add-user-authentication`. Once the work is completed and reviewed, merge the branch back into main using a pull request. This approach helps to keep the main codebase stable and allows for isolated development of features or fixes.
 
-When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. -->
+When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized.
 
 ### Fixing Bugs
 
 When a bug is discovered in the application, always consider updating existing or adding a test that triggers the error before fixing it. This ensures that the bug is properly documented and helps to prevent regressions in the future. After the test is in place, proceed to fix the bug and verify that the new test passes along with all existing tests.
 
-<!-- ## Issue Tracking
+## Issue Tracking
 
-All work on the application should be tracked using GitHub's issue tracking system. Each feature, bug fix, or improvement should have a corresponding issue that describes the work to be done. This ensures transparency, accountability, and helps in prioritizing tasks effectively. For implementing new features, issues should be created per feature, but broken down into smaller sub-issues to keep them manageable. When starting to work on an issue, it should be assigned to the developer working on it. Once the work is completed and merged, the issue should be closed to reflect its completion. When code is committed, the commit message should reference the relevant issue number to maintain a clear link between code changes and tracked work. -->
+All major on the application should be tracked using GitHub's issue tracking system. Each feature, bug fix, or improvement should have a corresponding issue that describes the work to be done. This ensures transparency, accountability, and helps in prioritizing tasks effectively. For implementing new features, issues should be created per feature, but broken down into smaller sub-issues to keep them manageable. When starting to work on an issue, it should be assigned to the developer working on it. Once the work is completed and merged, the issue should be closed to reflect its completion. When code is committed, the commit message should reference the relevant issue number to maintain a clear link between code changes and tracked work.
 
 ## Architectural decisions
 

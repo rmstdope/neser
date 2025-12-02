@@ -34,10 +34,6 @@ const VBLANK_START: u16 = 241;
 
 /// NES Picture Processing Unit (PPU) emulator
 pub struct PPU {
-    // Data address register
-    data_address: u16,
-    // True if the next write to the address register is the high byte
-    high_byte_next: bool,
     /// PPU data read buffer
     data_buffer: u8,
     // Control register value
@@ -70,14 +66,21 @@ pub struct PPU {
     sprite_overflow: bool,
     /// NMI enabled flag
     nmi_enabled: bool,
+    // Loopy registers for scrolling
+    /// v: Current VRAM address (15 bits)
+    v: u16,
+    /// t: Temporary VRAM address (15 bits)
+    t: u16,
+    /// x: Fine X scroll (3 bits)
+    x: u8,
+    /// w: Write toggle (1 bit) - false=first write, true=second write
+    w: bool,
 }
 
 impl PPU {
     /// Create a new PPU instance
     pub fn new(tv_system: TvSystem) -> Self {
         Self {
-            data_address: 0,
-            high_byte_next: true,
             control_register: 0,
             mirroring_mode: MirroringMode::Horizontal,
             chr_rom: vec![0; 8192],
@@ -94,13 +97,15 @@ impl PPU {
             sprite_0_hit: false,
             sprite_overflow: false,
             nmi_enabled: false,
+            v: 0,
+            t: 0,
+            x: 0,
+            w: false,
         }
     }
 
     /// Reset the PPU to its initial state
     pub fn reset(&mut self) {
-        self.data_address = 0;
-        self.high_byte_next = true;
         self.control_register = 0;
         self.ppu_ram = [0; 2048];
         self.palette = [0; 32];
@@ -114,6 +119,10 @@ impl PPU {
         self.sprite_0_hit = false;
         self.sprite_overflow = false;
         self.nmi_enabled = false;
+        self.v = 0;
+        self.t = 0;
+        self.x = 0;
+        self.w = false;
     }
 
     /// Run the PPU for a specified number of ticks
@@ -155,7 +164,6 @@ impl PPU {
     }
 
     /// Get the current scanline
-    #[cfg(test)]
     pub fn scanline(&self) -> u16 {
         self.scanline
     }
@@ -166,21 +174,63 @@ impl PPU {
         self.pixel
     }
 
+    /// Get the v register (current VRAM address)
+    #[cfg(test)]
+    pub fn v_register(&self) -> u16 {
+        self.v
+    }
+
+    /// Get the t register (temporary VRAM address)
+    #[cfg(test)]
+    pub fn t_register(&self) -> u16 {
+        self.t
+    }
+
+    /// Get the x register (fine X scroll)
+    #[cfg(test)]
+    pub fn x_register(&self) -> u8 {
+        self.x
+    }
+
+    /// Get the w register (write toggle)
+    #[cfg(test)]
+    pub fn w_register(&self) -> bool {
+        self.w
+    }
+
+    /// Write to the PPU scroll register ($2005)
+    /// First write sets coarse X and fine X, second write sets coarse Y and fine Y
+    pub fn write_scroll(&mut self, value: u8) {
+        if !self.w {
+            // First write: set fine X and coarse X in t register
+            self.x = value & 0x07;
+            self.t = (self.t & 0xFFE0) | ((value as u16) >> 3);
+        } else {
+            // Second write: set fine Y and coarse Y in t register
+            // Fine Y goes in bits 12-14, coarse Y goes in bits 5-9
+            self.t = (self.t & 0x8C1F) | (((value as u16) & 0x07) << 12) | (((value as u16) >> 3) << 5);
+        }
+        self.w = !self.w;
+    }
+
     /// Write to the PPU address register ($2006)
     /// First write sets high byte, second write sets low byte, then alternates
     /// High byte writes are masked with 0x3F to limit address range
     pub fn write_address(&mut self, value: u8) {
-        if self.high_byte_next {
-            self.data_address = (self.data_address & 0x00FF) | (((value & 0x3F) as u16) << 8);
+        if !self.w {
+            // First write: set high byte of t, masked with 0x3F
+            self.t = (self.t & 0x00FF) | (((value & 0x3F) as u16) << 8);
         } else {
-            self.data_address = (self.data_address & 0xFF00) | (value as u16);
+            // Second write: set low byte of t, then copy t to v
+            self.t = (self.t & 0xFF00) | (value as u16);
+            self.v = self.t;
         }
-        self.high_byte_next = !self.high_byte_next;
+        self.w = !self.w;
     }
 
     /// Increment the address by the given amount, wrapping at 0x3FFF
     fn inc_address(&mut self, amount: u16) {
-        self.data_address = (self.data_address.wrapping_add(amount)) & 0x3FFF;
+        self.v = (self.v.wrapping_add(amount)) & 0x3FFF;
     }
 
     /// Write to the PPU control register ($2000)
@@ -239,7 +289,7 @@ impl PPU {
     }
 
     /// Read from PPU status register ($2002)
-    /// Reading this register clears the VBlank flag and resets the address latch
+    /// Reading this register clears the VBlank flag and resets the address latch (w register)
     pub fn get_status(&mut self) -> u8 {
         let mut status = 0u8;
 
@@ -255,8 +305,8 @@ impl PPU {
 
         // Reading status clears VBlank flag
         self.vblank_flag = false;
-        // Reading status also resets the address latch
-        self.high_byte_next = true;
+        // Reading status also resets the write toggle
+        self.w = false;
 
         status
     }
@@ -266,7 +316,7 @@ impl PPU {
     /// Returns the value from the previous read (buffered) for non-palette reads
     /// Palette reads return immediately but still update the buffer
     pub fn read_data(&mut self) -> u8 {
-        let addr = self.data_address;
+        let addr = self.v;
         let result = match addr {
             0x0000..=0x1FFF => {
                 // CHR ROM/RAM: buffered read
@@ -301,7 +351,7 @@ impl PPU {
     /// Write to PPU data register ($2007)
     /// Writes a byte to PPU memory at the current address and increments the address
     pub fn write_data(&mut self, value: u8) {
-        let addr = self.data_address;
+        let addr = self.v;
         match addr {
             0x0000..=0x1FFF => {
                 // CHR ROM is read-only
@@ -348,6 +398,60 @@ impl PPU {
         let ret = self.nmi_enabled;
         self.nmi_enabled = false;
         ret
+    }
+
+    /// Check if currently in vblank period
+    pub fn is_in_vblank(&self) -> bool {
+        self.vblank_flag
+    }
+
+    /// Renders the first nametable from PPU VRAM to the screen buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `screen_buffer` - Mutable reference to the screen buffer to render to
+    pub fn render(&self, screen_buffer: &mut crate::screen_buffer::ScreenBuffer) {
+        // NES nametable is 32x30 tiles, each tile is 8x8 pixels
+        // First nametable starts at 0x2000 in PPU address space
+        // Each tile is referenced by a byte that indexes into the pattern table
+
+        // Render 32x30 tiles (256x240 pixels)
+        for tile_y in 0..30 {
+            for tile_x in 0..32 {
+                // Get the tile index from nametable
+                let nametable_index = tile_y * 32 + tile_x;
+                let tile_index = self.ppu_ram[nametable_index] as usize;
+
+                // Each tile in CHR ROM is 16 bytes (8 bytes for low bit plane, 8 bytes for high bit plane)
+                let tile_addr = tile_index * 16;
+
+                // Render the 8x8 tile
+                for pixel_y in 0..8 {
+                    let low_byte = self.chr_rom[tile_addr + pixel_y];
+                    let high_byte = self.chr_rom[tile_addr + pixel_y + 8];
+
+                    for pixel_x in 0..8 {
+                        // Get the 2-bit color value for this pixel
+                        let bit = 7 - pixel_x;
+                        let low_bit = (low_byte >> bit) & 1;
+                        let high_bit = (high_byte >> bit) & 1;
+                        let color_index = (high_bit << 1) | low_bit;
+
+                        // For now, use the first background palette (indices 0-3)
+                        let palette_index = self.palette[color_index as usize];
+
+                        // Convert to RGB using system palette
+                        let (r, g, b) = crate::nes::Nes::lookup_system_palette(palette_index);
+
+                        // Calculate screen position
+                        let screen_x = tile_x * 8 + pixel_x;
+                        let screen_y = tile_y * 8 + pixel_y;
+
+                        screen_buffer.set_pixel(screen_x as u32, screen_y as u32, r, g, b);
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -499,7 +603,7 @@ mod tests {
     fn test_ppu_address_write_first_byte_sets_high_byte() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         ppu.write_address(0x12);
-        assert_eq!(ppu.data_address, 0x1200);
+        assert_eq!(ppu.t_register(), 0x1200);
     }
 
     #[test]
@@ -507,7 +611,7 @@ mod tests {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         ppu.write_address(0x12);
         ppu.write_address(0x34);
-        assert_eq!(ppu.data_address, 0x1234);
+        assert_eq!(ppu.v_register(), 0x1234);
     }
 
     #[test]
@@ -517,7 +621,9 @@ mod tests {
         ppu.write_address(0x34);
         ppu.write_address(0x56);
         // 0x56 & 0x3F = 0x16
-        assert_eq!(ppu.data_address, 0x1634);
+        // Third write only updates t (high byte), v stays at 0x1234
+        assert_eq!(ppu.t_register(), 0x1634);
+        assert_eq!(ppu.v_register(), 0x1234);
     }
 
     #[test]
@@ -528,14 +634,18 @@ mod tests {
         ppu.write_address(0x56);
         ppu.write_address(0x78);
         // 0x56 & 0x3F = 0x16
-        assert_eq!(ppu.data_address, 0x1678);
+        // Fourth write updates t low byte then copies t to v
+        assert_eq!(ppu.v_register(), 0x1678);
+        assert_eq!(ppu.t_register(), 0x1678);
     }
 
     #[test]
     fn test_ppu_address_write_high_byte_masked_with_3f() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         ppu.write_address(0xFF);
-        assert_eq!(ppu.data_address, 0x3F00);
+        // First write only updates t, v stays at 0
+        assert_eq!(ppu.t_register(), 0x3F00);
+        assert_eq!(ppu.v_register(), 0x0000);
     }
 
     #[test]
@@ -544,39 +654,41 @@ mod tests {
         ppu.write_address(0x12);
         ppu.write_address(0x34);
         ppu.write_address(0xFF);
-        assert_eq!(ppu.data_address, 0x3F34);
+        // Third write updates t high byte with mask, v unchanged
+        assert_eq!(ppu.t_register(), 0x3F34);
+        assert_eq!(ppu.v_register(), 0x1234);
     }
 
     #[test]
     fn test_ppu_address_inc_increments_address() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        ppu.data_address = 0x2000;
+        ppu.v = 0x2000;
         ppu.inc_address(1);
-        assert_eq!(ppu.data_address, 0x2001);
+        assert_eq!(ppu.v_register(), 0x2001);
     }
 
     #[test]
     fn test_ppu_address_inc_increments_by_multiple() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        ppu.data_address = 0x2000;
+        ppu.v = 0x2000;
         ppu.inc_address(32);
-        assert_eq!(ppu.data_address, 0x2020);
+        assert_eq!(ppu.v_register(), 0x2020);
     }
 
     #[test]
     fn test_ppu_address_inc_wraps_at_3fff() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        ppu.data_address = 0x3FFF;
+        ppu.v = 0x3FFF;
         ppu.inc_address(1);
-        assert_eq!(ppu.data_address, 0x0000);
+        assert_eq!(ppu.v_register(), 0x0000);
     }
 
     #[test]
     fn test_ppu_address_inc_wraps_beyond_3fff() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        ppu.data_address = 0x3FFE;
+        ppu.v = 0x3FFE;
         ppu.inc_address(5);
-        assert_eq!(ppu.data_address, 0x0003);
+        assert_eq!(ppu.v_register(), 0x0003);
     }
 
     // Tests migrated from ppu_control
@@ -733,7 +845,7 @@ mod tests {
         ppu.write_address(0x20);
         ppu.write_address(0x00);
         ppu.write_data(0x11);
-        assert_eq!(ppu.data_address, 0x2001);
+        assert_eq!(ppu.v_register(), 0x2001);
     }
 
     #[test]
@@ -743,7 +855,7 @@ mod tests {
         ppu.write_address(0x20);
         ppu.write_address(0x00);
         ppu.write_data(0x11);
-        assert_eq!(ppu.data_address, 0x2020);
+        assert_eq!(ppu.v_register(), 0x2020);
     }
 
     #[test]
@@ -792,7 +904,7 @@ mod tests {
         ppu.write_data(0x99);
         assert_eq!(ppu.palette[31], 0x99);
         // Address should wrap from 0x3FFF to 0x0000
-        assert_eq!(ppu.data_address, 0x0000);
+        assert_eq!(ppu.v_register(), 0x0000);
     }
 
     #[test]
@@ -1215,5 +1327,228 @@ mod tests {
         ppu.run_ppu_cycles(21 * 341); // 262 total scanlines, so 21 more to wrap
         // NMI should be cleared on new frame
         assert_eq!(ppu.poll_nmi(), false);
+    }
+
+    #[test]
+    fn test_render() {
+        use crate::screen_buffer::ScreenBuffer;
+
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        let mut screen_buffer = ScreenBuffer::new();
+
+        // Write some test data to the first nametable (0x2000-0x23FF)
+        // Each nametable is 32x30 tiles = 960 bytes
+        // Set a few tiles to different values
+        ppu.write_address(0x20); // High byte of 0x2000
+        ppu.write_address(0x00); // Low byte of 0x2000
+        ppu.write_data(0x01); // First tile
+
+        ppu.write_address(0x20); // High byte of 0x2001
+        ppu.write_address(0x01); // Low byte of 0x2001
+        ppu.write_data(0x02); // Second tile
+
+        // Render the PPU to the screen buffer
+        ppu.render(&mut screen_buffer);
+
+        // For now, just verify that the function exists and can be called
+        // We'll verify actual rendering in later iterations
+        assert_eq!(screen_buffer.width(), 256);
+        assert_eq!(screen_buffer.height(), 240);
+    }
+
+    // Tests for Loopy registers (v, t, x, w)
+    #[test]
+    fn test_v_register_initializes_to_zero() {
+        let ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.v_register(), 0);
+    }
+
+    #[test]
+    fn test_t_register_initializes_to_zero() {
+        let ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.t_register(), 0);
+    }
+
+    #[test]
+    fn test_x_register_initializes_to_zero() {
+        let ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.x_register(), 0);
+    }
+
+    #[test]
+    fn test_w_register_initializes_to_false() {
+        let ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.w_register(), false);
+    }
+
+    #[test]
+    fn test_reset_clears_loopy_registers() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Manually set registers to non-zero values
+        ppu.v = 0x1234;
+        ppu.t = 0x5678;
+        ppu.x = 0x07;
+        ppu.w = true;
+        
+        ppu.reset();
+        
+        assert_eq!(ppu.v_register(), 0);
+        assert_eq!(ppu.t_register(), 0);
+        assert_eq!(ppu.x_register(), 0);
+        assert_eq!(ppu.w_register(), false);
+    }
+
+    #[test]
+    fn test_get_status_clears_w_register() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.w = true;
+        ppu.get_status();
+        assert_eq!(ppu.w_register(), false);
+    }
+
+    // PPUSCROLL ($2005) tests
+    #[test]
+    fn test_write_scroll_first_write_sets_fine_x() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_scroll(0b11111111); // All bits set
+        // Fine X = data & 0x07 = 0b111 = 7
+        assert_eq!(ppu.x_register(), 7);
+    }
+
+    #[test]
+    fn test_write_scroll_first_write_sets_coarse_x_in_t() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_scroll(0b11111111); // All bits set
+        // Coarse X = data >> 3 = 0b11111 = 31
+        // t = (t & 0xFFE0) | (data >> 3)
+        // t = 0x001F (coarse X in bits 0-4)
+        assert_eq!(ppu.t_register() & 0x001F, 31);
+    }
+
+    #[test]
+    fn test_write_scroll_first_write_toggles_w() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.w_register(), false);
+        ppu.write_scroll(0x12);
+        assert_eq!(ppu.w_register(), true);
+    }
+
+    #[test]
+    fn test_write_scroll_first_write_preserves_other_t_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.t = 0x7FE0; // Set all bits except coarse X
+        ppu.write_scroll(0b11111000); // coarse X = 31, fine X = 0
+        // Should preserve bits 5-14, update bits 0-4
+        assert_eq!(ppu.t_register(), 0x7FFF);
+    }
+
+    #[test]
+    fn test_write_scroll_second_write_sets_fine_y() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_scroll(0x00); // First write
+        ppu.write_scroll(0b11111111); // Second write
+        // Bits 12-14 should be set to fine Y (data & 0x07)
+        assert_eq!((ppu.t_register() >> 12) & 0x07, 0x07);
+    }
+
+    #[test]
+    fn test_write_scroll_second_write_sets_coarse_y_in_t() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_scroll(0x00); // First write
+        ppu.write_scroll(0b11111111); // Second write
+        // Bits 5-9 should be set to coarse Y (data >> 3)
+        assert_eq!((ppu.t_register() >> 5) & 0x1F, 0x1F);
+    }
+
+    #[test]
+    fn test_write_scroll_second_write_toggles_w_back() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_scroll(0x00); // First write (w becomes true)
+        assert_eq!(ppu.w_register(), true);
+        ppu.write_scroll(0x00); // Second write
+        assert_eq!(ppu.w_register(), false); // w should toggle back to false
+    }
+
+    #[test]
+    fn test_write_scroll_second_write_preserves_other_t_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.t = 0x7FFF; // Set all bits
+        ppu.write_scroll(0x00); // First write (clears bits 0-4)
+        ppu.write_scroll(0xFF); // Second write
+        // Bits 0-4 and 10-11 should be preserved
+        assert_eq!(ppu.t_register() & 0x001F, 0x00); // Coarse X cleared by first write
+        assert_eq!(ppu.t_register() & 0x0C00, 0x0C00); // Nametable bits preserved
+    }
+
+    // PPUADDR ($2006) tests
+    #[test]
+    fn test_write_address_first_write_sets_high_byte_in_t() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_address(0x12);
+        // First write: t = (t & 0x00FF) | ((value & 0x3F) << 8)
+        // High byte masked with 0x3F, so 0x12 stays as 0x12
+        assert_eq!((ppu.t_register() >> 8) & 0x3F, 0x12);
+    }
+
+    #[test]
+    fn test_write_address_first_write_masks_high_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_address(0xFF); // All bits set
+        // High 2 bits should be masked off (0xFF & 0x3F = 0x3F)
+        assert_eq!((ppu.t_register() >> 8) & 0x3F, 0x3F);
+    }
+
+    #[test]
+    fn test_write_address_first_write_toggles_w() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.w_register(), false);
+        ppu.write_address(0x20);
+        assert_eq!(ppu.w_register(), true);
+    }
+
+    #[test]
+    fn test_write_address_second_write_sets_low_byte_in_t() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_address(0x20); // First write
+        ppu.write_address(0x34); // Second write
+        // Second write sets low byte: t = (t & 0xFF00) | value
+        assert_eq!(ppu.t_register() & 0xFF, 0x34);
+    }
+
+    #[test]
+    fn test_write_address_second_write_copies_t_to_v() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_address(0x20); // First write: t high byte = 0x20
+        ppu.write_address(0x34); // Second write: t low byte = 0x34
+        // After second write, v should equal t
+        assert_eq!(ppu.v_register(), ppu.t_register());
+        assert_eq!(ppu.v_register(), 0x2034);
+    }
+
+    #[test]
+    fn test_write_address_second_write_toggles_w_back() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_address(0x20); // First write (w becomes true)
+        assert_eq!(ppu.w_register(), true);
+        ppu.write_address(0x34); // Second write
+        assert_eq!(ppu.w_register(), false); // w should toggle back to false
+    }
+
+    #[test]
+    fn test_write_address_preserves_low_byte_on_first_write() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.t = 0x00FF; // Set low byte
+        ppu.write_address(0x20); // First write
+        // Low byte should be preserved
+        assert_eq!(ppu.t_register() & 0xFF, 0xFF);
+    }
+
+    #[test]
+    fn test_write_address_preserves_high_byte_on_second_write() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_address(0x3F); // First write sets high byte
+        ppu.write_address(0x00); // Second write sets low byte to 0
+        // High byte should be preserved
+        assert_eq!((ppu.t_register() >> 8) & 0x3F, 0x3F);
     }
 }
