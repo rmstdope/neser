@@ -206,7 +206,7 @@ impl PPU {
     }
 
     /// Check if rendering is enabled (background or sprites)
-    /// 
+    ///
     /// TODO: This should check PPUMASK bits 3 (show background) and 4 (show sprites).
     /// For now, returns false until PPUMASK is implemented (issue #10).
     fn is_rendering_enabled(&self) -> bool {
