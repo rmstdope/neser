@@ -206,6 +206,21 @@ impl PPU {
         self.w
     }
 
+    /// Write to the PPU scroll register ($2005)
+    /// First write sets coarse X and fine X, second write sets coarse Y and fine Y
+    pub fn write_scroll(&mut self, value: u8) {
+        if !self.w {
+            // First write: set fine X and coarse X in t register
+            self.x = value & 0x07;
+            self.t = (self.t & 0xFFE0) | ((value as u16) >> 3);
+        } else {
+            // Second write: set fine Y and coarse Y in t register
+            // Fine Y goes in bits 12-14, coarse Y goes in bits 5-9
+            self.t = (self.t & 0x8C1F) | (((value as u16) & 0x07) << 12) | (((value as u16) >> 3) << 5);
+        }
+        self.w = !self.w;
+    }
+
     /// Write to the PPU address register ($2006)
     /// First write sets high byte, second write sets low byte, then alternates
     /// High byte writes are masked with 0x3F to limit address range
@@ -1387,5 +1402,79 @@ mod tests {
         ppu.w = true;
         ppu.get_status();
         assert_eq!(ppu.w_register(), false);
+    }
+
+    // PPUSCROLL ($2005) tests
+    #[test]
+    fn test_write_scroll_first_write_sets_fine_x() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_scroll(0b11111111); // All bits set
+        // Fine X = data & 0x07 = 0b111 = 7
+        assert_eq!(ppu.x_register(), 7);
+    }
+
+    #[test]
+    fn test_write_scroll_first_write_sets_coarse_x_in_t() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_scroll(0b11111111); // All bits set
+        // Coarse X = data >> 3 = 0b11111 = 31
+        // t = (t & 0xFFE0) | (data >> 3)
+        // t = 0x001F (coarse X in bits 0-4)
+        assert_eq!(ppu.t_register() & 0x001F, 31);
+    }
+
+    #[test]
+    fn test_write_scroll_first_write_toggles_w() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        assert_eq!(ppu.w_register(), false);
+        ppu.write_scroll(0x12);
+        assert_eq!(ppu.w_register(), true);
+    }
+
+    #[test]
+    fn test_write_scroll_first_write_preserves_other_t_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.t = 0x7FE0; // Set all bits except coarse X
+        ppu.write_scroll(0b11111000); // coarse X = 31, fine X = 0
+        // Should preserve bits 5-14, update bits 0-4
+        assert_eq!(ppu.t_register(), 0x7FFF);
+    }
+
+    #[test]
+    fn test_write_scroll_second_write_sets_fine_y() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_scroll(0x00); // First write
+        ppu.write_scroll(0b11111111); // Second write
+        // Bits 12-14 should be set to fine Y (data & 0x07)
+        assert_eq!((ppu.t_register() >> 12) & 0x07, 0x07);
+    }
+
+    #[test]
+    fn test_write_scroll_second_write_sets_coarse_y_in_t() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_scroll(0x00); // First write
+        ppu.write_scroll(0b11111111); // Second write
+        // Bits 5-9 should be set to coarse Y (data >> 3)
+        assert_eq!((ppu.t_register() >> 5) & 0x1F, 0x1F);
+    }
+
+    #[test]
+    fn test_write_scroll_second_write_toggles_w_back() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_scroll(0x00); // First write (w becomes true)
+        assert_eq!(ppu.w_register(), true);
+        ppu.write_scroll(0x00); // Second write
+        assert_eq!(ppu.w_register(), false); // w should toggle back to false
+    }
+
+    #[test]
+    fn test_write_scroll_second_write_preserves_other_t_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.t = 0x7FFF; // Set all bits
+        ppu.write_scroll(0x00); // First write (clears bits 0-4)
+        ppu.write_scroll(0xFF); // Second write
+        // Bits 0-4 and 10-11 should be preserved
+        assert_eq!(ppu.t_register() & 0x001F, 0x00); // Coarse X cleared by first write
+        assert_eq!(ppu.t_register() & 0x0C00, 0x0C00); // Nametable bits preserved
     }
 }
