@@ -164,6 +164,7 @@ impl PPU {
     }
 
     /// Get the current scanline
+    #[cfg(test)]
     pub fn scanline(&self) -> u16 {
         self.scanline
     }
@@ -208,7 +209,8 @@ impl PPU {
         } else {
             // Second write: set fine Y and coarse Y in t register
             // Fine Y goes in bits 12-14, coarse Y goes in bits 5-9
-            self.t = (self.t & 0x8C1F) | (((value as u16) & 0x07) << 12) | (((value as u16) >> 3) << 5);
+            self.t =
+                (self.t & 0x8C1F) | (((value as u16) & 0x07) << 12) | (((value as u16) >> 3) << 5);
         }
         self.w = !self.w;
     }
@@ -1389,9 +1391,9 @@ mod tests {
         ppu.t = 0x5678;
         ppu.x = 0x07;
         ppu.w = true;
-        
+
         ppu.reset();
-        
+
         assert_eq!(ppu.v_register(), 0);
         assert_eq!(ppu.t_register(), 0);
         assert_eq!(ppu.x_register(), 0);

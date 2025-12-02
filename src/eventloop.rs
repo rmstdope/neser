@@ -11,8 +11,6 @@ use crate::nes::TvSystem;
 pub struct EventLoop {
     _sdl_context: sdl2::Sdl,
     canvas: Option<Canvas<Window>>,
-    screen_width: u32,
-    screen_height: u32,
     event_pump: sdl2::EventPump,
     tv_system: TvSystem,
     timing_scale: f32,
@@ -77,9 +75,6 @@ impl EventLoop {
         let sdl_context = sdl2::init()?;
         let event_pump = sdl_context.event_pump()?;
 
-        let screen_width = tv_system.screen_width();
-        let screen_height = tv_system.screen_height();
-
         let canvas = if headless {
             None
         } else {
@@ -93,8 +88,6 @@ impl EventLoop {
         Ok(EventLoop {
             _sdl_context: sdl_context,
             canvas,
-            screen_width,
-            screen_height,
             event_pump,
             tv_system,
             timing_scale: clamped_timing_scale,
@@ -182,19 +175,19 @@ impl EventLoop {
 
     /// Checks if the user has requested to quit via Escape key or window close.
     /// Returns `true` if quit was requested, `false` otherwise.
-    fn should_quit(event_pump: &mut sdl2::EventPump) -> bool {
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => return true,
-                _ => {}
-            }
-        }
-        false
-    }
+    // fn should_quit(event_pump: &mut sdl2::EventPump) -> bool {
+    //     for event in event_pump.poll_iter() {
+    //         match event {
+    //             Event::Quit { .. }
+    //             | Event::KeyDown {
+    //                 keycode: Some(Keycode::Escape),
+    //                 ..
+    //             } => return true,
+    //             _ => {}
+    //         }
+    //     }
+    //     false
+    // }
 
     /// Renders the current frame from NES memory to the screen.
     fn render_frame(
@@ -408,7 +401,7 @@ mod tests {
     #[test]
     fn test_run_with_nes() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0).unwrap();
+        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance
