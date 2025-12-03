@@ -1,5 +1,6 @@
 use crate::cartridge::MirroringMode;
 use crate::nes::TvSystem;
+use crate::screen_buffer::ScreenBuffer;
 
 /// PPU Control Register ($2000) bit constants
 /// Bit 7: Generate NMI at start of VBlank
@@ -16,6 +17,21 @@ const GENERATE_NMI: u8 = 0b1000_0000;
 //const SPRITE_PATTERN_TABLE_ADDR: u8 = 0b0000_1000;
 const VRAM_ADDR_INCREMENT: u8 = 0b0000_0100;
 //const BASE_NAMETABLE_ADDR: u8 = 0b0000_0011;
+
+/// PPU Mask Register ($2001) bit constants
+/// Bit 7: Emphasize blue (NTSC) / Emphasize green (PAL)
+/// Bit 6: Emphasize green (NTSC) / Emphasize red (PAL)
+/// Bit 5: Emphasize red (NTSC) / Emphasize blue (PAL)
+/// Bit 4: Enable sprite rendering
+/// Bit 3: Enable background rendering
+/// Bit 2: Show sprites in leftmost 8 pixels
+/// Bit 1: Show background in leftmost 8 pixels
+/// Bit 0: Grayscale mode
+const SHOW_BACKGROUND: u8 = 0b0000_1000;
+const SHOW_SPRITES: u8 = 0b0001_0000;
+const SHOW_BACKGROUND_LEFT: u8 = 0b0000_0010;
+const SHOW_SPRITES_LEFT: u8 = 0b0000_0100;
+const GRAYSCALE: u8 = 0b0000_0001;
 
 /// PPU Status Register ($2002) bit constants
 /// Bit 7: VBlank Started
@@ -38,6 +54,8 @@ pub struct PPU {
     data_buffer: u8,
     // Control register value
     control_register: u8,
+    // Mask register value ($2001)
+    mask_register: u8,
     // Mirroring
     mirroring_mode: MirroringMode,
     /// Pattern tables (CHR ROM/RAM) - 8KB
@@ -75,6 +93,25 @@ pub struct PPU {
     x: u8,
     /// w: Write toggle (1 bit) - false=first write, true=second write
     w: bool,
+    // Background rendering shift registers and latches
+    /// Background pattern shift register - low bit plane (16 bits)
+    bg_pattern_shift_lo: u16,
+    /// Background pattern shift register - high bit plane (16 bits)
+    bg_pattern_shift_hi: u16,
+    /// Background attribute shift register - low bit (8 bits)
+    bg_attribute_shift_lo: u8,
+    /// Background attribute shift register - high bit (8 bits)
+    bg_attribute_shift_hi: u8,
+    /// Nametable byte latch (tile index)
+    nametable_latch: u8,
+    /// Attribute table byte latch (palette selection)
+    attribute_latch: u8,
+    /// Pattern table low byte latch
+    pattern_lo_latch: u8,
+    /// Pattern table high byte latch
+    pattern_hi_latch: u8,
+    /// Screen buffer for rendered pixels
+    screen_buffer: ScreenBuffer,
 }
 
 impl PPU {
@@ -82,6 +119,7 @@ impl PPU {
     pub fn new(tv_system: TvSystem) -> Self {
         Self {
             control_register: 0,
+            mask_register: 0,
             mirroring_mode: MirroringMode::Horizontal,
             chr_rom: vec![0; 8192],
             ppu_ram: [0; 2048],
@@ -101,12 +139,22 @@ impl PPU {
             t: 0,
             x: 0,
             w: false,
+            bg_pattern_shift_lo: 0,
+            bg_pattern_shift_hi: 0,
+            bg_attribute_shift_lo: 0,
+            bg_attribute_shift_hi: 0,
+            nametable_latch: 0,
+            attribute_latch: 0,
+            pattern_lo_latch: 0,
+            pattern_hi_latch: 0,
+            screen_buffer: ScreenBuffer::new(),
         }
     }
 
     /// Reset the PPU to its initial state
     pub fn reset(&mut self) {
         self.control_register = 0;
+        self.mask_register = 0;
         self.ppu_ram = [0; 2048];
         self.palette = [0; 32];
         self.data_buffer = 0;
@@ -123,6 +171,14 @@ impl PPU {
         self.t = 0;
         self.x = 0;
         self.w = false;
+        self.bg_pattern_shift_lo = 0;
+        self.bg_pattern_shift_hi = 0;
+        self.bg_attribute_shift_lo = 0;
+        self.bg_attribute_shift_hi = 0;
+        self.nametable_latch = 0;
+        self.attribute_latch = 0;
+        self.pattern_lo_latch = 0;
+        self.pattern_hi_latch = 0;
     }
 
     /// Run the PPU for a specified number of ticks
@@ -153,6 +209,34 @@ impl PPU {
             let scanlines_per_frame = self.tv_system.scanlines_per_frame();
             if self.scanline >= scanlines_per_frame {
                 self.scanline = 0;
+            }
+        }
+
+        // Background rendering pipeline
+        if self.is_rendering_cycle() {
+            // Shift registers every cycle during rendering
+            self.shift_registers();
+
+            // Render pixels to screen buffer only during visible scanlines (0-239)
+            // at visible pixel positions (1-256). Pre-render scanline (261) doesn't output pixels.
+            // Only render if rendering is actually enabled via PPUMASK.
+            if self.is_visible_pixel() && self.is_rendering_enabled() {
+                self.render_pixel_to_screen();
+            }
+
+            // Perform fetches based on the current cycle
+            let fetch_step = self.get_fetch_step();
+            match fetch_step {
+                0 | 4 => self.fetch_nametable_byte(), // Cycles 1, 5 (unused NT fetch)
+                1 | 5 => self.fetch_attribute_byte(), // Cycles 2, 6 (unused AT fetch)
+                2 | 6 => self.fetch_pattern_lo_byte(), // Cycles 3, 7
+                3 | 7 => self.fetch_pattern_hi_byte(), // Cycles 4, 8
+                _ => unreachable!(),
+            }
+
+            // Load shift registers after pattern high byte fetch (every 8th cycle)
+            if self.should_load_shift_registers() {
+                self.load_shift_registers();
             }
         }
 
@@ -207,10 +291,20 @@ impl PPU {
 
     /// Check if rendering is enabled (background or sprites)
     ///
-    /// TODO: This should check PPUMASK bits 3 (show background) and 4 (show sprites).
-    /// For now, returns false until PPUMASK is implemented (issue #10).
+    /// Returns true if either background rendering (bit 3) or sprite rendering (bit 4)
+    /// is enabled in the PPUMASK register.
     fn is_rendering_enabled(&self) -> bool {
-        false
+        self.is_background_enabled() || self.is_sprite_enabled()
+    }
+
+    /// Check if background rendering is enabled (PPUMASK bit 3)
+    fn is_background_enabled(&self) -> bool {
+        (self.mask_register & SHOW_BACKGROUND) != 0
+    }
+
+    /// Check if sprite rendering is enabled (PPUMASK bit 4)
+    fn is_sprite_enabled(&self) -> bool {
+        (self.mask_register & SHOW_SPRITES) != 0
     }
 
     /// Get the total number of ticks since reset
@@ -255,18 +349,32 @@ impl PPU {
         self.w
     }
 
+    /// Get a reference to the screen buffer
+    pub fn screen_buffer(&self) -> &ScreenBuffer {
+        &self.screen_buffer
+    }
+
+    /// Get a mutable reference to the screen buffer
+    pub fn screen_buffer_mut(&mut self) -> &mut ScreenBuffer {
+        &mut self.screen_buffer
+    }
+
     /// Write to the PPU scroll register ($2005)
     /// First write sets coarse X and fine X, second write sets coarse Y and fine Y
     pub fn write_scroll(&mut self, value: u8) {
         if !self.w {
             // First write: set fine X and coarse X in t register
+            // Fine X (3 bits) = value & 0x07
+            // Coarse X (5 bits) = value >> 3, stored in t bits 0-4
             self.x = value & 0x07;
             self.t = (self.t & 0xFFE0) | ((value as u16) >> 3);
         } else {
             // Second write: set fine Y and coarse Y in t register
-            // Fine Y goes in bits 12-14, coarse Y goes in bits 5-9
-            self.t =
-                (self.t & 0x8C1F) | (((value as u16) & 0x07) << 12) | (((value as u16) >> 3) << 5);
+            // Fine Y (3 bits) = value & 0x07, stored in t bits 12-14
+            // Coarse Y (5 bits) = value >> 3, stored in t bits 5-9
+            let fine_y = ((value as u16) & 0x07) << 12;
+            let coarse_y = ((value as u16) >> 3) << 5;
+            self.t = (self.t & 0x8C1F) | fine_y | coarse_y;
         }
         self.w = !self.w;
     }
@@ -320,6 +428,187 @@ impl PPU {
         self.v = (self.v & !0x7BE0) | (self.t & 0x7BE0);
     }
 
+    /// Fetch nametable byte (tile index) from VRAM
+    /// Address calculation: 0x2000 | (v & 0x0FFF)
+    /// - Bits 0-4 of v: Coarse X (tile column 0-31)
+    /// - Bits 5-9 of v: Coarse Y (tile row 0-29)  
+    /// - Bits 10-11 of v: Nametable select (0-3)
+    fn fetch_nametable_byte(&mut self) {
+        let addr = 0x2000 | (self.v & 0x0FFF);
+        self.nametable_latch = self.ppu_ram[self.mirror_vram_address(addr) as usize];
+    }
+
+    /// Fetch attribute table byte (palette selection) from VRAM
+    /// Address calculation: 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)
+    /// - Bits 10-11 of v: Nametable select (0x0C00)
+    /// - Bits 5-9 of v shifted right by 4: High 3 bits of coarse Y (0x38)
+    /// - Bits 2-4 of v shifted right by 2: High 3 bits of coarse X (0x07)
+    /// Each attribute byte controls a 4x4 tile area (32x32 pixels)
+    /// Fetch attribute table byte for current tile
+    ///
+    /// The attribute table starts at 0x23C0 within each nametable and contains palette
+    /// selection for 4x4 tile regions (32x32 pixels). Each byte controls 4 tiles.
+    ///
+    /// Address calculation:
+    /// - Bits 10-11 from v: Nametable select (which of 4 nametables)
+    /// - Bits 5-9 from v: Coarse Y, divided by 4 to get attribute row
+    /// - Bits 0-4 from v: Coarse X, divided by 4 to get attribute column
+    fn fetch_attribute_byte(&mut self) {
+        let addr = 0x23C0 | (self.v & 0x0C00) | ((self.v >> 4) & 0x38) | ((self.v >> 2) & 0x07);
+        self.attribute_latch = self.ppu_ram[self.mirror_vram_address(addr) as usize];
+    }
+
+    /// Fetch pattern table low byte for current tile
+    ///
+    /// The pattern table address is calculated from:
+    /// - PPUCTRL bit 4: Background pattern table base (0x0000 or 0x1000)
+    /// - Nametable byte: Tile index (0-255)
+    /// - Fine Y: Row within tile (0-7) from bits 12-14 of v register
+    fn fetch_pattern_lo_byte(&mut self) {
+        let pattern_table_base = ((self.control_register & 0x10) as u16) << 8;
+        let tile_index = self.nametable_latch as u16;
+        let fine_y = (self.v >> 12) & 0x07;
+        let addr = pattern_table_base | (tile_index << 4) | fine_y;
+        self.pattern_lo_latch = self.chr_rom[addr as usize];
+    }
+
+    /// Fetch pattern table high byte for current tile
+    ///
+    /// The high byte is located 8 bytes after the low byte in the pattern table.
+    /// Each tile has 16 bytes: 8 for low bit plane, 8 for high bit plane.
+    fn fetch_pattern_hi_byte(&mut self) {
+        let pattern_table_base = ((self.control_register & 0x10) as u16) << 8;
+        let tile_index = self.nametable_latch as u16;
+        let fine_y = (self.v >> 12) & 0x07;
+        let addr = pattern_table_base | (tile_index << 4) | fine_y | 0x08;
+        self.pattern_hi_latch = self.chr_rom[addr as usize];
+    }
+
+    /// Load shift registers from latches
+    ///
+    /// Transfers data from the latches into the low 8 bits of the shift registers.
+    /// The pattern shift registers are 16-bit, so this preserves the high 8 bits.
+    /// The attribute shift registers are 8-bit and get filled with the palette bits.
+    fn load_shift_registers(&mut self) {
+        // Load pattern data into low 8 bits of 16-bit shift registers
+        self.bg_pattern_shift_lo =
+            (self.bg_pattern_shift_lo & 0xFF00) | (self.pattern_lo_latch as u16);
+        self.bg_pattern_shift_hi =
+            (self.bg_pattern_shift_hi & 0xFF00) | (self.pattern_hi_latch as u16);
+
+        // Load attribute data - fill all 8 bits with the palette selection bits
+        self.bg_attribute_shift_lo = if (self.attribute_latch & 0x01) != 0 {
+            0xFF
+        } else {
+            0x00
+        };
+        self.bg_attribute_shift_hi = if (self.attribute_latch & 0x02) != 0 {
+            0xFF
+        } else {
+            0x00
+        };
+    }
+
+    /// Shift all background rendering shift registers left by 1
+    ///
+    /// This happens every PPU cycle during rendering to feed pixel data.
+    /// The MSB (bit 15 for pattern, bit 7 for attribute) is used for rendering.
+    fn shift_registers(&mut self) {
+        self.bg_pattern_shift_lo <<= 1;
+        self.bg_pattern_shift_hi <<= 1;
+        self.bg_attribute_shift_lo <<= 1;
+        self.bg_attribute_shift_hi <<= 1;
+    }
+
+    /// Get the current background pixel value
+    ///
+    /// Reads from the MSB of the shift registers, adjusted by fine X scroll.
+    /// Returns a palette index (0-15) where 0 means transparent.
+    fn get_background_pixel(&self) -> u8 {
+        // Fine X scroll determines which bit to read (0-7)
+        let bit_position = 15 - self.x;
+
+        // Extract pattern bits (2 bits combined give pixel value 0-3)
+        let pattern_lo_bit = ((self.bg_pattern_shift_lo >> bit_position) & 0x01) as u8;
+        let pattern_hi_bit = ((self.bg_pattern_shift_hi >> bit_position) & 0x01) as u8;
+        let pattern = (pattern_hi_bit << 1) | pattern_lo_bit;
+
+        // If pattern is 0, pixel is transparent
+        if pattern == 0 {
+            return 0;
+        }
+
+        // Extract attribute/palette bits
+        let attr_bit_position = 7 - self.x;
+        let attr_lo_bit = ((self.bg_attribute_shift_lo >> attr_bit_position) & 0x01) as u8;
+        let attr_hi_bit = ((self.bg_attribute_shift_hi >> attr_bit_position) & 0x01) as u8;
+        let palette = (attr_hi_bit << 1) | attr_lo_bit;
+
+        // Combine: palette_base + palette_offset + pattern
+        palette * 4 + pattern
+    }
+
+    /// Render the current pixel to the internal screen buffer
+    ///
+    /// This is called during visible scanlines (0-239) at pixels 1-256.
+    /// It reads from the shift registers to get the pixel color and writes to the screen buffer.
+    fn render_pixel_to_screen(&mut self) {
+        // Get the palette index from the background rendering pipeline
+        let palette_index = self.get_background_pixel();
+
+        // Look up the color in the palette RAM
+        let color_value = self.palette[palette_index as usize];
+
+        // Convert to RGB using the system palette
+        let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
+
+        // Calculate screen position (pixel is 1-indexed, screen is 0-indexed)
+        let screen_x = (self.pixel - 1) as u32;
+        let screen_y = self.scanline as u32;
+
+        // Write to the screen buffer
+        self.screen_buffer.set_pixel(screen_x, screen_y, r, g, b);
+    }
+
+    /// Check if the current cycle is a rendering cycle where fetches occur
+    ///
+    /// Returns true during visible scanlines (0-239) and pre-render scanline (261)
+    /// at cycles 1-256 (visible) and 321-336 (pre-fetch for next scanline).
+    /// Returns false during VBlank and idle cycles.
+    fn is_rendering_cycle(&self) -> bool {
+        let is_visible_or_prerender = self.scanline < 240 || self.scanline == 261;
+        let is_fetch_cycle =
+            (self.pixel >= 1 && self.pixel <= 256) || (self.pixel >= 321 && self.pixel <= 336);
+        is_visible_or_prerender && is_fetch_cycle
+    }
+
+    /// Check if the current position is a visible pixel that should be rendered to screen
+    ///
+    /// Returns true during visible scanlines (0-239) at visible pixel positions (1-256).
+    /// Returns false during pre-render scanline, VBlank, or off-screen pixels.
+    fn is_visible_pixel(&self) -> bool {
+        self.scanline < 240 && self.pixel >= 1 && self.pixel <= 256
+    }
+
+    /// Get the current fetch step (0-3) within the 8-cycle pattern
+    ///
+    /// Returns:
+    /// - 0: Nametable byte fetch
+    /// - 1: Attribute table byte fetch
+    /// - 2: Pattern table low byte fetch
+    /// - 3: Pattern table high byte fetch
+    fn get_fetch_step(&self) -> u8 {
+        ((self.pixel - 1) % 8) as u8
+    }
+
+    /// Check if shift registers should be loaded this cycle
+    ///
+    /// Shift registers are loaded every 8th cycle (after pattern high byte is fetched).
+    /// This occurs at cycles 8, 16, 24, ..., 256, and 328, 336 during pre-fetch.
+    fn should_load_shift_registers(&self) -> bool {
+        self.is_rendering_cycle() && (self.pixel % 8 == 0)
+    }
+
     /// Write to the PPU address register ($2006)
     /// First write sets high byte, second write sets low byte, then alternates
     /// High byte writes are masked with 0x3F to limit address range
@@ -351,6 +640,13 @@ impl PPU {
             // NMI enabled now
             self.nmi_enabled = true;
         }
+    }
+
+    /// Write to the PPU mask register ($2001)
+    /// Controls rendering settings including background/sprite enable, clipping, and color effects.
+    /// See PPUMASK bit constants for details on individual bits.
+    pub fn write_mask(&mut self, value: u8) {
+        self.mask_register = value;
     }
 
     /// Write to the OAM address register ($2003)
@@ -448,7 +744,10 @@ impl PPU {
                 // For now, just return the palette data
                 data
             }
-            _ => panic!("PPU address out of range: {:04X}", addr),
+            _ => {
+                eprintln!("PPU address out of range: {:04X}", addr);
+                self.data_buffer
+            }
         };
 
         self.inc_address(self.vram_increment() as u16);
@@ -462,7 +761,7 @@ impl PPU {
         match addr {
             0x0000..=0x1FFF => {
                 // CHR ROM is read-only
-                panic!("Cannot write to CHR ROM at address: {:04X}", addr);
+                eprintln!("Cannot write to CHR ROM at address: {:04X}", addr);
             }
             0x2000..=0x3EFF => {
                 // Nametable RAM
@@ -472,7 +771,7 @@ impl PPU {
                 // Palette RAM
                 self.palette[(addr - 0x3F00) as usize % 32] = value;
             }
-            _ => panic!("PPU address out of range: {:04X}", addr),
+            _ => eprintln!("PPU address out of range: {:04X}", addr),
         }
 
         self.inc_address(self.vram_increment() as u16);
@@ -1790,5 +2089,756 @@ mod tests {
         ppu.run_ppu_cycles(341);
         // v should not change when rendering is disabled
         assert_eq!(ppu.v_register(), 0x0000);
+    }
+
+    // Background rendering fetch tests
+    #[test]
+    fn test_fetch_nametable_byte() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Set up nametable with a specific tile
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        ppu.write_data(0x42); // Tile index 0x42 at nametable position 0
+
+        // Set v register to point to this nametable position
+        ppu.v = 0x2000;
+
+        // Fetch the nametable byte
+        ppu.fetch_nametable_byte();
+
+        // Should be stored in nametable_latch
+        assert_eq!(ppu.nametable_latch, 0x42);
+    }
+
+    #[test]
+    fn test_fetch_nametable_byte_uses_v_register() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Write to different nametable positions
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        ppu.write_data(0x11);
+        ppu.write_address(0x20);
+        ppu.write_address(0x01);
+        ppu.write_data(0x22);
+
+        // Fetch from position 0
+        ppu.v = 0x2000;
+        ppu.fetch_nametable_byte();
+        assert_eq!(ppu.nametable_latch, 0x11);
+
+        // Fetch from position 1
+        ppu.v = 0x2001;
+        ppu.fetch_nametable_byte();
+        assert_eq!(ppu.nametable_latch, 0x22);
+    }
+
+    #[test]
+    fn test_fetch_nametable_byte_with_mirroring() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.set_mirroring(MirroringMode::Vertical);
+
+        // Write to nametable 0
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        ppu.write_data(0x33);
+
+        // Fetch from nametable 2 (should mirror to nametable 0)
+        ppu.v = 0x2800;
+        ppu.fetch_nametable_byte();
+        assert_eq!(ppu.nametable_latch, 0x33);
+    }
+
+    #[test]
+    fn test_fetch_attribute_byte() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Attribute table starts at 0x23C0 (offset 0x3C0 in nametable 0)
+        ppu.write_address(0x23);
+        ppu.write_address(0xC0);
+        ppu.write_data(0xAA); // Attribute byte with palette selections
+
+        // Set v to point to top-left corner (coarse X=0, coarse Y=0)
+        ppu.v = 0x2000;
+
+        ppu.fetch_attribute_byte();
+        assert_eq!(ppu.attribute_latch, 0xAA);
+    }
+
+    #[test]
+    fn test_fetch_attribute_byte_calculation() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Write to different attribute table positions
+        // Attribute address formula: 0x23C0 | (v & 0x0C00) | ((v >> 4) & 0x38) | ((v >> 2) & 0x07)
+
+        // For coarse X=4, coarse Y=8 (v = 0x2104):
+        // Expected attribute address: 0x23C0 | 0x0000 | 0x10 | 0x01 = 0x23D1
+        ppu.write_address(0x23);
+        ppu.write_address(0xD1);
+        ppu.write_data(0x55);
+
+        ppu.v = 0x2104; // Coarse X=4, Coarse Y=8
+        ppu.fetch_attribute_byte();
+        assert_eq!(ppu.attribute_latch, 0x55);
+    }
+
+    #[test]
+    fn test_fetch_attribute_byte_with_nametable() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Test with nametable 1 (bit 10 set)
+        // Attribute table for nametable 1 is at 0x27C0
+        ppu.write_address(0x27);
+        ppu.write_address(0xC0);
+        ppu.write_data(0x33);
+
+        ppu.v = 0x2400; // Nametable 1, coarse X=0, coarse Y=0
+        ppu.fetch_attribute_byte();
+        assert_eq!(ppu.attribute_latch, 0x33);
+    }
+
+    #[test]
+    fn test_fetch_pattern_lo_byte() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Pattern table address = (PPUCTRL.B << 12) | (nametable_byte << 4) | fine_y
+        // For PPUCTRL.B=0, nametable_byte=0x42, fine_y=3:
+        // Address = 0x0000 | (0x42 << 4) | 3 = 0x0420 | 0x03 = 0x0423
+        ppu.chr_rom[0x0423] = 0xAB;
+        ppu.control_register = 0x00; // Background pattern table at 0x0000
+        ppu.nametable_latch = 0x42;
+        ppu.v = 0x3003; // fine_y = 3 (bits 12-14 = 0b011)
+
+        ppu.fetch_pattern_lo_byte();
+        assert_eq!(ppu.pattern_lo_latch, 0xAB);
+    }
+
+    #[test]
+    fn test_fetch_pattern_lo_byte_with_different_pattern_table() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Test with background pattern table at 0x1000 (PPUCTRL.B=1)
+        // For PPUCTRL.B=1, nametable_byte=0x10, fine_y=5:
+        // Address = 0x1000 | (0x10 << 4) | 5 = 0x1000 | 0x100 | 0x05 = 0x1105
+        ppu.chr_rom[0x1105] = 0xCD;
+        ppu.control_register = 0b0001_0000; // Background pattern table at 0x1000
+        ppu.nametable_latch = 0x10;
+        ppu.v = 0x5005; // fine_y = 5
+
+        ppu.fetch_pattern_lo_byte();
+        assert_eq!(ppu.pattern_lo_latch, 0xCD);
+    }
+
+    #[test]
+    fn test_fetch_pattern_lo_byte_with_fine_y() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Test different fine_y values
+        // For nametable_byte=0x00, fine_y=0 through 7
+        for fine_y in 0..8 {
+            let addr = fine_y as usize;
+            ppu.chr_rom[addr] = fine_y;
+            ppu.control_register = 0x00;
+            ppu.nametable_latch = 0x00;
+            ppu.v = (fine_y as u16) << 12; // Set fine_y in bits 12-14
+
+            ppu.fetch_pattern_lo_byte();
+            assert_eq!(ppu.pattern_lo_latch, fine_y);
+        }
+    }
+
+    #[test]
+    fn test_fetch_pattern_hi_byte() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Pattern high byte is at pattern_low_address + 8
+        // For PPUCTRL.B=0, nametable_byte=0x42, fine_y=3:
+        // Low address = 0x0423, High address = 0x042B
+        ppu.chr_rom[0x042B] = 0xEF;
+        ppu.control_register = 0x00;
+        ppu.nametable_latch = 0x42;
+        ppu.v = 0x3003; // fine_y = 3
+
+        ppu.fetch_pattern_hi_byte();
+        assert_eq!(ppu.pattern_hi_latch, 0xEF);
+    }
+
+    #[test]
+    fn test_fetch_pattern_hi_byte_with_different_pattern_table() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Test with background pattern table at 0x1000
+        // Low address = 0x1105, High address = 0x110D
+        ppu.chr_rom[0x110D] = 0x12;
+        ppu.control_register = 0b0001_0000;
+        ppu.nametable_latch = 0x10;
+        ppu.v = 0x5005; // fine_y = 5
+
+        ppu.fetch_pattern_hi_byte();
+        assert_eq!(ppu.pattern_hi_latch, 0x12);
+    }
+
+    #[test]
+    fn test_fetch_pattern_hi_byte_offset() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Verify that high byte is exactly 8 bytes after low byte
+        for tile in 0u8..=0xFF {
+            for fine_y in 0..8 {
+                let low_addr = (tile << 4) | fine_y;
+                let high_addr = low_addr + 8;
+                ppu.chr_rom[high_addr as usize] = 0x99;
+                ppu.control_register = 0x00;
+                ppu.nametable_latch = tile;
+                ppu.v = (fine_y as u16) << 12;
+
+                ppu.fetch_pattern_hi_byte();
+                assert_eq!(ppu.pattern_hi_latch, 0x99);
+                break; // Just test one fine_y per tile
+            }
+            if tile >= 2 {
+                break;
+            } // Just test a few tiles
+        }
+    }
+
+    #[test]
+    fn test_load_shift_registers() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Set up latches with test data
+        ppu.pattern_lo_latch = 0xAB;
+        ppu.pattern_hi_latch = 0xCD;
+        ppu.attribute_latch = 0b00000011; // Palette 3
+
+        ppu.load_shift_registers();
+
+        // Pattern shift registers should have the low 8 bits loaded
+        assert_eq!(ppu.bg_pattern_shift_lo & 0xFF, 0xAB);
+        assert_eq!(ppu.bg_pattern_shift_hi & 0xFF, 0xCD);
+        // Attribute shift registers should have all bits set to palette bit 0 or 1
+        assert_eq!(ppu.bg_attribute_shift_lo, 0xFF); // Bit 0 of palette (1)
+        assert_eq!(ppu.bg_attribute_shift_hi, 0xFF); // Bit 1 of palette (1)
+    }
+
+    #[test]
+    fn test_load_shift_registers_preserves_high_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Pre-load shift registers with existing data
+        ppu.bg_pattern_shift_lo = 0x1234;
+        ppu.bg_pattern_shift_hi = 0x5678;
+
+        ppu.pattern_lo_latch = 0xAB;
+        ppu.pattern_hi_latch = 0xCD;
+        ppu.attribute_latch = 0b00000000;
+
+        ppu.load_shift_registers();
+
+        // High 8 bits should be preserved, low 8 bits replaced
+        assert_eq!(ppu.bg_pattern_shift_lo, 0x12AB);
+        assert_eq!(ppu.bg_pattern_shift_hi, 0x56CD);
+    }
+
+    #[test]
+    fn test_load_shift_registers_attribute_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.pattern_lo_latch = 0x00;
+        ppu.pattern_hi_latch = 0x00;
+
+        // Test all 4 palette values
+        for palette in 0..4 {
+            ppu.attribute_latch = palette;
+            ppu.load_shift_registers();
+
+            let expected_lo = if (palette & 0x01) != 0 { 0xFF } else { 0x00 };
+            let expected_hi = if (palette & 0x02) != 0 { 0xFF } else { 0x00 };
+
+            assert_eq!(
+                ppu.bg_attribute_shift_lo, expected_lo,
+                "Failed for palette {}",
+                palette
+            );
+            assert_eq!(
+                ppu.bg_attribute_shift_hi, expected_hi,
+                "Failed for palette {}",
+                palette
+            );
+        }
+    }
+
+    #[test]
+    fn test_shift_registers() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Load initial data
+        ppu.bg_pattern_shift_lo = 0b1010101010101010;
+        ppu.bg_pattern_shift_hi = 0b1100110011001100;
+        ppu.bg_attribute_shift_lo = 0b10101010;
+        ppu.bg_attribute_shift_hi = 0b11001100;
+
+        ppu.shift_registers();
+
+        // All registers should shift left by 1
+        assert_eq!(ppu.bg_pattern_shift_lo, 0b0101010101010100);
+        assert_eq!(ppu.bg_pattern_shift_hi, 0b1001100110011000);
+        assert_eq!(ppu.bg_attribute_shift_lo, 0b01010100);
+        assert_eq!(ppu.bg_attribute_shift_hi, 0b10011000);
+    }
+
+    #[test]
+    fn test_shift_registers_multiple_times() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.bg_pattern_shift_lo = 0xFF00;
+        ppu.bg_pattern_shift_hi = 0x00FF;
+
+        // Shift 8 times
+        for _ in 0..8 {
+            ppu.shift_registers();
+        }
+
+        // After 8 shifts, original data should be in high byte
+        assert_eq!(ppu.bg_pattern_shift_lo, 0x0000);
+        assert_eq!(ppu.bg_pattern_shift_hi, 0xFF00);
+    }
+
+    #[test]
+    fn test_shift_registers_clears_low_bit() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.bg_pattern_shift_lo = 0xFFFF;
+        ppu.bg_pattern_shift_hi = 0xFFFF;
+        ppu.bg_attribute_shift_lo = 0xFF;
+        ppu.bg_attribute_shift_hi = 0xFF;
+
+        ppu.shift_registers();
+
+        // Low bit should be 0 after shift
+        assert_eq!(ppu.bg_pattern_shift_lo & 0x01, 0);
+        assert_eq!(ppu.bg_pattern_shift_hi & 0x01, 0);
+        assert_eq!(ppu.bg_attribute_shift_lo & 0x01, 0);
+        assert_eq!(ppu.bg_attribute_shift_hi & 0x01, 0);
+    }
+
+    #[test]
+    fn test_get_background_pixel() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Set up shift registers with known pattern
+        // MSB (bit 15) is used for current pixel
+        ppu.bg_pattern_shift_lo = 0b1000000000000000; // MSB = 1
+        ppu.bg_pattern_shift_hi = 0b0000000000000000; // MSB = 0
+        ppu.bg_attribute_shift_lo = 0b10000000; // MSB = 1
+        ppu.bg_attribute_shift_hi = 0b00000000; // MSB = 0
+        ppu.x = 0; // No fine X scroll
+
+        let pixel = ppu.get_background_pixel();
+        // Pattern bits: 01 (bit 1)
+        // Palette bits: 01 (palette 1)
+        // Result: palette_base + palette_select*4 + pattern = 0 + 1*4 + 1 = 5
+        assert_eq!(pixel, 5);
+    }
+
+    #[test]
+    fn test_get_background_pixel_with_fine_x() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Test with fine X scroll of 3
+        // Bit 15-3=12 should be used instead of bit 15
+        ppu.bg_pattern_shift_lo = 0b0001000000000000; // Bit 12 = 1
+        ppu.bg_pattern_shift_hi = 0b0001000000000000; // Bit 12 = 1
+        ppu.bg_attribute_shift_lo = 0b00010000; // Bit 4 = 1
+        ppu.bg_attribute_shift_hi = 0b00010000; // Bit 4 = 1
+        ppu.x = 3;
+
+        let pixel = ppu.get_background_pixel();
+        // Pattern bits: 11 (bit 3)
+        // Palette bits: 11 (palette 3)
+        // Result: 0 + 3*4 + 3 = 15
+        assert_eq!(pixel, 15);
+    }
+
+    #[test]
+    fn test_get_background_pixel_transparent() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // When both pattern bits are 0, pixel is transparent (index 0)
+        ppu.bg_pattern_shift_lo = 0b0000000000000000;
+        ppu.bg_pattern_shift_hi = 0b0000000000000000;
+        ppu.bg_attribute_shift_lo = 0b10000000; // Palette doesn't matter
+        ppu.bg_attribute_shift_hi = 0b10000000;
+        ppu.x = 0;
+
+        let pixel = ppu.get_background_pixel();
+        // Transparent pixel should return palette base (0)
+        assert_eq!(pixel, 0);
+    }
+
+    #[test]
+    fn test_is_rendering_cycle() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Visible scanlines (0-239)
+        for scanline in 0..240 {
+            ppu.scanline = scanline;
+
+            // Cycles 1-256: visible pixels, fetches occur
+            for cycle in 1..=256 {
+                ppu.pixel = cycle;
+                assert!(
+                    ppu.is_rendering_cycle(),
+                    "Should render at scanline {} cycle {}",
+                    scanline,
+                    cycle
+                );
+            }
+
+            // Cycles 257-320: idle, no fetches
+            for cycle in 257..=320 {
+                ppu.pixel = cycle;
+                assert!(
+                    !ppu.is_rendering_cycle(),
+                    "Should not render at scanline {} cycle {}",
+                    scanline,
+                    cycle
+                );
+            }
+
+            // Cycles 321-336: pre-fetch for next scanline
+            for cycle in 321..=336 {
+                ppu.pixel = cycle;
+                assert!(
+                    ppu.is_rendering_cycle(),
+                    "Should render at scanline {} cycle {}",
+                    scanline,
+                    cycle
+                );
+            }
+
+            // Cycles 337-340: idle
+            for cycle in 337..=340 {
+                ppu.pixel = cycle;
+                assert!(
+                    !ppu.is_rendering_cycle(),
+                    "Should not render at scanline {} cycle {}",
+                    scanline,
+                    cycle
+                );
+            }
+        }
+
+        // Pre-render scanline (261 for NTSC)
+        ppu.scanline = 261;
+        for cycle in 1..=256 {
+            ppu.pixel = cycle;
+            assert!(
+                ppu.is_rendering_cycle(),
+                "Should render on pre-render scanline cycle {}",
+                cycle
+            );
+        }
+
+        // VBlank scanlines should not render
+        ppu.scanline = 241;
+        for cycle in 1..=340 {
+            ppu.pixel = cycle;
+            assert!(
+                !ppu.is_rendering_cycle(),
+                "Should not render during VBlank at cycle {}",
+                cycle
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_fetch_step() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.scanline = 0;
+
+        // Fetch cycle repeats every 8 cycles: NT, AT, PL, PH, NT, AT, PL, PH
+        // Cycle 1: NT (step 0)
+        ppu.pixel = 1;
+        assert_eq!(ppu.get_fetch_step(), 0);
+
+        // Cycle 2: AT (step 1)
+        ppu.pixel = 2;
+        assert_eq!(ppu.get_fetch_step(), 1);
+
+        // Cycle 3: PL (step 2)
+        ppu.pixel = 3;
+        assert_eq!(ppu.get_fetch_step(), 2);
+
+        // Cycle 4: PH (step 3)
+        ppu.pixel = 4;
+        assert_eq!(ppu.get_fetch_step(), 3);
+
+        // Cycle 9: NT again (step 0)
+        ppu.pixel = 9;
+        assert_eq!(ppu.get_fetch_step(), 0);
+
+        // Cycle 321: NT (step 0)
+        ppu.pixel = 321;
+        assert_eq!(ppu.get_fetch_step(), 0);
+    }
+
+    #[test]
+    fn test_should_load_shift_registers() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.scanline = 0;
+
+        // Shift registers are loaded every 8 cycles (after PH fetch completes)
+        // This happens at cycles 8, 16, 24, ..., 256, 328, 336
+        for cycle in [8, 16, 24, 32, 256, 328, 336] {
+            ppu.pixel = cycle;
+            assert!(
+                ppu.should_load_shift_registers(),
+                "Should load at cycle {}",
+                cycle
+            );
+        }
+
+        // Should not load on other cycles
+        for cycle in [1, 2, 3, 7, 9, 15, 17, 257, 320, 321, 327, 337] {
+            ppu.pixel = cycle;
+            assert!(
+                !ppu.should_load_shift_registers(),
+                "Should not load at cycle {}",
+                cycle
+            );
+        }
+    }
+
+    #[test]
+    fn test_background_rendering_integration() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Set up a simple tile in nametable
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        ppu.write_data(0x42); // Tile index 0x42 at nametable position 0
+
+        // Set up attribute byte (palette 1)
+        ppu.write_address(0x23);
+        ppu.write_address(0xC0);
+        ppu.write_data(0x01);
+
+        // Set up pattern data for tile 0x42
+        ppu.chr_rom[0x0420] = 0b10101010; // Low byte, row 0
+        ppu.chr_rom[0x0428] = 0b01010101; // High byte, row 0
+
+        // Start rendering at scanline 0, cycle 1
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000; // Start at nametable position 0
+
+        // Simulate one complete tile fetch (8 cycles)
+        for _ in 0..8 {
+            ppu.tick_ppu_cycle();
+        }
+
+        // After 8 cycles, shift registers should be loaded
+        assert_eq!(ppu.bg_pattern_shift_lo & 0xFF, 0b10101010);
+        assert_eq!(ppu.bg_pattern_shift_hi & 0xFF, 0b01010101);
+    }
+
+    #[test]
+    fn test_shift_registers_update_during_rendering() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+
+        // Pre-load shift registers
+        ppu.bg_pattern_shift_lo = 0xFF00;
+        ppu.bg_pattern_shift_hi = 0xFF00;
+
+        // Run through visible scanline cycles
+        // Shift registers should shift on each rendering cycle
+        for _ in 0..8 {
+            ppu.tick_ppu_cycle();
+        }
+
+        // After 8 cycles of shifting, high byte should be mostly in low byte
+        assert_ne!(ppu.bg_pattern_shift_lo, 0xFF00);
+    }
+
+    #[test]
+    fn test_fetches_occur_at_correct_cycles() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        ppu.write_data(0x12); // Tile at position 0
+
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        // Run to cycle 1 (nametable fetch)
+        ppu.tick_ppu_cycle();
+        // After NT fetch, latch should contain tile index
+        assert_eq!(ppu.nametable_latch, 0x12);
+    }
+
+    #[test]
+    fn test_frame_buffer_exists() {
+        let ppu = PPU::new(TvSystem::Ntsc);
+        let screen_buffer = ppu.screen_buffer();
+        assert_eq!(screen_buffer.width(), 256);
+        assert_eq!(screen_buffer.height(), 240);
+    }
+
+    #[test]
+    fn test_pixels_written_to_frame_buffer_during_rendering() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up a simple tile with pattern data
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        ppu.write_data(0x01); // Tile index 1 at position 0
+
+        // Set up pattern data for tile 1
+        ppu.chr_rom[0x0010] = 0xFF; // Row 0, low byte - all pixels on
+        ppu.chr_rom[0x0018] = 0x00; // Row 0, high byte - all pixels off
+        // Pattern: 01 for each pixel (color 1)
+
+        // Set up palette
+        ppu.palette[1] = 0x30; // Some color for palette index 1
+
+        // Enable rendering via PPUMASK (bit 3 = show background)
+        ppu.mask_register = 0x08;
+
+        // Start at scanline 0, run through first visible scanline
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        // Run enough cycles to render first 8 pixels
+        for _ in 0..16 {
+            ppu.tick_ppu_cycle();
+        }
+
+        // Check that at least one pixel was written to the frame buffer
+        // After rendering, pixel at (1, 0) should have a non-zero value if rendering occurred
+        let screen_buffer = ppu.screen_buffer();
+        let (r, g, b) = screen_buffer.get_pixel(1, 0);
+
+        // If rendering is working, we should have non-zero RGB values
+        // (This will fail if pixels aren't being written during tick_ppu_cycle)
+        assert!(
+            r != 0 || g != 0 || b != 0,
+            "Expected pixel to be rendered but got (0, 0, 0)"
+        );
+    }
+
+    #[test]
+    fn test_no_pixels_written_during_vblank() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set scanline to VBlank (241)
+        ppu.scanline = 241;
+        ppu.pixel = 0;
+
+        // Enable rendering
+        ppu.control_register = 0x10;
+
+        // Run several cycles
+        for _ in 0..100 {
+            ppu.tick_ppu_cycle();
+        }
+
+        // Frame buffer should still be all zeros (not written during VBlank)
+        let screen_buffer = ppu.screen_buffer();
+
+        // Check that all pixels remain black (0, 0, 0) since we're in VBlank
+        let (r, g, b) = screen_buffer.get_pixel(0, 0);
+        assert_eq!((r, g, b), (0, 0, 0), "Expected no rendering during VBlank");
+    }
+
+    // PPUMASK ($2001) tests
+    #[test]
+    fn test_background_rendering_disabled_when_mask_bit_clear() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up pattern data
+        ppu.chr_rom[0x0010] = 0xFF;
+        ppu.chr_rom[0x0018] = 0x00;
+
+        // Set up palette
+        ppu.palette[1] = 0x30;
+
+        // PPUMASK with background rendering DISABLED (bit 3 = 0)
+        ppu.mask_register = 0x00;
+
+        // Start at scanline 0
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        // Run several cycles
+        for _ in 0..16 {
+            ppu.tick_ppu_cycle();
+        }
+
+        // Pixels should NOT be rendered when background rendering is disabled
+        let screen_buffer = ppu.screen_buffer();
+        let (r, g, b) = screen_buffer.get_pixel(1, 0);
+        assert_eq!(
+            (r, g, b),
+            (0, 0, 0),
+            "Expected no rendering when background disabled"
+        );
+    }
+
+    #[test]
+    fn test_background_rendering_enabled_when_mask_bit_set() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up pattern data
+        ppu.chr_rom[0x0010] = 0xFF;
+        ppu.chr_rom[0x0018] = 0x00;
+
+        // Set up palette
+        ppu.palette[1] = 0x30;
+
+        // PPUMASK with background rendering ENABLED (bit 3 = 1)
+        ppu.mask_register = 0x08;
+
+        // Start at scanline 0
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        // Run several cycles
+        for _ in 0..16 {
+            ppu.tick_ppu_cycle();
+        }
+
+        // Pixels SHOULD be rendered when background rendering is enabled
+        let screen_buffer = ppu.screen_buffer();
+        let (r, g, b) = screen_buffer.get_pixel(1, 0);
+        assert!(
+            r != 0 || g != 0 || b != 0,
+            "Expected rendering when background enabled"
+        );
+    }
+
+    // Integration tests for background rendering pipeline components
+
+    #[test]
+    fn test_shift_registers_shift_each_cycle_during_rendering() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.bg_pattern_shift_lo = 0xAAAA;
+        ppu.mask_register = SHOW_BACKGROUND;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+
+        let initial = ppu.bg_pattern_shift_lo;
+        
+        // One tick should shift left by 1
+        ppu.tick_ppu_cycle();
+        
+        assert_eq!(ppu.bg_pattern_shift_lo, initial << 1, "Shift register shifts each cycle");
+    }
+
+    #[test]
+    fn test_get_background_pixel_combines_pattern_and_attribute() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Pattern bits = 01 (color 1)
+        ppu.bg_pattern_shift_lo = 0b1000000000000000;
+        ppu.bg_pattern_shift_hi = 0b0000000000000000;
+        
+        // Attribute bits = 10 (palette 2)
+        ppu.bg_attribute_shift_lo = 0b00000000;
+        ppu.bg_attribute_shift_hi = 0b10000000;
+        
+        ppu.x = 0;
+
+        let pixel = ppu.get_background_pixel();
+        // Palette 2 (bits 54) + color 1 (bits 10) = 0b1001 = 9
+        assert_eq!(pixel, 9, "Pixel should combine pattern and attribute correctly");
     }
 }
