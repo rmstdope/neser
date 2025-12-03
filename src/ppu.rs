@@ -293,12 +293,12 @@ impl PPU {
                 self.sprites_found = 0;
                 self.sprite_eval_n = 0;
             }
-            
+
             // Dots 1-64: Initialize secondary OAM with 0xFF
             if self.pixel >= 1 && self.pixel <= 64 {
                 self.initialize_secondary_oam_byte();
             }
-            
+
             // Dots 65-256: Sprite evaluation
             if self.pixel >= 65 && self.pixel <= 256 {
                 self.evaluate_sprites();
@@ -540,16 +540,8 @@ impl PPU {
         let palette = (self.attribute_latch >> shift) & 0x03;
 
         // Load attribute data - fill all 8 bits with the palette selection bits
-        self.bg_attribute_shift_lo = if (palette & 0x01) != 0 {
-            0xFF
-        } else {
-            0x00
-        };
-        self.bg_attribute_shift_hi = if (palette & 0x02) != 0 {
-            0xFF
-        } else {
-            0x00
-        };
+        self.bg_attribute_shift_lo = if (palette & 0x01) != 0 { 0xFF } else { 0x00 };
+        self.bg_attribute_shift_hi = if (palette & 0x02) != 0 { 0xFF } else { 0x00 };
     }
 
     /// Shift all background rendering shift registers left by 1
@@ -596,18 +588,28 @@ impl PPU {
     /// This is called during visible scanlines (0-239) at pixels 1-256.
     /// It reads from the shift registers to get the pixel color and writes to the screen buffer.
     fn render_pixel_to_screen(&mut self) {
-        // Get the palette index from the background rendering pipeline
-        let palette_index = self.get_background_pixel();
-
-        // Look up the color in the palette RAM
-        let color_value = self.palette[palette_index as usize];
-
-        // Convert to RGB using the system palette
-        let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
-
         // Calculate screen position (pixel is 1-indexed, screen is 0-indexed)
         let screen_x = (self.pixel - 1) as u32;
         let screen_y = self.scanline as u32;
+
+        // Check if we should clip background in leftmost 8 pixels
+        let should_clip_background =
+            screen_x < 8 && (self.mask_register & SHOW_BACKGROUND_LEFT) == 0;
+
+        // Get the color to render
+        let (r, g, b) = if should_clip_background {
+            // When clipping, render black
+            (0, 0, 0)
+        } else {
+            // Get the palette index from the background rendering pipeline
+            let palette_index = self.get_background_pixel();
+
+            // Look up the color in the palette RAM
+            let color_value = self.palette[palette_index as usize];
+
+            // Convert to RGB using the system palette
+            crate::nes::Nes::lookup_system_palette(color_value)
+        };
 
         // Write to the screen buffer
         self.screen_buffer.set_pixel(screen_x, screen_y, r, g, b);
@@ -723,7 +725,7 @@ impl PPU {
 
     /// Perform sprite evaluation for the current cycle
     /// Called during dots 65-256 of visible scanlines
-    /// 
+    ///
     /// Sprite evaluation searches through all 64 sprites in OAM to find up to 8 sprites
     /// that are visible on the current scanline. The process:
     /// - Reads sprite Y coordinate from primary OAM (odd cycles)
@@ -903,8 +905,8 @@ impl PPU {
             let table = vram_index / 0x0400;
             let offset = vram_index % 0x0400;
             let mirrored_table = match table {
-                0 | 2 => 0,  // Tables 0 ($2000) and 2 ($2800) map to physical table 0
-                1 | 3 => 1,  // Tables 1 ($2400) and 3 ($2C00) map to physical table 1
+                0 | 2 => 0, // Tables 0 ($2000) and 2 ($2800) map to physical table 0
+                1 | 3 => 1, // Tables 1 ($2400) and 3 ($2C00) map to physical table 1
                 _ => unreachable!(),
             };
             mirrored_table * 0x0400 + offset
@@ -946,7 +948,11 @@ impl PPU {
                 // Render the 8x8 tile
                 for pixel_y in 0..8 {
                     let low_byte = self.chr_rom.get(tile_addr + pixel_y).copied().unwrap_or(0);
-                    let high_byte = self.chr_rom.get(tile_addr + pixel_y + 8).copied().unwrap_or(0);
+                    let high_byte = self
+                        .chr_rom
+                        .get(tile_addr + pixel_y + 8)
+                        .copied()
+                        .unwrap_or(0);
 
                     for pixel_x in 0..8 {
                         // Get the 2-bit color value for this pixel
@@ -2798,8 +2804,8 @@ mod tests {
         // Set up palette
         ppu.palette[1] = 0x30; // Some color for palette index 1
 
-        // Enable rendering via PPUMASK (bit 3 = show background)
-        ppu.mask_register = 0x08;
+        // Enable rendering via PPUMASK (bit 3 = show background, bit 1 = show leftmost 8 pixels)
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
 
         // Start at scanline 0, run through first visible scanline
         ppu.scanline = 0;
@@ -2894,8 +2900,8 @@ mod tests {
         // Set up palette
         ppu.palette[1] = 0x30;
 
-        // PPUMASK with background rendering ENABLED (bit 3 = 1)
-        ppu.mask_register = 0x08;
+        // PPUMASK with background rendering ENABLED (bit 3 = 1, bit 1 = 1 for leftmost 8 pixels)
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
 
         // Start at scanline 0
         ppu.scanline = 0;
@@ -2928,11 +2934,15 @@ mod tests {
         ppu.pixel = 0;
 
         let initial = ppu.bg_pattern_shift_lo;
-        
+
         // One tick should shift left by 1
         ppu.tick_ppu_cycle();
-        
-        assert_eq!(ppu.bg_pattern_shift_lo, initial << 1, "Shift register shifts each cycle");
+
+        assert_eq!(
+            ppu.bg_pattern_shift_lo,
+            initial << 1,
+            "Shift register shifts each cycle"
+        );
     }
 
     #[test]
@@ -2942,16 +2952,19 @@ mod tests {
         // Pattern bits = 01 (color 1)
         ppu.bg_pattern_shift_lo = 0b1000000000000000;
         ppu.bg_pattern_shift_hi = 0b0000000000000000;
-        
+
         // Attribute bits = 10 (palette 2)
         ppu.bg_attribute_shift_lo = 0b00000000;
         ppu.bg_attribute_shift_hi = 0b10000000;
-        
+
         ppu.x = 0;
 
         let pixel = ppu.get_background_pixel();
         // Palette 2 (bits 54) + color 1 (bits 10) = 0b1001 = 9
-        assert_eq!(pixel, 9, "Pixel should combine pattern and attribute correctly");
+        assert_eq!(
+            pixel, 9,
+            "Pixel should combine pattern and attribute correctly"
+        );
     }
 
     // Sprite evaluation tests
@@ -2959,26 +2972,25 @@ mod tests {
     #[test]
     fn test_secondary_oam_initialized_to_ff_during_dots_1_64() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        
+
         // Corrupt secondary OAM with non-FF values
         for i in 0..32 {
             ppu.secondary_oam[i] = 0xAA;
         }
-        
+
         // Set up visible scanline
         ppu.scanline = 0;
         ppu.pixel = 0;
-        
+
         // Run through dots 1-64 (initialization phase)
         for _ in 1..=64 {
             ppu.tick_ppu_cycle();
         }
-        
+
         // After initialization, all 32 bytes of secondary OAM should be 0xFF
         for i in 0..32 {
             assert_eq!(
-                ppu.secondary_oam[i],
-                0xFF,
+                ppu.secondary_oam[i], 0xFF,
                 "Secondary OAM byte {} should be 0xFF after initialization",
                 i
             );
@@ -2988,64 +3000,71 @@ mod tests {
     #[test]
     fn test_sprite_evaluation_copies_sprites_in_range() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        
+
         // Set up sprite 0 at Y=10 (will be visible on scanlines 10-17 for 8x8 sprite)
-        ppu.oam_data[0] = 10;  // Y position
+        ppu.oam_data[0] = 10; // Y position
         ppu.oam_data[1] = 0x42; // Tile index
         ppu.oam_data[2] = 0x00; // Attributes
-        ppu.oam_data[3] = 50;   // X position
-        
+        ppu.oam_data[3] = 50; // X position
+
         // Set up sprite 1 at Y=100 (not visible on scanline 15)
         ppu.oam_data[4] = 100; // Y position
         ppu.oam_data[5] = 0x43;
         ppu.oam_data[6] = 0x01;
         ppu.oam_data[7] = 60;
-        
+
         // Enable sprite rendering
         ppu.mask_register = SHOW_SPRITES;
-        
+
         // Run scanline 15 (should include sprite 0)
         ppu.scanline = 15;
         ppu.pixel = 0;
-        
+
         // Run through initialization and evaluation (dots 1-256)
         for _ in 1..=256 {
             ppu.tick_ppu_cycle();
         }
-        
+
         // Sprite 0 should be in secondary OAM
         assert_eq!(ppu.secondary_oam[0], 10, "Sprite 0 Y should be copied");
         assert_eq!(ppu.secondary_oam[1], 0x42, "Sprite 0 tile should be copied");
-        assert_eq!(ppu.secondary_oam[2], 0x00, "Sprite 0 attributes should be copied");
+        assert_eq!(
+            ppu.secondary_oam[2], 0x00,
+            "Sprite 0 attributes should be copied"
+        );
         assert_eq!(ppu.secondary_oam[3], 50, "Sprite 0 X should be copied");
-        
+
         // Rest of secondary OAM should still be 0xFF (sprite 1 is out of range)
         for i in 4..32 {
-            assert_eq!(ppu.secondary_oam[i], 0xFF, "Secondary OAM byte {} should be 0xFF", i);
+            assert_eq!(
+                ppu.secondary_oam[i], 0xFF,
+                "Secondary OAM byte {} should be 0xFF",
+                i
+            );
         }
     }
 
     #[test]
     fn test_sprite_evaluation_stops_at_8_sprites() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        
+
         // Set up 10 sprites all at Y=10 (visible on scanline 15)
         for i in 0..10 {
-            ppu.oam_data[i * 4] = 10;     // Y position
+            ppu.oam_data[i * 4] = 10; // Y position
             ppu.oam_data[i * 4 + 1] = i as u8; // Tile index (unique for testing)
-            ppu.oam_data[i * 4 + 2] = 0;  // Attributes
+            ppu.oam_data[i * 4 + 2] = 0; // Attributes
             ppu.oam_data[i * 4 + 3] = i as u8 * 10; // X position
         }
-        
+
         ppu.mask_register = SHOW_SPRITES;
         ppu.scanline = 15;
         ppu.pixel = 0;
-        
+
         // Run through evaluation
         for _ in 1..=256 {
             ppu.tick_ppu_cycle();
         }
-        
+
         // Only first 8 sprites should be in secondary OAM
         for i in 0..8 {
             assert_eq!(
@@ -3055,7 +3074,7 @@ mod tests {
                 i
             );
         }
-        
+
         // Should have found exactly 8 sprites
         assert_eq!(ppu.sprites_found, 8, "Should stop at 8 sprites");
     }
@@ -3063,48 +3082,179 @@ mod tests {
     #[test]
     fn test_sprite_height_detection_8x8() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        
+
         // PPUCTRL bit 5 = 0 means 8x8 sprites
         ppu.control_register = 0x00;
-        
+
         // Sprite at Y=10, scanline 17 (diff=7) should be visible
         ppu.oam_data[0] = 10;
         ppu.oam_data[1] = 0x42;
         ppu.oam_data[2] = 0;
         ppu.oam_data[3] = 50;
-        
+
         ppu.mask_register = SHOW_SPRITES;
         ppu.scanline = 17; // Y + 7 = last scanline of 8-pixel sprite
         ppu.pixel = 0;
-        
+
         for _ in 1..=256 {
             ppu.tick_ppu_cycle();
         }
-        
-        assert_eq!(ppu.secondary_oam[0], 10, "8x8 sprite should be visible at Y+7");
+
+        assert_eq!(
+            ppu.secondary_oam[0], 10,
+            "8x8 sprite should be visible at Y+7"
+        );
     }
 
     #[test]
     fn test_sprite_height_detection_8x16() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        
+
         // PPUCTRL bit 5 = 1 means 8x16 sprites
         ppu.control_register = 0b0010_0000;
-        
+
         // Sprite at Y=10, scanline 25 (diff=15) should be visible
         ppu.oam_data[0] = 10;
         ppu.oam_data[1] = 0x42;
         ppu.oam_data[2] = 0;
         ppu.oam_data[3] = 50;
-        
+
         ppu.mask_register = SHOW_SPRITES;
         ppu.scanline = 25; // Y + 15 = last scanline of 16-pixel sprite
         ppu.pixel = 0;
-        
+
         for _ in 1..=256 {
             ppu.tick_ppu_cycle();
         }
-        
-        assert_eq!(ppu.secondary_oam[0], 10, "8x16 sprite should be visible at Y+15");
+
+        assert_eq!(
+            ppu.secondary_oam[0], 10,
+            "8x16 sprite should be visible at Y+15"
+        );
+    }
+
+    // PPUMASK leftmost 8 pixels clipping tests
+
+    #[test]
+    fn test_background_clipped_in_leftmost_8_pixels_when_bit_1_clear() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up pattern data for tile 0 (nametable defaults to 0x00)
+        ppu.chr_rom[0x0000] = 0xFF; // Pattern table tile 0, plane 0
+        ppu.chr_rom[0x0008] = 0xFF; // Pattern table tile 0, plane 1
+
+        // Set up palette
+        ppu.palette[3] = 0x30; // Palette 0, color 3 (both pattern bits set)
+
+        // PPUMASK: background enabled (bit 3) but leftmost 8 pixels disabled (bit 1 = 0)
+        ppu.mask_register = SHOW_BACKGROUND;
+
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        // Run more cycles to ensure shift registers are loaded
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let screen_buffer = ppu.screen_buffer();
+
+        // Pixels 0-7 should be clipped (black)
+        for x in 0..8 {
+            let (r, g, b) = screen_buffer.get_pixel(x, 0);
+            assert_eq!(
+                (r, g, b),
+                (0, 0, 0),
+                "Pixel {} should be clipped when SHOW_BACKGROUND_LEFT is disabled",
+                x
+            );
+        }
+
+        // Pixels 8-15 should be rendered normally (but may still be black if rendering hasn't started)
+        // Just check that at least one pixel is non-zero
+        let mut found_non_zero = false;
+        for x in 8..20 {
+            let (r, g, b) = screen_buffer.get_pixel(x, 0);
+            if r != 0 || g != 0 || b != 0 {
+                found_non_zero = true;
+                break;
+            }
+        }
+        assert!(
+            found_non_zero,
+            "Expected at least one non-zero pixel after clipping region"
+        );
+    }
+
+    #[test]
+    fn test_background_rendered_in_leftmost_8_pixels_when_bit_1_set() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up pattern data for tile 0 (nametable defaults to 0x00)
+        ppu.chr_rom[0x0000] = 0xFF; // Pattern table tile 0, plane 0
+        ppu.chr_rom[0x0008] = 0xFF; // Pattern table tile 0, plane 1
+
+        // Set up palette
+        ppu.palette[1] = 0x30; // Non-zero color
+
+        // PPUMASK: background enabled (bit 3) AND leftmost 8 pixels enabled (bit 1 = 1)
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT; // 0x0A
+
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        // Run cycles for first 16 pixels
+        for _ in 0..16 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let screen_buffer = ppu.screen_buffer();
+
+        // All pixels 0-15 should be rendered (including leftmost 8)
+        for x in 0..16 {
+            let (r, g, b) = screen_buffer.get_pixel(x, 0);
+            assert!(
+                r != 0 || g != 0 || b != 0,
+                "Pixel {} should be rendered when SHOW_BACKGROUND_LEFT is enabled",
+                x
+            );
+        }
+    }
+
+    #[test]
+    fn test_background_clipping_only_affects_leftmost_8_pixels() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up pattern data for tile 0 (nametable defaults to 0x00)
+        ppu.chr_rom[0x0000] = 0xFF; // Pattern table tile 0, plane 0
+        ppu.chr_rom[0x0008] = 0xFF; // Pattern table tile 0, plane 1
+        ppu.palette[1] = 0x30;
+
+        // Background enabled, leftmost 8 clipped
+        ppu.mask_register = SHOW_BACKGROUND;
+
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        // Run through pixel 9 (just past the clipped region)
+        for _ in 0..10 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let screen_buffer = ppu.screen_buffer();
+
+        // Pixel 7 should still be clipped
+        let (r7, g7, b7) = screen_buffer.get_pixel(7, 0);
+        assert_eq!((r7, g7, b7), (0, 0, 0), "Pixel 7 should be clipped");
+
+        // Pixel 8 should be rendered (first pixel after clipping region)
+        let (r8, g8, b8) = screen_buffer.get_pixel(8, 0);
+        assert!(
+            r8 != 0 || g8 != 0 || b8 != 0,
+            "Pixel 8 should be first rendered pixel"
+        );
     }
 }

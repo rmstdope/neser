@@ -309,7 +309,7 @@ impl EventLoop {
                 
                 // Calculate FPS before sleeping
                 let fps = 1.0 / elapsed_seconds;
-                println!("FPS: {:.2}", fps);
+                // println!("FPS: {:.2}", fps);
                 
                 // Update last_frame_time before sleeping to avoid timing drift
                 last_frame_time = current_time;
