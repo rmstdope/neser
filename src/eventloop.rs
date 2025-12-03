@@ -306,20 +306,19 @@ impl EventLoop {
                 let elapsed_ticks = (current_time - last_frame_time) as f64;
                 let elapsed_seconds = elapsed_ticks / performance_frequency;
                 let target_frame_time = 1.0 / 60.0; // ~16.67ms per frame
+                
+                // Calculate FPS before sleeping
+                let fps = 1.0 / elapsed_seconds;
+                println!("FPS: {:.2}", fps);
+                
+                // Update last_frame_time before sleeping to avoid timing drift
+                last_frame_time = current_time;
+                
                 if elapsed_seconds < target_frame_time {
                     let sleep_time = target_frame_time - elapsed_seconds;
                     std::thread::sleep(std::time::Duration::from_secs_f64(sleep_time));
                 }
                 // println!("Frame limited.");
-
-                // Calculate and print framerate
-                let frame_end_time = timer.performance_counter();
-                let total_frame_time = (frame_end_time - last_frame_time) as f64 / performance_frequency;
-                let fps = 1.0 / total_frame_time;
-                println!("FPS: {:.2}", fps);
-                // TODO Why is this running around 57 Hz?
-
-                last_frame_time = frame_end_time;
             }
         } else {
             // Headless mode - just run without rendering
