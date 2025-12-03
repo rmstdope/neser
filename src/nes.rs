@@ -138,8 +138,6 @@ impl Nes {
 
         if self.ppu.borrow_mut().poll_nmi() {
             self.cpu.trigger_nmi();
-            self.tick_ppu(7);
-            cpu_cycles += 7;
             self.ready_to_render = true;
         }
 

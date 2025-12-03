@@ -539,6 +539,8 @@ impl PPU {
         //   Bits 7-6: bottom-right 2x2 tiles
         let coarse_x = self.v & 0x1F;
         let coarse_y = (self.v >> 5) & 0x1F;
+        // Get bit 1 of coarse_x (0 or 1) and bit 1 of coarse_y (0 or 1)
+        // Shift amount = (coarse_y bit 1) * 4 + (coarse_x bit 1) * 2
         let shift = ((coarse_y & 0x02) << 1) | (coarse_x & 0x02);
         let palette = (self.attribute_latch >> shift) & 0x03;
 
@@ -601,12 +603,8 @@ impl PPU {
         let screen_y = self.scanline as u32;
 
         // Check if we should clip background in leftmost 8 pixels
-        let mut should_clip_background =
+        let should_clip_background =
             screen_x < 8 && (self.mask_register & SHOW_BACKGROUND_LEFT) == 0;
-
-        // if screen_x > 97 {
-        //     should_clip_background = true;
-        // }
 
         // Get the color to render
         let (r, g, b) = if should_clip_background {
