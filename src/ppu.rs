@@ -982,8 +982,8 @@ impl PPU {
             self.fetch_sprite_pattern(sprite_index, sprite_row);
 
             // Load the X position for this sprite (will be used during rendering)
-            // Add 1 because we shift before rendering, so X must reach 0 at the pixel
-            // AFTER the desired screen position
+            // Add 1 because we shift before rendering: the counter must reach 0 at the
+            // pixel AFTER the OAM X coordinate to render at the correct screen position.
             self.sprite_x_positions[sprite_index] =
                 self.secondary_oam[sec_oam_offset + 3].wrapping_add(1);
         }
@@ -3698,12 +3698,10 @@ mod tests {
         ppu.mask_register = SHOW_SPRITES;
         ppu.control_register = 0; // Pattern table 0 for sprites
 
-        // Simulate sprite fetching for this sprite (normally happens on previous scanline)
+        // Simulate sprite fetching as it would happen during dots 257-320 on previous scanline
         ppu.scanline = 50;
-        ppu.fetch_sprite_pattern(0, 0); // Fetch sprite 0, row 0
-        // Load X position from secondary OAM with +1 offset (simulating what fetch_sprite_patterns does)
-        ppu.sprite_x_positions[0] = ppu.secondary_oam[3].wrapping_add(1);
-        // Note: fetch_sprite_pattern already loads sprite_attributes from secondary_oam
+        ppu.pixel = 257 + 7; // Simulate being at the end of sprite 0's fetch window
+        ppu.fetch_sprite_patterns(); // This loads pattern, attributes, and X position correctly
 
         // Now render scanline 50
         ppu.scanline = 50;
