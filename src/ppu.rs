@@ -531,6 +531,75 @@ impl PPU {
         self.pattern_hi_latch = self.chr_rom.get(addr as usize).copied().unwrap_or(0);
     }
 
+    /// Fetch sprite pattern data for a specific sprite and row
+    ///
+    /// # Arguments
+    /// * `sprite_index` - Index into secondary OAM (0-7)
+    /// * `row` - Row within the sprite to fetch (0-7 for 8x8, 0-15 for 8x16)
+    fn fetch_sprite_pattern(&mut self, sprite_index: usize, row: u8) {
+        // Get sprite data from secondary OAM
+        let oam_offset = sprite_index * 4;
+        let tile_index = self.secondary_oam[oam_offset + 1];
+        let attributes = self.secondary_oam[oam_offset + 2];
+
+        // Get pattern table base from PPUCTRL bit 3 (for 8x8 sprites)
+        // For 8x16 sprites, bit 0 of tile index selects the pattern table
+        let pattern_table_base = if self.get_sprite_height() == 8 {
+            // 8x8 sprites: use PPUCTRL bit 3
+            ((self.control_register & 0x08) as u16) << 9 // bit 3 -> $0000 or $1000
+        } else {
+            // 8x16 sprites: use bit 0 of tile index
+            ((tile_index & 0x01) as u16) << 12
+        };
+
+        // Calculate the pattern address
+        let tile_offset = if self.get_sprite_height() == 8 {
+            // 8x8 sprites: use tile index directly
+            (tile_index as u16) << 4
+        } else {
+            // 8x16 sprites: use tile index & 0xFE (ignore bit 0)
+            ((tile_index & 0xFE) as u16) << 4
+        };
+
+        // Apply vertical flip if needed
+        let effective_row = if (attributes & 0x80) != 0 {
+            // Vertical flip: invert the row
+            if self.get_sprite_height() == 8 {
+                7 - row
+            } else {
+                15 - row
+            }
+        } else {
+            row
+        };
+
+        // For 8x16 sprites, add 16 if we're in the bottom half
+        let tile_row = if self.get_sprite_height() == 16 && effective_row >= 8 {
+            effective_row - 8 + 16 // Bottom tile is 16 bytes after top tile
+        } else {
+            effective_row
+        };
+
+        let addr = pattern_table_base | tile_offset | (tile_row as u16);
+
+        // Fetch pattern bytes
+        let pattern_lo = self.chr_rom.get(addr as usize).copied().unwrap_or(0);
+        let pattern_hi = self.chr_rom.get((addr + 8) as usize).copied().unwrap_or(0);
+
+        // Apply horizontal flip if needed
+        let (final_lo, final_hi) = if (attributes & 0x40) != 0 {
+            // Horizontal flip: reverse the bits
+            (pattern_lo.reverse_bits(), pattern_hi.reverse_bits())
+        } else {
+            (pattern_lo, pattern_hi)
+        };
+
+        // Store in sprite shift registers
+        self.sprite_pattern_shift_lo[sprite_index] = final_lo;
+        self.sprite_pattern_shift_hi[sprite_index] = final_hi;
+        self.sprite_attributes[sprite_index] = attributes;
+    }
+
     /// Load shift registers from latches
     ///
     /// Transfers data from the latches into the low 8 bits of the shift registers.
@@ -3419,6 +3488,53 @@ mod tests {
             (r, g, b),
             (84, 84, 84),
             "Grayscale should mask to palette 0"
+        );
+    }
+
+    #[test]
+    fn test_sprite_pattern_table_selection() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up a sprite in secondary OAM (simulating sprite evaluation result)
+        // Secondary OAM format: Y, tile, attributes, X (same as primary OAM)
+        ppu.secondary_oam[0] = 10; // Y position
+        ppu.secondary_oam[1] = 0x42; // Tile index
+        ppu.secondary_oam[2] = 0; // Attributes  
+        ppu.secondary_oam[3] = 20; // X position
+
+        // Write pattern data to CHR ROM
+        // Pattern table 0: $0000-$0FFF
+        // Tile $42 starts at $0420 (0x42 * 16)
+        ppu.chr_rom[0x0420] = 0b10101010; // Pattern low byte, row 0
+        ppu.chr_rom[0x0428] = 0b01010101; // Pattern high byte, row 0
+
+        // Pattern table 1: $1000-$1FFF
+        // Tile $42 starts at $1420
+        ppu.chr_rom[0x1420] = 0b11110000; // Pattern low byte, row 0
+        ppu.chr_rom[0x1428] = 0b00001111; // Pattern high byte, row 0
+
+        // Test with PPUCTRL sprite pattern table = 0 (bit 3 = 0)
+        ppu.control_register = 0;
+        ppu.fetch_sprite_pattern(0, 0); // Sprite 0, row 0
+        assert_eq!(
+            ppu.sprite_pattern_shift_lo[0], 0b10101010,
+            "Should fetch from pattern table 0"
+        );
+        assert_eq!(
+            ppu.sprite_pattern_shift_hi[0], 0b01010101,
+            "Should fetch from pattern table 0"
+        );
+
+        // Test with PPUCTRL sprite pattern table = 1 (bit 3 = 1)
+        ppu.control_register = 0b0000_1000;
+        ppu.fetch_sprite_pattern(0, 0); // Sprite 0, row 0
+        assert_eq!(
+            ppu.sprite_pattern_shift_lo[0], 0b11110000,
+            "Should fetch from pattern table 1"
+        );
+        assert_eq!(
+            ppu.sprite_pattern_shift_hi[0], 0b00001111,
+            "Should fetch from pattern table 1"
         );
     }
 }
