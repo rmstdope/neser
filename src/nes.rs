@@ -167,6 +167,19 @@ impl Nes {
     pub fn get_screen_buffer(&self) -> std::cell::Ref<'_, crate::screen_buffer::ScreenBuffer> {
         std::cell::Ref::map(self.ppu.borrow(), |ppu| ppu.screen_buffer())
     }
+
+    /// Check if a frame is ready to be rendered
+    ///
+    /// Returns true when the PPU has completed a full frame (reached VBlank at scanline 241).
+    /// After checking this flag, call `clear_ready_to_render()` to reset it for the next frame.
+    pub fn is_ready_to_render(&self) -> bool {
+        self.ready_to_render
+    }
+
+    /// Clear the ready-to-render flag after rendering a frame
+    pub fn clear_ready_to_render(&mut self) {
+        self.ready_to_render = false;
+    }
 }
 
 #[cfg(test)]

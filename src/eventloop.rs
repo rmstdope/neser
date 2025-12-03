@@ -262,11 +262,6 @@ impl EventLoop {
                 .create_texture_streaming(PixelFormatEnum::RGB24, TEXTURE_WIDTH, TEXTURE_HEIGHT)
                 .map_err(|e| e.to_string())?;
 
-            // Get CPU clock frequency for timing
-            let cpu_frequency = self.tv_system.cpu_clock_frequency() as f64;
-            let mut cycles_per_frame = cpu_frequency / 60.0; // ~60 FPS for NTSC, ~50 for PAL
-            cycles_per_frame *= self.timing_scale as f64;
-
             let timer = self._sdl_context.timer()?;
             let mut last_frame_time = timer.performance_counter();
             let performance_frequency = timer.performance_frequency() as f64;
@@ -283,29 +278,27 @@ impl EventLoop {
                         _ => {}
                     }
                 }
-                // println!("Events polled.");
 
-                // 2. Emulate one frame worth of CPU cycles
-                let mut cycles_run = 0.0;
-                while cycles_run < cycles_per_frame && !nes.cpu.halted {
-                    let cycles_consumed = nes.run_cpu_tick() as f64;
-                    cycles_run += cycles_consumed;
-                    // Write random value to 0xfe (used by some games for random number generation)
-                    // nes.memory
-                    //     .borrow_mut()
-                    //     .write(0xfe as u16, rand::random::<u8>());
+                // 2. Emulate until PPU completes a full frame (reaches VBlank)
+                // The PPU runs at 3x CPU clock (NTSC) or 3.2x (PAL), so run_cpu_tick()
+                // automatically runs the correct number of PPU cycles per CPU instruction.
+                // A full frame is 262 scanlines × 341 pixels = 89,342 PPU cycles for NTSC
+                while !nes.is_ready_to_render() && !nes.cpu.halted {
+                    nes.run_cpu_tick();
                 }
-                // println!("Frame emulated.");
+                nes.clear_ready_to_render();
+                println!("Frame emulated. Scanline: {}, Pixel: {}", nes.ppu.borrow().scanline(), nes.ppu.borrow().pixel());
 
                 // 3. Render the frame
                 Self::render_frame(canvas, &mut texture, nes)?;
                 // println!("Frame rendered.");
 
-                // 4. Frame limiting - maintain ~60 FPS
+                // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
                 let current_time = timer.performance_counter();
                 let elapsed_ticks = (current_time - last_frame_time) as f64;
                 let elapsed_seconds = elapsed_ticks / performance_frequency;
-                let target_frame_time = 1.0 / 60.0; // ~16.67ms per frame
+                // Adjust target frame time by timing scale (1.0 = normal speed, 2.0 = 2x speed, etc.)
+                let target_frame_time = (1.0 / 60.0) / self.timing_scale as f64;
                 
                 // Calculate FPS before sleeping
                 let fps = 1.0 / elapsed_seconds;
