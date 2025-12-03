@@ -68,6 +68,12 @@ pub struct PPU {
     oam_data: [u8; 256],
     /// OAM address register ($2003)
     oam_address: u8,
+    /// Secondary OAM - 32 bytes for up to 8 sprites on current scanline
+    secondary_oam: [u8; 32],
+    /// Number of sprites found during sprite evaluation
+    sprites_found: u8,
+    /// Current sprite being evaluated during sprite evaluation
+    sprite_eval_n: u8,
     /// Total number of PPU ticks since reset
     total_cycles: u64,
     /// TV system (NTSC or PAL)
@@ -127,6 +133,9 @@ impl PPU {
             data_buffer: 0,
             oam_data: [0; 256],
             oam_address: 0,
+            secondary_oam: [0xFF; 32],
+            sprites_found: 0,
+            sprite_eval_n: 0,
             total_cycles: 0,
             tv_system,
             scanline: 0,
@@ -160,6 +169,9 @@ impl PPU {
         self.data_buffer = 0;
         self.oam_data = [0; 256];
         self.oam_address = 0;
+        self.secondary_oam = [0xFF; 32];
+        self.sprites_found = 0;
+        self.sprite_eval_n = 0;
         self.total_cycles = 0;
         self.scanline = 0;
         self.pixel = 0;
@@ -271,6 +283,25 @@ impl PPU {
             // Copy vertical bits from t to v during pre-render scanline (dots 280-304)
             if is_prerender_scanline && self.pixel >= 280 && self.pixel <= 304 {
                 self.copy_vertical_bits();
+            }
+        }
+
+        // Sprite evaluation during visible scanlines
+        if self.scanline < 240 {
+            // Reset sprite evaluation state at dot 0
+            if self.pixel == 0 {
+                self.sprites_found = 0;
+                self.sprite_eval_n = 0;
+            }
+            
+            // Dots 1-64: Initialize secondary OAM with 0xFF
+            if self.pixel >= 1 && self.pixel <= 64 {
+                self.initialize_secondary_oam_byte();
+            }
+            
+            // Dots 65-256: Sprite evaluation
+            if self.pixel >= 65 && self.pixel <= 256 {
+                self.evaluate_sprites();
             }
         }
 
@@ -665,6 +696,73 @@ impl PPU {
     /// Reads from OAM at the current OAM address (does not increment)
     pub fn read_oam_data(&self) -> u8 {
         self.oam_data[self.oam_address as usize]
+    }
+
+    /// Initialize secondary OAM with 0xFF
+    /// Called during dots 1-64 of visible scanlines
+    fn initialize_secondary_oam_byte(&mut self) {
+        // Each cycle writes 2 bytes (on odd/even cycles), but we do 1 byte per tick
+        // Dots 1-64 = 64 cycles, but we write every other cycle = 32 writes
+        let oam_index = ((self.pixel - 1) / 2) as usize;
+        if oam_index < 32 {
+            self.secondary_oam[oam_index] = 0xFF;
+        }
+    }
+
+    /// Perform sprite evaluation for the current cycle
+    /// Called during dots 65-256 of visible scanlines
+    /// 
+    /// Sprite evaluation searches through all 64 sprites in OAM to find up to 8 sprites
+    /// that are visible on the current scanline. The process:
+    /// - Reads sprite Y coordinate from primary OAM (odd cycles)
+    /// - Writes sprite data to secondary OAM if in range (even cycles)
+    /// - Stops after finding 8 sprites or checking all 64 sprites
+    fn evaluate_sprites(&mut self) {
+        // Only evaluate on odd cycles (odd cycles read, even cycles write)
+        if self.pixel % 2 == 0 {
+            return;
+        }
+
+        // Stop if we've found 8 sprites already
+        if self.sprites_found >= 8 {
+            return;
+        }
+
+        // Stop if we've evaluated all 64 sprites
+        if self.sprite_eval_n >= 64 {
+            return;
+        }
+
+        // Read sprite Y position from primary OAM
+        let oam_index = (self.sprite_eval_n as usize) * 4;
+        let sprite_y = self.oam_data[oam_index];
+
+        // Get sprite height (8 or 16 pixels based on PPUCTRL)
+        let sprite_height = self.get_sprite_height();
+
+        // Check if sprite is in range for current scanline
+        // Sprite Y is the top edge, so sprite is visible for height scanlines
+        let diff = self.scanline.wrapping_sub(sprite_y as u16);
+        if diff < sprite_height as u16 {
+            // Sprite is in range, copy all 4 bytes to secondary OAM
+            let sec_oam_index = (self.sprites_found as usize) * 4;
+            for i in 0..4 {
+                self.secondary_oam[sec_oam_index + i] = self.oam_data[oam_index + i];
+            }
+            self.sprites_found += 1;
+        }
+
+        self.sprite_eval_n += 1;
+    }
+
+    /// Get sprite height based on PPUCTRL bit 5
+    /// Returns 8 for 8x8 sprites, 16 for 8x16 sprites
+    fn get_sprite_height(&self) -> u8 {
+        if (self.control_register & 0b0010_0000) != 0 {
+            16
+        } else {
+            8
+        }
     }
 
     /// Get the VRAM address increment amount based on control register
@@ -2840,5 +2938,159 @@ mod tests {
         let pixel = ppu.get_background_pixel();
         // Palette 2 (bits 54) + color 1 (bits 10) = 0b1001 = 9
         assert_eq!(pixel, 9, "Pixel should combine pattern and attribute correctly");
+    }
+
+    // Sprite evaluation tests
+
+    #[test]
+    fn test_secondary_oam_initialized_to_ff_during_dots_1_64() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        
+        // Corrupt secondary OAM with non-FF values
+        for i in 0..32 {
+            ppu.secondary_oam[i] = 0xAA;
+        }
+        
+        // Set up visible scanline
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        
+        // Run through dots 1-64 (initialization phase)
+        for _ in 1..=64 {
+            ppu.tick_ppu_cycle();
+        }
+        
+        // After initialization, all 32 bytes of secondary OAM should be 0xFF
+        for i in 0..32 {
+            assert_eq!(
+                ppu.secondary_oam[i],
+                0xFF,
+                "Secondary OAM byte {} should be 0xFF after initialization",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_sprite_evaluation_copies_sprites_in_range() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        
+        // Set up sprite 0 at Y=10 (will be visible on scanlines 10-17 for 8x8 sprite)
+        ppu.oam_data[0] = 10;  // Y position
+        ppu.oam_data[1] = 0x42; // Tile index
+        ppu.oam_data[2] = 0x00; // Attributes
+        ppu.oam_data[3] = 50;   // X position
+        
+        // Set up sprite 1 at Y=100 (not visible on scanline 15)
+        ppu.oam_data[4] = 100; // Y position
+        ppu.oam_data[5] = 0x43;
+        ppu.oam_data[6] = 0x01;
+        ppu.oam_data[7] = 60;
+        
+        // Enable sprite rendering
+        ppu.mask_register = SHOW_SPRITES;
+        
+        // Run scanline 15 (should include sprite 0)
+        ppu.scanline = 15;
+        ppu.pixel = 0;
+        
+        // Run through initialization and evaluation (dots 1-256)
+        for _ in 1..=256 {
+            ppu.tick_ppu_cycle();
+        }
+        
+        // Sprite 0 should be in secondary OAM
+        assert_eq!(ppu.secondary_oam[0], 10, "Sprite 0 Y should be copied");
+        assert_eq!(ppu.secondary_oam[1], 0x42, "Sprite 0 tile should be copied");
+        assert_eq!(ppu.secondary_oam[2], 0x00, "Sprite 0 attributes should be copied");
+        assert_eq!(ppu.secondary_oam[3], 50, "Sprite 0 X should be copied");
+        
+        // Rest of secondary OAM should still be 0xFF (sprite 1 is out of range)
+        for i in 4..32 {
+            assert_eq!(ppu.secondary_oam[i], 0xFF, "Secondary OAM byte {} should be 0xFF", i);
+        }
+    }
+
+    #[test]
+    fn test_sprite_evaluation_stops_at_8_sprites() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        
+        // Set up 10 sprites all at Y=10 (visible on scanline 15)
+        for i in 0..10 {
+            ppu.oam_data[i * 4] = 10;     // Y position
+            ppu.oam_data[i * 4 + 1] = i as u8; // Tile index (unique for testing)
+            ppu.oam_data[i * 4 + 2] = 0;  // Attributes
+            ppu.oam_data[i * 4 + 3] = i as u8 * 10; // X position
+        }
+        
+        ppu.mask_register = SHOW_SPRITES;
+        ppu.scanline = 15;
+        ppu.pixel = 0;
+        
+        // Run through evaluation
+        for _ in 1..=256 {
+            ppu.tick_ppu_cycle();
+        }
+        
+        // Only first 8 sprites should be in secondary OAM
+        for i in 0..8 {
+            assert_eq!(
+                ppu.secondary_oam[i * 4 + 1],
+                i as u8,
+                "Sprite {} tile should be in secondary OAM",
+                i
+            );
+        }
+        
+        // Should have found exactly 8 sprites
+        assert_eq!(ppu.sprites_found, 8, "Should stop at 8 sprites");
+    }
+
+    #[test]
+    fn test_sprite_height_detection_8x8() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        
+        // PPUCTRL bit 5 = 0 means 8x8 sprites
+        ppu.control_register = 0x00;
+        
+        // Sprite at Y=10, scanline 17 (diff=7) should be visible
+        ppu.oam_data[0] = 10;
+        ppu.oam_data[1] = 0x42;
+        ppu.oam_data[2] = 0;
+        ppu.oam_data[3] = 50;
+        
+        ppu.mask_register = SHOW_SPRITES;
+        ppu.scanline = 17; // Y + 7 = last scanline of 8-pixel sprite
+        ppu.pixel = 0;
+        
+        for _ in 1..=256 {
+            ppu.tick_ppu_cycle();
+        }
+        
+        assert_eq!(ppu.secondary_oam[0], 10, "8x8 sprite should be visible at Y+7");
+    }
+
+    #[test]
+    fn test_sprite_height_detection_8x16() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        
+        // PPUCTRL bit 5 = 1 means 8x16 sprites
+        ppu.control_register = 0b0010_0000;
+        
+        // Sprite at Y=10, scanline 25 (diff=15) should be visible
+        ppu.oam_data[0] = 10;
+        ppu.oam_data[1] = 0x42;
+        ppu.oam_data[2] = 0;
+        ppu.oam_data[3] = 50;
+        
+        ppu.mask_register = SHOW_SPRITES;
+        ppu.scanline = 25; // Y + 15 = last scanline of 16-pixel sprite
+        ppu.pixel = 0;
+        
+        for _ in 1..=256 {
+            ppu.tick_ppu_cycle();
+        }
+        
+        assert_eq!(ppu.secondary_oam[0], 10, "8x16 sprite should be visible at Y+15");
     }
 }
