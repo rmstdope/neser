@@ -116,6 +116,15 @@ pub struct PPU {
     pattern_lo_latch: u8,
     /// Pattern table high byte latch
     pattern_hi_latch: u8,
+    // Sprite rendering shift registers (for up to 8 sprites)
+    /// Sprite pattern shift registers - low bit plane (8 sprites)
+    sprite_pattern_shift_lo: [u8; 8],
+    /// Sprite pattern shift registers - high bit plane (8 sprites)
+    sprite_pattern_shift_hi: [u8; 8],
+    /// Sprite X position counters (decrements each cycle, sprite renders when 0)
+    sprite_x_positions: [u8; 8],
+    /// Sprite attributes (palette, priority, flip bits)
+    sprite_attributes: [u8; 8],
     /// Screen buffer for rendered pixels
     screen_buffer: ScreenBuffer,
 }
@@ -156,6 +165,10 @@ impl PPU {
             attribute_latch: 0,
             pattern_lo_latch: 0,
             pattern_hi_latch: 0,
+            sprite_pattern_shift_lo: [0; 8],
+            sprite_pattern_shift_hi: [0; 8],
+            sprite_x_positions: [0; 8],
+            sprite_attributes: [0; 8],
             screen_buffer: ScreenBuffer::new(),
         }
     }
