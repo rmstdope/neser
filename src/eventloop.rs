@@ -203,7 +203,7 @@ impl EventLoop {
             .with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 // Get the PPU screen buffer and copy its RGB data to the texture
                 let screen_buffer = nes.get_screen_buffer();
-                
+
                 // Check if we can do a direct copy (pitch == width * 3 bytes per pixel)
                 if pitch == (TEXTURE_WIDTH as usize * 3) {
                     // Fast path: direct buffer copy
@@ -287,7 +287,11 @@ impl EventLoop {
                     nes.run_cpu_tick();
                 }
                 nes.clear_ready_to_render();
-                println!("Frame emulated. Scanline: {}, Pixel: {}", nes.ppu.borrow().scanline(), nes.ppu.borrow().pixel());
+                println!(
+                    "Frame emulated. Scanline: {}, Pixel: {}",
+                    nes.ppu.borrow().scanline(),
+                    nes.ppu.borrow().pixel()
+                );
 
                 // 3. Render the frame
                 Self::render_frame(canvas, &mut texture, nes)?;
@@ -299,14 +303,14 @@ impl EventLoop {
                 let elapsed_seconds = elapsed_ticks / performance_frequency;
                 // Adjust target frame time by timing scale (1.0 = normal speed, 2.0 = 2x speed, etc.)
                 let target_frame_time = (1.0 / 60.0) / self.timing_scale as f64;
-                
+
                 // Calculate FPS before sleeping
                 let fps = 1.0 / elapsed_seconds;
                 // println!("FPS: {:.2}", fps);
-                
+
                 // Update last_frame_time before sleeping to avoid timing drift
                 last_frame_time = current_time;
-                
+
                 if elapsed_seconds < target_frame_time {
                     let sleep_time = target_frame_time - elapsed_seconds;
                     std::thread::sleep(std::time::Duration::from_secs_f64(sleep_time));

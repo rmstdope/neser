@@ -96,6 +96,24 @@ impl MemController {
                 _ => panic!("Should never happen!"),
             },
 
+            // APU and I/O registers ($4000-$4017)
+            0x4000..=0x4017 => match addr {
+                0x4014 => {
+                    // OAMDMA - OAM DMA transfer
+                    // Writing $XX copies 256 bytes from $XX00-$XXFF to OAM
+                    let source_page = (value as u16) << 8;
+                    for i in 0..256u16 {
+                        let byte = self.read(source_page + i);
+                        self.ppu.borrow_mut().write_oam_data(byte);
+                    }
+                    // Note: This should also consume CPU cycles (513 or 514 depending on alignment)
+                    // but we don't track that in the memory controller
+                }
+                _ => {
+                    eprintln!("Warning: Write to unimplemented APU/IO register {:04X} ignored", addr);
+                }
+            },
+
             // PRG ROM ($8000-$FFFF) are read-only when ROM is loaded
             0x8000..=0xFFFF => {
                 panic!("Cannot write to PRG ROM address {:04X}", addr);

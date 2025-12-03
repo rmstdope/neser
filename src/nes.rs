@@ -9527,10 +9527,10 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
     #[test]
     fn test_nes_provides_access_to_ppu_screen_buffer() {
         let nes = Nes::new(TvSystem::Ntsc);
-        
+
         // Should be able to access the PPU's screen buffer
         let screen_buffer = nes.get_screen_buffer();
-        
+
         // Verify it has the correct dimensions
         assert_eq!(screen_buffer.width(), 256);
         assert_eq!(screen_buffer.height(), 240);
