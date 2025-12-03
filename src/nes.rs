@@ -119,6 +119,23 @@ impl Nes {
         let mut cpu_cycles = self.cpu.run_opcode();
         self.tick_ppu(cpu_cycles);
 
+        // Check if an OAM DMA was triggered during the opcode
+        let oam_dma_page = self.memory.borrow_mut().take_oam_dma_page();
+        if let Some(page) = oam_dma_page {
+            // OAM DMA takes 513 cycles (or 514 if on an odd CPU cycle)
+            // For simplicity, we use 513 cycles
+            let dma_cycles = 513u16;
+            
+            // Execute the DMA transfer
+            self.memory.borrow_mut().execute_oam_dma(page);
+            
+            // Tick the PPU for the DMA cycles
+            self.tick_ppu(dma_cycles as u8);
+            
+            // Add DMA cycles to total CPU cycles consumed (capped at u8::MAX)
+            cpu_cycles = cpu_cycles.saturating_add(dma_cycles as u8);
+        }
+
         if self.ppu.borrow_mut().poll_nmi() {
             self.cpu.trigger_nmi();
             self.tick_ppu(7);
