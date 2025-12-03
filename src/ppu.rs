@@ -345,13 +345,11 @@ impl PPU {
     }
 
     /// Get the current scanline
-    #[cfg(test)]
     pub fn scanline(&self) -> u16 {
         self.scanline
     }
 
     /// Get the current pixel within the scanline
-    #[cfg(test)]
     pub fn pixel(&self) -> u16 {
         self.pixel
     }
@@ -3370,7 +3368,7 @@ mod tests {
         // We need pattern = 0 (transparent) to get base palette 0
         // Actually, let's test with a different setup
         // Palette index 0x13 should become 0x10 when masked with 0x30
-        
+
         ppu.chr_rom[0x0000] = 0xFF;
         ppu.chr_rom[0x0008] = 0xFF;
         // Pattern = 3, so palette index will be 0 * 4 + 3 = 3
@@ -3392,6 +3390,10 @@ mod tests {
         let (r, g, b) = screen_buffer.get_pixel(10, 0);
 
         // Grayscale mode: 3 & 0x30 = 0, uses palette[0]
-        assert_eq!((r, g, b), (84, 84, 84), "Grayscale should mask to palette 0");
+        assert_eq!(
+            (r, g, b),
+            (84, 84, 84),
+            "Grayscale should mask to palette 0"
+        );
     }
 }
