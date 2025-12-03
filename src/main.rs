@@ -22,7 +22,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut nes_instance = nes::Nes::new(tv_system);
 
     // Load the snake.nes cartridge
-    let rom_data = std::fs::read("roms/games/pac-man.nes")?;
+    // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
+    // let rom_data = std::fs::read("roms/color_test.nes")?;
+    let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset();

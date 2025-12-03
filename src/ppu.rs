@@ -500,7 +500,7 @@ impl PPU {
         let tile_index = self.nametable_latch as u16;
         let fine_y = (self.v >> 12) & 0x07;
         let addr = pattern_table_base | (tile_index << 4) | fine_y;
-        self.pattern_lo_latch = self.chr_rom[addr as usize];
+        self.pattern_lo_latch = self.chr_rom.get(addr as usize).copied().unwrap_or(0);
     }
 
     /// Fetch pattern table high byte for current tile
@@ -512,7 +512,7 @@ impl PPU {
         let tile_index = self.nametable_latch as u16;
         let fine_y = (self.v >> 12) & 0x07;
         let addr = pattern_table_base | (tile_index << 4) | fine_y | 0x08;
-        self.pattern_hi_latch = self.chr_rom[addr as usize];
+        self.pattern_hi_latch = self.chr_rom.get(addr as usize).copied().unwrap_or(0);
     }
 
     /// Load shift registers from latches
@@ -824,7 +824,7 @@ impl PPU {
                 // Return the previous buffered value
                 let buffered = self.data_buffer;
                 // Update buffer with current read
-                self.data_buffer = self.chr_rom[addr as usize];
+                self.data_buffer = self.chr_rom.get(addr as usize).copied().unwrap_or(0);
                 buffered
             }
             0x2000..=0x3EFF => {
@@ -931,8 +931,8 @@ impl PPU {
 
                 // Render the 8x8 tile
                 for pixel_y in 0..8 {
-                    let low_byte = self.chr_rom[tile_addr + pixel_y];
-                    let high_byte = self.chr_rom[tile_addr + pixel_y + 8];
+                    let low_byte = self.chr_rom.get(tile_addr + pixel_y).copied().unwrap_or(0);
+                    let high_byte = self.chr_rom.get(tile_addr + pixel_y + 8).copied().unwrap_or(0);
 
                     for pixel_x in 0..8 {
                         // Get the 2-bit color value for this pixel
