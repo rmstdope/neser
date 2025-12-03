@@ -236,6 +236,21 @@ impl PPU {
                 self.render_pixel_to_screen();
             }
 
+            // Handle coarse X increment FIRST, before fetches (at dots 8, 16, 24... 256, 328, 336)
+            // This ensures the next tile is fetched with the incremented coarse X
+            if self.is_rendering_enabled() {
+                let is_visible_scanline = self.scanline < 240;
+                let is_prerender_scanline = self.scanline == 261;
+
+                if (is_visible_scanline || is_prerender_scanline) && self.pixel % 8 == 0 {
+                    if self.pixel >= 8 && self.pixel <= 256 {
+                        self.increment_coarse_x();
+                    } else if self.pixel == 328 || self.pixel == 336 {
+                        self.increment_coarse_x();
+                    }
+                }
+            }
+
             // Perform fetches based on the current cycle
             let fetch_step = self.get_fetch_step();
             match fetch_step {
@@ -259,16 +274,6 @@ impl PPU {
             let is_prerender_scanline = self.scanline == 261; // NTSC pre-render scanline
 
             if is_visible_scanline || is_prerender_scanline {
-                // Increment coarse X during tile fetching (dots 8-256, every 8 dots)
-                if self.pixel >= 8 && self.pixel <= 256 && self.pixel % 8 == 0 {
-                    self.increment_coarse_x();
-                }
-
-                // Increment coarse X during pre-fetch (dots 328, 336)
-                if self.pixel == 328 || self.pixel == 336 {
-                    self.increment_coarse_x();
-                }
-
                 // Increment fine Y at dot 256
                 if self.pixel == 256 {
                     self.increment_fine_y();
@@ -541,9 +546,11 @@ impl PPU {
         // Fill all 8 bits of the low byte with the palette bit value
         let palette_lo_bits = if (palette & 0x01) != 0 { 0xFF } else { 0x00 };
         let palette_hi_bits = if (palette & 0x02) != 0 { 0xFF } else { 0x00 };
-        
-        self.bg_attribute_shift_lo = (self.bg_attribute_shift_lo & 0xFF00) | (palette_lo_bits as u16);
-        self.bg_attribute_shift_hi = (self.bg_attribute_shift_hi & 0xFF00) | (palette_hi_bits as u16);
+
+        self.bg_attribute_shift_lo =
+            (self.bg_attribute_shift_lo & 0xFF00) | (palette_lo_bits as u16);
+        self.bg_attribute_shift_hi =
+            (self.bg_attribute_shift_hi & 0xFF00) | (palette_hi_bits as u16);
     }
 
     /// Shift all background rendering shift registers left by 1
@@ -597,9 +604,9 @@ impl PPU {
         let mut should_clip_background =
             screen_x < 8 && (self.mask_register & SHOW_BACKGROUND_LEFT) == 0;
 
-        // if screen_x > 87 {
-        //     should_clip_background = true;
-        // }
+        if screen_x > 96 {
+            should_clip_background = true;
+        }
 
         // Get the color to render
         let (r, g, b) = if should_clip_background {
