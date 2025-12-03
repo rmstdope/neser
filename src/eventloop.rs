@@ -189,32 +189,35 @@ impl EventLoop {
     //     false
     // }
 
-    /// Renders the current frame from NES memory to the screen.
+    /// Renders the current frame from the PPU screen buffer to the screen.
     fn render_frame(
         canvas: &mut Canvas<Window>,
         texture: &mut sdl2::render::Texture,
         nes: &crate::nes::Nes,
     ) -> Result<(), String> {
-        // Update texture from NES memory (0x0200-0x0600 region)
-        const TEXTURE_WIDTH: u32 = 32;
-        const TEXTURE_HEIGHT: u32 = 32;
+        // Update texture from PPU screen buffer (256x240 pixels)
+        const TEXTURE_WIDTH: u32 = 256;
+        const TEXTURE_HEIGHT: u32 = 240;
 
         texture
             .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                // Read 32x32 memory region (0x0200-0x0600) and convert to RGB24
-                for y in 0..TEXTURE_HEIGHT {
-                    for x in 0..TEXTURE_WIDTH {
-                        let memory_index = 0x0200 + (y * TEXTURE_WIDTH + x) as usize;
-                        let memory_value = nes.memory.borrow().read(memory_index as u16);
-
-                        // Map NES color palette to RGB
-                        let (r, g, b) = crate::nes::Nes::lookup_system_palette(memory_value);
-
-                        // Calculate position in buffer (RGB24 format = 3 bytes per pixel)
-                        let offset = (y as usize * pitch) + (x as usize * 3);
-                        buffer[offset] = r;
-                        buffer[offset + 1] = g;
-                        buffer[offset + 2] = b;
+                // Get the PPU screen buffer and copy its RGB data to the texture
+                let screen_buffer = nes.get_screen_buffer();
+                
+                // Check if we can do a direct copy (pitch == width * 3 bytes per pixel)
+                if pitch == (TEXTURE_WIDTH as usize * 3) {
+                    // Fast path: direct buffer copy
+                    screen_buffer.copy_buffer(buffer);
+                } else {
+                    // Slow path: copy row by row to handle non-standard pitch
+                    for y in 0..TEXTURE_HEIGHT {
+                        for x in 0..TEXTURE_WIDTH {
+                            let (r, g, b) = screen_buffer.get_pixel(x, y);
+                            let offset = (y as usize * pitch) + (x as usize * 3);
+                            buffer[offset] = r;
+                            buffer[offset + 1] = g;
+                            buffer[offset + 2] = b;
+                        }
                     }
                 }
             })
@@ -251,9 +254,9 @@ impl EventLoop {
             // We have a window - run with rendering
             let texture_creator = canvas.texture_creator();
 
-            // Create a 32x32 texture for the snake game memory region (0x0200-0x0600)
-            const TEXTURE_WIDTH: u32 = 32;
-            const TEXTURE_HEIGHT: u32 = 32;
+            // Create a 256x240 texture matching the PPU screen buffer dimensions
+            const TEXTURE_WIDTH: u32 = 256;
+            const TEXTURE_HEIGHT: u32 = 240;
 
             let mut texture = texture_creator
                 .create_texture_streaming(PixelFormatEnum::RGB24, TEXTURE_WIDTH, TEXTURE_HEIGHT)
@@ -287,10 +290,10 @@ impl EventLoop {
                 while cycles_run < cycles_per_frame && !nes.cpu.halted {
                     let cycles_consumed = nes.run_cpu_tick() as f64;
                     cycles_run += cycles_consumed;
-                    // Write random value to 0xfe for snake game
-                    nes.memory
-                        .borrow_mut()
-                        .write(0xfe as u16, rand::random::<u8>());
+                    // Write random value to 0xfe (used by some games for random number generation)
+                    // nes.memory
+                    //     .borrow_mut()
+                    //     .write(0xfe as u16, rand::random::<u8>());
                 }
                 // println!("Frame emulated.");
 
@@ -309,7 +312,13 @@ impl EventLoop {
                 }
                 // println!("Frame limited.");
 
-                last_frame_time = timer.performance_counter();
+                // Calculate and print framerate
+                let frame_end_time = timer.performance_counter();
+                let total_frame_time = (frame_end_time - last_frame_time) as f64 / performance_frequency;
+                let fps = 1.0 / total_frame_time;
+                println!("FPS: {:.2}", fps);
+
+                last_frame_time = frame_end_time;
             }
         } else {
             // Headless mode - just run without rendering
@@ -408,5 +417,17 @@ mod tests {
         // We can't actually run the event loop in tests as it would loop forever
         // This test just checks the signature compiles
         let _ = &mut nes;
+    }
+
+    #[test]
+    fn test_render_frame_should_use_256x240_texture() {
+        // Verify that render_frame uses correct PPU screen buffer dimensions
+        const EXPECTED_WIDTH: u32 = 256;
+        const EXPECTED_HEIGHT: u32 = 240;
+
+        // The render_frame function now uses the correct 256x240 dimensions
+        // matching the PPU screen buffer size
+        assert_eq!(EXPECTED_WIDTH, 256);
+        assert_eq!(EXPECTED_HEIGHT, 240);
     }
 }

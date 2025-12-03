@@ -68,7 +68,10 @@ impl MemController {
             }
 
             // Everything else
-            _ => panic!("Read from address {:04X} is not implemented", addr),
+            _ => {
+                eprintln!("Warning: Read from unimplemented address {:04X}, returning 0", addr);
+                0
+            }
         }
     }
 
@@ -83,11 +86,11 @@ impl MemController {
             // PPU registers ($2000-$3FFF) with mirroring every 8 bytes
             0x2000..=0x3FFF => match addr & 0x2007 {
                 0x2000 => self.ppu.borrow_mut().write_control(value),
-                0x2001 => panic!("Write to PPUMASK (0x2001) not yet implemented"),
+                0x2001 => self.ppu.borrow_mut().write_mask(value),
                 0x2002 => panic!("Cannot write to read-only PPU register PPUSTATUS (0x2002)"),
                 0x2003 => self.ppu.borrow_mut().write_oam_address(value),
                 0x2004 => self.ppu.borrow_mut().write_oam_data(value),
-                0x2005 => panic!("Write to PPUSCROLL (0x2005) not yet implemented"),
+                0x2005 => self.ppu.borrow_mut().write_scroll(value),
                 0x2006 => self.ppu.borrow_mut().write_address(value),
                 0x2007 => self.ppu.borrow_mut().write_data(value),
                 _ => panic!("Should never happen!"),
@@ -99,7 +102,9 @@ impl MemController {
             }
 
             // Everything else
-            _ => panic!("Write to address {:04X} is not implemented", addr),
+            _ => {
+                eprintln!("Warning: Write to unimplemented address {:04X} ignored", addr);
+            }
         }
     }
 

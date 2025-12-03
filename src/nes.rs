@@ -160,6 +160,13 @@ impl Nes {
     pub fn lookup_system_palette(color_index: u8) -> (u8, u8, u8) {
         Self::SYSTEM_PALETTE[(color_index & 0x3F) as usize]
     }
+
+    /// Get a reference to the PPU's screen buffer
+    ///
+    /// Returns a reference to the 256x240 RGB buffer containing the current frame.
+    pub fn get_screen_buffer(&self) -> std::cell::Ref<'_, crate::screen_buffer::ScreenBuffer> {
+        std::cell::Ref::map(self.ppu.borrow(), |ppu| ppu.screen_buffer())
+    }
 }
 
 #[cfg(test)]
@@ -9502,5 +9509,17 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
         // Test that values above 0x3F are masked
         assert_eq!(Nes::lookup_system_palette(0x40), (0x54, 0x54, 0x54)); // Same as 0x00
         assert_eq!(Nes::lookup_system_palette(0xFF), (0x00, 0x00, 0x00)); // Same as 0x3F
+    }
+
+    #[test]
+    fn test_nes_provides_access_to_ppu_screen_buffer() {
+        let nes = Nes::new(TvSystem::Ntsc);
+        
+        // Should be able to access the PPU's screen buffer
+        let screen_buffer = nes.get_screen_buffer();
+        
+        // Verify it has the correct dimensions
+        assert_eq!(screen_buffer.width(), 256);
+        assert_eq!(screen_buffer.height(), 240);
     }
 }
