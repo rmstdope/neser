@@ -321,6 +321,11 @@ impl PPU {
             if self.pixel >= 65 && self.pixel <= 256 {
                 self.evaluate_sprites();
             }
+
+            // Dots 257-320: Sprite pattern fetching (8 cycles per sprite, 8 sprites)
+            if self.pixel >= 257 && self.pixel <= 320 {
+                self.fetch_sprite_patterns();
+            }
         }
 
         // Check if we crossed into VBlank (scanline 241)
@@ -865,6 +870,35 @@ impl PPU {
         }
 
         self.sprite_eval_n += 1;
+    }
+
+    /// Fetch sprite patterns during dots 257-320
+    ///
+    /// This is called once per cycle during the sprite fetch phase.
+    /// Each sprite takes 8 cycles to fetch (similar to background tiles).
+    /// The NES PPU fetches pattern data for up to 8 sprites found during sprite evaluation.
+    fn fetch_sprite_patterns(&mut self) {
+        // Determine which sprite we're fetching (0-7) and which cycle within that sprite (0-7)
+        let cycle_offset = self.pixel - 257;
+        let sprite_index = (cycle_offset / 8) as usize;
+        let fetch_step = cycle_offset % 8;
+
+        // Only fetch on the last cycle for each sprite (when we have all the info we need)
+        if fetch_step == 7 && sprite_index < self.sprites_found as usize {
+            // Get sprite data from secondary OAM
+            let sec_oam_offset = sprite_index * 4;
+            let sprite_y = self.secondary_oam[sec_oam_offset];
+
+            // Calculate which row of the sprite we need based on current scanline
+            // scanline is the current line being rendered, sprite_y is the top of the sprite
+            let sprite_row = self.scanline.wrapping_sub(sprite_y as u16) as u8;
+
+            // Fetch the pattern data for this sprite and row
+            self.fetch_sprite_pattern(sprite_index, sprite_row);
+
+            // Load the X position for this sprite (will be used during rendering)
+            self.sprite_x_positions[sprite_index] = self.secondary_oam[sec_oam_offset + 3];
+        }
     }
 
     /// Get sprite height based on PPUCTRL bit 5
