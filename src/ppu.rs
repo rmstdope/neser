@@ -104,10 +104,10 @@ pub struct PPU {
     bg_pattern_shift_lo: u16,
     /// Background pattern shift register - high bit plane (16 bits)
     bg_pattern_shift_hi: u16,
-    /// Background attribute shift register - low bit (8 bits)
-    bg_attribute_shift_lo: u8,
-    /// Background attribute shift register - high bit (8 bits)
-    bg_attribute_shift_hi: u8,
+    /// Background attribute shift register - low bit (16 bits)
+    bg_attribute_shift_lo: u16,
+    /// Background attribute shift register - high bit (16 bits)
+    bg_attribute_shift_hi: u16,
     /// Nametable byte latch (tile index)
     nametable_latch: u8,
     /// Attribute table byte latch (palette selection)
@@ -537,9 +537,13 @@ impl PPU {
         let shift = ((coarse_y & 0x02) << 1) | (coarse_x & 0x02);
         let palette = (self.attribute_latch >> shift) & 0x03;
 
-        // Load attribute data - fill all 8 bits with the palette selection bits
-        self.bg_attribute_shift_lo = if (palette & 0x01) != 0 { 0xFF } else { 0x00 };
-        self.bg_attribute_shift_hi = if (palette & 0x02) != 0 { 0xFF } else { 0x00 };
+        // Load attribute data into low 8 bits
+        // Fill all 8 bits of the low byte with the palette bit value
+        let palette_lo_bits = if (palette & 0x01) != 0 { 0xFF } else { 0x00 };
+        let palette_hi_bits = if (palette & 0x02) != 0 { 0xFF } else { 0x00 };
+        
+        self.bg_attribute_shift_lo = (self.bg_attribute_shift_lo & 0xFF00) | (palette_lo_bits as u16);
+        self.bg_attribute_shift_hi = (self.bg_attribute_shift_hi & 0xFF00) | (palette_hi_bits as u16);
     }
 
     /// Shift all background rendering shift registers left by 1
@@ -571,10 +575,9 @@ impl PPU {
             return 0;
         }
 
-        // Extract attribute/palette bits
-        let attr_bit_position = 7 - self.x;
-        let attr_lo_bit = ((self.bg_attribute_shift_lo >> attr_bit_position) & 0x01) as u8;
-        let attr_hi_bit = ((self.bg_attribute_shift_hi >> attr_bit_position) & 0x01) as u8;
+        // Extract attribute/palette bits from the same position as pattern bits
+        let attr_lo_bit = ((self.bg_attribute_shift_lo >> bit_position) & 0x01) as u8;
+        let attr_hi_bit = ((self.bg_attribute_shift_hi >> bit_position) & 0x01) as u8;
         let palette = (attr_hi_bit << 1) | attr_lo_bit;
 
         // Combine: palette_base + palette_offset + pattern
@@ -591,8 +594,12 @@ impl PPU {
         let screen_y = self.scanline as u32;
 
         // Check if we should clip background in leftmost 8 pixels
-        let should_clip_background =
+        let mut should_clip_background =
             screen_x < 8 && (self.mask_register & SHOW_BACKGROUND_LEFT) == 0;
+
+        // if screen_x > 87 {
+        //     should_clip_background = true;
+        // }
 
         // Get the color to render
         let (r, g, b) = if should_clip_background {
@@ -2484,16 +2491,16 @@ mod tests {
         // Load initial data
         ppu.bg_pattern_shift_lo = 0b1010101010101010;
         ppu.bg_pattern_shift_hi = 0b1100110011001100;
-        ppu.bg_attribute_shift_lo = 0b10101010;
-        ppu.bg_attribute_shift_hi = 0b11001100;
+        ppu.bg_attribute_shift_lo = 0b1010101010101010;
+        ppu.bg_attribute_shift_hi = 0b1100110011001100;
 
         ppu.shift_registers();
 
         // All registers should shift left by 1
         assert_eq!(ppu.bg_pattern_shift_lo, 0b0101010101010100);
         assert_eq!(ppu.bg_pattern_shift_hi, 0b1001100110011000);
-        assert_eq!(ppu.bg_attribute_shift_lo, 0b01010100);
-        assert_eq!(ppu.bg_attribute_shift_hi, 0b10011000);
+        assert_eq!(ppu.bg_attribute_shift_lo, 0b0101010101010100);
+        assert_eq!(ppu.bg_attribute_shift_hi, 0b1001100110011000);
     }
 
     #[test]
@@ -2536,8 +2543,8 @@ mod tests {
         // MSB (bit 15) is used for current pixel
         ppu.bg_pattern_shift_lo = 0b1000000000000000; // MSB = 1
         ppu.bg_pattern_shift_hi = 0b0000000000000000; // MSB = 0
-        ppu.bg_attribute_shift_lo = 0b10000000; // MSB = 1
-        ppu.bg_attribute_shift_hi = 0b00000000; // MSB = 0
+        ppu.bg_attribute_shift_lo = 0b1000000000000000; // MSB = 1
+        ppu.bg_attribute_shift_hi = 0b0000000000000000; // MSB = 0
         ppu.x = 0; // No fine X scroll
 
         let pixel = ppu.get_background_pixel();
@@ -2554,8 +2561,8 @@ mod tests {
         // Bit 15-3=12 should be used instead of bit 15
         ppu.bg_pattern_shift_lo = 0b0001000000000000; // Bit 12 = 1
         ppu.bg_pattern_shift_hi = 0b0001000000000000; // Bit 12 = 1
-        ppu.bg_attribute_shift_lo = 0b00010000; // Bit 4 = 1
-        ppu.bg_attribute_shift_hi = 0b00010000; // Bit 4 = 1
+        ppu.bg_attribute_shift_lo = 0b0001000000000000; // Bit 12 = 1
+        ppu.bg_attribute_shift_hi = 0b0001000000000000; // Bit 12 = 1
         ppu.x = 3;
 
         let pixel = ppu.get_background_pixel();
@@ -2958,8 +2965,8 @@ mod tests {
         ppu.bg_pattern_shift_hi = 0b0000000000000000;
 
         // Attribute bits = 10 (palette 2)
-        ppu.bg_attribute_shift_lo = 0b00000000;
-        ppu.bg_attribute_shift_hi = 0b10000000;
+        ppu.bg_attribute_shift_lo = 0b0000000000000000;
+        ppu.bg_attribute_shift_hi = 0b1000000000000000;
 
         ppu.x = 0;
 
