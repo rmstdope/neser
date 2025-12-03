@@ -115,6 +115,15 @@ impl Nes {
     /// - PAL: 3.2 PPU cycles per CPU cycle
     ///
     /// For PAL, fractional cycles are accumulated to maintain timing accuracy.
+    ///
+    /// # Known Limitations
+    ///
+    /// This implementation ticks the PPU after each complete CPU opcode, not cycle-by-cycle.
+    /// This means PPU register writes (PPUCTRL, PPUMASK, PPUSCROLL, etc.) take effect for
+    /// all PPU cycles in the opcode, rather than at the exact cycle when the write occurs.
+    /// This can cause timing issues with ROMs that update PPU registers mid-scanline for
+    /// visual effects. Most games work fine, but some test ROMs (like palette.nes) may
+    /// show minor rendering artifacts due to this limitation.
     pub fn run_cpu_tick(&mut self) -> u8 {
         let mut cpu_cycles = self.cpu.run_opcode();
         self.tick_ppu(cpu_cycles);

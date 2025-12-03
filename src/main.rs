@@ -24,15 +24,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // OADM Read test - PASS
     // let rom_data = std::fs::read("roms/oam_read.nes")?;
 
+    // Palette test - shows timing issues due to PPU timing limitations
+    // let rom_data = std::fs::read("roms/palette.nes")?;
+
     // Load the snake.nes cartridge
-    // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
+    let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/color_test.nes")?;
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
     // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
     // let rom_data = std::fs::read("roms/ntsc_torture.nes")?;
     // let rom_data = std::fs::read("roms/oam_stress.nes")?;
     // let rom_data = std::fs::read("roms/oam3.nes")?;
-    let rom_data = std::fs::read("roms/palette.nes")?;
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset();
