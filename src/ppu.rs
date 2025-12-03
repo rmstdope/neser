@@ -527,13 +527,25 @@ impl PPU {
         self.bg_pattern_shift_hi =
             (self.bg_pattern_shift_hi & 0xFF00) | (self.pattern_hi_latch as u16);
 
+        // Extract the correct 2-bit palette from the attribute byte
+        // Each attribute byte controls a 4x4 tile area (32x32 pixels)
+        // The byte is divided into four 2-bit fields based on tile position:
+        //   Bits 1-0: top-left 2x2 tiles
+        //   Bits 3-2: top-right 2x2 tiles
+        //   Bits 5-4: bottom-left 2x2 tiles
+        //   Bits 7-6: bottom-right 2x2 tiles
+        let coarse_x = self.v & 0x1F;
+        let coarse_y = (self.v >> 5) & 0x1F;
+        let shift = ((coarse_y & 0x02) << 1) | (coarse_x & 0x02);
+        let palette = (self.attribute_latch >> shift) & 0x03;
+
         // Load attribute data - fill all 8 bits with the palette selection bits
-        self.bg_attribute_shift_lo = if (self.attribute_latch & 0x01) != 0 {
+        self.bg_attribute_shift_lo = if (palette & 0x01) != 0 {
             0xFF
         } else {
             0x00
         };
-        self.bg_attribute_shift_hi = if (self.attribute_latch & 0x02) != 0 {
+        self.bg_attribute_shift_hi = if (palette & 0x02) != 0 {
             0xFF
         } else {
             0x00
@@ -881,16 +893,18 @@ impl PPU {
         // Map $2000-$2FFF to 0x0000-0x0FFF
         let vram_index = (addr & 0x2FFF) - 0x2000;
         // There are 4 nametables of 1KB each, but only 2KB of VRAM
-        // Simple vertical mirroring: $2000/$2400 map to first 1KB, $2800/$2C00 map to second 1KB
+        // Vertical mirroring: $2000/$2800 map to first 1KB, $2400/$2C00 map to second 1KB
+        // This creates vertical arrangement (top mirrors to top, bottom mirrors to bottom)
         if self.mirroring_mode == MirroringMode::Vertical {
             vram_index % 0x0800
         } else {
-            // Horizontal mirroring
+            // Horizontal mirroring: $2000/$2400 map to first 1KB, $2800/$2C00 map to second 1KB
+            // This creates horizontal arrangement (left mirrors to left, right mirrors to right)
             let table = vram_index / 0x0400;
             let offset = vram_index % 0x0400;
             let mirrored_table = match table {
-                0 | 1 => 0,
-                2 | 3 => 1,
+                0 | 2 => 0,  // Tables 0 ($2000) and 2 ($2800) map to physical table 0
+                1 | 3 => 1,  // Tables 1 ($2400) and 3 ($2C00) map to physical table 1
                 _ => unreachable!(),
             };
             mirrored_table * 0x0400 + offset
@@ -1481,29 +1495,29 @@ mod tests {
     }
 
     #[test]
-    fn test_horizontal_mirroring_nametable_0_and_1_same() {
+    fn test_horizontal_mirroring_nametable_0_and_2_same() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         ppu.set_mirroring(MirroringMode::Horizontal);
         // Write to nametable 0 ($2000)
         ppu.write_address(0x20);
         ppu.write_address(0x00);
         ppu.write_data(0xCC);
-        // Read from nametable 1 ($2400) - should be the same
-        ppu.write_address(0x24);
+        // Read from nametable 2 ($2800) - should be the same (both map to left side)
+        ppu.write_address(0x28);
         ppu.write_address(0x00);
         assert_eq!(ppu.read_data(), 0x00); // buffer
         assert_eq!(ppu.read_data(), 0xCC); // actual value
     }
 
     #[test]
-    fn test_horizontal_mirroring_nametable_2_and_3_same() {
+    fn test_horizontal_mirroring_nametable_1_and_3_same() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         ppu.set_mirroring(MirroringMode::Horizontal);
-        // Write to nametable 2 ($2800)
-        ppu.write_address(0x28);
+        // Write to nametable 1 ($2400)
+        ppu.write_address(0x24);
         ppu.write_address(0x00);
         ppu.write_data(0xDD);
-        // Read from nametable 3 ($2C00) - should be the same
+        // Read from nametable 3 ($2C00) - should be the same (both map to right side)
         ppu.write_address(0x2C);
         ppu.write_address(0x00);
         assert_eq!(ppu.read_data(), 0x00); // buffer
@@ -1511,15 +1525,15 @@ mod tests {
     }
 
     #[test]
-    fn test_horizontal_mirroring_nametable_0_and_2_different() {
+    fn test_horizontal_mirroring_nametable_0_and_1_different() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         ppu.set_mirroring(MirroringMode::Horizontal);
-        // Write to nametable 0 ($2000) at offset 0x10
+        // Write to nametable 0 ($2000) at offset 0x10 - left side
         ppu.write_address(0x20);
         ppu.write_address(0x10);
         ppu.write_data(0xCC);
-        // Write to nametable 2 ($2800) at offset 0x10
-        ppu.write_address(0x28);
+        // Write to nametable 1 ($2400) at offset 0x10 - right side
+        ppu.write_address(0x24);
         ppu.write_address(0x10);
         ppu.write_data(0xDD);
         // Read nametable 0 - should get 0xCC
@@ -1527,8 +1541,8 @@ mod tests {
         ppu.write_address(0x10);
         assert_eq!(ppu.read_data(), 0x00); // buffer
         assert_eq!(ppu.read_data(), 0xCC);
-        // Read nametable 2 - should get 0xDD
-        ppu.write_address(0x28);
+        // Read nametable 1 - should get 0xDD (different from left side)
+        ppu.write_address(0x24);
         ppu.write_address(0x10);
         assert_eq!(ppu.read_data(), 0x00); // buffer (from reading ram[0x0011] which is uninitialized)
         assert_eq!(ppu.read_data(), 0xDD);
@@ -1576,18 +1590,18 @@ mod tests {
             ppu.write_data(test_values[i]);
         }
 
-        // With horizontal mirroring: 0==1, 2==3
-        // So we should have: ram[0]=0x22 (from NT1), ram[0x400]=0x44 (from NT3)
-        // because NT1 and NT3 overwrite NT0 and NT2
+        // With horizontal mirroring: 0==2, 1==3
+        // So we should have: ram[0]=0x33 (from NT2), ram[0x400]=0x44 (from NT3)
+        // because NT2 and NT3 overwrite NT0 and NT1
         ppu.write_address(0x20);
         ppu.write_address(0x00);
         ppu.read_data(); // skip buffer
-        assert_eq!(ppu.read_data(), 0x22); // NT0 mirrors NT1
+        assert_eq!(ppu.read_data(), 0x33); // NT0 mirrors NT2
 
-        ppu.write_address(0x28);
+        ppu.write_address(0x24);
         ppu.write_address(0x00);
         ppu.read_data(); // skip buffer
-        assert_eq!(ppu.read_data(), 0x44); // NT2 mirrors NT3
+        assert_eq!(ppu.read_data(), 0x44); // NT1 mirrors NT3
     }
 
     #[test]
