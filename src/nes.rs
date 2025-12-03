@@ -115,14 +115,38 @@ impl Nes {
     /// - PAL: 3.2 PPU cycles per CPU cycle
     ///
     /// For PAL, fractional cycles are accumulated to maintain timing accuracy.
+    ///
+    /// # Known Limitations
+    ///
+    /// This implementation ticks the PPU after each complete CPU opcode, not cycle-by-cycle.
+    /// This means PPU register writes (PPUCTRL, PPUMASK, PPUSCROLL, etc.) take effect for
+    /// all PPU cycles in the opcode, rather than at the exact cycle when the write occurs.
+    /// This can cause timing issues with ROMs that update PPU registers mid-scanline for
+    /// visual effects. Most games work fine, but some test ROMs (like palette.nes) may
+    /// show minor rendering artifacts due to this limitation.
     pub fn run_cpu_tick(&mut self) -> u8 {
         let mut cpu_cycles = self.cpu.run_opcode();
         self.tick_ppu(cpu_cycles);
 
+        // Check if an OAM DMA was triggered during the opcode
+        let oam_dma_page = self.memory.borrow_mut().take_oam_dma_page();
+        if let Some(page) = oam_dma_page {
+            // OAM DMA takes 513 cycles (or 514 if on an odd CPU cycle)
+            // For simplicity, we use 513 cycles
+            let dma_cycles = 513u16;
+
+            // Execute the DMA transfer
+            self.memory.borrow_mut().execute_oam_dma(page);
+
+            // Tick the PPU for the DMA cycles
+            self.tick_ppu(dma_cycles as u8);
+
+            // Add DMA cycles to total CPU cycles consumed (capped at u8::MAX)
+            cpu_cycles = cpu_cycles.saturating_add(dma_cycles as u8);
+        }
+
         if self.ppu.borrow_mut().poll_nmi() {
             self.cpu.trigger_nmi();
-            self.tick_ppu(7);
-            cpu_cycles += 7;
             self.ready_to_render = true;
         }
 
@@ -166,6 +190,19 @@ impl Nes {
     /// Returns a reference to the 256x240 RGB buffer containing the current frame.
     pub fn get_screen_buffer(&self) -> std::cell::Ref<'_, crate::screen_buffer::ScreenBuffer> {
         std::cell::Ref::map(self.ppu.borrow(), |ppu| ppu.screen_buffer())
+    }
+
+    /// Check if a frame is ready to be rendered
+    ///
+    /// Returns true when the PPU has completed a full frame (reached VBlank at scanline 241).
+    /// After checking this flag, call `clear_ready_to_render()` to reset it for the next frame.
+    pub fn is_ready_to_render(&self) -> bool {
+        self.ready_to_render
+    }
+
+    /// Clear the ready-to-render flag after rendering a frame
+    pub fn clear_ready_to_render(&mut self) {
+        self.ready_to_render = false;
     }
 }
 
@@ -9514,10 +9551,10 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
     #[test]
     fn test_nes_provides_access_to_ppu_screen_buffer() {
         let nes = Nes::new(TvSystem::Ntsc);
-        
+
         // Should be able to access the PPU's screen buffer
         let screen_buffer = nes.get_screen_buffer();
-        
+
         // Verify it has the correct dimensions
         assert_eq!(screen_buffer.width(), 256);
         assert_eq!(screen_buffer.height(), 240);

@@ -8,6 +8,7 @@ pub struct MemController {
     cpu_ram: Vec<u8>,
     prg_rom: Vec<u8>,
     ppu: Rc<RefCell<ppu::PPU>>,
+    oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
 }
 
 impl MemController {
@@ -17,6 +18,7 @@ impl MemController {
             cpu_ram: vec![0; 0x10000],
             prg_rom: Vec::new(),
             ppu,
+            oam_dma_page: None,
         }
     }
 
@@ -69,14 +71,18 @@ impl MemController {
 
             // Everything else
             _ => {
-                eprintln!("Warning: Read from unimplemented address {:04X}, returning 0", addr);
+                eprintln!(
+                    "Warning: Read from unimplemented address {:04X}, returning 0",
+                    addr
+                );
                 0
             }
         }
     }
 
     /// Write a byte to memory
-    pub fn write(&mut self, addr: u16, value: u8) {
+    /// Returns true if an OAM DMA was triggered (at $4014)
+    pub fn write(&mut self, addr: u16, value: u8) -> bool {
         match addr {
             // RAM ($0000-$1FFF) with mirroring
             0x0000..=0x1FFF => {
@@ -96,6 +102,21 @@ impl MemController {
                 _ => panic!("Should never happen!"),
             },
 
+            // APU and I/O registers ($4000-$4017)
+            0x4000..=0x4017 => match addr {
+                0x4014 => {
+                    // OAMDMA - Store the page for later DMA execution
+                    self.oam_dma_page = Some(value);
+                    return true; // Signal that OAM DMA should occur
+                }
+                _ => {
+                    eprintln!(
+                        "Warning: Write to unimplemented APU/IO register {:04X} ignored",
+                        addr
+                    );
+                }
+            },
+
             // PRG ROM ($8000-$FFFF) are read-only when ROM is loaded
             0x8000..=0xFFFF => {
                 panic!("Cannot write to PRG ROM address {:04X}", addr);
@@ -103,9 +124,13 @@ impl MemController {
 
             // Everything else
             _ => {
-                eprintln!("Warning: Write to unimplemented address {:04X} ignored", addr);
+                eprintln!(
+                    "Warning: Write to unimplemented address {:04X} ignored",
+                    addr
+                );
             }
         }
+        false // No DMA triggered
     }
 
     /// Read a 16-bit word from memory (little-endian)
@@ -122,6 +147,21 @@ impl MemController {
         let hi = (value >> 8) as u8;
         self.write(addr, lo);
         self.write(addr.wrapping_add(1), hi);
+    }
+
+    /// Check if an OAM DMA is pending and get the page value
+    pub fn take_oam_dma_page(&mut self) -> Option<u8> {
+        self.oam_dma_page.take()
+    }
+
+    /// Execute an OAM DMA transfer from the specified page to OAM
+    /// Returns the number of bytes transferred (always 256)
+    pub fn execute_oam_dma(&mut self, page: u8) {
+        let source_page = (page as u16) << 8;
+        for i in 0..256u16 {
+            let byte = self.read(source_page + i);
+            self.ppu.borrow_mut().write_oam_data(byte);
+        }
     }
 }
 
@@ -145,7 +185,8 @@ mod tests {
     #[test]
     fn test_write_and_read_byte() {
         let mut memory = create_test_memory();
-        memory.write(0x1234, 0x42);
+        let dma = memory.write(0x1234, 0x42);
+        assert_eq!(dma, false);
         assert_eq!(memory.read(0x1234), 0x42);
     }
 
