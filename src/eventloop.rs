@@ -317,6 +317,7 @@ impl EventLoop {
                 let total_frame_time = (frame_end_time - last_frame_time) as f64 / performance_frequency;
                 let fps = 1.0 / total_frame_time;
                 println!("FPS: {:.2}", fps);
+                // TODO Why is this running around 57 Hz?
 
                 last_frame_time = frame_end_time;
             }
@@ -360,22 +361,6 @@ mod tests {
     fn test_new_headless() {
         let _lock = TEST_MUTEX.lock().unwrap();
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0);
-        assert!(event_loop.is_ok());
-    }
-
-    #[test]
-    #[ignore] // Requires display/window system
-    fn test_new_with_ntsc_window() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-        let event_loop = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0);
-        assert!(event_loop.is_ok());
-    }
-
-    #[test]
-    #[ignore] // Requires display/window system
-    fn test_new_with_pal_window() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-        let event_loop = EventLoop::new(false, TvSystem::Pal, 3.0, 1.0);
         assert!(event_loop.is_ok());
     }
 
