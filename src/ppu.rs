@@ -236,21 +236,6 @@ impl PPU {
                 self.render_pixel_to_screen();
             }
 
-            // Handle coarse X increment FIRST, before fetches (at dots 8, 16, 24... 256, 328, 336)
-            // This ensures the next tile is fetched with the incremented coarse X
-            if self.is_rendering_enabled() {
-                let is_visible_scanline = self.scanline < 240;
-                let is_prerender_scanline = self.scanline == 261;
-
-                if (is_visible_scanline || is_prerender_scanline) && self.pixel % 8 == 0 {
-                    if self.pixel >= 8 && self.pixel <= 256 {
-                        self.increment_coarse_x();
-                    } else if self.pixel == 328 || self.pixel == 336 {
-                        self.increment_coarse_x();
-                    }
-                }
-            }
-
             // Perform fetches based on the current cycle
             let fetch_step = self.get_fetch_step();
             match fetch_step {
@@ -264,6 +249,21 @@ impl PPU {
             // Load shift registers after pattern high byte fetch (every 8th cycle)
             if self.should_load_shift_registers() {
                 self.load_shift_registers();
+
+                // Increment coarse X immediately after loading shift registers
+                // This happens at dots 8, 16, 24... 256, 328, 336
+                if self.is_rendering_enabled() {
+                    let is_visible_scanline = self.scanline < 240;
+                    let is_prerender_scanline = self.scanline == 261;
+
+                    if is_visible_scanline || is_prerender_scanline {
+                        if self.pixel <= 256 {
+                            self.increment_coarse_x();
+                        } else if self.pixel == 328 || self.pixel == 336 {
+                            self.increment_coarse_x();
+                        }
+                    }
+                }
             }
         }
 
@@ -604,9 +604,9 @@ impl PPU {
         let mut should_clip_background =
             screen_x < 8 && (self.mask_register & SHOW_BACKGROUND_LEFT) == 0;
 
-        if screen_x > 96 {
-            should_clip_background = true;
-        }
+        // if screen_x > 97 {
+        //     should_clip_background = true;
+        // }
 
         // Get the color to render
         let (r, g, b) = if should_clip_background {
