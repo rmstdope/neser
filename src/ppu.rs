@@ -3855,6 +3855,457 @@ mod tests {
     }
 
     #[test]
+    fn test_sprite_8x16_rendering() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up CHR ROM
+        ppu.chr_rom.resize(0x2000, 0);
+        
+        // Set up CHR ROM with distinct patterns for top and bottom tiles
+        // For 8x16 sprites with even tile index N:
+        // - Top tile: N (from pattern table determined by bit 0 of tile index)
+        // - Bottom tile: N+1
+        
+        // Tile 0 (top half): pattern for color 1 (low=1, high=0)
+        ppu.chr_rom[0x00] = 0xFF; // Pattern low byte, row 0 - all 1s
+        ppu.chr_rom[0x08] = 0x00; // Pattern high byte, row 0 - all 0s
+        // Result: pixels are all color 1 (pattern = 01)
+        
+        // Tile 1 (bottom half): pattern for color 2 (low=0, high=1)
+        ppu.chr_rom[0x10] = 0x00; // Pattern low byte, row 0 - all 0s
+        ppu.chr_rom[0x18] = 0xFF; // Pattern high byte, row 0 - all 1s
+        // Result: pixels are all color 2 (pattern = 10)
+
+        // Set up palette
+        ppu.palette[0] = 0x0F; // Backdrop color: Black
+        // Sprite palette 0 starts at index 16
+        ppu.palette[16] = 0x00; // Transparent (color 0)
+        ppu.palette[17] = 0x01; // Color 1 - dark blue
+        ppu.palette[18] = 0x23; // Color 2 - purple
+        ppu.palette[19] = 0x30; // Color 3 - white
+
+        // Set up sprite 0 at Y=50, using 8x16 mode
+        ppu.oam_data[0] = 50; // Y position
+        ppu.oam_data[1] = 0; // Tile index 0 (even - will use tiles 0 and 1)
+        ppu.oam_data[2] = 0; // Attributes: palette 0, no flip
+        ppu.oam_data[3] = 100; // X position
+
+        // Enable sprite rendering and 8x16 mode
+        ppu.mask_register = SHOW_SPRITES | SHOW_SPRITES_LEFT;
+        ppu.control_register = 0b0010_0000; // Bit 5: 8x16 sprite mode
+
+        // Helper to simulate sprite fetch and render for a scanline
+        let fetch_and_render = |ppu: &mut PPU, fetch_scanline: u16, render_scanline: u16| {
+            // Simulate sprite evaluation and fetching
+            ppu.scanline = fetch_scanline;
+            ppu.sprites_found = 1;
+            ppu.sprite_count = 1;
+            ppu.secondary_oam[0] = 50; // Y - sprite appears starting at scanline 50
+            ppu.secondary_oam[1] = 0; // Tile
+            ppu.secondary_oam[2] = 0; // Attributes
+            ppu.secondary_oam[3] = 100; // X
+
+            // Fetch sprite pattern
+            ppu.pixel = 257 + 7;
+            ppu.fetch_sprite_patterns();
+
+            // Swap buffers
+            std::mem::swap(
+                &mut ppu.sprite_pattern_shift_lo,
+                &mut ppu.next_sprite_pattern_shift_lo,
+            );
+            std::mem::swap(
+                &mut ppu.sprite_pattern_shift_hi,
+                &mut ppu.next_sprite_pattern_shift_hi,
+            );
+            std::mem::swap(
+                &mut ppu.sprite_x_positions,
+                &mut ppu.next_sprite_x_positions,
+            );
+            std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+            // Render scanline
+            ppu.scanline = render_scanline;
+            for pixel in 1..=256 {
+                ppu.pixel = pixel;
+                ppu.shift_registers();
+                ppu.render_pixel_to_screen();
+            }
+        };
+
+        // Test top half (row 0) - fetch on scanline 49 for rendering on scanline 50
+        fetch_and_render(&mut ppu, 49, 50);
+
+        let screen_buffer = ppu.screen_buffer();
+        let (r, g, b) = screen_buffer.get_pixel(100, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x01),
+            "Top tile should render with color 1 (dark blue)"
+        );
+
+        // Test bottom half (row 8) - fetch on scanline 57 for rendering on scanline 58
+        fetch_and_render(&mut ppu, 57, 58);
+
+        let screen_buffer = ppu.screen_buffer();
+        let (r, g, b) = screen_buffer.get_pixel(100, 58);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x23),
+            "Bottom tile should render with color 2 (purple) - different from top tile"
+        );
+    }
+
+    #[test]
+    fn test_sprite_horizontal_flip() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up CHR ROM with an asymmetric pattern to test flipping
+        ppu.chr_rom.resize(0x2000, 0);
+        
+        // Pattern: 11000000 (bits 7-0)
+        // When flipped: 00000011 (bits 0-7 become bits 7-0)
+        ppu.chr_rom[0x00] = 0b11000000; // Pattern low byte, row 0
+        ppu.chr_rom[0x08] = 0b00000000; // Pattern high byte, row 0
+        // Without flip: pixels are 01 01 00 00 00 00 00 00 (colors 1,1,0,0,0,0,0,0)
+        // With flip:    pixels are 00 00 00 00 00 00 01 01 (colors 0,0,0,0,0,0,1,1)
+
+        // Set up palette
+        ppu.palette[0] = 0x0F; // Backdrop color: Black
+        ppu.palette[16] = 0x00; // Transparent (color 0)
+        ppu.palette[17] = 0x01; // Color 1
+        ppu.palette[18] = 0x23; // Color 2 - purple
+        ppu.palette[19] = 0x30; // Color 3
+
+        // Set up sprite WITHOUT horizontal flip
+        ppu.oam_data[0] = 50; // Y position
+        ppu.oam_data[1] = 0; // Tile index 0
+        ppu.oam_data[2] = 0b00000000; // Attributes: no flip
+        ppu.oam_data[3] = 100; // X position
+
+        // Enable sprite rendering
+        ppu.mask_register = SHOW_SPRITES | SHOW_SPRITES_LEFT;
+        ppu.control_register = 0; // 8x8 mode, pattern table 0
+
+        // Simulate sprite evaluation and fetching
+        ppu.scanline = 49;
+        ppu.sprites_found = 1;
+        ppu.sprite_count = 1;
+        ppu.secondary_oam[0] = 50;
+        ppu.secondary_oam[1] = 0;
+        ppu.secondary_oam[2] = 0b00000000; // No flip
+        ppu.secondary_oam[3] = 100;
+
+        ppu.pixel = 257 + 7;
+        ppu.fetch_sprite_patterns();
+
+        // Swap buffers
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        // Render scanline 50
+        ppu.scanline = 50;
+        for pixel in 1..=256 {
+            ppu.pixel = pixel;
+            ppu.shift_registers();
+            ppu.render_pixel_to_screen();
+        }
+
+        let screen_buffer = ppu.screen_buffer();
+
+        // Without flip: first two pixels should be dark blue (color 1)
+        let (r, g, b) = screen_buffer.get_pixel(100, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x01),
+            "First pixel without flip should be dark blue"
+        );
+        let (r, g, b) = screen_buffer.get_pixel(101, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x01),
+            "Second pixel without flip should be dark blue"
+        );
+
+        // Without flip: last two pixels should be transparent (backdrop black)
+        let (r, g, b) = screen_buffer.get_pixel(106, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x0F),
+            "Second-to-last pixel without flip should be backdrop"
+        );
+        let (r, g, b) = screen_buffer.get_pixel(107, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x0F),
+            "Last pixel without flip should be backdrop"
+        );
+
+        // Now test WITH horizontal flip (bit 6 set)
+        ppu.oam_data[2] = 0b01000000; // Attributes: horizontal flip
+        ppu.secondary_oam[2] = 0b01000000; // Horizontal flip
+
+        // Fetch and render again with flip
+        ppu.scanline = 49;
+        ppu.sprites_found = 1;
+        ppu.sprite_count = 1;
+        ppu.pixel = 257 + 7;
+        ppu.fetch_sprite_patterns();
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.scanline = 50;
+        for pixel in 1..=256 {
+            ppu.pixel = pixel;
+            ppu.shift_registers();
+            ppu.render_pixel_to_screen();
+        }
+
+        let screen_buffer = ppu.screen_buffer();
+
+        // With flip: first two pixels should be transparent (backdrop black)
+        let (r, g, b) = screen_buffer.get_pixel(100, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x0F),
+            "First pixel with flip should be backdrop"
+        );
+        let (r, g, b) = screen_buffer.get_pixel(101, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x0F),
+            "Second pixel with flip should be backdrop"
+        );
+
+        // With flip: last two pixels should be dark blue (color 1)
+        let (r, g, b) = screen_buffer.get_pixel(106, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x01),
+            "Second-to-last pixel with flip should be dark blue"
+        );
+        let (r, g, b) = screen_buffer.get_pixel(107, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x01),
+            "Last pixel with flip should be dark blue"
+        );
+    }
+
+    #[test]
+    fn test_sprite_vertical_flip() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up CHR ROM with different patterns for different rows
+        ppu.chr_rom.resize(0x2000, 0);
+        
+        // Row 0: all color 1
+        ppu.chr_rom[0x00] = 0xFF; // Pattern low byte
+        ppu.chr_rom[0x08] = 0x00; // Pattern high byte
+        // Row 7: all color 2
+        ppu.chr_rom[0x07] = 0x00; // Pattern low byte
+        ppu.chr_rom[0x0F] = 0xFF; // Pattern high byte
+
+        // Set up palette
+        ppu.palette[0] = 0x0F; // Backdrop color: Black
+        ppu.palette[16] = 0x00; // Transparent (color 0)
+        ppu.palette[17] = 0x01; // Color 1 - dark blue
+        ppu.palette[18] = 0x23; // Color 2 - purple
+        ppu.palette[19] = 0x30; // Color 3
+
+        // Set up sprite WITHOUT vertical flip
+        ppu.oam_data[0] = 50; // Y position
+        ppu.oam_data[1] = 0; // Tile index 0
+        ppu.oam_data[2] = 0b00000000; // Attributes: no flip
+        ppu.oam_data[3] = 100; // X position
+
+        // Enable sprite rendering
+        ppu.mask_register = SHOW_SPRITES | SHOW_SPRITES_LEFT;
+        ppu.control_register = 0; // 8x8 mode, pattern table 0
+
+        // Test row 0 without flip (should be color 1)
+        ppu.scanline = 49; // Fetch for scanline 50
+        ppu.sprites_found = 1;
+        ppu.sprite_count = 1;
+        ppu.secondary_oam[0] = 50; // Y
+        ppu.secondary_oam[1] = 0; // Tile
+        ppu.secondary_oam[2] = 0b00000000; // No flip
+        ppu.secondary_oam[3] = 100; // X
+
+        ppu.pixel = 257 + 7;
+        ppu.fetch_sprite_patterns();
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.scanline = 50;
+        for pixel in 1..=256 {
+            ppu.pixel = pixel;
+            ppu.shift_registers();
+            ppu.render_pixel_to_screen();
+        }
+
+        let screen_buffer = ppu.screen_buffer();
+        let (r, g, b) = screen_buffer.get_pixel(100, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x01),
+            "Row 0 without flip should be dark blue (color 1)"
+        );
+
+        // Test row 7 without flip (should be color 2)
+        ppu.scanline = 56; // Fetch for scanline 57 (Y=50 + row 7)
+        ppu.sprites_found = 1;
+        ppu.sprite_count = 1;
+        ppu.pixel = 257 + 7;
+        ppu.fetch_sprite_patterns();
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.scanline = 57;
+        for pixel in 1..=256 {
+            ppu.pixel = pixel;
+            ppu.shift_registers();
+            ppu.render_pixel_to_screen();
+        }
+
+        let screen_buffer = ppu.screen_buffer();
+        let (r, g, b) = screen_buffer.get_pixel(100, 57);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x23),
+            "Row 7 without flip should be purple (color 2)"
+        );
+
+        // Now test WITH vertical flip (bit 7 set)
+        ppu.oam_data[2] = 0b10000000; // Attributes: vertical flip
+        ppu.secondary_oam[2] = 0b10000000; // Vertical flip
+
+        // Test row 0 with flip (should now be color 2, fetched from row 7)
+        ppu.scanline = 49;
+        ppu.sprites_found = 1;
+        ppu.sprite_count = 1;
+        ppu.secondary_oam[0] = 50;
+        ppu.secondary_oam[1] = 0;
+        ppu.secondary_oam[2] = 0b10000000; // Vertical flip
+        ppu.secondary_oam[3] = 100;
+
+        ppu.pixel = 257 + 7;
+        ppu.fetch_sprite_patterns();
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.scanline = 50;
+        for pixel in 1..=256 {
+            ppu.pixel = pixel;
+            ppu.shift_registers();
+            ppu.render_pixel_to_screen();
+        }
+
+        let screen_buffer = ppu.screen_buffer();
+        let (r, g, b) = screen_buffer.get_pixel(100, 50);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x23),
+            "Row 0 with vertical flip should be purple (color 2, from row 7)"
+        );
+
+        // Test row 7 with flip (should now be color 1, fetched from row 0)
+        ppu.scanline = 56;
+        ppu.sprites_found = 1;
+        ppu.sprite_count = 1;
+        ppu.pixel = 257 + 7;
+        ppu.fetch_sprite_patterns();
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.scanline = 57;
+        for pixel in 1..=256 {
+            ppu.pixel = pixel;
+            ppu.shift_registers();
+            ppu.render_pixel_to_screen();
+        }
+
+        let screen_buffer = ppu.screen_buffer();
+        let (r, g, b) = screen_buffer.get_pixel(100, 57);
+        assert_eq!(
+            (r, g, b),
+            crate::nes::Nes::lookup_system_palette(0x01),
+            "Row 7 with vertical flip should be dark blue (color 1, from row 0)"
+        );
+    }
+
+    #[test]
     fn test_sprite_pattern_data_stable_during_next_scanline_fetch() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
 
