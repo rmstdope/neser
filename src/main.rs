@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // snake::run()
-    let mut event_loop = eventloop::EventLoop::new(false, tv_system, 2.0, 1.0)?;
+    let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0)?;
     let mut nes_instance = nes::Nes::new(tv_system);
 
     // OADM Read test - PASS

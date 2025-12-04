@@ -287,11 +287,11 @@ impl EventLoop {
                     nes.run_cpu_tick();
                 }
                 nes.clear_ready_to_render();
-                println!(
-                    "Frame emulated. Scanline: {}, Pixel: {}",
-                    nes.ppu.borrow().scanline(),
-                    nes.ppu.borrow().pixel()
-                );
+                // println!(
+                //     "Frame emulated. Scanline: {}, Pixel: {}",
+                //     nes.ppu.borrow().scanline(),
+                //     nes.ppu.borrow().pixel()
+                // );
 
                 // 3. Render the frame
                 Self::render_frame(canvas, &mut texture, nes)?;
