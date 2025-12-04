@@ -22,6 +22,7 @@ impl ScreenBuffer {
     }
 
     /// Returns the width of the screen buffer.
+    #[cfg(test)]
     pub fn width(&self) -> u32 {
         self.width
     }

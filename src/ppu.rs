@@ -408,6 +408,11 @@ impl PPU {
             self.vblank_flag = false;
             self.nmi_enabled = false;
         }
+
+        // Clear sprite 0 hit flag at pre-render scanline, dot 1
+        if self.scanline == 261 && self.pixel == 1 {
+            self.sprite_0_hit = false;
+        }
     }
 
     /// Check if rendering is enabled (background or sprites)
@@ -4462,7 +4467,8 @@ mod tests {
         ppu.sprite_0_index = Some(0); // Mark that sprite 0 is in slot 0
 
         // Enable rendering
-        ppu.mask_register = SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT | SHOW_SPRITES_LEFT;
+        ppu.mask_register =
+            SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT | SHOW_SPRITES_LEFT;
         ppu.control_register = 0; // Pattern table 0 for both
 
         // Fetch sprite patterns manually (simulating what happens during scanline fetch)
@@ -4508,7 +4514,7 @@ mod tests {
         for _ in 0..11 {
             ppu.shift_registers();
         }
-        
+
         ppu.render_pixel_to_screen();
 
         // Verify sprite_0_hit flag is set
@@ -4523,6 +4529,116 @@ mod tests {
             status & SPRITE_0_HIT,
             SPRITE_0_HIT,
             "PPUSTATUS bit 6 should be set when sprite 0 hit occurs"
+        );
+    }
+
+    #[test]
+    fn test_sprite_0_hit_cleared_at_prerender() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up CHR ROM with patterns
+        ppu.chr_rom.resize(0x2000, 0);
+
+        // Background pattern: opaque pixels (tile 0 in pattern table 0)
+        ppu.chr_rom[0x00] = 0xFF; // Pattern low byte, row 0 - all pixels opaque
+        ppu.chr_rom[0x08] = 0x00; // Pattern high byte, row 0 - color 1
+
+        // Sprite pattern: opaque pixels (tile 5 in pattern table 0)
+        ppu.chr_rom[0x50] = 0xFF; // Pattern low byte, row 0
+        ppu.chr_rom[0x58] = 0x00; // Pattern high byte, row 0 - color 1
+
+        // Set up palette
+        ppu.palette[0] = 0x0F; // Backdrop
+        ppu.palette[1] = 0x10; // Background color 1
+        ppu.palette[17] = 0x20; // Sprite color 1
+
+        // Set up nametable - tile 0 at position (0,0)
+        ppu.ppu_ram[0] = 0; // Tile index 0
+
+        // Set up sprite 0 in secondary OAM at position (10, 10)
+        ppu.secondary_oam[0] = 10; // Y
+        ppu.secondary_oam[1] = 5; // Tile index 5
+        ppu.secondary_oam[2] = 0; // Attributes
+        ppu.secondary_oam[3] = 10; // X
+        ppu.sprite_count = 1;
+        ppu.sprites_found = 1;
+        ppu.sprite_0_index = Some(0);
+
+        // Enable rendering
+        ppu.mask_register =
+            SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT | SHOW_SPRITES_LEFT;
+        ppu.control_register = 0; // Pattern table 0 for both
+
+        // Fetch sprite patterns
+        ppu.scanline = 9;
+        ppu.pixel = 264;
+        ppu.fetch_sprite_patterns();
+        ppu.next_sprite_x_positions[0] = ppu.secondary_oam[3];
+
+        // Swap sprite buffers
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        // Set up background shift registers
+        ppu.v = 0;
+        ppu.x = 0;
+        ppu.fetch_nametable_byte();
+        ppu.fetch_attribute_byte();
+        ppu.fetch_pattern_lo_byte();
+        ppu.fetch_pattern_hi_byte();
+        ppu.load_shift_registers();
+
+        // Clear sprite_0_hit flag
+        ppu.sprite_0_hit = false;
+
+        // Render scanline 10, pixel 11
+        ppu.scanline = 10;
+        ppu.pixel = 11;
+
+        // Shift registers to simulate having rendered pixels 0-10
+        for _ in 0..11 {
+            ppu.shift_registers();
+        }
+
+        ppu.render_pixel_to_screen();
+
+        // Verify hit occurred
+        assert!(
+            ppu.sprite_0_hit,
+            "Sprite 0 hit should occur before testing clearing"
+        );
+
+        // Now advance to pre-render scanline (261), pixel 0
+        // After tick, it will be at pixel 1 where the flag should clear
+        ppu.scanline = 261;
+        ppu.pixel = 0;
+
+        // Tick the PPU at this point - should clear the flag
+        ppu.tick_ppu_cycle();
+
+        // Verify flag is cleared
+        assert!(
+            !ppu.sprite_0_hit,
+            "Sprite 0 hit flag should be cleared at pre-render scanline dot 1"
+        );
+
+        // Verify PPUSTATUS bit 6 is also cleared
+        let status = ppu.get_status();
+        assert_eq!(
+            status & SPRITE_0_HIT,
+            0,
+            "PPUSTATUS bit 6 should be cleared at pre-render scanline dot 1"
         );
     }
 }
