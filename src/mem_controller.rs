@@ -71,10 +71,10 @@ impl MemController {
 
             // Everything else
             _ => {
-                eprintln!(
-                    "Warning: Read from unimplemented address {:04X}, returning 0",
-                    addr
-                );
+                // eprintln!(
+                //     "Warning: Read from unimplemented address {:04X}, returning 0",
+                //     addr
+                // );
                 0
             }
         }
@@ -110,10 +110,10 @@ impl MemController {
                     return true; // Signal that OAM DMA should occur
                 }
                 _ => {
-                    eprintln!(
-                        "Warning: Write to unimplemented APU/IO register {:04X} ignored",
-                        addr
-                    );
+                    // eprintln!(
+                    //     "Warning: Write to unimplemented APU/IO register {:04X} ignored",
+                    //     addr
+                    // );
                 }
             },
 
@@ -175,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_memory_is_zeroed() {
+    fn test_new_memory_is_initialized() {
         let memory = create_test_memory();
         assert_eq!(memory.read(0x0000), 0);
         assert_eq!(memory.read(0x1234), 0);
