@@ -3860,17 +3860,17 @@ mod tests {
 
         // Set up CHR ROM
         ppu.chr_rom.resize(0x2000, 0);
-        
+
         // Set up CHR ROM with distinct patterns for top and bottom tiles
         // For 8x16 sprites with even tile index N:
         // - Top tile: N (from pattern table determined by bit 0 of tile index)
         // - Bottom tile: N+1
-        
+
         // Tile 0 (top half): pattern for color 1 (low=1, high=0)
         ppu.chr_rom[0x00] = 0xFF; // Pattern low byte, row 0 - all 1s
         ppu.chr_rom[0x08] = 0x00; // Pattern high byte, row 0 - all 0s
         // Result: pixels are all color 1 (pattern = 01)
-        
+
         // Tile 1 (bottom half): pattern for color 2 (low=0, high=1)
         ppu.chr_rom[0x10] = 0x00; // Pattern low byte, row 0 - all 0s
         ppu.chr_rom[0x18] = 0xFF; // Pattern high byte, row 0 - all 1s
@@ -3962,7 +3962,7 @@ mod tests {
 
         // Set up CHR ROM with an asymmetric pattern to test flipping
         ppu.chr_rom.resize(0x2000, 0);
-        
+
         // Pattern: 11000000 (bits 7-0)
         // When flipped: 00000011 (bits 0-7 become bits 7-0)
         ppu.chr_rom[0x00] = 0b11000000; // Pattern low byte, row 0
@@ -4121,7 +4121,7 @@ mod tests {
 
         // Set up CHR ROM with different patterns for different rows
         ppu.chr_rom.resize(0x2000, 0);
-        
+
         // Row 0: all color 1
         ppu.chr_rom[0x00] = 0xFF; // Pattern low byte
         ppu.chr_rom[0x08] = 0x00; // Pattern high byte
