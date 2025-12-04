@@ -28,6 +28,7 @@ impl ScreenBuffer {
     }
 
     /// Returns the height of the screen buffer.
+    #[cfg(test)]
     pub fn height(&self) -> u32 {
         self.height
     }

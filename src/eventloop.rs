@@ -12,7 +12,6 @@ pub struct EventLoop {
     _sdl_context: sdl2::Sdl,
     canvas: Option<Canvas<Window>>,
     event_pump: sdl2::EventPump,
-    tv_system: TvSystem,
     timing_scale: f32,
 }
 
@@ -89,7 +88,6 @@ impl EventLoop {
             _sdl_context: sdl_context,
             canvas,
             event_pump,
-            tv_system,
             timing_scale: clamped_timing_scale,
         })
     }

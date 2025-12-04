@@ -12,17 +12,6 @@ pub enum TvSystem {
 }
 
 impl TvSystem {
-    /// Returns the CPU clock frequency in Hz for this TV system
-    ///
-    /// NTSC: 1.789773 MHz (1,789,773 Hz)
-    /// PAL: 1.662607 MHz (1,662,607 Hz)
-    pub fn cpu_clock_frequency(&self) -> u32 {
-        match self {
-            TvSystem::Ntsc => 1_789_773,
-            TvSystem::Pal => 1_662_607,
-        }
-    }
-
     /// Returns the PPU cycles per CPU cycle ratio for this TV system
     ///
     /// NTSC: 3.0 PPU cycles per CPU cycle (exact)
@@ -9408,29 +9397,6 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
 
         assert_eq!(ntsc_nes.tv_system(), TvSystem::Ntsc);
         assert_eq!(pal_nes.tv_system(), TvSystem::Pal);
-    }
-
-    #[test]
-    fn test_ntsc_cpu_clock_frequency() {
-        let ntsc = TvSystem::Ntsc;
-        // NTSC CPU clock: ~1.789773 MHz
-        assert_eq!(ntsc.cpu_clock_frequency(), 1_789_773);
-    }
-
-    #[test]
-    fn test_pal_cpu_clock_frequency() {
-        let pal = TvSystem::Pal;
-        // PAL CPU clock: ~1.662607 MHz
-        assert_eq!(pal.cpu_clock_frequency(), 1_662_607);
-    }
-
-    #[test]
-    fn test_nes_cpu_clock_frequency_via_tv_system() {
-        let ntsc_nes = Nes::new(TvSystem::Ntsc);
-        let pal_nes = Nes::new(TvSystem::Pal);
-
-        assert_eq!(ntsc_nes.tv_system().cpu_clock_frequency(), 1_789_773);
-        assert_eq!(pal_nes.tv_system().cpu_clock_frequency(), 1_662_607);
     }
 
     #[test]

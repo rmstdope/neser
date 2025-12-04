@@ -4641,4 +4641,83 @@ mod tests {
             "PPUSTATUS bit 6 should be cleared at pre-render scanline dot 1"
         );
     }
+
+    // Sprite 0 Hit Clipping Tests
+
+    #[test]
+    fn test_sprite_0_hit_respects_sprite_clipping() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up CHR ROM with patterns
+        ppu.chr_rom.resize(0x2000, 0);
+
+        // Background pattern: opaque pixels (tile 0)
+        ppu.chr_rom[0x00] = 0xFF;
+        ppu.chr_rom[0x08] = 0x00;
+
+        // Sprite pattern: opaque pixels (tile 5)
+        ppu.chr_rom[0x50] = 0xFF;
+        ppu.chr_rom[0x58] = 0x00;
+
+        // Set up palette
+        ppu.palette[0] = 0x0F;
+        ppu.palette[1] = 0x10;
+        ppu.palette[17] = 0x20;
+
+        // Set up nametable
+        ppu.ppu_ram[0] = 0;
+
+        // Set up sprite 0 at X=5 (within leftmost 8 pixels)
+        ppu.secondary_oam[0] = 10;
+        ppu.secondary_oam[1] = 5;
+        ppu.secondary_oam[2] = 0;
+        ppu.secondary_oam[3] = 5; // X position in clipping zone
+        ppu.sprite_count = 1;
+        ppu.sprites_found = 1;
+        ppu.sprite_0_index = Some(0);
+
+        // Enable rendering with sprite clipping (SHOW_SPRITES_LEFT disabled)
+        // Background is visible in leftmost 8, but sprites are clipped
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT;
+        ppu.control_register = 0;
+
+        // Fetch sprite patterns
+        ppu.scanline = 9;
+        ppu.pixel = 264;
+        ppu.fetch_sprite_patterns();
+        ppu.next_sprite_x_positions[0] = ppu.secondary_oam[3];
+
+        // Swap sprite buffers
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        // Set up background - doesn't matter much since sprite won't render anyway
+        ppu.v = 0;
+        ppu.x = 0;
+
+        ppu.sprite_0_hit = false;
+
+        // Try to render at X=5 where sprite should be clipped
+        ppu.scanline = 10;
+        ppu.pixel = 6; // screen X = 5
+
+        ppu.render_pixel_to_screen();
+
+        // With sprite clipping enabled, sprite 0 hit should NOT occur
+        assert!(
+            !ppu.sprite_0_hit,
+            "Sprite 0 hit should not occur when sprite is clipped in leftmost 8 pixels"
+        );
+    }
 }
