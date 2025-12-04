@@ -78,6 +78,10 @@ pub struct PPU {
     next_sprite_count: u8,
     /// Whether we've populated next_sprite buffers at least once (to avoid swapping garbage on first frame)
     sprite_buffers_ready: bool,
+    /// Index (0-7) of sprite 0 in current scanline's sprite buffers, or None if not present
+    sprite_0_index: Option<usize>,
+    /// Index of sprite 0 in next scanline's sprite buffers, or None if not present
+    next_sprite_0_index: Option<usize>,
     /// Current sprite being evaluated during sprite evaluation
     sprite_eval_n: u8,
     /// Total number of PPU ticks since reset
@@ -162,6 +166,8 @@ impl PPU {
             sprite_count: 0,
             next_sprite_count: 0,
             sprite_buffers_ready: false,
+            sprite_0_index: None,
+            next_sprite_0_index: None,
             sprite_eval_n: 0,
             total_cycles: 0,
             tv_system,
@@ -330,34 +336,37 @@ impl PPU {
         // Visible scanlines (0-239) evaluate sprites for the next scanline
         // Pre-render scanline (261) evaluates sprites for scanline 0
         if self.scanline < 240 || self.scanline == 261 {
-            // Reset sprite evaluation state at dot 0
+            // At pixel 0: swap sprite buffers and reset evaluation state
             if self.pixel == 0 {
+                // Swap sprite buffers: next scanline's sprites become current
+                // DON'T swap on scanline 261 - that's when we first populate the buffers
+                // Also don't swap until buffers have been populated at least once
+                if self.scanline < 240 && self.sprite_buffers_ready {
+                    // Swap buffers: next scanline data becomes current scanline data
+                    std::mem::swap(
+                        &mut self.sprite_pattern_shift_lo,
+                        &mut self.next_sprite_pattern_shift_lo,
+                    );
+                    std::mem::swap(
+                        &mut self.sprite_pattern_shift_hi,
+                        &mut self.next_sprite_pattern_shift_hi,
+                    );
+                    std::mem::swap(
+                        &mut self.sprite_x_positions,
+                        &mut self.next_sprite_x_positions,
+                    );
+                    std::mem::swap(
+                        &mut self.sprite_attributes,
+                        &mut self.next_sprite_attributes,
+                    );
+                    std::mem::swap(&mut self.sprite_count, &mut self.next_sprite_count);
+                    std::mem::swap(&mut self.sprite_0_index, &mut self.next_sprite_0_index);
+                }
+
+                // Reset sprite evaluation state for this scanline
                 self.sprites_found = 0;
                 self.sprite_eval_n = 0;
-            }
-
-            // Swap sprite buffers: next scanline's sprites become current
-            // DON'T swap on scanline 261 - that's when we first populate the buffers
-            // Also don't swap until buffers have been populated at least once
-            if self.pixel == 0 && self.scanline < 240 && self.sprite_buffers_ready {
-                // Swap buffers: next scanline data becomes current scanline data
-                std::mem::swap(
-                    &mut self.sprite_pattern_shift_lo,
-                    &mut self.next_sprite_pattern_shift_lo,
-                );
-                std::mem::swap(
-                    &mut self.sprite_pattern_shift_hi,
-                    &mut self.next_sprite_pattern_shift_hi,
-                );
-                std::mem::swap(
-                    &mut self.sprite_x_positions,
-                    &mut self.next_sprite_x_positions,
-                );
-                std::mem::swap(
-                    &mut self.sprite_attributes,
-                    &mut self.next_sprite_attributes,
-                );
-                std::mem::swap(&mut self.sprite_count, &mut self.next_sprite_count);
+                self.next_sprite_0_index = None;
             }
 
             // Dots 1-64: Initialize secondary OAM with 0xFF
@@ -832,6 +841,18 @@ impl PPU {
         // Get sprite pixel (None = transparent)
         let sprite_pixel = self.get_sprite_pixel();
 
+        // Sprite 0 hit detection
+        // Check if sprite 0's opaque pixel overlaps with background's opaque pixel
+        if let Some((_sprite_palette_idx, sprite_idx, _is_foreground)) = sprite_pixel {
+            // Check if this sprite slot contains sprite 0 from OAM
+            if let Some(sprite_0_slot) = self.sprite_0_index {
+                if sprite_idx == sprite_0_slot && bg_pixel != 0 {
+                    // Both sprite 0 and background have opaque pixels at this position
+                    self.sprite_0_hit = true;
+                }
+            }
+        }
+
         // Determine final palette index based on sprite/background priority
         let mut palette_index =
             if let Some((sprite_palette_idx, _sprite_idx, is_foreground)) = sprite_pixel {
@@ -1035,6 +1056,12 @@ impl PPU {
             for i in 0..4 {
                 self.secondary_oam[sec_oam_index + i] = self.oam_data[oam_index + i];
             }
+
+            // Track if this is sprite 0 (from OAM index 0)
+            if self.sprite_eval_n == 0 {
+                self.next_sprite_0_index = Some(self.sprites_found as usize);
+            }
+
             self.sprites_found += 1;
         }
 
@@ -4397,6 +4424,105 @@ mod tests {
         assert_eq!(
             ppu.next_sprite_pattern_shift_lo[0], 0x33,
             "Next buffer should have tile 1 pattern after fetch"
+        );
+    }
+
+    // Sprite 0 Hit Detection Tests
+
+    #[test]
+    fn test_sprite_0_hit_basic() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up CHR ROM with patterns
+        ppu.chr_rom.resize(0x2000, 0);
+
+        // Background pattern: opaque pixels (tile 0 in pattern table 0)
+        ppu.chr_rom[0x00] = 0xFF; // Pattern low byte, row 0 - all pixels opaque
+        ppu.chr_rom[0x08] = 0x00; // Pattern high byte, row 0 - color 1
+
+        // Sprite pattern: opaque pixels (tile 5 in pattern table 0)
+        ppu.chr_rom[0x50] = 0xFF; // Pattern low byte, row 0
+        ppu.chr_rom[0x58] = 0x00; // Pattern high byte, row 0 - color 1
+
+        // Set up palette
+        ppu.palette[0] = 0x0F; // Backdrop
+        ppu.palette[1] = 0x10; // Background color 1
+        ppu.palette[17] = 0x20; // Sprite color 1
+
+        // Set up nametable - tile 0 at position (0,0)
+        ppu.ppu_ram[0] = 0; // Tile index 0
+
+        // Set up sprite 0 in secondary OAM at position (10, 10)
+        ppu.secondary_oam[0] = 10; // Y
+        ppu.secondary_oam[1] = 5; // Tile index 5
+        ppu.secondary_oam[2] = 0; // Attributes
+        ppu.secondary_oam[3] = 10; // X
+        ppu.sprite_count = 1;
+        ppu.sprites_found = 1; // Need this for fetch_sprite_patterns to work
+        ppu.sprite_0_index = Some(0); // Mark that sprite 0 is in slot 0
+
+        // Enable rendering
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT | SHOW_SPRITES_LEFT;
+        ppu.control_register = 0; // Pattern table 0 for both
+
+        // Fetch sprite patterns manually (simulating what happens during scanline fetch)
+        ppu.scanline = 9; // Fetching for scanline 10
+        ppu.pixel = 264; // During sprite fetch window
+        ppu.fetch_sprite_patterns();
+        // Also load X position manually (fetch_sprite_patterns would do this during normal operation)
+        ppu.next_sprite_x_positions[0] = ppu.secondary_oam[3]; // X position from secondary OAM
+
+        // Swap sprite buffers (simulating what happens at start of scanline)
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        // Set up background shift registers with tile 0's pattern
+        ppu.v = 0; // Point to top-left of nametable
+        ppu.x = 0; // Fine X = 0
+        ppu.fetch_nametable_byte();
+        ppu.fetch_attribute_byte();
+        ppu.fetch_pattern_lo_byte();
+        ppu.fetch_pattern_hi_byte();
+        ppu.load_shift_registers();
+
+        // Clear sprite_0_hit flag
+        ppu.sprite_0_hit = false;
+
+        // Now render scanline 10, pixel 11 (first pixel of sprite at X=10)
+        ppu.scanline = 10;
+        ppu.pixel = 11;
+
+        // Shift registers to simulate having rendered pixels 0-10
+        // (In real PPU, shift happens once per pixel)
+        for _ in 0..11 {
+            ppu.shift_registers();
+        }
+        
+        ppu.render_pixel_to_screen();
+
+        // Verify sprite_0_hit flag is set
+        assert!(
+            ppu.sprite_0_hit,
+            "Sprite 0 hit flag should be set when sprite 0 opaque pixel overlaps background opaque pixel"
+        );
+
+        // Verify flag is reflected in PPUSTATUS
+        let status = ppu.get_status();
+        assert_eq!(
+            status & SPRITE_0_HIT,
+            SPRITE_0_HIT,
+            "PPUSTATUS bit 6 should be set when sprite 0 hit occurs"
         );
     }
 }
