@@ -1,11 +1,12 @@
 mod timing;
 mod status;
+mod registers;
 
 pub use timing::Timing;
 pub use status::Status;
+pub use registers::Registers;
 
 // TODO: Add more modules as they are created:
-// mod registers;
 // mod memory;
 // mod background;
 // mod sprites;
