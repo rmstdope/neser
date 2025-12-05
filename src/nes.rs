@@ -196,7 +196,7 @@ impl Nes {
     ///
     /// Returns a reference to the 256x240 RGB buffer containing the current frame.
     pub fn get_screen_buffer(&self) -> std::cell::Ref<'_, crate::screen_buffer::ScreenBuffer> {
-        std::cell::Ref::map(self.ppu.borrow(), |ppu: &ppu_modules::PPUModular| ppu.screen_buffer())
+        std::cell::Ref::map(self.ppu.borrow(), |ppu| ppu.screen_buffer())
     }
 
     /// Check if a frame is ready to be rendered
