@@ -228,6 +228,17 @@ mod tests {
         
         let status = ppu.get_status();
         // VBlank flag should be set (bit 7)
-        assert_eq!(status & 0x80, 0);  // Cleared by reading
+        assert_eq!(status & 0x80, 0x80);
+        
+        // Advance one more cycle to get past vblank_start_cycle
+        ppu.run_ppu_cycles(1);
+        
+        // Reading status should clear VBlank flag (now that we're past vblank_start_cycle)
+        let status_first_read = ppu.get_status();
+        assert_eq!(status_first_read & 0x80, 0x80);
+        
+        // Second read should show cleared flag
+        let status_second_read = ppu.get_status();
+        assert_eq!(status_second_read & 0x80, 0);
     }
 }
