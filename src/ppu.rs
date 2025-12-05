@@ -4610,6 +4610,142 @@ mod tests {
     }
 
     #[test]
+    fn test_color_emphasis_green_bit() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up a simple background pixel
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x30; // Bright white in NES palette
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Test without emphasis first
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_normal, g_normal, b_normal) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Now test with GREEN emphasis (bit 6)
+        ppu = PPU::new(TvSystem::Ntsc);
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x30;
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Enable green emphasis (bit 6 of PPUMASK)
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | 0b0100_0000;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_green, g_green, b_green) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // With green emphasis, green should be boosted and red/blue attenuated
+        assert!(
+            g_green >= g_normal,
+            "Green component should be emphasized (or at least not reduced)"
+        );
+        assert!(
+            r_green < r_normal || b_green < b_normal,
+            "Red and/or blue should be attenuated when green is emphasized"
+        );
+    }
+
+    #[test]
+    fn test_color_emphasis_blue_bit() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up a simple background pixel
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x30; // Bright white in NES palette
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Test without emphasis first
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_normal, g_normal, b_normal) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Now test with BLUE emphasis (bit 7)
+        ppu = PPU::new(TvSystem::Ntsc);
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x30;
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Enable blue emphasis (bit 7 of PPUMASK)
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | 0b1000_0000;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_blue, g_blue, b_blue) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // With blue emphasis, blue should be boosted and red/green attenuated
+        assert!(
+            b_blue >= b_normal,
+            "Blue component should be emphasized (or at least not reduced)"
+        );
+        assert!(
+            r_blue < r_normal || g_blue < g_normal,
+            "Red and/or green should be attenuated when blue is emphasized"
+        );
+    }
+
+    #[test]
+    fn test_grayscale_with_emphasis() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up a simple background pixel
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x16; // Red color
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Enable grayscale mode with red emphasis
+        // Grayscale should mask the palette index to 0x30, then emphasis should apply
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | GRAYSCALE | 0b0010_0000;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r, g, b) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // With grayscale, the palette index is masked, then emphasis applies to the result
+        // The pixel should still appear grayish, but with a red tint
+        // Red should be the highest component due to emphasis
+        assert!(
+            r >= g && r >= b,
+            "With grayscale + red emphasis, red should be the dominant component"
+        );
+    }
+
+    #[test]
     fn test_sprite_pattern_table_selection() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
 
