@@ -1019,6 +1019,23 @@ impl PPU {
         self.v = (self.v.wrapping_add(amount)) & 0x3FFF;
     }
 
+    /// Map palette address to account for mirroring
+    ///
+    /// Sprite palette backdrop colors mirror to background palette backdrop colors:
+    /// - $3F10, $3F14, $3F18, $3F1C → $3F00, $3F04, $3F08, $3F0C
+    ///
+    /// This is because sprites use color 0 for transparency, so sprite palette
+    /// backdrop colors are never rendered and share storage with background backdrops.
+    fn mirror_palette_address(&self, addr: u16) -> usize {
+        let offset = (addr - 0x3F00) as usize % 32;
+        // Mirror addresses $10, $14, $18, $1C to $00, $04, $08, $0C
+        if offset & 0x13 == 0x10 {
+            offset & 0x0F
+        } else {
+            offset
+        }
+    }
+
     /// Check if PPUDATA access should trigger the rendering glitch
     /// The glitch occurs when:
     /// - Rendering is enabled (background or sprites)
@@ -1333,7 +1350,7 @@ impl PPU {
             0x3F00..=0x3FFF => {
                 // Palette reads return immediately (no buffering of palette data)
                 // but still update the buffer with mirrored nametable data
-                let palette_data = self.palette[(addr - 0x3F00) as usize % 32];
+                let palette_data = self.palette[self.mirror_palette_address(addr)];
 
                 // Update buffer with nametable data "underneath" the palette
                 // Palette addresses $3F00-$3FFF mirror to $2F00-$2FFF in nametable space
@@ -1372,7 +1389,7 @@ impl PPU {
             }
             0x3F00..=0x3FFF => {
                 // Palette RAM
-                self.palette[(addr - 0x3F00) as usize % 32] = value;
+                self.palette[self.mirror_palette_address(addr)] = value;
             }
             _ => eprintln!("PPU address out of range: {:04X}", addr),
         }
@@ -6054,6 +6071,216 @@ mod tests {
             status2 & SPRITE_0_HIT,
             SPRITE_0_HIT,
             "PPUSTATUS should still show sprite 0 hit after second read"
+        );
+    }
+
+    #[test]
+    fn test_palette_mirroring_3f10_to_3f00() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Write to $3F10 (sprite palette 0, color 0)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x10);
+        ppu.write_data(0x25);
+
+        // Read from $3F00 (backdrop color)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        let value = ppu.read_data();
+
+        assert_eq!(value, 0x25, "$3F10 should mirror to $3F00");
+    }
+
+    #[test]
+    fn test_palette_mirroring_3f14_to_3f04() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Write to $3F14 (sprite palette 1, color 0)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x14);
+        ppu.write_data(0x26);
+
+        // Read from $3F04 (background palette 1, color 0)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x04);
+        let value = ppu.read_data();
+
+        assert_eq!(value, 0x26, "$3F14 should mirror to $3F04");
+    }
+
+    #[test]
+    fn test_palette_mirroring_3f18_to_3f08() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Write to $3F18 (sprite palette 2, color 0)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x18);
+        ppu.write_data(0x27);
+
+        // Read from $3F08 (background palette 2, color 0)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x08);
+        let value = ppu.read_data();
+
+        assert_eq!(value, 0x27, "$3F18 should mirror to $3F08");
+    }
+
+    #[test]
+    fn test_palette_mirroring_3f1c_to_3f0c() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Write to $3F1C (sprite palette 3, color 0)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x1C);
+        ppu.write_data(0x28);
+
+        // Read from $3F0C (background palette 3, color 0)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x0C);
+        let value = ppu.read_data();
+
+        assert_eq!(value, 0x28, "$3F1C should mirror to $3F0C");
+    }
+
+    #[test]
+    fn test_palette_mirroring_bidirectional() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Write to $3F00 (backdrop color)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        ppu.write_data(0x29);
+
+        // Read from $3F10 (should see same value)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x10);
+        let value = ppu.read_data();
+
+        assert_eq!(value, 0x29, "$3F00 should be readable from $3F10");
+    }
+
+    #[test]
+    fn test_palette_non_mirrored_addresses() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Write to $3F11 (sprite palette 0, color 1 - not mirrored)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x11);
+        ppu.write_data(0x30);
+
+        // Write to $3F01 (background palette 0, color 1)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x01);
+        ppu.write_data(0x31);
+
+        // Read $3F11 - should be 0x30
+        ppu.write_address(0x3F);
+        ppu.write_address(0x11);
+        let value1 = ppu.read_data();
+
+        // Read $3F01 - should be 0x31
+        ppu.write_address(0x3F);
+        ppu.write_address(0x01);
+        let value2 = ppu.read_data();
+
+        assert_eq!(value1, 0x30, "$3F11 should store its own value");
+        assert_eq!(value2, 0x31, "$3F01 should store its own value");
+    }
+
+    #[test]
+    fn test_palette_all_32_addresses() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Write unique values to all 32 palette addresses
+        for i in 0..32 {
+            ppu.write_address(0x3F);
+            ppu.write_address(i);
+            ppu.write_data(i as u8);
+        }
+
+        // Verify non-mirrored addresses
+        let non_mirrored = [
+            // Note: $3F00, $3F04, $3F08, $3F0C will have been overwritten by mirrored writes
+            0x01, 0x02, 0x03, 0x05, 0x06, 0x07, 0x09, 0x0A, 0x0B, 0x0D, 0x0E, 0x0F, 0x11, 0x12,
+            0x13, 0x15, 0x16, 0x17, 0x19, 0x1A, 0x1B, 0x1D, 0x1E, 0x1F,
+        ];
+
+        for &addr in &non_mirrored {
+            ppu.write_address(0x3F);
+            ppu.write_address(addr);
+            let value = ppu.read_data();
+            assert_eq!(
+                value, addr,
+                "Address $3F{:02X} should contain {:02X}",
+                addr, addr
+            );
+        }
+
+        // Verify backdrop colors were overwritten by mirrored sprite palette writes
+        // $3F10 wrote 0x10 to $3F00, $3F14 wrote 0x14 to $3F04, etc.
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        assert_eq!(
+            ppu.read_data(),
+            0x10,
+            "$3F00 should contain 0x10 (overwritten by $3F10)"
+        );
+
+        ppu.write_address(0x3F);
+        ppu.write_address(0x04);
+        assert_eq!(
+            ppu.read_data(),
+            0x14,
+            "$3F04 should contain 0x14 (overwritten by $3F14)"
+        );
+
+        ppu.write_address(0x3F);
+        ppu.write_address(0x08);
+        assert_eq!(
+            ppu.read_data(),
+            0x18,
+            "$3F08 should contain 0x18 (overwritten by $3F18)"
+        );
+
+        ppu.write_address(0x3F);
+        ppu.write_address(0x0C);
+        assert_eq!(
+            ppu.read_data(),
+            0x1C,
+            "$3F0C should contain 0x1C (overwritten by $3F1C)"
+        );
+
+        // Verify mirrored addresses read the same as their targets
+        ppu.write_address(0x3F);
+        ppu.write_address(0x10);
+        assert_eq!(
+            ppu.read_data(),
+            0x10,
+            "$3F10 should mirror to $3F00 (value 0x10)"
+        );
+
+        ppu.write_address(0x3F);
+        ppu.write_address(0x14);
+        assert_eq!(
+            ppu.read_data(),
+            0x14,
+            "$3F14 should mirror to $3F04 (value 0x14)"
+        );
+
+        ppu.write_address(0x3F);
+        ppu.write_address(0x18);
+        assert_eq!(
+            ppu.read_data(),
+            0x18,
+            "$3F18 should mirror to $3F08 (value 0x18)"
+        );
+
+        ppu.write_address(0x3F);
+        ppu.write_address(0x1C);
+        assert_eq!(
+            ppu.read_data(),
+            0x1C,
+            "$3F1C should mirror to $3F0C (value 0x1C)"
         );
     }
 }
