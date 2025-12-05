@@ -73,23 +73,191 @@ impl PPUModular {
             self.status.exit_vblank();
         }
 
-        // Render pixels during visible scanlines and pixels
-        // Scanlines 0-239 are visible, pixels 1-256 are visible (1-indexed)
         let scanline = self.timing.scanline();
         let pixel = self.timing.pixel();
+        let is_rendering_enabled = self.registers.is_rendering_enabled();
         
-        if scanline < 240 && pixel >= 1 && pixel <= 256 && self.registers.is_rendering_enabled() {
-            // Convert to 0-indexed screen coordinates
+        // Background rendering pipeline during rendering cycles
+        let is_visible_scanline = scanline < 240;
+        let is_prerender = scanline == prerender_scanline;
+        let is_rendering_scanline = is_visible_scanline || is_prerender;
+        let is_rendering_pixel = pixel >= 1 && pixel <= 256;
+        
+        if is_rendering_enabled && is_rendering_scanline {
+            // Shift registers every cycle during rendering
+            self.background.shift_registers();
+            
+            // Perform background tile fetches based on cycle (every 8 pixels)
+            // Fetch step: 0=nametable, 1=attribute, 2=pattern lo, 3=pattern hi
+            let fetch_step = ((pixel - 1) % 8) / 2;
+            match fetch_step {
+                0 => {
+                    // Fetch nametable byte
+                    let v = self.registers.v();
+                    self.background.fetch_nametable(v, |addr| self.memory.read_nametable(addr));
+                }
+                1 => {
+                    // Fetch attribute byte
+                    let v = self.registers.v();
+                    self.background.fetch_attribute(v, |addr| self.memory.read_nametable(addr));
+                }
+                2 => {
+                    // Fetch pattern table low byte
+                    let v = self.registers.v();
+                    let bg_pattern_table = self.registers.bg_pattern_table_addr();
+                    self.background.fetch_pattern_lo(bg_pattern_table, v, |addr| self.memory.read_chr(addr));
+                }
+                3 => {
+                    // Fetch pattern table high byte
+                    let v = self.registers.v();
+                    let bg_pattern_table = self.registers.bg_pattern_table_addr();
+                    self.background.fetch_pattern_hi(bg_pattern_table, v, |addr| self.memory.read_chr(addr));
+                    
+                    // Load shift registers after pattern high byte fetch
+                    self.background.load_shift_registers(v);
+                    
+                    // Increment coarse X after loading shift registers
+                    if pixel <= 256 {
+                        self.registers.increment_coarse_x();
+                    }
+                }
+                _ => {}
+            }
+            
+            // Handle scroll register updates
+            if pixel == 256 {
+                // Increment fine Y at end of scanline
+                self.registers.increment_fine_y();
+            } else if pixel == 257 {
+                // Copy horizontal bits from t to v
+                self.registers.copy_horizontal_bits();
+            }
+        }
+        
+        // Copy vertical bits during pre-render scanline (dots 280-304)
+        if is_rendering_enabled && is_prerender && pixel >= 280 && pixel <= 304 {
+            self.registers.copy_vertical_bits();
+        }
+        
+        // Sprite evaluation during visible scanlines
+        if is_visible_scanline {
+            if pixel == 0 {
+                // Reset sprite evaluation at start of scanline
+                self.sprites.reset_evaluation();
+            } else if pixel >= 1 && pixel <= 64 {
+                // Initialize secondary OAM
+                self.sprites.initialize_secondary_oam_byte(pixel);
+            } else if pixel >= 65 && pixel <= 256 {
+                // Evaluate sprites for next scanline
+                let sprite_height = self.registers.sprite_height();
+                let sprite_0_found = self.sprites.evaluate_sprites(pixel, scanline, sprite_height);
+                
+                if pixel == 256 {
+                    // Finalize evaluation
+                    self.sprites.finalize_evaluation();
+                    if sprite_0_found && self.sprites.sprite_count() > 8 {
+                        self.status.set_sprite_overflow();
+                    }
+                }
+            } else if pixel >= 257 && pixel <= 320 {
+                // Fetch sprite patterns for next scanline
+                let sprite_height = self.registers.sprite_height();
+                let sprite_pattern_table = self.registers.sprite_pattern_table_addr();
+                self.sprites.fetch_sprite_pattern(
+                    pixel,
+                    scanline,
+                    sprite_height,
+                    sprite_pattern_table,
+                    |addr| self.memory.read_chr(addr)
+                );
+            } else if pixel == 321 {
+                // Swap sprite buffers for rendering
+                self.sprites.swap_buffers();
+                self.sprites.mark_buffers_ready();
+            }
+        }
+        
+        // Render pixels to screen buffer during visible scanlines and pixels
+        if is_visible_scanline && is_rendering_pixel && is_rendering_enabled {
             let screen_x = (pixel - 1) as u32;
             let screen_y = scanline as u32;
             
-            // For now, render a simple backdrop color to verify rendering works
-            // Get backdrop color from palette[0]
-            let backdrop_index = self.memory.read_palette(0);
-            let (r, g, b) = crate::nes::Nes::lookup_system_palette(backdrop_index);
+            // Get background pixel
+            let fine_x = self.registers.x();
+            let bg_pixel = self.background.get_pixel(fine_x);
             
-            // Render the pixel to the screen buffer
-            self.rendering.screen_buffer_mut().set_pixel(screen_x, screen_y, r, g, b);
+            // Get sprite pixel
+            let show_sprites_left = self.registers.show_sprites_left();
+            let sprite_pixel = self.sprites.get_pixel(screen_x as i16, show_sprites_left);
+            
+            // Check for sprite 0 hit
+            if let Some((_palette_idx, sprite_idx, _priority)) = sprite_pixel {
+                if self.sprites.is_sprite_0(sprite_idx) && bg_pixel != 0 {
+                    self.status.set_sprite_0_hit();
+                }
+            }
+            
+            // Determine final palette index
+            let palette_index = if let Some((sprite_palette_idx, _sprite_idx, is_foreground)) = sprite_pixel {
+                if bg_pixel == 0 {
+                    sprite_palette_idx // Background transparent, show sprite
+                } else if is_foreground {
+                    sprite_palette_idx // Sprite in foreground
+                } else {
+                    bg_pixel // Sprite in background
+                }
+            } else {
+                bg_pixel // No sprite
+            };
+            
+            // Apply grayscale if enabled
+            let final_palette_index = if self.registers.is_grayscale() {
+                palette_index & 0x30
+            } else {
+                palette_index
+            };
+            
+            // Look up color in palette
+            let color_value = self.memory.read_palette(final_palette_index as u16);
+            let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
+            
+            // Apply color emphasis/tint
+            let (final_r, final_g, final_b) = if self.registers.color_emphasis() != 0 {
+                let emphasis = self.registers.color_emphasis();
+                let emphasize_red = (emphasis & 0x01) != 0;
+                let emphasize_green = (emphasis & 0x02) != 0;
+                let emphasize_blue = (emphasis & 0x04) != 0;
+                
+                const ATTENUATION: f32 = 0.75;
+                const BOOST: f32 = 1.1;
+                
+                let mut fr = r as f32;
+                let mut fg = g as f32;
+                let mut fb = b as f32;
+                
+                if emphasize_red {
+                    fr = (fr * BOOST).min(255.0);
+                    if !emphasize_green { fg *= ATTENUATION; }
+                    if !emphasize_blue { fb *= ATTENUATION; }
+                }
+                if emphasize_green {
+                    fg = (fg * BOOST).min(255.0);
+                    if !emphasize_red { fr *= ATTENUATION; }
+                    if !emphasize_blue { fb *= ATTENUATION; }
+                }
+                if emphasize_blue {
+                    fb = (fb * BOOST).min(255.0);
+                    if !emphasize_red { fr *= ATTENUATION; }
+                    if !emphasize_green { fg *= ATTENUATION; }
+                }
+                
+                (fr as u8, fg as u8, fb as u8)
+            } else {
+                (r, g, b)
+            };
+            
+            // Write pixel to screen buffer
+            self.rendering.screen_buffer_mut().set_pixel(screen_x, screen_y, final_r, final_g, final_b);
         }
     }
 
