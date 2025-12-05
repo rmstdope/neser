@@ -1,3 +1,22 @@
+// ============================================================================
+// DEPRECATED: This file contains the original monolithic PPU implementation.
+// 
+// The PPU has been refactored into modular components in src/ppu_modules/:
+//   - timing.rs: Scanline/pixel/cycle management
+//   - status.rs: VBlank, NMI, sprite flags
+//   - registers.rs: PPUCTRL, PPUMASK, Loopy registers
+//   - memory.rs: VRAM, palette, CHR ROM
+//   - background.rs: Background rendering
+//   - sprites.rs: Sprite evaluation and rendering
+//   - rendering.rs: Pixel composition
+//   - ppu_modular.rs: Main coordinator
+//
+// The modular PPU (PPUModular) is now used throughout the codebase.
+// This file is kept temporarily for reference and its extensive test suite.
+// The tests in this file should be gradually migrated to the appropriate
+// modules in ppu_modules/ before this file is removed.
+// ============================================================================
+
 use crate::cartridge::MirroringMode;
 use crate::nes::TvSystem;
 use crate::screen_buffer::ScreenBuffer;
