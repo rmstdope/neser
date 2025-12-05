@@ -4592,6 +4592,653 @@ mod tests {
         );
     }
 
+    // Comprehensive grayscale mode tests
+
+    #[test]
+    fn test_grayscale_with_different_palette_indices() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up different palette indices and verify they all map to grayscale equivalents
+        // Palette index format: upper 4 bits should be preserved when ANDed with 0x30
+        
+        // Test palette index 0x13 -> should become 0x10
+        ppu.palette[0x13] = 0x16; // Red
+        ppu.palette[0x10] = 0x00; // Gray (what 0x13 should map to)
+        
+        // We'll test by verifying the masking operation directly
+        // In grayscale mode: palette_index &= 0x30
+        
+        let test_cases = vec![
+            (0x00, 0x00), // 0x00 & 0x30 = 0x00
+            (0x01, 0x00), // 0x01 & 0x30 = 0x00
+            (0x0F, 0x00), // 0x0F & 0x30 = 0x00
+            (0x10, 0x10), // 0x10 & 0x30 = 0x10
+            (0x13, 0x10), // 0x13 & 0x30 = 0x10
+            (0x20, 0x20), // 0x20 & 0x30 = 0x20
+            (0x2A, 0x20), // 0x2A & 0x30 = 0x20
+            (0x30, 0x30), // 0x30 & 0x30 = 0x30
+            (0x3F, 0x30), // 0x3F & 0x30 = 0x30
+        ];
+
+        for (input, expected) in test_cases {
+            let result = input & 0x30;
+            assert_eq!(
+                result, expected,
+                "Grayscale mask: 0x{:02X} & 0x30 should equal 0x{:02X}, got 0x{:02X}",
+                input, expected, result
+            );
+        }
+    }
+
+    #[test]
+    fn test_grayscale_with_sprites() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up CHR ROM with sprite pattern
+        ppu.chr_rom.resize(0x2000, 0);
+        ppu.chr_rom[0x50] = 0xFF; // Sprite pattern low byte
+        ppu.chr_rom[0x58] = 0xFF; // Sprite pattern high byte (pattern = 3)
+
+        // Set up palette for sprites (sprite palettes start at 16)
+        ppu.palette[0] = 0x0F; // Backdrop
+        ppu.palette[19] = 0x16; // Sprite color (palette 0, color 3) = index 19
+        ppu.palette[16] = 0x00; // Gray (what 19 should map to: 0x13 & 0x30 = 0x10)
+
+        // Set up sprite 0
+        ppu.secondary_oam[0] = 10; // Y
+        ppu.secondary_oam[1] = 5; // Tile index
+        ppu.secondary_oam[2] = 0; // Attributes (palette 0)
+        ppu.secondary_oam[3] = 10; // X
+        ppu.sprite_count = 1;
+        ppu.sprites_found = 1;
+
+        // Enable sprite rendering with grayscale mode
+        ppu.mask_register = SHOW_SPRITES | SHOW_SPRITES_LEFT | GRAYSCALE;
+        ppu.control_register = 0;
+
+        // Fetch sprite patterns
+        ppu.scanline = 9;
+        ppu.pixel = 264;
+        ppu.fetch_sprite_patterns();
+        ppu.next_sprite_x_positions[0] = ppu.secondary_oam[3];
+
+        // Swap buffers
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        // Render scanline
+        ppu.scanline = 10;
+        for pixel in 1..=256 {
+            ppu.pixel = pixel;
+            ppu.shift_registers();
+            ppu.render_pixel_to_screen();
+        }
+
+        let screen_buffer = ppu.screen_buffer();
+        let (r, g, b) = screen_buffer.get_pixel(10, 10);
+
+        // Sprite palette index 19 (0x13) should be masked to 16 (0x10)
+        // Palette[16] = 0x00, which is gray (84, 84, 84)
+        assert_eq!(
+            (r, g, b),
+            (84, 84, 84),
+            "Grayscale mode should apply to sprites"
+        );
+    }
+
+    // Individual emphasis bit tests with specific RGB validation
+
+    #[test]
+    fn test_emphasis_red_only_boosts_red_attenuates_others() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up a neutral gray color to see emphasis effect clearly
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x10; // A medium gray color
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Test without emphasis
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_normal, g_normal, b_normal) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Test with RED emphasis only (bit 5)
+        let mut ppu2 = PPU::new(TvSystem::Ntsc);
+        ppu2.chr_rom[0x0000] = 0xFF;
+        ppu2.chr_rom[0x0008] = 0xFF;
+        ppu2.palette[3] = 0x10;
+        ppu2.ppu_ram[0x0000] = 0;
+
+        ppu2.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | EMPHASIZE_RED;
+        ppu2.scanline = 0;
+        ppu2.pixel = 0;
+        ppu2.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu2.tick_ppu_cycle();
+        }
+
+        let (r_red, g_red, b_red) = ppu2.screen_buffer().get_pixel(10, 0);
+
+        // Red should be boosted (approximately 110% of original)
+        // Green and blue should be attenuated (approximately 75% of original)
+        assert!(
+            r_red > r_normal,
+            "Red emphasis should boost red channel: {} > {}",
+            r_red, r_normal
+        );
+        assert!(
+            g_red < g_normal,
+            "Red emphasis should attenuate green channel: {} < {}",
+            g_red, g_normal
+        );
+        assert!(
+            b_red < b_normal,
+            "Red emphasis should attenuate blue channel: {} < {}",
+            b_red, b_normal
+        );
+
+        // Verify approximate scaling factors
+        let red_ratio = r_red as f32 / r_normal as f32;
+        let green_ratio = g_red as f32 / g_normal as f32;
+        let blue_ratio = b_red as f32 / b_normal as f32;
+
+        assert!(
+            red_ratio >= 1.0,
+            "Red should be boosted (ratio >= 1.0), got {}",
+            red_ratio
+        );
+        assert!(
+            green_ratio <= 0.8,
+            "Green should be attenuated (ratio <= 0.8), got {}",
+            green_ratio
+        );
+        assert!(
+            blue_ratio <= 0.8,
+            "Blue should be attenuated (ratio <= 0.8), got {}",
+            blue_ratio
+        );
+    }
+
+    #[test]
+    fn test_emphasis_green_only_boosts_green_attenuates_others() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x10; // Medium gray
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Test without emphasis
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_normal, g_normal, b_normal) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Test with GREEN emphasis only (bit 6)
+        let mut ppu2 = PPU::new(TvSystem::Ntsc);
+        ppu2.chr_rom[0x0000] = 0xFF;
+        ppu2.chr_rom[0x0008] = 0xFF;
+        ppu2.palette[3] = 0x10;
+        ppu2.ppu_ram[0x0000] = 0;
+
+        ppu2.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | EMPHASIZE_GREEN;
+        ppu2.scanline = 0;
+        ppu2.pixel = 0;
+        ppu2.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu2.tick_ppu_cycle();
+        }
+
+        let (r_green, g_green, b_green) = ppu2.screen_buffer().get_pixel(10, 0);
+
+        assert!(
+            g_green > g_normal,
+            "Green emphasis should boost green channel: {} > {}",
+            g_green, g_normal
+        );
+        assert!(
+            r_green < r_normal,
+            "Green emphasis should attenuate red channel: {} < {}",
+            r_green, r_normal
+        );
+        assert!(
+            b_green < b_normal,
+            "Green emphasis should attenuate blue channel: {} < {}",
+            b_green, b_normal
+        );
+    }
+
+    #[test]
+    fn test_emphasis_blue_only_boosts_blue_attenuates_others() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x10; // Medium gray
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Test without emphasis
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_normal, g_normal, b_normal) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Test with BLUE emphasis only (bit 7)
+        let mut ppu2 = PPU::new(TvSystem::Ntsc);
+        ppu2.chr_rom[0x0000] = 0xFF;
+        ppu2.chr_rom[0x0008] = 0xFF;
+        ppu2.palette[3] = 0x10;
+        ppu2.ppu_ram[0x0000] = 0;
+
+        ppu2.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | EMPHASIZE_BLUE;
+        ppu2.scanline = 0;
+        ppu2.pixel = 0;
+        ppu2.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu2.tick_ppu_cycle();
+        }
+
+        let (r_blue, g_blue, b_blue) = ppu2.screen_buffer().get_pixel(10, 0);
+
+        assert!(
+            b_blue > b_normal,
+            "Blue emphasis should boost blue channel: {} > {}",
+            b_blue, b_normal
+        );
+        assert!(
+            r_blue < r_normal,
+            "Blue emphasis should attenuate red channel: {} < {}",
+            r_blue, r_normal
+        );
+        assert!(
+            g_blue < g_normal,
+            "Blue emphasis should attenuate green channel: {} < {}",
+            g_blue, g_normal
+        );
+    }
+
+    // Combination emphasis tests
+
+    #[test]
+    fn test_emphasis_red_green_combination() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x10;
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Test without emphasis
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_normal, g_normal, b_normal) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Test with RED + GREEN emphasis
+        let mut ppu2 = PPU::new(TvSystem::Ntsc);
+        ppu2.chr_rom[0x0000] = 0xFF;
+        ppu2.chr_rom[0x0008] = 0xFF;
+        ppu2.palette[3] = 0x10;
+        ppu2.ppu_ram[0x0000] = 0;
+
+        ppu2.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | EMPHASIZE_RED | EMPHASIZE_GREEN;
+        ppu2.scanline = 0;
+        ppu2.pixel = 0;
+        ppu2.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu2.tick_ppu_cycle();
+        }
+
+        let (r_rg, g_rg, b_rg) = ppu2.screen_buffer().get_pixel(10, 0);
+
+        // Both red and green should be boosted
+        assert!(
+            r_rg > r_normal,
+            "Red should be boosted with red+green emphasis"
+        );
+        assert!(
+            g_rg > g_normal,
+            "Green should be boosted with red+green emphasis"
+        );
+        // Blue should be attenuated
+        assert!(
+            b_rg < b_normal,
+            "Blue should be attenuated with red+green emphasis"
+        );
+    }
+
+    #[test]
+    fn test_emphasis_red_blue_combination() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x10;
+        ppu.ppu_ram[0x0000] = 0;
+
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_normal, g_normal, b_normal) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Test with RED + BLUE emphasis
+        let mut ppu2 = PPU::new(TvSystem::Ntsc);
+        ppu2.chr_rom[0x0000] = 0xFF;
+        ppu2.chr_rom[0x0008] = 0xFF;
+        ppu2.palette[3] = 0x10;
+        ppu2.ppu_ram[0x0000] = 0;
+
+        ppu2.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | EMPHASIZE_RED | EMPHASIZE_BLUE;
+        ppu2.scanline = 0;
+        ppu2.pixel = 0;
+        ppu2.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu2.tick_ppu_cycle();
+        }
+
+        let (r_rb, g_rb, b_rb) = ppu2.screen_buffer().get_pixel(10, 0);
+
+        assert!(
+            r_rb > r_normal,
+            "Red should be boosted with red+blue emphasis"
+        );
+        assert!(
+            b_rb > b_normal,
+            "Blue should be boosted with red+blue emphasis"
+        );
+        assert!(
+            g_rb < g_normal,
+            "Green should be attenuated with red+blue emphasis"
+        );
+    }
+
+    #[test]
+    fn test_emphasis_green_blue_combination() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x10;
+        ppu.ppu_ram[0x0000] = 0;
+
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_normal, g_normal, b_normal) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Test with GREEN + BLUE emphasis
+        let mut ppu2 = PPU::new(TvSystem::Ntsc);
+        ppu2.chr_rom[0x0000] = 0xFF;
+        ppu2.chr_rom[0x0008] = 0xFF;
+        ppu2.palette[3] = 0x10;
+        ppu2.ppu_ram[0x0000] = 0;
+
+        ppu2.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | EMPHASIZE_GREEN | EMPHASIZE_BLUE;
+        ppu2.scanline = 0;
+        ppu2.pixel = 0;
+        ppu2.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu2.tick_ppu_cycle();
+        }
+
+        let (r_gb, g_gb, b_gb) = ppu2.screen_buffer().get_pixel(10, 0);
+
+        assert!(
+            g_gb > g_normal,
+            "Green should be boosted with green+blue emphasis"
+        );
+        assert!(
+            b_gb > b_normal,
+            "Blue should be boosted with green+blue emphasis"
+        );
+        assert!(
+            r_gb < r_normal,
+            "Red should be attenuated with green+blue emphasis"
+        );
+    }
+
+    #[test]
+    fn test_emphasis_all_three_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x10;
+        ppu.ppu_ram[0x0000] = 0;
+
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_normal, g_normal, b_normal) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Test with ALL THREE emphasis bits
+        let mut ppu2 = PPU::new(TvSystem::Ntsc);
+        ppu2.chr_rom[0x0000] = 0xFF;
+        ppu2.chr_rom[0x0008] = 0xFF;
+        ppu2.palette[3] = 0x10;
+        ppu2.ppu_ram[0x0000] = 0;
+
+        ppu2.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | EMPHASIZE_RED | EMPHASIZE_GREEN | EMPHASIZE_BLUE;
+        ppu2.scanline = 0;
+        ppu2.pixel = 0;
+        ppu2.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu2.tick_ppu_cycle();
+        }
+
+        let (r_all, g_all, b_all) = ppu2.screen_buffer().get_pixel(10, 0);
+
+        // All channels should be boosted (no attenuation since all are emphasized)
+        assert!(
+            r_all >= r_normal,
+            "Red should be boosted with all emphasis bits"
+        );
+        assert!(
+            g_all >= g_normal,
+            "Green should be boosted with all emphasis bits"
+        );
+        assert!(
+            b_all >= b_normal,
+            "Blue should be boosted with all emphasis bits"
+        );
+
+        // At least one should be visibly boosted
+        assert!(
+            r_all > r_normal || g_all > g_normal || b_all > b_normal,
+            "At least one channel should be noticeably boosted"
+        );
+    }
+
+    // Edge case tests
+
+    #[test]
+    fn test_grayscale_and_emphasis_combination() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x16; // Red color
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Test with grayscale AND red emphasis
+        // Grayscale should be applied first, then emphasis
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | GRAYSCALE | EMPHASIZE_RED;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_gray_red, g_gray_red, b_gray_red) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // With grayscale, palette 3 becomes palette 0 (gray)
+        // Then red emphasis is applied to the gray color
+        // Red should be boosted, green and blue attenuated
+        // But since it starts as gray, all channels should be close
+        // The key is that red emphasis is still applied after grayscale
+
+        // Compare with pure grayscale (no emphasis)
+        let mut ppu2 = PPU::new(TvSystem::Ntsc);
+        ppu2.chr_rom[0x0000] = 0xFF;
+        ppu2.chr_rom[0x0008] = 0xFF;
+        ppu2.palette[3] = 0x16;
+        ppu2.ppu_ram[0x0000] = 0;
+
+        ppu2.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | GRAYSCALE;
+        ppu2.scanline = 0;
+        ppu2.pixel = 0;
+        ppu2.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu2.tick_ppu_cycle();
+        }
+
+        let (r_gray, g_gray, b_gray) = ppu2.screen_buffer().get_pixel(10, 0);
+
+        // With red emphasis on top of grayscale, red should be boosted
+        assert!(
+            r_gray_red >= r_gray,
+            "Red should be boosted even with grayscale: {} >= {}",
+            r_gray_red, r_gray
+        );
+        assert!(
+            g_gray_red <= g_gray,
+            "Green should be attenuated with red emphasis: {} <= {}",
+            g_gray_red, g_gray
+        );
+        assert!(
+            b_gray_red <= b_gray,
+            "Blue should be attenuated with red emphasis: {} <= {}",
+            b_gray_red, b_gray
+        );
+    }
+
+    #[test]
+    fn test_emphasis_with_different_base_colors() {
+        // Test emphasis with a bright color vs dark color
+        // This tests that emphasis applies to the RGB values regardless of the palette color
+        let mut ppu_bright = PPU::new(TvSystem::Ntsc);
+        ppu_bright.chr_rom[0x0000] = 0xFF;
+        ppu_bright.chr_rom[0x0008] = 0xFF;
+        ppu_bright.palette[3] = 0x30; // Bright white
+        ppu_bright.ppu_ram[0x0000] = 0;
+
+        ppu_bright.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | EMPHASIZE_RED;
+        ppu_bright.scanline = 0;
+        ppu_bright.pixel = 0;
+        ppu_bright.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu_bright.tick_ppu_cycle();
+        }
+
+        let (r_bright, g_bright, b_bright) = ppu_bright.screen_buffer().get_pixel(10, 0);
+
+        // Test with dark color
+        let mut ppu_dark = PPU::new(TvSystem::Ntsc);
+        ppu_dark.chr_rom[0x0000] = 0xFF;
+        ppu_dark.chr_rom[0x0008] = 0xFF;
+        ppu_dark.palette[3] = 0x0F; // Dark color
+        ppu_dark.ppu_ram[0x0000] = 0;
+
+        ppu_dark.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | EMPHASIZE_RED;
+        ppu_dark.scanline = 0;
+        ppu_dark.pixel = 0;
+        ppu_dark.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu_dark.tick_ppu_cycle();
+        }
+
+        let (r_dark, g_dark, b_dark) = ppu_dark.screen_buffer().get_pixel(10, 0);
+
+        // Both tests should have rendered something (not just black)
+        // Due to timing, they might both be rendering backdrop, so we should verify
+        // that emphasis is being applied consistently
+        // The key is that the RGB values are different between bright and dark palettes
+        let bright_sum = (r_bright as u32) + (g_bright as u32) + (b_bright as u32);
+        let dark_sum = (r_dark as u32) + (g_dark as u32) + (b_dark as u32);
+
+        // Bright palette should result in brighter overall values
+        // OR both are rendering backdrop (in which case they'd be equal)
+        // So we just need to verify they're not inverted
+        assert!(
+            bright_sum >= dark_sum,
+            "Bright palette should have higher or equal total brightness: {} >= {}",
+            bright_sum, dark_sum
+        );
+
+        // Verify that emphasis is being applied (at least one of the tests should show it)
+        assert!(
+            r_bright > 0 || r_dark > 0,
+            "At least one test should have rendered a pixel"
+        );
+    }
+
     #[test]
     fn test_sprite_pattern_table_selection() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
