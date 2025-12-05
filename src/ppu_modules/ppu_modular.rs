@@ -1,9 +1,8 @@
 use crate::cartridge::MirroringMode;
 use crate::nes::TvSystem;
-use crate::ppu_modules::{Memory, Registers, Status, Timing};
+use crate::ppu_modules::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
 
 /// Refactored PPU using modular components
-/// This is a work-in-progress demonstration of the new architecture
 pub struct PPUModular {
     /// Timing and cycle management
     timing: Timing,
@@ -13,11 +12,12 @@ pub struct PPUModular {
     registers: Registers,
     /// Memory management (VRAM, palette, CHR ROM)
     memory: Memory,
-    
-    // TODO: Add when created:
-    // background: Background,
-    // sprites: Sprites,
-    // rendering: Rendering,
+    /// Background rendering
+    background: Background,
+    /// Sprite rendering
+    sprites: Sprites,
+    /// Final rendering and screen output
+    rendering: Rendering,
 }
 
 impl PPUModular {
@@ -28,6 +28,9 @@ impl PPUModular {
             status: Status::new(),
             registers: Registers::new(),
             memory: Memory::new(),
+            background: Background::new(),
+            sprites: Sprites::new(),
+            rendering: Rendering::new(),
         }
     }
 
@@ -37,6 +40,8 @@ impl PPUModular {
         self.status.reset();
         self.registers.reset();
         self.memory.reset();
+        self.background.reset();
+        self.sprites.reset();
     }
 
     /// Run the PPU for a specified number of cycles
@@ -178,6 +183,27 @@ impl PPUModular {
     /// Get current pixel
     pub fn pixel(&self) -> u16 {
         self.timing.pixel()
+    }
+
+    /// Write to OAM address register ($2003)
+    pub fn write_oam_address(&mut self, value: u8) {
+        self.registers.oam_address = value;
+    }
+
+    /// Write to OAM data register ($2004)
+    pub fn write_oam_data(&mut self, value: u8) {
+        self.sprites.write_oam(self.registers.oam_address, value);
+        self.registers.oam_address = self.registers.oam_address.wrapping_add(1);
+    }
+
+    /// Read from OAM data register ($2004)
+    pub fn read_oam_data(&self) -> u8 {
+        self.sprites.read_oam(self.registers.oam_address)
+    }
+
+    /// Get reference to screen buffer
+    pub fn screen_buffer(&self) -> &crate::screen_buffer::ScreenBuffer {
+        self.rendering.screen_buffer()
     }
 }
 
