@@ -8,4 +8,5 @@ pub mod mem_controller;
 pub mod nes;
 pub mod opcode;
 pub mod ppu;
+pub mod ppu_modules; // New modular PPU structure
 pub mod screen_buffer;
