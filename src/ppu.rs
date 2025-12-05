@@ -4641,8 +4641,8 @@ mod tests {
 
         // Set up palette for sprites (sprite palettes start at 16)
         ppu.palette[0] = 0x0F; // Backdrop
-        ppu.palette[19] = 0x16; // Sprite color (palette 0, color 3) = index 19
-        ppu.palette[16] = 0x00; // Gray (what 19 should map to: 0x13 & 0x30 = 0x10)
+        ppu.palette[19] = 0x16; // Sprite color (palette 0, color 3) at index 19 (0x13 in hex)
+        ppu.palette[16] = 0x00; // Gray - what index 19 maps to in grayscale: 0x13 & 0x30 = 0x10 (16 in decimal)
 
         // Set up sprite 0
         ppu.secondary_oam[0] = 10; // Y
@@ -4688,12 +4688,12 @@ mod tests {
         let screen_buffer = ppu.screen_buffer();
         let (r, g, b) = screen_buffer.get_pixel(10, 10);
 
-        // Sprite palette index 19 (0x13) should be masked to 16 (0x10)
-        // Palette[16] = 0x00, which is gray (84, 84, 84)
+        // Sprite palette index 19 (0x13 in hex) should be masked to 16 (0x10 in hex) in grayscale mode
+        // Palette[16] = 0x00 in NES palette, which maps to RGB (84, 84, 84) via system palette lookup
         assert_eq!(
             (r, g, b),
-            (84, 84, 84),
-            "Grayscale mode should apply to sprites"
+            crate::nes::Nes::lookup_system_palette(0x00),
+            "Grayscale mode should apply to sprites, mapping index 19 to 16"
         );
     }
 
@@ -5216,23 +5216,21 @@ mod tests {
 
         let (r_dark, g_dark, b_dark) = ppu_dark.screen_buffer().get_pixel(10, 0);
 
-        // Both tests should have rendered something (not just black)
-        // Due to timing, they might both be rendering backdrop, so we should verify
-        // that emphasis is being applied consistently
-        // The key is that the RGB values are different between bright and dark palettes
+        // Due to timing in test setup, both tests might render backdrop color instead of 
+        // the pattern tiles. To make this test robust, we verify overall brightness relationship
+        // rather than specific values. The bright palette (0x30) should produce equal or higher
+        // brightness than the dark palette (0x0F), regardless of whether rendering shows the
+        // pattern or backdrop.
         let bright_sum = (r_bright as u32) + (g_bright as u32) + (b_bright as u32);
         let dark_sum = (r_dark as u32) + (g_dark as u32) + (b_dark as u32);
 
-        // Bright palette should result in brighter overall values
-        // OR both are rendering backdrop (in which case they'd be equal)
-        // So we just need to verify they're not inverted
         assert!(
             bright_sum >= dark_sum,
             "Bright palette should have higher or equal total brightness: {} >= {}",
             bright_sum, dark_sum
         );
 
-        // Verify that emphasis is being applied (at least one of the tests should show it)
+        // Verify that at least some rendering occurred
         assert!(
             r_bright > 0 || r_dark > 0,
             "At least one test should have rendered a pixel"
