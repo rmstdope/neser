@@ -4720,4 +4720,308 @@ mod tests {
             "Sprite 0 hit should not occur when sprite is clipped in leftmost 8 pixels"
         );
     }
+
+    // Sprite 0 Hit Miss Scenarios Tests
+
+    #[test]
+    fn test_sprite_0_no_hit_when_sprite_transparent() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom.resize(0x2000, 0);
+
+        // Background pattern: opaque pixels
+        ppu.chr_rom[0x00] = 0xFF;
+        ppu.chr_rom[0x08] = 0x00;
+
+        // Sprite pattern: TRANSPARENT pixels (pattern = 0)
+        ppu.chr_rom[0x50] = 0x00;
+        ppu.chr_rom[0x58] = 0x00;
+
+        ppu.palette[0] = 0x0F;
+        ppu.palette[1] = 0x10;
+        ppu.palette[17] = 0x20;
+
+        ppu.ppu_ram[0] = 0;
+
+        ppu.secondary_oam[0] = 10;
+        ppu.secondary_oam[1] = 5;
+        ppu.secondary_oam[2] = 0;
+        ppu.secondary_oam[3] = 10;
+        ppu.sprite_count = 1;
+        ppu.sprites_found = 1;
+        ppu.sprite_0_index = Some(0);
+
+        ppu.mask_register =
+            SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT | SHOW_SPRITES_LEFT;
+        ppu.control_register = 0;
+
+        ppu.scanline = 9;
+        ppu.pixel = 264;
+        ppu.fetch_sprite_patterns();
+        ppu.next_sprite_x_positions[0] = ppu.secondary_oam[3];
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.v = 0;
+        ppu.x = 0;
+        ppu.fetch_nametable_byte();
+        ppu.fetch_attribute_byte();
+        ppu.fetch_pattern_lo_byte();
+        ppu.fetch_pattern_hi_byte();
+        ppu.load_shift_registers();
+
+        ppu.sprite_0_hit = false;
+
+        ppu.scanline = 10;
+        ppu.pixel = 11;
+
+        for _ in 0..11 {
+            ppu.shift_registers();
+        }
+
+        ppu.render_pixel_to_screen();
+
+        assert!(
+            !ppu.sprite_0_hit,
+            "Sprite 0 hit should not occur when sprite pixel is transparent"
+        );
+    }
+
+    #[test]
+    fn test_sprite_0_no_hit_when_background_transparent() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom.resize(0x2000, 0);
+
+        // Background pattern: TRANSPARENT pixels (pattern = 0)
+        ppu.chr_rom[0x00] = 0x00;
+        ppu.chr_rom[0x08] = 0x00;
+
+        // Sprite pattern: opaque pixels
+        ppu.chr_rom[0x50] = 0xFF;
+        ppu.chr_rom[0x58] = 0x00;
+
+        ppu.palette[0] = 0x0F;
+        ppu.palette[1] = 0x10;
+        ppu.palette[17] = 0x20;
+
+        ppu.ppu_ram[0] = 0;
+
+        ppu.secondary_oam[0] = 10;
+        ppu.secondary_oam[1] = 5;
+        ppu.secondary_oam[2] = 0;
+        ppu.secondary_oam[3] = 10;
+        ppu.sprite_count = 1;
+        ppu.sprites_found = 1;
+        ppu.sprite_0_index = Some(0);
+
+        ppu.mask_register =
+            SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT | SHOW_SPRITES_LEFT;
+        ppu.control_register = 0;
+
+        ppu.scanline = 9;
+        ppu.pixel = 264;
+        ppu.fetch_sprite_patterns();
+        ppu.next_sprite_x_positions[0] = ppu.secondary_oam[3];
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.v = 0;
+        ppu.x = 0;
+        ppu.fetch_nametable_byte();
+        ppu.fetch_attribute_byte();
+        ppu.fetch_pattern_lo_byte();
+        ppu.fetch_pattern_hi_byte();
+        ppu.load_shift_registers();
+
+        ppu.sprite_0_hit = false;
+
+        ppu.scanline = 10;
+        ppu.pixel = 11;
+
+        for _ in 0..11 {
+            ppu.shift_registers();
+        }
+
+        ppu.render_pixel_to_screen();
+
+        assert!(
+            !ppu.sprite_0_hit,
+            "Sprite 0 hit should not occur when background pixel is transparent"
+        );
+    }
+
+    #[test]
+    fn test_sprite_0_no_hit_when_both_transparent() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom.resize(0x2000, 0);
+
+        // Background pattern: transparent
+        ppu.chr_rom[0x00] = 0x00;
+        ppu.chr_rom[0x08] = 0x00;
+
+        // Sprite pattern: transparent
+        ppu.chr_rom[0x50] = 0x00;
+        ppu.chr_rom[0x58] = 0x00;
+
+        ppu.palette[0] = 0x0F;
+        ppu.palette[1] = 0x10;
+        ppu.palette[17] = 0x20;
+
+        ppu.ppu_ram[0] = 0;
+
+        ppu.secondary_oam[0] = 10;
+        ppu.secondary_oam[1] = 5;
+        ppu.secondary_oam[2] = 0;
+        ppu.secondary_oam[3] = 10;
+        ppu.sprite_count = 1;
+        ppu.sprites_found = 1;
+        ppu.sprite_0_index = Some(0);
+
+        ppu.mask_register =
+            SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT | SHOW_SPRITES_LEFT;
+        ppu.control_register = 0;
+
+        ppu.scanline = 9;
+        ppu.pixel = 264;
+        ppu.fetch_sprite_patterns();
+        ppu.next_sprite_x_positions[0] = ppu.secondary_oam[3];
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.v = 0;
+        ppu.x = 0;
+        ppu.fetch_nametable_byte();
+        ppu.fetch_attribute_byte();
+        ppu.fetch_pattern_lo_byte();
+        ppu.fetch_pattern_hi_byte();
+        ppu.load_shift_registers();
+
+        ppu.sprite_0_hit = false;
+
+        ppu.scanline = 10;
+        ppu.pixel = 11;
+
+        for _ in 0..11 {
+            ppu.shift_registers();
+        }
+
+        ppu.render_pixel_to_screen();
+
+        assert!(
+            !ppu.sprite_0_hit,
+            "Sprite 0 hit should not occur when both pixels are transparent"
+        );
+    }
+
+    #[test]
+    fn test_sprite_0_no_hit_when_rendering_disabled() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom.resize(0x2000, 0);
+
+        // Both opaque
+        ppu.chr_rom[0x00] = 0xFF;
+        ppu.chr_rom[0x08] = 0x00;
+        ppu.chr_rom[0x50] = 0xFF;
+        ppu.chr_rom[0x58] = 0x00;
+
+        ppu.palette[0] = 0x0F;
+        ppu.palette[1] = 0x10;
+        ppu.palette[17] = 0x20;
+
+        ppu.ppu_ram[0] = 0;
+
+        ppu.secondary_oam[0] = 10;
+        ppu.secondary_oam[1] = 5;
+        ppu.secondary_oam[2] = 0;
+        ppu.secondary_oam[3] = 10;
+        ppu.sprite_count = 1;
+        ppu.sprites_found = 1;
+        ppu.sprite_0_index = Some(0);
+
+        // Rendering DISABLED - both SHOW_BACKGROUND and SHOW_SPRITES are 0
+        ppu.mask_register = 0;
+        ppu.control_register = 0;
+
+        ppu.scanline = 9;
+        ppu.pixel = 264;
+        ppu.fetch_sprite_patterns();
+        ppu.next_sprite_x_positions[0] = ppu.secondary_oam[3];
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.v = 0;
+        ppu.x = 0;
+        ppu.fetch_nametable_byte();
+        ppu.fetch_attribute_byte();
+        ppu.fetch_pattern_lo_byte();
+        ppu.fetch_pattern_hi_byte();
+        ppu.load_shift_registers();
+
+        ppu.sprite_0_hit = false;
+
+        ppu.scanline = 10;
+        ppu.pixel = 11;
+
+        for _ in 0..11 {
+            ppu.shift_registers();
+        }
+
+        ppu.render_pixel_to_screen();
+
+        assert!(
+            !ppu.sprite_0_hit,
+            "Sprite 0 hit should not occur when rendering is disabled"
+        );
+    }
 }
