@@ -1310,12 +1310,16 @@ impl PPU {
                 buffered
             }
             0x3F00..=0x3FFF => {
-                // Palette reads return immediately (no buffering)
+                // Palette reads return immediately (no buffering of palette data)
                 // but still update the buffer with mirrored nametable data
-                let data = self.palette[(addr - 0x3F00) as usize % 32];
-                // Update buffer (would be from mirrored nametable, but not implemented yet)
-                // For now, just return the palette data
-                data
+                let palette_data = self.palette[(addr - 0x3F00) as usize % 32];
+
+                // Update buffer with nametable data "underneath" the palette
+                // Palette addresses $3F00-$3FFF mirror to $2F00-$2FFF in nametable space
+                let mirrored_addr = addr & 0x2FFF;
+                self.data_buffer = self.ppu_ram[self.mirror_vram_address(mirrored_addr) as usize];
+
+                palette_data
             }
             _ => {
                 eprintln!("PPU address out of range: {:04X}", addr);
@@ -1532,6 +1536,153 @@ mod tests {
         // Palette reads return immediately (not buffered)
         assert_eq!(ppu.read_data(), 0x11);
         assert_eq!(ppu.read_data(), 0x22);
+    }
+
+    #[test]
+    fn test_ppudata_palette_read_updates_buffer_with_nametable() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Write a value to nametable at $2F00
+        ppu.write_address(0x2F);
+        ppu.write_address(0x00);
+        ppu.write_data(0xAB);
+
+        // Set a different palette value at $3F00
+        ppu.palette[0] = 0xCD;
+
+        // Read from palette $3F00 (which mirrors nametable $2F00)
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        let palette_value = ppu.read_data();
+
+        // Should return palette value immediately
+        assert_eq!(palette_value, 0xCD);
+
+        // Now read from a different address - this should return the buffered nametable value
+        // The buffer should have been updated with the nametable data at $2F00 (which is $AB)
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        let buffered_value = ppu.read_data();
+
+        // This read should return what was in the buffer from the palette read
+        // which should be the nametable value at $2F00 = $AB
+        assert_eq!(buffered_value, 0xAB);
+    }
+
+    #[test]
+    fn test_ppudata_buffer_initial_state() {
+        let ppu = PPU::new(TvSystem::Ntsc);
+        // Buffer should start at 0
+        assert_eq!(ppu.data_buffer, 0);
+    }
+
+    #[test]
+    fn test_ppudata_palette_to_palette_reads() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up different nametable values under palette addresses
+        ppu.write_address(0x2F);
+        ppu.write_address(0x00);
+        ppu.write_data(0x11);
+
+        ppu.write_address(0x2F);
+        ppu.write_address(0x01);
+        ppu.write_data(0x22);
+
+        // Set different palette values
+        ppu.palette[0] = 0xAA;
+        ppu.palette[1] = 0xBB;
+
+        // Read first palette - should return palette immediately, buffer gets nametable
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        assert_eq!(ppu.read_data(), 0xAA);
+
+        // Read second palette - should return palette immediately, buffer gets new nametable
+        assert_eq!(ppu.read_data(), 0xBB);
+
+        // Now read from nametable to verify buffer has the last nametable value
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        assert_eq!(ppu.read_data(), 0x22); // Should return buffered nametable from $2F01
+    }
+
+    #[test]
+    fn test_ppudata_cross_boundary_chr_to_nametable() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set CHR ROM value
+        ppu.chr_rom[0x1FFF] = 0xAA;
+
+        // Set nametable value
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        ppu.write_data(0xBB);
+
+        // Read from CHR ROM
+        ppu.write_address(0x1F);
+        ppu.write_address(0xFF);
+        assert_eq!(ppu.read_data(), 0x00); // First read returns buffer (0)
+
+        // Read from nametable - should return buffered CHR value (0xAA)
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        assert_eq!(ppu.read_data(), 0xAA);
+
+        // Next read returns buffered nametable value
+        assert_eq!(ppu.read_data(), 0xBB);
+    }
+
+    #[test]
+    fn test_ppudata_cross_boundary_nametable_to_palette() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Write to nametable
+        ppu.write_address(0x2F);
+        ppu.write_address(0xFF);
+        ppu.write_data(0x77);
+
+        // Set palette
+        ppu.palette[0] = 0x88;
+
+        // Read nametable
+        ppu.write_address(0x2F);
+        ppu.write_address(0xFF);
+        assert_eq!(ppu.read_data(), 0x00); // First read returns buffer (0)
+
+        // Read palette - should return palette immediately
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        assert_eq!(ppu.read_data(), 0x88);
+
+        // Read nametable again - should return buffered nametable from palette read ($2F00)
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        let buffered = ppu.read_data();
+        // The buffer should have the nametable value from $2F00, not the palette
+        // Since we didn't write to $2F00, it should be 0
+        assert_eq!(buffered, 0x00);
+    }
+
+    #[test]
+    fn test_ppudata_buffer_persistence_across_writes() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Read from CHR to fill buffer
+        ppu.chr_rom[0x0100] = 0xCC;
+        ppu.write_address(0x01);
+        ppu.write_address(0x00);
+        assert_eq!(ppu.read_data(), 0x00); // Returns buffer (0), loads 0xCC
+
+        // Write to a different address - buffer should persist
+        ppu.write_address(0x20);
+        ppu.write_address(0x50);
+        ppu.write_data(0xDD);
+
+        // Read from yet another address - should return the persisted buffer
+        ppu.write_address(0x20);
+        ppu.write_address(0x60);
+        assert_eq!(ppu.read_data(), 0xCC); // Should return the buffer from CHR read
     }
 
     #[test]
