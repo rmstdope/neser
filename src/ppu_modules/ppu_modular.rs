@@ -73,9 +73,24 @@ impl PPUModular {
             self.status.exit_vblank();
         }
 
-        // TODO: Add background rendering pipeline
-        // TODO: Add sprite evaluation and rendering
-        // TODO: Add pixel composition
+        // Render pixels during visible scanlines and pixels
+        // Scanlines 0-239 are visible, pixels 1-256 are visible (1-indexed)
+        let scanline = self.timing.scanline();
+        let pixel = self.timing.pixel();
+        
+        if scanline < 240 && pixel >= 1 && pixel <= 256 && self.registers.is_rendering_enabled() {
+            // Convert to 0-indexed screen coordinates
+            let screen_x = (pixel - 1) as u32;
+            let screen_y = scanline as u32;
+            
+            // For now, render a simple backdrop color to verify rendering works
+            // Get backdrop color from palette[0]
+            let backdrop_index = self.memory.read_palette(0);
+            let (r, g, b) = crate::nes::Nes::lookup_system_palette(backdrop_index);
+            
+            // Render the pixel to the screen buffer
+            self.rendering.screen_buffer_mut().set_pixel(screen_x, screen_y, r, g, b);
+        }
     }
 
     /// Write to control register ($2000)
