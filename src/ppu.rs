@@ -112,6 +112,8 @@ pub struct PPU {
     nmi_enabled: bool,
     /// Frame complete flag - set when VBlank starts, regardless of NMI generation
     frame_complete: bool,
+    /// Frame counter for odd/even frame tracking (used for NTSC odd frame skip)
+    frame_count: u64,
     // Loopy registers for scrolling
     /// v: Current VRAM address (15 bits)
     v: u16,
@@ -191,6 +193,7 @@ impl PPU {
             sprite_overflow: false,
             nmi_enabled: false,
             frame_complete: false,
+            frame_count: 0,
             v: 0,
             t: 0,
             x: 0,
@@ -236,6 +239,7 @@ impl PPU {
         self.sprite_overflow = false;
         self.nmi_enabled = false;
         self.frame_complete = false;
+        self.frame_count = 0;
         self.v = 0;
         self.t = 0;
         self.x = 0;
@@ -269,15 +273,31 @@ impl PPU {
         let _old_pixel = self.pixel;
         let old_scanline = self.scanline;
 
-        // Advance pixel position
-        self.pixel += 1;
-        if self.pixel >= PIXELS_PER_SCANLINE {
-            self.pixel = 0;
-            self.scanline += 1;
+        // NTSC odd frame skip: On odd frames with rendering enabled,
+        // skip from pre-render scanline dot 339 directly to scanline 0 dot 0
+        let should_skip_odd_frame = self.tv_system == TvSystem::Ntsc
+            && (self.frame_count & 1) == 1 // Odd frame
+            && self.is_rendering_enabled()
+            && self.scanline == 261 // Pre-render scanline
+            && self.pixel == 339;
 
-            let scanlines_per_frame = self.tv_system.scanlines_per_frame();
-            if self.scanline >= scanlines_per_frame {
-                self.scanline = 0;
+        if should_skip_odd_frame {
+            // Skip dot 340 and go directly to scanline 0, dot 0
+            self.pixel = 0;
+            self.scanline = 0;
+            self.frame_count += 1;
+        } else {
+            // Normal pixel advancement
+            self.pixel += 1;
+            if self.pixel >= PIXELS_PER_SCANLINE {
+                self.pixel = 0;
+                self.scanline += 1;
+
+                let scanlines_per_frame = self.tv_system.scanlines_per_frame();
+                if self.scanline >= scanlines_per_frame {
+                    self.scanline = 0;
+                    self.frame_count += 1;
+                }
             }
         }
 
@@ -2857,6 +2877,172 @@ mod tests {
             status_after & SPRITE_OVERFLOW,
             0,
             "PPUSTATUS bit 5 should be clear after pre-render scanline dot 1"
+        );
+    }
+
+    #[test]
+    fn test_odd_frame_skip_on_ntsc() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Enable rendering (odd frame skip only happens when rendering is enabled)
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_SPRITES;
+
+        // Start at an even frame (frame 0), advance to start of frame 1 (odd frame)
+        // Frame 0: 262 scanlines × 341 dots = 89,342 cycles
+        ppu.run_ppu_cycles(262 * 341);
+
+        // Now we're at the start of frame 1 (odd frame)
+        // Advance to scanline 261 (pre-render), dot 339
+        let cycles_to_prerender_339 = (261 * 341) + 339;
+        ppu.run_ppu_cycles(cycles_to_prerender_339);
+
+        assert_eq!(ppu.scanline, 261, "Should be on pre-render scanline");
+        assert_eq!(ppu.pixel, 339, "Should be at dot 339");
+
+        // Tick once - on odd frames, should skip dot 340 and go to scanline 0, dot 0
+        ppu.tick_ppu_cycle();
+
+        assert_eq!(ppu.scanline, 0, "Should skip to scanline 0");
+        assert_eq!(ppu.pixel, 0, "Should skip to dot 0 (skipping dot 340)");
+    }
+
+    #[test]
+    fn test_even_frame_no_skip_on_ntsc() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_SPRITES;
+
+        // Frame 0 is even - advance to scanline 261, dot 339
+        let cycles_to_prerender_339 = (261 * 341) + 339;
+        ppu.run_ppu_cycles(cycles_to_prerender_339);
+
+        assert_eq!(ppu.scanline, 261, "Should be on pre-render scanline");
+        assert_eq!(ppu.pixel, 339, "Should be at dot 339");
+
+        // Tick once - on even frames, should go to dot 340 (no skip)
+        ppu.tick_ppu_cycle();
+
+        assert_eq!(ppu.scanline, 261, "Should still be on scanline 261");
+        assert_eq!(
+            ppu.pixel, 340,
+            "Should advance to dot 340 (no skip on even frames)"
+        );
+    }
+
+    #[test]
+    fn test_odd_frame_skip_only_when_rendering_enabled() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Rendering DISABLED - advance to odd frame
+        ppu.run_ppu_cycles(262 * 341);
+
+        // Advance to scanline 261, dot 339
+        let cycles_to_prerender_339 = (261 * 341) + 339;
+        ppu.run_ppu_cycles(cycles_to_prerender_339);
+
+        assert_eq!(ppu.scanline, 261);
+        assert_eq!(ppu.pixel, 339);
+
+        // Tick once - without rendering enabled, should NOT skip
+        ppu.tick_ppu_cycle();
+
+        assert_eq!(ppu.scanline, 261, "Should still be on scanline 261");
+        assert_eq!(
+            ppu.pixel, 340,
+            "Should advance to dot 340 (no skip when rendering disabled)"
+        );
+    }
+
+    #[test]
+    fn test_odd_frame_skip_ntsc_only_not_pal() {
+        let mut ppu = PPU::new(TvSystem::Pal);
+
+        // Enable rendering
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_SPRITES;
+
+        // PAL has different scanline count (312 instead of 262)
+        // Advance to odd frame start
+        ppu.run_ppu_cycles(312 * 341);
+
+        // PAL pre-render is scanline 311
+        // Advance to scanline 311, dot 339
+        let cycles_to_prerender_339 = (311 * 341) + 339;
+        ppu.run_ppu_cycles(cycles_to_prerender_339);
+
+        assert_eq!(ppu.scanline, 311, "Should be on PAL pre-render scanline");
+        assert_eq!(ppu.pixel, 339);
+
+        // Tick once - PAL should NOT skip even on odd frames
+        ppu.tick_ppu_cycle();
+
+        assert_eq!(ppu.scanline, 311, "Should still be on scanline 311");
+        assert_eq!(ppu.pixel, 340, "PAL should not skip dot 340");
+    }
+
+    #[test]
+    fn test_vertical_scroll_reload_timing() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_SPRITES;
+
+        // Manually position PPU at pre-render scanline (261), dot 279
+        ppu.scanline = 261;
+        ppu.pixel = 279;
+
+        // Set up different values in t (temporary) and v (current) registers
+        ppu.t = 0b0111_1011_1101_1111; // All vertical bits set in t
+        ppu.v = 0b0000_0000_0000_0000; // All bits clear in v
+
+        // Verify v still has cleared vertical bits before reload
+        assert_eq!(
+            ppu.v & 0b0111_1011_1110_0000,
+            0,
+            "Vertical bits should still be clear before dot 280"
+        );
+
+        // Tick to dot 280 - vertical reload should happen
+        ppu.tick_ppu_cycle();
+
+        assert_eq!(ppu.pixel, 280);
+
+        // Verify vertical bits were copied from t to v
+        // Vertical bits are: bits 10-11 (nametable Y), bits 12-14 (fine Y), bits 5-9 (coarse Y)
+        let expected_vertical = ppu.t & 0b0111_1011_1110_0000;
+        let actual_vertical = ppu.v & 0b0111_1011_1110_0000;
+        assert_eq!(
+            actual_vertical, expected_vertical,
+            "Vertical bits should be reloaded from t to v at dot 280"
+        );
+
+        // Verify reload continues through dot 304
+        ppu.t = 0b0101_0101_0101_0101; // Change t again
+        for _ in 0..24 {
+            ppu.tick_ppu_cycle(); // Advance to dot 304
+        }
+
+        assert_eq!(ppu.pixel, 304);
+
+        // Reload should still be happening
+        let expected_vertical_304 = ppu.t & 0b0111_1011_1110_0000;
+        let actual_vertical_304 = ppu.v & 0b0111_1011_1110_0000;
+        assert_eq!(
+            actual_vertical_304, expected_vertical_304,
+            "Vertical bits should still be reloaded at dot 304"
+        );
+
+        // Tick to dot 305 - reload should stop
+        ppu.t = 0b0000_1111_0000_1111; // Change t again
+        ppu.tick_ppu_cycle();
+
+        assert_eq!(ppu.pixel, 305);
+
+        // Reload should have stopped, so v should keep its previous value
+        assert_eq!(
+            ppu.v & 0b0111_1011_1110_0000,
+            expected_vertical_304,
+            "Vertical bits should not change after dot 304"
         );
     }
 
