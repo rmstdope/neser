@@ -83,7 +83,7 @@ impl PPUModular {
         let is_rendering_scanline = is_visible_scanline || is_prerender;
         let is_rendering_pixel = pixel >= 1 && pixel <= 256;
         
-        if is_rendering_enabled && is_rendering_scanline {
+        if is_rendering_enabled && is_rendering_scanline && pixel >= 1 && pixel <= 256 {
             // Shift registers every cycle during rendering
             self.background.shift_registers();
             
@@ -117,9 +117,7 @@ impl PPUModular {
                     self.background.load_shift_registers(v);
                     
                     // Increment coarse X after loading shift registers
-                    if pixel <= 256 {
-                        self.registers.increment_coarse_x();
-                    }
+                    self.registers.increment_coarse_x();
                 }
                 _ => {}
             }
@@ -704,5 +702,34 @@ mod tests {
         
         assert!(ppu.poll_frame_complete()); // Should return true once
         assert!(!ppu.poll_frame_complete()); // Should be cleared after polling
+    }
+
+    #[test]
+    fn test_pixel_zero_no_panic() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        // Enable rendering
+        ppu.write_mask(0x18); // Enable background and sprite rendering
+        
+        // Run through a full scanline which includes pixel 0
+        ppu.run_ppu_cycles(341);
+        
+        // Should not panic - pixel 0 is handled correctly
+        assert_eq!(ppu.scanline(), 1);
+        assert_eq!(ppu.pixel(), 0);
+    }
+
+    #[test]
+    fn test_rendering_with_pixel_transitions() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        // Enable rendering
+        ppu.write_mask(0x18);
+        
+        // Run through multiple scanlines to test pixel 0 transitions
+        for _ in 0..5 {
+            ppu.run_ppu_cycles(341);
+        }
+        
+        // Should complete without panicking
+        assert_eq!(ppu.scanline(), 5);
     }
 }
