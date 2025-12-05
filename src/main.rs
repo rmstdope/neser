@@ -6,7 +6,6 @@ mod nes;
 mod opcode;
 mod ppu;
 mod screen_buffer;
-mod snake;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Check for -pal flag
@@ -17,7 +16,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         nes::TvSystem::Ntsc
     };
 
-    // snake::run()
     let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0)?;
     let mut nes_instance = nes::Nes::new(tv_system);
 
@@ -27,7 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Palette test - shows timing issues due to PPU timing limitations
     // let rom_data = std::fs::read("roms/palette.nes")?;
 
-    // Load the snake.nes cartridge
+    // Load the pac-man.nes cartridge
     let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/color_test.nes")?;
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
