@@ -216,8 +216,9 @@ impl PPUModular {
                 palette_index
             };
             
-            // Look up color in palette
-            let color_value = self.memory.read_palette(final_palette_index as u16);
+            // Look up color in palette (convert index to address)
+            let palette_addr = 0x3F00 + (final_palette_index as u16);
+            let color_value = self.memory.read_palette(palette_addr);
             let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
             
             // Apply color emphasis/tint
@@ -731,5 +732,27 @@ mod tests {
         
         // Should complete without panicking
         assert_eq!(ppu.scanline(), 5);
+    }
+
+    #[test]
+    fn test_palette_access_with_correct_addressing() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        
+        // Write to palette using full address
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        ppu.write_data(0x30); // Write to backdrop color
+        
+        // Write to another palette entry
+        ppu.write_address(0x3F);
+        ppu.write_address(0x01);
+        ppu.write_data(0x16);
+        
+        // Enable rendering and run one scanline
+        ppu.write_mask(0x18);
+        ppu.run_ppu_cycles(341);
+        
+        // Should complete without panic - palette lookups work correctly
+        assert_eq!(ppu.scanline(), 1);
     }
 }
