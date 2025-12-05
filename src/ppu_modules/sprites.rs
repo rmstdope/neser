@@ -1,0 +1,340 @@
+/// Manages sprite evaluation, OAM, and sprite rendering
+pub struct Sprites {
+    /// OAM (Object Attribute Memory) - 256 bytes for sprite data
+    oam_data: [u8; 256],
+    /// Secondary OAM - 32 bytes for up to 8 sprites on current scanline
+    secondary_oam: [u8; 32],
+    /// Number of sprites found during sprite evaluation (current scanline)
+    sprites_found: u8,
+    /// Number of sprites to render (from previous scanline's evaluation) - CURRENT scanline
+    sprite_count: u8,
+    /// Number of sprites for NEXT scanline (swapped at pixel 0)
+    next_sprite_count: u8,
+    /// Whether we've populated next_sprite buffers at least once
+    sprite_buffers_ready: bool,
+    /// Index (0-7) of sprite 0 in current scanline's sprite buffers, or None if not present
+    sprite_0_index: Option<usize>,
+    /// Index of sprite 0 in next scanline's sprite buffers, or None if not present
+    next_sprite_0_index: Option<usize>,
+    /// Current sprite being evaluated during sprite evaluation
+    sprite_eval_n: u8,
+    /// Byte offset (0-3) within sprite during overflow checking (for buggy behavior)
+    sprite_eval_m: u8,
+    /// Sprite pattern shift registers - low bit plane (8 sprites) - CURRENT scanline
+    sprite_pattern_shift_lo: [u8; 8],
+    /// Sprite pattern shift registers - high bit plane (8 sprites) - CURRENT scanline
+    sprite_pattern_shift_hi: [u8; 8],
+    /// Sprite X position counters - CURRENT scanline
+    sprite_x_positions: [u8; 8],
+    /// Sprite attributes (palette, priority, flip bits) - CURRENT scanline
+    sprite_attributes: [u8; 8],
+    /// Sprite pattern shift registers - low bit plane (8 sprites) - NEXT scanline
+    next_sprite_pattern_shift_lo: [u8; 8],
+    /// Sprite pattern shift registers - high bit plane (8 sprites) - NEXT scanline
+    next_sprite_pattern_shift_hi: [u8; 8],
+    /// Sprite X position counters - NEXT scanline
+    next_sprite_x_positions: [u8; 8],
+    /// Sprite attributes - NEXT scanline
+    next_sprite_attributes: [u8; 8],
+}
+
+impl Sprites {
+    /// Create a new Sprites instance
+    pub fn new() -> Self {
+        Self {
+            oam_data: [0xFF; 256],
+            secondary_oam: [0xFF; 32],
+            sprites_found: 0,
+            sprite_count: 0,
+            next_sprite_count: 0,
+            sprite_buffers_ready: false,
+            sprite_0_index: None,
+            next_sprite_0_index: None,
+            sprite_eval_n: 0,
+            sprite_eval_m: 0,
+            sprite_pattern_shift_lo: [0; 8],
+            sprite_pattern_shift_hi: [0; 8],
+            sprite_x_positions: [0; 8],
+            sprite_attributes: [0; 8],
+            next_sprite_pattern_shift_lo: [0; 8],
+            next_sprite_pattern_shift_hi: [0; 8],
+            next_sprite_x_positions: [0; 8],
+            next_sprite_attributes: [0; 8],
+        }
+    }
+
+    /// Reset sprite state
+    pub fn reset(&mut self) {
+        self.oam_data = [0; 256];
+        self.secondary_oam = [0xFF; 32];
+        self.sprites_found = 0;
+        self.sprite_eval_n = 0;
+        self.sprite_eval_m = 0;
+    }
+
+    /// Get OAM data at specified address
+    pub fn read_oam(&self, addr: u8) -> u8 {
+        self.oam_data[addr as usize]
+    }
+
+    /// Write OAM data at specified address
+    pub fn write_oam(&mut self, addr: u8, value: u8) {
+        self.oam_data[addr as usize] = value;
+    }
+
+    /// Initialize secondary OAM byte with 0xFF
+    pub fn initialize_secondary_oam_byte(&mut self, pixel: u16) {
+        let oam_index = ((pixel - 1) / 2) as usize;
+        if oam_index < 32 {
+            self.secondary_oam[oam_index] = 0xFF;
+        }
+    }
+
+    /// Evaluate sprites for the current scanline
+    pub fn evaluate_sprites(&mut self, pixel: u16, scanline: u16, sprite_height: u8) -> bool {
+        // Only evaluate on odd cycles
+        if pixel % 2 == 0 {
+            return false;
+        }
+
+        // Stop if we've evaluated all 64 sprites
+        if self.sprite_eval_n >= 64 {
+            return false;
+        }
+
+        let mut overflow = false;
+
+        // If we've already found 8 sprites, enter overflow checking mode
+        if self.sprites_found >= 8 {
+            // NES PPU Hardware Bug: Sprite Overflow Detection
+            let oam_index = (self.sprite_eval_n as usize) * 4 + (self.sprite_eval_m as usize);
+
+            if oam_index < 256 {
+                let sprite_y = self.oam_data[oam_index];
+
+                let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
+                let diff = next_scanline.wrapping_sub(sprite_y as u16);
+                
+                if diff < sprite_height as u16 && sprite_y < 0xEF {
+                    overflow = true;
+                }
+            }
+
+            // THE BUG: Increment BOTH n and m
+            self.sprite_eval_n += 1;
+            self.sprite_eval_m += 1;
+
+            if self.sprite_eval_m >= 4 {
+                self.sprite_eval_m = 0;
+            }
+
+            return overflow;
+        }
+
+        // Normal sprite evaluation (first 8 sprites)
+        let oam_index = (self.sprite_eval_n as usize) * 4;
+        let sprite_y = self.oam_data[oam_index];
+
+        if sprite_y >= 0xEF {
+            self.sprite_eval_n += 1;
+            return false;
+        }
+
+        let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
+        let diff = next_scanline.wrapping_sub(sprite_y as u16);
+        
+        if diff < sprite_height as u16 {
+            // Sprite is in range, copy all 4 bytes to secondary OAM
+            let sec_oam_index = (self.sprites_found as usize) * 4;
+            for i in 0..4 {
+                self.secondary_oam[sec_oam_index + i] = self.oam_data[oam_index + i];
+            }
+
+            // Track if this is sprite 0
+            if self.sprite_eval_n == 0 {
+                self.next_sprite_0_index = Some(self.sprites_found as usize);
+            }
+
+            self.sprites_found += 1;
+        }
+
+        self.sprite_eval_n += 1;
+        false
+    }
+
+    /// Fetch sprite pattern data
+    pub fn fetch_sprite_pattern<F>(&mut self, pixel: u16, scanline: u16, sprite_height: u8, read_chr: F)
+    where
+        F: Fn(u16) -> u8,
+    {
+        let cycle_offset = pixel - 257;
+        let sprite_index = (cycle_offset / 8) as usize;
+        let fetch_step = cycle_offset % 8;
+
+        if fetch_step == 7 && sprite_index < self.sprites_found as usize {
+            let sec_oam_offset = sprite_index * 4;
+            let sprite_y = self.secondary_oam[sec_oam_offset];
+            let tile_index = self.secondary_oam[sec_oam_offset + 1];
+            let attributes = self.secondary_oam[sec_oam_offset + 2];
+
+            let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
+            let sprite_row = next_scanline.wrapping_sub(sprite_y as u16) as u8;
+
+            // Calculate pattern address
+            let pattern_table_base = if sprite_height == 8 {
+                // Will be provided by caller based on PPUCTRL
+                0 // Placeholder
+            } else {
+                ((tile_index & 0x01) as u16) << 12
+            };
+
+            let tile_offset = if sprite_height == 8 {
+                (tile_index as u16) << 4
+            } else {
+                ((tile_index & 0xFE) as u16) << 4
+            };
+
+            let effective_row = if (attributes & 0x80) != 0 {
+                if sprite_height == 8 { 7 - sprite_row } else { 15 - sprite_row }
+            } else {
+                sprite_row
+            };
+
+            let tile_row = if sprite_height == 16 && effective_row >= 8 {
+                effective_row - 8 + 16
+            } else {
+                effective_row
+            };
+
+            let addr = pattern_table_base | tile_offset | (tile_row as u16);
+
+            let pattern_lo = read_chr(addr);
+            let pattern_hi = read_chr(addr + 8);
+
+            let (final_lo, final_hi) = if (attributes & 0x40) != 0 {
+                (pattern_lo.reverse_bits(), pattern_hi.reverse_bits())
+            } else {
+                (pattern_lo, pattern_hi)
+            };
+
+            self.next_sprite_pattern_shift_lo[sprite_index] = final_lo;
+            self.next_sprite_pattern_shift_hi[sprite_index] = final_hi;
+            self.next_sprite_attributes[sprite_index] = attributes;
+            self.next_sprite_x_positions[sprite_index] = self.secondary_oam[sec_oam_offset + 3];
+        }
+    }
+
+    /// Swap sprite buffers for next scanline
+    pub fn swap_buffers(&mut self) {
+        if self.sprite_buffers_ready {
+            std::mem::swap(&mut self.sprite_pattern_shift_lo, &mut self.next_sprite_pattern_shift_lo);
+            std::mem::swap(&mut self.sprite_pattern_shift_hi, &mut self.next_sprite_pattern_shift_hi);
+            std::mem::swap(&mut self.sprite_x_positions, &mut self.next_sprite_x_positions);
+            std::mem::swap(&mut self.sprite_attributes, &mut self.next_sprite_attributes);
+            std::mem::swap(&mut self.sprite_count, &mut self.next_sprite_count);
+            std::mem::swap(&mut self.sprite_0_index, &mut self.next_sprite_0_index);
+        }
+    }
+
+    /// Reset sprite evaluation state for a new scanline
+    pub fn reset_evaluation(&mut self) {
+        self.sprites_found = 0;
+        self.sprite_eval_n = 0;
+        self.sprite_eval_m = 0;
+        self.next_sprite_0_index = None;
+    }
+
+    /// Finalize sprite count for next scanline
+    pub fn finalize_evaluation(&mut self) {
+        self.next_sprite_count = self.sprites_found;
+    }
+
+    /// Mark buffers as ready
+    pub fn mark_buffers_ready(&mut self) {
+        self.sprite_buffers_ready = true;
+    }
+
+    /// Get sprite pixel at current position
+    /// Returns (palette_index, sprite_index, is_foreground) or None
+    pub fn get_pixel(&self, screen_x: i16, show_sprites_left: bool) -> Option<(u8, usize, bool)> {
+        // Check if we should clip sprites in leftmost 8 pixels
+        if screen_x < 8 && !show_sprites_left {
+            return None;
+        }
+
+        for sprite_idx in 0..(self.sprite_count as usize) {
+            let sprite_x = self.sprite_x_positions[sprite_idx] as i16;
+            let shift = screen_x - sprite_x;
+
+            if shift >= 0 && shift < 8 {
+                let bit_pos = 7 - (shift as u8);
+                let pattern_lo_bit = ((self.sprite_pattern_shift_lo[sprite_idx] >> bit_pos) & 0x01) as u8;
+                let pattern_hi_bit = ((self.sprite_pattern_shift_hi[sprite_idx] >> bit_pos) & 0x01) as u8;
+                let pattern = (pattern_hi_bit << 1) | pattern_lo_bit;
+
+                if pattern == 0 {
+                    continue;
+                }
+
+                let attributes = self.sprite_attributes[sprite_idx];
+                let palette = attributes & 0x03;
+                let is_foreground = (attributes & 0x20) == 0;
+
+                let palette_index = 16 + palette * 4 + pattern;
+
+                return Some((palette_index, sprite_idx, is_foreground));
+            }
+        }
+
+        None
+    }
+
+    /// Check if sprite 0 is in the current sprite buffer at the given index
+    pub fn is_sprite_0(&self, sprite_idx: usize) -> bool {
+        self.sprite_0_index.map_or(false, |idx| idx == sprite_idx)
+    }
+
+    /// Get sprite count for rendering
+    pub fn sprite_count(&self) -> u8 {
+        self.sprite_count
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sprites_new() {
+        let sprites = Sprites::new();
+        assert_eq!(sprites.sprite_count(), 0);
+    }
+
+    #[test]
+    fn test_write_read_oam() {
+        let mut sprites = Sprites::new();
+        sprites.write_oam(0, 0x42);
+        assert_eq!(sprites.read_oam(0), 0x42);
+    }
+
+    #[test]
+    fn test_initialize_secondary_oam() {
+        let mut sprites = Sprites::new();
+        sprites.initialize_secondary_oam_byte(1);
+        assert_eq!(sprites.secondary_oam[0], 0xFF);
+    }
+
+    #[test]
+    fn test_reset_evaluation() {
+        let mut sprites = Sprites::new();
+        sprites.sprites_found = 5;
+        sprites.reset_evaluation();
+        assert_eq!(sprites.sprites_found, 0);
+    }
+
+    #[test]
+    fn test_get_pixel_no_sprites() {
+        let sprites = Sprites::new();
+        assert!(sprites.get_pixel(10, true).is_none());
+    }
+}
