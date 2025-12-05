@@ -84,6 +84,8 @@ pub struct PPU {
     next_sprite_0_index: Option<usize>,
     /// Current sprite being evaluated during sprite evaluation
     sprite_eval_n: u8,
+    /// Byte offset (0-3) within sprite during overflow checking (for buggy behavior)
+    sprite_eval_m: u8,
     /// Total number of PPU ticks since reset
     total_cycles: u64,
     /// TV system (NTSC or PAL)
@@ -169,6 +171,7 @@ impl PPU {
             sprite_0_index: None,
             next_sprite_0_index: None,
             sprite_eval_n: 0,
+            sprite_eval_m: 0,
             total_cycles: 0,
             tv_system,
             scanline: 0,
@@ -213,6 +216,7 @@ impl PPU {
         self.secondary_oam = [0xFF; 32];
         self.sprites_found = 0;
         self.sprite_eval_n = 0;
+        self.sprite_eval_m = 0;
         self.total_cycles = 0;
         self.scanline = 0;
         self.pixel = 0;
@@ -366,6 +370,7 @@ impl PPU {
                 // Reset sprite evaluation state for this scanline
                 self.sprites_found = 0;
                 self.sprite_eval_n = 0;
+                self.sprite_eval_m = 0;
                 self.next_sprite_0_index = None;
             }
 
@@ -412,6 +417,7 @@ impl PPU {
         // Clear sprite 0 hit flag at pre-render scanline, dot 1
         if self.scanline == 261 && self.pixel == 1 {
             self.sprite_0_hit = false;
+            self.sprite_overflow = false;
         }
     }
 
@@ -1013,14 +1019,10 @@ impl PPU {
     /// - Reads sprite Y coordinate from primary OAM (odd cycles)
     /// - Writes sprite data to secondary OAM if in range (even cycles)
     /// - Stops after finding 8 sprites or checking all 64 sprites
+    /// - After finding 8 sprites, enters overflow checking mode (with buggy behavior)
     fn evaluate_sprites(&mut self) {
         // Only evaluate on odd cycles (odd cycles read, even cycles write)
         if self.pixel % 2 == 0 {
-            return;
-        }
-
-        // Stop if we've found 8 sprites already
-        if self.sprites_found >= 8 {
             return;
         }
 
@@ -1029,6 +1031,67 @@ impl PPU {
             return;
         }
 
+        // If we've already found 8 sprites, enter overflow checking mode
+        if self.sprites_found >= 8 {
+            // NES PPU Hardware Bug: Sprite Overflow Detection
+            //
+            // After finding 8 sprites, the hardware should check remaining sprites (9-64)
+            // by reading OAM[n*4 + 0] (the Y coordinate) for each sprite n.
+            //
+            // THE BUG: The hardware incorrectly uses both indices n and m:
+            // - n: sprite number (8-63)
+            // - m: byte offset within sprite (0-3: Y, tile, attr, X)
+            //
+            // Instead of always reading Y at offset 0, it reads OAM[n*4 + m].
+            // After each check, BOTH n and m increment (should only increment n).
+            //
+            // This causes "diagonal scanning" through OAM:
+            // - Check sprite 8 byte 0 (Y) -> increment to sprite 9 byte 1 (tile)
+            // - Check sprite 9 byte 1 (tile as Y) -> increment to sprite 10 byte 2 (attr)
+            // - Check sprite 10 byte 2 (attr as Y) -> increment to sprite 11 byte 3 (X)
+            // - Check sprite 11 byte 3 (X as Y) -> m wraps, sprite 12 byte 0 (Y)
+            //
+            // This causes false positives (wrong bytes match as Y coordinates)
+            // and false negatives (actual overflow missed due to diagonal scan).
+
+            let oam_index = (self.sprite_eval_n as usize) * 4 + (self.sprite_eval_m as usize);
+
+            // Prevent reading past OAM bounds
+            if oam_index >= 256 {
+                self.sprite_eval_n += 1;
+                return;
+            }
+
+            let sprite_y = self.oam_data[oam_index];
+
+            // Check if this byte (interpreted as Y coordinate) is in range for next scanline
+            let sprite_height = self.get_sprite_height();
+            let next_scanline = if self.scanline == 261 {
+                0
+            } else {
+                self.scanline + 1
+            };
+
+            let diff = next_scanline.wrapping_sub(sprite_y as u16);
+            if diff < sprite_height as u16 && sprite_y < 0xEF {
+                // Set overflow flag (may be false positive if m != 0)
+                self.sprite_overflow = true;
+                // Hardware continues checking even after setting flag
+            }
+
+            // THE BUG: Increment BOTH n and m (should only increment n)
+            self.sprite_eval_n += 1;
+            self.sprite_eval_m += 1;
+
+            // m wraps from 3 to 0 (byte offset stays within valid range)
+            if self.sprite_eval_m >= 4 {
+                self.sprite_eval_m = 0;
+            }
+
+            return;
+        }
+
+        // Normal sprite evaluation (first 8 sprites)
         // Read sprite Y position from primary OAM
         let oam_index = (self.sprite_eval_n as usize) * 4;
         let sprite_y = self.oam_data[oam_index];
@@ -2125,6 +2188,143 @@ mod tests {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         let status = ppu.get_status();
         assert_eq!(status & 0b0010_0000, 0);
+    }
+
+    #[test]
+    fn test_sprite_overflow_with_9_sprites_on_scanline() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up OAM with 9 sprites all on scanline 10
+        // Each sprite is 4 bytes: Y, tile, attributes, X
+        for i in 0..9 {
+            ppu.oam_data[i * 4] = 10; // Y position - all on scanline 10
+            ppu.oam_data[i * 4 + 1] = i as u8; // Tile index
+            ppu.oam_data[i * 4 + 2] = 0; // Attributes
+            ppu.oam_data[i * 4 + 3] = i as u8 * 10; // X position (spread out)
+        }
+
+        // Enable rendering (sprite evaluation only happens when rendering is enabled)
+        ppu.mask_register = SHOW_SPRITES | SHOW_BACKGROUND;
+
+        // Clear overflow flag
+        ppu.sprite_overflow = false;
+
+        // Set up for scanline 10 sprite evaluation
+        ppu.scanline = 10;
+        ppu.sprites_found = 0;
+        ppu.sprite_eval_n = 0;
+        ppu.sprite_eval_m = 0;
+
+        // Run sprite evaluation for all sprites (pixels 65-256, odd cycles only)
+        // Each sprite check happens on an odd pixel
+        for pixel in (65..=256).step_by(2) {
+            ppu.pixel = pixel;
+            ppu.evaluate_sprites();
+        }
+
+        // With 9 sprites on the scanline, overflow should be detected
+        // (even with the buggy behavior, since sprite 8 is at m=0 initially)
+        assert!(
+            ppu.sprite_overflow,
+            "Sprite overflow flag should be set when more than 8 sprites are on scanline"
+        );
+
+        // Verify flag is reflected in PPUSTATUS
+        let status = ppu.get_status();
+        assert_eq!(
+            status & SPRITE_OVERFLOW,
+            SPRITE_OVERFLOW,
+            "PPUSTATUS bit 5 should be set when sprite overflow occurs"
+        );
+    }
+
+    #[test]
+    fn test_sprite_overflow_buggy_increment_behavior() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up OAM to trigger the hardware bug
+        // Put 8 sprites on scanline 10 (fills secondary OAM)
+        for i in 0..8 {
+            ppu.oam_data[i * 4] = 10; // Y position
+            ppu.oam_data[i * 4 + 1] = i as u8; // Tile
+            ppu.oam_data[i * 4 + 2] = 0; // Attributes
+            ppu.oam_data[i * 4 + 3] = i as u8 * 10; // X position
+        }
+
+        // Sprite 8: Not on scanline 10 (Y = 50)
+        ppu.oam_data[32] = 50; // Y (not in range)
+        ppu.oam_data[33] = 8; // Tile
+        ppu.oam_data[34] = 0; // Attributes
+        ppu.oam_data[35] = 80; // X
+
+        // Due to the bug: after checking sprite 8's Y (not in range),
+        // both n and m increment, so next check is sprite 9, byte 1 (tile index)
+        // Sprite 9: Tile byte happens to match as Y coordinate
+        ppu.oam_data[36] = 100; // Y (not in range as Y)
+        ppu.oam_data[37] = 10; // Tile - this will be read as Y when m=1!
+        ppu.oam_data[38] = 0; // Attributes
+        ppu.oam_data[39] = 90; // X
+
+        // Enable rendering
+        ppu.mask_register = SHOW_SPRITES | SHOW_BACKGROUND;
+
+        // Set up for scanline 10 sprite evaluation
+        ppu.scanline = 10;
+        ppu.sprites_found = 0;
+        ppu.sprite_eval_n = 0;
+        ppu.sprite_eval_m = 0;
+
+        // Run sprite evaluation
+        for pixel in (65..=256).step_by(2) {
+            ppu.pixel = pixel;
+            ppu.evaluate_sprites();
+        }
+
+        // Bug behavior: When checking sprite 8 (n=8, m=0), Y=50 not in range
+        // Bug increments BOTH n and m, so next check is n=9, m=1
+        // This reads sprite 9's tile byte (37 = 10) as a Y coordinate
+        // Since 10 <= 11 < 18 (for 8px sprites), overflow is set (FALSE POSITIVE)
+        assert!(
+            ppu.sprite_overflow,
+            "Sprite overflow should be set due to hardware bug reading tile byte as Y"
+        );
+    }
+
+    #[test]
+    fn test_sprite_overflow_cleared_at_prerender() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set sprite overflow flag
+        ppu.sprite_overflow = true;
+
+        // Verify flag is set in PPUSTATUS
+        let status_before = ppu.get_status();
+        assert_eq!(
+            status_before & SPRITE_OVERFLOW,
+            SPRITE_OVERFLOW,
+            "Sprite overflow flag should be set initially"
+        );
+
+        // Set position to pre-render scanline (261), dot 0
+        ppu.scanline = 261;
+        ppu.pixel = 0;
+
+        // Tick to dot 1 where flags are cleared
+        ppu.tick_ppu_cycle();
+
+        // Verify flag is cleared
+        assert!(
+            !ppu.sprite_overflow,
+            "Sprite overflow flag should be cleared at pre-render scanline dot 1"
+        );
+
+        // Verify flag is reflected in PPUSTATUS
+        let status_after = ppu.get_status();
+        assert_eq!(
+            status_after & SPRITE_OVERFLOW,
+            0,
+            "PPUSTATUS bit 5 should be clear after pre-render scanline dot 1"
+        );
     }
 
     #[test]
