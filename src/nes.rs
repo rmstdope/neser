@@ -136,6 +136,9 @@ impl Nes {
 
         if self.ppu.borrow_mut().poll_nmi() {
             self.cpu.trigger_nmi();
+        }
+
+        if self.ppu.borrow_mut().poll_frame_complete() {
             self.ready_to_render = true;
         }
 

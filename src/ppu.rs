@@ -110,6 +110,8 @@ pub struct PPU {
     sprite_overflow: bool,
     /// NMI enabled flag
     nmi_enabled: bool,
+    /// Frame complete flag - set when VBlank starts, regardless of NMI generation
+    frame_complete: bool,
     // Loopy registers for scrolling
     /// v: Current VRAM address (15 bits)
     v: u16,
@@ -188,6 +190,7 @@ impl PPU {
             sprite_0_hit: false,
             sprite_overflow: false,
             nmi_enabled: false,
+            frame_complete: false,
             v: 0,
             t: 0,
             x: 0,
@@ -232,6 +235,7 @@ impl PPU {
         self.sprite_0_hit = false;
         self.sprite_overflow = false;
         self.nmi_enabled = false;
+        self.frame_complete = false;
         self.v = 0;
         self.t = 0;
         self.x = 0;
@@ -411,6 +415,7 @@ impl PPU {
         // Check if we crossed into VBlank (scanline 241)
         if old_scanline < VBLANK_START && self.scanline >= VBLANK_START {
             self.vblank_flag = true;
+            self.frame_complete = true;
             if self.should_generate_nmi() {
                 self.nmi_enabled = true;
             }
@@ -1014,6 +1019,22 @@ impl PPU {
         self.v = (self.v.wrapping_add(amount)) & 0x3FFF;
     }
 
+    /// Check if PPUDATA access should trigger the rendering glitch
+    /// The glitch occurs when:
+    /// - Rendering is enabled (background or sprites)
+    /// - Currently on a visible scanline (0-239)
+    fn should_use_rendering_glitch(&self) -> bool {
+        self.is_rendering_enabled() && self.scanline < 240
+    }
+
+    /// Increment v register using the rendering glitch pattern
+    /// During rendering, PPUDATA access increments both coarse X and fine Y
+    /// This is a hardware quirk that some games rely on
+    fn inc_address_with_rendering_glitch(&mut self) {
+        self.increment_coarse_x();
+        self.increment_fine_y();
+    }
+
     /// Write to the PPU control register ($2000)
     pub fn write_control(&mut self, value: u8) {
         let old_value: u8 = self.control_register;
@@ -1327,7 +1348,12 @@ impl PPU {
             }
         };
 
-        self.inc_address(self.vram_increment() as u16);
+        // Use rendering glitch increment if during active rendering, otherwise normal increment
+        if self.should_use_rendering_glitch() {
+            self.inc_address_with_rendering_glitch();
+        } else {
+            self.inc_address(self.vram_increment() as u16);
+        }
         result
     }
 
@@ -1351,7 +1377,12 @@ impl PPU {
             _ => eprintln!("PPU address out of range: {:04X}", addr),
         }
 
-        self.inc_address(self.vram_increment() as u16);
+        // Use rendering glitch increment if during active rendering, otherwise normal increment
+        if self.should_use_rendering_glitch() {
+            self.inc_address_with_rendering_glitch();
+        } else {
+            self.inc_address(self.vram_increment() as u16);
+        }
     }
 
     /// Mirror the VRAM address based on nametable mirroring
@@ -1382,6 +1413,19 @@ impl PPU {
     pub fn poll_nmi(&mut self) -> bool {
         let ret = self.nmi_enabled;
         self.nmi_enabled = false;
+        ret
+    }
+
+    /// Poll and clear the frame complete flag
+    ///
+    /// This method returns true when a frame is ready to render (VBlank has started),
+    /// regardless of whether NMI generation is enabled. This ensures the emulator
+    /// can render frames even when the ROM doesn't use NMI.
+    ///
+    /// The flag is automatically cleared after being read.
+    pub fn poll_frame_complete(&mut self) -> bool {
+        let ret = self.frame_complete;
+        self.frame_complete = false;
         ret
     }
 
@@ -2143,6 +2187,122 @@ mod tests {
         ppu.write_address(0x00);
         ppu.write_data(0x11);
         assert_eq!(ppu.v_register(), 0x2020);
+    }
+
+    #[test]
+    fn test_ppudata_write_glitch_during_rendering() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0b0001_1000); // Enable background and sprite rendering
+
+        // Set to visible scanline during rendering
+        ppu.scanline = 100;
+        ppu.pixel = 100;
+
+        // Set v register to a known value: 0x2000 (nametable 0, coarse X=0, coarse Y=0, fine Y=0)
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+
+        // Write data - should trigger glitch increment (coarse X + fine Y)
+        ppu.write_data(0x55);
+
+        // With glitch: both coarse X and fine Y increment
+        // Coarse X: 0 -> 1 (bit 0)
+        // Fine Y: 0 -> 1 (bit 12)
+        // Result: 0x2000 + 0x0001 + 0x1000 = 0x3001
+        assert_eq!(ppu.v_register(), 0x3001);
+    }
+
+    #[test]
+    fn test_ppudata_read_glitch_during_rendering() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0b0001_1000);
+
+        // Set to visible scanline
+        ppu.scanline = 50;
+        ppu.pixel = 200;
+
+        // Set v register
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+
+        // Read data - should also trigger glitch
+        ppu.read_data();
+
+        // Same glitch as write
+        assert_eq!(ppu.v_register(), 0x3001);
+    }
+
+    #[test]
+    fn test_ppudata_no_glitch_when_rendering_disabled() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Rendering disabled (mask = 0)
+        ppu.write_mask(0b0000_0000);
+
+        // On visible scanline
+        ppu.scanline = 100;
+        ppu.pixel = 100;
+
+        // Set v register
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+
+        // Write data - should use normal increment (+1)
+        ppu.write_data(0x55);
+
+        // Normal increment: 0x2000 + 1 = 0x2001
+        assert_eq!(ppu.v_register(), 0x2001);
+    }
+
+    #[test]
+    fn test_ppudata_no_glitch_during_vblank() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0b0001_1000);
+
+        // During vblank (scanline 241)
+        ppu.scanline = 241;
+        ppu.pixel = 100;
+
+        // Set v register
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+
+        // Write data - should use normal increment (not glitch)
+        ppu.write_data(0x55);
+
+        // Normal increment: 0x2000 + 1 = 0x2001
+        assert_eq!(ppu.v_register(), 0x2001);
+    }
+
+    #[test]
+    fn test_ppudata_glitch_with_increment_32() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0b0001_1000);
+
+        // Set PPUCTRL to increment by 32 (should be ignored during glitch)
+        ppu.write_control(0b0000_0100);
+
+        // On visible scanline
+        ppu.scanline = 100;
+        ppu.pixel = 100;
+
+        // Set v register
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+
+        // Write data - glitch ignores PPUCTRL increment setting
+        ppu.write_data(0x55);
+
+        // Glitch increment (not +32): 0x2000 + coarse_x + fine_y = 0x3001
+        assert_eq!(ppu.v_register(), 0x3001);
     }
 
     #[test]
