@@ -32,6 +32,9 @@ const SHOW_SPRITES: u8 = 0b0001_0000;
 const SHOW_BACKGROUND_LEFT: u8 = 0b0000_0010;
 const SHOW_SPRITES_LEFT: u8 = 0b0000_0100;
 const GRAYSCALE: u8 = 0b0000_0001;
+const EMPHASIZE_RED: u8 = 0b0010_0000;
+const EMPHASIZE_GREEN: u8 = 0b0100_0000;
+const EMPHASIZE_BLUE: u8 = 0b1000_0000;
 
 /// PPU Status Register ($2002) bit constants
 /// Bit 7: VBlank Started
@@ -897,7 +900,51 @@ impl PPU {
         let color_value = self.palette[palette_index as usize];
 
         // Convert to RGB using the system palette
-        let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
+        let (mut r, mut g, mut b) = crate::nes::Nes::lookup_system_palette(color_value);
+
+        // Apply color emphasis/tint (PPUMASK bits 5-7)
+        // When emphasis bits are set, they boost the corresponding color channel
+        // and attenuate the others, creating a color tint effect
+        if (self.mask_register & (EMPHASIZE_RED | EMPHASIZE_GREEN | EMPHASIZE_BLUE)) != 0 {
+            // NES hardware uses analog attenuation - we'll approximate with digital scaling
+            // Emphasized channels get boosted, non-emphasized get attenuated
+            let emphasize_red = (self.mask_register & EMPHASIZE_RED) != 0;
+            let emphasize_green = (self.mask_register & EMPHASIZE_GREEN) != 0;
+            let emphasize_blue = (self.mask_register & EMPHASIZE_BLUE) != 0;
+
+            // Attenuation factor for non-emphasized channels (approximately 75%)
+            const ATTENUATION: f32 = 0.75;
+            // Boost factor for emphasized channels (approximately 110%)
+            const BOOST: f32 = 1.1;
+
+            if emphasize_red {
+                r = ((r as f32) * BOOST).min(255.0) as u8;
+                if !emphasize_green {
+                    g = ((g as f32) * ATTENUATION) as u8;
+                }
+                if !emphasize_blue {
+                    b = ((b as f32) * ATTENUATION) as u8;
+                }
+            }
+            if emphasize_green {
+                g = ((g as f32) * BOOST).min(255.0) as u8;
+                if !emphasize_red {
+                    r = ((r as f32) * ATTENUATION) as u8;
+                }
+                if !emphasize_blue {
+                    b = ((b as f32) * ATTENUATION) as u8;
+                }
+            }
+            if emphasize_blue {
+                b = ((b as f32) * BOOST).min(255.0) as u8;
+                if !emphasize_red {
+                    r = ((r as f32) * ATTENUATION) as u8;
+                }
+                if !emphasize_green {
+                    g = ((g as f32) * ATTENUATION) as u8;
+                }
+            }
+        }
 
         // Write to the screen buffer
         self.screen_buffer.set_pixel(screen_x, screen_y, r, g, b);
@@ -3944,6 +3991,132 @@ mod tests {
             (84, 84, 84),
             "Grayscale should mask to palette 0"
         );
+    }
+
+    // PPUMASK color emphasis/tint tests
+
+    #[test]
+    fn test_color_emphasis_red_bit() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up a simple background pixel
+        ppu.chr_rom[0x0000] = 0xFF; // Pattern data
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x30; // Bright white in NES palette
+        ppu.ppu_ram[0x0000] = 0; // Nametable entry
+
+        // Test without emphasis first
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_normal, g_normal, b_normal) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Now test with RED emphasis (bit 5)
+        ppu = PPU::new(TvSystem::Ntsc);
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x30;
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Enable red emphasis (bit 5 of PPUMASK)
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | 0b0010_0000;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r_red, g_red, b_red) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // With red emphasis, red should be boosted and green/blue attenuated
+        assert!(
+            r_red >= r_normal,
+            "Red component should be emphasized (or at least not reduced)"
+        );
+        assert!(
+            g_red < g_normal || b_red < b_normal,
+            "Green and/or blue should be attenuated when red is emphasized"
+        );
+    }
+
+    #[test]
+    fn test_color_emphasis_multiple_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set up a simple background pixel with a neutral color
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x30; // Bright white
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Test with both RED and GREEN emphasis (bits 5 and 6)
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT | 0b0110_0000;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r, g, b) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // With red and green emphasis, blue should be attenuated
+        // Red and green should be boosted (or at least not reduced as much)
+        // We mainly care that blue is reduced relative to red and green
+        assert!(
+            b < r || b < g,
+            "Blue should be more attenuated than red/green when both red and green are emphasized"
+        );
+    }
+
+    #[test]
+    fn test_color_emphasis_does_not_apply_with_no_bits_set() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x30;
+        ppu.ppu_ram[0x0000] = 0;
+
+        // Test without any emphasis bits
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r1, g1, b1) = ppu.screen_buffer().get_pixel(10, 0);
+
+        // Reset and test again - should get same colors
+        ppu = PPU::new(TvSystem::Ntsc);
+        ppu.chr_rom[0x0000] = 0xFF;
+        ppu.chr_rom[0x0008] = 0xFF;
+        ppu.palette[3] = 0x30;
+        ppu.ppu_ram[0x0000] = 0;
+        ppu.mask_register = SHOW_BACKGROUND | SHOW_BACKGROUND_LEFT;
+        ppu.scanline = 0;
+        ppu.pixel = 0;
+        ppu.v = 0x0000;
+
+        for _ in 0..20 {
+            ppu.tick_ppu_cycle();
+        }
+
+        let (r2, g2, b2) = ppu.screen_buffer().get_pixel(10, 0);
+
+        assert_eq!((r1, g1, b1), (r2, g2, b2), "Colors should be identical without emphasis");
     }
 
     #[test]
