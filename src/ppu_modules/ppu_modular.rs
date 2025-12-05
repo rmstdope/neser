@@ -312,4 +312,213 @@ mod tests {
         let status_second_read = ppu.get_status();
         assert_eq!(status_second_read & 0x80, 0);
     }
+
+    // PPU Data tests
+    #[test]
+    fn test_read_data_from_palette() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        ppu.write_data(0x42);
+        
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        assert_eq!(ppu.read_data(), 0x42);
+    }
+
+    #[test]
+    fn test_read_data_increments_address() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        ppu.write_data(0x10);
+        ppu.write_data(0x20);
+        
+        ppu.write_address(0x3F);
+        ppu.write_address(0x00);
+        assert_eq!(ppu.read_data(), 0x10);
+        assert_eq!(ppu.read_data(), 0x20);
+    }
+
+    #[test]
+    fn test_write_data_to_nametable() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        ppu.write_data(0x42);
+        
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        let _ = ppu.read_data(); // Dummy read for buffer
+        assert_eq!(ppu.read_data(), 0x42);
+    }
+
+    // OAM tests
+    #[test]
+    fn test_oam_write_and_read() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_oam_address(0x00);
+        ppu.write_oam_data(0x42);
+        ppu.write_oam_address(0x00);
+        assert_eq!(ppu.read_oam_data(), 0x42);
+    }
+
+    #[test]
+    fn test_oam_data_increments_address() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_oam_address(0x00);
+        ppu.write_oam_data(0x11);
+        ppu.write_oam_data(0x22);
+        ppu.write_oam_data(0x33);
+        
+        ppu.write_oam_address(0x00);
+        assert_eq!(ppu.read_oam_data(), 0x11);
+        ppu.write_oam_address(0x01);
+        assert_eq!(ppu.read_oam_data(), 0x22);
+        ppu.write_oam_address(0x02);
+        assert_eq!(ppu.read_oam_data(), 0x33);
+    }
+
+    // Control register tests
+    #[test]
+    fn test_ppuctrl_nmi_enable() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_control(0x80); // Bit 7: NMI enable
+        assert!(ppu.should_generate_nmi());
+        
+        ppu.write_control(0x00);
+        assert!(!ppu.should_generate_nmi());
+    }
+
+    // Address register tests
+    #[test]
+    fn test_address_write_sequence() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_address(0x20); // High byte
+        ppu.write_address(0x00); // Low byte
+        assert_eq!(ppu.v_register(), 0x2000);
+    }
+
+    #[test]
+    fn test_address_wraps_correctly() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_address(0xFF); // High byte
+        ppu.write_address(0xFF); // Low byte
+        // Address should be masked to 14 bits (0x3FFF)
+        assert_eq!(ppu.v_register() & 0x3FFF, 0x3FFF);
+    }
+
+    // Scroll register tests
+    #[test]
+    fn test_scroll_write_updates_registers() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_scroll(0xFF); // X scroll
+        ppu.write_scroll(0xFF); // Y scroll
+        // Verify write toggle was used
+        assert!(!ppu.w_register()); // Should be false after two writes
+    }
+
+    // Timing tests
+    #[test]
+    fn test_scanline_increments() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.run_ppu_cycles(341); // One full scanline
+        assert_eq!(ppu.scanline(), 1);
+        assert_eq!(ppu.pixel(), 0);
+    }
+
+    #[test]
+    fn test_frame_wraps_at_262_scanlines() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.run_ppu_cycles(262 * 341); // One full frame
+        assert_eq!(ppu.scanline(), 0);
+        assert_eq!(ppu.pixel(), 0);
+    }
+
+    // Status register tests
+    #[test]
+    fn test_status_read_clears_vblank() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.run_ppu_cycles(241 * 341 + 2); // Past vblank start
+        
+        let status1 = ppu.get_status();
+        assert_eq!(status1 & 0x80, 0x80); // VBlank set
+        
+        let status2 = ppu.get_status();
+        assert_eq!(status2 & 0x80, 0); // VBlank cleared
+    }
+
+    #[test]
+    fn test_status_read_clears_write_toggle() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_scroll(0x00); // First write, sets w=true
+        assert!(ppu.w_register());
+        
+        ppu.get_status(); // Should clear w
+        assert!(!ppu.w_register());
+    }
+
+    // CHR ROM and mirroring tests
+    #[test]
+    fn test_load_chr_rom() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let chr_data = vec![0x42; 8192];
+        ppu.load_chr_rom(chr_data);
+        // CHR ROM should be loaded (tested via read operations)
+    }
+
+    #[test]
+    fn test_vertical_mirroring() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.set_mirroring(crate::cartridge::MirroringMode::Vertical);
+        
+        // Write to nametable 0
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        ppu.write_data(0x42);
+        
+        // Read from nametable 2 (should mirror to 0)
+        ppu.write_address(0x28);
+        ppu.write_address(0x00);
+        let _ = ppu.read_data(); // Dummy read
+        assert_eq!(ppu.read_data(), 0x42);
+    }
+
+    #[test]
+    fn test_horizontal_mirroring() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.set_mirroring(crate::cartridge::MirroringMode::Horizontal);
+        
+        // Write to nametable 0
+        ppu.write_address(0x20);
+        ppu.write_address(0x00);
+        ppu.write_data(0x55);
+        
+        // Read from nametable 1 (should NOT mirror to 0 in horizontal)
+        ppu.write_address(0x24);
+        ppu.write_address(0x00);
+        let _ = ppu.read_data(); // Dummy read
+        let val = ppu.read_data();
+        assert_ne!(val, 0x55); // Should be different (not mirrored)
+    }
+
+    // NMI and frame complete tests
+    #[test]
+    fn test_nmi_polling() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.write_control(0x80); // Enable NMI
+        ppu.run_ppu_cycles(241 * 341 + 1); // Enter VBlank
+        
+        assert!(ppu.poll_nmi()); // Should return true once
+        assert!(!ppu.poll_nmi()); // Should be cleared after polling
+    }
+
+    #[test]
+    fn test_frame_complete_polling() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        ppu.run_ppu_cycles(241 * 341 + 1); // Enter VBlank
+        
+        assert!(ppu.poll_frame_complete()); // Should return true once
+        assert!(!ppu.poll_frame_complete()); // Should be cleared after polling
+    }
 }
