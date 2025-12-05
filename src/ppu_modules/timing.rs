@@ -93,6 +93,11 @@ impl Timing {
         self.frame_count
     }
 
+    /// Get the TV system
+    pub fn tv_system(&self) -> TvSystem {
+        self.tv_system
+    }
+
     /// Check if we're currently in a rendering cycle
     /// Rendering cycles occur during visible scanlines (0-239) and pre-render scanline (261)
     /// at pixel positions 0-256 and 328-336
