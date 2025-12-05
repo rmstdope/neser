@@ -5,6 +5,7 @@ mod mem_controller;
 mod nes;
 mod opcode;
 mod ppu;
+mod ppu_modules;
 mod screen_buffer;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
