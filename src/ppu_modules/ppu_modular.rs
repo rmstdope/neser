@@ -84,9 +84,6 @@ impl PPUModular {
         let is_rendering_pixel = pixel >= 1 && pixel <= 256;
         
         if is_rendering_enabled && is_rendering_scanline && pixel >= 1 && pixel <= 256 {
-            // Shift registers every cycle during rendering
-            self.background.shift_registers();
-            
             // Perform background tile fetches based on cycle (every 8 pixels)
             // Fetch step: 0=nametable, 1=attribute, 2=pattern lo, 3=pattern hi
             let fetch_step = ((pixel - 1) % 8) / 2;
@@ -220,6 +217,11 @@ impl PPUModular {
             let palette_addr = 0x3F00 + (final_palette_index as u16);
             let color_value = self.memory.read_palette(palette_addr);
             let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
+            
+            // Shift registers after rendering this pixel for next cycle
+            if is_rendering_enabled && is_rendering_scanline {
+                self.background.shift_registers();
+            }
             
             // Apply color emphasis/tint
             let (final_r, final_g, final_b) = if self.registers.color_emphasis() != 0 {
