@@ -110,6 +110,8 @@ pub struct PPU {
     sprite_overflow: bool,
     /// NMI enabled flag
     nmi_enabled: bool,
+    /// Frame complete flag - set when VBlank starts, regardless of NMI generation
+    frame_complete: bool,
     // Loopy registers for scrolling
     /// v: Current VRAM address (15 bits)
     v: u16,
@@ -188,6 +190,7 @@ impl PPU {
             sprite_0_hit: false,
             sprite_overflow: false,
             nmi_enabled: false,
+            frame_complete: false,
             v: 0,
             t: 0,
             x: 0,
@@ -232,6 +235,7 @@ impl PPU {
         self.sprite_0_hit = false;
         self.sprite_overflow = false;
         self.nmi_enabled = false;
+        self.frame_complete = false;
         self.v = 0;
         self.t = 0;
         self.x = 0;
@@ -411,6 +415,7 @@ impl PPU {
         // Check if we crossed into VBlank (scanline 241)
         if old_scanline < VBLANK_START && self.scanline >= VBLANK_START {
             self.vblank_flag = true;
+            self.frame_complete = true;
             if self.should_generate_nmi() {
                 self.nmi_enabled = true;
             }
@@ -1408,6 +1413,19 @@ impl PPU {
     pub fn poll_nmi(&mut self) -> bool {
         let ret = self.nmi_enabled;
         self.nmi_enabled = false;
+        ret
+    }
+
+    /// Poll and clear the frame complete flag
+    ///
+    /// This method returns true when a frame is ready to render (VBlank has started),
+    /// regardless of whether NMI generation is enabled. This ensures the emulator
+    /// can render frames even when the ROM doesn't use NMI.
+    ///
+    /// The flag is automatically cleared after being read.
+    pub fn poll_frame_complete(&mut self) -> bool {
+        let ret = self.frame_complete;
+        self.frame_complete = false;
         ret
     }
 
