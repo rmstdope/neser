@@ -205,6 +205,51 @@ impl PPUModular {
     pub fn screen_buffer(&self) -> &crate::screen_buffer::ScreenBuffer {
         self.rendering.screen_buffer()
     }
+
+    /// Get mutable reference to screen buffer (for compatibility)
+    pub fn screen_buffer_mut(&mut self) -> &mut crate::screen_buffer::ScreenBuffer {
+        self.rendering.screen_buffer_mut()
+    }
+
+    /// Check if in VBlank period
+    pub fn is_in_vblank(&self) -> bool {
+        self.status.is_in_vblank()
+    }
+
+    /// Check if should generate NMI
+    pub fn should_generate_nmi(&self) -> bool {
+        self.registers.should_generate_nmi()
+    }
+
+    /// Get total cycles (for testing)
+    #[cfg(test)]
+    pub fn total_cycles(&self) -> u64 {
+        self.timing.total_cycles()
+    }
+
+    /// Get v register (for testing)
+    #[cfg(test)]
+    pub fn v_register(&self) -> u16 {
+        self.registers.v()
+    }
+
+    /// Get t register (for testing)
+    #[cfg(test)]
+    pub fn t_register(&self) -> u16 {
+        self.registers.t()
+    }
+
+    /// Get x register (for testing)
+    #[cfg(test)]
+    pub fn x_register(&self) -> u8 {
+        self.registers.x()
+    }
+
+    /// Get w register (for testing)
+    #[cfg(test)]
+    pub fn w_register(&self) -> bool {
+        self.registers.w()
+    }
 }
 
 #[cfg(test)]
