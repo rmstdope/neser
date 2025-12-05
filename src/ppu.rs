@@ -4,19 +4,24 @@ use crate::screen_buffer::ScreenBuffer;
 
 /// PPU Control Register ($2000) bit constants
 /// Bit 7: Generate NMI at start of VBlank
-/// Bit 6: PPU Master/Slave
-/// Bit 5: Sprite size
-/// Bit 4: Background pattern table address
-/// Bit 3: Sprite pattern table address
-/// Bit 2: Address increment per CPU read/write of PPUDATA
-/// Bit 1-0: Base nametable address
+/// Bit 6: PPU Master/Slave select (see note below)
+/// Bit 5: Sprite size (0=8x8, 1=8x16)
+/// Bit 4: Background pattern table address (0=$0000, 1=$1000)
+/// Bit 3: Sprite pattern table address (0=$0000, 1=$1000, ignored in 8x16 mode)
+/// Bit 2: Address increment per CPU read/write of PPUDATA (0=+1, 1=+32)
+/// Bit 1-0: Base nametable address (0=$2000, 1=$2400, 2=$2800, 3=$2C00)
+///
+/// Note on Master/Slave bit (bit 6):
+/// This bit was intended to control PPU behavior on arcade systems with multiple PPUs.
+/// In standard NES/Famicom systems, this bit has no effect and is not emulated.
+/// Games do not rely on this functionality, so it can be safely ignored in emulation.
 const GENERATE_NMI: u8 = 0b1000_0000;
-//const PPU_MASTER_SLAVE: u8 = 0b0100_0000;
-//const SPRITE_SIZE: u8 = 0b0010_0000;
-//const BG_PATTERN_TABLE_ADDR: u8 = 0b0001_0000;
-//const SPRITE_PATTERN_TABLE_ADDR: u8 = 0b0000_1000;
+const PPU_MASTER_SLAVE: u8 = 0b0100_0000; // Not emulated - unused in standard NES hardware
+const SPRITE_SIZE: u8 = 0b0010_0000;
+const BG_PATTERN_TABLE_ADDR: u8 = 0b0001_0000;
+const SPRITE_PATTERN_TABLE_ADDR: u8 = 0b0000_1000;
 const VRAM_ADDR_INCREMENT: u8 = 0b0000_0100;
-//const BASE_NAMETABLE_ADDR: u8 = 0b0000_0011;
+const BASE_NAMETABLE_ADDR: u8 = 0b0000_0011;
 
 /// PPU Mask Register ($2001) bit constants
 /// Bit 7: Emphasize blue (NTSC) / Emphasize green (PAL)
@@ -598,7 +603,7 @@ impl PPU {
     /// - Nametable byte: Tile index (0-255)
     /// - Fine Y: Row within tile (0-7) from bits 12-14 of v register
     fn fetch_pattern_lo_byte(&mut self) {
-        let pattern_table_base = ((self.control_register & 0x10) as u16) << 8;
+        let pattern_table_base = ((self.control_register & BG_PATTERN_TABLE_ADDR) as u16) << 8;
         let tile_index = self.nametable_latch as u16;
         let fine_y = (self.v >> 12) & 0x07;
         let addr = pattern_table_base | (tile_index << 4) | fine_y;
@@ -632,7 +637,7 @@ impl PPU {
         // For 8x16 sprites, bit 0 of tile index selects the pattern table
         let pattern_table_base = if self.get_sprite_height() == 8 {
             // 8x8 sprites: use PPUCTRL bit 3
-            ((self.control_register & 0x08) as u16) << 9 // bit 3 -> $0000 or $1000
+            ((self.control_register & SPRITE_PATTERN_TABLE_ADDR) as u16) << 9 // bit 3 -> $0000 or $1000
         } else {
             // 8x16 sprites: use bit 0 of tile index
             ((tile_index & 0x01) as u16) << 12
@@ -1013,6 +1018,11 @@ impl PPU {
     pub fn write_control(&mut self, value: u8) {
         let old_value: u8 = self.control_register;
         self.control_register = value;
+
+        // Update t register bits 10-11 with nametable select (PPUCTRL bits 0-1)
+        // t: ....BA.. ........ <- value: ......BA
+        self.t = (self.t & !0x0C00) | (((value & BASE_NAMETABLE_ADDR) as u16) << 10);
+
         if self.control_register & GENERATE_NMI != 0
             && old_value & GENERATE_NMI == 0
             && self.vblank_flag
@@ -1223,7 +1233,7 @@ impl PPU {
     /// Get sprite height based on PPUCTRL bit 5
     /// Returns 8 for 8x8 sprites, 16 for 8x16 sprites
     fn get_sprite_height(&self) -> u8 {
-        if (self.control_register & 0b0010_0000) != 0 {
+        if (self.control_register & SPRITE_SIZE) != 0 {
             16
         } else {
             8
@@ -1681,6 +1691,21 @@ mod tests {
     }
 
     #[test]
+    fn test_ppuctrl_write_updates_t_nametable_bits() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        // Initialize t to a known value
+        ppu.t = 0b0011_1111_1111_1111;
+
+        // Write PPUCTRL with nametable bits 0-1 set to 0b10
+        ppu.write_control(0b0000_0010);
+
+        // Bits 0-1 of PPUCTRL should be copied to bits 10-11 of t
+        // PPUCTRL bits 0-1 = 10, so t bits 10-11 become 10
+        // t should become: 0b0011_1011_1111_1111 (bit 11 set, bit 10 clear)
+        assert_eq!(ppu.t_register(), 0b0011_1011_1111_1111);
+    }
+
+    #[test]
     fn test_ppu_control_write_multiple_times() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         ppu.write_control(0xFF);
@@ -1710,6 +1735,139 @@ mod tests {
         assert_eq!(ppu.vram_increment(), 1);
         ppu.write_control(0b0000_0100); // Only VRAM_ADDR_INCREMENT set
         assert_eq!(ppu.vram_increment(), 32);
+    }
+
+    // Comprehensive PPUCTRL tests
+    #[test]
+    fn test_ppuctrl_nmi_enable_bit() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.vblank_flag = true;
+
+        // NMI bit clear - should not enable NMI
+        ppu.write_control(0b0000_0000);
+        assert!(!ppu.nmi_enabled);
+
+        // NMI bit set - should enable NMI
+        ppu.write_control(0b1000_0000);
+        assert!(ppu.nmi_enabled);
+    }
+
+    #[test]
+    fn test_ppuctrl_vram_increment_modes() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Bit 2 clear: increment by 1 (across)
+        ppu.write_control(0b0000_0000);
+        assert_eq!(ppu.vram_increment(), 1);
+
+        // Bit 2 set: increment by 32 (down)
+        ppu.write_control(0b0000_0100);
+        assert_eq!(ppu.vram_increment(), 32);
+    }
+
+    #[test]
+    fn test_ppuctrl_sprite_size_selection() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Bit 5 clear: 8x8 sprites
+        ppu.write_control(0b0000_0000);
+        assert_eq!(ppu.get_sprite_height(), 8);
+
+        // Bit 5 set: 8x16 sprites
+        ppu.write_control(0b0010_0000);
+        assert_eq!(ppu.get_sprite_height(), 16);
+    }
+
+    #[test]
+    fn test_ppuctrl_bg_pattern_table_selection() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Bit 4 clear: use pattern table at $0000
+        ppu.write_control(0b0000_0000);
+        assert_eq!(ppu.control_register & 0b0001_0000, 0);
+
+        // Bit 4 set: use pattern table at $1000
+        ppu.write_control(0b0001_0000);
+        assert_eq!(ppu.control_register & 0b0001_0000, 0b0001_0000);
+    }
+
+    #[test]
+    fn test_ppuctrl_sprite_pattern_table_selection() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Bit 3 clear: use pattern table at $0000
+        ppu.write_control(0b0000_0000);
+        assert_eq!(ppu.control_register & 0b0000_1000, 0);
+
+        // Bit 3 set: use pattern table at $1000
+        ppu.write_control(0b0000_1000);
+        assert_eq!(ppu.control_register & 0b0000_1000, 0b0000_1000);
+    }
+
+    #[test]
+    fn test_ppuctrl_nametable_base_address_combinations() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Test all 4 nametable base addresses (bits 0-1)
+        // 00 = $2000
+        ppu.t = 0;
+        ppu.write_control(0b0000_0000);
+        assert_eq!(ppu.t_register() & 0x0C00, 0x0000);
+
+        // 01 = $2400
+        ppu.t = 0;
+        ppu.write_control(0b0000_0001);
+        assert_eq!(ppu.t_register() & 0x0C00, 0x0400);
+
+        // 10 = $2800
+        ppu.t = 0;
+        ppu.write_control(0b0000_0010);
+        assert_eq!(ppu.t_register() & 0x0C00, 0x0800);
+
+        // 11 = $2C00
+        ppu.t = 0;
+        ppu.write_control(0b0000_0011);
+        assert_eq!(ppu.t_register() & 0x0C00, 0x0C00);
+    }
+
+    #[test]
+    fn test_ppuctrl_all_bits_independent() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+        ppu.vblank_flag = true;
+
+        // Set all bits independently and verify each works
+        // Binary: 1010_1010 = bits 7, 5, 3, 1 are set
+        ppu.write_control(0b1010_1010);
+
+        // Bit 7: NMI enable
+        assert!(ppu.nmi_enabled);
+
+        // Bit 5: Sprite size (set = 16 pixels)
+        assert_eq!(ppu.get_sprite_height(), 16);
+
+        // Bit 2: VRAM increment (clear = increment by 1)
+        assert_eq!(ppu.vram_increment(), 1);
+
+        // Bits 0-1: Nametable (10 = 0x0800)
+        assert_eq!(ppu.t_register() & 0x0C00, 0x0800);
+
+        // Now test with alternating bits
+        // Binary: 0101_0101 = bits 6, 4, 2, 0 are set
+        ppu.nmi_enabled = false;
+        ppu.t = 0;
+        ppu.write_control(0b0101_0101);
+
+        // Bit 7: NMI should not be enabled (bit clear)
+        assert!(!ppu.nmi_enabled);
+
+        // Bit 5: Sprite size (clear = 8 pixels)
+        assert_eq!(ppu.get_sprite_height(), 8);
+
+        // Bit 2: VRAM increment (set = increment by 32)
+        assert_eq!(ppu.vram_increment(), 32);
+
+        // Bits 0-1: Nametable (01 = 0x0400)
+        assert_eq!(ppu.t_register() & 0x0C00, 0x0400);
     }
 
     // OAM tests
@@ -4116,7 +4274,11 @@ mod tests {
 
         let (r2, g2, b2) = ppu.screen_buffer().get_pixel(10, 0);
 
-        assert_eq!((r1, g1, b1), (r2, g2, b2), "Colors should be identical without emphasis");
+        assert_eq!(
+            (r1, g1, b1),
+            (r2, g2, b2),
+            "Colors should be identical without emphasis"
+        );
     }
 
     #[test]
