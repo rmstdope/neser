@@ -155,7 +155,8 @@ impl PPUModular {
                 if pixel == 256 {
                     // Finalize evaluation
                     self.sprites.finalize_evaluation();
-                    if sprite_0_found && self.sprites.sprite_count() > 8 {
+                    // Set sprite overflow if more than 8 sprites found
+                    if self.sprites.sprite_count() > 8 {
                         self.status.set_sprite_overflow();
                     }
                 }
@@ -210,7 +211,7 @@ impl PPUModular {
                 bg_pixel // No sprite
             };
             
-            // Apply grayscale if enabled
+            // Apply grayscale if enabled (mask to monochrome palette)
             let final_palette_index = if self.registers.is_grayscale() {
                 palette_index & 0x30
             } else {
