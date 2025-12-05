@@ -12,7 +12,6 @@ pub struct EventLoop {
     _sdl_context: sdl2::Sdl,
     canvas: Option<Canvas<Window>>,
     event_pump: sdl2::EventPump,
-    tv_system: TvSystem,
     timing_scale: f32,
 }
 
@@ -89,7 +88,6 @@ impl EventLoop {
             _sdl_context: sdl_context,
             canvas,
             event_pump,
-            tv_system,
             timing_scale: clamped_timing_scale,
         })
     }
@@ -305,7 +303,7 @@ impl EventLoop {
                 let target_frame_time = (1.0 / 60.0) / self.timing_scale as f64;
 
                 // Calculate FPS before sleeping
-                let fps = 1.0 / elapsed_seconds;
+                // let fps = 1.0 / elapsed_seconds;
                 // println!("FPS: {:.2}", fps);
 
                 // Update last_frame_time before sleeping to avoid timing drift
