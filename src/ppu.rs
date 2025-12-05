@@ -2192,21 +2192,21 @@ mod tests {
     #[test]
     fn test_ppudata_write_glitch_during_rendering() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        
+
         // Enable rendering
         ppu.write_mask(0b0001_1000); // Enable background and sprite rendering
-        
+
         // Set to visible scanline during rendering
         ppu.scanline = 100;
         ppu.pixel = 100;
-        
+
         // Set v register to a known value: 0x2000 (nametable 0, coarse X=0, coarse Y=0, fine Y=0)
         ppu.write_address(0x20);
         ppu.write_address(0x00);
-        
+
         // Write data - should trigger glitch increment (coarse X + fine Y)
         ppu.write_data(0x55);
-        
+
         // With glitch: both coarse X and fine Y increment
         // Coarse X: 0 -> 1 (bit 0)
         // Fine Y: 0 -> 1 (bit 12)
@@ -2217,21 +2217,21 @@ mod tests {
     #[test]
     fn test_ppudata_read_glitch_during_rendering() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        
+
         // Enable rendering
         ppu.write_mask(0b0001_1000);
-        
+
         // Set to visible scanline
         ppu.scanline = 50;
         ppu.pixel = 200;
-        
+
         // Set v register
         ppu.write_address(0x20);
         ppu.write_address(0x00);
-        
+
         // Read data - should also trigger glitch
         ppu.read_data();
-        
+
         // Same glitch as write
         assert_eq!(ppu.v_register(), 0x3001);
     }
@@ -2239,21 +2239,21 @@ mod tests {
     #[test]
     fn test_ppudata_no_glitch_when_rendering_disabled() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        
+
         // Rendering disabled (mask = 0)
         ppu.write_mask(0b0000_0000);
-        
+
         // On visible scanline
         ppu.scanline = 100;
         ppu.pixel = 100;
-        
+
         // Set v register
         ppu.write_address(0x20);
         ppu.write_address(0x00);
-        
+
         // Write data - should use normal increment (+1)
         ppu.write_data(0x55);
-        
+
         // Normal increment: 0x2000 + 1 = 0x2001
         assert_eq!(ppu.v_register(), 0x2001);
     }
@@ -2261,21 +2261,21 @@ mod tests {
     #[test]
     fn test_ppudata_no_glitch_during_vblank() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        
+
         // Enable rendering
         ppu.write_mask(0b0001_1000);
-        
+
         // During vblank (scanline 241)
         ppu.scanline = 241;
         ppu.pixel = 100;
-        
+
         // Set v register
         ppu.write_address(0x20);
         ppu.write_address(0x00);
-        
+
         // Write data - should use normal increment (not glitch)
         ppu.write_data(0x55);
-        
+
         // Normal increment: 0x2000 + 1 = 0x2001
         assert_eq!(ppu.v_register(), 0x2001);
     }
@@ -2283,24 +2283,24 @@ mod tests {
     #[test]
     fn test_ppudata_glitch_with_increment_32() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        
+
         // Enable rendering
         ppu.write_mask(0b0001_1000);
-        
+
         // Set PPUCTRL to increment by 32 (should be ignored during glitch)
         ppu.write_control(0b0000_0100);
-        
+
         // On visible scanline
         ppu.scanline = 100;
         ppu.pixel = 100;
-        
+
         // Set v register
         ppu.write_address(0x20);
         ppu.write_address(0x00);
-        
+
         // Write data - glitch ignores PPUCTRL increment setting
         ppu.write_data(0x55);
-        
+
         // Glitch increment (not +32): 0x2000 + coarse_x + fine_y = 0x3001
         assert_eq!(ppu.v_register(), 0x3001);
     }
