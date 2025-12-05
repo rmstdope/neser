@@ -114,25 +114,30 @@ impl Nes {
     /// visual effects. Most games work fine, but some test ROMs (like palette.nes) may
     /// show minor rendering artifacts due to this limitation.
     pub fn run_cpu_tick(&mut self) -> u8 {
-        let mut cpu_cycles = self.cpu.run_opcode();
-        self.tick_ppu(cpu_cycles);
-
-        // Check if an OAM DMA was triggered during the opcode
+        // Check if an OAM DMA is pending before executing the opcode
         let oam_dma_page = self.memory.borrow_mut().take_oam_dma_page();
         if let Some(page) = oam_dma_page {
-            // OAM DMA takes 513 cycles (or 514 if on an odd CPU cycle)
-            // For simplicity, we use 513 cycles
-            let dma_cycles = 513u16;
+            // OAM DMA takes 513 cycles on even CPU cycle, or 514 cycles on odd CPU cycle
+            // Check current CPU cycle parity
+            let is_odd_cycle = self.cpu.total_cycles % 2 == 1;
+            let dma_cycles = if is_odd_cycle { 514u16 } else { 513u16 };
 
             // Execute the DMA transfer
             self.memory.borrow_mut().execute_oam_dma(page);
 
             // Tick the PPU for the DMA cycles
-            self.tick_ppu(dma_cycles as u8);
+            self.tick_ppu_u16(dma_cycles);
 
-            // Add DMA cycles to total CPU cycles consumed (capped at u8::MAX)
-            cpu_cycles = cpu_cycles.saturating_add(dma_cycles as u8);
+            // Add DMA cycles to CPU's total cycle counter
+            self.cpu.total_cycles += dma_cycles as u64;
+
+            // Return DMA cycles (capped at u8::MAX)
+            return dma_cycles.min(255) as u8;
         }
+
+        // Normal opcode execution
+        let cpu_cycles = self.cpu.run_opcode();
+        self.tick_ppu(cpu_cycles);
 
         if self.ppu.borrow_mut().poll_nmi() {
             self.cpu.trigger_nmi();
@@ -149,6 +154,16 @@ impl Nes {
     ///
     /// For PAL, fractional cycles are accumulated to maintain timing accuracy.
     fn tick_ppu(&mut self, cpu_cycles: u8) {
+        let ppu_cycles = cpu_cycles as f64 * self.tv_system.ppu_cycles_per_cpu_cycle();
+        self.fractional_ppu_cycles += ppu_cycles;
+
+        let ppu_cycles_to_run = self.fractional_ppu_cycles as u64;
+        self.fractional_ppu_cycles -= ppu_cycles_to_run as f64;
+
+        self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles_to_run);
+    }
+
+    fn tick_ppu_u16(&mut self, cpu_cycles: u16) {
         let ppu_cycles = cpu_cycles as f64 * self.tv_system.ppu_cycles_per_cpu_cycle();
         self.fractional_ppu_cycles += ppu_cycles;
 
@@ -9527,5 +9542,184 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
         // Verify it has the correct dimensions
         assert_eq!(screen_buffer.width(), 256);
         assert_eq!(screen_buffer.height(), 240);
+    }
+
+    /// Helper function to create a minimal iNES ROM with a simple infinite loop
+    /// This ROM just executes JMP $8000 (4C 00 80) forever
+    fn create_minimal_rom() -> Vec<u8> {
+        let mut rom = Vec::new();
+
+        // iNES header
+        rom.extend_from_slice(b"NES\x1A"); // Magic bytes
+        rom.push(1); // 1x 16 KB PRG ROM
+        rom.push(0); // 0x 8 KB CHR ROM (no CHR)
+        rom.push(0); // Flags 6 (horizontal mirroring, no other features)
+        rom.push(0); // Flags 7
+        rom.extend_from_slice(&[0; 8]); // Padding to complete 16-byte header
+
+        // PRG ROM (16 KB = 16384 bytes)
+        let mut prg_rom = vec![0; 16384];
+
+        // Reset vector at $FFFC-$FFFD points to $8000
+        prg_rom[0x3FFC] = 0x00; // Low byte
+        prg_rom[0x3FFD] = 0x80; // High byte
+
+        // Code at $8000: JMP $8000 (infinite loop)
+        prg_rom[0] = 0x4C; // JMP absolute
+        prg_rom[1] = 0x00; // Low byte of address
+        prg_rom[2] = 0x80; // High byte of address
+
+        rom.extend_from_slice(&prg_rom);
+        rom
+    }
+
+    #[test]
+    fn test_oam_dma_takes_513_cycles_on_even_cpu_cycle() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let rom_data = create_minimal_rom();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        nes.insert_cartridge(cartridge);
+        nes.cpu.reset();
+
+        // Set CPU to an even cycle (8)
+        nes.cpu.total_cycles = 8;
+
+        let cycles_before = nes.cpu.total_cycles;
+        assert_eq!(cycles_before % 2, 0, "Should start on even cycle");
+
+        // Trigger OAM DMA by writing to $4014
+        nes.memory.borrow_mut().write(0x4014, 0x02);
+
+        // Run one CPU tick which should process the DMA
+        nes.run_cpu_tick();
+
+        // On even alignment, DMA should take 513 CPU cycles
+        let cycles_after = nes.cpu.total_cycles;
+        assert_eq!(
+            cycles_after - cycles_before,
+            513,
+            "DMA should take 513 cycles on even alignment"
+        );
+    }
+
+    #[test]
+    fn test_oam_dma_takes_514_cycles_on_odd_cpu_cycle() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let rom_data = create_minimal_rom();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        nes.insert_cartridge(cartridge);
+        nes.cpu.reset();
+
+        // Set CPU to an odd cycle (7)
+        nes.cpu.total_cycles = 7;
+
+        let cycles_before = nes.cpu.total_cycles;
+        assert_eq!(cycles_before % 2, 1, "Should start on odd cycle");
+
+        // Trigger OAM DMA by writing to $4014
+        nes.memory.borrow_mut().write(0x4014, 0x02);
+
+        // Run one CPU tick which should process the DMA
+        nes.run_cpu_tick();
+
+        // On odd alignment, DMA should take 514 CPU cycles (513 + 1 wait cycle)
+        let cycles_after = nes.cpu.total_cycles;
+        assert_eq!(
+            cycles_after - cycles_before,
+            514,
+            "DMA should take 514 cycles on odd alignment"
+        );
+    }
+
+    #[test]
+    fn test_oam_dma_transfers_256_bytes() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let rom_data = create_minimal_rom();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        nes.insert_cartridge(cartridge);
+        nes.cpu.reset();
+
+        // Set up test data in RAM at page $02 ($0200-$02FF)
+        for i in 0..256u16 {
+            nes.memory.borrow_mut().write(0x0200 + i, (i & 0xFF) as u8);
+        }
+
+        // Trigger OAM DMA from page $02
+        nes.memory.borrow_mut().write(0x4014, 0x02);
+        nes.run_cpu_tick();
+
+        // Verify all 256 bytes were copied to OAM by reading through $2004
+        for i in 0..256 {
+            // Set OAM address via $2003
+            nes.memory.borrow_mut().write(0x2003, i as u8);
+            // Read OAM data via $2004
+            let oam_byte = nes.memory.borrow().read(0x2004);
+            assert_eq!(
+                oam_byte,
+                (i & 0xFF) as u8,
+                "OAM byte {} should match source data",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_oam_dma_uses_correct_source_page() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let rom_data = create_minimal_rom();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        nes.insert_cartridge(cartridge);
+        nes.cpu.reset();
+
+        // Set up distinct data in different pages
+        // Page $03: $0300-$03FF
+        for i in 0..256u16 {
+            nes.memory.borrow_mut().write(0x0300 + i, 0xAA); // Marker value
+        }
+
+        // Trigger OAM DMA from page $03
+        nes.memory.borrow_mut().write(0x4014, 0x03);
+        nes.run_cpu_tick();
+
+        // Verify bytes came from page $03 by reading through $2004
+        for i in 0..256 {
+            // Set OAM address via $2003
+            nes.memory.borrow_mut().write(0x2003, i as u8);
+            // Read OAM data via $2004
+            let oam_byte = nes.memory.borrow().read(0x2004);
+            assert_eq!(
+                oam_byte, 0xAA,
+                "OAM byte {} should be 0xAA from page $03",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_ppu_advances_during_oam_dma() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let rom_data = create_minimal_rom();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        nes.insert_cartridge(cartridge);
+        nes.cpu.reset();
+
+        // Set CPU to an even cycle (8)
+        nes.cpu.total_cycles = 8;
+
+        // Get initial PPU state
+        let initial_ppu_cycles = nes.ppu.borrow().total_cycles();
+
+        // Trigger OAM DMA
+        nes.memory.borrow_mut().write(0x4014, 0x02);
+        nes.run_cpu_tick();
+
+        // PPU should have advanced by 513 CPU cycles * 3 PPU cycles per CPU cycle
+        let expected_ppu_cycles = initial_ppu_cycles + (513 * 3);
+        let actual_ppu_cycles = nes.ppu.borrow().total_cycles();
+
+        assert_eq!(
+            actual_ppu_cycles, expected_ppu_cycles,
+            "PPU should advance by 513*3 cycles during DMA on even alignment"
+        );
     }
 }
