@@ -65,7 +65,7 @@ impl Sprites {
 
     /// Reset sprite state
     pub fn reset(&mut self) {
-        self.oam_data = [0; 256];
+        self.oam_data = [0xFF; 256];
         self.secondary_oam = [0xFF; 32];
         self.sprites_found = 0;
         self.sprite_eval_n = 0;
@@ -163,7 +163,7 @@ impl Sprites {
     }
 
     /// Fetch sprite pattern data
-    pub fn fetch_sprite_pattern<F>(&mut self, pixel: u16, scanline: u16, sprite_height: u8, read_chr: F)
+    pub fn fetch_sprite_pattern<F>(&mut self, pixel: u16, scanline: u16, sprite_height: u8, sprite_pattern_table_base: u16, read_chr: F)
     where
         F: Fn(u16) -> u8,
     {
@@ -182,9 +182,10 @@ impl Sprites {
 
             // Calculate pattern address
             let pattern_table_base = if sprite_height == 8 {
-                // Will be provided by caller based on PPUCTRL
-                0 // Placeholder
+                // Use pattern table base from PPUCTRL (provided by caller)
+                sprite_pattern_table_base
             } else {
+                // 8x16 sprites: use bit 0 of tile index
                 ((tile_index & 0x01) as u16) << 12
             };
 

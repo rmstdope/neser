@@ -53,10 +53,7 @@ impl Rendering {
             bg_pixel
         };
 
-        // If palette index is 0, use backdrop color
-        if palette_index == 0 {
-            palette_index = 0;
-        }
+        // Palette index 0 represents backdrop color (palette[0])
 
         // Check for sprite 0 hit (both sprite 0 and background have opaque pixels)
         let sprite_0_hit = if let Some((_sprite_palette_idx, sprite_idx, _is_foreground)) = sprite_pixel {
