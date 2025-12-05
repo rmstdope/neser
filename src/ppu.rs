@@ -5024,4 +5024,190 @@ mod tests {
             "Sprite 0 hit should not occur when rendering is disabled"
         );
     }
+
+    // Sprite 0 Hit Flag Persistence Tests
+
+    #[test]
+    fn test_sprite_0_hit_persists_across_scanlines() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom.resize(0x2000, 0);
+
+        // Both opaque
+        ppu.chr_rom[0x00] = 0xFF;
+        ppu.chr_rom[0x08] = 0x00;
+        ppu.chr_rom[0x50] = 0xFF;
+        ppu.chr_rom[0x58] = 0x00;
+
+        ppu.palette[0] = 0x0F;
+        ppu.palette[1] = 0x10;
+        ppu.palette[17] = 0x20;
+
+        ppu.ppu_ram[0] = 0;
+
+        ppu.secondary_oam[0] = 10;
+        ppu.secondary_oam[1] = 5;
+        ppu.secondary_oam[2] = 0;
+        ppu.secondary_oam[3] = 10;
+        ppu.sprite_count = 1;
+        ppu.sprites_found = 1;
+        ppu.sprite_0_index = Some(0);
+
+        ppu.mask_register =
+            SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT | SHOW_SPRITES_LEFT;
+        ppu.control_register = 0;
+
+        ppu.scanline = 9;
+        ppu.pixel = 264;
+        ppu.fetch_sprite_patterns();
+        ppu.next_sprite_x_positions[0] = ppu.secondary_oam[3];
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.v = 0;
+        ppu.x = 0;
+        ppu.fetch_nametable_byte();
+        ppu.fetch_attribute_byte();
+        ppu.fetch_pattern_lo_byte();
+        ppu.fetch_pattern_hi_byte();
+        ppu.load_shift_registers();
+
+        ppu.sprite_0_hit = false;
+
+        // Trigger sprite 0 hit on scanline 10
+        ppu.scanline = 10;
+        ppu.pixel = 11;
+
+        for _ in 0..11 {
+            ppu.shift_registers();
+        }
+
+        ppu.render_pixel_to_screen();
+
+        assert!(ppu.sprite_0_hit, "Sprite 0 hit should be set initially");
+
+        // Advance to next scanline and verify flag persists
+        ppu.scanline = 11;
+        ppu.pixel = 1;
+
+        assert!(
+            ppu.sprite_0_hit,
+            "Sprite 0 hit flag should persist across scanlines"
+        );
+
+        // Advance several more scanlines
+        ppu.scanline = 50;
+        ppu.pixel = 100;
+
+        assert!(
+            ppu.sprite_0_hit,
+            "Sprite 0 hit flag should persist across many scanlines"
+        );
+    }
+
+    #[test]
+    fn test_sprite_0_hit_persists_after_status_read() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        ppu.chr_rom.resize(0x2000, 0);
+
+        // Both opaque
+        ppu.chr_rom[0x00] = 0xFF;
+        ppu.chr_rom[0x08] = 0x00;
+        ppu.chr_rom[0x50] = 0xFF;
+        ppu.chr_rom[0x58] = 0x00;
+
+        ppu.palette[0] = 0x0F;
+        ppu.palette[1] = 0x10;
+        ppu.palette[17] = 0x20;
+
+        ppu.ppu_ram[0] = 0;
+
+        ppu.secondary_oam[0] = 10;
+        ppu.secondary_oam[1] = 5;
+        ppu.secondary_oam[2] = 0;
+        ppu.secondary_oam[3] = 10;
+        ppu.sprite_count = 1;
+        ppu.sprites_found = 1;
+        ppu.sprite_0_index = Some(0);
+
+        ppu.mask_register =
+            SHOW_BACKGROUND | SHOW_SPRITES | SHOW_BACKGROUND_LEFT | SHOW_SPRITES_LEFT;
+        ppu.control_register = 0;
+
+        ppu.scanline = 9;
+        ppu.pixel = 264;
+        ppu.fetch_sprite_patterns();
+        ppu.next_sprite_x_positions[0] = ppu.secondary_oam[3];
+
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_lo,
+            &mut ppu.next_sprite_pattern_shift_lo,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_pattern_shift_hi,
+            &mut ppu.next_sprite_pattern_shift_hi,
+        );
+        std::mem::swap(
+            &mut ppu.sprite_x_positions,
+            &mut ppu.next_sprite_x_positions,
+        );
+        std::mem::swap(&mut ppu.sprite_attributes, &mut ppu.next_sprite_attributes);
+
+        ppu.v = 0;
+        ppu.x = 0;
+        ppu.fetch_nametable_byte();
+        ppu.fetch_attribute_byte();
+        ppu.fetch_pattern_lo_byte();
+        ppu.fetch_pattern_hi_byte();
+        ppu.load_shift_registers();
+
+        ppu.sprite_0_hit = false;
+
+        // Trigger sprite 0 hit
+        ppu.scanline = 10;
+        ppu.pixel = 11;
+
+        for _ in 0..11 {
+            ppu.shift_registers();
+        }
+
+        ppu.render_pixel_to_screen();
+
+        assert!(ppu.sprite_0_hit, "Sprite 0 hit should be set initially");
+
+        // Read PPUSTATUS
+        let status = ppu.get_status();
+        assert_eq!(
+            status & SPRITE_0_HIT,
+            SPRITE_0_HIT,
+            "PPUSTATUS should show sprite 0 hit"
+        );
+
+        // Verify flag is NOT cleared by reading PPUSTATUS (unlike vblank)
+        assert!(
+            ppu.sprite_0_hit,
+            "Sprite 0 hit flag should persist after PPUSTATUS read"
+        );
+
+        // Read again to verify it's still there
+        let status2 = ppu.get_status();
+        assert_eq!(
+            status2 & SPRITE_0_HIT,
+            SPRITE_0_HIT,
+            "PPUSTATUS should still show sprite 0 hit after second read"
+        );
+    }
 }
