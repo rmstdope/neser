@@ -114,6 +114,8 @@ pub struct PPU {
     frame_complete: bool,
     /// Frame counter for odd/even frame tracking (used for NTSC odd frame skip)
     frame_count: u64,
+    /// Flag to track if we're on the exact cycle when VBlank starts (for race condition)
+    vblank_start_cycle: bool,
     // Loopy registers for scrolling
     /// v: Current VRAM address (15 bits)
     v: u16,
@@ -194,6 +196,7 @@ impl PPU {
             nmi_enabled: false,
             frame_complete: false,
             frame_count: 0,
+            vblank_start_cycle: false,
             v: 0,
             t: 0,
             x: 0,
@@ -240,6 +243,7 @@ impl PPU {
         self.nmi_enabled = false;
         self.frame_complete = false;
         self.frame_count = 0;
+        self.vblank_start_cycle = false;
         self.v = 0;
         self.t = 0;
         self.x = 0;
@@ -271,7 +275,6 @@ impl PPU {
         self.total_cycles += 1;
 
         let _old_pixel = self.pixel;
-        let old_scanline = self.scanline;
 
         // NTSC odd frame skip: On odd frames with rendering enabled,
         // skip from pre-render scanline dot 339 directly to scanline 0 dot 0
@@ -432,23 +435,25 @@ impl PPU {
             }
         }
 
-        // Check if we crossed into VBlank (scanline 241)
-        if old_scanline < VBLANK_START && self.scanline >= VBLANK_START {
+        // Clear the vblank_start_cycle flag from the previous cycle
+        self.vblank_start_cycle = false;
+
+        // Set VBlank flag at scanline 241, dot 1
+        if self.scanline == 241 && self.pixel == 1 {
             self.vblank_flag = true;
             self.frame_complete = true;
+            self.vblank_start_cycle = true; // Mark this as the VBlank start cycle
             if self.should_generate_nmi() {
                 self.nmi_enabled = true;
             }
         }
 
-        // Clear VBlank flag when we wrap around to scanline 0
-        if self.scanline < old_scanline {
+        // Clear VBlank flag and sprite flags at pre-render scanline dot 1
+        // Pre-render scanline is the last scanline: NTSC=261, PAL=311
+        let prerender_scanline = self.tv_system.scanlines_per_frame() - 1;
+        if self.scanline == prerender_scanline && self.pixel == 1 {
             self.vblank_flag = false;
             self.nmi_enabled = false;
-        }
-
-        // Clear sprite 0 hit flag at pre-render scanline, dot 1
-        if self.scanline == 261 && self.pixel == 1 {
             self.sprite_0_hit = false;
             self.sprite_overflow = false;
         }
@@ -1335,6 +1340,12 @@ impl PPU {
         }
         if self.sprite_overflow {
             status |= SPRITE_OVERFLOW;
+        }
+
+        // Race condition: if PPUSTATUS is read at the exact moment VBlank is set
+        // (scanline 241 dot 1), suppress the NMI
+        if self.vblank_start_cycle {
+            self.nmi_enabled = false;
         }
 
         // Reading status clears VBlank flag
@@ -2711,8 +2722,8 @@ mod tests {
     #[test]
     fn test_status_vblank_flag_set_at_scanline_241() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        // Run to scanline 241 (start of VBlank)
-        ppu.run_ppu_cycles(241 * 341);
+        // Run to scanline 241 dot 1 (start of VBlank)
+        ppu.run_ppu_cycles(241 * 341 + 1);
         let status = ppu.get_status();
         assert_eq!(status & 0b1000_0000, 0b1000_0000);
     }
@@ -2720,13 +2731,304 @@ mod tests {
     #[test]
     fn test_status_vblank_flag_cleared_on_read() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
-        // Run to VBlank
-        ppu.run_ppu_cycles(241 * 341);
+        // Run to VBlank (scanline 241 dot 1)
+        ppu.run_ppu_cycles(241 * 341 + 1);
         let status = ppu.get_status();
         assert_eq!(status & 0b1000_0000, 0b1000_0000);
         // Reading status should clear VBlank flag
         let status2 = ppu.get_status();
         assert_eq!(status2 & 0b1000_0000, 0);
+    }
+
+    #[test]
+    fn test_vblank_flag_set_at_dot_1_not_dot_0() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Position at scanline 241, dot 0 (start of scanline)
+        ppu.scanline = 241;
+        ppu.pixel = 0;
+
+        // VBlank flag should NOT be set yet
+        assert_eq!(ppu.vblank_flag, false, "VBlank should not be set at dot 0");
+
+        // Tick to dot 1
+        ppu.tick_ppu_cycle();
+
+        assert_eq!(ppu.scanline, 241);
+        assert_eq!(ppu.pixel, 1);
+
+        // VBlank flag should NOW be set
+        assert_eq!(ppu.vblank_flag, true, "VBlank should be set at dot 1");
+    }
+
+    #[test]
+    fn test_vblank_flag_not_set_before_dot_1() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Run to scanline 240 (last visible scanline)
+        ppu.run_ppu_cycles(240 * 341);
+
+        assert_eq!(ppu.scanline, 240);
+        assert_eq!(
+            ppu.vblank_flag, false,
+            "VBlank should not be set on scanline 240"
+        );
+
+        // Run through entire scanline 240
+        ppu.run_ppu_cycles(341);
+
+        assert_eq!(ppu.scanline, 241);
+        assert_eq!(ppu.pixel, 0);
+        assert_eq!(
+            ppu.vblank_flag, false,
+            "VBlank should not be set at scanline 241 dot 0"
+        );
+    }
+
+    #[test]
+    fn test_vblank_flag_cleared_at_prerender_dot_1() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Set VBlank flag manually
+        ppu.vblank_flag = true;
+
+        // Position at pre-render scanline (261), dot 0
+        ppu.scanline = 261;
+        ppu.pixel = 0;
+
+        // VBlank flag should still be set
+        assert_eq!(ppu.vblank_flag, true, "VBlank should still be set at dot 0");
+
+        // Tick to dot 1
+        ppu.tick_ppu_cycle();
+
+        assert_eq!(ppu.scanline, 261);
+        assert_eq!(ppu.pixel, 1);
+
+        // VBlank flag should NOW be cleared
+        assert_eq!(
+            ppu.vblank_flag, false,
+            "VBlank should be cleared at pre-render dot 1"
+        );
+    }
+
+    #[test]
+    fn test_vblank_persists_through_vblank_period() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Run to scanline 241 dot 1 (VBlank start)
+        ppu.run_ppu_cycles(241 * 341 + 1);
+
+        assert_eq!(ppu.vblank_flag, true, "VBlank should be set");
+
+        // Run through several VBlank scanlines (241-260)
+        ppu.run_ppu_cycles(10 * 341); // Now at scanline 251 dot 1
+
+        assert_eq!(ppu.scanline, 251);
+        assert_eq!(ppu.pixel, 1);
+        assert_eq!(
+            ppu.vblank_flag, true,
+            "VBlank should persist during VBlank period"
+        );
+
+        // Run to just before pre-render scanline dot 1
+        ppu.run_ppu_cycles(10 * 341 - 1); // Now at scanline 261 dot 0
+
+        assert_eq!(ppu.scanline, 261);
+        assert_eq!(ppu.pixel, 0);
+        assert_eq!(
+            ppu.vblank_flag, true,
+            "VBlank should still be set at pre-render dot 0"
+        );
+    }
+
+    #[test]
+    fn test_ppustatus_read_at_vblank_start_suppresses_nmi() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Enable NMI generation
+        ppu.write_control(0b1000_0000);
+
+        // Position at scanline 241, dot 0 (just before VBlank set)
+        ppu.scanline = 241;
+        ppu.pixel = 0;
+
+        // Tick to dot 1 (VBlank set moment)
+        ppu.tick_ppu_cycle();
+
+        // Read PPUSTATUS at the exact moment VBlank is set
+        let status = ppu.get_status();
+
+        // VBlank flag should be set in the status
+        assert_eq!(
+            status & 0b1000_0000,
+            0b1000_0000,
+            "VBlank flag should be set in status"
+        );
+
+        // But NMI should be suppressed due to race condition
+        assert_eq!(
+            ppu.poll_nmi(),
+            false,
+            "NMI should be suppressed by race condition"
+        );
+    }
+
+    #[test]
+    fn test_ppustatus_read_before_vblank_no_suppression() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Enable NMI generation
+        ppu.write_control(0b1000_0000);
+
+        // Position at scanline 241, dot 0 (just before VBlank)
+        ppu.scanline = 241;
+        ppu.pixel = 0;
+
+        // Read PPUSTATUS before VBlank is set
+        let status = ppu.get_status();
+
+        // VBlank flag should NOT be set
+        assert_eq!(status & 0b1000_0000, 0, "VBlank flag should not be set yet");
+
+        // Now tick to dot 1 (VBlank set)
+        ppu.tick_ppu_cycle();
+
+        // NMI should be triggered normally (no race condition)
+        assert_eq!(
+            ppu.poll_nmi(),
+            true,
+            "NMI should be triggered since no race condition"
+        );
+    }
+
+    #[test]
+    fn test_ppustatus_read_after_vblank_no_suppression() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Enable NMI generation
+        ppu.write_control(0b1000_0000);
+
+        // Position at scanline 241, dot 0
+        ppu.scanline = 241;
+        ppu.pixel = 0;
+
+        // Tick to dot 1 (VBlank set)
+        ppu.tick_ppu_cycle();
+
+        // VBlank and NMI should be set
+        assert_eq!(ppu.poll_nmi(), true, "NMI should be set");
+
+        // Tick to dot 2
+        ppu.tick_ppu_cycle();
+
+        // Read PPUSTATUS after VBlank was set
+        // (Note: NMI was already polled and cleared above)
+        let status = ppu.get_status();
+
+        // VBlank flag should still be in status (but cleared by read)
+        assert_eq!(
+            status & 0b1000_0000,
+            0b1000_0000,
+            "VBlank flag should be in status"
+        );
+    }
+
+    #[test]
+    fn test_vblank_duration_ntsc() {
+        let mut ppu = PPU::new(TvSystem::Ntsc);
+
+        // Position at scanline 241, dot 0 (just before VBlank)
+        ppu.scanline = 241;
+        ppu.pixel = 0;
+
+        // Tick to dot 1 - VBlank should be set
+        ppu.tick_ppu_cycle();
+        assert_eq!(ppu.vblank_flag, true, "VBlank should be set at 241:1");
+
+        // VBlank should persist through scanlines 241-260 (20 scanlines)
+        // Run through scanlines 241-260
+        for scanline in 241..=260 {
+            ppu.scanline = scanline;
+            ppu.pixel = 100; // Arbitrary pixel in the scanline
+            assert_eq!(
+                ppu.vblank_flag, true,
+                "VBlank should be set during scanline {}",
+                scanline
+            );
+        }
+
+        // VBlank should still be set at scanline 261 dot 0 (pre-render)
+        ppu.scanline = 261;
+        ppu.pixel = 0;
+        assert_eq!(ppu.vblank_flag, true, "VBlank should be set at 261:0");
+
+        // Tick to dot 1 - VBlank should be cleared
+        ppu.tick_ppu_cycle();
+        assert_eq!(ppu.vblank_flag, false, "VBlank should be cleared at 261:1");
+    }
+
+    #[test]
+    fn test_vblank_duration_pal() {
+        let mut ppu = PPU::new(TvSystem::Pal);
+
+        // Position at scanline 241, dot 0 (just before VBlank)
+        ppu.scanline = 241;
+        ppu.pixel = 0;
+
+        // Tick to dot 1 - VBlank should be set
+        ppu.tick_ppu_cycle();
+        assert_eq!(ppu.vblank_flag, true, "VBlank should be set at 241:1");
+
+        // VBlank should persist through scanlines 241-310 (70 scanlines for PAL)
+        // Sample some scanlines throughout the VBlank period
+        let test_scanlines = [241, 250, 270, 290, 310];
+        for &scanline in &test_scanlines {
+            ppu.scanline = scanline;
+            ppu.pixel = 100; // Arbitrary pixel in the scanline
+            assert_eq!(
+                ppu.vblank_flag, true,
+                "VBlank should be set during PAL scanline {}",
+                scanline
+            );
+        }
+
+        // VBlank should still be set at scanline 311 dot 0 (PAL pre-render)
+        ppu.scanline = 311;
+        ppu.pixel = 0;
+        assert_eq!(ppu.vblank_flag, true, "VBlank should be set at PAL 311:0");
+
+        // Tick to dot 1 - VBlank should be cleared
+        ppu.tick_ppu_cycle();
+        assert_eq!(
+            ppu.vblank_flag, false,
+            "VBlank should be cleared at PAL 311:1"
+        );
+    }
+
+    #[test]
+    fn test_vblank_cleared_at_correct_prerender_scanline() {
+        // Test NTSC: pre-render is scanline 261
+        let mut ppu_ntsc = PPU::new(TvSystem::Ntsc);
+        ppu_ntsc.vblank_flag = true;
+        ppu_ntsc.scanline = 261;
+        ppu_ntsc.pixel = 0;
+        ppu_ntsc.tick_ppu_cycle();
+        assert_eq!(
+            ppu_ntsc.vblank_flag, false,
+            "NTSC VBlank should clear at scanline 261:1"
+        );
+
+        // Test PAL: pre-render is scanline 311
+        let mut ppu_pal = PPU::new(TvSystem::Pal);
+        ppu_pal.vblank_flag = true;
+        ppu_pal.scanline = 311;
+        ppu_pal.pixel = 0;
+        ppu_pal.tick_ppu_cycle();
+        assert_eq!(
+            ppu_pal.vblank_flag, false,
+            "PAL VBlank should clear at scanline 311:1"
+        );
     }
 
     #[test]
@@ -3051,8 +3353,8 @@ mod tests {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         // Don't set NMI bit in control register
         ppu.write_control(0x00);
-        // Run to VBlank
-        ppu.run_ppu_cycles(241 * 341);
+        // Run to VBlank (scanline 241 dot 1)
+        ppu.run_ppu_cycles(241 * 341 + 1);
         // NMI should not be enabled
         assert_eq!(ppu.poll_nmi(), false);
     }
@@ -3062,8 +3364,8 @@ mod tests {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         // Set NMI generation bit in control register
         ppu.write_control(0b1000_0000);
-        // Run to VBlank (scanline 241)
-        ppu.run_ppu_cycles(241 * 341);
+        // Run to VBlank (scanline 241 dot 1)
+        ppu.run_ppu_cycles(241 * 341 + 1);
         // NMI should be enabled
         assert_eq!(ppu.poll_nmi(), true);
     }
@@ -3073,8 +3375,8 @@ mod tests {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         // Don't set NMI bit initially
         ppu.write_control(0x00);
-        // Run to VBlank
-        ppu.run_ppu_cycles(241 * 341);
+        // Run to VBlank (scanline 241 dot 1)
+        ppu.run_ppu_cycles(241 * 341 + 1);
         // NMI should not be enabled yet
         assert_eq!(ppu.poll_nmi(), false);
         // Now enable NMI during VBlank
@@ -3096,7 +3398,7 @@ mod tests {
     fn test_poll_nmi_clears_flag() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         ppu.write_control(0b1000_0000);
-        ppu.run_ppu_cycles(241 * 341);
+        ppu.run_ppu_cycles(241 * 341 + 1);
         // First poll returns true
         assert_eq!(ppu.poll_nmi(), true);
         // Second poll returns false (flag cleared)
@@ -3107,12 +3409,12 @@ mod tests {
     fn test_nmi_cleared_on_new_frame() {
         let mut ppu = PPU::new(TvSystem::Ntsc);
         ppu.write_control(0b1000_0000);
-        // Run to VBlank
-        ppu.run_ppu_cycles(241 * 341);
+        // Run to VBlank (scanline 241 dot 1)
+        ppu.run_ppu_cycles(241 * 341 + 1);
         assert_eq!(ppu.poll_nmi(), true);
-        // Run to next frame (wrap around to scanline 0)
-        ppu.run_ppu_cycles(21 * 341); // 262 total scanlines, so 21 more to wrap
-        // NMI should be cleared on new frame
+        // Run to pre-render scanline dot 1 (where VBlank clears)
+        ppu.run_ppu_cycles(20 * 341); // From 241 to 261 is 20 scanlines
+        // NMI should be cleared at pre-render scanline dot 1
         assert_eq!(ppu.poll_nmi(), false);
     }
 
