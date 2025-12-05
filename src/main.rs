@@ -34,8 +34,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // OAM Stress test - FAIL
     // let rom_data = std::fs::read("roms/oam_stress.nes")?;
 
-    // Load the pac-man.nes cartridge
+    // Load game cartridge
     let rom_data = std::fs::read("roms/games/pac-man.nes")?;
+    // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
 
     // Unknown status
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
