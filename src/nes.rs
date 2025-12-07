@@ -9722,4 +9722,44 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
             "PPU should advance by 513*3 cycles during DMA on even alignment"
         );
     }
+
+    #[test]
+    fn test_ntsc_refresh_rate_calculation() {
+        // NTSC CPU runs at approximately 1.789773 MHz
+        // Even frame: 89342 PPU cycles / 3 = 29780.67 CPU cycles
+        // Odd frame:  89341 PPU cycles / 3 = 29780.33 CPU cycles
+        // Average: ~29780.5 CPU cycles per frame
+        // Refresh rate: 1789773 / 29780.5 ≈ 60.10 Hz
+
+        let tv_system = TvSystem::Ntsc;
+        let even_frame_ppu_cycles = 262 * 341; // 89342
+        let odd_frame_ppu_cycles = 262 * 341 - 1; // 89341 (with odd frame skip)
+        let avg_ppu_cycles = (even_frame_ppu_cycles + odd_frame_ppu_cycles) as f64 / 2.0;
+        let avg_cpu_cycles = avg_ppu_cycles / tv_system.ppu_cycles_per_cpu_cycle();
+
+        assert_eq!(even_frame_ppu_cycles, 89342);
+        assert_eq!(odd_frame_ppu_cycles, 89341);
+        assert!(
+            (avg_cpu_cycles - 29780.5).abs() < 0.01,
+            "NTSC should average ~29780.5 CPU cycles per frame"
+        );
+    }
+
+    #[test]
+    fn test_pal_refresh_rate_calculation() {
+        // PAL CPU runs at approximately 1.662607 MHz
+        // PAL frame: 312 scanlines * 341 dots = 106392 PPU cycles
+        // 106392 PPU cycles / 3.2 = 33247.5 CPU cycles per frame
+        // Refresh rate: 1662607 / 33247.5 ≈ 50.00 Hz
+
+        let tv_system = TvSystem::Pal;
+        let frame_ppu_cycles = 312 * 341; // 106392
+        let cpu_cycles_per_frame = frame_ppu_cycles as f64 / tv_system.ppu_cycles_per_cpu_cycle();
+
+        assert_eq!(frame_ppu_cycles, 106392);
+        assert!(
+            (cpu_cycles_per_frame - 33247.5).abs() < 0.01,
+            "PAL should have ~33247.5 CPU cycles per frame"
+        );
+    }
 }
