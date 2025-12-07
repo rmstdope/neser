@@ -186,6 +186,14 @@ impl Registers {
         self.v = (self.v & 0x841F) | (self.t & 0x7BE0);
     }
 
+    /// Increment v register using the rendering glitch pattern
+    /// During rendering, PPUDATA access increments both coarse X and fine Y
+    /// This is a hardware quirk that some games rely on
+    pub fn inc_address_with_rendering_glitch(&mut self) {
+        self.increment_coarse_x();
+        self.increment_fine_y();
+    }
+
     /// Get current VRAM address
     pub fn v(&self) -> u16 {
         self.v

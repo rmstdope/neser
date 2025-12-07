@@ -358,7 +358,12 @@ impl PPUModular {
             _ => self.registers.data_buffer(),
         };
 
-        self.registers.increment_vram_address();
+        // Use rendering glitch during active rendering
+        if self.should_use_rendering_glitch() {
+            self.registers.inc_address_with_rendering_glitch();
+        } else {
+            self.registers.increment_vram_address();
+        }
         result
     }
 
@@ -378,7 +383,12 @@ impl PPUModular {
             _ => {}
         }
 
-        self.registers.increment_vram_address();
+        // Use rendering glitch during active rendering
+        if self.should_use_rendering_glitch() {
+            self.registers.inc_address_with_rendering_glitch();
+        } else {
+            self.registers.increment_vram_address();
+        }
     }
 
     /// Load CHR ROM
@@ -445,6 +455,14 @@ impl PPUModular {
     /// Check if should generate NMI
     pub fn should_generate_nmi(&self) -> bool {
         self.registers.should_generate_nmi()
+    }
+
+    /// Check if PPUDATA access should trigger the rendering glitch
+    /// Returns true if rendering is enabled and we're on a visible scanline
+    fn should_use_rendering_glitch(&self) -> bool {
+        let scanline = self.timing.scanline();
+        let is_visible_scanline = scanline < 240;
+        self.registers.is_rendering_enabled() && is_visible_scanline
     }
 
     /// Get total cycles (for testing)
