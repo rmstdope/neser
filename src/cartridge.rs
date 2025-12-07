@@ -6,6 +6,7 @@ pub enum MirroringMode {
     Vertical,
     Horizontal,
     FourScreen,
+    SingleScreen,
 }
 /// Represents an NES cartridge containing PRG ROM and CHR ROM
 pub struct Cartridge {
