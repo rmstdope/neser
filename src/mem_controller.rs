@@ -1,5 +1,5 @@
 use crate::cartridge::Cartridge;
-use crate::ppu;
+use crate::ppu_modules;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -7,13 +7,13 @@ use std::rc::Rc;
 pub struct MemController {
     cpu_ram: Vec<u8>,
     prg_rom: Vec<u8>,
-    ppu: Rc<RefCell<ppu::PPU>>,
+    ppu: Rc<RefCell<ppu_modules::PPUModular>>,
     oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
 }
 
 impl MemController {
     /// Create a new memory instance with 64KB of RAM initialized to 0
-    pub fn new(ppu: Rc<RefCell<ppu::PPU>>) -> Self {
+    pub fn new(ppu: Rc<RefCell<ppu_modules::PPUModular>>) -> Self {
         Self {
             cpu_ram: vec![0; 0x10000],
             prg_rom: Vec::new(),
@@ -170,7 +170,7 @@ mod tests {
     use super::*;
 
     fn create_test_memory() -> MemController {
-        let ppu = Rc::new(RefCell::new(ppu::PPU::new(crate::nes::TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu_modules::PPUModular::new(crate::nes::TvSystem::Ntsc)));
         MemController::new(ppu)
     }
 

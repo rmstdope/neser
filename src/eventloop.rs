@@ -13,6 +13,7 @@ pub struct EventLoop {
     canvas: Option<Canvas<Window>>,
     event_pump: sdl2::EventPump,
     timing_scale: f32,
+    paused: bool,
 }
 
 impl EventLoop {
@@ -89,6 +90,7 @@ impl EventLoop {
             canvas,
             event_pump,
             timing_scale: clamped_timing_scale,
+            paused: false,
         })
     }
 
@@ -273,8 +275,20 @@ impl EventLoop {
                             keycode: Some(Keycode::Escape),
                             ..
                         } => return Ok(()),
+                        Event::KeyDown {
+                            keycode: Some(Keycode::Space),
+                            ..
+                        } => {
+                            self.paused = !self.paused;
+                        }
                         _ => {}
                     }
+                }
+
+                // Skip emulation and rendering if paused
+                if self.paused {
+                    std::thread::sleep(std::time::Duration::from_millis(16));
+                    continue;
                 }
 
                 // 2. Emulate until PPU completes a full frame (reaches VBlank)

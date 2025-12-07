@@ -4,7 +4,7 @@ mod eventloop;
 mod mem_controller;
 mod nes;
 mod opcode;
-mod ppu;
+mod ppu_modules;
 mod screen_buffer;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -35,9 +35,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/oam_stress.nes")?;
 
     // Load game cartridge
-    // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
+    let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
-    let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
+    // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
 
     // Unknown status
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;

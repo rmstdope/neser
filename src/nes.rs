@@ -1,7 +1,7 @@
 use crate::cartridge::Cartridge;
 use crate::cpu;
 use crate::mem_controller;
-use crate::ppu;
+use crate::ppu_modules;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -51,7 +51,7 @@ impl TvSystem {
 }
 
 pub struct Nes {
-    pub ppu: Rc<RefCell<ppu::PPU>>,
+    pub ppu: Rc<RefCell<ppu_modules::PPUModular>>,
     pub memory: Rc<RefCell<mem_controller::MemController>>,
     pub cpu: cpu::Cpu,
     tv_system: TvSystem,
@@ -61,7 +61,7 @@ pub struct Nes {
 
 impl Nes {
     pub fn new(tv_system: TvSystem) -> Self {
-        let ppu = Rc::new(RefCell::new(ppu::PPU::new(tv_system)));
+        let ppu = Rc::new(RefCell::new(ppu_modules::PPUModular::new(tv_system)));
         let memory = Rc::new(RefCell::new(mem_controller::MemController::new(
             ppu.clone(),
         )));
