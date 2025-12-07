@@ -114,7 +114,7 @@ impl Sprites {
 
                 let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
                 let diff = next_scanline.wrapping_sub(sprite_y as u16);
-                
+
                 if diff < sprite_height as u16 && sprite_y < 0xEF {
                     overflow = true;
                 }
@@ -141,8 +141,9 @@ impl Sprites {
         }
 
         let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
-        let diff = next_scanline.wrapping_sub(sprite_y as u16);
-        
+        // Adjust Y position: add 1 to sprite_y to move sprites 2 pixels down
+        let diff = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16);
+
         if diff < sprite_height as u16 {
             // Sprite is in range, copy all 4 bytes to secondary OAM
             let sec_oam_index = (self.sprites_found as usize) * 4;
@@ -163,8 +164,14 @@ impl Sprites {
     }
 
     /// Fetch sprite pattern data
-    pub fn fetch_sprite_pattern<F>(&mut self, pixel: u16, scanline: u16, sprite_height: u8, sprite_pattern_table_base: u16, read_chr: F)
-    where
+    pub fn fetch_sprite_pattern<F>(
+        &mut self,
+        pixel: u16,
+        scanline: u16,
+        sprite_height: u8,
+        sprite_pattern_table_base: u16,
+        read_chr: F,
+    ) where
         F: Fn(u16) -> u8,
     {
         let cycle_offset = pixel - 257;
@@ -178,7 +185,8 @@ impl Sprites {
             let attributes = self.secondary_oam[sec_oam_offset + 2];
 
             let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
-            let sprite_row = next_scanline.wrapping_sub(sprite_y as u16) as u8;
+            // Adjust Y position: add 1 to sprite_y to move sprites 2 pixels down
+            let sprite_row = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16) as u8;
 
             // Calculate pattern address
             let pattern_table_base = if sprite_height == 8 {
@@ -196,7 +204,11 @@ impl Sprites {
             };
 
             let effective_row = if (attributes & 0x80) != 0 {
-                if sprite_height == 8 { 7 - sprite_row } else { 15 - sprite_row }
+                if sprite_height == 8 {
+                    7 - sprite_row
+                } else {
+                    15 - sprite_row
+                }
             } else {
                 sprite_row
             };
@@ -228,10 +240,22 @@ impl Sprites {
     /// Swap sprite buffers for next scanline
     pub fn swap_buffers(&mut self) {
         if self.sprite_buffers_ready {
-            std::mem::swap(&mut self.sprite_pattern_shift_lo, &mut self.next_sprite_pattern_shift_lo);
-            std::mem::swap(&mut self.sprite_pattern_shift_hi, &mut self.next_sprite_pattern_shift_hi);
-            std::mem::swap(&mut self.sprite_x_positions, &mut self.next_sprite_x_positions);
-            std::mem::swap(&mut self.sprite_attributes, &mut self.next_sprite_attributes);
+            std::mem::swap(
+                &mut self.sprite_pattern_shift_lo,
+                &mut self.next_sprite_pattern_shift_lo,
+            );
+            std::mem::swap(
+                &mut self.sprite_pattern_shift_hi,
+                &mut self.next_sprite_pattern_shift_hi,
+            );
+            std::mem::swap(
+                &mut self.sprite_x_positions,
+                &mut self.next_sprite_x_positions,
+            );
+            std::mem::swap(
+                &mut self.sprite_attributes,
+                &mut self.next_sprite_attributes,
+            );
             std::mem::swap(&mut self.sprite_count, &mut self.next_sprite_count);
             std::mem::swap(&mut self.sprite_0_index, &mut self.next_sprite_0_index);
         }
@@ -265,12 +289,15 @@ impl Sprites {
 
         for sprite_idx in 0..(self.sprite_count as usize) {
             let sprite_x = self.sprite_x_positions[sprite_idx] as i16;
-            let shift = screen_x - sprite_x;
+            // Adjust X position: add 2 to move sprites 2 pixels left
+            let shift = screen_x - (sprite_x - 2);
 
             if shift >= 0 && shift < 8 {
                 let bit_pos = 7 - (shift as u8);
-                let pattern_lo_bit = ((self.sprite_pattern_shift_lo[sprite_idx] >> bit_pos) & 0x01) as u8;
-                let pattern_hi_bit = ((self.sprite_pattern_shift_hi[sprite_idx] >> bit_pos) & 0x01) as u8;
+                let pattern_lo_bit =
+                    ((self.sprite_pattern_shift_lo[sprite_idx] >> bit_pos) & 0x01) as u8;
+                let pattern_hi_bit =
+                    ((self.sprite_pattern_shift_hi[sprite_idx] >> bit_pos) & 0x01) as u8;
                 let pattern = (pattern_hi_bit << 1) | pattern_lo_bit;
 
                 if pattern == 0 {
@@ -337,5 +364,129 @@ mod tests {
     fn test_get_pixel_no_sprites() {
         let sprites = Sprites::new();
         assert!(sprites.get_pixel(10, true).is_none());
+    }
+
+    #[test]
+    fn test_sprite_x_position_offset() {
+        let mut sprites = Sprites::new();
+        // Set up a sprite at X position 10
+        sprites.sprite_count = 1;
+        sprites.sprite_x_positions[0] = 10;
+        sprites.sprite_pattern_shift_lo[0] = 0b11111111;
+        sprites.sprite_pattern_shift_hi[0] = 0b00000000;
+        sprites.sprite_attributes[0] = 0x00; // Palette 0, foreground
+
+        // With our 2-pixel left adjustment, screen_x 8 should hit sprite at X=10
+        // because: shift = 8 - (10 - 2) = 8 - 8 = 0
+        let result = sprites.get_pixel(8, true);
+        assert!(result.is_some());
+
+        // screen_x 7 should miss (shift = 7 - 8 = -1, which is < 0)
+        let result = sprites.get_pixel(7, true);
+        assert!(result.is_none());
+
+        // screen_x 15 should hit (shift = 15 - 8 = 7, which is < 8)
+        let result = sprites.get_pixel(15, true);
+        assert!(result.is_some());
+
+        // screen_x 16 should miss (shift = 16 - 8 = 8, which is >= 8)
+        let result = sprites.get_pixel(16, true);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_sprite_y_position_offset() {
+        let mut sprites = Sprites::new();
+        // Set up OAM data for a sprite at Y position 10
+        sprites.oam_data[0] = 10; // Y position
+        sprites.oam_data[1] = 0; // Tile index
+        sprites.oam_data[2] = 0; // Attributes
+        sprites.oam_data[3] = 50; // X position
+
+        // Evaluate sprites for scanline 11 (evaluates for next scanline 12)
+        // With our +1 adjustment: diff = 12 - (10 + 1) = 1, which is < 8 (sprite height)
+        // So the sprite should be included
+        sprites.reset_evaluation();
+        sprites.evaluate_sprites(65, 11, 8); // pixel 65 triggers evaluation
+        assert_eq!(sprites.sprites_found, 1);
+
+        // Evaluate sprite for scanline 10 (evaluates for next scanline 11)
+        // diff = 11 - (10 + 1) = 0, which is < 8, should be included
+        sprites.reset_evaluation();
+        sprites.evaluate_sprites(65, 10, 8);
+        assert_eq!(sprites.sprites_found, 1);
+
+        // Evaluate sprite for scanline 18 (evaluates for next scanline 19)
+        // diff = 19 - (10 + 1) = 8, which is >= 8, should NOT be included
+        sprites.reset_evaluation();
+        sprites.evaluate_sprites(65, 18, 8);
+        assert_eq!(sprites.sprites_found, 0);
+    }
+
+    #[test]
+    fn test_sprite_pattern_fetch_with_y_offset() {
+        let mut sprites = Sprites::new();
+        // Set up sprite in secondary OAM
+        sprites.sprites_found = 1;
+        sprites.secondary_oam[0] = 50; // Y position
+        sprites.secondary_oam[1] = 0x00; // Tile index
+        sprites.secondary_oam[2] = 0x00; // Attributes (no flip)
+        sprites.secondary_oam[3] = 100; // X position
+
+        // Mock CHR read function that returns different values for pattern lo/hi
+        let read_chr = |addr: u16| -> u8 {
+            if addr & 0x08 == 0 {
+                0xAA // Pattern low
+            } else {
+                0x55 // Pattern high
+            }
+        };
+
+        // Fetch pattern for scanline 52
+        // With our +1 adjustment: sprite_row = 52 - (50 + 1) = 1
+        sprites.fetch_sprite_pattern(257 + 7, 51, 8, 0x0000, read_chr);
+
+        // Verify pattern data was fetched
+        assert_eq!(sprites.next_sprite_pattern_shift_lo[0], 0xAA);
+        assert_eq!(sprites.next_sprite_pattern_shift_hi[0], 0x55);
+        assert_eq!(sprites.next_sprite_x_positions[0], 100);
+    }
+
+    #[test]
+    fn test_sprite_clipping_left_8_pixels() {
+        let mut sprites = Sprites::new();
+        // Set up a sprite at X position 2 (which with -2 offset becomes screen X 0)
+        sprites.sprite_count = 1;
+        sprites.sprite_x_positions[0] = 2;
+        sprites.sprite_pattern_shift_lo[0] = 0xFF;
+        sprites.sprite_pattern_shift_hi[0] = 0x00;
+        sprites.sprite_attributes[0] = 0x00;
+
+        // With show_sprites_left = false, sprites in X < 8 should be clipped
+        let result = sprites.get_pixel(0, false);
+        assert!(result.is_none());
+
+        // With show_sprites_left = true, sprites in X < 8 should be shown
+        let result = sprites.get_pixel(0, true);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_sprite_transparent_pixels() {
+        let mut sprites = Sprites::new();
+        sprites.sprite_count = 1;
+        sprites.sprite_x_positions[0] = 10;
+        // Pattern with some transparent pixels (pattern = 0)
+        sprites.sprite_pattern_shift_lo[0] = 0b10101010;
+        sprites.sprite_pattern_shift_hi[0] = 0b00000000;
+        sprites.sprite_attributes[0] = 0x00;
+
+        // screen_x 8 should hit non-transparent pixel (bit 7 of lo = 1)
+        let result = sprites.get_pixel(8, true);
+        assert!(result.is_some());
+
+        // screen_x 9 should be transparent (bit 6 of lo = 0, bit 6 of hi = 0)
+        let result = sprites.get_pixel(9, true);
+        assert!(result.is_none());
     }
 }
