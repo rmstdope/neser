@@ -1,3 +1,4 @@
+use crate::mapper::{self, Mapper};
 use std::io;
 
 // Mirroring types for nametables
@@ -10,12 +11,8 @@ pub enum MirroringMode {
 }
 /// Represents an NES cartridge containing PRG ROM and CHR ROM
 pub struct Cartridge {
-    /// Program ROM - contains the game code
-    pub prg_rom: Vec<u8>,
-    /// Character ROM - contains the graphics data
-    pub chr_rom: Vec<u8>,
-    /// Nametable mirroring type
-    pub mirroring: MirroringMode,
+    /// Mapper instance that handles banking and memory access
+    mapper: Box<dyn Mapper>,
 }
 
 impl Cartridge {
@@ -33,6 +30,12 @@ impl Cartridge {
         let prg_rom_size = data[4] as usize * 16384; // 16 KB units
         let chr_rom_size = data[5] as usize * 8192; // 8 KB units
         let flags6 = data[6];
+        let flags7 = data[7];
+
+        // Parse mapper number from flags6 and flags7
+        // Lower nibble: bits 4-7 of flags6
+        // Upper nibble: bits 4-7 of flags7
+        let mapper_number = (flags6 >> 4) | (flags7 & 0xF0);
 
         // Parse mirroring from flags6
         // Bit 0: Mirroring (0 = horizontal, 1 = vertical)
@@ -67,11 +70,28 @@ impl Cartridge {
         let prg_rom = data[prg_rom_start..prg_rom_end].to_vec();
         let chr_rom = data[chr_rom_start..chr_rom_end].to_vec();
 
-        Ok(Self {
-            prg_rom,
-            chr_rom,
-            mirroring,
-        })
+        // Create mapper instance
+        let mapper = mapper::create_mapper(mapper_number, prg_rom, chr_rom, mirroring)?;
+
+        Ok(Self { mapper })
+    }
+
+    /// Get a reference to the mapper
+    pub fn mapper(&self) -> &dyn Mapper {
+        &*self.mapper
+    }
+
+    /// Get a mutable reference to the mapper
+    pub fn mapper_mut(&mut self) -> &mut dyn Mapper {
+        &mut *self.mapper
+    }
+
+    /// Create a cartridge directly from components (for testing)
+    #[cfg(test)]
+    pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        use crate::mapper::NROMMapper;
+        let mapper = Box::new(NROMMapper::new(prg_rom, chr_rom, mirroring));
+        Self { mapper }
     }
 }
 
@@ -125,10 +145,10 @@ mod tests {
         let rom_data = create_test_rom(1, 1, 0, false);
 
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert_eq!(cartridge.prg_rom.len(), 16384);
-        assert_eq!(cartridge.chr_rom.len(), 8192);
-        assert_eq!(cartridge.prg_rom[0], 0xAA);
-        assert_eq!(cartridge.chr_rom[0], 0xBB);
+        // Verify mapper can read PRG ROM (16KB at $8000-$BFFF)
+        assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
+        // Verify mapper can read CHR ROM (8KB at $0000-$1FFF)
+        assert_eq!(cartridge.mapper().read_chr(0x0000), 0xBB);
     }
 
     #[test]
@@ -136,10 +156,10 @@ mod tests {
         let rom_data = create_test_rom(1, 1, 0x04, true);
 
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert_eq!(cartridge.prg_rom.len(), 16384);
-        assert_eq!(cartridge.chr_rom.len(), 8192);
-        assert_eq!(cartridge.prg_rom[0], 0xAA);
-        assert_eq!(cartridge.chr_rom[0], 0xBB);
+        // Verify mapper can read PRG ROM after skipping trainer
+        assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
+        // Verify mapper can read CHR ROM
+        assert_eq!(cartridge.mapper().read_chr(0x0000), 0xBB);
     }
 
     #[test]
@@ -147,8 +167,12 @@ mod tests {
         let rom_data = create_test_rom(2, 4, 0, false);
 
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert_eq!(cartridge.prg_rom.len(), 32768); // 2 * 16KB
-        assert_eq!(cartridge.chr_rom.len(), 32768); // 4 * 8KB
+        // Verify 32KB PRG ROM can be read
+        assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
+        assert_eq!(cartridge.mapper().read_prg(0xFFFF), 0xAA);
+        // Verify CHR ROM can be read (only first 8KB used by NROM)
+        assert_eq!(cartridge.mapper().read_chr(0x0000), 0xBB);
+        assert_eq!(cartridge.mapper().read_chr(0x1FFF), 0xBB);
     }
 
     #[test]
@@ -179,21 +203,30 @@ mod tests {
     fn test_horizontal_mirroring() {
         let rom_data = create_test_rom(1, 1, 0x00, false); // Bit 0 = 0 = Horizontal
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert!(matches!(cartridge.mirroring, MirroringMode::Horizontal));
+        assert!(matches!(
+            cartridge.mapper().get_mirroring(),
+            MirroringMode::Horizontal
+        ));
     }
 
     #[test]
     fn test_vertical_mirroring() {
         let rom_data = create_test_rom(1, 1, 0x01, false); // Bit 0 = 1 = Vertical
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert!(matches!(cartridge.mirroring, MirroringMode::Vertical));
+        assert!(matches!(
+            cartridge.mapper().get_mirroring(),
+            MirroringMode::Vertical
+        ));
     }
 
     #[test]
     fn test_four_screen_mirroring() {
         let rom_data = create_test_rom(1, 1, 0x08, false); // Bit 3 = 1 = Four-screen
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert!(matches!(cartridge.mirroring, MirroringMode::FourScreen));
+        assert!(matches!(
+            cartridge.mapper().get_mirroring(),
+            MirroringMode::FourScreen
+        ));
     }
 
     #[test]
@@ -201,7 +234,10 @@ mod tests {
         let rom_data = create_test_rom(1, 1, 0x09, false); // Bit 3 and Bit 0 set
         let cartridge = Cartridge::new(&rom_data).unwrap();
         // Four-screen should take precedence
-        assert!(matches!(cartridge.mirroring, MirroringMode::FourScreen));
+        assert!(matches!(
+            cartridge.mapper().get_mirroring(),
+            MirroringMode::FourScreen
+        ));
     }
 
     #[test]
@@ -209,7 +245,10 @@ mod tests {
         // Flags6 = 0b0000_0000: Bit 0 clear = Horizontal
         let rom_data = create_test_rom(1, 1, 0b0000_0000, false);
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert!(matches!(cartridge.mirroring, MirroringMode::Horizontal));
+        assert!(matches!(
+            cartridge.mapper().get_mirroring(),
+            MirroringMode::Horizontal
+        ));
     }
 
     #[test]
@@ -217,7 +256,10 @@ mod tests {
         // Flags6 = 0b0000_0001: Bit 0 set = Vertical
         let rom_data = create_test_rom(1, 1, 0b0000_0001, false);
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert!(matches!(cartridge.mirroring, MirroringMode::Vertical));
+        assert!(matches!(
+            cartridge.mapper().get_mirroring(),
+            MirroringMode::Vertical
+        ));
     }
 
     #[test]
@@ -225,15 +267,22 @@ mod tests {
         // Flags6 = 0b0000_1000: Bit 3 set = Four-screen
         let rom_data = create_test_rom(1, 1, 0b0000_1000, false);
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert!(matches!(cartridge.mirroring, MirroringMode::FourScreen));
+        assert!(matches!(
+            cartridge.mapper().get_mirroring(),
+            MirroringMode::FourScreen
+        ));
     }
 
     #[test]
     fn test_mirroring_with_other_flags_set() {
-        // Flags6 = 0b1111_0110: Other flags set (including trainer bit 2), but bit 0 clear = Horizontal
-        let rom_data = create_test_rom(1, 1, 0b1111_0110, true);
+        // Flags6 = 0b0000_0110: Bit 2 (trainer) and bit 1 set, but bit 0 clear = Horizontal
+        // Lower nibble (bits 4-7) is 0, so mapper number is 0
+        let rom_data = create_test_rom(1, 1, 0b0000_0110, true);
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert!(matches!(cartridge.mirroring, MirroringMode::Horizontal));
+        assert!(matches!(
+            cartridge.mapper().get_mirroring(),
+            MirroringMode::Horizontal
+        ));
     }
 
     #[test]
@@ -241,6 +290,9 @@ mod tests {
         // Flags6 = 0b0000_0101: Bit 2 (trainer) and Bit 0 (vertical) set
         let rom_data = create_test_rom(1, 1, 0b0000_0101, true);
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert!(matches!(cartridge.mirroring, MirroringMode::Vertical));
+        assert!(matches!(
+            cartridge.mapper().get_mirroring(),
+            MirroringMode::Vertical
+        ));
     }
 }
