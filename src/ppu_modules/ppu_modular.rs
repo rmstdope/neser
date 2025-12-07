@@ -18,6 +18,8 @@ pub struct PPUModular {
     sprites: Sprites,
     /// Final rendering and screen output
     rendering: Rendering,
+    /// Previous A12 state for change detection (bit 12 of PPU address)
+    prev_a12: bool,
 }
 
 impl PPUModular {
@@ -31,6 +33,7 @@ impl PPUModular {
             background: Background::new(),
             sprites: Sprites::new(),
             rendering: Rendering::new(),
+            prev_a12: false,
         }
     }
 
@@ -42,6 +45,7 @@ impl PPUModular {
         self.memory.reset();
         self.background.reset();
         self.sprites.reset();
+        self.prev_a12 = false;
     }
 
     /// Run the PPU for a specified number of cycles
@@ -493,6 +497,16 @@ impl PPUModular {
     #[cfg(test)]
     pub fn w_register(&self) -> bool {
         self.registers.w()
+    }
+
+    /// Check if A12 changed from 0 to 1 (rising edge)
+    /// This is used for mapper IRQ counters (e.g., MMC3)
+    /// Returns true if A12 went from 0 to 1
+    fn check_a12_rising_edge(&mut self, addr: u16) -> bool {
+        let current_a12 = (addr & 0x1000) != 0;
+        let rising_edge = !self.prev_a12 && current_a12;
+        self.prev_a12 = current_a12;
+        rising_edge
     }
 }
 
@@ -971,5 +985,34 @@ mod tests {
         let v_after_16 = ppu.v_register();
         let coarse_x_after_16 = v_after_16 & 0x001F;
         assert_eq!(coarse_x_after_16, (coarse_x_initial + 2) & 0x001F);
+    }
+
+    #[test]
+    fn test_a12_rising_edge_detection() {
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+
+        // A12 is bit 12 of address (0x1000)
+        // Initially prev_a12 should be false
+
+        // Access $0000 (A12=0) - no rising edge
+        assert_eq!(ppu.check_a12_rising_edge(0x0000), false);
+
+        // Access $0FFF (A12=0) - no rising edge
+        assert_eq!(ppu.check_a12_rising_edge(0x0FFF), false);
+
+        // Access $1000 (A12=1) - rising edge!
+        assert_eq!(ppu.check_a12_rising_edge(0x1000), true);
+
+        // Access $1FFF (A12=1) - no rising edge (already high)
+        assert_eq!(ppu.check_a12_rising_edge(0x1FFF), false);
+
+        // Access $0000 (A12=0) - no rising edge (falling edge)
+        assert_eq!(ppu.check_a12_rising_edge(0x0000), false);
+
+        // Access $1800 (A12=1) - rising edge!
+        assert_eq!(ppu.check_a12_rising_edge(0x1800), true);
+
+        // Access $1000 (A12=1) - no rising edge
+        assert_eq!(ppu.check_a12_rising_edge(0x1000), false);
     }
 }

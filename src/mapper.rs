@@ -2,7 +2,30 @@ use crate::cartridge::MirroringMode;
 use std::io;
 
 /// Trait for NES cartridge mappers
-/// Mappers handle bank switching and address translation for PRG ROM/RAM and CHR ROM/RAM
+/// 
+/// Mappers handle bank switching and address translation for PRG ROM/RAM and CHR ROM/RAM.
+/// Different mapper implementations (NROM, MMC1, MMC3, etc.) provide different banking
+/// capabilities and features.
+/// 
+/// # Example Implementation
+/// 
+/// ```ignore
+/// struct MyMapper {
+///     prg_rom: Vec<u8>,
+///     chr_rom: Vec<u8>,
+///     // Add banking registers, etc.
+/// }
+/// 
+/// impl Mapper for MyMapper {
+///     fn read_prg(&self, addr: u16) -> u8 {
+///         // Translate address through banking logic
+///         let bank = self.current_prg_bank();
+///         let offset = addr - 0x8000;
+///         self.prg_rom[bank * 0x4000 + offset as usize]
+///     }
+///     // Implement other methods...
+/// }
+/// ```
 pub trait Mapper {
     /// Read a byte from PRG address space (CPU $8000-$FFFF)
     /// Returns the byte at the given address after bank translation
@@ -30,8 +53,14 @@ pub trait Mapper {
 }
 
 /// NROM mapper (Mapper 0)
-/// The simplest mapper with no bank switching
-/// Supports 16KB or 32KB PRG ROM and 8KB CHR ROM/RAM
+/// 
+/// The simplest mapper with no bank switching.
+/// Supports:
+/// - 16KB or 32KB PRG ROM (16KB is mirrored at $C000)
+/// - 8KB CHR ROM or CHR-RAM
+/// - Fixed nametable mirroring
+/// 
+/// This is the baseline mapper implementation that all other mappers build upon.
 pub struct NROMMapper {
     prg_rom: Vec<u8>,
     chr_memory: Vec<u8>,
