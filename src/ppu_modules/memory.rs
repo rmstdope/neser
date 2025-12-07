@@ -44,6 +44,16 @@ impl Memory {
         self.chr_rom.get(addr as usize).copied().unwrap_or(0)
     }
 
+    /// Write to CHR memory at the specified address
+    /// Only works if CHR-RAM is present (not CHR-ROM)
+    /// For now, we allow writes - mapper will handle ROM vs RAM distinction later
+    pub fn write_chr(&mut self, addr: u16, value: u8) {
+        let index = (addr & 0x1FFF) as usize;
+        if index < self.chr_rom.len() {
+            self.chr_rom[index] = value;
+        }
+    }
+
     /// Read from nametable at the specified address (with mirroring)
     pub fn read_nametable(&self, addr: u16) -> u8 {
         let mirrored = self.mirror_vram_address(addr);
@@ -361,5 +371,22 @@ mod tests {
         mem.write_nametable(0x2000, 0x33);
         // $3000-$3EFF mirrors to $2000-$2EFF
         assert_eq!(mem.read_nametable(0x3000), 0x33);
+    }
+
+    #[test]
+    fn test_chr_write() {
+        let mut mem = Memory::new();
+        // Initially should read 0
+        assert_eq!(mem.read_chr(0x0000), 0x00);
+        
+        // Write to CHR memory
+        mem.write_chr(0x0000, 0xAA);
+        mem.write_chr(0x1000, 0xBB);
+        mem.write_chr(0x1FFF, 0xCC);
+        
+        // Read back the values
+        assert_eq!(mem.read_chr(0x0000), 0xAA);
+        assert_eq!(mem.read_chr(0x1000), 0xBB);
+        assert_eq!(mem.read_chr(0x1FFF), 0xCC);
     }
 }

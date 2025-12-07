@@ -6,7 +6,7 @@ use std::rc::Rc;
 /// NES Memory (64KB address space)
 pub struct MemController {
     cpu_ram: Vec<u8>,
-    prg_rom: Vec<u8>,
+    cartridge: Option<Cartridge>,
     ppu: Rc<RefCell<ppu_modules::PPUModular>>,
     oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
 }
@@ -16,7 +16,7 @@ impl MemController {
     pub fn new(ppu: Rc<RefCell<ppu_modules::PPUModular>>) -> Self {
         Self {
             cpu_ram: vec![0; 0x10000],
-            prg_rom: Vec::new(),
+            cartridge: None,
             ppu,
             oam_dma_page: None,
         }
@@ -24,10 +24,16 @@ impl MemController {
 
     /// Map a cartridge into memory
     pub fn map_cartridge(&mut self, cartridge: Cartridge) {
-        self.prg_rom = cartridge.prg_rom;
+        // Extract CHR data from mapper (8KB)
+        let mut chr_data = Vec::with_capacity(8192);
+        for addr in 0..8192 {
+            chr_data.push(cartridge.mapper().read_chr(addr));
+        }
+        
         let mut ppu = self.ppu.borrow_mut();
-        ppu.load_chr_rom(cartridge.chr_rom);
-        ppu.set_mirroring(cartridge.mirroring);
+        ppu.load_chr_rom(chr_data);
+        ppu.set_mirroring(cartridge.mapper().get_mirroring());
+        self.cartridge = Some(cartridge);
     }
 
     /// Read a byte from memory
@@ -51,21 +57,10 @@ impl MemController {
 
             // PRG ROM ($8000-$FFFF)
             0x8000..=0xFFFF => {
-                let prg_size = self.prg_rom.len();
-                if prg_size > 0 {
-                    // Calculate offset into PRG ROM
-                    let offset = (addr - 0x8000) as usize;
-                    // Handle mirroring for 16KB ROMs (mirror at $C000)
-                    let index = if prg_size == 0x4000 {
-                        // 16KB ROM: mirror the same 16KB at both $8000 and $C000
-                        offset % 0x4000
-                    } else {
-                        // 32KB or larger ROM: direct mapping
-                        offset % prg_size
-                    };
-                    self.prg_rom[index]
+                if let Some(ref cartridge) = self.cartridge {
+                    cartridge.mapper().read_prg(addr)
                 } else {
-                    panic!("No PRG ROM mapped, cannot read from {:04X}", addr);
+                    panic!("No cartridge mapped, cannot read from {:04X}", addr);
                 }
             }
 
@@ -253,11 +248,11 @@ mod tests {
         prg_rom[0] = 0xAA; // First byte
         prg_rom[0x3FFF] = 0xBB; // Last byte of 16KB
 
-        let cartridge = Cartridge {
+        let cartridge = Cartridge::from_parts(
             prg_rom,
-            chr_rom: vec![],
-            mirroring: crate::cartridge::MirroringMode::Horizontal,
-        };
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
 
         memory.map_cartridge(cartridge);
 
@@ -283,11 +278,11 @@ mod tests {
         prg_rom[0x4000] = 0xCC; // First byte at $C000
         prg_rom[0x7FFF] = 0xDD; // Last byte at $FFFF
 
-        let cartridge = Cartridge {
+        let cartridge = Cartridge::from_parts(
             prg_rom,
-            chr_rom: vec![],
-            mirroring: crate::cartridge::MirroringMode::Horizontal,
-        };
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
 
         memory.map_cartridge(cartridge);
 
@@ -305,11 +300,11 @@ mod tests {
 
         let mut memory = create_test_memory();
 
-        let cartridge = Cartridge {
-            prg_rom: vec![0; 0x4000],
-            chr_rom: vec![],
-            mirroring: crate::cartridge::MirroringMode::Horizontal,
-        };
+        let cartridge = Cartridge::from_parts(
+            vec![0; 0x4000],
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
 
         memory.map_cartridge(cartridge);
 

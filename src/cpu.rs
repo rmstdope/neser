@@ -345,13 +345,13 @@ impl Cpu {
                 // so we push PC+1 which points to the byte after BRK's padding byte)
                 let return_addr = self.pc.wrapping_add(1);
                 self.push_word(return_addr);
-                
+
                 // Push P with B flag and unused flag set to distinguish BRK from IRQ
                 self.push_byte(self.p | FLAG_BREAK | FLAG_UNUSED);
-                
+
                 // Set Interrupt Disable flag to prevent further interrupts
                 self.p |= FLAG_INTERRUPT;
-                
+
                 // Load PC from IRQ/BRK vector
                 self.pc = self.memory.borrow().read_u16(IRQ_VECTOR);
             }
@@ -1954,11 +1954,7 @@ mod tests {
         // Create CHR ROM with zeros only (8KB)
         let chr_rom = vec![0; 0x2000];
 
-        let cartridge = Cartridge {
-            prg_rom,
-            chr_rom,
-            mirroring: MirroringMode::Horizontal,
-        };
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         cpu.memory.borrow_mut().map_cartridge(cartridge);
     }
@@ -6184,11 +6180,11 @@ mod tests {
         prg_rom[0x3FFF] = 0x90; // High byte of 0x9000
 
         let chr_rom = vec![0; 0x2000];
-        let cartridge = crate::cartridge::Cartridge {
+        let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             chr_rom,
-            mirroring: crate::cartridge::MirroringMode::Horizontal,
-        };
+            crate::cartridge::MirroringMode::Horizontal,
+        );
 
         cpu.memory.borrow_mut().map_cartridge(cartridge);
         cpu.reset();

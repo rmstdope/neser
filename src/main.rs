@@ -1,6 +1,7 @@
 mod cartridge;
 mod cpu;
 mod eventloop;
+mod mapper;
 mod mem_controller;
 mod nes;
 mod opcode;
