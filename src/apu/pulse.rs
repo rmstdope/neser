@@ -179,6 +179,16 @@ impl Pulse {
         self.length_counter
     }
 
+    /// Get the envelope start flag state
+    pub fn get_envelope_start_flag(&self) -> bool {
+        self.envelope_start_flag
+    }
+
+    /// Get the sweep reload flag state
+    pub fn get_sweep_reload(&self) -> bool {
+        self.sweep_reload
+    }
+
     /// Set length counter enabled/disabled (from $4015)
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         if !enabled {
