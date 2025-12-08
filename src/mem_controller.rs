@@ -1,4 +1,5 @@
 use crate::cartridge::Cartridge;
+use crate::joypad::Joypad;
 use crate::ppu_modules;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -9,6 +10,8 @@ pub struct MemController {
     cartridge: Option<Cartridge>,
     ppu: Rc<RefCell<ppu_modules::PPUModular>>,
     oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
+    joypad1: RefCell<Joypad>,
+    joypad2: RefCell<Joypad>,
 }
 
 impl MemController {
@@ -19,6 +22,8 @@ impl MemController {
             cartridge: None,
             ppu,
             oam_dma_page: None,
+            joypad1: RefCell::new(Joypad::new()),
+            joypad2: RefCell::new(Joypad::new()),
         }
     }
 
@@ -54,6 +59,10 @@ impl MemController {
                 0x2007 => self.ppu.borrow_mut().read_data(),
                 _ => panic!("Should never happen!"),
             },
+
+            // Controller ports ($4016-$4017)
+            0x4016 => self.joypad1.borrow_mut().read(),
+            0x4017 => self.joypad2.borrow_mut().read(),
 
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
@@ -116,6 +125,11 @@ impl MemController {
                     // OAMDMA - Store the page for later DMA execution
                     self.oam_dma_page = Some(value);
                     return true; // Signal that OAM DMA should occur
+                }
+                0x4016 => {
+                    // Controller strobe - write to both controllers
+                    self.joypad1.borrow_mut().write_strobe(value);
+                    self.joypad2.borrow_mut().write_strobe(value);
                 }
                 _ => {
                     eprintln!(
@@ -189,6 +203,15 @@ impl MemController {
         for i in 0..256u16 {
             let byte = self.read(source_page + i);
             self.ppu.borrow_mut().write_oam_data(byte);
+        }
+    }
+
+    /// Set button state for a controller
+    pub fn set_button(&mut self, controller: u8, button: crate::joypad::Button, pressed: bool) {
+        match controller {
+            1 => self.joypad1.borrow_mut().set_button(button, pressed),
+            2 => self.joypad2.borrow_mut().set_button(button, pressed),
+            _ => {}
         }
     }
 }

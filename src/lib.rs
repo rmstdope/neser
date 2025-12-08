@@ -4,6 +4,7 @@
 pub mod cartridge;
 pub mod cpu;
 pub mod eventloop;
+pub mod joypad;
 pub mod mapper;
 pub mod mem_controller;
 pub mod nes;

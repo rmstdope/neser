@@ -282,6 +282,18 @@ impl EventLoop {
                         } => {
                             self.paused = !self.paused;
                         }
+                        Event::KeyDown {
+                            keycode: Some(keycode),
+                            ..
+                        } => {
+                            Self::handle_key_down(nes, keycode);
+                        }
+                        Event::KeyUp {
+                            keycode: Some(keycode),
+                            ..
+                        } => {
+                            Self::handle_key_up(nes, keycode);
+                        }
                         _ => {}
                     }
                 }
@@ -343,12 +355,63 @@ impl EventLoop {
                             keycode: Some(Keycode::Escape),
                             ..
                         } => return Ok(()),
+                        Event::KeyDown {
+                            keycode: Some(keycode),
+                            ..
+                        } => {
+                            Self::handle_key_down(nes, keycode);
+                        }
+                        Event::KeyUp {
+                            keycode: Some(keycode),
+                            ..
+                        } => {
+                            Self::handle_key_up(nes, keycode);
+                        }
                         _ => {}
                     }
                 }
 
                 nes.run_cpu_tick();
             }
+        }
+    }
+
+    /// Handle keyboard key press events
+    ///
+    /// Maps keyboard keys to NES controller buttons:
+    /// - Arrow Keys: D-Pad (Up, Down, Left, Right)
+    /// - Z: B button
+    /// - X: A button
+    /// - A: Select button
+    /// - S: Start button
+    fn handle_key_down(nes: &mut crate::nes::Nes, keycode: Keycode) {
+        use crate::joypad::Button;
+        match keycode {
+            Keycode::Up => nes.set_button(1, Button::Up, true),
+            Keycode::Down => nes.set_button(1, Button::Down, true),
+            Keycode::Left => nes.set_button(1, Button::Left, true),
+            Keycode::Right => nes.set_button(1, Button::Right, true),
+            Keycode::Z => nes.set_button(1, Button::B, true),
+            Keycode::X => nes.set_button(1, Button::A, true),
+            Keycode::A => nes.set_button(1, Button::Select, true),
+            Keycode::S => nes.set_button(1, Button::Start, true),
+            _ => {}
+        }
+    }
+
+    /// Handle keyboard key release events
+    fn handle_key_up(nes: &mut crate::nes::Nes, keycode: Keycode) {
+        use crate::joypad::Button;
+        match keycode {
+            Keycode::Up => nes.set_button(1, Button::Up, false),
+            Keycode::Down => nes.set_button(1, Button::Down, false),
+            Keycode::Left => nes.set_button(1, Button::Left, false),
+            Keycode::Right => nes.set_button(1, Button::Right, false),
+            Keycode::Z => nes.set_button(1, Button::B, false),
+            Keycode::X => nes.set_button(1, Button::A, false),
+            Keycode::A => nes.set_button(1, Button::Select, false),
+            Keycode::S => nes.set_button(1, Button::Start, false),
+            _ => {}
         }
     }
 }

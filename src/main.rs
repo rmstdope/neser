@@ -1,6 +1,7 @@
 mod cartridge;
 mod cpu;
 mod eventloop;
+mod joypad;
 mod mapper;
 mod mem_controller;
 mod nes;
@@ -26,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // OAM Stress test - PASS
     // let rom_data = std::fs::read("roms/oam_stress.nes")?;
 
-    let rom_data = std::fs::read("roms/cpu_interrupts.nes")?;
+    // let rom_data = std::fs::read("roms/cpu_interrupts.nes")?;
 
     // Palette test - shows timing issues due to PPU timing limitations
     // let rom_data = std::fs::read("roms/palette.nes")?;
@@ -38,7 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/ntsc_torture.nes")?;
 
     // Load game cartridge
-    // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
+    let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
 
@@ -50,6 +51,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     nes_instance.reset();
 
     event_loop
-        .run(&mut nes_instance, true)
+        .run(&mut nes_instance, false)
         .map_err(|e| e.into())
 }

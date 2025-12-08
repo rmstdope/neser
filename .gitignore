@@ -27,3 +27,5 @@ target
 
 # ROMs that should not be comitted
 roms/games
+
+.github/ISSUE_TEMPLATE
