@@ -137,9 +137,17 @@ impl MemController {
                 }
             }
 
-            // PRG ROM ($8000-$FFFF) are read-only when ROM is loaded
+            // PRG ROM area ($8000-$FFFF)
+            // Writes here are typically mapper register writes, not ROM writes
             0x8000..=0xFFFF => {
-                panic!("Cannot write to PRG ROM address {:04X}", addr);
+                if let Some(ref mut cartridge) = self.cartridge {
+                    cartridge.mapper_mut().write_prg(addr, value);
+                } else {
+                    eprintln!(
+                        "Warning: Write to PRG ROM area {:04X} without cartridge, ignored",
+                        addr
+                    );
+                }
             }
 
             // Everything else
