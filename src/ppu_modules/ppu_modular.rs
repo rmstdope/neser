@@ -162,6 +162,26 @@ impl PPUModular {
             self.registers.copy_vertical_bits();
         }
 
+        // OAM corruption bug: If OAMADDR >= 8 when sprite tile loading starts,
+        // copy 8 bytes from (OAMADDR & 0xF8) to OAM[0..7]
+        // This happens at pixel 257 of the pre-render scanline
+        if is_rendering_enabled && is_prerender && pixel == 257 {
+            if self.registers.oam_address >= 8 {
+                let source_addr = (self.registers.oam_address & 0xF8) as usize;
+                // Copy 8 bytes from source to OAM[0..7]
+                for i in 0..8 {
+                    let value = self.sprites.read_oam((source_addr + i) as u8);
+                    self.sprites.write_oam(i as u8, value);
+                }
+            }
+        }
+
+        // Clear OAMADDR during sprite tile loading (pixels 257-320) on visible and pre-render scanlines
+        // This is critical NES PPU hardware behavior
+        if is_rendering_enabled && is_rendering_scanline && pixel >= 257 && pixel <= 320 {
+            self.registers.oam_address = 0;
+        }
+
         // Sprite evaluation during visible scanlines
         if is_visible_scanline {
             if pixel == 0 {
@@ -432,8 +452,20 @@ impl PPUModular {
 
     /// Write to OAM data register ($2004)
     pub fn write_oam_data(&mut self, value: u8) {
-        self.sprites.write_oam(self.registers.oam_address, value);
-        self.registers.oam_address = self.registers.oam_address.wrapping_add(1);
+        let is_rendering = self.is_actively_rendering();
+
+        // During rendering, writes to OAMDATA are ignored (but address still increments)
+        if !is_rendering {
+            self.sprites.write_oam(self.registers.oam_address, value);
+            // Normal increment: add 1
+            self.registers.oam_address = self.registers.oam_address.wrapping_add(1);
+        } else {
+            // Glitchy increment during rendering: increment only the high 6 bits (add 4)
+            // This preserves the low 2 bits and bumps the sprite index
+            let low_bits = self.registers.oam_address & 0x03;
+            let high_bits = self.registers.oam_address.wrapping_add(4) & 0xFC;
+            self.registers.oam_address = high_bits | low_bits;
+        }
     }
 
     /// Read from OAM data register ($2004)
@@ -469,6 +501,24 @@ impl PPUModular {
         self.registers.is_rendering_enabled() && is_visible_scanline
     }
 
+    /// Check if PPU is currently on a rendering scanline (visible or pre-render)
+    /// Returns true if we're on scanlines 0-239 or the pre-render scanline
+    fn is_on_rendering_scanline(&self) -> bool {
+        let scanline = self.timing.scanline();
+        let prerender_scanline = match self.timing.tv_system() {
+            TvSystem::Ntsc => 261,
+            TvSystem::Pal => 311,
+        };
+        let is_visible_scanline = scanline < 240;
+        let is_prerender = scanline == prerender_scanline;
+        is_visible_scanline || is_prerender
+    }
+
+    /// Check if PPU is actively rendering (rendering enabled + on rendering scanline)
+    fn is_actively_rendering(&self) -> bool {
+        self.registers.is_rendering_enabled() && self.is_on_rendering_scanline()
+    }
+
     /// Get total cycles (for testing)
     #[cfg(test)]
     pub fn total_cycles(&self) -> u64 {
@@ -497,6 +547,12 @@ impl PPUModular {
     #[cfg(test)]
     pub fn w_register(&self) -> bool {
         self.registers.w()
+    }
+
+    /// Get OAM address register (for testing)
+    #[cfg(test)]
+    pub fn oam_address(&self) -> u8 {
+        self.registers.oam_address
     }
 
     /// Check if A12 changed from 0 to 1 (rising edge)
@@ -625,16 +681,316 @@ mod tests {
     fn test_oam_data_increments_address() {
         let mut ppu = PPUModular::new(TvSystem::Ntsc);
         ppu.write_oam_address(0x00);
-        ppu.write_oam_data(0x11);
-        ppu.write_oam_data(0x22);
-        ppu.write_oam_data(0x33);
+        ppu.write_oam_data(0x11); // Byte 0: Y position
+        ppu.write_oam_data(0x22); // Byte 1: Tile index
+        ppu.write_oam_data(0xE3); // Byte 2: Attributes (use valid bits only)
+        ppu.write_oam_data(0x44); // Byte 3: X position
 
         ppu.write_oam_address(0x00);
         assert_eq!(ppu.read_oam_data(), 0x11);
         ppu.write_oam_address(0x01);
         assert_eq!(ppu.read_oam_data(), 0x22);
         ppu.write_oam_address(0x02);
-        assert_eq!(ppu.read_oam_data(), 0x33);
+        assert_eq!(ppu.read_oam_data(), 0xE3);
+        ppu.write_oam_address(0x03);
+        assert_eq!(ppu.read_oam_data(), 0x44);
+    }
+
+    #[test]
+    fn test_oam_full_256_bytes() {
+        // Test writing and reading all 256 bytes of OAM
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+
+        // Write all 256 bytes with a pattern that accounts for attribute byte masking
+        ppu.write_oam_address(0x00);
+        for i in 0..256 {
+            ppu.write_oam_data(i as u8);
+        }
+
+        // Verify OAMADDR wrapped around
+        assert_eq!(
+            ppu.oam_address(),
+            0x00,
+            "OAMADDR should wrap to 0 after 256 writes"
+        );
+
+        // Read all 256 bytes back, accounting for attribute byte masking
+        ppu.write_oam_address(0x00);
+        for i in 0..256 {
+            let value = ppu.read_oam_data();
+            ppu.write_oam_address((i + 1) as u8); // Manually increment since read doesn't
+            let expected = if (i & 0x03) == 2 {
+                (i as u8) & 0xE3 // Attribute bytes have bits 2-4 masked
+            } else {
+                i as u8
+            };
+            assert_eq!(value, expected, "OAM[{}] should be {}", i, expected);
+        }
+    }
+
+    #[test]
+    fn test_oamaddr_cleared_during_sprite_loading() {
+        // OAMADDR is automatically set to 0 during pixels 257-320 of visible and pre-render scanlines
+        // This is critical hardware behavior that many test ROMs rely on
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+
+        // Enable rendering (otherwise OAMADDR clearing doesn't happen)
+        ppu.write_control(0x00);
+        ppu.write_mask(0x18); // Enable background and sprite rendering
+
+        // Set OAMADDR to non-zero value
+        ppu.write_oam_address(0x42);
+        assert_eq!(ppu.oam_address(), 0x42);
+
+        // Run to scanline 0, pixel 257 (start of sprite loading interval)
+        ppu.run_ppu_cycles(257);
+
+        // OAMADDR should be cleared to 0 during pixels 257-320
+        assert_eq!(
+            ppu.oam_address(),
+            0x00,
+            "OAMADDR should be cleared to 0 during sprite tile loading (pixels 257-320)"
+        );
+
+        // Set it again to verify it keeps getting cleared during the interval
+        ppu.write_oam_address(0x99);
+        ppu.run_ppu_cycles(1); // Still in the 257-320 interval
+        assert_eq!(
+            ppu.oam_address(),
+            0x00,
+            "OAMADDR should stay 0 during entire sprite loading interval"
+        );
+
+        // Run past pixel 320
+        ppu.run_ppu_cycles(64); // Now at pixel 257+1+64 = 322
+
+        // Now OAMADDR should stay whatever we set it to
+        ppu.write_oam_address(0x55);
+        ppu.run_ppu_cycles(1);
+        assert_eq!(
+            ppu.oam_address(),
+            0x55,
+            "OAMADDR should not be cleared after pixel 320"
+        );
+    }
+
+    #[test]
+    fn test_oamaddr_cleared_on_prerender_scanline() {
+        // OAMADDR clearing also happens on the pre-render scanline
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Run to pre-render scanline (261), pixel 257
+        ppu.run_ppu_cycles(261 * 341 + 257);
+
+        ppu.write_oam_address(0x42);
+        ppu.run_ppu_cycles(1); // Pixel 258, should clear OAMADDR
+        assert_eq!(
+            ppu.oam_address(),
+            0x00,
+            "OAMADDR should be cleared during pre-render scanline sprite loading"
+        );
+    }
+
+    #[test]
+    fn test_oamaddr_not_cleared_when_rendering_disabled() {
+        // OAMADDR should NOT be cleared if rendering is disabled
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+
+        // Rendering disabled (mask = 0)
+        ppu.write_mask(0x00);
+
+        ppu.write_oam_address(0x42);
+
+        // Run through the sprite loading interval
+        ppu.run_ppu_cycles(320);
+
+        // OAMADDR should still be 0x42
+        assert_eq!(
+            ppu.oam_address(),
+            0x42,
+            "OAMADDR should not be cleared when rendering is disabled"
+        );
+    }
+
+    #[test]
+    fn test_oamaddr_corruption_at_rendering_start() {
+        // If OAMADDR >= 8 when rendering starts (during pre-render sprite tile loading),
+        // the 8 bytes at (OAMADDR & 0xF8) are copied to OAM[0..7]
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Setup: Write distinct values to different parts of OAM during vblank
+        ppu.run_ppu_cycles(241 * 341 + 10); // In vblank
+
+        // Write pattern to OAM[0..7]
+        ppu.write_oam_address(0x00);
+        for i in 0..8 {
+            ppu.write_oam_data(i);
+        }
+
+        // Write different pattern to OAM[0x10..0x17]
+        ppu.write_oam_address(0x10);
+        for i in 0..8 {
+            ppu.write_oam_data(0x80 + i);
+        }
+
+        // Set OAMADDR to 0x10 (>= 8) before rendering starts
+        ppu.write_oam_address(0x10);
+
+        // Run to pre-render scanline sprite tile loading (scanline 261, pixel 257)
+        // At this point, OAM corruption should occur
+        ppu.run_ppu_cycles((261 - 241) * 341 + 257 - 10);
+
+        // Check that OAM[0..7] has been corrupted with data from OAM[0x10..0x17]
+        // OAMADDR was 0x10, so 0x10 & 0xF8 = 0x10, meaning OAM[0x10..0x17] -> OAM[0..7]
+        ppu.write_oam_address(0x00);
+        for i in 0..8 {
+            let value = ppu.read_oam_data();
+            ppu.write_oam_address((i + 1) as u8); // Re-set address since read doesn't increment
+            let expected = if (i & 0x03) == 2 {
+                // Attribute byte: 0x82 with masking = 0x82 & 0xE3 = 0x82
+                (0x80 + i) & 0xE3
+            } else {
+                0x80 + i
+            };
+            assert_eq!(
+                value, expected,
+                "OAM[{}] should be corrupted with value from OAM[0x10+{}]",
+                i, i
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_oamaddr_corruption_when_less_than_8() {
+        // If OAMADDR < 8 when rendering starts, no corruption occurs
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Setup OAM during vblank
+        ppu.run_ppu_cycles(241 * 341 + 10);
+
+        ppu.write_oam_address(0x00);
+        for i in 0..8 {
+            ppu.write_oam_data(0x40 + i); // Use values that work with attribute masking
+        }
+
+        // Set OAMADDR to value < 8
+        ppu.write_oam_address(0x05);
+
+        // Run to pre-render sprite tile loading
+        ppu.run_ppu_cycles((261 - 241) * 341 + 257 - 10);
+
+        // OAM[0..7] should be unchanged
+        ppu.write_oam_address(0x00);
+        for i in 0..8 {
+            let value = ppu.read_oam_data();
+            ppu.write_oam_address((i + 1) as u8);
+            let expected = if (i & 0x03) == 2 {
+                (0x40 + i) & 0xE3 // Attribute byte masking
+            } else {
+                0x40 + i
+            };
+            assert_eq!(
+                value, expected,
+                "OAM[{}] should not be corrupted when OAMADDR < 8",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_oam_write_during_rendering_ignored() {
+        // Writes to OAMDATA during rendering should NOT modify OAM
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Write initial value to OAM during vblank (should work)
+        ppu.run_ppu_cycles(241 * 341 + 10); // In vblank
+        ppu.write_oam_address(0x05);
+        ppu.write_oam_data(0x42);
+
+        // Run to visible scanline, avoiding the OAMADDR clearing period (257-320)
+        ppu.run_ppu_cycles((262 - 241) * 341 + 100); // Scanline 0, pixel 100
+
+        // Try to write during rendering (should be ignored)
+        ppu.write_oam_address(0x05);
+        ppu.write_oam_data(0x99); // This write should be ignored
+
+        // Read back - should still be 0x42
+        ppu.write_oam_address(0x05);
+        assert_eq!(
+            ppu.read_oam_data(),
+            0x42,
+            "OAM write during rendering should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_oam_write_during_rendering_increments_address() {
+        // Writes to OAMDATA during rendering should still increment OAMADDR (glitchy increment)
+        // The glitchy increment bumps only the high 6 bits (adds 4 instead of 1)
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Run to visible scanline
+        ppu.run_ppu_cycles(100); // Scanline 0, pixel 100
+
+        // Set OAMADDR to 0x10 and write (write ignored, but address incremented by 4)
+        ppu.write_oam_address(0x10);
+        ppu.write_oam_data(0x99); // Write ignored, but glitchy increment happens
+
+        // Address should have incremented by 4 (glitchy increment - high 6 bits bumped)
+        assert_eq!(
+            ppu.oam_address(),
+            0x14,
+            "OAMADDR should increment by 4 (glitchy) during rendering"
+        );
+
+        // Test with address 0x13 (low 2 bits = 0b11)
+        ppu.write_oam_address(0x13);
+        ppu.write_oam_data(0x99);
+        // Glitchy increment: (0x13 & 0x03) | ((0x13 + 4) & 0xFC) = 0x03 | 0x14 = 0x17
+        assert_eq!(
+            ppu.oam_address(),
+            0x17,
+            "Glitchy increment should preserve low 2 bits and add 4 to high 6 bits"
+        );
+    }
+
+    #[test]
+    fn test_oam_write_outside_rendering_works() {
+        // Writes to OAMDATA outside rendering should work normally
+        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Run to vblank
+        ppu.run_ppu_cycles(241 * 341 + 10);
+
+        // Write during vblank (should work)
+        ppu.write_oam_address(0x00);
+        ppu.write_oam_data(0x42);
+
+        // Read back
+        ppu.write_oam_address(0x00);
+        assert_eq!(
+            ppu.read_oam_data(),
+            0x42,
+            "OAM write during vblank should work normally"
+        );
     }
 
     // Control register tests

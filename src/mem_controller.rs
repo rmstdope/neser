@@ -29,7 +29,7 @@ impl MemController {
         for addr in 0..8192 {
             chr_data.push(cartridge.mapper().read_chr(addr));
         }
-        
+
         let mut ppu = self.ppu.borrow_mut();
         ppu.load_chr_rom(chr_data);
         ppu.set_mirroring(cartridge.mapper().get_mirroring());
@@ -55,6 +55,19 @@ impl MemController {
                 _ => panic!("Should never happen!"),
             },
 
+            // PRG-RAM ($6000-$7FFF)
+            0x6000..=0x7FFF => {
+                if let Some(ref cartridge) = self.cartridge {
+                    cartridge.mapper().read_prg(addr)
+                } else {
+                    eprintln!(
+                        "Warning: Read from PRG-RAM {:04X} without cartridge, returning 0",
+                        addr
+                    );
+                    0
+                }
+            }
+
             // PRG ROM ($8000-$FFFF)
             0x8000..=0xFFFF => {
                 if let Some(ref cartridge) = self.cartridge {
@@ -66,10 +79,10 @@ impl MemController {
 
             // Everything else
             _ => {
-                // eprintln!(
-                //     "Warning: Read from unimplemented address {:04X}, returning 0",
-                //     addr
-                // );
+                eprintln!(
+                    "Warning: Read from unimplemented address {:04X}, returning 0",
+                    addr
+                );
                 0
             }
         }
@@ -105,12 +118,24 @@ impl MemController {
                     return true; // Signal that OAM DMA should occur
                 }
                 _ => {
-                    // eprintln!(
-                    //     "Warning: Write to unimplemented APU/IO register {:04X} ignored",
-                    //     addr
-                    // );
+                    eprintln!(
+                        "Warning: Write to unimplemented APU/IO register {:04X} ignored",
+                        addr
+                    );
                 }
             },
+
+            // PRG-RAM ($6000-$7FFF)
+            0x6000..=0x7FFF => {
+                if let Some(ref mut cartridge) = self.cartridge {
+                    cartridge.mapper_mut().write_prg(addr, value);
+                } else {
+                    eprintln!(
+                        "Warning: Write to PRG-RAM {:04X} without cartridge, ignored",
+                        addr
+                    );
+                }
+            }
 
             // PRG ROM ($8000-$FFFF) are read-only when ROM is loaded
             0x8000..=0xFFFF => {
@@ -165,7 +190,9 @@ mod tests {
     use super::*;
 
     fn create_test_memory() -> MemController {
-        let ppu = Rc::new(RefCell::new(ppu_modules::PPUModular::new(crate::nes::TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu_modules::PPUModular::new(
+            crate::nes::TvSystem::Ntsc,
+        )));
         MemController::new(ppu)
     }
 
@@ -248,11 +275,8 @@ mod tests {
         prg_rom[0] = 0xAA; // First byte
         prg_rom[0x3FFF] = 0xBB; // Last byte of 16KB
 
-        let cartridge = Cartridge::from_parts(
-            prg_rom,
-            vec![],
-            crate::cartridge::MirroringMode::Horizontal,
-        );
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
 
         memory.map_cartridge(cartridge);
 
@@ -278,11 +302,8 @@ mod tests {
         prg_rom[0x4000] = 0xCC; // First byte at $C000
         prg_rom[0x7FFF] = 0xDD; // Last byte at $FFFF
 
-        let cartridge = Cartridge::from_parts(
-            prg_rom,
-            vec![],
-            crate::cartridge::MirroringMode::Horizontal,
-        );
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
 
         memory.map_cartridge(cartridge);
 
@@ -342,15 +363,15 @@ mod tests {
     fn test_write_to_oamaddr_sets_oam_address() {
         let mut memory = create_test_memory();
 
-        // Write to OAMADDR register
-        memory.write(0x2003, 0x42);
+        // Write to OAMADDR register (use address 0x40 to avoid attribute byte)
+        memory.write(0x2003, 0x40);
 
         // Verify by writing to OAMDATA and checking the address incremented
         memory.write(0x2004, 0xAA);
         memory.write(0x2004, 0xBB);
 
         // Reset OAM address and read back
-        memory.write(0x2003, 0x42);
+        memory.write(0x2003, 0x40);
         assert_eq!(memory.read(0x2004), 0xAA);
         assert_eq!(memory.read(0x2004), 0xAA); // Reading doesn't increment
     }
@@ -375,7 +396,8 @@ mod tests {
         assert_eq!(memory.read(0x2004), 0x22);
 
         memory.write(0x2003, 0x02);
-        assert_eq!(memory.read(0x2004), 0x33);
+        // Attribute byte: 0x33 with masking = 0x33 & 0xE3 = 0x23
+        assert_eq!(memory.read(0x2004), 0x23);
     }
 
     #[test]
@@ -420,7 +442,7 @@ mod tests {
         memory.write(0x2003, 0x00);
         memory.write(0x2004, 0x10); // Y position
         memory.write(0x2004, 0x20); // Tile index
-        memory.write(0x2004, 0x30); // Attributes
+        memory.write(0x2004, 0xE3); // Attributes (valid value with all implemented bits set)
         memory.write(0x2004, 0x40); // X position
 
         // Read back the sprite data
@@ -429,8 +451,115 @@ mod tests {
         memory.write(0x2003, 0x01);
         assert_eq!(memory.read(0x2004), 0x20);
         memory.write(0x2003, 0x02);
-        assert_eq!(memory.read(0x2004), 0x30);
+        assert_eq!(memory.read(0x2004), 0xE3);
         memory.write(0x2003, 0x03);
         assert_eq!(memory.read(0x2004), 0x40);
+    }
+
+    #[test]
+    fn test_prg_ram_write_and_read() {
+        // Test basic PRG-RAM read/write at $6000-$7FFF
+        let mut memory = create_test_memory();
+
+        // Load a simple NROM cartridge with PRG-RAM
+        let rom_data = create_nrom_rom_with_prg_ram();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        memory.map_cartridge(cartridge);
+
+        // Write to PRG-RAM
+        memory.write(0x6000, 0x42);
+        memory.write(0x6001, 0x43);
+        memory.write(0x7FFF, 0xFF);
+
+        // Read back from PRG-RAM
+        assert_eq!(
+            memory.read(0x6000),
+            0x42,
+            "PRG-RAM at $6000 should return written value"
+        );
+        assert_eq!(
+            memory.read(0x6001),
+            0x43,
+            "PRG-RAM at $6001 should return written value"
+        );
+        assert_eq!(
+            memory.read(0x7FFF),
+            0xFF,
+            "PRG-RAM at $7FFF should return written value"
+        );
+    }
+
+    #[test]
+    fn test_prg_ram_persistence() {
+        // Test that PRG-RAM persists across multiple reads
+        let mut memory = create_test_memory();
+
+        let rom_data = create_nrom_rom_with_prg_ram();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        memory.map_cartridge(cartridge);
+
+        memory.write(0x6100, 0xAB);
+
+        // Multiple reads should return the same value
+        assert_eq!(memory.read(0x6100), 0xAB);
+        assert_eq!(memory.read(0x6100), 0xAB);
+        assert_eq!(memory.read(0x6100), 0xAB);
+    }
+
+    #[test]
+    fn test_prg_ram_8kb_size() {
+        // Test that PRG-RAM is 8KB ($6000-$7FFF = 8192 bytes)
+        let mut memory = create_test_memory();
+
+        let rom_data = create_nrom_rom_with_prg_ram();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        memory.map_cartridge(cartridge);
+
+        // Write to first and last byte of 8KB range
+        memory.write(0x6000, 0x01);
+        memory.write(0x7FFF, 0xFF);
+
+        assert_eq!(memory.read(0x6000), 0x01);
+        assert_eq!(memory.read(0x7FFF), 0xFF);
+
+        // They should be different addresses (not mirrored)
+        assert_ne!(memory.read(0x6000), memory.read(0x7FFF));
+    }
+
+    #[test]
+    fn test_prg_ram_initialized_to_zero() {
+        // Test that PRG-RAM starts with all zeros
+        let mut memory = create_test_memory();
+
+        let rom_data = create_nrom_rom_with_prg_ram();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        memory.map_cartridge(cartridge);
+
+        // Check various addresses are initialized to 0
+        assert_eq!(memory.read(0x6000), 0x00);
+        assert_eq!(memory.read(0x6100), 0x00);
+        assert_eq!(memory.read(0x7000), 0x00);
+        assert_eq!(memory.read(0x7FFF), 0x00);
+    }
+
+    /// Helper function to create a minimal NROM ROM with PRG-RAM support
+    fn create_nrom_rom_with_prg_ram() -> Vec<u8> {
+        let mut rom = Vec::new();
+
+        // iNES header
+        rom.extend_from_slice(b"NES\x1A"); // Signature
+        rom.push(2); // 2 * 16KB PRG ROM
+        rom.push(1); // 1 * 8KB CHR ROM
+        rom.push(0x02); // Flags 6: Battery-backed PRG-RAM present (bit 1)
+        rom.push(0x00); // Flags 7: Mapper 0 (NROM)
+        rom.extend_from_slice(&[0; 8]); // Unused padding
+
+        // 32KB PRG ROM (2 * 16KB) - filled with NOPs
+        rom.extend_from_slice(&[0xEA; 32768]);
+
+        // 8KB CHR ROM - filled with zeros
+        rom.extend_from_slice(&[0x00; 8192]);
+
+        rom
     }
 }

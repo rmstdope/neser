@@ -3,6 +3,7 @@ use std::io;
 
 // Memory size constants
 const CHR_RAM_SIZE: usize = 8192; // 8KB
+const PRG_RAM_SIZE: usize = 8192; // 8KB
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 
@@ -32,12 +33,15 @@ const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 /// }
 /// ```
 pub trait Mapper {
-    /// Read a byte from PRG address space (CPU $8000-$FFFF)
+    /// Read a byte from PRG address space (CPU $6000-$FFFF)
+    /// - $6000-$7FFF: PRG-RAM (8KB, battery-backed on some cartridges)
+    /// - $8000-$FFFF: PRG-ROM (with bank switching on advanced mappers)
     /// Returns the byte at the given address after bank translation
     fn read_prg(&self, addr: u16) -> u8;
 
-    /// Write a byte to PRG address space (CPU $8000-$FFFF)
-    /// Used for mapper control registers and PRG-RAM
+    /// Write a byte to PRG address space (CPU $6000-$FFFF)
+    /// - $6000-$7FFF: PRG-RAM (8KB, writable)
+    /// - $8000-$FFFF: Mapper control registers (PRG-ROM is read-only)
     fn write_prg(&mut self, addr: u16, value: u8);
 
     /// Read a byte from CHR address space (PPU $0000-$1FFF)
@@ -62,12 +66,14 @@ pub trait Mapper {
 /// The simplest mapper with no bank switching.
 /// Supports:
 /// - 16KB or 32KB PRG ROM (16KB is mirrored at $C000)
+/// - 8KB PRG-RAM at $6000-$7FFF (battery-backed on some cartridges)
 /// - 8KB CHR ROM or CHR-RAM
 /// - Fixed nametable mirroring
 ///
 /// This is the baseline mapper implementation that all other mappers build upon.
 pub struct NROMMapper {
     prg_rom: Vec<u8>,
+    prg_ram: Vec<u8>,
     chr_memory: Vec<u8>,
     mirroring: MirroringMode,
     has_chr_ram: bool,
@@ -86,6 +92,7 @@ impl NROMMapper {
 
         Self {
             prg_rom,
+            prg_ram: vec![0; PRG_RAM_SIZE], // 8KB PRG-RAM initialized to 0
             chr_memory,
             mirroring,
             has_chr_ram,
@@ -95,24 +102,45 @@ impl NROMMapper {
 
 impl Mapper for NROMMapper {
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG ROM is mapped to $8000-$FFFF
-        let offset = (addr - 0x8000) as usize;
+        match addr {
+            // PRG-RAM at $6000-$7FFF (8KB)
+            0x6000..=0x7FFF => {
+                let offset = (addr - 0x6000) as usize;
+                self.prg_ram.get(offset).copied().unwrap_or(0)
+            }
+            // PRG ROM at $8000-$FFFF
+            0x8000..=0xFFFF => {
+                let offset = (addr - 0x8000) as usize;
 
-        // Handle 16KB vs 32KB PRG ROM
-        if self.prg_rom.len() == PRG_BANK_SIZE {
-            // 16KB ROM: mirror at $C000
-            // $8000-$BFFF maps to ROM, $C000-$FFFF mirrors to same ROM
-            let index = offset % PRG_BANK_SIZE;
-            self.prg_rom.get(index).copied().unwrap_or(0)
-        } else {
-            // 32KB or larger ROM: direct mapping
-            let index = offset % self.prg_rom.len();
-            self.prg_rom.get(index).copied().unwrap_or(0)
+                // Handle 16KB vs 32KB PRG ROM
+                if self.prg_rom.len() == PRG_BANK_SIZE {
+                    // 16KB ROM: mirror at $C000
+                    // $8000-$BFFF maps to ROM, $C000-$FFFF mirrors to same ROM
+                    let index = offset % PRG_BANK_SIZE;
+                    self.prg_rom.get(index).copied().unwrap_or(0)
+                } else {
+                    // 32KB or larger ROM: direct mapping
+                    let index = offset % self.prg_rom.len();
+                    self.prg_rom.get(index).copied().unwrap_or(0)
+                }
+            }
+            _ => 0,
         }
     }
 
-    fn write_prg(&mut self, _addr: u16, _value: u8) {
-        // NROM has no PRG-RAM or mapper registers, writes are ignored
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        match addr {
+            // PRG-RAM at $6000-$7FFF (8KB)
+            0x6000..=0x7FFF => {
+                let offset = (addr - 0x6000) as usize;
+                if offset < self.prg_ram.len() {
+                    self.prg_ram[offset] = value;
+                }
+            }
+            // Writes to PRG ROM are ignored (no mapper registers in NROM)
+            0x8000..=0xFFFF => {}
+            _ => {}
+        }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
@@ -146,12 +174,14 @@ impl Mapper for NROMMapper {
 /// Supports:
 /// - 16KB switchable PRG bank at $8000-$BFFF
 /// - 16KB fixed PRG bank at $C000-$FFFF (always last bank)
+/// - 8KB PRG-RAM at $6000-$7FFF
 /// - 8KB CHR-RAM (no CHR ROM banking)
 /// - Bank select register at $8000-$FFFF (any write)
 ///
 /// Common in games like Mega Man, Castlevania, Contra, Duck Tales, Metal Gear.
 pub struct UxROMMapper {
     prg_rom: Vec<u8>,
+    prg_ram: Vec<u8>,
     chr_ram: Vec<u8>,
     mirroring: MirroringMode,
     bank_select: u8,
@@ -162,6 +192,7 @@ impl UxROMMapper {
         // UxROM uses CHR-RAM, ignore chr_rom parameter
         Self {
             prg_rom,
+            prg_ram: vec![0; PRG_RAM_SIZE],
             chr_ram: vec![0; CHR_RAM_SIZE],
             mirroring,
             bank_select: 0,
@@ -175,24 +206,47 @@ impl UxROMMapper {
 
 impl Mapper for UxROMMapper {
     fn read_prg(&self, addr: u16) -> u8 {
-        let offset = (addr - 0x8000) as usize;
+        match addr {
+            // PRG-RAM at $6000-$7FFF (8KB)
+            0x6000..=0x7FFF => {
+                let offset = (addr - 0x6000) as usize;
+                self.prg_ram.get(offset).copied().unwrap_or(0)
+            }
+            // PRG ROM at $8000-$FFFF
+            0x8000..=0xFFFF => {
+                let offset = (addr - 0x8000) as usize;
 
-        if addr < 0xC000 {
-            // $8000-$BFFF: Switchable 16KB bank
-            let bank_offset = (self.bank_select as usize) * PRG_BANK_SIZE;
-            let index = bank_offset + offset;
-            self.prg_rom.get(index).copied().unwrap_or(0)
-        } else {
-            // $C000-$FFFF: Fixed to last 16KB bank
-            let last_bank_offset = self.get_last_bank_offset();
-            let index = last_bank_offset + (offset - PRG_BANK_SIZE);
-            self.prg_rom.get(index).copied().unwrap_or(0)
+                if addr < 0xC000 {
+                    // $8000-$BFFF: Switchable 16KB bank
+                    let bank_offset = (self.bank_select as usize) * PRG_BANK_SIZE;
+                    let index = bank_offset + offset;
+                    self.prg_rom.get(index).copied().unwrap_or(0)
+                } else {
+                    // $C000-$FFFF: Fixed to last 16KB bank
+                    let last_bank_offset = self.get_last_bank_offset();
+                    let index = last_bank_offset + (offset - PRG_BANK_SIZE);
+                    self.prg_rom.get(index).copied().unwrap_or(0)
+                }
+            }
+            _ => 0,
         }
     }
 
-    fn write_prg(&mut self, _addr: u16, value: u8) {
-        // Any write to $8000-$FFFF sets the bank register
-        self.bank_select = value;
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        match addr {
+            // PRG-RAM at $6000-$7FFF (8KB)
+            0x6000..=0x7FFF => {
+                let offset = (addr - 0x6000) as usize;
+                if offset < self.prg_ram.len() {
+                    self.prg_ram[offset] = value;
+                }
+            }
+            // Any write to $8000-$FFFF sets the bank register
+            0x8000..=0xFFFF => {
+                self.bank_select = value;
+            }
+            _ => {}
+        }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
@@ -217,17 +271,19 @@ impl Mapper for UxROMMapper {
 }
 
 /// CNROM mapper (Mapper 3)
-/// 
+///
 /// Simple CHR banking mapper with fixed PRG ROM.
 /// Supports:
 /// - 32KB fixed PRG ROM (no PRG banking)
+/// - 8KB PRG-RAM at $6000-$7FFF
 /// - 8KB switchable CHR ROM window (up to 4 banks = 32KB typical)
 /// - CHR bank select via writes to $8000-$FFFF
 /// - Fixed horizontal or vertical mirroring
-/// 
+///
 /// Used in many early NES games.
 pub struct CNROMMapper {
     prg_rom: Vec<u8>,
+    prg_ram: Vec<u8>,
     chr_rom: Vec<u8>,
     mirroring: MirroringMode,
     chr_bank_select: u8,
@@ -237,6 +293,7 @@ impl CNROMMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         Self {
             prg_rom,
+            prg_ram: vec![0; PRG_RAM_SIZE],
             chr_rom,
             mirroring,
             chr_bank_select: 0,
@@ -252,15 +309,37 @@ impl CNROMMapper {
 
 impl Mapper for CNROMMapper {
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG ROM is fixed at $8000-$FFFF (32KB or 16KB)
-        let offset = (addr - 0x8000) as usize;
-        let index = offset % self.prg_rom.len();
-        self.prg_rom.get(index).copied().unwrap_or(0)
+        match addr {
+            // PRG-RAM at $6000-$7FFF (8KB)
+            0x6000..=0x7FFF => {
+                let offset = (addr - 0x6000) as usize;
+                self.prg_ram.get(offset).copied().unwrap_or(0)
+            }
+            // PRG ROM is fixed at $8000-$FFFF (32KB or 16KB)
+            0x8000..=0xFFFF => {
+                let offset = (addr - 0x8000) as usize;
+                let index = offset % self.prg_rom.len();
+                self.prg_rom.get(index).copied().unwrap_or(0)
+            }
+            _ => 0,
+        }
     }
 
-    fn write_prg(&mut self, _addr: u16, value: u8) {
-        // Any write to $8000-$FFFF sets the CHR bank register
-        self.chr_bank_select = value;
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        match addr {
+            // PRG-RAM at $6000-$7FFF (8KB)
+            0x6000..=0x7FFF => {
+                let offset = (addr - 0x6000) as usize;
+                if offset < self.prg_ram.len() {
+                    self.prg_ram[offset] = value;
+                }
+            }
+            // Any write to $8000-$FFFF sets the CHR bank select
+            0x8000..=0xFFFF => {
+                self.chr_bank_select = value;
+            }
+            _ => {}
+        }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
@@ -579,7 +658,7 @@ mod tests {
     fn test_cnrom_32kb_prg_no_banking() {
         // CNROM has 32KB PRG ROM with no banking (like NROM)
         let mut prg_rom = vec![0; 32 * 1024];
-        
+
         // Fill with pattern - each 1KB block gets a unique value
         for (i, byte) in prg_rom.iter_mut().enumerate() {
             *byte = (i / 1024) as u8;
@@ -588,8 +667,8 @@ mod tests {
         let mapper = CNROMMapper::new(prg_rom, vec![0; 32 * 1024], MirroringMode::Horizontal);
 
         // PRG ROM should be accessible at $8000-$FFFF
-        assert_eq!(mapper.read_prg(0x8000), 0);  // First byte of first 1KB block
-        assert_eq!(mapper.read_prg(0x9000), 4);  // $9000 = $8000 + $1000 = 4KB offset = block 4
+        assert_eq!(mapper.read_prg(0x8000), 0); // First byte of first 1KB block
+        assert_eq!(mapper.read_prg(0x9000), 4); // $9000 = $8000 + $1000 = 4KB offset = block 4
         assert_eq!(mapper.read_prg(0xC000), 16); // $C000 = $8000 + $4000 = 16KB offset = block 16
         assert_eq!(mapper.read_prg(0xFFFF), 31); // $FFFF = last byte of block 31
     }
@@ -598,7 +677,7 @@ mod tests {
     fn test_cnrom_chr_bank_switching_4_banks() {
         // 32KB CHR ROM = 4 banks of 8KB
         let mut chr_rom = vec![0; 32 * 1024];
-        
+
         // Fill each 8KB bank with its bank number
         for bank in 0..4 {
             let start = bank * 8 * 1024;
@@ -638,7 +717,7 @@ mod tests {
     fn test_cnrom_chr_bank_switching_2_banks() {
         // 16KB CHR ROM = 2 banks of 8KB
         let mut chr_rom = vec![0; 16 * 1024];
-        
+
         for bank in 0..2 {
             let start = bank * 8 * 1024;
             let end = start + 8 * 1024;
@@ -676,10 +755,18 @@ mod tests {
 
     #[test]
     fn test_cnrom_mirroring() {
-        let mapper_h = CNROMMapper::new(vec![0; 32 * 1024], vec![0; 32 * 1024], MirroringMode::Horizontal);
+        let mapper_h = CNROMMapper::new(
+            vec![0; 32 * 1024],
+            vec![0; 32 * 1024],
+            MirroringMode::Horizontal,
+        );
         assert_eq!(mapper_h.get_mirroring(), MirroringMode::Horizontal);
 
-        let mapper_v = CNROMMapper::new(vec![0; 32 * 1024], vec![0; 32 * 1024], MirroringMode::Vertical);
+        let mapper_v = CNROMMapper::new(
+            vec![0; 32 * 1024],
+            vec![0; 32 * 1024],
+            MirroringMode::Vertical,
+        );
         assert_eq!(mapper_v.get_mirroring(), MirroringMode::Vertical);
     }
 
@@ -687,7 +774,7 @@ mod tests {
     fn test_cnrom_bank_select_any_address() {
         // CNROM responds to writes anywhere in $8000-$FFFF
         let mut chr_rom = vec![0; 32 * 1024];
-        
+
         for bank in 0..4 {
             let start = bank * 8 * 1024;
             let end = start + 8 * 1024;

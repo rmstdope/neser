@@ -23,6 +23,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // OADM Read test - PASS
     // let rom_data = std::fs::read("roms/oam_read.nes")?;
 
+    // OAM Stress test - PASS
+    // let rom_data = std::fs::read("roms/oam_stress.nes")?;
+
+    // OAM3 Test - FAIL
+    let rom_data = std::fs::read("roms/oam3.nes")?;
+
     // Palette test - shows timing issues due to PPU timing limitations
     // let rom_data = std::fs::read("roms/palette.nes")?;
 
@@ -32,18 +38,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // NTSC Torture test - Run when input is implemented
     // let rom_data = std::fs::read("roms/ntsc_torture.nes")?;
 
-    // OAM Stress test - FAIL
-    // let rom_data = std::fs::read("roms/oam_stress.nes")?;
-
     // Load game cartridge
-    let rom_data = std::fs::read("roms/games/pac-man.nes")?;
+    // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
 
     // Unknown status
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
     // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
-    // let rom_data = std::fs::read("roms/oam3.nes")?;
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset();

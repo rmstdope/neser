@@ -9654,10 +9654,15 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
             nes.memory.borrow_mut().write(0x2003, i as u8);
             // Read OAM data via $2004
             let oam_byte = nes.memory.borrow().read(0x2004);
+            let expected = if (i & 0x03) == 2 {
+                // Attribute byte: mask bits 2-4
+                ((i & 0xFF) as u8) & 0xE3
+            } else {
+                (i & 0xFF) as u8
+            };
             assert_eq!(
-                oam_byte,
-                (i & 0xFF) as u8,
-                "OAM byte {} should match source data",
+                oam_byte, expected,
+                "OAM byte {} should match source data (with attribute masking)",
                 i
             );
         }
@@ -9687,9 +9692,15 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
             nes.memory.borrow_mut().write(0x2003, i as u8);
             // Read OAM data via $2004
             let oam_byte = nes.memory.borrow().read(0x2004);
+            let expected = if (i & 0x03) == 2 {
+                // Attribute byte: 0xAA with masking = 0xAA & 0xE3 = 0xA2
+                0xA2
+            } else {
+                0xAA
+            };
             assert_eq!(
-                oam_byte, 0xAA,
-                "OAM byte {} should be 0xAA from page $03",
+                oam_byte, expected,
+                "OAM byte {} should be from page $03 (with attribute masking)",
                 i
             );
         }

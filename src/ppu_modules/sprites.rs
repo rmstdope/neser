@@ -38,6 +38,10 @@ pub struct Sprites {
     next_sprite_attributes: [u8; 8],
 }
 
+/// OAM attribute byte mask - bits 2-4 are unimplemented and always read as 0
+/// Mask: 11100011 (0xE3) - preserves bits 7-5 (priority/palette) and 1-0 (flip bits)
+const OAM_ATTRIBUTE_MASK: u8 = 0xE3;
+
 impl Sprites {
     /// Create a new Sprites instance
     pub fn new() -> Self {
@@ -74,11 +78,20 @@ impl Sprites {
 
     /// Get OAM data at specified address
     pub fn read_oam(&self, addr: u8) -> u8 {
-        self.oam_data[addr as usize]
+        let value = self.oam_data[addr as usize];
+        // Byte 2 of each sprite (attribute byte) has unimplemented bits 2-4
+        // These bits should always read as 0
+        if (addr & 0x03) == 2 {
+            value & OAM_ATTRIBUTE_MASK
+        } else {
+            value
+        }
     }
 
     /// Write OAM data at specified address
     pub fn write_oam(&mut self, addr: u8, value: u8) {
+        // Note: Unimplemented bits in byte 2 can be written but will read back as 0
+        // We store the full value but mask it on read
         self.oam_data[addr as usize] = value;
     }
 
