@@ -16,7 +16,17 @@ pub struct Pulse {
     volume_envelope_period: u8,
     envelope_divider: u8,
     envelope_decay_level: u8,
+
+    // Length counter fields
+    length_counter: u8,
+    length_counter_halt: bool,
 }
+
+/// Length counter load table (indexed by bits 7-3 of $4003/$4007)
+const LENGTH_COUNTER_TABLE: [u8; 32] = [
+    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
+    192, 24, 72, 26, 16, 28, 32, 30,
+];
 
 /// Duty cycle sequence lookup tables
 /// Sequencer starts at 0 and counts down (reads 0, 7, 6, 5, 4, 3, 2, 1)
@@ -47,6 +57,8 @@ impl Pulse {
             volume_envelope_period: 0,
             envelope_divider: 0,
             envelope_decay_level: 0,
+            length_counter: 0,
+            length_counter_halt: false,
         }
     }
 
@@ -89,18 +101,22 @@ impl Pulse {
         self.duty_mode = duty & 0x03;
     }
 
-    /// Write to $4000 register (duty, loop, constant volume, volume/envelope period)
+    /// Write to $4000 register (duty, loop/halt, constant volume, volume/envelope period)
     pub fn write_control(&mut self, value: u8) {
         self.duty_mode = (value >> 6) & 0x03;
         self.envelope_loop_flag = (value & 0x20) != 0;
+        self.length_counter_halt = (value & 0x20) != 0; // Same bit as envelope loop
         self.constant_volume_flag = (value & 0x10) != 0;
         self.volume_envelope_period = value & 0x0F;
     }
 
-    /// Write to $4003 register (sets start flag in addition to timer high)
+    /// Write to $4003 register (loads length counter, sets start flag, sets timer high)
     pub fn write_length_counter_timer_high(&mut self, value: u8) {
         self.write_timer_high(value);
         self.envelope_start_flag = true;
+        // Load length counter from bits 7-3
+        let index = (value >> 3) as usize;
+        self.length_counter = LENGTH_COUNTER_TABLE[index];
     }
 
     /// Clock the envelope (called by quarter frame from frame counter)
@@ -127,6 +143,25 @@ impl Pulse {
             self.volume_envelope_period
         } else {
             self.envelope_decay_level
+        }
+    }
+
+    /// Clock the length counter (called by half frame from frame counter)
+    pub fn clock_length_counter(&mut self) {
+        if !self.length_counter_halt && self.length_counter > 0 {
+            self.length_counter -= 1;
+        }
+    }
+
+    /// Get the current length counter value
+    pub fn get_length_counter(&self) -> u8 {
+        self.length_counter
+    }
+
+    /// Set length counter enabled/disabled (from $4015)
+    pub fn set_length_counter_enabled(&mut self, enabled: bool) {
+        if !enabled {
+            self.length_counter = 0;
         }
     }
 }
@@ -468,5 +503,139 @@ mod tests {
         }
         assert_eq!(pulse.envelope_decay_level, 14);
         assert_eq!(pulse.get_envelope_volume(), 5); // Still returns constant volume
+    }
+
+    // Length Counter Tests
+
+    #[test]
+    fn test_length_counter_load_values() {
+        let mut pulse = Pulse::new();
+
+        // Test all 32 load values
+        let expected = [
+            10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20,
+            96, 22, 192, 24, 72, 26, 16, 28, 32, 30,
+        ];
+
+        for (i, &expected_value) in expected.iter().enumerate() {
+            let value = (i as u8) << 3; // Put index in bits 7-3
+            pulse.write_length_counter_timer_high(value);
+            assert_eq!(
+                pulse.get_length_counter(),
+                expected_value,
+                "Failed for index {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_length_counter_decrements() {
+        let mut pulse = Pulse::new();
+        pulse.write_length_counter_timer_high(0b00001_000); // Load value 2 (index 1)
+        assert_eq!(pulse.get_length_counter(), 254);
+
+        pulse.clock_length_counter();
+        assert_eq!(pulse.get_length_counter(), 253);
+
+        pulse.clock_length_counter();
+        assert_eq!(pulse.get_length_counter(), 252);
+    }
+
+    #[test]
+    fn test_length_counter_halt_flag() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0010_0000); // Set halt flag
+        pulse.write_length_counter_timer_high(0b00010_000); // Load value 20 (index 2)
+
+        assert_eq!(pulse.get_length_counter(), 20);
+
+        // Clock should not decrement when halted
+        pulse.clock_length_counter();
+        assert_eq!(pulse.get_length_counter(), 20);
+
+        pulse.clock_length_counter();
+        assert_eq!(pulse.get_length_counter(), 20);
+    }
+
+    #[test]
+    fn test_length_counter_stops_at_zero() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0000_0000); // No halt
+        pulse.write_length_counter_timer_high(0b00011_000); // Load value 2 (index 3)
+
+        assert_eq!(pulse.get_length_counter(), 2);
+
+        pulse.clock_length_counter();
+        assert_eq!(pulse.get_length_counter(), 1);
+
+        pulse.clock_length_counter();
+        assert_eq!(pulse.get_length_counter(), 0);
+
+        // Should not go below zero
+        pulse.clock_length_counter();
+        assert_eq!(pulse.get_length_counter(), 0);
+    }
+
+    #[test]
+    fn test_length_counter_can_be_reloaded() {
+        let mut pulse = Pulse::new();
+        pulse.write_length_counter_timer_high(0b00100_000); // Load value 40 (index 4)
+        assert_eq!(pulse.get_length_counter(), 40);
+
+        // Clock a few times
+        pulse.clock_length_counter();
+        pulse.clock_length_counter();
+        assert_eq!(pulse.get_length_counter(), 38);
+
+        // Reload with different value
+        pulse.write_length_counter_timer_high(0b00000_000); // Load value 10 (index 0)
+        assert_eq!(pulse.get_length_counter(), 10);
+    }
+
+    #[test]
+    fn test_length_counter_halt_flag_shared_with_envelope_loop() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0010_0000); // Bit 5 set
+
+        // Both flags should be set from same bit
+        assert!(pulse.length_counter_halt);
+        assert!(pulse.envelope_loop_flag);
+
+        pulse.write_control(0b0000_0000); // Bit 5 clear
+
+        assert!(!pulse.length_counter_halt);
+        assert!(!pulse.envelope_loop_flag);
+    }
+
+    #[test]
+    fn test_set_length_counter_enabled() {
+        let mut pulse = Pulse::new();
+        pulse.write_length_counter_timer_high(0b01010_000); // Load some value
+        assert_eq!(pulse.get_length_counter(), 60);
+
+        // Disable should clear counter
+        pulse.set_length_counter_enabled(false);
+        assert_eq!(pulse.get_length_counter(), 0);
+
+        // Enable should not change counter (it stays at current value)
+        pulse.set_length_counter_enabled(true);
+        assert_eq!(pulse.get_length_counter(), 0);
+    }
+
+    #[test]
+    fn test_length_counter_with_halt_then_unhalt() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0010_0000); // Halt flag set
+        pulse.write_length_counter_timer_high(0b00000_000); // Load 10
+
+        pulse.clock_length_counter();
+        assert_eq!(pulse.get_length_counter(), 10); // Halted, no change
+
+        // Clear halt flag
+        pulse.write_control(0b0000_0000);
+
+        pulse.clock_length_counter();
+        assert_eq!(pulse.get_length_counter(), 9); // Now decrements
     }
 }
