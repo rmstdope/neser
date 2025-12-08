@@ -245,11 +245,12 @@ impl EventLoop {
     /// # Arguments
     ///
     /// * `nes` - A mutable reference to the NES instance to run.
+    /// * `trace` - If `true`, prints a trace line for each CPU instruction executed.
     ///
     /// # Errors
     ///
     /// Currently returns Ok(()) in all cases, but the Result type is kept for future error handling.
-    pub fn run(&mut self, nes: &mut crate::nes::Nes) -> Result<(), String> {
+    pub fn run(&mut self, nes: &mut crate::nes::Nes, trace: bool) -> Result<(), String> {
         if let Some(ref mut canvas) = self.canvas {
             // We have a window - run with rendering
             let texture_creator = canvas.texture_creator();
@@ -296,6 +297,9 @@ impl EventLoop {
                 // automatically runs the correct number of PPU cycles per CPU instruction.
                 // A full frame is 262 scanlines × 341 pixels = 89,342 PPU cycles for NTSC
                 while !nes.is_ready_to_render() && !nes.cpu.halted {
+                    if trace {
+                        println!("{}", nes.trace(false));
+                    }
                     nes.run_cpu_tick();
                 }
                 nes.clear_ready_to_render();

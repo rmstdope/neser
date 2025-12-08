@@ -69,9 +69,10 @@ impl Status {
     /// Returns the status byte
     pub fn read_status(&mut self) -> u8 {
         let mut status = 0u8;
-        
+
         if self.vblank_flag {
             status |= 0b1000_0000; // Bit 7: VBlank
+            println!("PPU Status: VBlank flag set");
         }
         if self.sprite_0_hit {
             status |= 0b0100_0000; // Bit 6: Sprite 0 hit
@@ -79,12 +80,12 @@ impl Status {
         if self.sprite_overflow {
             status |= 0b0010_0000; // Bit 5: Sprite overflow
         }
-        
+
         // Reading status clears VBlank flag (but not during vblank_start_cycle for race condition)
         if !self.vblank_start_cycle {
             self.vblank_flag = false;
         }
-        
+
         status
     }
 
@@ -163,7 +164,7 @@ mod tests {
         let mut status = Status::new();
         status.enter_vblank(false);
         status.clear_vblank_start_cycle();
-        
+
         let status_byte = status.read_status();
         assert_eq!(status_byte & 0b1000_0000, 0b1000_0000);
         assert!(!status.is_in_vblank());
@@ -173,7 +174,7 @@ mod tests {
     fn test_read_status_during_vblank_start() {
         let mut status = Status::new();
         status.enter_vblank(false);
-        
+
         // Reading during vblank_start_cycle should not clear flag
         let status_byte = status.read_status();
         assert_eq!(status_byte & 0b1000_0000, 0b1000_0000);
@@ -185,7 +186,7 @@ mod tests {
         let mut status = Status::new();
         status.set_sprite_0_hit();
         assert!(status.is_sprite_0_hit());
-        
+
         let status_byte = status.read_status();
         assert_eq!(status_byte & 0b0100_0000, 0b0100_0000);
     }
@@ -194,7 +195,7 @@ mod tests {
     fn test_sprite_overflow() {
         let mut status = Status::new();
         status.set_sprite_overflow();
-        
+
         let status_byte = status.read_status();
         assert_eq!(status_byte & 0b0010_0000, 0b0010_0000);
     }
@@ -203,7 +204,7 @@ mod tests {
     fn test_poll_nmi() {
         let mut status = Status::new();
         status.enter_vblank(true);
-        
+
         assert!(status.poll_nmi());
         assert!(!status.poll_nmi()); // Should be cleared after first poll
     }
@@ -212,7 +213,7 @@ mod tests {
     fn test_poll_frame_complete() {
         let mut status = Status::new();
         status.enter_vblank(false);
-        
+
         assert!(status.poll_frame_complete());
         assert!(!status.poll_frame_complete()); // Should be cleared after first poll
     }

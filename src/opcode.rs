@@ -29,7 +29,6 @@ impl OpCode {
     }
 
     /// Get the number of bytes for this instruction based on its addressing mode
-    #[cfg(test)]
     pub fn bytes(&self) -> u8 {
         match self.mode {
             "IMP" | "ACC" => 1,

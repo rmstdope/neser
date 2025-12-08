@@ -26,8 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // OAM Stress test - PASS
     // let rom_data = std::fs::read("roms/oam_stress.nes")?;
 
-    // OAM3 Test - FAIL
-    let rom_data = std::fs::read("roms/cpu.nes")?;
+    let rom_data = std::fs::read("roms/cpu_interrupts.nes")?;
 
     // Palette test - shows timing issues due to PPU timing limitations
     // let rom_data = std::fs::read("roms/palette.nes")?;
@@ -50,5 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     nes_instance.insert_cartridge(cart);
     nes_instance.reset();
 
-    event_loop.run(&mut nes_instance).map_err(|e| e.into())
+    event_loop
+        .run(&mut nes_instance, true)
+        .map_err(|e| e.into())
 }

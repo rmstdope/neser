@@ -125,10 +125,10 @@ mod tests {
         assert_eq!(result, OamTestResult::Pass, "oam_stress.nes should pass");
     }
 
-    // #[test]
-    // fn test_oam3() {
-    //     let runner = OamTestRunner::new("roms/oam3.nes", 180);
-    //     let result = runner.run_test();
-    //     assert_eq!(result, OamTestResult::Pass, "oam3.nes should pass");
-    // }
+    #[test]
+    fn test_cpu() {
+        let runner = OamTestRunner::new("roms/cpu.nes", 180);
+        let result = runner.run_test();
+        assert_eq!(result, OamTestResult::Pass, "cpu.nes should pass");
+    }
 }

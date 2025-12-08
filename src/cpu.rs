@@ -64,7 +64,6 @@ impl Cpu {
     }
 
     /// Get the total number of cycles executed since last reset
-    #[cfg(test)]
     pub fn total_cycles(&self) -> u64 {
         self.total_cycles
     }

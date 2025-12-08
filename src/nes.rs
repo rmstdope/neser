@@ -1,6 +1,7 @@
 use crate::cartridge::Cartridge;
 use crate::cpu;
 use crate::mem_controller;
+use crate::opcode;
 use crate::ppu_modules;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -211,18 +212,16 @@ impl Nes {
     pub fn clear_ready_to_render(&mut self) {
         self.ready_to_render = false;
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::opcode;
-    use std::fs;
 
     /// Generate a trace line for the current CPU state
-    fn trace(nes: &mut Nes) -> String {
-        let pc = nes.cpu.pc;
-        let memory = nes.memory.borrow();
+    ///
+    /// Returns a string in the nestest.log format showing the current instruction,
+    /// registers, and PPU state. Useful for debugging and comparing against reference logs.
+    ///
+    /// Format: `PC  OPCODE  INSTRUCTION                 A:XX X:XX Y:XX P:XX SP:XX PPU:SSS,PPP CYC:C`
+    pub fn trace(&mut self, nestest: bool) -> String {
+        let pc = self.cpu.pc;
+        let memory = self.memory.borrow();
         // Read the opcode and determine instruction size
         let opcode_byte = memory.read(pc);
         let instruction = opcode::lookup(opcode_byte)
@@ -255,91 +254,126 @@ mod tests {
             "IMM" => format!("{} #${:02X}", instruction.mnemonic, byte1),
             "ZP" => {
                 let addr = byte1 as u16;
-                let value = memory.read(addr);
-                format!("{} ${:02X} = {:02X}", instruction.mnemonic, byte1, value)
+                if nestest {
+                    let value = memory.read(addr);
+                    format!("{} ${:02X} = {:02X}", instruction.mnemonic, byte1, value)
+                } else {
+                    format!("{} ${:02X}", instruction.mnemonic, byte1)
+                }
             }
             "ZPX" => {
-                let addr = byte1.wrapping_add(nes.cpu.x) as u16;
-                let value = memory.read(addr);
-                format!(
-                    "{} ${:02X},X @ {:02X} = {:02X}",
-                    instruction.mnemonic, byte1, addr as u8, value
-                )
+                let addr = byte1.wrapping_add(self.cpu.x) as u16;
+                if nestest {
+                    let value = memory.read(addr);
+                    format!(
+                        "{} ${:02X},X @ {:02X} = {:02X}",
+                        instruction.mnemonic, byte1, addr as u8, value
+                    )
+                } else {
+                    format!("{} ${:02X},X", instruction.mnemonic, byte1)
+                }
             }
             "ZPY" => {
-                let addr = byte1.wrapping_add(nes.cpu.y) as u16;
-                let value = memory.read(addr);
-                format!(
-                    "{} ${:02X},Y @ {:02X} = {:02X}",
-                    instruction.mnemonic, byte1, addr as u8, value
-                )
+                let addr = byte1.wrapping_add(self.cpu.y) as u16;
+                if nestest {
+                    let value = memory.read(addr);
+                    format!(
+                        "{} ${:02X},Y @ {:02X} = {:02X}",
+                        instruction.mnemonic, byte1, addr as u8, value
+                    )
+                } else {
+                    format!("{} ${:02X},Y", instruction.mnemonic, byte1)
+                }
             }
             "ABS" => {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 // JMP and JSR don't show memory value for ABS addressing
                 if instruction.mnemonic == "JMP" || instruction.mnemonic == "JSR" {
                     format!("{} ${:04X}", instruction.mnemonic, addr)
-                } else {
+                } else if nestest {
                     let value = memory.read(addr);
                     format!("{} ${:04X} = {:02X}", instruction.mnemonic, addr, value)
+                } else {
+                    format!("{} ${:04X}", instruction.mnemonic, addr)
                 }
             }
             "ABSX" => {
                 let addr = u16::from_le_bytes([byte1, byte2]);
-                let effective_addr = addr.wrapping_add(nes.cpu.x as u16);
-                let value = memory.read(effective_addr);
-                format!(
-                    "{} ${:04X},X @ {:04X} = {:02X}",
-                    instruction.mnemonic, addr, effective_addr, value
-                )
+                if nestest {
+                    let effective_addr = addr.wrapping_add(self.cpu.x as u16);
+                    let value = memory.read(effective_addr);
+                    format!(
+                        "{} ${:04X},X @ {:04X} = {:02X}",
+                        instruction.mnemonic, addr, effective_addr, value
+                    )
+                } else {
+                    format!("{} ${:04X},X", instruction.mnemonic, addr)
+                }
             }
             "ABSY" => {
                 let addr = u16::from_le_bytes([byte1, byte2]);
-                let effective_addr = addr.wrapping_add(nes.cpu.y as u16);
-                let value = memory.read(effective_addr);
-                format!(
-                    "{} ${:04X},Y @ {:04X} = {:02X}",
-                    instruction.mnemonic, addr, effective_addr, value
-                )
+                if nestest {
+                    let effective_addr = addr.wrapping_add(self.cpu.y as u16);
+                    let value = memory.read(effective_addr);
+                    format!(
+                        "{} ${:04X},Y @ {:04X} = {:02X}",
+                        instruction.mnemonic, addr, effective_addr, value
+                    )
+                } else {
+                    format!("{} ${:04X},Y", instruction.mnemonic, addr)
+                }
             }
             "INDX" => {
-                let zp_addr = byte1.wrapping_add(nes.cpu.x);
-                let addr_lo = memory.read(zp_addr as u16);
-                let addr_hi = memory.read(zp_addr.wrapping_add(1) as u16);
-                let addr = u16::from_le_bytes([addr_lo, addr_hi]);
-                let value = memory.read(addr);
-                format!(
-                    "{} (${:02X},X) @ {:02X} = {:04X} = {:02X}",
-                    instruction.mnemonic, byte1, zp_addr, addr, value
-                )
+                if nestest {
+                    let zp_addr = byte1.wrapping_add(self.cpu.x);
+                    let addr_lo = memory.read(zp_addr as u16);
+                    let addr_hi = memory.read(zp_addr.wrapping_add(1) as u16);
+                    let addr = u16::from_le_bytes([addr_lo, addr_hi]);
+                    let value = memory.read(addr);
+                    format!(
+                        "{} (${:02X},X) @ {:02X} = {:04X} = {:02X}",
+                        instruction.mnemonic, byte1, zp_addr, addr, value
+                    )
+                } else {
+                    format!("{} (${:02X},X)", instruction.mnemonic, byte1)
+                }
             }
             "INDY" => {
-                let addr_lo = memory.read(byte1 as u16);
-                let addr_hi = memory.read(byte1.wrapping_add(1) as u16);
-                let base_addr = u16::from_le_bytes([addr_lo, addr_hi]);
-                let effective_addr = base_addr.wrapping_add(nes.cpu.y as u16);
-                let value = memory.read(effective_addr);
-                format!(
-                    "{} (${:02X}),Y = {:04X} @ {:04X} = {:02X}",
-                    instruction.mnemonic, byte1, base_addr, effective_addr, value
-                )
+                if nestest {
+                    let addr_lo = memory.read(byte1 as u16);
+                    let addr_hi = memory.read(byte1.wrapping_add(1) as u16);
+                    let base_addr = u16::from_le_bytes([addr_lo, addr_hi]);
+                    let effective_addr = base_addr.wrapping_add(self.cpu.y as u16);
+                    let value = memory.read(effective_addr);
+                    format!(
+                        "{} (${:02X}),Y = {:04X} @ {:04X} = {:02X}",
+                        instruction.mnemonic, byte1, base_addr, effective_addr, value
+                    )
+                } else {
+                    format!("{} (${:02X}),Y", instruction.mnemonic, byte1)
+                }
             }
             "IND" => {
-                let ptr_addr = u16::from_le_bytes([byte1, byte2]);
-                let addr_lo = memory.read(ptr_addr);
-                // 6502 bug: if ptr_addr is at page boundary (e.g., $02FF),
-                // high byte wraps within same page instead of crossing to next page
-                let hi_addr = if ptr_addr & 0xFF == 0xFF {
-                    ptr_addr & 0xFF00 // Wrap to start of same page
+                if nestest {
+                    let ptr_addr = u16::from_le_bytes([byte1, byte2]);
+                    let addr_lo = memory.read(ptr_addr);
+                    // 6502 bug: if ptr_addr is at page boundary (e.g., $02FF),
+                    // high byte wraps within same page instead of crossing to next page
+                    let hi_addr = if ptr_addr & 0xFF == 0xFF {
+                        ptr_addr & 0xFF00 // Wrap to start of same page
+                    } else {
+                        ptr_addr.wrapping_add(1)
+                    };
+                    let addr_hi = memory.read(hi_addr);
+                    let target_addr = u16::from_le_bytes([addr_lo, addr_hi]);
+                    format!(
+                        "{} (${:04X}) = {:04X}",
+                        instruction.mnemonic, ptr_addr, target_addr
+                    )
                 } else {
-                    ptr_addr.wrapping_add(1)
-                };
-                let addr_hi = memory.read(hi_addr);
-                let target_addr = u16::from_le_bytes([addr_lo, addr_hi]);
-                format!(
-                    "{} (${:04X}) = {:04X}",
-                    instruction.mnemonic, ptr_addr, target_addr
-                )
+                    let ptr_addr = u16::from_le_bytes([byte1, byte2]);
+                    format!("{} (${:04X})", instruction.mnemonic, ptr_addr)
+                }
             }
             "REL" => {
                 let offset = byte1 as i8;
@@ -356,24 +390,31 @@ mod tests {
             ("  ", 31)
         };
 
-        let ppu = nes.ppu.borrow();
+        let ppu = self.ppu.borrow();
         format!(
             "{:04X}  {}{}{:<width$} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3},{:3} CYC:{}",
             pc,
             hex_dump,
             pad_before,
             asm,
-            nes.cpu.a,
-            nes.cpu.x,
-            nes.cpu.y,
-            nes.cpu.p,
-            nes.cpu.sp,
+            self.cpu.a,
+            self.cpu.x,
+            self.cpu.y,
+            self.cpu.p,
+            self.cpu.sp,
             ppu.scanline(),
             ppu.pixel(),
-            nes.cpu.total_cycles(),
+            self.cpu.total_cycles(),
             width = width
         )
     }
+}
+
+#[cfg(test)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
 
     #[test]
     fn test_nestest() {
@@ -9386,7 +9427,7 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
 
         for line in golden_log.lines() {
             let expected = line.to_string();
-            let actual = trace(&mut nes);
+            let actual = nes.trace(true);
 
             // Note: Full comparison temporarily disabled due to opcode table alignment issues
             // The opcode table has several missing entries causing misalignment (e.g., missing DOP at 0x14, 0x34 was missing)
