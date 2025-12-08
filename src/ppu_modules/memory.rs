@@ -92,14 +92,14 @@ impl Memory {
                 vram_index % 0x0800
             }
             MirroringMode::Horizontal => {
-                // Horizontal mirroring: A, B, A, B
-                // $2000/$2800 map to A (first 1KB), $2400/$2C00 map to B (second 1KB)
-                // Tables 0&2 share first 1KB, tables 1&3 share second 1KB
+                // Horizontal mirroring: A, A, B, B (left-right mirrored)
+                // $2000/$2400 map to A (first 1KB), $2800/$2C00 map to B (second 1KB)
+                // Tables 0&1 share first 1KB, tables 2&3 share second 1KB
                 let table = vram_index / 0x0400;
                 let offset = vram_index % 0x0400;
                 let mirrored_table = match table {
-                    0 | 2 => 0, // Tables 0 ($2000) and 2 ($2800) map to physical table 0
-                    1 | 3 => 1, // Tables 1 ($2400) and 3 ($2C00) map to physical table 1
+                    0 | 1 => 0, // Tables 0 ($2000) and 1 ($2400) map to physical table 0
+                    2 | 3 => 1, // Tables 2 ($2800) and 3 ($2C00) map to physical table 1
                     _ => unreachable!(),
                 };
                 mirrored_table * 0x0400 + offset
@@ -206,11 +206,11 @@ mod tests {
 
         // Write to nametable 0
         mem.write_nametable(0x2000, 0x22);
-        // Nametable 1 should not mirror to nametable 0
-        assert_ne!(mem.read_nametable(0x2400), 0x22);
+        // Nametable 1 should mirror to nametable 0 (horizontal mirroring)
+        assert_eq!(mem.read_nametable(0x2400), 0x22);
 
-        // But nametable 2 should mirror to nametable 0
-        assert_eq!(mem.read_nametable(0x2800), 0x22);
+        // But nametable 2 should not mirror to nametable 0
+        assert_ne!(mem.read_nametable(0x2800), 0x22);
     }
 
     #[test]
@@ -303,29 +303,29 @@ mod tests {
         let mut memory = Memory::new();
         memory.set_mirroring(MirroringMode::Horizontal);
 
-        // Horizontal mirroring: A, B, A, B
-        // Nametable 0 ($2000) and 2 ($2800) share memory (left side)
-        // Nametable 1 ($2400) and 3 ($2C00) share memory (right side)
+        // Horizontal mirroring: A, A, B, B (left-right mirrored)
+        // Nametable 0 ($2000) and 1 ($2400) share memory (top row)
+        // Nametable 2 ($2800) and 3 ($2C00) share memory (bottom row)
 
-        // Write to nametable 0, should mirror to nametable 2
+        // Write to nametable 0, should mirror to nametable 1
         memory.write_nametable(0x2000, 0x11);
         assert_eq!(memory.read_nametable(0x2000), 0x11);
-        assert_eq!(memory.read_nametable(0x2800), 0x11); // Mirror
+        assert_eq!(memory.read_nametable(0x2400), 0x11); // Mirror
 
-        // Write to nametable 1, should mirror to nametable 3
-        memory.write_nametable(0x2400, 0x22);
-        assert_eq!(memory.read_nametable(0x2400), 0x22);
+        // Write to nametable 2, should mirror to nametable 3
+        memory.write_nametable(0x2800, 0x22);
+        assert_eq!(memory.read_nametable(0x2800), 0x22);
         assert_eq!(memory.read_nametable(0x2C00), 0x22); // Mirror
 
-        // Verify nametables 0 and 1 are independent
-        assert_ne!(memory.read_nametable(0x2000), memory.read_nametable(0x2400));
+        // Verify nametables 0 and 2 are independent
+        assert_ne!(memory.read_nametable(0x2000), memory.read_nametable(0x2800));
 
         // Test with offset addresses
         memory.write_nametable(0x2100, 0x33);
-        assert_eq!(memory.read_nametable(0x2900), 0x33); // $2100 mirrors to $2900
+        assert_eq!(memory.read_nametable(0x2500), 0x33); // $2100 mirrors to $2500
 
-        memory.write_nametable(0x2500, 0x44);
-        assert_eq!(memory.read_nametable(0x2D00), 0x44); // $2500 mirrors to $2D00
+        memory.write_nametable(0x2900, 0x44);
+        assert_eq!(memory.read_nametable(0x2D00), 0x44); // $2900 mirrors to $2D00
     }
 
     #[test]
@@ -337,12 +337,12 @@ mod tests {
         memory.write_nametable(0x2000, 0xAA);
         assert_eq!(memory.read_nametable(0x2800), 0xAA); // $2000 mirrors to $2800 in vertical
 
-        // Switch to Horizontal mirroring (A, B, A, B)
+        // Switch to Horizontal mirroring (A, A, B, B)
         memory.set_mirroring(MirroringMode::Horizontal);
         memory.write_nametable(0x2000, 0xBB);
-        assert_eq!(memory.read_nametable(0x2800), 0xBB); // $2000 still mirrors to $2800 in horizontal
-        // But now $2400 mirrors to $2C00 instead
-        memory.write_nametable(0x2400, 0xDD);
+        assert_eq!(memory.read_nametable(0x2400), 0xBB); // $2000 mirrors to $2400 in horizontal
+        // And $2800 mirrors to $2C00
+        memory.write_nametable(0x2800, 0xDD);
         assert_eq!(memory.read_nametable(0x2C00), 0xDD);
 
         // Switch to SingleScreen (A, A, A, A)
@@ -378,12 +378,12 @@ mod tests {
         let mut mem = Memory::new();
         // Initially should read 0
         assert_eq!(mem.read_chr(0x0000), 0x00);
-        
+
         // Write to CHR memory
         mem.write_chr(0x0000, 0xAA);
         mem.write_chr(0x1000, 0xBB);
         mem.write_chr(0x1FFF, 0xCC);
-        
+
         // Read back the values
         assert_eq!(mem.read_chr(0x0000), 0xAA);
         assert_eq!(mem.read_chr(0x1000), 0xBB);

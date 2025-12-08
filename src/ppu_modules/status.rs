@@ -72,7 +72,7 @@ impl Status {
 
         if self.vblank_flag {
             status |= 0b1000_0000; // Bit 7: VBlank
-            println!("PPU Status: VBlank flag set");
+            // println!("PPU Status: VBlank flag set");
         }
         if self.sprite_0_hit {
             status |= 0b0100_0000; // Bit 6: Sprite 0 hit

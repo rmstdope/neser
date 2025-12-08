@@ -224,105 +224,121 @@ impl PPUModular {
         }
 
         // Render pixels to screen buffer during visible scanlines and pixels
-        if is_visible_scanline && is_rendering_pixel && is_rendering_enabled {
-            // Shift registers before rendering (matches NES hardware timing)
-            self.background.shift_registers();
-
+        if is_visible_scanline && is_rendering_pixel {
             let screen_x = (pixel - 1) as u32;
             let screen_y = scanline as u32;
 
-            // Get background pixel
-            let fine_x = self.registers.x();
-            let bg_pixel = self.background.get_pixel(fine_x);
+            if is_rendering_enabled {
+                // Shift registers before rendering (matches NES hardware timing)
+                self.background.shift_registers();
 
-            // Get sprite pixel
-            let show_sprites_left = self.registers.show_sprites_left();
-            let sprite_pixel = self.sprites.get_pixel(screen_x as i16, show_sprites_left);
-
-            // Check for sprite 0 hit
-            if let Some((_palette_idx, sprite_idx, _priority)) = sprite_pixel {
-                if self.sprites.is_sprite_0(sprite_idx) && bg_pixel != 0 {
-                    self.status.set_sprite_0_hit();
-                }
-            }
-
-            // Determine final palette index
-            let palette_index =
-                if let Some((sprite_palette_idx, _sprite_idx, is_foreground)) = sprite_pixel {
-                    if bg_pixel == 0 {
-                        sprite_palette_idx // Background transparent, show sprite
-                    } else if is_foreground {
-                        sprite_palette_idx // Sprite in foreground
-                    } else {
-                        bg_pixel // Sprite in background
-                    }
+                // Get background pixel (only if background rendering is enabled)
+                let fine_x = self.registers.x();
+                let bg_pixel = if self.registers.is_background_enabled() {
+                    self.background.get_pixel(fine_x)
                 } else {
-                    bg_pixel // No sprite
+                    0 // Background disabled, treat as transparent
                 };
 
-            // Apply grayscale if enabled (mask to monochrome palette)
-            let final_palette_index = if self.registers.is_grayscale() {
-                palette_index & 0x30
+                // Get sprite pixel
+                let show_sprites_left = self.registers.show_sprites_left();
+                let sprite_pixel = self.sprites.get_pixel(screen_x as i16, show_sprites_left);
+
+                // Check for sprite 0 hit
+                if let Some((_palette_idx, sprite_idx, _priority)) = sprite_pixel {
+                    if self.sprites.is_sprite_0(sprite_idx) && bg_pixel != 0 {
+                        self.status.set_sprite_0_hit();
+                    }
+                }
+
+                // Determine final palette index
+                let palette_index =
+                    if let Some((sprite_palette_idx, _sprite_idx, is_foreground)) = sprite_pixel {
+                        if bg_pixel == 0 {
+                            sprite_palette_idx // Background transparent, show sprite
+                        } else if is_foreground {
+                            sprite_palette_idx // Sprite in foreground
+                        } else {
+                            bg_pixel // Sprite in background
+                        }
+                    } else {
+                        bg_pixel // No sprite
+                    };
+
+                // Apply grayscale if enabled (mask to monochrome palette)
+                let final_palette_index = if self.registers.is_grayscale() {
+                    palette_index & 0x30
+                } else {
+                    palette_index
+                };
+
+                // Look up color in palette (convert index to address)
+                let palette_addr = 0x3F00 + (final_palette_index as u16);
+                let color_value = self.memory.read_palette(palette_addr);
+                let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
+
+                // Apply color emphasis/tint
+                let (final_r, final_g, final_b) = if self.registers.color_emphasis() != 0 {
+                    let emphasis = self.registers.color_emphasis();
+                    let emphasize_red = (emphasis & 0x01) != 0;
+                    let emphasize_green = (emphasis & 0x02) != 0;
+                    let emphasize_blue = (emphasis & 0x04) != 0;
+
+                    const ATTENUATION: f32 = 0.75;
+                    const BOOST: f32 = 1.1;
+
+                    let mut fr = r as f32;
+                    let mut fg = g as f32;
+                    let mut fb = b as f32;
+
+                    if emphasize_red {
+                        fr = (fr * BOOST).min(255.0);
+                        if !emphasize_green {
+                            fg *= ATTENUATION;
+                        }
+                        if !emphasize_blue {
+                            fb *= ATTENUATION;
+                        }
+                    }
+                    if emphasize_green {
+                        fg = (fg * BOOST).min(255.0);
+                        if !emphasize_red {
+                            fr *= ATTENUATION;
+                        }
+                        if !emphasize_blue {
+                            fb *= ATTENUATION;
+                        }
+                    }
+                    if emphasize_blue {
+                        fb = (fb * BOOST).min(255.0);
+                        if !emphasize_red {
+                            fr *= ATTENUATION;
+                        }
+                        if !emphasize_green {
+                            fg *= ATTENUATION;
+                        }
+                    }
+
+                    (fr as u8, fg as u8, fb as u8)
+                } else {
+                    (r, g, b)
+                };
+
+                // Write pixel to screen buffer
+                self.rendering
+                    .screen_buffer_mut()
+                    .set_pixel(screen_x, screen_y, final_r, final_g, final_b);
             } else {
-                palette_index
-            };
+                // When rendering is disabled, output the backdrop color
+                let backdrop_addr = 0x3F00;
+                let color_value = self.memory.read_palette(backdrop_addr);
+                let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
 
-            // Look up color in palette (convert index to address)
-            let palette_addr = 0x3F00 + (final_palette_index as u16);
-            let color_value = self.memory.read_palette(palette_addr);
-            let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
-
-            // Apply color emphasis/tint
-            let (final_r, final_g, final_b) = if self.registers.color_emphasis() != 0 {
-                let emphasis = self.registers.color_emphasis();
-                let emphasize_red = (emphasis & 0x01) != 0;
-                let emphasize_green = (emphasis & 0x02) != 0;
-                let emphasize_blue = (emphasis & 0x04) != 0;
-
-                const ATTENUATION: f32 = 0.75;
-                const BOOST: f32 = 1.1;
-
-                let mut fr = r as f32;
-                let mut fg = g as f32;
-                let mut fb = b as f32;
-
-                if emphasize_red {
-                    fr = (fr * BOOST).min(255.0);
-                    if !emphasize_green {
-                        fg *= ATTENUATION;
-                    }
-                    if !emphasize_blue {
-                        fb *= ATTENUATION;
-                    }
-                }
-                if emphasize_green {
-                    fg = (fg * BOOST).min(255.0);
-                    if !emphasize_red {
-                        fr *= ATTENUATION;
-                    }
-                    if !emphasize_blue {
-                        fb *= ATTENUATION;
-                    }
-                }
-                if emphasize_blue {
-                    fb = (fb * BOOST).min(255.0);
-                    if !emphasize_red {
-                        fr *= ATTENUATION;
-                    }
-                    if !emphasize_green {
-                        fg *= ATTENUATION;
-                    }
-                }
-
-                (fr as u8, fg as u8, fb as u8)
-            } else {
-                (r, g, b)
-            };
-
-            // Write pixel to screen buffer
-            self.rendering
-                .screen_buffer_mut()
-                .set_pixel(screen_x, screen_y, final_r, final_g, final_b);
+                // Write backdrop color to screen buffer
+                self.rendering
+                    .screen_buffer_mut()
+                    .set_pixel(screen_x, screen_y, r, g, b);
+            }
         }
     }
 
@@ -1108,12 +1124,12 @@ mod tests {
         ppu.write_address(0x00);
         ppu.write_data(0x55);
 
-        // Read from nametable 1 (should NOT mirror to 0 in horizontal)
+        // Read from nametable 1 (should mirror to 0 in horizontal)
         ppu.write_address(0x24);
         ppu.write_address(0x00);
         let _ = ppu.read_data(); // Dummy read
         let val = ppu.read_data();
-        assert_ne!(val, 0x55); // Should be different (not mirrored)
+        assert_eq!(val, 0x55); // Should be mirrored
     }
 
     // NMI and frame complete tests
