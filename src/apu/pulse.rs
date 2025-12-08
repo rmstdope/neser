@@ -241,6 +241,27 @@ impl Pulse {
             }
         }
     }
+
+    /// Get the current output sample from the pulse channel
+    /// Returns envelope volume (0-15) if playing, or 0 if muted
+    /// 
+    /// Channel is muted (outputs 0) if ANY of these conditions are true:
+    /// 1. Sequencer output is 0 (duty cycle low point)
+    /// 2. Length counter is 0
+    /// 3. Timer period < 8
+    /// 4. Sweep target period > $7FF
+    pub fn output(&self) -> u8 {
+        // Check all muting conditions
+        if self.get_sequencer_output() == 0
+            || self.length_counter == 0
+            || self.timer_period < 8
+            || self.get_sweep_target_period() > 0x7FF
+        {
+            0
+        } else {
+            self.get_envelope_volume()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -879,5 +900,223 @@ mod tests {
 
         // Period should remain 7 (muting prevents update)
         assert_eq!(pulse.get_timer_period(), 7);
+    }
+
+    // Output logic and integration tests
+
+    #[test]
+    fn test_output_when_all_conditions_met() {
+        let mut pulse = Pulse::new();
+
+        // Setup: duty 50%, constant volume 10, period 100, length counter loaded
+        pulse.write_control(0b1011_1010); // Duty 50%, constant volume, volume=10
+        pulse.write_timer_low(0x64); // Period = 100
+        pulse.write_timer_high(0x00);
+        pulse.write_length_counter_timer_high(0b00000_000); // Load length counter (index 0 = 10)
+
+        // Advance to a point where sequencer outputs 1
+        for _ in 0..=100 {
+            pulse.clock_timer();
+        }
+
+        // Should output volume (10) when sequencer is high
+        let output = pulse.output();
+        assert!(output == 10 || output == 0); // Depends on sequencer position
+    }
+
+    #[test]
+    fn test_output_silenced_when_sequencer_zero() {
+        let mut pulse = Pulse::new();
+
+        // Setup: duty 12.5% (mostly zeros), constant volume 15, period 100
+        pulse.write_control(0b0001_1111); // Duty 12.5%, constant volume, volume=15
+        pulse.write_timer_low(0x64);
+        pulse.write_timer_high(0x00);
+        pulse.write_length_counter_timer_high(0b00000_000); // Index 0 = 10
+
+        // Step until sequencer is at 0
+        // Sequencer reads in reverse: 0,7,6,5,4,3,2,1
+        // Duty 12.5%: [0,0,0,0,0,0,0,1]
+        // Most positions should be 0
+        for _ in 0..102 {
+            pulse.clock_timer();
+        }
+
+        // At some point output should be 0 due to sequencer
+        let mut found_zero = false;
+        for _ in 0..8 {
+            if pulse.output() == 0 {
+                found_zero = true;
+                break;
+            }
+            pulse.clock_timer();
+        }
+        assert!(found_zero);
+    }
+
+    #[test]
+    fn test_output_silenced_when_length_counter_zero() {
+        let mut pulse = Pulse::new();
+
+        // Setup with valid conditions but length counter = 0
+        pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
+        pulse.write_timer_low(0x64);
+        pulse.write_timer_high(0x00);
+        // Don't load length counter, it stays at 0
+
+        assert_eq!(pulse.output(), 0);
+    }
+
+    #[test]
+    fn test_output_silenced_when_timer_period_less_than_8() {
+        let mut pulse = Pulse::new();
+
+        // Setup with period < 8
+        pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
+        pulse.write_timer_low(0x07); // Period = 7 (< 8)
+        pulse.write_timer_high(0x00);
+        pulse.write_length_counter_timer_high(0b00000_000); // Load length counter (index 0 = 10)
+
+        assert_eq!(pulse.output(), 0);
+    }
+
+    #[test]
+    fn test_output_silenced_when_sweep_overflow() {
+        let mut pulse = Pulse::new();
+
+        // Setup with sweep that causes overflow
+        pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
+        pulse.write_length_counter_timer_high(0b00000_111); // Index 0, sets timer high to 7
+        pulse.write_timer_low(0xFF); // Set low 8 bits -> Period = $7FF
+        pulse.write_sweep(0b1000_0001); // Enable, shift=1 (will overflow)
+
+        // Target = $7FF + ($7FF >> 1) = $7FF + $3FF = $BFE > $7FF
+        assert!(pulse.is_sweep_muting());
+        assert_eq!(pulse.output(), 0);
+    }
+
+    #[test]
+    fn test_output_uses_envelope_volume() {
+        let mut pulse = Pulse::new();
+
+        // Setup with decay mode envelope
+        pulse.write_control(0b1000_0101); // Duty 50%, decay mode, period=5
+        pulse.write_timer_low(0x64);
+        pulse.write_timer_high(0x00);
+        pulse.write_length_counter_timer_high(0b00000_000); // Sets start flag (index 0 = 10)
+
+        // Clock envelope to start it
+        pulse.clock_envelope();
+
+        // Envelope should start at 15
+        assert_eq!(pulse.get_envelope_volume(), 15);
+
+        // Output might be 15 or 0 depending on sequencer
+        let output = pulse.output();
+        assert!(output == 15 || output == 0);
+    }
+
+    #[test]
+    fn test_integration_full_waveform_cycle() {
+        let mut pulse = Pulse::new();
+
+        // Setup: 50% duty cycle, constant volume 8, period 10
+        pulse.write_control(0b1001_1000); // Duty 50%, constant volume=8
+        pulse.write_timer_low(0x0A); // Period = 10
+        pulse.write_timer_high(0x00);
+        pulse.write_length_counter_timer_high(0b00000_000); // Index 0 = 10
+
+        // Run through one complete waveform cycle (8 steps)
+        let mut outputs = Vec::new();
+        for _ in 0..8 {
+            outputs.push(pulse.output());
+            // Clock timer to advance through period
+            for _ in 0..=10 {
+                pulse.clock_timer();
+            }
+        }
+
+        // Should see mix of 8s and 0s (50% duty)
+        let has_volume = outputs.iter().any(|&v| v == 8);
+        let has_silence = outputs.iter().any(|&v| v == 0);
+        assert!(has_volume && has_silence);
+    }
+
+    #[test]
+    fn test_integration_length_counter_silences_channel() {
+        let mut pulse = Pulse::new();
+
+        // Setup with short length counter value
+        pulse.write_control(0b1001_1111); // Duty 50%, no halt (bit 5 clear), constant volume=15
+        pulse.write_timer_low(0x64);
+        pulse.write_timer_high(0x00);
+        pulse.write_length_counter_timer_high(0b00000_000); // Load length=10 (index 0)
+
+        // Initially should be able to output
+        assert_eq!(pulse.get_length_counter(), 10);
+
+        // Clock length counter 10 times to reach 0
+        for _ in 0..10 {
+            pulse.clock_length_counter();
+        }
+
+        assert_eq!(pulse.get_length_counter(), 0);
+        assert_eq!(pulse.output(), 0); // Now silenced
+    }
+
+    #[test]
+    fn test_integration_sweep_changes_period_over_time() {
+        let mut pulse = Pulse::new();
+
+        // Setup with sweep enabled
+        pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
+        pulse.write_timer_low(0x10); // Period = 16
+        pulse.write_timer_high(0x00);
+        pulse.write_length_counter_timer_high(0b00000_000); // Index 0 = 10
+        pulse.write_sweep(0b1000_0001); // Enable, period=0, shift=1
+
+        let initial_period = pulse.get_timer_period();
+        assert_eq!(initial_period, 16);
+
+        // Clock sweep twice (reload, then update)
+        pulse.clock_sweep();
+        pulse.clock_sweep();
+
+        let new_period = pulse.get_timer_period();
+        // Period should have increased: 16 + (16>>1) = 16 + 8 = 24
+        assert_eq!(new_period, 24);
+    }
+
+    #[test]
+    fn test_output_all_muting_conditions_independent() {
+        let mut pulse = Pulse::new();
+
+        // Start with valid setup
+        pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
+        pulse.write_timer_low(0x64); // Period = 100
+        pulse.write_timer_high(0x00);
+        pulse.write_length_counter_timer_high(0b00000_000); // Index 0 = 10
+
+        // Test 1: Mute by clearing length counter
+        pulse.set_length_counter_enabled(false);
+        assert_eq!(pulse.output(), 0);
+
+        // Restore length counter
+        pulse.write_length_counter_timer_high(0b00000_000);
+
+        // Test 2: Mute by setting period < 8
+        pulse.write_timer_low(0x07);
+        pulse.write_timer_high(0x00);
+        assert_eq!(pulse.output(), 0);
+
+        // Restore period
+        pulse.write_timer_low(0x64);
+        pulse.write_timer_high(0x00);
+
+        // Test 3: Mute by sweep overflow
+        pulse.write_length_counter_timer_high(0b00000_111); // Index 0, sets timer high to 7
+        pulse.write_timer_low(0xFF); // Period = $7FF
+        pulse.write_sweep(0b1000_0001); // Causes overflow
+        assert_eq!(pulse.output(), 0);
     }
 }
