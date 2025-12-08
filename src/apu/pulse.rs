@@ -8,6 +8,14 @@ pub struct Pulse {
     // Sequencer fields
     duty_mode: u8,
     sequence_position: u8,
+
+    // Envelope fields
+    envelope_start_flag: bool,
+    envelope_loop_flag: bool,
+    constant_volume_flag: bool,
+    volume_envelope_period: u8,
+    envelope_divider: u8,
+    envelope_decay_level: u8,
 }
 
 /// Duty cycle sequence lookup tables
@@ -33,6 +41,12 @@ impl Pulse {
             timer_counter: 0,
             duty_mode: 0,
             sequence_position: 0,
+            envelope_start_flag: false,
+            envelope_loop_flag: false,
+            constant_volume_flag: false,
+            volume_envelope_period: 0,
+            envelope_divider: 0,
+            envelope_decay_level: 0,
         }
     }
 
@@ -73,6 +87,47 @@ impl Pulse {
     /// Write duty cycle mode (bits 7-6 of $4000)
     pub fn write_duty(&mut self, duty: u8) {
         self.duty_mode = duty & 0x03;
+    }
+
+    /// Write to $4000 register (duty, loop, constant volume, volume/envelope period)
+    pub fn write_control(&mut self, value: u8) {
+        self.duty_mode = (value >> 6) & 0x03;
+        self.envelope_loop_flag = (value & 0x20) != 0;
+        self.constant_volume_flag = (value & 0x10) != 0;
+        self.volume_envelope_period = value & 0x0F;
+    }
+
+    /// Write to $4003 register (sets start flag in addition to timer high)
+    pub fn write_length_counter_timer_high(&mut self, value: u8) {
+        self.write_timer_high(value);
+        self.envelope_start_flag = true;
+    }
+
+    /// Clock the envelope (called by quarter frame from frame counter)
+    pub fn clock_envelope(&mut self) {
+        if self.envelope_start_flag {
+            self.envelope_start_flag = false;
+            self.envelope_decay_level = 15;
+            self.envelope_divider = self.volume_envelope_period;
+        } else if self.envelope_divider == 0 {
+            self.envelope_divider = self.volume_envelope_period;
+            if self.envelope_decay_level > 0 {
+                self.envelope_decay_level -= 1;
+            } else if self.envelope_loop_flag {
+                self.envelope_decay_level = 15;
+            }
+        } else {
+            self.envelope_divider -= 1;
+        }
+    }
+
+    /// Get the envelope volume output (0-15)
+    pub fn get_envelope_volume(&self) -> u8 {
+        if self.constant_volume_flag {
+            self.volume_envelope_period
+        } else {
+            self.envelope_decay_level
+        }
     }
 }
 
@@ -266,5 +321,152 @@ mod tests {
         let mut pulse = Pulse::new();
         pulse.write_duty(0xFF); // Only bits 1-0 should be used
         assert_eq!(pulse.duty_mode, 3);
+    }
+
+    // Envelope Generator Tests
+
+    #[test]
+    fn test_envelope_constant_volume_mode() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0001_1010); // Constant volume flag set, volume = 10
+        assert_eq!(pulse.get_envelope_volume(), 10);
+
+        // Clock envelope - should not change in constant volume mode
+        pulse.clock_envelope();
+        assert_eq!(pulse.get_envelope_volume(), 10);
+    }
+
+    #[test]
+    fn test_envelope_decay_mode() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0000_0000); // Decay mode, period = 0
+
+        // Start flag not set, decay level starts at 0
+        assert_eq!(pulse.get_envelope_volume(), 0);
+
+        // Set start flag
+        pulse.envelope_start_flag = true;
+        pulse.clock_envelope();
+
+        // Should reset to 15
+        assert_eq!(pulse.get_envelope_volume(), 15);
+
+        // Clock envelope - divider = 0, so should decrement decay level
+        pulse.clock_envelope();
+        assert_eq!(pulse.get_envelope_volume(), 14);
+
+        pulse.clock_envelope();
+        assert_eq!(pulse.get_envelope_volume(), 13);
+    }
+
+    #[test]
+    fn test_envelope_start_flag_on_write() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0000_0000);
+
+        assert!(!pulse.envelope_start_flag);
+
+        pulse.write_length_counter_timer_high(0x00);
+        assert!(pulse.envelope_start_flag);
+    }
+
+    #[test]
+    fn test_envelope_divider_period() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0000_0010); // Period = 2 (divider period = 3)
+        pulse.envelope_start_flag = true;
+        pulse.clock_envelope();
+
+        // Start flag cleared, decay level = 15, divider = 2
+        assert_eq!(pulse.envelope_decay_level, 15);
+        assert_eq!(pulse.envelope_divider, 2);
+
+        // Clock: divider 2 -> 1
+        pulse.clock_envelope();
+        assert_eq!(pulse.envelope_decay_level, 15);
+        assert_eq!(pulse.envelope_divider, 1);
+
+        // Clock: divider 1 -> 0
+        pulse.clock_envelope();
+        assert_eq!(pulse.envelope_decay_level, 15);
+        assert_eq!(pulse.envelope_divider, 0);
+
+        // Clock: divider = 0, reload to 2, decrement decay level 15 -> 14
+        pulse.clock_envelope();
+        assert_eq!(pulse.envelope_decay_level, 14);
+        assert_eq!(pulse.envelope_divider, 2);
+    }
+
+    #[test]
+    fn test_envelope_loop_flag() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0010_0000); // Loop flag set, period = 0
+        pulse.envelope_start_flag = true;
+        pulse.clock_envelope();
+
+        // With period = 0, divider is always 0, so decay decrements every clock
+        // Decay from 15 to 0
+        for expected in (0..=15).rev() {
+            assert_eq!(pulse.envelope_decay_level, expected);
+            pulse.clock_envelope();
+        }
+
+        // At 0, with loop flag, should have reloaded to 15
+        assert_eq!(pulse.envelope_decay_level, 15);
+    }
+
+    #[test]
+    fn test_envelope_no_loop_stays_at_zero() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0000_0000); // No loop, period = 0
+        pulse.envelope_start_flag = true;
+        pulse.clock_envelope();
+
+        // Decay from 15 to 0
+        for _ in 0..15 {
+            pulse.clock_envelope();
+        }
+
+        assert_eq!(pulse.envelope_decay_level, 0);
+
+        // Should stay at 0 without loop
+        pulse.clock_envelope();
+        assert_eq!(pulse.envelope_decay_level, 0);
+
+        pulse.clock_envelope();
+        assert_eq!(pulse.envelope_decay_level, 0);
+    }
+
+    #[test]
+    fn test_write_control_parses_all_fields() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b1111_1010);
+        // Bits 7-6: duty = 11 (3)
+        // Bit 5: loop flag = 1
+        // Bit 4: constant volume = 1
+        // Bits 3-0: volume/period = 1010 (10)
+
+        assert_eq!(pulse.duty_mode, 3);
+        assert!(pulse.envelope_loop_flag);
+        assert!(pulse.constant_volume_flag);
+        assert_eq!(pulse.volume_envelope_period, 10);
+    }
+
+    #[test]
+    fn test_envelope_constant_volume_still_updates_decay() {
+        let mut pulse = Pulse::new();
+        pulse.write_control(0b0001_0101); // Constant volume, period = 5
+        pulse.envelope_start_flag = true;
+
+        pulse.clock_envelope();
+        assert_eq!(pulse.envelope_decay_level, 15);
+        assert_eq!(pulse.get_envelope_volume(), 5); // Returns constant volume
+
+        // Even in constant volume mode, decay level is updated
+        for _ in 0..6 {
+            pulse.clock_envelope();
+        }
+        assert_eq!(pulse.envelope_decay_level, 14);
+        assert_eq!(pulse.get_envelope_volume(), 5); // Still returns constant volume
     }
 }
