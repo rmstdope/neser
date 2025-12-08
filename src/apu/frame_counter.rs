@@ -5,6 +5,7 @@ pub struct FrameCounter {
     mode: Mode,
     irq_inhibit: bool,
     cycle_counter: u32,
+    irq_flag: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +27,7 @@ impl FrameCounter {
             mode: Mode::FourStep,
             irq_inhibit: false,
             cycle_counter: 0,
+            irq_flag: false,
         }
     }
 
@@ -41,6 +43,11 @@ impl FrameCounter {
         };
         self.irq_inhibit = (value & 0x40) != 0;
         self.cycle_counter = 0;
+
+        // Writing 1 to IRQ inhibit clears the IRQ flag
+        if (value & 0x40) != 0 {
+            self.irq_flag = false;
+        }
 
         // Note: Immediate clock handled by write_register_with_immediate_clock
         let _ = old_mode;
@@ -59,6 +66,11 @@ impl FrameCounter {
         self.mode = new_mode;
         self.irq_inhibit = (value & 0x40) != 0;
         self.cycle_counter = 0;
+
+        // Writing 1 to IRQ inhibit clears the IRQ flag
+        if (value & 0x40) != 0 {
+            self.irq_flag = false;
+        }
 
         // Immediate clock only when switching TO 5-step mode
         if new_mode == Mode::FiveStep && old_mode != Mode::FiveStep {
@@ -81,6 +93,16 @@ impl FrameCounter {
     /// Get the current cycle counter
     pub fn get_cycle_counter(&self) -> u32 {
         self.cycle_counter
+    }
+
+    /// Get the IRQ flag state
+    pub fn get_irq_flag(&self) -> bool {
+        self.irq_flag
+    }
+
+    /// Clear the IRQ flag
+    pub fn clear_irq_flag(&mut self) {
+        self.irq_flag = false;
     }
 
     /// Clock the frame counter by one CPU cycle
@@ -108,6 +130,11 @@ impl FrameCounter {
             STEP_1_CYCLES | STEP_2_CYCLES | STEP_3_CYCLES | STEP_4_CYCLES
         );
         let half_frame = matches!(self.cycle_counter, STEP_2_CYCLES | STEP_4_CYCLES);
+
+        // Set IRQ flag at step 4 if not inhibited
+        if self.cycle_counter == STEP_4_CYCLES && !self.irq_inhibit {
+            self.irq_flag = true;
+        }
 
         // Wrap around after step 4
         if self.cycle_counter >= STEP_4_CYCLES {
@@ -571,5 +598,136 @@ mod tests {
         let result = fc.write_register_with_immediate_clock(0b0000_0000);
         
         assert_eq!(result, (false, false)); // No immediate clock
+    }
+
+    // IRQ Generation Tests
+    #[test]
+    fn test_irq_flag_set_at_step_4_in_4_step_mode() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode, IRQ not inhibited
+
+        // Clock to step 4 (29829 cycles)
+        for _ in 0..29829 {
+            fc.clock();
+        }
+
+        // IRQ flag should be set
+        assert!(fc.get_irq_flag());
+    }
+
+    #[test]
+    fn test_irq_flag_not_set_when_inhibited() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0100_0000); // 4-step mode, IRQ inhibited
+
+        // Clock to step 4
+        for _ in 0..29829 {
+            fc.clock();
+        }
+
+        // IRQ flag should NOT be set (inhibited)
+        assert!(!fc.get_irq_flag());
+    }
+
+    #[test]
+    fn test_irq_flag_not_set_in_5_step_mode() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b1000_0000); // 5-step mode, IRQ not inhibited
+
+        // Clock through entire 5-step sequence
+        for _ in 0..37281 {
+            fc.clock();
+        }
+
+        // IRQ flag should NOT be set (5-step mode never generates IRQ)
+        assert!(!fc.get_irq_flag());
+    }
+
+    #[test]
+    fn test_irq_flag_cleared_by_clear_method() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Set IRQ flag
+        for _ in 0..29829 {
+            fc.clock();
+        }
+        assert!(fc.get_irq_flag());
+
+        // Clear it
+        fc.clear_irq_flag();
+        assert!(!fc.get_irq_flag());
+    }
+
+    #[test]
+    fn test_irq_flag_cleared_when_setting_inhibit_bit() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode, IRQ not inhibited
+
+        // Set IRQ flag
+        for _ in 0..29829 {
+            fc.clock();
+        }
+        assert!(fc.get_irq_flag());
+
+        // Write with inhibit bit set - should clear IRQ
+        fc.write_register(0b0100_0000);
+        assert!(!fc.get_irq_flag());
+    }
+
+    #[test]
+    fn test_irq_flag_not_cleared_when_inhibit_already_set() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0100_0000); // Already inhibited
+        
+        // Manually set IRQ flag for testing
+        fc.irq_flag = true;
+        assert!(fc.get_irq_flag());
+
+        // Write with inhibit bit still set - IRQ should be cleared
+        fc.write_register(0b0100_0000);
+        assert!(!fc.get_irq_flag());
+    }
+
+    #[test]
+    fn test_irq_flag_persists_across_multiple_cycles() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Set IRQ flag
+        for _ in 0..29829 {
+            fc.clock();
+        }
+        assert!(fc.get_irq_flag());
+
+        // Clock a few more times (wraps around)
+        for _ in 0..100 {
+            fc.clock();
+        }
+
+        // IRQ flag should still be set
+        assert!(fc.get_irq_flag());
+    }
+
+    #[test]
+    fn test_irq_flag_set_again_on_next_sequence() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // First sequence
+        for _ in 0..29829 {
+            fc.clock();
+        }
+        assert!(fc.get_irq_flag());
+
+        // Clear IRQ
+        fc.clear_irq_flag();
+        assert!(!fc.get_irq_flag());
+
+        // Second sequence - should set IRQ again
+        for _ in 0..29829 {
+            fc.clock();
+        }
+        assert!(fc.get_irq_flag());
     }
 }
