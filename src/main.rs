@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/oam_stress.nes")?;
 
     // OAM3 Test - FAIL
-    let rom_data = std::fs::read("roms/oam3.nes")?;
+    let rom_data = std::fs::read("roms/cpu.nes")?;
 
     // Palette test - shows timing issues due to PPU timing limitations
     // let rom_data = std::fs::read("roms/palette.nes")?;
