@@ -56,6 +56,40 @@ impl FrameCounter {
     pub fn get_cycle_counter(&self) -> u32 {
         self.cycle_counter
     }
+
+    /// Clock the frame counter by one CPU cycle
+    /// Returns (quarter_frame, half_frame) signals
+    pub fn clock(&mut self) -> (bool, bool) {
+        self.cycle_counter += 1;
+
+        let (quarter_frame, half_frame) = match self.mode {
+            Mode::FourStep => self.clock_four_step(),
+            Mode::FiveStep => (false, false), // TODO: Implement in sub-issue #83
+        };
+
+        (quarter_frame, half_frame)
+    }
+
+    /// Clock the 4-step sequencer
+    fn clock_four_step(&mut self) -> (bool, bool) {
+        const STEP_1_CYCLES: u32 = 7457;
+        const STEP_2_CYCLES: u32 = 14913;
+        const STEP_3_CYCLES: u32 = 22371;
+        const STEP_4_CYCLES: u32 = 29829;
+
+        let quarter_frame = matches!(
+            self.cycle_counter,
+            STEP_1_CYCLES | STEP_2_CYCLES | STEP_3_CYCLES | STEP_4_CYCLES
+        );
+        let half_frame = matches!(self.cycle_counter, STEP_2_CYCLES | STEP_4_CYCLES);
+
+        // Wrap around after step 4
+        if self.cycle_counter >= STEP_4_CYCLES {
+            self.cycle_counter = 0;
+        }
+
+        (quarter_frame, half_frame)
+    }
 }
 
 #[cfg(test)]
@@ -156,5 +190,170 @@ mod tests {
 
         fc.write_register(0b0100_0000); // IRQ inhibit = 1
         assert!(fc.is_irq_inhibited());
+    }
+
+    // 4-Step Sequencer Tests
+    #[test]
+    fn test_four_step_cycle_counter_increments() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        assert_eq!(fc.get_cycle_counter(), 0);
+        fc.clock();
+        assert_eq!(fc.get_cycle_counter(), 1);
+        fc.clock();
+        assert_eq!(fc.get_cycle_counter(), 2);
+    }
+
+    #[test]
+    fn test_four_step_step_1_signals() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Clock up to step 1 (7457 cycles)
+        for _ in 0..7456 {
+            let (quarter, half) = fc.clock();
+            assert!(!quarter);
+            assert!(!half);
+        }
+
+        // At cycle 7457, quarter frame signal
+        let (quarter, half) = fc.clock();
+        assert!(quarter);
+        assert!(!half);
+    }
+
+    #[test]
+    fn test_four_step_step_2_signals() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Clock up to step 2 (14913 cycles)
+        for _ in 0..14912 {
+            fc.clock();
+        }
+
+        // At cycle 14913, quarter and half frame signals
+        let (quarter, half) = fc.clock();
+        assert!(quarter);
+        assert!(half);
+    }
+
+    #[test]
+    fn test_four_step_step_3_signals() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Clock up to step 3 (22371 cycles)
+        for _ in 0..22370 {
+            fc.clock();
+        }
+
+        // At cycle 22371, quarter frame signal
+        let (quarter, half) = fc.clock();
+        assert!(quarter);
+        assert!(!half);
+    }
+
+    #[test]
+    fn test_four_step_step_4_signals() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Clock up to step 4 (29829 cycles)
+        for _ in 0..29828 {
+            fc.clock();
+        }
+
+        // At cycle 29829, quarter and half frame signals
+        let (quarter, half) = fc.clock();
+        assert!(quarter);
+        assert!(half);
+    }
+
+    #[test]
+    fn test_four_step_wraparound() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Clock to step 4 (29829 cycles)
+        for _ in 0..29829 {
+            fc.clock();
+        }
+
+        // Counter should have wrapped to 0
+        assert_eq!(fc.get_cycle_counter(), 0);
+
+        // Next clock should be at cycle 1
+        fc.clock();
+        assert_eq!(fc.get_cycle_counter(), 1);
+    }
+
+    #[test]
+    fn test_four_step_complete_sequence() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        let mut quarter_count = 0;
+        let mut half_count = 0;
+
+        // Run through one complete sequence
+        for _ in 0..29829 {
+            let (quarter, half) = fc.clock();
+            if quarter {
+                quarter_count += 1;
+            }
+            if half {
+                half_count += 1;
+            }
+        }
+
+        assert_eq!(quarter_count, 4); // 4 quarter frame clocks
+        assert_eq!(half_count, 2); // 2 half frame clocks
+        assert_eq!(fc.get_cycle_counter(), 0); // Wrapped around
+    }
+
+    #[test]
+    fn test_four_step_no_signals_between_steps() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Clock past step 1 (7457)
+        for _ in 0..7457 {
+            fc.clock();
+        }
+
+        // Check no signals between step 1 and step 2
+        for _ in 0..100 {
+            let (quarter, half) = fc.clock();
+            assert!(!quarter);
+            assert!(!half);
+        }
+    }
+
+    #[test]
+    fn test_four_step_multiple_sequences() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Run two complete sequences
+        for sequence in 0..2 {
+            let mut quarter_count = 0;
+            let mut half_count = 0;
+
+            for _ in 0..29829 {
+                let (quarter, half) = fc.clock();
+                if quarter {
+                    quarter_count += 1;
+                }
+                if half {
+                    half_count += 1;
+                }
+            }
+
+            assert_eq!(quarter_count, 4, "Sequence {}", sequence);
+            assert_eq!(half_count, 2, "Sequence {}", sequence);
+            assert_eq!(fc.get_cycle_counter(), 0, "Sequence {}", sequence);
+        }
     }
 }
