@@ -126,7 +126,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Ignore by default since we don't know the status yet
     fn test_oam3() {
         let runner = OamTestRunner::new("roms/oam3.nes", 180);
         let result = runner.run_test();
