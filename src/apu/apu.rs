@@ -1,5 +1,5 @@
-use super::pulse::Pulse;
 use super::frame_counter::FrameCounter;
+use super::pulse::Pulse;
 
 /// Main APU module integrating frame counter and sound channels
 pub struct Apu {
@@ -13,8 +13,8 @@ impl Apu {
     pub fn new() -> Self {
         Self {
             frame_counter: FrameCounter::new(),
-            pulse1: Pulse::new(),
-            pulse2: Pulse::new(),
+            pulse1: Pulse::new(true),  // Pulse 1 uses ones' complement
+            pulse2: Pulse::new(false), // Pulse 2 uses two's complement
         }
     }
 
@@ -91,10 +91,10 @@ mod tests {
     fn test_frame_counter_advances() {
         let mut apu = Apu::new();
         assert_eq!(apu.frame_counter().get_cycle_counter(), 0);
-        
+
         apu.clock();
         assert_eq!(apu.frame_counter().get_cycle_counter(), 1);
-        
+
         for _ in 0..100 {
             apu.clock();
         }
@@ -104,19 +104,19 @@ mod tests {
     #[test]
     fn test_envelope_gets_clocked() {
         let mut apu = Apu::new();
-        
+
         // Set up pulse with envelope that will be clocked
         apu.pulse1_mut().write_control(0b0000_0000); // Envelope period 0
         apu.pulse1_mut().write_length_counter_timer_high(0xFF); // Set start flag
-        
+
         // Envelope start flag should be set
         assert!(apu.pulse1().get_envelope_start_flag());
-        
+
         // Clock to first quarter frame
         for _ in 0..7457 {
             apu.clock();
         }
-        
+
         // Envelope should have been clocked (start flag consumed)
         assert!(!apu.pulse1().get_envelope_start_flag());
     }
@@ -124,19 +124,20 @@ mod tests {
     #[test]
     fn test_length_counter_gets_clocked() {
         let mut apu = Apu::new();
-        
+
         // Set up pulse with length counter = 1
         apu.pulse1_mut().write_control(0b0000_0000); // halt=0
-        apu.pulse1_mut().write_length_counter_timer_high(0b00010_000); // Index 2 = length 20
-        
+        apu.pulse1_mut()
+            .write_length_counter_timer_high(0b00010_000); // Index 2 = length 20
+
         let initial_length = apu.pulse1().get_length_counter();
         assert_eq!(initial_length, 20);
-        
+
         // Clock to first half frame (14913 cycles)
         for _ in 0..14913 {
             apu.clock();
         }
-        
+
         // Length counter should have decremented
         assert_eq!(apu.pulse1().get_length_counter(), 19);
     }
@@ -144,17 +145,17 @@ mod tests {
     #[test]
     fn test_sweep_gets_clocked() {
         let mut apu = Apu::new();
-        
+
         // Set up pulse with sweep reload flag
         apu.pulse1_mut().write_sweep(0b1000_0001); // Sets sweep_reload = true
-        
+
         assert!(apu.pulse1().get_sweep_reload());
-        
+
         // Clock to first half frame
         for _ in 0..14913 {
             apu.clock();
         }
-        
+
         // Sweep should have been clocked (reload flag consumed)
         assert!(!apu.pulse1().get_sweep_reload());
     }
@@ -162,14 +163,14 @@ mod tests {
     #[test]
     fn test_frame_counter_mode_change() {
         let mut apu = Apu::new();
-        
+
         // Start in 4-step mode (default)
         assert!(!apu.frame_counter().get_mode());
-        
+
         // Switch to 5-step mode
         apu.frame_counter_mut().write_register(0b1000_0000);
         assert!(apu.frame_counter().get_mode());
-        
+
         // Switch back to 4-step mode
         apu.frame_counter_mut().write_register(0b0000_0000);
         assert!(!apu.frame_counter().get_mode());
@@ -178,21 +179,53 @@ mod tests {
     #[test]
     fn test_both_pulse_channels_get_clocked() {
         let mut apu = Apu::new();
-        
+
         // Set up both pulses
         apu.pulse1_mut().write_length_counter_timer_high(0xFF);
         apu.pulse2_mut().write_length_counter_timer_high(0xFF);
-        
+
         assert!(apu.pulse1().get_envelope_start_flag());
         assert!(apu.pulse2().get_envelope_start_flag());
-        
+
         // Clock to first quarter frame
         for _ in 0..7457 {
             apu.clock();
         }
-        
+
         // Both envelopes should have been clocked
         assert!(!apu.pulse1().get_envelope_start_flag());
         assert!(!apu.pulse2().get_envelope_start_flag());
+    }
+
+    #[test]
+    fn test_pulse1_uses_ones_complement_for_sweep() {
+        let mut apu = Apu::new();
+
+        // Set up pulse 1 with period = 20, shift = 1, negate enabled
+        apu.pulse1_mut().write_timer_low(20);
+        apu.pulse1_mut().write_timer_high(0);
+        apu.pulse1_mut().write_sweep(0b1000_1001); // Enable=1, period=0, negate=1, shift=1
+
+        // Target period calculation for Pulse 1 (ones' complement):
+        // change = 20 >> 1 = 10
+        // ones' complement: -10 - 1 = -11
+        // target = 20 + (-11) = 9
+        assert_eq!(apu.pulse1().get_sweep_target_period(), 9);
+    }
+
+    #[test]
+    fn test_pulse2_uses_twos_complement_for_sweep() {
+        let mut apu = Apu::new();
+
+        // Set up pulse 2 with period = 20, shift = 1, negate enabled
+        apu.pulse2_mut().write_timer_low(20);
+        apu.pulse2_mut().write_timer_high(0);
+        apu.pulse2_mut().write_sweep(0b1000_1001); // Enable=1, period=0, negate=1, shift=1
+
+        // Target period calculation for Pulse 2 (two's complement):
+        // change = 20 >> 1 = 10
+        // two's complement: -10
+        // target = 20 + (-10) = 10
+        assert_eq!(apu.pulse2().get_sweep_target_period(), 10);
     }
 }
