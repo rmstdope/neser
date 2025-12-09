@@ -160,6 +160,11 @@ impl Triangle {
         self.length_counter
     }
 
+    /// Get the current linear counter value
+    pub fn get_linear_counter(&self) -> u8 {
+        self.linear_counter
+    }
+
     /// Clock the length counter (called by frame counter half frame)
     pub fn clock_length_counter(&mut self) {
         if !self.control_flag && self.length_counter > 0 {
