@@ -24,8 +24,8 @@ const TRIANGLE_SEQUENCE_LENGTH: u8 = 32;
 /// Triangle wave sequence (32 steps)
 /// Produces values: 15,14,13,...,1,0,0,1,2,...,14,15
 const TRIANGLE_SEQUENCE: [u8; TRIANGLE_SEQUENCE_LENGTH as usize] = [
-    15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
-    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+    13, 14, 15,
 ];
 
 impl Default for Triangle {
@@ -68,6 +68,23 @@ impl Triangle {
     pub fn output(&self) -> u8 {
         TRIANGLE_SEQUENCE[self.sequence_position as usize]
     }
+
+    /// Set the linear counter reload value
+    pub fn set_linear_counter_reload(&mut self, value: u8) {
+        self.linear_counter_reload_value = value;
+    }
+
+    /// Trigger the linear counter to reload from the reload value
+    pub fn trigger_linear_counter_reload(&mut self) {
+        self.linear_counter = self.linear_counter_reload_value;
+    }
+
+    /// Clock the linear counter (called by frame counter)
+    pub fn clock_linear_counter(&mut self) {
+        if self.linear_counter > 0 {
+            self.linear_counter -= 1;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -88,22 +105,59 @@ mod tests {
     fn test_triangle_32_step_sequence() {
         let mut triangle = Triangle::new();
         triangle.timer_period = 0; // Timer clocks every cycle when period is 0
-        
+
         // The triangle wave should produce values 0-15 ascending, then 15-0 descending
         // Creating a 32-step sequence: 15,14,13,...,1,0,0,1,2,...,14,15
         let expected_sequence = vec![
-            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,  // Descending
-            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,  // Ascending
+            15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0, // Descending
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, // Ascending
         ];
-        
+
         for expected_value in expected_sequence {
-            assert_eq!(triangle.output(), expected_value, 
-                "Expected {} at position {}", expected_value, triangle.sequence_position);
+            assert_eq!(
+                triangle.output(),
+                expected_value,
+                "Expected {} at position {}",
+                expected_value,
+                triangle.sequence_position
+            );
             triangle.clock_timer();
         }
-        
+
         // After 32 steps, should wrap back to start
         assert_eq!(triangle.sequence_position, 0);
         assert_eq!(triangle.output(), 15);
+    }
+
+    #[test]
+    fn test_linear_counter_clocking() {
+        let mut triangle = Triangle::new();
+
+        // Set up the linear counter with a reload value
+        triangle.set_linear_counter_reload(5);
+        triangle.trigger_linear_counter_reload();
+
+        // Linear counter should be reloaded to 5
+        assert_eq!(triangle.linear_counter, 5);
+
+        // Clock the linear counter - it should decrement
+        triangle.clock_linear_counter();
+        assert_eq!(triangle.linear_counter, 4);
+
+        triangle.clock_linear_counter();
+        assert_eq!(triangle.linear_counter, 3);
+
+        triangle.clock_linear_counter();
+        assert_eq!(triangle.linear_counter, 2);
+
+        triangle.clock_linear_counter();
+        assert_eq!(triangle.linear_counter, 1);
+
+        triangle.clock_linear_counter();
+        assert_eq!(triangle.linear_counter, 0);
+
+        // Once at zero, should stay at zero
+        triangle.clock_linear_counter();
+        assert_eq!(triangle.linear_counter, 0);
     }
 }
