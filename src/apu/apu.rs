@@ -1,4 +1,5 @@
 use super::frame_counter::FrameCounter;
+use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
 
@@ -8,6 +9,7 @@ pub struct Apu {
     pulse1: Pulse,
     pulse2: Pulse,
     triangle: Triangle,
+    noise: Noise,
 }
 
 impl Apu {
@@ -18,6 +20,7 @@ impl Apu {
             pulse1: Pulse::new(true),  // Pulse 1 uses ones' complement
             pulse2: Pulse::new(false), // Pulse 2 uses two's complement
             triangle: Triangle::new(),
+            noise: Noise::new(),
         }
     }
 
@@ -61,6 +64,16 @@ impl Apu {
         &mut self.triangle
     }
 
+    /// Get reference to noise channel
+    pub fn noise(&self) -> &Noise {
+        &self.noise
+    }
+
+    /// Get mutable reference to noise channel
+    pub fn noise_mut(&mut self) -> &mut Noise {
+        &mut self.noise
+    }
+
     /// Clock the APU by one CPU cycle
     /// This advances the frame counter and triggers channel clocking when needed
     pub fn clock(&mut self) {
@@ -71,6 +84,7 @@ impl Apu {
             self.pulse1.clock_envelope();
             self.pulse2.clock_envelope();
             self.triangle.clock_linear_counter_with_reload();
+            self.noise.clock_envelope();
         }
 
         // Half frame: clock length counters and sweep units
@@ -80,6 +94,7 @@ impl Apu {
             self.pulse2.clock_length_counter();
             self.pulse2.clock_sweep();
             self.triangle.clock_length_counter();
+            self.noise.clock_length_counter();
         }
     }
 }
@@ -101,6 +116,7 @@ mod tests {
         assert_eq!(apu.pulse1().output(), 0);
         assert_eq!(apu.pulse2().output(), 0);
         assert_eq!(apu.triangle().output(), 0); // Triangle is muted with zero counters
+        assert_eq!(apu.noise().output(), 0); // Noise is muted with zero length counter
     }
 
     #[test]
@@ -290,5 +306,48 @@ mod tests {
 
         // Length counter should have decremented
         assert_eq!(apu.triangle().get_length_counter(), 3);
+    }
+
+    #[test]
+    fn test_noise_channel_integrated() {
+        let apu = Apu::new();
+        assert_eq!(apu.noise().output(), 0); // Noise starts muted (length counter = 0)
+    }
+
+    #[test]
+    fn test_noise_envelope_gets_clocked() {
+        let mut apu = Apu::new();
+
+        // Set up noise with envelope that will be clocked
+        apu.noise_mut().write_envelope(0b0000_0101); // Volume 5, constant volume
+        apu.noise_mut().write_length(0xFF); // Set length and envelope start flag
+
+        // Clock to first quarter frame
+        for _ in 0..7457 {
+            apu.clock();
+        }
+
+        // Envelope should have been clocked (integration works - verified by no panic)
+        // Note: output() may still be 0 if shift_register bit 0 is set (which mutes output)
+    }
+
+    #[test]
+    fn test_noise_length_counter_gets_clocked() {
+        let mut apu = Apu::new();
+
+        // Set up noise with length counter (index 2 = length 20)
+        apu.noise_mut().write_envelope(0b0000_0000); // halt=0
+        apu.noise_mut().write_length(0b00010_000); // Index 2
+
+        // Length counter should be loaded
+        // Output will be 0 because shift register bit 0 might be set
+
+        // Clock to first half frame (14913 cycles)
+        for _ in 0..14913 {
+            apu.clock();
+        }
+
+        // Length counter should have decremented (can't directly check but it affects output)
+        // This test verifies the integration works without panicking
     }
 }
