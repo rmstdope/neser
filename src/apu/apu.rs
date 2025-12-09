@@ -165,6 +165,34 @@ impl Apu {
 
         status
     }
+
+    /// Write to the APU enable register ($4015)
+    /// Format: ---D NT21
+    /// - Bit 4 (D): Enable DMC
+    /// - Bit 3 (N): Enable Noise
+    /// - Bit 2 (T): Enable Triangle
+    /// - Bit 1 (2): Enable Pulse 2
+    /// - Bit 0 (1): Enable Pulse 1
+    ///
+    /// Writing 0 to a channel bit silences that channel and halts its length counter.
+    /// Writing 1 enables the channel.
+    /// For DMC: If enabled and bytes remaining = 0, restart sample.
+    ///
+    /// Side effect: Clears the DMC interrupt flag
+    pub fn write_enable(&mut self, value: u8) {
+        self.pulse1
+            .set_length_counter_enabled(value & STATUS_PULSE1 != 0);
+        self.pulse2
+            .set_length_counter_enabled(value & STATUS_PULSE2 != 0);
+        self.triangle
+            .set_length_counter_enabled(value & STATUS_TRIANGLE != 0);
+        self.noise
+            .set_length_counter_enabled(value & STATUS_NOISE != 0);
+        self.dmc.set_enabled(value & STATUS_DMC != 0);
+
+        // Side effect: Clear DMC interrupt flag
+        self.dmc.clear_irq_flag();
+    }
 }
 
 impl Default for Apu {
@@ -516,5 +544,105 @@ mod tests {
         apu.noise_mut().write_length(0b00001_000);
         // Bits 0-3 should be set (no DMC, no interrupts yet)
         assert_eq!(apu.read_status() & 0b0000_1111, 0b0000_1111);
+    }
+
+    #[test]
+    fn test_enable_disable_pulse1() {
+        let mut apu = Apu::new();
+        // Load pulse 1 length counter
+        apu.pulse1_mut()
+            .write_length_counter_timer_high(0b00001_000);
+        assert_eq!(apu.read_status() & STATUS_PULSE1, STATUS_PULSE1);
+
+        // Disable pulse 1
+        apu.write_enable(0b0000_0000);
+        assert_eq!(apu.read_status() & STATUS_PULSE1, 0);
+    }
+
+    #[test]
+    fn test_enable_pulse1_with_enable_bit() {
+        let mut apu = Apu::new();
+        // Enable pulse 1
+        apu.write_enable(STATUS_PULSE1);
+        // Load length counter should work
+        apu.pulse1_mut()
+            .write_length_counter_timer_high(0b00001_000);
+        assert_eq!(apu.read_status() & STATUS_PULSE1, STATUS_PULSE1);
+    }
+
+    #[test]
+    fn test_enable_all_channels() {
+        let mut apu = Apu::new();
+        // Enable all channels
+        apu.write_enable(0b0001_1111);
+        // Load all length counters
+        apu.pulse1_mut()
+            .write_length_counter_timer_high(0b00001_000);
+        apu.pulse2_mut()
+            .write_length_counter_timer_high(0b00001_000);
+        apu.triangle_mut().load_length_counter(1);
+        apu.noise_mut().write_length(0b00001_000);
+        // All should be active
+        assert_eq!(apu.read_status() & 0b0000_1111, 0b0000_1111);
+    }
+
+    #[test]
+    fn test_disable_clears_length_counters() {
+        let mut apu = Apu::new();
+        // Load all length counters
+        apu.pulse1_mut()
+            .write_length_counter_timer_high(0b00001_000);
+        apu.pulse2_mut()
+            .write_length_counter_timer_high(0b00001_000);
+        apu.triangle_mut().load_length_counter(1);
+        apu.noise_mut().write_length(0b00001_000);
+        // Verify all active
+        assert_eq!(apu.read_status() & 0b0000_1111, 0b0000_1111);
+
+        // Disable all channels
+        apu.write_enable(0b0000_0000);
+        // All should be inactive
+        assert_eq!(apu.read_status() & 0b0000_1111, 0b0000_0000);
+    }
+
+    #[test]
+    fn test_enable_dmc_restarts_sample_when_empty() {
+        let mut apu = Apu::new();
+        // Set up DMC with sample address and length
+        apu.dmc_mut().write_sample_address(0x00); // Address $C000
+        apu.dmc_mut().write_sample_length(0x01); // Length 17 bytes
+
+        // Enable DMC - should restart sample
+        apu.write_enable(STATUS_DMC);
+
+        // DMC should now have bytes remaining
+        assert_eq!(apu.read_status() & STATUS_DMC, STATUS_DMC);
+    }
+
+    #[test]
+    fn test_disable_dmc_clears_bytes_remaining() {
+        let mut apu = Apu::new();
+        // Set up and enable DMC
+        apu.dmc_mut().write_sample_address(0x00);
+        apu.dmc_mut().write_sample_length(0x01);
+        apu.write_enable(STATUS_DMC);
+        assert!(apu.dmc().has_bytes_remaining());
+
+        // Disable DMC
+        apu.write_enable(0b0000_0000);
+        assert!(!apu.dmc().has_bytes_remaining());
+    }
+
+    #[test]
+    fn test_write_enable_clears_dmc_interrupt() {
+        let mut apu = Apu::new();
+        // Manually trigger DMC IRQ by setting it up to finish
+        apu.dmc_mut().write_flags_and_rate(0b1000_0000); // IRQ enabled
+        apu.dmc_mut().write_sample_address(0x00);
+        apu.dmc_mut().write_sample_length(0x00); // Minimal length
+
+        // Any write to enable register should clear DMC IRQ flag
+        apu.write_enable(0b0000_0000);
+        assert_eq!(apu.read_status() & STATUS_DMC_IRQ, 0);
     }
 }
