@@ -166,6 +166,13 @@ impl Triangle {
             self.length_counter -= 1;
         }
     }
+
+    /// Set length counter enabled/disabled (from $4015)
+    pub fn set_length_counter_enabled(&mut self, enabled: bool) {
+        if !enabled {
+            self.length_counter = 0;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -186,7 +193,7 @@ mod tests {
     fn test_triangle_32_step_sequence() {
         let mut triangle = Triangle::new();
         triangle.timer_period = 0; // Timer clocks every cycle when period is 0
-        
+
         // Set counters to non-zero to enable output
         triangle.linear_counter = 1;
         triangle.length_counter = 1;
@@ -418,5 +425,26 @@ mod tests {
         triangle.linear_counter = 5;
         triangle.load_length_counter(1); // Length counter = 254
         assert_eq!(triangle.output(), 15); // Not muted, returns sequence value
+    }
+
+    #[test]
+    fn test_set_length_counter_enabled() {
+        let mut triangle = Triangle::new();
+
+        // Load a length counter value
+        triangle.load_length_counter(5);
+        assert_eq!(triangle.get_length_counter(), 4);
+
+        // Disabling should clear the length counter
+        triangle.set_length_counter_enabled(false);
+        assert_eq!(triangle.get_length_counter(), 0);
+
+        // Load again
+        triangle.load_length_counter(10);
+        assert_eq!(triangle.get_length_counter(), 60); // Index 10 = value 60
+
+        // Enabling should not affect the counter
+        triangle.set_length_counter_enabled(true);
+        assert_eq!(triangle.get_length_counter(), 60);
     }
 }
