@@ -85,6 +85,34 @@ impl Triangle {
             self.linear_counter -= 1;
         }
     }
+
+    /// Clock the linear counter with reload behavior (called by frame counter quarter frame)
+    pub fn clock_linear_counter_with_reload(&mut self) {
+        if self.linear_counter_reload_flag {
+            self.linear_counter = self.linear_counter_reload_value;
+        } else if self.linear_counter > 0 {
+            self.linear_counter -= 1;
+        }
+
+        if !self.control_flag {
+            self.linear_counter_reload_flag = false;
+        }
+    }
+
+    /// Set the linear counter reload flag
+    pub fn set_linear_counter_reload_flag(&mut self) {
+        self.linear_counter_reload_flag = true;
+    }
+
+    /// Check if the linear counter reload flag is set
+    pub fn is_linear_counter_reload_flag_set(&self) -> bool {
+        self.linear_counter_reload_flag
+    }
+
+    /// Set the control flag (also acts as length counter halt)
+    pub fn set_control_flag(&mut self, value: bool) {
+        self.control_flag = value;
+    }
 }
 
 #[cfg(test)]
@@ -159,5 +187,44 @@ mod tests {
         // Once at zero, should stay at zero
         triangle.clock_linear_counter();
         assert_eq!(triangle.linear_counter, 0);
+    }
+
+    #[test]
+    fn test_linear_counter_reload_flag() {
+        let mut triangle = Triangle::new();
+        triangle.set_linear_counter_reload(10);
+
+        // Initially, reload flag should be false
+        assert!(!triangle.is_linear_counter_reload_flag_set());
+
+        // Set the reload flag (simulates write to $400B)
+        triangle.set_linear_counter_reload_flag();
+        assert!(triangle.is_linear_counter_reload_flag_set());
+
+        // When flag is set, quarter frame should reload the counter
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.linear_counter, 10);
+
+        // After reload, if control flag is false, the flag should be cleared
+        assert!(!triangle.is_linear_counter_reload_flag_set());
+
+        // Now counter should decrement normally
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.linear_counter, 9);
+
+        // If control flag is set, reload flag should NOT be cleared
+        triangle.set_control_flag(true);
+        triangle.set_linear_counter_reload_flag();
+        assert!(triangle.is_linear_counter_reload_flag_set());
+
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.linear_counter, 10); // Reloaded
+
+        // Flag should still be set because control flag is true
+        assert!(triangle.is_linear_counter_reload_flag_set());
+
+        // Counter keeps reloading while flag is set
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.linear_counter, 10); // Reloaded again
     }
 }
