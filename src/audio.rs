@@ -90,16 +90,11 @@ impl AudioCallback for AudioCallbackImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    // SDL2 can only be initialized once per process, so we use a mutex to ensure tests run serially
-    // This is the same mutex used in eventloop tests to prevent conflicts
-    static TEST_MUTEX: Mutex<()> = Mutex::new(());
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_audio_functionality() {
-        let _lock = TEST_MUTEX.lock().unwrap();
-
         // Test audio creation, control, and sample queueing
         // Combine into one test to avoid SDL2 thread issues
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");

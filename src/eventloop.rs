@@ -443,56 +443,53 @@ impl EventLoop {
 mod tests {
     use super::*;
     use crate::nes::{Nes, TvSystem};
-    use std::sync::Mutex;
-
-    // SDL2 can only be initialized once per process, so we use a mutex to ensure tests run serially
-    static TEST_MUTEX: Mutex<()> = Mutex::new(());
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_eventloop_creation() {
-        let _lock = TEST_MUTEX.lock().unwrap();
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
+    #[serial]
     fn test_new_headless() {
-        let _lock = TEST_MUTEX.lock().unwrap();
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
+    #[serial]
     fn test_scaling_below_minimum() {
-        let _lock = TEST_MUTEX.lock().unwrap();
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
+    #[serial]
     fn test_scaling_above_maximum() {
-        let _lock = TEST_MUTEX.lock().unwrap();
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
+    #[serial]
     fn test_scaling_at_minimum() {
-        let _lock = TEST_MUTEX.lock().unwrap();
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
+    #[serial]
     fn test_scaling_at_maximum() {
-        let _lock = TEST_MUTEX.lock().unwrap();
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
+    #[serial]
     fn test_run_with_nes() {
-        let _lock = TEST_MUTEX.lock().unwrap();
         let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
