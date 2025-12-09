@@ -293,6 +293,12 @@ impl EventLoop {
                             self.paused = !self.paused;
                         }
                         Event::KeyDown {
+                            keycode: Some(Keycode::F1),
+                            ..
+                        } => {
+                            nes.reset();
+                        }
+                        Event::KeyDown {
                             keycode: Some(keycode),
                             ..
                         } => {
@@ -374,6 +380,12 @@ impl EventLoop {
                             keycode: Some(Keycode::Escape),
                             ..
                         } => return Ok(()),
+                        Event::KeyDown {
+                            keycode: Some(Keycode::F1),
+                            ..
+                        } => {
+                            nes.reset();
+                        }
                         Event::KeyDown {
                             keycode: Some(keycode),
                             ..
