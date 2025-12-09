@@ -97,6 +97,7 @@ impl Nes {
     pub fn reset(&mut self) {
         self.cpu.reset();
         self.ppu.borrow_mut().reset();
+        self.apu.borrow_mut().reset();
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
     }
@@ -321,7 +322,7 @@ impl Nes {
                 let addr = byte1.wrapping_add(self.cpu.x) as u16;
                 if nestest {
                     let mut value = memory.read(addr);
-                    if addr >= 0x4000 && addr < 0x4100  {
+                    if addr >= 0x4000 && addr < 0x4100 {
                         value = 0xFF;
                     }
                     format!(
@@ -336,7 +337,7 @@ impl Nes {
                 let addr = byte1.wrapping_add(self.cpu.y) as u16;
                 if nestest {
                     let mut value = memory.read(addr);
-                    if addr >= 0x4000 && addr < 0x4100  {
+                    if addr >= 0x4000 && addr < 0x4100 {
                         value = 0xFF;
                     }
                     format!(
@@ -354,7 +355,7 @@ impl Nes {
                     format!("{} ${:04X}", instruction.mnemonic, addr)
                 } else if nestest {
                     let mut value = memory.read(addr);
-                    if addr >= 0x4000 && addr < 0x4100  {
+                    if addr >= 0x4000 && addr < 0x4100 {
                         value = 0xFF;
                     }
                     format!("{} ${:04X} = {:02X}", instruction.mnemonic, addr, value)
@@ -486,7 +487,7 @@ mod tests {
         // Load the golden log from file
         let golden_log = fs::read_to_string("roms/nestest.log")
             .expect("Failed to load nestest.log - make sure roms/nestest.log exists");
-        
+
         // Load the nestest ROM
         let rom_data = fs::read("roms/nestest.nes").expect("Failed to load ROM");
         let cartridge = Cartridge::new(&rom_data).expect("Failed to parse ROM");

@@ -102,6 +102,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     event_loop
-        .run(&mut nes_instance, true)
+        .run(&mut nes_instance, false)
         .map_err(|e| e.into())
 }

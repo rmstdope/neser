@@ -109,6 +109,25 @@ impl Apu {
         }
     }
 
+    /// Reset the APU to its initial power-on state
+    pub fn reset(&mut self) {
+        self.frame_counter = FrameCounter::new();
+        self.pulse1 = Pulse::new(true);
+        self.pulse2 = Pulse::new(false);
+        self.triangle = Triangle::new();
+        self.noise = Noise::new();
+        self.dmc = Dmc::new();
+        self.sample_accumulator = 0.0;
+        self.pending_sample = None;
+        self.pulse1_enabled = true;
+        self.pulse2_enabled = true;
+        self.triangle_enabled = true;
+        self.noise_enabled = true;
+        self.dmc_enabled = true;
+        self.apu_cycle = 0;
+        // Note: sample rate is preserved across resets
+    }
+
     /// Get reference to pulse channel 1
     pub fn pulse1(&self) -> &Pulse {
         &self.pulse1
