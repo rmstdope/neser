@@ -4,6 +4,9 @@ use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
 
+// CPU clock frequency (NTSC)
+const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
+
 // Status register ($4015) bit masks
 const STATUS_PULSE1: u8 = 1 << 0;
 const STATUS_PULSE2: u8 = 1 << 1;
@@ -68,11 +71,17 @@ pub struct Apu {
     triangle: Triangle,
     noise: Noise,
     dmc: Dmc,
+    // Sample generation
+    sample_accumulator: f32,
+    cycles_per_sample: f32,
+    pending_sample: Option<f32>,
 }
 
 impl Apu {
     /// Create a new APU
     pub fn new() -> Self {
+        const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
+
         Self {
             frame_counter: FrameCounter::new(),
             pulse1: Pulse::new(true),  // Pulse 1 uses ones' complement
@@ -80,6 +89,9 @@ impl Apu {
             triangle: Triangle::new(),
             noise: Noise::new(),
             dmc: Dmc::new(),
+            sample_accumulator: 0.0,
+            cycles_per_sample: CPU_CLOCK_NTSC / DEFAULT_SAMPLE_RATE,
+            pending_sample: None,
         }
     }
 
@@ -168,6 +180,13 @@ impl Apu {
 
         // DMC timer runs every CPU cycle (independent of frame counter)
         self.dmc.clock_timer();
+
+        // Sample generation
+        self.sample_accumulator += 1.0;
+        if self.sample_accumulator >= self.cycles_per_sample {
+            self.sample_accumulator -= self.cycles_per_sample;
+            self.pending_sample = Some(self.mix());
+        }
     }
 
     /// Read the APU status register ($4015)
@@ -269,6 +288,29 @@ impl Apu {
 
         // Combine outputs
         pulse_out + tnd_out
+    }
+
+    /// Set the sample rate for audio output
+    ///
+    /// # Arguments
+    /// * `sample_rate` - Target sample rate in Hz (e.g., 44100.0, 48000.0)
+    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.cycles_per_sample = CPU_CLOCK_NTSC / sample_rate;
+        self.sample_accumulator = 0.0;
+        self.pending_sample = None;
+    }
+
+    /// Check if an audio sample is ready for retrieval
+    pub fn sample_ready(&self) -> bool {
+        self.pending_sample.is_some()
+    }
+
+    /// Get the next audio sample if one is ready
+    ///
+    /// Returns `Some(sample)` if a sample is available, `None` otherwise.
+    /// After calling this, `sample_ready()` will return false until the next sample is generated.
+    pub fn get_sample(&mut self) -> Option<f32> {
+        self.pending_sample.take()
     }
 }
 
@@ -795,5 +837,102 @@ mod tests {
 
         // Combined output should be greater (non-linear mixing)
         assert!(pulse_and_dmc >= pulse_only);
+    }
+
+    #[test]
+    fn test_sample_generation_no_sample_initially() {
+        let apu = Apu::new();
+        // No sample should be ready before clocking
+        assert!(!apu.sample_ready());
+    }
+
+    #[test]
+    fn test_sample_generation_after_clocking() {
+        let mut apu = Apu::new();
+        // Clock the APU enough times to generate a sample
+        // For 44100 Hz from 1.789 MHz: ~40.56 cycles per sample
+        for _ in 0..41 {
+            apu.clock();
+        }
+        // Sample should be ready after ~41 cycles
+        assert!(apu.sample_ready());
+    }
+
+    #[test]
+    fn test_sample_generation_retrieves_sample() {
+        let mut apu = Apu::new();
+        // Generate a sample
+        for _ in 0..41 {
+            apu.clock();
+        }
+        assert!(apu.sample_ready());
+
+        // Retrieve the sample
+        let sample = apu.get_sample();
+        assert!(sample.is_some());
+
+        // After retrieval, no sample should be ready
+        assert!(!apu.sample_ready());
+    }
+
+    #[test]
+    fn test_sample_generation_uses_mixer_output() {
+        let mut apu = Apu::new();
+        // Set up pulse channel to produce output
+        apu.pulse1_mut().write_control(0b1111_1111); // Duty 3, constant volume 15
+        apu.pulse1_mut().write_timer_low(0x08);
+        apu.pulse1_mut()
+            .write_length_counter_timer_high(0b00001_000);
+
+        // Generate a sample
+        for _ in 0..41 {
+            apu.clock();
+        }
+
+        let sample = apu.get_sample();
+        assert!(sample.is_some());
+        // Sample should match mixer output (non-zero when pulse is active)
+        let sample_value = sample.unwrap();
+        assert!(sample_value > 0.0);
+        assert!(sample_value <= 1.0);
+    }
+
+    #[test]
+    fn test_sample_generation_timing() {
+        let mut apu = Apu::new();
+        let mut sample_count = 0;
+
+        // Clock for 1789 cycles (should generate ~44 samples at 44100 Hz)
+        for _ in 0..1789 {
+            apu.clock();
+            if apu.sample_ready() {
+                apu.get_sample();
+                sample_count += 1;
+            }
+        }
+
+        // Should generate approximately 44 samples (1789 / 40.56 ≈ 44.08)
+        assert!(sample_count >= 43 && sample_count <= 45);
+    }
+
+    #[test]
+    fn test_sample_generation_configurable_rate() {
+        let mut apu = Apu::new();
+
+        // Set to 48000 Hz (1.789 MHz / 48000 ≈ 37.27 cycles per sample)
+        apu.set_sample_rate(48000.0);
+
+        // Clock for 1789 cycles (should generate ~48 samples at 48000 Hz)
+        let mut sample_count = 0;
+        for _ in 0..1789 {
+            apu.clock();
+            if apu.sample_ready() {
+                apu.get_sample();
+                sample_count += 1;
+            }
+        }
+
+        // Should generate approximately 48 samples (1789 / 37.27 ≈ 48)
+        assert!(sample_count >= 47 && sample_count <= 49);
     }
 }
