@@ -3,19 +3,23 @@
 /// This module handles SDL2 audio initialization and manages the audio callback
 /// that retrieves samples from the APU.
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 
 /// Audio output handler that receives samples from the NES APU
 pub struct NesAudio {
     device: AudioDevice<AudioCallbackImpl>,
-    sample_sender: Sender<f32>,
+    sample_sender: SyncSender<f32>,
 }
 
 impl NesAudio {
+    /// Audio buffer size in samples
+    /// At 44.1kHz, this provides ~0.5 seconds of buffering (22050 samples / 44100 Hz)
+    const BUFFER_SIZE: usize = 22050;
+
     /// Create a new audio output handler
     ///
     /// Initializes SDL2 audio subsystem with the specified sample rate.
-    /// Creates a channel for sending audio samples from the emulator to the audio callback.
+    /// Creates a bounded channel for sending audio samples from the emulator to the audio callback.
     ///
     /// # Arguments
     /// * `sdl_context` - The SDL2 context for audio initialization
@@ -32,8 +36,9 @@ impl NesAudio {
             samples: None,     // Use SDL2 default buffer size
         };
 
-        // Create channel for sending samples to audio callback
-        let (sender, receiver) = channel();
+        // Create bounded channel for sending samples to audio callback
+        // This prevents unbounded memory growth if audio callback falls behind
+        let (sender, receiver) = sync_channel(Self::BUFFER_SIZE);
 
         let device =
             audio_subsystem.open_playback(None, &desired_spec, |_spec| AudioCallbackImpl {
@@ -49,14 +54,14 @@ impl NesAudio {
     /// Send an audio sample to the audio output
     ///
     /// Sends a sample to the audio callback for playback.
-    /// If the buffer is full, old samples may be dropped.
+    /// If the buffer is full, the sample will be dropped to prevent blocking.
     ///
     /// # Arguments
     /// * `sample` - Audio sample in range 0.0 to 1.0
     pub fn queue_sample(&mut self, sample: f32) {
-        // Send sample to audio callback
-        // If the channel is disconnected or full, ignore the error
-        let _ = self.sample_sender.send(sample);
+        // Send sample to audio callback using try_send to avoid blocking
+        // If the buffer is full, drop the sample to prevent emulation slowdown
+        let _ = self.sample_sender.try_send(sample);
     }
 
     /// Start audio playback
