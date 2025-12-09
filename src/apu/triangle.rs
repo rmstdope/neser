@@ -28,6 +28,12 @@ const TRIANGLE_SEQUENCE: [u8; TRIANGLE_SEQUENCE_LENGTH as usize] = [
     13, 14, 15,
 ];
 
+/// Length counter lookup table (shared across all channels)
+const LENGTH_COUNTER_TABLE: [u8; 32] = [
+    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
+    192, 24, 72, 26, 16, 28, 32, 30,
+];
+
 impl Default for Triangle {
     fn default() -> Self {
         Self::new()
@@ -112,6 +118,24 @@ impl Triangle {
     /// Set the control flag (also acts as length counter halt)
     pub fn set_control_flag(&mut self, value: bool) {
         self.control_flag = value;
+    }
+
+    /// Load the length counter from the lookup table
+    pub fn load_length_counter(&mut self, index: u8) {
+        let table_index = (index & 0x1F) as usize;
+        self.length_counter = LENGTH_COUNTER_TABLE[table_index];
+    }
+
+    /// Get the current length counter value
+    pub fn get_length_counter(&self) -> u8 {
+        self.length_counter
+    }
+
+    /// Clock the length counter (called by frame counter half frame)
+    pub fn clock_length_counter(&mut self) {
+        if !self.control_flag && self.length_counter > 0 {
+            self.length_counter -= 1;
+        }
     }
 }
 
@@ -226,5 +250,59 @@ mod tests {
         // Counter keeps reloading while flag is set
         triangle.clock_linear_counter_with_reload();
         assert_eq!(triangle.linear_counter, 10); // Reloaded again
+    }
+
+    #[test]
+    fn test_length_counter_clocking() {
+        let mut triangle = Triangle::new();
+
+        // Load length counter with value (index 5 = value 4)
+        triangle.load_length_counter(5);
+        assert_eq!(triangle.get_length_counter(), 4);
+
+        // Clock the length counter - it should decrement
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 3);
+
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 2);
+
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 1);
+
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 0);
+
+        // Once at zero, should stay at zero
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 0);
+    }
+
+    #[test]
+    fn test_length_counter_halt() {
+        let mut triangle = Triangle::new();
+
+        // Load length counter
+        triangle.load_length_counter(5);
+        assert_eq!(triangle.get_length_counter(), 4);
+
+        // Set control flag (which also acts as length counter halt)
+        triangle.set_control_flag(true);
+
+        // Clock the length counter - should NOT decrement when halted
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 4);
+
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 4);
+
+        // Clear control flag - should resume counting
+        triangle.set_control_flag(false);
+
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 3);
+
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 2);
     }
 }
