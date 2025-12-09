@@ -2,6 +2,7 @@
 // This is not published or exposed externally
 
 pub mod apu;
+pub mod audio;
 pub mod cartridge;
 pub mod cpu;
 pub mod eventloop;

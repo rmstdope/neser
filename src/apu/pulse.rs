@@ -24,6 +24,7 @@ pub struct Pulse {
     // Length counter fields
     length_counter: u8,
     length_counter_halt: bool,
+    length_counter_enabled: bool, // Controlled by $4015
 
     // Sweep unit fields
     sweep_enabled: bool,
@@ -57,7 +58,7 @@ impl Default for Pulse {
 
 impl Pulse {
     /// Create a new Pulse channel
-    /// 
+    ///
     /// # Arguments
     /// * `is_pulse1` - true for Pulse 1, false for Pulse 2 (affects sweep complement mode)
     pub fn new(is_pulse1: bool) -> Self {
@@ -75,6 +76,7 @@ impl Pulse {
             envelope_decay_level: 0,
             length_counter: 0,
             length_counter_halt: false,
+            length_counter_enabled: false, // Disabled at power-on
 
             // Sweep unit fields
             sweep_enabled: false,
@@ -143,9 +145,11 @@ impl Pulse {
     pub fn write_length_counter_timer_high(&mut self, value: u8) {
         self.write_timer_high(value);
         self.envelope_start_flag = true;
-        // Load length counter from bits 7-3
-        let index = (value >> 3) as usize;
-        self.length_counter = LENGTH_COUNTER_TABLE[index];
+        // Load length counter from bits 7-3, but only if channel is enabled
+        if self.length_counter_enabled {
+            let index = (value >> 3) as usize;
+            self.length_counter = LENGTH_COUNTER_TABLE[index];
+        }
     }
 
     /// Clock the envelope (called by quarter frame from frame counter)
@@ -199,6 +203,7 @@ impl Pulse {
 
     /// Set length counter enabled/disabled (from $4015)
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
+        self.length_counter_enabled = enabled;
         if !enabled {
             self.length_counter = 0;
         }
@@ -268,7 +273,7 @@ impl Pulse {
 
     /// Get the current output sample from the pulse channel
     /// Returns envelope volume (0-15) if playing, or 0 if muted
-    /// 
+    ///
     /// Channel is muted (outputs 0) if ANY of these conditions are true:
     /// 1. Sequencer output is 0 (duty cycle low point)
     /// 2. Length counter is 0
@@ -632,6 +637,7 @@ mod tests {
     #[test]
     fn test_length_counter_load_values() {
         let mut pulse = Pulse::default();
+        pulse.set_length_counter_enabled(true);
 
         // Test all 32 load values
         let expected = [
@@ -654,6 +660,7 @@ mod tests {
     #[test]
     fn test_length_counter_decrements() {
         let mut pulse = Pulse::default();
+        pulse.set_length_counter_enabled(true);
         pulse.write_length_counter_timer_high(0b00001_000); // Load value 2 (index 1)
         assert_eq!(pulse.get_length_counter(), 254);
 
@@ -668,6 +675,7 @@ mod tests {
     fn test_length_counter_halt_flag() {
         let mut pulse = Pulse::default();
         pulse.write_control(0b0010_0000); // Set halt flag
+        pulse.set_length_counter_enabled(true);
         pulse.write_length_counter_timer_high(0b00010_000); // Load value 20 (index 2)
 
         assert_eq!(pulse.get_length_counter(), 20);
@@ -684,6 +692,7 @@ mod tests {
     fn test_length_counter_stops_at_zero() {
         let mut pulse = Pulse::default();
         pulse.write_control(0b0000_0000); // No halt
+        pulse.set_length_counter_enabled(true);
         pulse.write_length_counter_timer_high(0b00011_000); // Load value 2 (index 3)
 
         assert_eq!(pulse.get_length_counter(), 2);
@@ -702,6 +711,7 @@ mod tests {
     #[test]
     fn test_length_counter_can_be_reloaded() {
         let mut pulse = Pulse::default();
+        pulse.set_length_counter_enabled(true);
         pulse.write_length_counter_timer_high(0b00100_000); // Load value 40 (index 4)
         assert_eq!(pulse.get_length_counter(), 40);
 
@@ -733,6 +743,8 @@ mod tests {
     #[test]
     fn test_set_length_counter_enabled() {
         let mut pulse = Pulse::default();
+        // Enable first, then load
+        pulse.set_length_counter_enabled(true);
         pulse.write_length_counter_timer_high(0b01010_000); // Load some value
         assert_eq!(pulse.get_length_counter(), 60);
 
@@ -740,15 +752,20 @@ mod tests {
         pulse.set_length_counter_enabled(false);
         assert_eq!(pulse.get_length_counter(), 0);
 
-        // Enable should not change counter (it stays at current value)
+        // Enable again - counter stays at current value (0)
         pulse.set_length_counter_enabled(true);
         assert_eq!(pulse.get_length_counter(), 0);
+
+        // Now we can load again since it's enabled
+        pulse.write_length_counter_timer_high(0b00100_000); // Load different value
+        assert_eq!(pulse.get_length_counter(), 40);
     }
 
     #[test]
     fn test_length_counter_with_halt_then_unhalt() {
         let mut pulse = Pulse::default();
         pulse.write_control(0b0010_0000); // Halt flag set
+        pulse.set_length_counter_enabled(true);
         pulse.write_length_counter_timer_high(0b00000_000); // Load 10
 
         pulse.clock_length_counter();
@@ -1048,6 +1065,7 @@ mod tests {
         pulse.write_control(0b1001_1000); // Duty 50%, constant volume=8
         pulse.write_timer_low(0x0A); // Period = 10
         pulse.write_timer_high(0x00);
+        pulse.set_length_counter_enabled(true);
         pulse.write_length_counter_timer_high(0b00000_000); // Index 0 = 10
 
         // Run through one complete waveform cycle (8 steps)
@@ -1074,6 +1092,7 @@ mod tests {
         pulse.write_control(0b1001_1111); // Duty 50%, no halt (bit 5 clear), constant volume=15
         pulse.write_timer_low(0x64);
         pulse.write_timer_high(0x00);
+        pulse.set_length_counter_enabled(true);
         pulse.write_length_counter_timer_high(0b00000_000); // Load length=10 (index 0)
 
         // Initially should be able to output

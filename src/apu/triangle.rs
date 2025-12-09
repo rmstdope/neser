@@ -16,6 +16,7 @@ pub struct Triangle {
 
     // Length counter fields
     length_counter: u8,
+    length_counter_enabled: bool, // Controlled by $4015
 }
 
 /// Length of the triangle wave sequence
@@ -52,6 +53,7 @@ impl Triangle {
             linear_counter_reload_flag: false,
             control_flag: false,
             length_counter: 0,
+            length_counter_enabled: false, // Disabled at power-on
         }
     }
 
@@ -151,8 +153,11 @@ impl Triangle {
 
     /// Load the length counter from the lookup table
     pub fn load_length_counter(&mut self, index: u8) {
-        let table_index = (index & 0x1F) as usize;
-        self.length_counter = LENGTH_COUNTER_TABLE[table_index];
+        // Only load if channel is enabled via $4015
+        if self.length_counter_enabled {
+            let table_index = (index & 0x1F) as usize;
+            self.length_counter = LENGTH_COUNTER_TABLE[table_index];
+        }
     }
 
     /// Get the current length counter value
@@ -174,6 +179,7 @@ impl Triangle {
 
     /// Set length counter enabled/disabled (from $4015)
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
+        self.length_counter_enabled = enabled;
         if !enabled {
             self.length_counter = 0;
         }
@@ -302,6 +308,7 @@ mod tests {
         let mut triangle = Triangle::new();
 
         // Load length counter with value (index 5 = value 4)
+        triangle.set_length_counter_enabled(true);
         triangle.load_length_counter(5);
         assert_eq!(triangle.get_length_counter(), 4);
 
@@ -328,6 +335,7 @@ mod tests {
         let mut triangle = Triangle::new();
 
         // Load length counter
+        triangle.set_length_counter_enabled(true);
         triangle.load_length_counter(5);
         assert_eq!(triangle.get_length_counter(), 4);
 
@@ -395,6 +403,7 @@ mod tests {
         // Sets linear counter reload flag
 
         // Write 0b1010_1101 (length index=21, timer high=0b101)
+        triangle.set_length_counter_enabled(true);
         triangle.write_timer_low(0xFF); // Set low bits first
         triangle.write_length_counter_timer_high(0b1010_1101);
 
@@ -413,6 +422,7 @@ mod tests {
     fn test_output_muted_when_counters_zero() {
         let mut triangle = Triangle::new();
         triangle.timer_period = 0;
+        triangle.set_length_counter_enabled(true);
 
         // Triangle should be muted when linear counter is 0
         triangle.set_linear_counter_reload(0);
@@ -436,7 +446,8 @@ mod tests {
     fn test_set_length_counter_enabled() {
         let mut triangle = Triangle::new();
 
-        // Load a length counter value
+        // Enable first, then load a length counter value
+        triangle.set_length_counter_enabled(true);
         triangle.load_length_counter(5);
         assert_eq!(triangle.get_length_counter(), 4);
 
@@ -444,12 +455,16 @@ mod tests {
         triangle.set_length_counter_enabled(false);
         assert_eq!(triangle.get_length_counter(), 0);
 
-        // Load again
+        // Load again - should NOT load because disabled
+        triangle.load_length_counter(10);
+        assert_eq!(triangle.get_length_counter(), 0); // Stays 0
+
+        // Enabling should not affect the counter (stays at 0)
+        triangle.set_length_counter_enabled(true);
+        assert_eq!(triangle.get_length_counter(), 0);
+
+        // Now that it's enabled, we can load again
         triangle.load_length_counter(10);
         assert_eq!(triangle.get_length_counter(), 60); // Index 10 = value 60
-
-        // Enabling should not affect the counter
-        triangle.set_length_counter_enabled(true);
-        assert_eq!(triangle.get_length_counter(), 60);
     }
 }

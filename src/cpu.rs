@@ -1923,7 +1923,8 @@ mod tests {
         let ppu = Rc::new(RefCell::new(crate::ppu_modules::PPUModular::new(
             crate::nes::TvSystem::Ntsc,
         )));
-        MemController::new(ppu)
+        let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
+        MemController::new(ppu, apu)
     }
 
     // Test helper function to run the CPU until halted (KIL instruction)
