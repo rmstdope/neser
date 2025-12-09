@@ -1,3 +1,4 @@
+use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::cpu;
 use crate::mem_controller;
@@ -53,6 +54,7 @@ impl TvSystem {
 
 pub struct Nes {
     pub ppu: Rc<RefCell<ppu_modules::PPUModular>>,
+    pub apu: Rc<RefCell<apu::Apu>>,
     pub memory: Rc<RefCell<mem_controller::MemController>>,
     pub cpu: cpu::Cpu,
     tv_system: TvSystem,
@@ -63,12 +65,15 @@ pub struct Nes {
 impl Nes {
     pub fn new(tv_system: TvSystem) -> Self {
         let ppu = Rc::new(RefCell::new(ppu_modules::PPUModular::new(tv_system)));
+        let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let memory = Rc::new(RefCell::new(mem_controller::MemController::new(
             ppu.clone(),
+            apu.clone(),
         )));
         let cpu = cpu::Cpu::new(memory.clone());
         Self {
             ppu,
+            apu,
             memory,
             cpu,
             tv_system,
@@ -129,6 +134,9 @@ impl Nes {
             // Tick the PPU for the DMA cycles
             self.tick_ppu_u16(dma_cycles);
 
+            // Clock the APU for the DMA cycles
+            self.tick_apu_u16(dma_cycles);
+
             // Add DMA cycles to CPU's total cycle counter
             self.cpu.total_cycles += dma_cycles as u64;
 
@@ -139,6 +147,9 @@ impl Nes {
         // Normal opcode execution
         let cpu_cycles = self.cpu.run_opcode();
         self.tick_ppu(cpu_cycles);
+
+        // Clock the APU for each CPU cycle
+        self.tick_apu(cpu_cycles);
 
         if self.ppu.borrow_mut().poll_nmi() {
             self.cpu.trigger_nmi();
@@ -172,6 +183,19 @@ impl Nes {
         self.fractional_ppu_cycles -= ppu_cycles_to_run as f64;
 
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles_to_run);
+    }
+
+    /// Clock the APU for the specified number of CPU cycles
+    fn tick_apu(&mut self, cpu_cycles: u8) {
+        for _ in 0..cpu_cycles {
+            self.apu.borrow_mut().clock();
+        }
+    }
+
+    fn tick_apu_u16(&mut self, cpu_cycles: u16) {
+        for _ in 0..cpu_cycles {
+            self.apu.borrow_mut().clock();
+        }
     }
 
     /// NES system palette - 64 RGB color values (0x00-0x3F)
@@ -211,6 +235,23 @@ impl Nes {
     /// Clear the ready-to-render flag after rendering a frame
     pub fn clear_ready_to_render(&mut self) {
         self.ready_to_render = false;
+    }
+
+    /// Check if an audio sample is ready for retrieval
+    ///
+    /// Returns true when the APU has generated a new audio sample.
+    /// After checking this flag, call `get_sample()` to retrieve the sample.
+    pub fn sample_ready(&self) -> bool {
+        self.apu.borrow().sample_ready()
+    }
+
+    /// Get the next audio sample if one is ready
+    ///
+    /// Returns `Some(sample)` if a sample is available, `None` otherwise.
+    /// The sample is in the range 0.0 to 1.0.
+    /// After calling this, `sample_ready()` will return false until the next sample is generated.
+    pub fn get_sample(&mut self) -> Option<f32> {
+        self.apu.borrow_mut().get_sample()
     }
 
     /// Set button state for a controller
@@ -9825,5 +9866,186 @@ C689  A9 02     LDA #$02                        A:00 X:FF Y:15 P:27 SP:FB PPU:23
             (cpu_cycles_per_frame - 33247.5).abs() < 0.01,
             "PAL should have ~33247.5 CPU cycles per frame"
         );
+    }
+
+    #[test]
+    fn test_apu_clocked_every_cpu_cycle() {
+        // Test that the APU is clocked once for every CPU cycle
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Load a simple NOP program that executes predictably
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        nes.insert_cartridge(cartridge);
+
+        // Reset to start execution
+        nes.reset();
+
+        // Get initial frame counter cycle count
+        let initial_cycle = nes.apu.borrow().frame_counter().get_cycle_counter();
+
+        // Execute one CPU instruction (NOP = 2 cycles)
+        let cpu_cycles = nes.run_cpu_tick();
+
+        // APU should have been clocked once per CPU cycle
+        let final_cycle = nes.apu.borrow().frame_counter().get_cycle_counter();
+        let apu_cycles_elapsed = final_cycle - initial_cycle;
+
+        assert_eq!(
+            apu_cycles_elapsed, cpu_cycles as u32,
+            "APU should be clocked once per CPU cycle"
+        );
+    }
+
+    #[test]
+    fn test_apu_clocked_during_oam_dma() {
+        // Test that the APU is clocked during OAM DMA cycles
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        nes.insert_cartridge(cartridge);
+        nes.reset();
+
+        // Get initial APU cycle count
+        let initial_cycle = nes.apu.borrow().frame_counter().get_cycle_counter();
+
+        // Trigger an OAM DMA by writing to $4014
+        nes.memory.borrow_mut().write(0x4014, 0x02);
+
+        // Run a CPU tick which should execute the DMA
+        let dma_cycles = nes.run_cpu_tick();
+
+        // APU should have been clocked for all DMA cycles
+        let final_cycle = nes.apu.borrow().frame_counter().get_cycle_counter();
+        let apu_cycles_elapsed = final_cycle - initial_cycle;
+
+        // OAM DMA takes 513 or 514 cycles, but returns min(cycles, 255) as u8
+        assert!(
+            dma_cycles == 255,
+            "OAM DMA should return 255 (capped from 513/514 cycles)"
+        );
+        // APU should have been clocked for the actual DMA cycles (513 or 514)
+        assert!(
+            apu_cycles_elapsed == 513 || apu_cycles_elapsed == 514,
+            "APU should be clocked 513 or 514 times during OAM DMA, got {}",
+            apu_cycles_elapsed
+        );
+    }
+
+    #[test]
+    fn test_sample_ready_initially_false() {
+        // Test that sample_ready returns false initially
+        let nes = Nes::new(TvSystem::Ntsc);
+
+        assert!(!nes.sample_ready());
+    }
+
+    #[test]
+    fn test_sample_ready_after_clocking() {
+        // Test that sample_ready returns true after enough APU clocks
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        nes.insert_cartridge(cartridge);
+        nes.reset();
+
+        // Clock the APU until a sample is ready
+        // At 44100 Hz sample rate and 1789773 Hz CPU clock:
+        // cycles_per_sample = 1789773 / 44100 ≈ 40.59 cycles
+        // So we need to run at least 41 CPU cycles
+        for _ in 0..50 {
+            nes.run_cpu_tick();
+            if nes.sample_ready() {
+                break;
+            }
+        }
+
+        assert!(nes.sample_ready());
+    }
+
+    #[test]
+    fn test_get_sample_returns_value() {
+        // Test that get_sample returns a valid audio sample
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        nes.insert_cartridge(cartridge);
+        nes.reset();
+
+        // Clock until a sample is ready
+        for _ in 0..50 {
+            nes.run_cpu_tick();
+            if nes.sample_ready() {
+                break;
+            }
+        }
+
+        // Get the sample
+        let sample = nes.get_sample();
+        assert!(sample.is_some());
+
+        // Sample should be in valid range 0.0 to 1.0
+        let sample_value = sample.unwrap();
+        assert!(sample_value >= 0.0 && sample_value <= 1.0);
+    }
+
+    #[test]
+    fn test_get_sample_clears_ready_flag() {
+        // Test that get_sample clears the sample_ready flag
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        nes.insert_cartridge(cartridge);
+        nes.reset();
+
+        // Clock until a sample is ready
+        for _ in 0..50 {
+            nes.run_cpu_tick();
+            if nes.sample_ready() {
+                break;
+            }
+        }
+
+        assert!(nes.sample_ready());
+
+        // Get the sample
+        nes.get_sample();
+
+        // sample_ready should now return false
+        assert!(!nes.sample_ready());
+    }
+
+    #[test]
+    fn test_get_sample_returns_none_when_not_ready() {
+        // Test that get_sample returns None when no sample is ready
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let sample = nes.get_sample();
+        assert!(sample.is_none());
+    }
+
+    /// Helper function to create a minimal NROM ROM for testing
+    fn create_minimal_nrom_rom() -> Vec<u8> {
+        let mut rom = Vec::new();
+
+        // iNES header
+        rom.extend_from_slice(b"NES\x1A"); // Signature
+        rom.push(2); // 2 * 16KB PRG ROM
+        rom.push(1); // 1 * 8KB CHR ROM
+        rom.push(0x00); // Flags 6: Mapper 0 (NROM)
+        rom.push(0x00); // Flags 7
+        rom.extend_from_slice(&[0; 8]); // Unused padding
+
+        // 32KB PRG ROM (2 * 16KB) - filled with NOPs
+        rom.extend_from_slice(&[0xEA; 32768]); // NOP instruction
+
+        // 8KB CHR ROM - filled with zeros
+        rom.extend_from_slice(&[0x00; 8192]);
+
+        rom
     }
 }

@@ -1,3 +1,4 @@
+use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::joypad::Joypad;
 use crate::ppu_modules;
@@ -9,6 +10,7 @@ pub struct MemController {
     cpu_ram: Vec<u8>,
     cartridge: Option<Cartridge>,
     ppu: Rc<RefCell<ppu_modules::PPUModular>>,
+    apu: Rc<RefCell<apu::Apu>>,
     oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
     joypad1: RefCell<Joypad>,
     joypad2: RefCell<Joypad>,
@@ -16,11 +18,12 @@ pub struct MemController {
 
 impl MemController {
     /// Create a new memory instance with 64KB of RAM initialized to 0
-    pub fn new(ppu: Rc<RefCell<ppu_modules::PPUModular>>) -> Self {
+    pub fn new(ppu: Rc<RefCell<ppu_modules::PPUModular>>, apu: Rc<RefCell<apu::Apu>>) -> Self {
         Self {
             cpu_ram: vec![0; 0x10000],
             cartridge: None,
             ppu,
+            apu,
             oam_dma_page: None,
             joypad1: RefCell::new(Joypad::new()),
             joypad2: RefCell::new(Joypad::new()),
@@ -59,6 +62,9 @@ impl MemController {
                 0x2007 => self.ppu.borrow_mut().read_data(),
                 _ => panic!("Should never happen!"),
             },
+
+            // APU Status register ($4015)
+            0x4015 => self.apu.borrow_mut().read_status(),
 
             // Controller ports ($4016-$4017)
             0x4016 => self.joypad1.borrow_mut().read(),
@@ -121,15 +127,66 @@ impl MemController {
 
             // APU and I/O registers ($4000-$4017)
             0x4000..=0x4017 => match addr {
+                // Pulse 1 registers
+                0x4000 => self.apu.borrow_mut().pulse1_mut().write_control(value),
+                0x4001 => self.apu.borrow_mut().pulse1_mut().write_sweep(value),
+                0x4002 => self.apu.borrow_mut().pulse1_mut().write_timer_low(value),
+                0x4003 => self
+                    .apu
+                    .borrow_mut()
+                    .pulse1_mut()
+                    .write_length_counter_timer_high(value),
+
+                // Pulse 2 registers
+                0x4004 => self.apu.borrow_mut().pulse2_mut().write_control(value),
+                0x4005 => self.apu.borrow_mut().pulse2_mut().write_sweep(value),
+                0x4006 => self.apu.borrow_mut().pulse2_mut().write_timer_low(value),
+                0x4007 => self
+                    .apu
+                    .borrow_mut()
+                    .pulse2_mut()
+                    .write_length_counter_timer_high(value),
+
+                // Triangle registers
+                0x4008 => self.apu.borrow_mut().triangle_mut().write_linear_counter(value),
+                0x400A => self.apu.borrow_mut().triangle_mut().write_timer_low(value),
+                0x400B => self
+                    .apu
+                    .borrow_mut()
+                    .triangle_mut()
+                    .write_length_counter_timer_high(value),
+
+                // Noise registers
+                0x400C => self.apu.borrow_mut().noise_mut().write_envelope(value),
+                0x400E => self.apu.borrow_mut().noise_mut().write_period(value),
+                0x400F => self.apu.borrow_mut().noise_mut().write_length(value),
+
+                // DMC registers
+                0x4010 => self.apu.borrow_mut().dmc_mut().write_flags_and_rate(value),
+                0x4011 => self.apu.borrow_mut().dmc_mut().write_direct_load(value),
+                0x4012 => self.apu.borrow_mut().dmc_mut().write_sample_address(value),
+                0x4013 => self.apu.borrow_mut().dmc_mut().write_sample_length(value),
+
                 0x4014 => {
                     // OAMDMA - Store the page for later DMA execution
                     self.oam_dma_page = Some(value);
                     return true; // Signal that OAM DMA should occur
                 }
+
+                // APU Control registers
+                0x4015 => self.apu.borrow_mut().write_enable(value),
                 0x4016 => {
                     // Controller strobe - write to both controllers
                     self.joypad1.borrow_mut().write_strobe(value);
                     self.joypad2.borrow_mut().write_strobe(value);
+                }
+                0x4017 => self.apu.borrow_mut().frame_counter_mut().write_register(value),
+
+                // Unused APU registers
+                0x4009 | 0x400D => {
+                    // $4009 is unused (triangle register 1)
+                    // $400D is unused (noise register 1)
+                    // Writes to these addresses have no effect
                 }
                 _ => {
                     eprintln!(
@@ -224,7 +281,8 @@ mod tests {
         let ppu = Rc::new(RefCell::new(ppu_modules::PPUModular::new(
             crate::nes::TvSystem::Ntsc,
         )));
-        MemController::new(ppu)
+        let apu = Rc::new(RefCell::new(apu::Apu::new()));
+        MemController::new(ppu, apu)
     }
 
     #[test]
@@ -592,5 +650,181 @@ mod tests {
         rom.extend_from_slice(&[0x00; 8192]);
 
         rom
+    }
+
+    #[test]
+    fn test_read_apu_status_register() {
+        // Test reading from $4015 returns APU status
+        let memory = create_test_memory();
+
+        // Reading $4015 should return the APU status register
+        let status = memory.read(0x4015);
+
+        // Initially all channels should be disabled, so status should be 0
+        assert_eq!(status, 0x00);
+    }
+
+    #[test]
+    fn test_read_apu_status_after_enable() {
+        // Test that reading $4015 returns the APU's status
+        let memory = create_test_memory();
+
+        // Directly configure pulse 1 through the APU to test reading
+        {
+            let mut apu = memory.apu.borrow_mut();
+            apu.write_enable(0b0000_0001); // Enable pulse 1
+            // Set length counter to non-zero by writing to register 3
+            apu.pulse1_mut()
+                .write_length_counter_timer_high(0b1111_1000);
+        }
+
+        // Read status through memory controller - pulse 1 bit should be set
+        let status = memory.read(0x4015);
+        assert_eq!(status & 0b0000_0001, 0b0000_0001);
+    }
+
+    #[test]
+    fn test_apu_status_register_mirrored() {
+        // Test that $4015 is not mirrored (only accessible at exact address)
+        let memory = create_test_memory();
+
+        // Reading exactly $4015 should work
+        let status = memory.read(0x4015);
+        assert_eq!(status, 0x00);
+
+        // Note: $4015 is not mirrored, so other addresses in APU range
+        // should not return the status register
+    }
+
+    #[test]
+    fn test_write_pulse1_registers() {
+        // Test writing to pulse 1 registers ($4000-$4003)
+        let mut memory = create_test_memory();
+
+        // Enable pulse 1 first
+        memory.write(0x4015, 0b00000001);
+
+        // Write to $4000 (control register)
+        memory.write(0x4000, 0b10111111);
+
+        // Write to $4001 (sweep register)
+        memory.write(0x4001, 0b10101010);
+
+        // Write to $4002 (timer low)
+        memory.write(0x4002, 0xAB);
+
+        // Write to $4003 (length/timer high)
+        memory.write(0x4003, 0b11111000);
+
+        // Verify writes reached the APU by checking pulse1 length counter
+        let apu = memory.apu.borrow();
+        assert!(apu.pulse1().get_length_counter() > 0);
+    }
+
+    #[test]
+    fn test_write_pulse2_registers() {
+        // Test writing to pulse 2 registers ($4004-$4007)
+        let mut memory = create_test_memory();
+
+        // Enable pulse 2 first
+        memory.write(0x4015, 0b00000010);
+
+        // Write to $4004 (control register)
+        memory.write(0x4004, 0b11001111);
+
+        // Write to $4007 (length/timer high)
+        memory.write(0x4007, 0b11110000);
+
+        // Verify writes reached the APU
+        let apu = memory.apu.borrow();
+        assert!(apu.pulse2().get_length_counter() > 0);
+    }
+
+    #[test]
+    fn test_write_triangle_registers() {
+        // Test writing to triangle registers ($4008-$400B)
+        let mut memory = create_test_memory();
+
+        // Enable triangle first
+        memory.write(0x4015, 0b00000100);
+
+        // Write to $4008 (linear counter)
+        memory.write(0x4008, 0b11111111);
+
+        // Write to $400B (length/timer high)
+        memory.write(0x400B, 0b11110000);
+
+        // Verify writes reached the APU
+        let apu = memory.apu.borrow();
+        assert!(apu.triangle().get_length_counter() > 0);
+    }
+
+    #[test]
+    fn test_write_noise_registers() {
+        // Test writing to noise registers ($400C-$400F)
+        let mut memory = create_test_memory();
+
+        // Enable noise first
+        memory.write(0x4015, 0b00001000);
+
+        // Write to $400C (control)
+        memory.write(0x400C, 0b00111111);
+
+        // Write to $400F (length counter load)
+        memory.write(0x400F, 0b11110000);
+
+        // Verify writes reached the APU
+        let apu = memory.apu.borrow();
+        assert!(apu.noise().get_length_counter() > 0);
+    }
+
+    #[test]
+    fn test_write_dmc_registers() {
+        // Test writing to DMC registers ($4010-$4013)
+        let mut memory = create_test_memory();
+
+        // Write to $4010 (flags and rate)
+        memory.write(0x4010, 0b00001111);
+
+        // Write to $4011 (direct load)
+        memory.write(0x4011, 0x40);
+
+        // Write to $4012 (sample address)
+        memory.write(0x4012, 0xC0);
+
+        // Write to $4013 (sample length)
+        memory.write(0x4013, 0xFF);
+
+        // Verify write reached the APU (no panic means success)
+    }
+
+    #[test]
+    fn test_write_apu_enable_register() {
+        // Test writing to $4015 (enable register)
+        let mut memory = create_test_memory();
+
+        // Enable pulse 1 and pulse 2
+        memory.write(0x4015, 0b00000011);
+
+        // Write length counters to make them non-zero
+        memory.write(0x4003, 0b11110000);
+        memory.write(0x4007, 0b11110000);
+
+        // Read status to verify both are enabled
+        let status = memory.read(0x4015);
+        assert_eq!(status & 0b00000011, 0b00000011);
+    }
+
+    #[test]
+    fn test_write_frame_counter_register() {
+        // Test writing to $4017 (frame counter)
+        let mut memory = create_test_memory();
+
+        // Write to frame counter register - 5-step mode (bit 7 set)
+        memory.write(0x4017, 0b10000000);
+
+        // Verify write reached the APU
+        let apu = memory.apu.borrow();
+        assert_eq!(apu.frame_counter().get_mode(), true);
     }
 }
