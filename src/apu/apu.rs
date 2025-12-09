@@ -4,6 +4,15 @@ use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
 
+// Status register ($4015) bit masks
+const STATUS_PULSE1: u8 = 1 << 0;
+const STATUS_PULSE2: u8 = 1 << 1;
+const STATUS_TRIANGLE: u8 = 1 << 2;
+const STATUS_NOISE: u8 = 1 << 3;
+const STATUS_DMC: u8 = 1 << 4;
+const STATUS_FRAME_IRQ: u8 = 1 << 6;
+const STATUS_DMC_IRQ: u8 = 1 << 7;
+
 /// Main APU module integrating frame counter and sound channels
 pub struct Apu {
     frame_counter: FrameCounter,
@@ -112,6 +121,49 @@ impl Apu {
 
         // DMC timer runs every CPU cycle (independent of frame counter)
         self.dmc.clock_timer();
+    }
+
+    /// Read the APU status register ($4015)
+    /// Returns: IF-D NT21
+    /// - Bit 7 (I): DMC interrupt flag
+    /// - Bit 6 (F): Frame counter interrupt flag
+    /// - Bit 5: Open bus (not implemented, returns 0)
+    /// - Bit 4 (D): DMC active (bytes remaining > 0)
+    /// - Bit 3 (N): Noise length counter > 0
+    /// - Bit 2 (T): Triangle length counter > 0
+    /// - Bit 1 (2): Pulse 2 length counter > 0
+    /// - Bit 0 (1): Pulse 1 length counter > 0
+    ///
+    /// Side effect: Clears the frame counter interrupt flag
+    pub fn read_status(&mut self) -> u8 {
+        let mut status = 0;
+
+        if self.pulse1.get_length_counter() > 0 {
+            status |= STATUS_PULSE1;
+        }
+        if self.pulse2.get_length_counter() > 0 {
+            status |= STATUS_PULSE2;
+        }
+        if self.triangle.get_length_counter() > 0 {
+            status |= STATUS_TRIANGLE;
+        }
+        if self.noise.get_length_counter() > 0 {
+            status |= STATUS_NOISE;
+        }
+        if self.dmc.has_bytes_remaining() {
+            status |= STATUS_DMC;
+        }
+        if self.frame_counter.get_irq_flag() {
+            status |= STATUS_FRAME_IRQ;
+        }
+        if self.dmc.get_irq_flag() {
+            status |= STATUS_DMC_IRQ;
+        }
+
+        // Side effect: Clear frame counter interrupt flag
+        self.frame_counter.clear_irq_flag();
+
+        status
     }
 }
 
@@ -403,5 +455,66 @@ mod tests {
 
         // Timer should have clocked (verified by no panic)
         // Note: Without sample data, DMC won't change output
+    }
+
+    #[test]
+    fn test_status_all_channels_inactive() {
+        let mut apu = Apu::new();
+        // All channels start with length counter = 0
+        // Bits: IF-D NT21
+        // Expected: 0b0000_0000 (all inactive)
+        assert_eq!(apu.read_status(), 0b0000_0000);
+    }
+
+    #[test]
+    fn test_status_pulse1_active() {
+        let mut apu = Apu::new();
+        // Load length counter for pulse 1
+        apu.pulse1_mut()
+            .write_length_counter_timer_high(0b00001_000); // Index 1 = length 254
+        // Bit 0 should be set
+        assert_eq!(apu.read_status() & 0b0000_0001, 0b0000_0001);
+    }
+
+    #[test]
+    fn test_status_pulse2_active() {
+        let mut apu = Apu::new();
+        // Load length counter for pulse 2
+        apu.pulse2_mut()
+            .write_length_counter_timer_high(0b00001_000); // Index 1 = length 254
+        // Bit 1 should be set
+        assert_eq!(apu.read_status() & 0b0000_0010, 0b0000_0010);
+    }
+
+    #[test]
+    fn test_status_triangle_active() {
+        let mut apu = Apu::new();
+        // Load length counter for triangle
+        apu.triangle_mut().load_length_counter(1); // Index 1 = length 254
+        // Bit 2 should be set
+        assert_eq!(apu.read_status() & 0b0000_0100, 0b0000_0100);
+    }
+
+    #[test]
+    fn test_status_noise_active() {
+        let mut apu = Apu::new();
+        // Load length counter for noise (index 1 = length 254)
+        apu.noise_mut().write_length(0b00001_000);
+        // Bit 3 should be set
+        assert_eq!(apu.read_status() & 0b0000_1000, 0b0000_1000);
+    }
+
+    #[test]
+    fn test_status_all_channels_active() {
+        let mut apu = Apu::new();
+        // Load length counters for all channels
+        apu.pulse1_mut()
+            .write_length_counter_timer_high(0b00001_000);
+        apu.pulse2_mut()
+            .write_length_counter_timer_high(0b00001_000);
+        apu.triangle_mut().load_length_counter(1);
+        apu.noise_mut().write_length(0b00001_000);
+        // Bits 0-3 should be set (no DMC, no interrupts yet)
+        assert_eq!(apu.read_status() & 0b0000_1111, 0b0000_1111);
     }
 }

@@ -172,6 +172,11 @@ impl Noise {
             self.length_counter = 0;
         }
     }
+
+    /// Get the current length counter value
+    pub fn get_length_counter(&self) -> u8 {
+        self.length_counter
+    }
 }
 
 #[cfg(test)]
