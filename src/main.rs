@@ -20,7 +20,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         nes::TvSystem::Ntsc
     };
 
-    let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, None)?;
+    // Initialize SDL2 for audio
+    let sdl_context = sdl2::init()?;
+    
+    // Create audio output (44.1 kHz)
+    let audio = audio::NesAudio::new(&sdl_context, 44100)?;
+    
+    let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, Some(audio))?;
     let mut nes_instance = nes::Nes::new(tv_system);
 
     // OADM Read test - PASS
