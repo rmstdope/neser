@@ -12,21 +12,26 @@ mod ppu_modules;
 mod screen_buffer;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Check for -pal flag
+    // Parse command-line arguments
     let args: Vec<String> = std::env::args().collect();
     let tv_system = if args.contains(&"-pal".to_string()) {
         nes::TvSystem::Pal
     } else {
         nes::TvSystem::Ntsc
     };
+    let no_audio = args.contains(&"--no-audio".to_string());
 
-    // Initialize SDL2 for audio
+    // Initialize SDL2
     let sdl_context = sdl2::init()?;
 
-    // Create audio output (44.1 kHz)
-    let audio = audio::NesAudio::new(&sdl_context, 44100)?;
+    // Create audio output (44.1 kHz) unless disabled
+    let audio = if no_audio {
+        None
+    } else {
+        Some(audio::NesAudio::new(&sdl_context, 44100)?)
+    };
 
-    let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, Some(audio))?;
+    let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, audio)?;
     let mut nes_instance = nes::Nes::new(tv_system);
 
     // OADM Read test - PASS
