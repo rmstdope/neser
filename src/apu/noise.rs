@@ -41,6 +41,7 @@ pub struct Noise {
     // Length counter
     length_counter: u8,
     length_counter_halt: bool,
+    length_counter_enabled: bool, // Controlled by $4015
 }
 
 impl Noise {
@@ -58,6 +59,7 @@ impl Noise {
             envelope_decay_level: 0,
             length_counter: 0,
             length_counter_halt: false,
+            length_counter_enabled: false, // Disabled at power-on
         }
     }
 
@@ -143,8 +145,11 @@ impl Noise {
     /// Format: llll l---
     /// l = length counter load value (index into lookup table)
     pub fn write_length(&mut self, value: u8) {
-        let length_index = ((value >> 3) & 0x1F) as usize;
-        self.length_counter = LENGTH_COUNTER_TABLE[length_index];
+        // Only load length counter if channel is enabled via $4015
+        if self.length_counter_enabled {
+            let length_index = ((value >> 3) & 0x1F) as usize;
+            self.length_counter = LENGTH_COUNTER_TABLE[length_index];
+        }
         self.envelope_start = true;
     }
 
@@ -168,6 +173,7 @@ impl Noise {
     /// Enable or disable the length counter (controlled by APU status register)
     /// When disabled, the length counter is immediately cleared
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
+        self.length_counter_enabled = enabled;
         if !enabled {
             self.length_counter = 0;
         }
@@ -328,6 +334,7 @@ mod tests {
 
         // $400F: llll l---
         // l = length counter load
+        noise.set_length_counter_enabled(true);
         noise.write_length(0b10110_000); // load index 22
 
         assert_eq!(noise.length_counter, LENGTH_COUNTER_TABLE[22]);

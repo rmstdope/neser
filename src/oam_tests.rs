@@ -131,4 +131,11 @@ mod tests {
         let result = runner.run_test();
         assert_eq!(result, OamTestResult::Pass, "cpu.nes should pass");
     }
+
+    #[test]
+    fn test_4015_cleared() {
+        let runner = OamTestRunner::new("roms/4015_cleared.nes", 180);
+        let result = runner.run_test();
+        assert_eq!(result, OamTestResult::Pass, "4015_cleared.nes should pass");
+    }
 }

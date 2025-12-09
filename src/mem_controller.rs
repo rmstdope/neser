@@ -14,6 +14,7 @@ pub struct MemController {
     oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
     joypad1: RefCell<Joypad>,
     joypad2: RefCell<Joypad>,
+    open_bus: RefCell<u8>, // Last value on the data bus for open bus behavior
 }
 
 impl MemController {
@@ -27,6 +28,7 @@ impl MemController {
             oam_dma_page: None,
             joypad1: RefCell::new(Joypad::new()),
             joypad2: RefCell::new(Joypad::new()),
+            open_bus: RefCell::new(0xFF), // Initialize to 0xFF (common power-on state)
         }
     }
 
@@ -46,7 +48,7 @@ impl MemController {
 
     /// Read a byte from memory
     pub fn read(&self, addr: u16) -> u8 {
-        match addr {
+        let value = match addr {
             // RAM ($0000-$1FFF) with mirroring
             0x0000..=0x1FFF => self.cpu_ram[(addr & 0x07FF) as usize],
 
@@ -63,10 +65,11 @@ impl MemController {
                 _ => panic!("Should never happen!"),
             },
 
-            // APU Status register ($4015)
-            0x4015 => self.apu.borrow_mut().read_status(),
-
-            // Controller ports ($4016-$4017)
+            // APU registers ($4000-$4017)
+            // Most APU registers are write-only and return open bus when read
+            0x4000..=0x4013 => *self.open_bus.borrow(), // APU write-only registers
+            0x4014 => *self.open_bus.borrow(),          // OAM DMA (write-only)
+            0x4015 => self.apu.borrow_mut().read_status(*self.open_bus.borrow()),
             0x4016 => self.joypad1.borrow_mut().read(),
             0x4017 => self.joypad2.borrow_mut().read(),
 
@@ -100,12 +103,19 @@ impl MemController {
                 );
                 0
             }
-        }
+        };
+
+        // Update open bus with the value read
+        *self.open_bus.borrow_mut() = value;
+        value
     }
 
     /// Write a byte to memory
     /// Returns true if an OAM DMA was triggered (at $4014)
     pub fn write(&mut self, addr: u16, value: u8) -> bool {
+        // Update open bus with the value being written
+        *self.open_bus.borrow_mut() = value;
+
         match addr {
             // RAM ($0000-$1FFF) with mirroring
             0x0000..=0x1FFF => {
@@ -148,7 +158,11 @@ impl MemController {
                     .write_length_counter_timer_high(value),
 
                 // Triangle registers
-                0x4008 => self.apu.borrow_mut().triangle_mut().write_linear_counter(value),
+                0x4008 => self
+                    .apu
+                    .borrow_mut()
+                    .triangle_mut()
+                    .write_linear_counter(value),
                 0x400A => self.apu.borrow_mut().triangle_mut().write_timer_low(value),
                 0x400B => self
                     .apu
@@ -180,7 +194,11 @@ impl MemController {
                     self.joypad1.borrow_mut().write_strobe(value);
                     self.joypad2.borrow_mut().write_strobe(value);
                 }
-                0x4017 => self.apu.borrow_mut().frame_counter_mut().write_register(value),
+                0x4017 => self
+                    .apu
+                    .borrow_mut()
+                    .frame_counter_mut()
+                    .write_register(value),
 
                 // Unused APU registers
                 0x4009 | 0x400D => {
@@ -661,7 +679,9 @@ mod tests {
         let status = memory.read(0x4015);
 
         // Initially all channels should be disabled, so status should be 0
-        assert_eq!(status, 0x00);
+        // except for bit 5 which returns the current open bus value (0xFF at power-on)
+        assert_eq!(status & 0b1101_1111, 0x00); // Mask out bit 5 (open bus)
+        assert_eq!(status & 0b0010_0000, 0x20); // Bit 5 should be set from open bus
     }
 
     #[test]
@@ -690,7 +710,8 @@ mod tests {
 
         // Reading exactly $4015 should work
         let status = memory.read(0x4015);
-        assert_eq!(status, 0x00);
+        // Bit 5 is open bus, so mask it out
+        assert_eq!(status & 0b1101_1111, 0x00);
 
         // Note: $4015 is not mirrored, so other addresses in APU range
         // should not return the status register

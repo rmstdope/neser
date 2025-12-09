@@ -4,9 +4,9 @@
 /// that retrieves samples from the APU.
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
 use std::sync::{
-    atomic::{AtomicU32, Ordering},
-    mpsc::{sync_channel, Receiver, SyncSender},
     Arc,
+    atomic::{AtomicU32, Ordering},
+    mpsc::{Receiver, SyncSender, sync_channel},
 };
 
 /// Audio output handler that receives samples from the NES APU
@@ -37,22 +37,23 @@ impl NesAudio {
 
         let desired_spec = AudioSpecDesired {
             freq: Some(sample_rate),
-            channels: Some(1), // Mono audio
-            samples: None,     // Use SDL2 default buffer size
+            channels: Some(1),  // Mono audio
+            samples: Some(512), // Request smaller buffer size for lower latency
         };
 
         // Create bounded channel for sending samples to audio callback
         // This prevents unbounded memory growth if audio callback falls behind
         let (sender, receiver) = sync_channel(Self::BUFFER_SIZE);
 
-        // Create shared volume control (default 100%)
-        let volume = Arc::new(AtomicU32::new(f32::to_bits(1.0)));
+        // Create shared volume control (default 25% to avoid distortion)
+        let volume = Arc::new(AtomicU32::new(f32::to_bits(0.25)));
         let volume_clone = Arc::clone(&volume);
 
         let device =
             audio_subsystem.open_playback(None, &desired_spec, |_spec| AudioCallbackImpl {
                 sample_receiver: receiver,
                 volume: volume_clone,
+                prev_sample: 0.0,
             })?;
 
         Ok(Self {
@@ -107,6 +108,8 @@ impl NesAudio {
 struct AudioCallbackImpl {
     sample_receiver: Receiver<f32>,
     volume: Arc<AtomicU32>,
+    // Simple low-pass filter state (previous sample for smoothing)
+    prev_sample: f32,
 }
 
 impl AudioCallback for AudioCallbackImpl {
@@ -118,9 +121,27 @@ impl AudioCallback for AudioCallbackImpl {
 
         for sample in out.iter_mut() {
             // Try to receive a sample from the channel
-            // If no sample is available, output silence
-            let raw_sample = self.sample_receiver.try_recv().unwrap_or(0.0);
-            *sample = raw_sample * volume;
+            // If no sample is available, output silence (0.0 for signed audio)
+            match self.sample_receiver.try_recv() {
+                Ok(raw_sample) => {
+                    // NES APU mix() outputs 0.0-1.177, where 0.0 represents silence
+                    // SDL2 f32 format expects -1.0 to +1.0 where 0.0 is silence
+                    // The NES output needs to be scaled to use the full SDL2 range
+                    // and shifted so NES silence (0.0) maps to SDL2 silence (0.0)
+                    //
+                    // Strategy: Map NES 0.0-1.177 to SDL2 0.0-1.0
+                    const NES_APU_MAX: f32 = 1.177;
+                    let normalized = raw_sample / NES_APU_MAX;
+                    let final_sample = normalized * volume;
+                    
+                    // Safety clamp to prevent any unexpected clipping
+                    *sample = final_sample.clamp(-1.0, 1.0);
+                }
+                Err(_) => {
+                    // Buffer underrun - output silence
+                    *sample = 0.0;
+                }
+            }
         }
     }
 }
@@ -143,7 +164,7 @@ mod tests {
         let mut audio = audio.unwrap();
 
         // Test volume control
-        assert_eq!(audio.get_volume(), 1.0, "Default volume should be 1.0");
+        assert_eq!(audio.get_volume(), 0.25, "Default volume should be 0.25");
         audio.set_volume(0.5);
         assert_eq!(audio.get_volume(), 0.5, "Volume should be 0.5");
         audio.set_volume(2.0); // Test clamping

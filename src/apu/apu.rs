@@ -75,6 +75,14 @@ pub struct Apu {
     sample_accumulator: f32,
     cycles_per_sample: f32,
     pending_sample: Option<f32>,
+    // Channel enable/disable flags for debugging
+    pulse1_enabled: bool,
+    pulse2_enabled: bool,
+    triangle_enabled: bool,
+    noise_enabled: bool,
+    dmc_enabled: bool,
+    // APU cycle counter for timer clocking
+    apu_cycle: u32,
 }
 
 impl Apu {
@@ -92,6 +100,12 @@ impl Apu {
             sample_accumulator: 0.0,
             cycles_per_sample: CPU_CLOCK_NTSC / DEFAULT_SAMPLE_RATE,
             pending_sample: None,
+            pulse1_enabled: true,
+            pulse2_enabled: true,
+            triangle_enabled: true,
+            noise_enabled: true,
+            dmc_enabled: true,
+            apu_cycle: 0,
         }
     }
 
@@ -178,6 +192,19 @@ impl Apu {
             self.noise.clock_length_counter();
         }
 
+        // Clock timers every APU cycle (every 2 CPU cycles)
+        // APU runs at half the CPU clock rate
+        // Use dedicated apu_cycle counter to ensure consistent timing
+        if self.apu_cycle % 2 == 0 {
+            self.pulse1.clock_timer();
+            self.pulse2.clock_timer();
+            self.triangle.clock_timer();
+            self.noise.clock_timer();
+        }
+
+        // Increment APU cycle counter
+        self.apu_cycle = self.apu_cycle.wrapping_add(1);
+
         // DMC timer runs every CPU cycle (independent of frame counter)
         self.dmc.clock_timer();
 
@@ -193,7 +220,7 @@ impl Apu {
     /// Returns: IF-D NT21
     /// - Bit 7 (I): DMC interrupt flag
     /// - Bit 6 (F): Frame counter interrupt flag
-    /// - Bit 5: Open bus (not implemented, returns 0)
+    /// - Bit 5: Open bus (returns the current open bus value)
     /// - Bit 4 (D): DMC active (bytes remaining > 0)
     /// - Bit 3 (N): Noise length counter > 0
     /// - Bit 2 (T): Triangle length counter > 0
@@ -201,7 +228,7 @@ impl Apu {
     /// - Bit 0 (1): Pulse 1 length counter > 0
     ///
     /// Side effect: Clears the frame counter interrupt flag
-    pub fn read_status(&mut self) -> u8 {
+    pub fn read_status(&mut self, open_bus: u8) -> u8 {
         let mut status = 0;
 
         if self.pulse1.get_length_counter() > 0 {
@@ -225,6 +252,9 @@ impl Apu {
         if self.dmc.get_irq_flag() {
             status |= STATUS_DMC_IRQ;
         }
+
+        // Bit 5 is open bus - preserve it from the last value on the data bus
+        status |= open_bus & (1 << 5);
 
         // Side effect: Clear frame counter interrupt flag
         self.frame_counter.clear_irq_flag();
@@ -263,12 +293,32 @@ impl Apu {
     /// Mix all channel outputs using non-linear DAC
     /// Returns audio output in range 0.0 to 1.0
     pub fn mix(&self) -> f32 {
-        // Get channel outputs
-        let pulse1 = self.pulse1.output() as usize;
-        let pulse2 = self.pulse2.output() as usize;
-        let triangle = self.triangle.output() as usize;
-        let noise = self.noise.output() as usize;
-        let dmc = self.dmc.output() as usize;
+        // Get channel outputs (0 if channel is disabled)
+        let pulse1 = if self.pulse1_enabled {
+            self.pulse1.output() as usize
+        } else {
+            0
+        };
+        let pulse2 = if self.pulse2_enabled {
+            self.pulse2.output() as usize
+        } else {
+            0
+        };
+        let triangle = if self.triangle_enabled {
+            self.triangle.output() as usize
+        } else {
+            0
+        };
+        let noise = if self.noise_enabled {
+            self.noise.output() as usize
+        } else {
+            0
+        };
+        let dmc = if self.dmc_enabled {
+            self.dmc.output() as usize
+        } else {
+            0
+        };
 
         // Pulse mixing (table index is sum of both pulse channels)
         let pulse_index = pulse1 + pulse2;
@@ -311,6 +361,27 @@ impl Apu {
     /// After calling this, `sample_ready()` will return false until the next sample is generated.
     pub fn get_sample(&mut self) -> Option<f32> {
         self.pending_sample.take()
+    }
+
+    /// Enable or disable individual channels for debugging
+    pub fn set_pulse1_enabled(&mut self, enabled: bool) {
+        self.pulse1_enabled = enabled;
+    }
+
+    pub fn set_pulse2_enabled(&mut self, enabled: bool) {
+        self.pulse2_enabled = enabled;
+    }
+
+    pub fn set_triangle_enabled(&mut self, enabled: bool) {
+        self.triangle_enabled = enabled;
+    }
+
+    pub fn set_noise_enabled(&mut self, enabled: bool) {
+        self.noise_enabled = enabled;
+    }
+
+    pub fn set_dmc_enabled(&mut self, enabled: bool) {
+        self.dmc_enabled = enabled;
     }
 }
 
@@ -373,6 +444,7 @@ mod tests {
         let mut apu = Apu::new();
 
         // Set up pulse with length counter = 1
+        apu.write_enable(STATUS_PULSE1);
         apu.pulse1_mut().write_control(0b0000_0000); // halt=0
         apu.pulse1_mut()
             .write_length_counter_timer_high(0b00010_000); // Index 2 = length 20
@@ -426,7 +498,7 @@ mod tests {
     #[test]
     fn test_both_pulse_channels_get_clocked() {
         let mut apu = Apu::new();
-
+        apu.write_enable(0b0001_1111); // Enable all channels
         // Set up both pulses
         apu.pulse1_mut().write_length_counter_timer_high(0xFF);
         apu.pulse2_mut().write_length_counter_timer_high(0xFF);
@@ -511,6 +583,7 @@ mod tests {
         let mut apu = Apu::new();
 
         // Load length counter (index 5 = value 4)
+        apu.write_enable(STATUS_TRIANGLE);
         apu.triangle_mut().load_length_counter(5);
         assert_eq!(apu.triangle().get_length_counter(), 4);
 
@@ -610,51 +683,60 @@ mod tests {
         // All channels start with length counter = 0
         // Bits: IF-D NT21
         // Expected: 0b0000_0000 (all inactive)
-        assert_eq!(apu.read_status(), 0b0000_0000);
+        assert_eq!(apu.read_status(0), 0b0000_0000);
     }
 
     #[test]
     fn test_status_pulse1_active() {
         let mut apu = Apu::new();
+        // Enable pulse 1 channel first
+        apu.write_enable(STATUS_PULSE1);
         // Load length counter for pulse 1
         apu.pulse1_mut()
             .write_length_counter_timer_high(0b00001_000); // Index 1 = length 254
         // Bit 0 should be set
-        assert_eq!(apu.read_status() & 0b0000_0001, 0b0000_0001);
+        assert_eq!(apu.read_status(0) & 0b0000_0001, 0b0000_0001);
     }
 
     #[test]
     fn test_status_pulse2_active() {
         let mut apu = Apu::new();
+        // Enable pulse 2 channel first
+        apu.write_enable(STATUS_PULSE2);
         // Load length counter for pulse 2
         apu.pulse2_mut()
             .write_length_counter_timer_high(0b00001_000); // Index 1 = length 254
         // Bit 1 should be set
-        assert_eq!(apu.read_status() & 0b0000_0010, 0b0000_0010);
+        assert_eq!(apu.read_status(0) & 0b0000_0010, 0b0000_0010);
     }
 
     #[test]
     fn test_status_triangle_active() {
         let mut apu = Apu::new();
+        // Enable triangle channel first
+        apu.write_enable(STATUS_TRIANGLE);
         // Load length counter for triangle
         apu.triangle_mut().load_length_counter(1); // Index 1 = length 254
         // Bit 2 should be set
-        assert_eq!(apu.read_status() & 0b0000_0100, 0b0000_0100);
+        assert_eq!(apu.read_status(0) & 0b0000_0100, 0b0000_0100);
     }
 
     #[test]
     fn test_status_noise_active() {
         let mut apu = Apu::new();
+        // Enable noise channel first
+        apu.write_enable(STATUS_NOISE);
         // Load length counter for noise (index 1 = length 254)
         apu.noise_mut().write_length(0b00001_000);
         // Bit 3 should be set
-        assert_eq!(apu.read_status() & 0b0000_1000, 0b0000_1000);
+        assert_eq!(apu.read_status(0) & 0b0000_1000, 0b0000_1000);
     }
 
     #[test]
     fn test_status_all_channels_active() {
         let mut apu = Apu::new();
         // Load length counters for all channels
+        apu.write_enable(0b0001_1111);
         apu.pulse1_mut()
             .write_length_counter_timer_high(0b00001_000);
         apu.pulse2_mut()
@@ -662,20 +744,21 @@ mod tests {
         apu.triangle_mut().load_length_counter(1);
         apu.noise_mut().write_length(0b00001_000);
         // Bits 0-3 should be set (no DMC, no interrupts yet)
-        assert_eq!(apu.read_status() & 0b0000_1111, 0b0000_1111);
+        assert_eq!(apu.read_status(0) & 0b0000_1111, 0b0000_1111);
     }
 
     #[test]
     fn test_enable_disable_pulse1() {
         let mut apu = Apu::new();
         // Load pulse 1 length counter
+        apu.write_enable(STATUS_PULSE1);
         apu.pulse1_mut()
             .write_length_counter_timer_high(0b00001_000);
-        assert_eq!(apu.read_status() & STATUS_PULSE1, STATUS_PULSE1);
+        assert_eq!(apu.read_status(0) & STATUS_PULSE1, STATUS_PULSE1);
 
         // Disable pulse 1
         apu.write_enable(0b0000_0000);
-        assert_eq!(apu.read_status() & STATUS_PULSE1, 0);
+        assert_eq!(apu.read_status(0) & STATUS_PULSE1, 0);
     }
 
     #[test]
@@ -686,7 +769,7 @@ mod tests {
         // Load length counter should work
         apu.pulse1_mut()
             .write_length_counter_timer_high(0b00001_000);
-        assert_eq!(apu.read_status() & STATUS_PULSE1, STATUS_PULSE1);
+        assert_eq!(apu.read_status(0) & STATUS_PULSE1, STATUS_PULSE1);
     }
 
     #[test]
@@ -702,13 +785,14 @@ mod tests {
         apu.triangle_mut().load_length_counter(1);
         apu.noise_mut().write_length(0b00001_000);
         // All should be active
-        assert_eq!(apu.read_status() & 0b0000_1111, 0b0000_1111);
+        assert_eq!(apu.read_status(0) & 0b0000_1111, 0b0000_1111);
     }
 
     #[test]
     fn test_disable_clears_length_counters() {
         let mut apu = Apu::new();
         // Load all length counters
+        apu.write_enable(0b0001_1111);
         apu.pulse1_mut()
             .write_length_counter_timer_high(0b00001_000);
         apu.pulse2_mut()
@@ -716,12 +800,12 @@ mod tests {
         apu.triangle_mut().load_length_counter(1);
         apu.noise_mut().write_length(0b00001_000);
         // Verify all active
-        assert_eq!(apu.read_status() & 0b0000_1111, 0b0000_1111);
+        assert_eq!(apu.read_status(0) & 0b0000_1111, 0b0000_1111);
 
         // Disable all channels
         apu.write_enable(0b0000_0000);
         // All should be inactive
-        assert_eq!(apu.read_status() & 0b0000_1111, 0b0000_0000);
+        assert_eq!(apu.read_status(0) & 0b0000_1111, 0b0000_0000);
     }
 
     #[test]
@@ -735,7 +819,7 @@ mod tests {
         apu.write_enable(STATUS_DMC);
 
         // DMC should now have bytes remaining
-        assert_eq!(apu.read_status() & STATUS_DMC, STATUS_DMC);
+        assert_eq!(apu.read_status(0) & STATUS_DMC, STATUS_DMC);
     }
 
     #[test]
@@ -762,7 +846,7 @@ mod tests {
 
         // Any write to enable register should clear DMC IRQ flag
         apu.write_enable(0b0000_0000);
-        assert_eq!(apu.read_status() & STATUS_DMC_IRQ, 0);
+        assert_eq!(apu.read_status(0) & STATUS_DMC_IRQ, 0);
     }
 
     #[test]
@@ -777,6 +861,7 @@ mod tests {
     fn test_mixer_pulse_only() {
         let mut apu = Apu::new();
         // Set pulse 1 to max volume (15) with duty 3 (starts high)
+        apu.write_enable(STATUS_PULSE1);
         apu.pulse1_mut().write_control(0b1111_1111); // Duty 3, constant volume 15
         apu.pulse1_mut().write_timer_low(0x08); // Timer period >= 8
         apu.pulse1_mut()
@@ -878,23 +963,29 @@ mod tests {
     #[test]
     fn test_sample_generation_uses_mixer_output() {
         let mut apu = Apu::new();
-        // Set up pulse channel to produce output
-        apu.pulse1_mut().write_control(0b1111_1111); // Duty 3, constant volume 15
-        apu.pulse1_mut().write_timer_low(0x08);
+        // Set up pulse channel to produce output with 50% duty cycle
+        apu.write_enable(STATUS_PULSE1);
+        apu.pulse1_mut().write_control(0b1011_1111); // Duty 2 (50%), constant volume 15
+        apu.pulse1_mut().write_timer_low(0x08); // Timer = 8
         apu.pulse1_mut()
             .write_length_counter_timer_high(0b00001_000);
 
-        // Generate a sample
-        for _ in 0..41 {
+        // Clock enough to generate multiple samples - at least one should be non-zero
+        // With duty 2 (50%), half the samples should be non-zero
+        let mut non_zero_found = false;
+        for _ in 0..200 {
             apu.clock();
+            if let Some(sample) = apu.get_sample() {
+                if sample > 0.0 {
+                    non_zero_found = true;
+                    assert!(sample <= 1.0);
+                }
+            }
         }
-
-        let sample = apu.get_sample();
-        assert!(sample.is_some());
-        // Sample should match mixer output (non-zero when pulse is active)
-        let sample_value = sample.unwrap();
-        assert!(sample_value > 0.0);
-        assert!(sample_value <= 1.0);
+        assert!(
+            non_zero_found,
+            "Expected at least one non-zero sample with 50% duty cycle"
+        );
     }
 
     #[test]
