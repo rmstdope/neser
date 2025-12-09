@@ -1,4 +1,5 @@
 mod cartridge;
+mod audio;
 mod cpu;
 mod eventloop;
 mod joypad;
