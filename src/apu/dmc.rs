@@ -204,6 +204,11 @@ impl Dmc {
         self.interrupt_flag
     }
 
+    /// Clear the IRQ flag (side effect of writing to $4015)
+    pub fn clear_irq_flag(&mut self) {
+        self.interrupt_flag = false;
+    }
+
     /// Check if the channel has bytes remaining (for status register $4015 bit 4)
     pub fn has_bytes_remaining(&self) -> bool {
         self.bytes_remaining > 0
