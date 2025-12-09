@@ -34,6 +34,31 @@ pub struct Pulse {
     sweep_divider: u8,
 }
 
+// Register bit masks
+const TIMER_LOW_MASK: u16 = 0x00FF;
+const TIMER_HIGH_MASK: u16 = 0x0700;
+const TIMER_HIGH_BITS_MASK: u8 = 0x07;
+const DUTY_MODE_MASK: u8 = 0x03;
+const LENGTH_HALT_ENVELOPE_LOOP_BIT: u8 = 0x20;
+const CONSTANT_VOLUME_BIT: u8 = 0x10;
+const VOLUME_ENVELOPE_MASK: u8 = 0x0F;
+const SWEEP_ENABLE_BIT: u8 = 0x80;
+const SWEEP_PERIOD_MASK: u8 = 0x07;
+const SWEEP_NEGATE_BIT: u8 = 0x08;
+const SWEEP_SHIFT_MASK: u8 = 0x07;
+
+// Register bit shifts
+const DUTY_MODE_SHIFT: u8 = 6;
+const SWEEP_PERIOD_SHIFT: u8 = 4;
+const LENGTH_COUNTER_INDEX_SHIFT: u8 = 3;
+const TIMER_HIGH_SHIFT: u8 = 8;
+
+// Hardware limits
+const MIN_TIMER_PERIOD: u16 = 8;
+const MAX_TIMER_PERIOD: u16 = 0x7FF;
+const MAX_ENVELOPE_LEVEL: u8 = 15;
+const MAX_SEQUENCER_POSITION: u8 = 7;
+
 /// Length counter load table (indexed by bits 7-3 of $4003/$4007)
 const LENGTH_COUNTER_TABLE: [u8; 32] = [
     10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
@@ -57,7 +82,7 @@ impl Default for Pulse {
 
 impl Pulse {
     /// Create a new Pulse channel
-    /// 
+    ///
     /// # Arguments
     /// * `is_pulse1` - true for Pulse 1, false for Pulse 2 (affects sweep complement mode)
     pub fn new(is_pulse1: bool) -> Self {
@@ -88,12 +113,13 @@ impl Pulse {
 
     /// Write to timer low register ($4002 for Pulse 1)
     pub fn write_timer_low(&mut self, value: u8) {
-        self.timer_period = (self.timer_period & 0x0700) | (value as u16);
+        self.timer_period = (self.timer_period & TIMER_HIGH_MASK) | (value as u16);
     }
 
     /// Write to timer high register ($4003 bits 2-0 for Pulse 1)
     pub fn write_timer_high(&mut self, value: u8) {
-        self.timer_period = (self.timer_period & 0x00FF) | (((value & 0x07) as u16) << 8);
+        self.timer_period = (self.timer_period & TIMER_LOW_MASK)
+            | (((value & TIMER_HIGH_BITS_MASK) as u16) << TIMER_HIGH_SHIFT);
     }
 
     /// Get current timer period (for testing)
@@ -114,7 +140,7 @@ impl Pulse {
     /// Clock the sequencer (decrements position)
     fn clock_sequencer(&mut self) {
         self.sequence_position = if self.sequence_position == 0 {
-            7
+            MAX_SEQUENCER_POSITION
         } else {
             self.sequence_position - 1
         };
@@ -127,16 +153,16 @@ impl Pulse {
 
     /// Write duty cycle mode (bits 7-6 of $4000)
     pub fn write_duty(&mut self, duty: u8) {
-        self.duty_mode = duty & 0x03;
+        self.duty_mode = duty & DUTY_MODE_MASK;
     }
 
     /// Write to $4000 register (duty, loop/halt, constant volume, volume/envelope period)
     pub fn write_control(&mut self, value: u8) {
-        self.duty_mode = (value >> 6) & 0x03;
-        self.envelope_loop_flag = (value & 0x20) != 0;
-        self.length_counter_halt = (value & 0x20) != 0; // Same bit as envelope loop
-        self.constant_volume_flag = (value & 0x10) != 0;
-        self.volume_envelope_period = value & 0x0F;
+        self.duty_mode = (value >> DUTY_MODE_SHIFT) & DUTY_MODE_MASK;
+        self.envelope_loop_flag = (value & LENGTH_HALT_ENVELOPE_LOOP_BIT) != 0;
+        self.length_counter_halt = (value & LENGTH_HALT_ENVELOPE_LOOP_BIT) != 0; // Same bit as envelope loop
+        self.constant_volume_flag = (value & CONSTANT_VOLUME_BIT) != 0;
+        self.volume_envelope_period = value & VOLUME_ENVELOPE_MASK;
     }
 
     /// Write to $4003 register (loads length counter, sets start flag, sets timer high)
@@ -144,7 +170,7 @@ impl Pulse {
         self.write_timer_high(value);
         self.envelope_start_flag = true;
         // Load length counter from bits 7-3
-        let index = (value >> 3) as usize;
+        let index = (value >> LENGTH_COUNTER_INDEX_SHIFT) as usize;
         self.length_counter = LENGTH_COUNTER_TABLE[index];
     }
 
@@ -152,14 +178,14 @@ impl Pulse {
     pub fn clock_envelope(&mut self) {
         if self.envelope_start_flag {
             self.envelope_start_flag = false;
-            self.envelope_decay_level = 15;
+            self.envelope_decay_level = MAX_ENVELOPE_LEVEL;
             self.envelope_divider = self.volume_envelope_period;
         } else if self.envelope_divider == 0 {
             self.envelope_divider = self.volume_envelope_period;
             if self.envelope_decay_level > 0 {
                 self.envelope_decay_level -= 1;
             } else if self.envelope_loop_flag {
-                self.envelope_decay_level = 15;
+                self.envelope_decay_level = MAX_ENVELOPE_LEVEL;
             }
         } else {
             self.envelope_divider -= 1;
@@ -210,10 +236,10 @@ impl Pulse {
     /// Bit 3: Negate flag (ones' complement for Pulse 1)
     /// Bits 2-0: Shift count
     pub fn write_sweep(&mut self, value: u8) {
-        self.sweep_enabled = (value & 0x80) != 0;
-        self.sweep_divider_period = (value >> 4) & 0x07;
-        self.sweep_negate = (value & 0x08) != 0;
-        self.sweep_shift = value & 0x07;
+        self.sweep_enabled = (value & SWEEP_ENABLE_BIT) != 0;
+        self.sweep_divider_period = (value >> SWEEP_PERIOD_SHIFT) & SWEEP_PERIOD_MASK;
+        self.sweep_negate = (value & SWEEP_NEGATE_BIT) != 0;
+        self.sweep_shift = value & SWEEP_SHIFT_MASK;
         self.sweep_reload = true;
     }
 
@@ -241,7 +267,7 @@ impl Pulse {
     /// Mutes if: current period < 8 OR target period > $7FF
     /// Note: Muting check runs continuously, even when sweep is disabled
     pub fn is_sweep_muting(&self) -> bool {
-        self.timer_period < 8 || self.get_sweep_target_period() > 0x7FF
+        self.timer_period < MIN_TIMER_PERIOD || self.get_sweep_target_period() > MAX_TIMER_PERIOD
     }
 
     /// Clock the sweep unit (called by half frame)
@@ -259,7 +285,7 @@ impl Pulse {
         // Update period if divider reached 0 and all conditions are met
         if should_update && self.sweep_enabled && self.sweep_shift != 0 {
             let target_period = self.get_sweep_target_period();
-            if self.timer_period >= 8 && target_period <= 0x7FF {
+            if self.timer_period >= MIN_TIMER_PERIOD && target_period <= MAX_TIMER_PERIOD {
                 self.timer_period = target_period;
                 self.timer_counter = self.timer_period;
             }
@@ -268,7 +294,7 @@ impl Pulse {
 
     /// Get the current output sample from the pulse channel
     /// Returns envelope volume (0-15) if playing, or 0 if muted
-    /// 
+    ///
     /// Channel is muted (outputs 0) if ANY of these conditions are true:
     /// 1. Sequencer output is 0 (duty cycle low point)
     /// 2. Length counter is 0
@@ -278,8 +304,8 @@ impl Pulse {
         // Check all muting conditions
         if self.get_sequencer_output() == 0
             || self.length_counter == 0
-            || self.timer_period < 8
-            || self.get_sweep_target_period() > 0x7FF
+            || self.timer_period < MIN_TIMER_PERIOD
+            || self.get_sweep_target_period() > MAX_TIMER_PERIOD
         {
             0
         } else {

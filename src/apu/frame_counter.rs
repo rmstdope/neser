@@ -1,3 +1,7 @@
+// Register bit masks
+const MODE_SELECT_BIT: u8 = 0x80;
+const IRQ_INHIBIT_BIT: u8 = 0x40;
+
 /// Frame Counter for the NES APU
 /// Sequences envelope, sweep, and length counter clocks
 /// Operates in two modes: 4-step and 5-step
@@ -36,16 +40,16 @@ impl FrameCounter {
     /// Bit 6: IRQ inhibit (1 = disable IRQ)
     pub fn write_register(&mut self, value: u8) {
         let old_mode = self.mode;
-        self.mode = if (value & 0x80) != 0 {
+        self.mode = if (value & MODE_SELECT_BIT) != 0 {
             Mode::FiveStep
         } else {
             Mode::FourStep
         };
-        self.irq_inhibit = (value & 0x40) != 0;
+        self.irq_inhibit = (value & IRQ_INHIBIT_BIT) != 0;
         self.cycle_counter = 0;
 
         // Writing 1 to IRQ inhibit clears the IRQ flag
-        if (value & 0x40) != 0 {
+        if (value & IRQ_INHIBIT_BIT) != 0 {
             self.irq_flag = false;
         }
 
@@ -57,18 +61,18 @@ impl FrameCounter {
     /// Returns (quarter_frame, half_frame) signals if immediate clock occurs
     pub fn write_register_with_immediate_clock(&mut self, value: u8) -> (bool, bool) {
         let old_mode = self.mode;
-        let new_mode = if (value & 0x80) != 0 {
+        let new_mode = if (value & MODE_SELECT_BIT) != 0 {
             Mode::FiveStep
         } else {
             Mode::FourStep
         };
 
         self.mode = new_mode;
-        self.irq_inhibit = (value & 0x40) != 0;
+        self.irq_inhibit = (value & IRQ_INHIBIT_BIT) != 0;
         self.cycle_counter = 0;
 
         // Writing 1 to IRQ inhibit clears the IRQ flag
-        if (value & 0x40) != 0 {
+        if (value & IRQ_INHIBIT_BIT) != 0 {
             self.irq_flag = false;
         }
 
@@ -560,7 +564,7 @@ mod tests {
     #[test]
     fn test_five_step_immediate_clock_on_mode_switch() {
         let mut fc = FrameCounter::new();
-        
+
         // Start in 4-step mode, advance a bit
         fc.write_register(0b0000_0000);
         for _ in 0..100 {
@@ -569,7 +573,7 @@ mod tests {
 
         // Switch to 5-step mode - should immediately clock quarter and half
         let result = fc.write_register_with_immediate_clock(0b1000_0000);
-        
+
         assert_eq!(result, (true, true)); // Both quarter and half frame clocked
         assert_eq!(fc.get_cycle_counter(), 0); // Counter reset
     }
@@ -577,26 +581,26 @@ mod tests {
     #[test]
     fn test_five_step_no_immediate_clock_when_staying_in_5_step() {
         let mut fc = FrameCounter::new();
-        
+
         // Already in 5-step mode
         fc.write_register(0b1000_0000);
-        
+
         // Write to 5-step again - should NOT trigger immediate clock
         let result = fc.write_register_with_immediate_clock(0b1000_0000);
-        
+
         assert_eq!(result, (false, false)); // No immediate clock
     }
 
     #[test]
     fn test_five_step_no_immediate_clock_when_switching_to_4_step() {
         let mut fc = FrameCounter::new();
-        
+
         // Start in 5-step mode
         fc.write_register(0b1000_0000);
-        
+
         // Switch to 4-step - should NOT trigger immediate clock
         let result = fc.write_register_with_immediate_clock(0b0000_0000);
-        
+
         assert_eq!(result, (false, false)); // No immediate clock
     }
 
@@ -679,7 +683,7 @@ mod tests {
     fn test_irq_flag_not_cleared_when_inhibit_already_set() {
         let mut fc = FrameCounter::new();
         fc.write_register(0b0100_0000); // Already inhibited
-        
+
         // Manually set IRQ flag for testing
         fc.irq_flag = true;
         assert!(fc.get_irq_flag());
