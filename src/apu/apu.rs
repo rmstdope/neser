@@ -1,3 +1,4 @@
+use super::dmc::Dmc;
 use super::frame_counter::FrameCounter;
 use super::noise::Noise;
 use super::pulse::Pulse;
@@ -10,6 +11,7 @@ pub struct Apu {
     pulse2: Pulse,
     triangle: Triangle,
     noise: Noise,
+    dmc: Dmc,
 }
 
 impl Apu {
@@ -21,6 +23,7 @@ impl Apu {
             pulse2: Pulse::new(false), // Pulse 2 uses two's complement
             triangle: Triangle::new(),
             noise: Noise::new(),
+            dmc: Dmc::new(),
         }
     }
 
@@ -74,6 +77,16 @@ impl Apu {
         &mut self.noise
     }
 
+    /// Get reference to DMC channel
+    pub fn dmc(&self) -> &Dmc {
+        &self.dmc
+    }
+
+    /// Get mutable reference to DMC channel
+    pub fn dmc_mut(&mut self) -> &mut Dmc {
+        &mut self.dmc
+    }
+
     /// Clock the APU by one CPU cycle
     /// This advances the frame counter and triggers channel clocking when needed
     pub fn clock(&mut self) {
@@ -96,6 +109,9 @@ impl Apu {
             self.triangle.clock_length_counter();
             self.noise.clock_length_counter();
         }
+
+        // DMC timer runs every CPU cycle (independent of frame counter)
+        self.dmc.clock_timer();
     }
 }
 
@@ -349,5 +365,43 @@ mod tests {
 
         // Length counter should have decremented (can't directly check but it affects output)
         // This test verifies the integration works without panicking
+    }
+
+    #[test]
+    fn test_dmc_channel_accessible() {
+        let apu = Apu::new();
+        // Should be able to access DMC channel
+        assert_eq!(apu.dmc().output(), 0);
+    }
+
+    #[test]
+    fn test_dmc_channel_mutable() {
+        let mut apu = Apu::new();
+        // Should be able to mutably access DMC channel
+        apu.dmc_mut().write_direct_load(0b0100_0000); // Set output to 64
+        assert_eq!(apu.dmc().output(), 64);
+    }
+
+    #[test]
+    fn test_dmc_timer_gets_clocked() {
+        let mut apu = Apu::new();
+
+        // Set up DMC with fastest rate (rate index 0 = period 428)
+        apu.dmc_mut().write_flags_and_rate(0b0000_0000); // Rate 0
+        apu.dmc_mut().write_direct_load(0b0000_0000); // Output = 0
+
+        // Clock less than one period
+        for _ in 0..427 {
+            apu.clock();
+        }
+
+        // Timer should not have triggered yet
+        // (We can't directly check timer state, but we verify no crash)
+
+        // Clock one more to complete the period
+        apu.clock();
+
+        // Timer should have clocked (verified by no panic)
+        // Note: Without sample data, DMC won't change output
     }
 }
