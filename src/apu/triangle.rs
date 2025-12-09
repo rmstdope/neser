@@ -462,7 +462,7 @@ mod tests {
         // Enabling should not affect the counter (stays at 0)
         triangle.set_length_counter_enabled(true);
         assert_eq!(triangle.get_length_counter(), 0);
-        
+
         // Now that it's enabled, we can load again
         triangle.load_length_counter(10);
         assert_eq!(triangle.get_length_counter(), 60); // Index 10 = value 60

@@ -58,7 +58,7 @@ impl Default for Pulse {
 
 impl Pulse {
     /// Create a new Pulse channel
-    /// 
+    ///
     /// # Arguments
     /// * `is_pulse1` - true for Pulse 1, false for Pulse 2 (affects sweep complement mode)
     pub fn new(is_pulse1: bool) -> Self {
@@ -273,7 +273,7 @@ impl Pulse {
 
     /// Get the current output sample from the pulse channel
     /// Returns envelope volume (0-15) if playing, or 0 if muted
-    /// 
+    ///
     /// Channel is muted (outputs 0) if ANY of these conditions are true:
     /// 1. Sequencer output is 0 (duty cycle low point)
     /// 2. Length counter is 0
@@ -755,7 +755,7 @@ mod tests {
         // Enable again - counter stays at current value (0)
         pulse.set_length_counter_enabled(true);
         assert_eq!(pulse.get_length_counter(), 0);
-        
+
         // Now we can load again since it's enabled
         pulse.write_length_counter_timer_high(0b00100_000); // Load different value
         assert_eq!(pulse.get_length_counter(), 40);
