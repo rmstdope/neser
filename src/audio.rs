@@ -37,8 +37,8 @@ impl NesAudio {
 
         let desired_spec = AudioSpecDesired {
             freq: Some(sample_rate),
-            channels: Some(1),  // Mono audio
-            samples: Some(512), // Request smaller buffer size for lower latency
+            channels: Some(1),   // Mono audio
+            samples: Some(1024), // Larger buffer for debug mode (less CPU pressure)
         };
 
         // Create bounded channel for sending samples to audio callback
@@ -133,7 +133,7 @@ impl AudioCallback for AudioCallbackImpl {
                     const NES_APU_MAX: f32 = 1.177;
                     let normalized = raw_sample / NES_APU_MAX;
                     let final_sample = normalized * volume;
-                    
+
                     // Safety clamp to prevent any unexpected clipping
                     *sample = final_sample.clamp(-1.0, 1.0);
                 }
