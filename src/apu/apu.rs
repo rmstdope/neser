@@ -1,11 +1,13 @@
 use super::frame_counter::FrameCounter;
 use super::pulse::Pulse;
+use super::triangle::Triangle;
 
 /// Main APU module integrating frame counter and sound channels
 pub struct Apu {
     frame_counter: FrameCounter,
     pulse1: Pulse,
     pulse2: Pulse,
+    triangle: Triangle,
 }
 
 impl Apu {
@@ -15,6 +17,7 @@ impl Apu {
             frame_counter: FrameCounter::new(),
             pulse1: Pulse::new(true),  // Pulse 1 uses ones' complement
             pulse2: Pulse::new(false), // Pulse 2 uses two's complement
+            triangle: Triangle::new(),
         }
     }
 
@@ -48,15 +51,26 @@ impl Apu {
         &mut self.frame_counter
     }
 
+    /// Get reference to triangle channel
+    pub fn triangle(&self) -> &Triangle {
+        &self.triangle
+    }
+
+    /// Get mutable reference to triangle channel
+    pub fn triangle_mut(&mut self) -> &mut Triangle {
+        &mut self.triangle
+    }
+
     /// Clock the APU by one CPU cycle
     /// This advances the frame counter and triggers channel clocking when needed
     pub fn clock(&mut self) {
         let (quarter_frame, half_frame) = self.frame_counter.clock();
 
-        // Quarter frame: clock envelopes
+        // Quarter frame: clock envelopes and linear counter
         if quarter_frame {
             self.pulse1.clock_envelope();
             self.pulse2.clock_envelope();
+            self.triangle.clock_linear_counter_with_reload();
         }
 
         // Half frame: clock length counters and sweep units
@@ -65,6 +79,7 @@ impl Apu {
             self.pulse1.clock_sweep();
             self.pulse2.clock_length_counter();
             self.pulse2.clock_sweep();
+            self.triangle.clock_length_counter();
         }
     }
 }
@@ -85,6 +100,7 @@ mod tests {
         assert_eq!(apu.frame_counter().get_cycle_counter(), 0);
         assert_eq!(apu.pulse1().output(), 0);
         assert_eq!(apu.pulse2().output(), 0);
+        assert_eq!(apu.triangle().output(), 0); // Triangle is muted with zero counters
     }
 
     #[test]
@@ -227,5 +243,52 @@ mod tests {
         // two's complement: -10
         // target = 20 + (-10) = 10
         assert_eq!(apu.pulse2().get_sweep_target_period(), 10);
+    }
+
+    #[test]
+    fn test_triangle_linear_counter_gets_clocked() {
+        let mut apu = Apu::new();
+
+        // Set up triangle with a linear counter reload value
+        apu.triangle_mut().write_linear_counter(0x7F); // Max reload value (127), control flag off
+        apu.triangle_mut().write_length_counter_timer_high(0x08); // Sets reload flag
+
+        // Check initial state after setting reload flag
+        assert!(apu.triangle_mut().is_linear_counter_reload_flag_set());
+
+        // Clock to first quarter frame (7457 cycles in 4-step mode)
+        for _ in 0..7457 {
+            apu.clock();
+        }
+
+        // Linear counter should have been reloaded to 127
+        assert_eq!(apu.triangle().get_linear_counter(), 127);
+        // Reload flag should be cleared (control flag is off)
+        assert!(!apu.triangle().is_linear_counter_reload_flag_set());
+
+        // Clock to next quarter frame
+        for _ in 0..7456 {
+            apu.clock();
+        }
+
+        // Linear counter should have decremented
+        assert_eq!(apu.triangle().get_linear_counter(), 126);
+    }
+
+    #[test]
+    fn test_triangle_length_counter_gets_clocked() {
+        let mut apu = Apu::new();
+
+        // Load length counter (index 5 = value 4)
+        apu.triangle_mut().load_length_counter(5);
+        assert_eq!(apu.triangle().get_length_counter(), 4);
+
+        // Clock to first half frame (14913 cycles in 4-step mode)
+        for _ in 0..14913 {
+            apu.clock();
+        }
+
+        // Length counter should have decremented
+        assert_eq!(apu.triangle().get_length_counter(), 3);
     }
 }
