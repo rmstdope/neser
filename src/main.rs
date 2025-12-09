@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         nes::TvSystem::Ntsc
     };
 
-    let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0)?;
+    let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, None)?;
     let mut nes_instance = nes::Nes::new(tv_system);
 
     // OADM Read test - PASS

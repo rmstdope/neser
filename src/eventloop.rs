@@ -4,6 +4,7 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
 
+use crate::audio::NesAudio;
 use crate::nes::TvSystem;
 
 /// EventLoop manages the SDL2 event loop for the application.
@@ -14,6 +15,7 @@ pub struct EventLoop {
     event_pump: sdl2::EventPump,
     timing_scale: f32,
     paused: bool,
+    audio: Option<NesAudio>,
 }
 
 impl EventLoop {
@@ -41,6 +43,7 @@ impl EventLoop {
     /// * `timing_scale` - Emulation speed multiplier. Values are clamped to the range [0.001, 100.0].
     ///             If a value outside this range is provided, it will be clamped and a warning
     ///             will be printed to the console.
+    /// * `audio` - Optional audio output system. If provided, audio will be enabled.
     ///
     /// # Errors
     ///
@@ -54,13 +57,13 @@ impl EventLoop {
     /// use neser::nes::TvSystem;
     ///
     /// // Create a headless EventLoop for testing
-    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0)?;
+    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None)?;
     ///
     /// // Create an EventLoop with an NTSC window at 2x scale
-    /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0)?;
+    /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0, None)?;
     ///
     /// // Create an EventLoop with a PAL window at 3x scale at 2x speed
-    /// let pal = EventLoop::new(false, TvSystem::Pal, 3.0, 2.0)?;
+    /// let pal = EventLoop::new(false, TvSystem::Pal, 3.0, 2.0, None)?;
     /// # Ok::<(), String>(())
     /// ```
     pub fn new(
@@ -68,6 +71,7 @@ impl EventLoop {
         tv_system: TvSystem,
         video_scale: f32,
         timing_scale: f32,
+        audio: Option<NesAudio>,
     ) -> Result<Self, String> {
         let clamped_video_scale = Self::clamp_scale(video_scale);
         let clamped_timing_scale = Self::clamp_timing_scale(timing_scale);
@@ -91,6 +95,7 @@ impl EventLoop {
             event_pump,
             timing_scale: clamped_timing_scale,
             paused: false,
+            audio,
         })
     }
 
@@ -313,6 +318,15 @@ impl EventLoop {
                         println!("{}", nes.trace(false));
                     }
                     nes.run_cpu_tick();
+
+                    // Poll audio samples from APU and queue them
+                    if let Some(ref mut audio) = self.audio {
+                        while nes.sample_ready() {
+                            if let Some(sample) = nes.get_sample() {
+                                audio.queue_sample(sample);
+                            }
+                        }
+                    }
                 }
                 nes.clear_ready_to_render();
                 // println!(
@@ -372,6 +386,15 @@ impl EventLoop {
                 }
 
                 nes.run_cpu_tick();
+
+                // Poll audio samples from APU and queue them
+                if let Some(ref mut audio) = self.audio {
+                    while nes.sample_ready() {
+                        if let Some(sample) = nes.get_sample() {
+                            audio.queue_sample(sample);
+                        }
+                    }
+                }
             }
         }
     }
@@ -428,49 +451,49 @@ mod tests {
     #[test]
     fn test_eventloop_creation() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     fn test_new_headless() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     fn test_scaling_below_minimum() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     fn test_scaling_above_maximum() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     fn test_scaling_at_minimum() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     fn test_scaling_at_maximum() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     fn test_run_with_nes() {
         let _lock = TEST_MUTEX.lock().unwrap();
-        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0).unwrap();
+        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance
