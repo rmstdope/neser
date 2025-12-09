@@ -1,6 +1,10 @@
 /// Pulse wave channel for the NES APU
 /// Generates square waves with variable duty cycle
 pub struct Pulse {
+    // Channel identifier (true = Pulse 1, false = Pulse 2)
+    // Used for sweep complement mode: Pulse 1 uses ones' complement, Pulse 2 uses two's complement
+    is_pulse1: bool,
+
     // Timer fields
     timer_period: u16,
     timer_counter: u16,
@@ -47,14 +51,18 @@ const DUTY_SEQUENCES: [[u8; 8]; 4] = [
 
 impl Default for Pulse {
     fn default() -> Self {
-        Self::new()
+        Self::new(true) // Default to Pulse 1
     }
 }
 
 impl Pulse {
     /// Create a new Pulse channel
-    pub fn new() -> Self {
+    /// 
+    /// # Arguments
+    /// * `is_pulse1` - true for Pulse 1, false for Pulse 2 (affects sweep complement mode)
+    pub fn new(is_pulse1: bool) -> Self {
         Self {
+            is_pulse1,
             timer_period: 0,
             timer_counter: 0,
             duty_mode: 0,
@@ -211,12 +219,18 @@ impl Pulse {
 
     /// Calculate target period for sweep
     /// Target = current period + (current period >> shift)
-    /// If negate is set, uses ones' complement: -change - 1 (Pulse 1 specific)
+    /// Pulse 1 uses ones' complement: -change - 1
+    /// Pulse 2 uses two's complement: -change
     pub fn get_sweep_target_period(&self) -> u16 {
         let change = self.timer_period >> self.sweep_shift;
         if self.sweep_negate {
-            // Pulse 1 uses ones' complement: -change - 1
-            let negated = change.wrapping_neg().wrapping_sub(1);
+            let negated = if self.is_pulse1 {
+                // Pulse 1: ones' complement (-change - 1)
+                change.wrapping_neg().wrapping_sub(1)
+            } else {
+                // Pulse 2: two's complement (-change)
+                change.wrapping_neg()
+            };
             self.timer_period.wrapping_add(negated)
         } else {
             self.timer_period.wrapping_add(change)
@@ -280,28 +294,28 @@ mod tests {
 
     #[test]
     fn test_pulse_new() {
-        let pulse = Pulse::new();
+        let pulse = Pulse::default();
         assert_eq!(pulse.timer_period, 0);
         assert_eq!(pulse.sequence_position, 0);
     }
 
     #[test]
     fn test_write_timer_low() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0xAB);
         assert_eq!(pulse.timer_period, 0xAB);
     }
 
     #[test]
     fn test_write_timer_high() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_high(0x05);
         assert_eq!(pulse.timer_period, 0x0500);
     }
 
     #[test]
     fn test_write_timer_combined() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0xCD);
         pulse.write_timer_high(0x07);
         assert_eq!(pulse.timer_period, 0x07CD);
@@ -309,20 +323,20 @@ mod tests {
 
     #[test]
     fn test_timer_high_masks_upper_bits() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_high(0xFF); // Only bits 2-0 should be used
         assert_eq!(pulse.timer_period, 0x0700);
     }
 
     #[test]
     fn test_sequencer_starts_at_zero() {
-        let pulse = Pulse::new();
+        let pulse = Pulse::default();
         assert_eq!(pulse.sequence_position, 0);
     }
 
     #[test]
     fn test_sequencer_counts_down() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.timer_period = 0;
 
         // Initial position is 0, clock should move to 7
@@ -358,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_timer_countdown() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(3);
 
         // Timer starts at period value
@@ -388,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_duty_cycle_0_12_5_percent() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_duty(0);
 
         // Duty 0: [0,0,0,0,0,0,0,1]
@@ -407,7 +421,7 @@ mod tests {
 
     #[test]
     fn test_duty_cycle_1_25_percent() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_duty(1);
 
         // Duty 1: [0,0,0,0,0,0,1,1]
@@ -423,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_duty_cycle_2_50_percent() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_duty(2);
 
         // Duty 2: [0,0,0,0,1,1,1,1]
@@ -442,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_duty_cycle_3_25_percent_negated() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_duty(3);
 
         // Duty 3: [1,1,1,1,1,1,0,0]
@@ -461,7 +475,7 @@ mod tests {
 
     #[test]
     fn test_duty_write_masks_upper_bits() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_duty(0xFF); // Only bits 1-0 should be used
         assert_eq!(pulse.duty_mode, 3);
     }
@@ -470,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_envelope_constant_volume_mode() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0001_1010); // Constant volume flag set, volume = 10
         assert_eq!(pulse.get_envelope_volume(), 10);
 
@@ -481,7 +495,7 @@ mod tests {
 
     #[test]
     fn test_envelope_decay_mode() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0000_0000); // Decay mode, period = 0
 
         // Start flag not set, decay level starts at 0
@@ -504,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_envelope_start_flag_on_write() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0000_0000);
 
         assert!(!pulse.envelope_start_flag);
@@ -515,7 +529,7 @@ mod tests {
 
     #[test]
     fn test_envelope_divider_period() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0000_0010); // Period = 2 (divider period = 3)
         pulse.envelope_start_flag = true;
         pulse.clock_envelope();
@@ -542,7 +556,7 @@ mod tests {
 
     #[test]
     fn test_envelope_loop_flag() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0010_0000); // Loop flag set, period = 0
         pulse.envelope_start_flag = true;
         pulse.clock_envelope();
@@ -560,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_envelope_no_loop_stays_at_zero() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0000_0000); // No loop, period = 0
         pulse.envelope_start_flag = true;
         pulse.clock_envelope();
@@ -582,7 +596,7 @@ mod tests {
 
     #[test]
     fn test_write_control_parses_all_fields() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b1111_1010);
         // Bits 7-6: duty = 11 (3)
         // Bit 5: loop flag = 1
@@ -597,7 +611,7 @@ mod tests {
 
     #[test]
     fn test_envelope_constant_volume_still_updates_decay() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0001_0101); // Constant volume, period = 5
         pulse.envelope_start_flag = true;
 
@@ -617,7 +631,7 @@ mod tests {
 
     #[test]
     fn test_length_counter_load_values() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Test all 32 load values
         let expected = [
@@ -639,7 +653,7 @@ mod tests {
 
     #[test]
     fn test_length_counter_decrements() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_length_counter_timer_high(0b00001_000); // Load value 2 (index 1)
         assert_eq!(pulse.get_length_counter(), 254);
 
@@ -652,7 +666,7 @@ mod tests {
 
     #[test]
     fn test_length_counter_halt_flag() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0010_0000); // Set halt flag
         pulse.write_length_counter_timer_high(0b00010_000); // Load value 20 (index 2)
 
@@ -668,7 +682,7 @@ mod tests {
 
     #[test]
     fn test_length_counter_stops_at_zero() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0000_0000); // No halt
         pulse.write_length_counter_timer_high(0b00011_000); // Load value 2 (index 3)
 
@@ -687,7 +701,7 @@ mod tests {
 
     #[test]
     fn test_length_counter_can_be_reloaded() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_length_counter_timer_high(0b00100_000); // Load value 40 (index 4)
         assert_eq!(pulse.get_length_counter(), 40);
 
@@ -703,7 +717,7 @@ mod tests {
 
     #[test]
     fn test_length_counter_halt_flag_shared_with_envelope_loop() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0010_0000); // Bit 5 set
 
         // Both flags should be set from same bit
@@ -718,7 +732,7 @@ mod tests {
 
     #[test]
     fn test_set_length_counter_enabled() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_length_counter_timer_high(0b01010_000); // Load some value
         assert_eq!(pulse.get_length_counter(), 60);
 
@@ -733,7 +747,7 @@ mod tests {
 
     #[test]
     fn test_length_counter_with_halt_then_unhalt() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_control(0b0010_0000); // Halt flag set
         pulse.write_length_counter_timer_high(0b00000_000); // Load 10
 
@@ -751,14 +765,14 @@ mod tests {
 
     #[test]
     fn test_sweep_initial_state() {
-        let pulse = Pulse::new();
+        let pulse = Pulse::default();
         // Initial period is 0, which is < 8, so it should be muting
         assert!(pulse.is_sweep_muting());
     }
 
     #[test]
     fn test_sweep_write_register() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         // Enable=1, Period=3, Negate=1, Shift=2
         // Binary: 1_011_1_010
         pulse.write_sweep(0b1011_1010);
@@ -770,7 +784,7 @@ mod tests {
 
     #[test]
     fn test_sweep_target_period_no_negate() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0x04);
         pulse.write_timer_high(0x00); // Period = 4
         pulse.write_sweep(0b1000_0001); // Enable, period=0, no negate, shift=1
@@ -782,7 +796,7 @@ mod tests {
 
     #[test]
     fn test_sweep_target_period_with_negate_ones_complement() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0x14);
         pulse.write_timer_high(0x00); // Period = 20 (0x14)
         pulse.write_sweep(0b1000_1001); // Enable, period=0, negate=1, shift=1
@@ -795,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_sweep_target_period_negate_with_shift_0() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0x14);
         pulse.write_timer_high(0x00); // Period = 20 (0x14)
         pulse.write_sweep(0b1000_1000); // Enable, period=0, negate=1, shift=0
@@ -808,7 +822,7 @@ mod tests {
 
     #[test]
     fn test_sweep_muting_period_less_than_8() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0x07);
         pulse.write_timer_high(0x00); // Period = 7
 
@@ -821,7 +835,7 @@ mod tests {
 
     #[test]
     fn test_sweep_muting_target_greater_than_7ff() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0xFF);
         pulse.write_timer_high(0b000_11111); // Period = $7FF
         pulse.write_sweep(0b1000_0001); // Enable, period=0, no negate, shift=1
@@ -832,7 +846,7 @@ mod tests {
 
     #[test]
     fn test_sweep_divider_reload() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_sweep(0b1011_0000); // Enable, period=3, no negate, shift=0
 
         // First clock should reload divider (reload flag set by write)
@@ -850,7 +864,7 @@ mod tests {
 
     #[test]
     fn test_sweep_period_update_when_enabled() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0x10);
         pulse.write_timer_high(0x00); // Period = 16 (0x10)
         pulse.write_sweep(0b1000_0001); // Enable, period=0, no negate, shift=1
@@ -870,7 +884,7 @@ mod tests {
 
     #[test]
     fn test_sweep_no_update_when_disabled() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0x10);
         pulse.write_timer_high(0x00); // Period = 16 (0x10)
         pulse.write_sweep(0b0000_0001); // Disabled, shift=1
@@ -884,7 +898,7 @@ mod tests {
 
     #[test]
     fn test_sweep_no_update_when_shift_zero() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0x10);
         pulse.write_timer_high(0x00); // Period = 16 (0x10)
         pulse.write_sweep(0b1000_0000); // Enable, shift=0
@@ -898,7 +912,7 @@ mod tests {
 
     #[test]
     fn test_sweep_no_update_when_muting() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
         pulse.write_timer_low(0x07);
         pulse.write_timer_high(0x00); // Period = 7 (muted, < 8)
         pulse.write_sweep(0b1000_0001); // Enable, shift=1
@@ -916,7 +930,7 @@ mod tests {
 
     #[test]
     fn test_output_when_all_conditions_met() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Setup: duty 50%, constant volume 10, period 100, length counter loaded
         pulse.write_control(0b1011_1010); // Duty 50%, constant volume, volume=10
@@ -936,7 +950,7 @@ mod tests {
 
     #[test]
     fn test_output_silenced_when_sequencer_zero() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Setup: duty 12.5% (mostly zeros), constant volume 15, period 100
         pulse.write_control(0b0001_1111); // Duty 12.5%, constant volume, volume=15
@@ -966,7 +980,7 @@ mod tests {
 
     #[test]
     fn test_output_silenced_when_length_counter_zero() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Setup with valid conditions but length counter = 0
         pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
@@ -979,7 +993,7 @@ mod tests {
 
     #[test]
     fn test_output_silenced_when_timer_period_less_than_8() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Setup with period < 8
         pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
@@ -992,7 +1006,7 @@ mod tests {
 
     #[test]
     fn test_output_silenced_when_sweep_overflow() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Setup with sweep that causes overflow
         pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
@@ -1007,7 +1021,7 @@ mod tests {
 
     #[test]
     fn test_output_uses_envelope_volume() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Setup with decay mode envelope
         pulse.write_control(0b1000_0101); // Duty 50%, decay mode, period=5
@@ -1028,7 +1042,7 @@ mod tests {
 
     #[test]
     fn test_integration_full_waveform_cycle() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Setup: 50% duty cycle, constant volume 8, period 10
         pulse.write_control(0b1001_1000); // Duty 50%, constant volume=8
@@ -1054,7 +1068,7 @@ mod tests {
 
     #[test]
     fn test_integration_length_counter_silences_channel() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Setup with short length counter value
         pulse.write_control(0b1001_1111); // Duty 50%, no halt (bit 5 clear), constant volume=15
@@ -1076,7 +1090,7 @@ mod tests {
 
     #[test]
     fn test_integration_sweep_changes_period_over_time() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Setup with sweep enabled
         pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
@@ -1099,7 +1113,7 @@ mod tests {
 
     #[test]
     fn test_output_all_muting_conditions_independent() {
-        let mut pulse = Pulse::new();
+        let mut pulse = Pulse::default();
 
         // Start with valid setup
         pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
