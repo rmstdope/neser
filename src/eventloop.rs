@@ -256,6 +256,11 @@ impl EventLoop {
     ///
     /// Currently returns Ok(()) in all cases, but the Result type is kept for future error handling.
     pub fn run(&mut self, nes: &mut crate::nes::Nes, trace: bool) -> Result<(), String> {
+        // Start audio playback if audio is enabled
+        if let Some(ref audio) = self.audio {
+            audio.resume();
+        }
+
         if let Some(ref mut canvas) = self.canvas {
             // We have a window - run with rendering
             let texture_creator = canvas.texture_creator();

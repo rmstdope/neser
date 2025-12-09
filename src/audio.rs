@@ -3,12 +3,17 @@
 /// This module handles SDL2 audio initialization and manages the audio callback
 /// that retrieves samples from the APU.
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    mpsc::{sync_channel, Receiver, SyncSender},
+    Arc,
+};
 
 /// Audio output handler that receives samples from the NES APU
 pub struct NesAudio {
     device: AudioDevice<AudioCallbackImpl>,
     sample_sender: SyncSender<f32>,
+    volume: Arc<AtomicU32>,
 }
 
 impl NesAudio {
@@ -40,14 +45,20 @@ impl NesAudio {
         // This prevents unbounded memory growth if audio callback falls behind
         let (sender, receiver) = sync_channel(Self::BUFFER_SIZE);
 
+        // Create shared volume control (default 100%)
+        let volume = Arc::new(AtomicU32::new(f32::to_bits(1.0)));
+        let volume_clone = Arc::clone(&volume);
+
         let device =
             audio_subsystem.open_playback(None, &desired_spec, |_spec| AudioCallbackImpl {
                 sample_receiver: receiver,
+                volume: volume_clone,
             })?;
 
         Ok(Self {
             device,
             sample_sender: sender,
+            volume,
         })
     }
 
@@ -73,21 +84,43 @@ impl NesAudio {
     pub fn pause(&self) {
         self.device.pause();
     }
+
+    /// Set audio volume
+    ///
+    /// # Arguments
+    /// * `volume` - Volume level from 0.0 (mute) to 1.0 (full volume)
+    pub fn set_volume(&self, volume: f32) {
+        let clamped = volume.clamp(0.0, 1.0);
+        self.volume.store(f32::to_bits(clamped), Ordering::Relaxed);
+    }
+
+    /// Get current audio volume
+    ///
+    /// # Returns
+    /// Current volume level from 0.0 to 1.0
+    pub fn get_volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
+    }
 }
 
 /// SDL2 audio callback implementation
 struct AudioCallbackImpl {
     sample_receiver: Receiver<f32>,
+    volume: Arc<AtomicU32>,
 }
 
 impl AudioCallback for AudioCallbackImpl {
     type Channel = f32;
 
     fn callback(&mut self, out: &mut [f32]) {
+        // Load current volume
+        let volume = f32::from_bits(self.volume.load(Ordering::Relaxed));
+
         for sample in out.iter_mut() {
             // Try to receive a sample from the channel
             // If no sample is available, output silence
-            *sample = self.sample_receiver.try_recv().unwrap_or(0.0);
+            let raw_sample = self.sample_receiver.try_recv().unwrap_or(0.0);
+            *sample = raw_sample * volume;
         }
     }
 }
@@ -108,6 +141,15 @@ mod tests {
         assert!(audio.is_ok(), "Audio initialization should succeed");
 
         let mut audio = audio.unwrap();
+
+        // Test volume control
+        assert_eq!(audio.get_volume(), 1.0, "Default volume should be 1.0");
+        audio.set_volume(0.5);
+        assert_eq!(audio.get_volume(), 0.5, "Volume should be 0.5");
+        audio.set_volume(2.0); // Test clamping
+        assert_eq!(audio.get_volume(), 1.0, "Volume should clamp to 1.0");
+        audio.set_volume(-0.5); // Test clamping
+        assert_eq!(audio.get_volume(), 0.0, "Volume should clamp to 0.0");
 
         // Test control methods - should not panic
         audio.resume();
