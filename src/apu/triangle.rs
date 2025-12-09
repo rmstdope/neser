@@ -72,7 +72,36 @@ impl Triangle {
 
     /// Get the current output sample from the triangle channel
     pub fn output(&self) -> u8 {
+        // Triangle is muted when either linear counter or length counter is zero
+        if self.linear_counter == 0 || self.length_counter == 0 {
+            return 0;
+        }
         TRIANGLE_SEQUENCE[self.sequence_position as usize]
+    }
+
+    /// Write to $4008 register (linear counter control and reload value)
+    pub fn write_linear_counter(&mut self, value: u8) {
+        self.control_flag = (value & 0x80) != 0;
+        self.linear_counter_reload_value = value & 0x7F;
+    }
+
+    /// Write to $400A register (timer low 8 bits)
+    pub fn write_timer_low(&mut self, value: u8) {
+        self.timer_period = (self.timer_period & 0xFF00) | (value as u16);
+    }
+
+    /// Write to $400B register (length counter load and timer high 3 bits)
+    pub fn write_length_counter_timer_high(&mut self, value: u8) {
+        // Set timer high 3 bits (bits 0-2 of value)
+        let timer_high = ((value & 0x07) as u16) << 8;
+        self.timer_period = (self.timer_period & 0x00FF) | timer_high;
+
+        // Load length counter from bits 3-7 (5 bits)
+        let length_index = value >> 3;
+        self.load_length_counter(length_index);
+
+        // Set linear counter reload flag
+        self.linear_counter_reload_flag = true;
     }
 
     /// Set the linear counter reload value
@@ -157,6 +186,10 @@ mod tests {
     fn test_triangle_32_step_sequence() {
         let mut triangle = Triangle::new();
         triangle.timer_period = 0; // Timer clocks every cycle when period is 0
+        
+        // Set counters to non-zero to enable output
+        triangle.linear_counter = 1;
+        triangle.length_counter = 1;
 
         // The triangle wave should produce values 0-15 ascending, then 15-0 descending
         // Creating a 32-step sequence: 15,14,13,...,1,0,0,1,2,...,14,15
@@ -304,5 +337,86 @@ mod tests {
 
         triangle.clock_length_counter();
         assert_eq!(triangle.get_length_counter(), 2);
+    }
+
+    #[test]
+    fn test_write_linear_counter_register() {
+        let mut triangle = Triangle::new();
+
+        // $4008: CRRR.RRRR - Control flag and reload value
+        // C: Control flag (length counter halt / linear counter reload persistence)
+        // R: Linear counter reload value (7 bits)
+
+        // Write 0b1010_1010 (control=1, reload=42)
+        triangle.write_linear_counter(0b1010_1010);
+        assert_eq!(triangle.linear_counter_reload_value, 42);
+        assert!(triangle.control_flag);
+
+        // Write 0b0011_1111 (control=0, reload=63)
+        triangle.write_linear_counter(0b0011_1111);
+        assert_eq!(triangle.linear_counter_reload_value, 63);
+        assert!(!triangle.control_flag);
+
+        // Write 0b1111_1111 (control=1, reload=127, max value)
+        triangle.write_linear_counter(0b1111_1111);
+        assert_eq!(triangle.linear_counter_reload_value, 127);
+        assert!(triangle.control_flag);
+    }
+
+    #[test]
+    fn test_write_timer_low_register() {
+        let mut triangle = Triangle::new();
+
+        // $400A: TTTT.TTTT - Timer low 8 bits
+        triangle.write_timer_low(0xAB);
+        assert_eq!(triangle.timer_period & 0xFF, 0xAB);
+
+        triangle.write_timer_low(0x12);
+        assert_eq!(triangle.timer_period & 0xFF, 0x12);
+    }
+
+    #[test]
+    fn test_write_length_counter_timer_high_register() {
+        let mut triangle = Triangle::new();
+
+        // $400B: LLLL.LTTT - Length counter load (5 bits) and timer high (3 bits)
+        // Sets linear counter reload flag
+
+        // Write 0b1010_1101 (length index=21, timer high=0b101)
+        triangle.write_timer_low(0xFF); // Set low bits first
+        triangle.write_length_counter_timer_high(0b1010_1101);
+
+        // Check length counter loaded from table (index 21 = value 20)
+        assert_eq!(triangle.get_length_counter(), 20);
+
+        // Check timer high bits (bits 0-2)
+        let expected_timer = (0b101 << 8) | 0xFF;
+        assert_eq!(triangle.timer_period, expected_timer);
+
+        // Check that linear counter reload flag was set
+        assert!(triangle.is_linear_counter_reload_flag_set());
+    }
+
+    #[test]
+    fn test_output_muted_when_counters_zero() {
+        let mut triangle = Triangle::new();
+        triangle.timer_period = 0;
+
+        // Triangle should be muted when linear counter is 0
+        triangle.set_linear_counter_reload(0);
+        triangle.trigger_linear_counter_reload();
+        triangle.load_length_counter(1); // Length counter = 254
+        assert_eq!(triangle.output(), 0); // Muted
+
+        // Triangle should be muted when length counter is 0
+        triangle.set_linear_counter_reload(10);
+        triangle.trigger_linear_counter_reload();
+        triangle.length_counter = 0;
+        assert_eq!(triangle.output(), 0); // Muted
+
+        // Triangle should output when both counters are non-zero
+        triangle.linear_counter = 5;
+        triangle.load_length_counter(1); // Length counter = 254
+        assert_eq!(triangle.output(), 15); // Not muted, returns sequence value
     }
 }
