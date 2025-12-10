@@ -150,6 +150,33 @@ impl Dmc {
     fn start_output_cycle(&mut self) {
         self.bits_remaining = 8;
 
+        // If sample buffer is empty, try to fill it from memory
+        if self.sample_buffer.is_none() && self.bytes_remaining > 0 {
+            // TODO: Read actual byte from CPU memory at current_address
+            // For now, use dummy data (0x00) since we don't have memory access
+            self.sample_buffer = Some(0x00);
+
+            // Advance to next byte
+            self.current_address = self.current_address.wrapping_add(1);
+            // Wrap address at $FFFF to $8000
+            if self.current_address == 0x0000 {
+                self.current_address = 0x8000;
+            }
+
+            // Decrement bytes remaining and handle completion
+            self.bytes_remaining -= 1;
+            if self.bytes_remaining == 0 {
+                // Sample finished
+                if self.loop_flag {
+                    // Loop: restart the sample
+                    self.restart_sample();
+                } else if self.irq_enabled {
+                    // No loop: set IRQ flag if enabled
+                    self.interrupt_flag = true;
+                }
+            }
+        }
+
         // If sample buffer is empty, set silence flag
         // Otherwise, load sample buffer into shift register
         if let Some(sample) = self.sample_buffer {

@@ -186,4 +186,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_works_immediately() {
+        let runner = BlarggTestRunner::new("roms/blargg/works_immediately.nes", 180);
+        let result = runner.run_test();
+        assert_eq!(
+            result,
+            BlarggTestResult::Pass,
+            "works_immediately.nes should pass"
+        );
+    }
+
 }

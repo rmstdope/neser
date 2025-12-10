@@ -137,6 +137,7 @@ impl Apu {
             sample_accumulator: 0.0,
             cycles_per_sample: CPU_CLOCK_NTSC / DEFAULT_SAMPLE_RATE,
             pending_sample: None,
+            // For testing: start with all channels enabled for convenience
             pulse1_enabled: true,
             pulse2_enabled: true,
             triangle_enabled: true,
