@@ -211,7 +211,25 @@ impl Apu {
     /// to properly track the last written value for reset behavior
     pub fn write_frame_counter(&mut self, value: u8) {
         self.last_4017_write = value;
-        self.frame_counter.write_register(value);
+        // Pass the current APU cycle to determine CPU cycle phase for jitter
+        let (quarter_frame, half_frame) = self.frame_counter.write_register_with_immediate_clock(value, self.apu_cycle);
+
+        // If switching to 5-step mode, immediately clock quarter and half frame
+        if quarter_frame {
+            self.pulse1.clock_envelope();
+            self.pulse2.clock_envelope();
+            self.triangle.clock_linear_counter_with_reload();
+            self.noise.clock_envelope();
+        }
+
+        if half_frame {
+            self.pulse1.clock_length_counter();
+            self.pulse1.clock_sweep();
+            self.pulse2.clock_length_counter();
+            self.pulse2.clock_sweep();
+            self.triangle.clock_length_counter();
+            self.noise.clock_length_counter();
+        }
     }
 
     /// Get reference to triangle channel
@@ -346,20 +364,41 @@ impl Apu {
     /// - Bit 1 (2): Enable Pulse 2
     /// - Bit 0 (1): Enable Pulse 1
     ///
-    /// Writing 0 to a channel bit silences that channel and halts its length counter.
+    /// Writing 0 to a channel bit clears that channel's length counter to 0.
     /// Writing 1 enables the channel.
     /// For DMC: If enabled and bytes remaining = 0, restart sample.
     ///
     /// Side effect: Clears the DMC interrupt flag
     pub fn write_enable(&mut self, value: u8) {
-        self.pulse1
-            .set_length_counter_enabled(value & STATUS_PULSE1 != 0);
-        self.pulse2
-            .set_length_counter_enabled(value & STATUS_PULSE2 != 0);
-        self.triangle
-            .set_length_counter_enabled(value & STATUS_TRIANGLE != 0);
-        self.noise
-            .set_length_counter_enabled(value & STATUS_NOISE != 0);
+        // Pulse 1
+        let pulse1_enabled = value & STATUS_PULSE1 != 0;
+        if !pulse1_enabled {
+            self.pulse1.clear_length_counter();
+        }
+        self.pulse1.set_length_counter_enabled(pulse1_enabled);
+
+        // Pulse 2
+        let pulse2_enabled = value & STATUS_PULSE2 != 0;
+        if !pulse2_enabled {
+            self.pulse2.clear_length_counter();
+        }
+        self.pulse2.set_length_counter_enabled(pulse2_enabled);
+
+        // Triangle
+        let triangle_enabled = value & STATUS_TRIANGLE != 0;
+        if !triangle_enabled {
+            self.triangle.clear_length_counter();
+        }
+        self.triangle.set_length_counter_enabled(triangle_enabled);
+
+        // Noise
+        let noise_enabled = value & STATUS_NOISE != 0;
+        if !noise_enabled {
+            self.noise.clear_length_counter();
+        }
+        self.noise.set_length_counter_enabled(noise_enabled);
+
+        // DMC
         self.dmc.set_enabled(value & STATUS_DMC != 0);
 
         // Side effect: Clear DMC interrupt flag

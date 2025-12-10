@@ -145,9 +145,11 @@ impl Pulse {
     pub fn write_length_counter_timer_high(&mut self, value: u8) {
         self.write_timer_high(value);
         self.envelope_start_flag = true;
-        // Load length counter from bits 7-3 (always, even if channel disabled)
-        let index = (value >> 3) as usize;
-        self.length_counter = LENGTH_COUNTER_TABLE[index];
+        // Load length counter from bits 7-3 (only if channel is enabled via $4015)
+        if self.length_counter_enabled {
+            let index = (value >> 3) as usize;
+            self.length_counter = LENGTH_COUNTER_TABLE[index];
+        }
     }
 
     /// Clock the envelope (called by quarter frame from frame counter)
@@ -189,6 +191,11 @@ impl Pulse {
         self.length_counter
     }
 
+    /// Clear the length counter to 0
+    pub fn clear_length_counter(&mut self) {
+        self.length_counter = 0;
+    }
+
     /// Get the envelope start flag state
     pub fn get_envelope_start_flag(&self) -> bool {
         self.envelope_start_flag
@@ -203,11 +210,10 @@ impl Pulse {
     /// When disabled, the channel is silenced but the length counter value is preserved
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         self.length_counter_enabled = enabled;
-        // Note: We don't clear length_counter to 0 when disabling.
-        // The channel is silenced because length_counter_enabled gates
-        // the length counter clock, preventing it from counting down.
-        // This allows the length counter to retain its value for when
-        // the channel is re-enabled.
+        // When disabling via $4015, clear the length counter to 0
+        if !enabled {
+            self.length_counter = 0;
+        }
     }
 
     /// Get whether length counter is enabled (from $4015)

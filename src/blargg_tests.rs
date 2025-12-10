@@ -197,4 +197,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_1_len_ctr() {
+        let runner = BlarggTestRunner::new("roms/blargg/1-len_ctr.nes", 180);
+        let result = runner.run_test();
+        assert_eq!(
+            result,
+            BlarggTestResult::Pass,
+            "1-len_ctr.nes should pass"
+        );
+    }
+
+    #[test]
+    fn test_2_len_table() {
+        let runner = BlarggTestRunner::new("roms/blargg/2-len_table.nes", 180);
+        let result = runner.run_test();
+        assert_eq!(
+            result,
+            BlarggTestResult::Pass,
+            "2-len_table.nes should pass"
+        );
+    }
+
+    #[test]
+    fn test_3_irq_flags() {
+        let runner = BlarggTestRunner::new("roms/blargg/3-irq_flags.nes", 180);
+        let result = runner.run_test();
+        assert_eq!(
+            result,
+            BlarggTestResult::Pass,
+            "3-irq_flags.nes should pass"
+        );
+    }
+
+    #[test]
+    fn test_4_jitter() {
+        let runner = BlarggTestRunner::new("roms/blargg/4-jitter.nes", 180);
+        let result = runner.run_test();
+        assert_eq!(
+            result,
+            BlarggTestResult::Pass,
+            "4-jitter.nes should pass"
+        );
+    }
+
 }

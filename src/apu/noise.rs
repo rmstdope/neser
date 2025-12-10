@@ -145,9 +145,11 @@ impl Noise {
     /// Format: llll l---
     /// l = length counter load value (index into lookup table)
     pub fn write_length(&mut self, value: u8) {
-        // Always load length counter, even if channel disabled via $4015
-        let length_index = ((value >> 3) & 0x1F) as usize;
-        self.length_counter = LENGTH_COUNTER_TABLE[length_index];
+        // Only load length counter if channel is enabled via $4015
+        if self.length_counter_enabled {
+            let length_index = ((value >> 3) & 0x1F) as usize;
+            self.length_counter = LENGTH_COUNTER_TABLE[length_index];
+        }
         self.envelope_start = true;
     }
 
@@ -187,6 +189,11 @@ impl Noise {
     /// Get the current length counter value
     pub fn get_length_counter(&self) -> u8 {
         self.length_counter
+    }
+
+    /// Clear the length counter to 0
+    pub fn clear_length_counter(&mut self) {
+        self.length_counter = 0;
     }
 }
 

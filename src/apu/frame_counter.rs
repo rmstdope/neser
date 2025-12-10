@@ -6,6 +6,7 @@ pub struct FrameCounter {
     irq_inhibit: bool,
     cycle_counter: u32,
     irq_flag: bool,
+    reset_phase: bool,     // Phase when counter was reset (for jitter calculation)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +29,7 @@ impl FrameCounter {
             irq_inhibit: false,
             cycle_counter: 0,
             irq_flag: false,
+            reset_phase: false,     // Reset on even cycle
         }
     }
 
@@ -43,6 +45,7 @@ impl FrameCounter {
         };
         self.irq_inhibit = (value & 0x40) != 0;
         self.cycle_counter = 0;
+        // Note: Phase not tracked here as we don't know the APU cycle
 
         // Writing 1 to IRQ inhibit clears the IRQ flag
         if (value & 0x40) != 0 {
@@ -55,7 +58,7 @@ impl FrameCounter {
 
     /// Write to frame counter register with immediate clock support
     /// Returns (quarter_frame, half_frame) signals if immediate clock occurs
-    pub fn write_register_with_immediate_clock(&mut self, value: u8) -> (bool, bool) {
+    pub fn write_register_with_immediate_clock(&mut self, value: u8, apu_cycle: u32) -> (bool, bool) {
         let old_mode = self.mode;
         let new_mode = if (value & 0x80) != 0 {
             Mode::FiveStep
@@ -65,15 +68,28 @@ impl FrameCounter {
 
         self.mode = new_mode;
         self.irq_inhibit = (value & 0x40) != 0;
-        self.cycle_counter = 0;
+        
+        // Jitter: When $4017 is written on an odd CPU cycle, the reset is delayed by 1 cycle
+        // This shifts the entire frame sequence, including when we read relative to IRQ timing
+        // Note: apu_cycle odd means CPU cycle odd (they increment together)
+        let write_on_odd_cpu_cycle = (apu_cycle % 2) != 0;
+        self.cycle_counter = if write_on_odd_cpu_cycle { 
+            // Odd write: start at -1 (will become 0 on next clock)
+            // This delays everything by 1 cycle
+            u32::MAX  // wraps to 0 on increment
+        } else { 
+            0 
+        };
+        self.reset_phase = write_on_odd_cpu_cycle;
 
         // Writing 1 to IRQ inhibit clears the IRQ flag
         if (value & 0x40) != 0 {
             self.irq_flag = false;
         }
 
-        // Immediate clock only when switching TO 5-step mode
-        if new_mode == Mode::FiveStep && old_mode != Mode::FiveStep {
+        // Immediate clock when writing 1 to mode bit (bit 7)
+        // This happens every time $80 is written, not just when switching modes
+        if new_mode == Mode::FiveStep {
             (true, true) // Clock both quarter and half frame
         } else {
             (false, false)
@@ -108,7 +124,9 @@ impl FrameCounter {
     /// Clock the frame counter by one CPU cycle
     /// Returns (quarter_frame, half_frame) signals
     pub fn clock(&mut self) -> (bool, bool) {
-        self.cycle_counter += 1;
+        // Frame counter increments every CPU cycle
+        // Use wrapping_add to handle the jitter case where cycle_counter starts at u32::MAX
+        self.cycle_counter = self.cycle_counter.wrapping_add(1);
 
         let (quarter_frame, half_frame) = match self.mode {
             Mode::FourStep => self.clock_four_step(),
@@ -124,6 +142,7 @@ impl FrameCounter {
         const STEP_2_CYCLES: u32 = 14913;
         const STEP_3_CYCLES: u32 = 22371;
         const STEP_4_CYCLES: u32 = 29829;
+        const IRQ_CYCLE: u32 = STEP_4_CYCLES + 2; // IRQ at 29831
 
         let quarter_frame = matches!(
             self.cycle_counter,
@@ -131,13 +150,13 @@ impl FrameCounter {
         );
         let half_frame = matches!(self.cycle_counter, STEP_2_CYCLES | STEP_4_CYCLES);
 
-        // Set IRQ flag at step 4 if not inhibited
-        if self.cycle_counter == STEP_4_CYCLES && !self.irq_inhibit {
+        // Set IRQ flag at cycle 29831 (jitter offset already in cycle_counter)
+        if self.cycle_counter == IRQ_CYCLE && !self.irq_inhibit {
             self.irq_flag = true;
         }
 
-        // Wrap around after step 4
-        if self.cycle_counter >= STEP_4_CYCLES {
+        // Wrap around after IRQ is set
+        if self.cycle_counter > IRQ_CYCLE {
             self.cycle_counter = 0;
         }
 
@@ -568,7 +587,7 @@ mod tests {
         }
 
         // Switch to 5-step mode - should immediately clock quarter and half
-        let result = fc.write_register_with_immediate_clock(0b1000_0000);
+        let result = fc.write_register_with_immediate_clock(0b1000_0000, 0);
         
         assert_eq!(result, (true, true)); // Both quarter and half frame clocked
         assert_eq!(fc.get_cycle_counter(), 0); // Counter reset
@@ -582,7 +601,7 @@ mod tests {
         fc.write_register(0b1000_0000);
         
         // Write to 5-step again - should NOT trigger immediate clock
-        let result = fc.write_register_with_immediate_clock(0b1000_0000);
+        let result = fc.write_register_with_immediate_clock(0b1000_0000, 0);
         
         assert_eq!(result, (false, false)); // No immediate clock
     }
@@ -595,7 +614,7 @@ mod tests {
         fc.write_register(0b1000_0000);
         
         // Switch to 4-step - should NOT trigger immediate clock
-        let result = fc.write_register_with_immediate_clock(0b0000_0000);
+        let result = fc.write_register_with_immediate_clock(0b0000_0000, 0);
         
         assert_eq!(result, (false, false)); // No immediate clock
     }

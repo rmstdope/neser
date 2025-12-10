@@ -153,14 +153,21 @@ impl Triangle {
 
     /// Load the length counter from the lookup table
     pub fn load_length_counter(&mut self, index: u8) {
-        // Always load length counter, even if channel disabled via $4015
-        let table_index = (index & 0x1F) as usize;
-        self.length_counter = LENGTH_COUNTER_TABLE[table_index];
+        // Only load length counter if channel is enabled via $4015
+        if self.length_counter_enabled {
+            let table_index = (index & 0x1F) as usize;
+            self.length_counter = LENGTH_COUNTER_TABLE[table_index];
+        }
     }
 
     /// Get the current length counter value
     pub fn get_length_counter(&self) -> u8 {
         self.length_counter
+    }
+
+    /// Clear the length counter to 0
+    pub fn clear_length_counter(&mut self) {
+        self.length_counter = 0;
     }
 
     /// Get the current linear counter value
