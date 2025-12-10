@@ -113,7 +113,8 @@ impl Apu {
             power_on_delay: None,
         };
 
-        // At power-on: $00 written to $4017, then 9 cycle delay before CPU execution
+        // At power-on: $00 written to $4017, then 9-12 cycle delay before CPU execution
+        // Delay after NES being powered off for a minute is usually 9
         apu.frame_counter.write_register(0x00);
         for _ in 0..9 {
             apu.frame_counter.clock();
@@ -166,7 +167,9 @@ impl Apu {
         self.sample_accumulator = 0.0;
         self.pending_sample = None;
         self.apu_cycle = 0;
-        // Reset: re-write last $4017 value, then 9 cycle delay before CPU execution
+        // Reset: The APU acts as if $4017 were written 9-12 clocks before first instruction.
+        // The exact timing varies. For now, we use 9 cycles which makes most tests pass.
+        // TODO: Implement the delayed write mechanism like Mesen2 to handle this properly.
         self.frame_counter.write_register(self.last_4017_write);
         for _ in 0..9 {
             self.frame_counter.clock();
@@ -212,7 +215,9 @@ impl Apu {
     pub fn write_frame_counter(&mut self, value: u8) {
         self.last_4017_write = value;
         // Pass the current APU cycle to determine CPU cycle phase for jitter
-        let (quarter_frame, half_frame) = self.frame_counter.write_register_with_immediate_clock(value, self.apu_cycle);
+        let (quarter_frame, half_frame) = self
+            .frame_counter
+            .write_register_with_immediate_clock(value, self.apu_cycle);
 
         // If switching to 5-step mode, immediately clock quarter and half frame
         if quarter_frame {

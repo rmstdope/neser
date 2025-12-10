@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_3_irq_flags() {
-        let runner = BlarggTestRunner::new("roms/blargg/3-irq_flags.nes", 180);
+        let runner = BlarggTestRunner::new("roms/blargg/3-irq_flag.nes", 180);
         let result = runner.run_test();
         assert_eq!(
             result,
