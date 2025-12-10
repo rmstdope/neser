@@ -83,6 +83,9 @@ pub struct Apu {
     dmc_enabled: bool,
     // APU cycle counter for timer clocking
     apu_cycle: u32,
+    // Power-on/reset state
+    last_4017_write: u8,
+    power_on_delay: Option<u32>, // Countdown for power-on $4017 write (9-12 cycles)
 }
 
 impl Apu {
@@ -90,7 +93,7 @@ impl Apu {
     pub fn new() -> Self {
         const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
 
-        Self {
+        let mut apu = Self {
             frame_counter: FrameCounter::new(),
             pulse1: Pulse::new(true),  // Pulse 1 uses ones' complement
             pulse2: Pulse::new(false), // Pulse 2 uses two's complement
@@ -106,7 +109,48 @@ impl Apu {
             noise_enabled: true,
             dmc_enabled: true,
             apu_cycle: 0,
+            last_4017_write: 0x00,
+            power_on_delay: None,
+        };
+
+        // At power-on: $00 written to $4017, then 9 cycle delay before CPU execution
+        apu.frame_counter.write_register(0x00);
+        for _ in 0..9 {
+            apu.frame_counter.clock();
         }
+
+        apu
+    }
+    /// Create a new APU without power-on delay (for testing)
+    /// This creates an APU as if code execution started immediately at frame counter cycle 0
+    #[cfg(test)]
+    fn new_for_testing() -> Self {
+        const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
+
+        let mut apu = Self {
+            frame_counter: FrameCounter::new(),
+            pulse1: Pulse::new(true),
+            pulse2: Pulse::new(false),
+            triangle: Triangle::new(),
+            noise: Noise::new(),
+            dmc: Dmc::new(),
+            sample_accumulator: 0.0,
+            cycles_per_sample: CPU_CLOCK_NTSC / DEFAULT_SAMPLE_RATE,
+            pending_sample: None,
+            pulse1_enabled: true,
+            pulse2_enabled: true,
+            triangle_enabled: true,
+            noise_enabled: true,
+            dmc_enabled: true,
+            apu_cycle: 0,
+            last_4017_write: 0x00,
+            power_on_delay: None,
+        };
+
+        // Initialize frame counter to 0 without power-on delay
+        apu.frame_counter.write_register(0x00);
+
+        apu
     }
 
     /// Reset the APU to its initial power-on state
@@ -125,7 +169,13 @@ impl Apu {
         self.noise_enabled = true;
         self.dmc_enabled = true;
         self.apu_cycle = 0;
+        // Reset: re-write last $4017 value, then 9 cycle delay before CPU execution
+        self.frame_counter.write_register(self.last_4017_write);
+        for _ in 0..9 {
+            self.frame_counter.clock();
+        }
         // Note: sample rate is preserved across resets
+        // Note: last_4017_write is preserved (not reset to $00)
     }
 
     /// Get reference to pulse channel 1
@@ -156,6 +206,14 @@ impl Apu {
     /// Get mutable reference to frame counter
     pub fn frame_counter_mut(&mut self) -> &mut FrameCounter {
         &mut self.frame_counter
+    }
+
+    /// Write to frame counter register ($4017)
+    /// This is the public API that should be used instead of frame_counter_mut().write_register()
+    /// to properly track the last written value for reset behavior
+    pub fn write_frame_counter(&mut self, value: u8) {
+        self.last_4017_write = value;
+        self.frame_counter.write_register(value);
     }
 
     /// Get reference to triangle channel
@@ -416,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_apu_new() {
-        let apu = Apu::new();
+        let apu = Apu::new_for_testing();
         assert_eq!(apu.frame_counter().get_cycle_counter(), 0);
         assert_eq!(apu.pulse1().output(), 0);
         assert_eq!(apu.pulse2().output(), 0);
@@ -426,7 +484,7 @@ mod tests {
 
     #[test]
     fn test_frame_counter_advances() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         assert_eq!(apu.frame_counter().get_cycle_counter(), 0);
 
         apu.clock();
@@ -440,7 +498,7 @@ mod tests {
 
     #[test]
     fn test_envelope_gets_clocked() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Set up pulse with envelope that will be clocked
         apu.pulse1_mut().write_control(0b0000_0000); // Envelope period 0
@@ -460,7 +518,7 @@ mod tests {
 
     #[test]
     fn test_length_counter_gets_clocked() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Set up pulse with length counter = 1
         apu.write_enable(STATUS_PULSE1);
@@ -482,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_sweep_gets_clocked() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Set up pulse with sweep reload flag
         apu.pulse1_mut().write_sweep(0b1000_0001); // Sets sweep_reload = true
@@ -500,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_frame_counter_mode_change() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Start in 4-step mode (default)
         assert!(!apu.frame_counter().get_mode());
@@ -516,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_both_pulse_channels_get_clocked() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         apu.write_enable(0b0001_1111); // Enable all channels
         // Set up both pulses
         apu.pulse1_mut().write_length_counter_timer_high(0xFF);
@@ -537,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_pulse1_uses_ones_complement_for_sweep() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Set up pulse 1 with period = 20, shift = 1, negate enabled
         apu.pulse1_mut().write_timer_low(20);
@@ -553,7 +611,7 @@ mod tests {
 
     #[test]
     fn test_pulse2_uses_twos_complement_for_sweep() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Set up pulse 2 with period = 20, shift = 1, negate enabled
         apu.pulse2_mut().write_timer_low(20);
@@ -569,7 +627,7 @@ mod tests {
 
     #[test]
     fn test_triangle_linear_counter_gets_clocked() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Set up triangle with a linear counter reload value
         apu.triangle_mut().write_linear_counter(0x7F); // Max reload value (127), control flag off
@@ -599,7 +657,7 @@ mod tests {
 
     #[test]
     fn test_triangle_length_counter_gets_clocked() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Load length counter (index 5 = value 4)
         apu.write_enable(STATUS_TRIANGLE);
@@ -617,13 +675,13 @@ mod tests {
 
     #[test]
     fn test_noise_channel_integrated() {
-        let apu = Apu::new();
+        let apu = Apu::new_for_testing();
         assert_eq!(apu.noise().output(), 0); // Noise starts muted (length counter = 0)
     }
 
     #[test]
     fn test_noise_envelope_gets_clocked() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Set up noise with envelope that will be clocked
         apu.noise_mut().write_envelope(0b0000_0101); // Volume 5, constant volume
@@ -640,7 +698,7 @@ mod tests {
 
     #[test]
     fn test_noise_length_counter_gets_clocked() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Set up noise with length counter (index 2 = length 20)
         apu.noise_mut().write_envelope(0b0000_0000); // halt=0
@@ -660,14 +718,14 @@ mod tests {
 
     #[test]
     fn test_dmc_channel_accessible() {
-        let apu = Apu::new();
+        let apu = Apu::new_for_testing();
         // Should be able to access DMC channel
         assert_eq!(apu.dmc().output(), 0);
     }
 
     #[test]
     fn test_dmc_channel_mutable() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Should be able to mutably access DMC channel
         apu.dmc_mut().write_direct_load(0b0100_0000); // Set output to 64
         assert_eq!(apu.dmc().output(), 64);
@@ -675,7 +733,7 @@ mod tests {
 
     #[test]
     fn test_dmc_timer_gets_clocked() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Set up DMC with fastest rate (rate index 0 = period 428)
         apu.dmc_mut().write_flags_and_rate(0b0000_0000); // Rate 0
@@ -698,7 +756,7 @@ mod tests {
 
     #[test]
     fn test_status_all_channels_inactive() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // All channels start with length counter = 0
         // Bits: IF-D NT21
         // Expected: 0b0000_0000 (all inactive)
@@ -707,7 +765,7 @@ mod tests {
 
     #[test]
     fn test_status_pulse1_active() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Enable pulse 1 channel first
         apu.write_enable(STATUS_PULSE1);
         // Load length counter for pulse 1
@@ -719,7 +777,7 @@ mod tests {
 
     #[test]
     fn test_status_pulse2_active() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Enable pulse 2 channel first
         apu.write_enable(STATUS_PULSE2);
         // Load length counter for pulse 2
@@ -731,7 +789,7 @@ mod tests {
 
     #[test]
     fn test_status_triangle_active() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Enable triangle channel first
         apu.write_enable(STATUS_TRIANGLE);
         // Load length counter for triangle
@@ -742,7 +800,7 @@ mod tests {
 
     #[test]
     fn test_status_noise_active() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Enable noise channel first
         apu.write_enable(STATUS_NOISE);
         // Load length counter for noise (index 1 = length 254)
@@ -753,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_status_all_channels_active() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Load length counters for all channels
         apu.write_enable(0b0001_1111);
         apu.pulse1_mut()
@@ -768,7 +826,7 @@ mod tests {
 
     #[test]
     fn test_enable_disable_pulse1() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Load pulse 1 length counter
         apu.write_enable(STATUS_PULSE1);
         apu.pulse1_mut()
@@ -782,7 +840,7 @@ mod tests {
 
     #[test]
     fn test_enable_pulse1_with_enable_bit() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Enable pulse 1
         apu.write_enable(STATUS_PULSE1);
         // Load length counter should work
@@ -793,7 +851,7 @@ mod tests {
 
     #[test]
     fn test_enable_all_channels() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Enable all channels
         apu.write_enable(0b0001_1111);
         // Load all length counters
@@ -809,7 +867,7 @@ mod tests {
 
     #[test]
     fn test_disable_clears_length_counters() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Load all length counters
         apu.write_enable(0b0001_1111);
         apu.pulse1_mut()
@@ -829,7 +887,7 @@ mod tests {
 
     #[test]
     fn test_enable_dmc_restarts_sample_when_empty() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Set up DMC with sample address and length
         apu.dmc_mut().write_sample_address(0x00); // Address $C000
         apu.dmc_mut().write_sample_length(0x01); // Length 17 bytes
@@ -843,7 +901,7 @@ mod tests {
 
     #[test]
     fn test_disable_dmc_clears_bytes_remaining() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Set up and enable DMC
         apu.dmc_mut().write_sample_address(0x00);
         apu.dmc_mut().write_sample_length(0x01);
@@ -857,7 +915,7 @@ mod tests {
 
     #[test]
     fn test_write_enable_clears_dmc_interrupt() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Manually trigger DMC IRQ by setting it up to finish
         apu.dmc_mut().write_flags_and_rate(0b1000_0000); // IRQ enabled
         apu.dmc_mut().write_sample_address(0x00);
@@ -870,7 +928,7 @@ mod tests {
 
     #[test]
     fn test_mixer_all_channels_silent() {
-        let apu = Apu::new();
+        let apu = Apu::new_for_testing();
         // All channels start at 0
         let output = apu.mix();
         assert_eq!(output, 0.0);
@@ -878,7 +936,7 @@ mod tests {
 
     #[test]
     fn test_mixer_pulse_only() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Set pulse 1 to max volume (15) with duty 3 (starts high)
         apu.write_enable(STATUS_PULSE1);
         apu.pulse1_mut().write_control(0b1111_1111); // Duty 3, constant volume 15
@@ -893,7 +951,7 @@ mod tests {
 
     #[test]
     fn test_mixer_output_range() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Set all channels to max with duty 3 (starts high) for pulse channels
         apu.pulse1_mut().write_control(0b1111_1111); // Duty 3, constant volume 15
         apu.pulse1_mut().write_timer_low(0x08); // Timer period >= 8
@@ -917,7 +975,7 @@ mod tests {
 
     #[test]
     fn test_mixer_formula_pulse() {
-        let apu = Apu::new();
+        let apu = Apu::new_for_testing();
         // Test with known pulse values
         // pulse_out = 95.88 / ((8128 / (pulse1 + pulse2)) + 100)
         // For pulse1 = 0, pulse2 = 0: pulse_out = 0
@@ -927,7 +985,7 @@ mod tests {
 
     #[test]
     fn test_mixer_combines_channels() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Set pulse 1 with duty 3 (starts high)
         apu.pulse1_mut().write_control(0b1111_0101); // Duty 3, constant volume 5
         apu.pulse1_mut().write_timer_low(0x08); // Timer period >= 8
@@ -945,14 +1003,14 @@ mod tests {
 
     #[test]
     fn test_sample_generation_no_sample_initially() {
-        let apu = Apu::new();
+        let apu = Apu::new_for_testing();
         // No sample should be ready before clocking
         assert!(!apu.sample_ready());
     }
 
     #[test]
     fn test_sample_generation_after_clocking() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Clock the APU enough times to generate a sample
         // For 44100 Hz from 1.789 MHz: ~40.56 cycles per sample
         for _ in 0..41 {
@@ -964,7 +1022,7 @@ mod tests {
 
     #[test]
     fn test_sample_generation_retrieves_sample() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Generate a sample
         for _ in 0..41 {
             apu.clock();
@@ -981,7 +1039,7 @@ mod tests {
 
     #[test]
     fn test_sample_generation_uses_mixer_output() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         // Set up pulse channel to produce output with 50% duty cycle
         apu.write_enable(STATUS_PULSE1);
         apu.pulse1_mut().write_control(0b1011_1111); // Duty 2 (50%), constant volume 15
@@ -1009,7 +1067,7 @@ mod tests {
 
     #[test]
     fn test_sample_generation_timing() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
         let mut sample_count = 0;
 
         // Clock for 1789 cycles (should generate ~44 samples at 44100 Hz)
@@ -1027,7 +1085,7 @@ mod tests {
 
     #[test]
     fn test_sample_generation_configurable_rate() {
-        let mut apu = Apu::new();
+        let mut apu = Apu::new_for_testing();
 
         // Set to 48000 Hz (1.789 MHz / 48000 ≈ 37.27 cycles per sample)
         apu.set_sample_rate(48000.0);

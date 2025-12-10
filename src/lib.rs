@@ -10,7 +10,7 @@ pub mod joypad;
 pub mod mapper;
 pub mod mem_controller;
 pub mod nes;
-pub mod oam_tests;
+pub mod blargg_tests;
 pub mod opcode;
 pub mod ppu_modules; // Modular PPU structure
 pub mod screen_buffer;

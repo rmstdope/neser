@@ -76,7 +76,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // NTSC Torture test - Run when input is implemented
     // let rom_data = std::fs::read("roms/ntsc_torture.nes")?;
-    let rom_data = std::fs::read("roms/4015_cleared.nes")?;
 
     // Load game cartridge
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
@@ -87,6 +86,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Unknown status
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
     // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
+    // let rom_data = std::fs::read("roms/blargg/4017_timing.nes")?;
+    let rom_data = std::fs::read("roms/blargg/4017_written.nes")?;
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset();

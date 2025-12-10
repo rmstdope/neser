@@ -30,3 +30,4 @@ roms/games
 
 .github/ISSUE_TEMPLATE
 *.log
+.romsource

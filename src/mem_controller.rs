@@ -194,11 +194,7 @@ impl MemController {
                     self.joypad1.borrow_mut().write_strobe(value);
                     self.joypad2.borrow_mut().write_strobe(value);
                 }
-                0x4017 => self
-                    .apu
-                    .borrow_mut()
-                    .frame_counter_mut()
-                    .write_register(value),
+                0x4017 => self.apu.borrow_mut().write_frame_counter(value),
 
                 // Unused APU registers
                 0x4009 | 0x400D => {
@@ -216,6 +212,10 @@ impl MemController {
 
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
+                if addr == 0x6000 {
+                    // For debugging, print writes to $6000
+                    println!("Debug: Write to $6000 PRG-RAM: {:02X}", value);
+                }
                 if let Some(ref mut cartridge) = self.cartridge {
                     cartridge.mapper_mut().write_prg(addr, value);
                 } else {

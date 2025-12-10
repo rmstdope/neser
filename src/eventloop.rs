@@ -296,6 +296,7 @@ impl EventLoop {
                             keycode: Some(Keycode::F1),
                             ..
                         } => {
+                            println!("Resetting NES...");
                             nes.reset();
                         }
                         Event::KeyDown {
@@ -384,6 +385,7 @@ impl EventLoop {
                             keycode: Some(Keycode::F1),
                             ..
                         } => {
+                            println!("Resetting NES...");
                             nes.reset();
                         }
                         Event::KeyDown {
