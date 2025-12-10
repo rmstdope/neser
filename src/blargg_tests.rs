@@ -165,4 +165,25 @@ mod tests {
             "4017_written.nes should pass"
         );
     }
+    #[test]
+    fn test_irq_flag_cleared() {
+        let runner = BlarggTestRunner::new("roms/blargg/irq_flag_cleared.nes", 180);
+        let result = runner.run_test();
+        assert_eq!(
+            result,
+            BlarggTestResult::Pass,
+            "irq_flag_cleared.nes should pass"
+        );
+    }
+    #[test]
+    fn test_len_ctrs_enabled() {
+        let runner = BlarggTestRunner::new("roms/blargg/len_ctrs_enabled.nes", 180);
+        let result = runner.run_test();
+        assert_eq!(
+            result,
+            BlarggTestResult::Pass,
+            "len_ctrs_enabled.nes should pass"
+        );
+    }
+
 }

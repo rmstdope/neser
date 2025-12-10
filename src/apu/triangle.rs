@@ -153,11 +153,9 @@ impl Triangle {
 
     /// Load the length counter from the lookup table
     pub fn load_length_counter(&mut self, index: u8) {
-        // Only load if channel is enabled via $4015
-        if self.length_counter_enabled {
-            let table_index = (index & 0x1F) as usize;
-            self.length_counter = LENGTH_COUNTER_TABLE[table_index];
-        }
+        // Always load length counter, even if channel disabled via $4015
+        let table_index = (index & 0x1F) as usize;
+        self.length_counter = LENGTH_COUNTER_TABLE[table_index];
     }
 
     /// Get the current length counter value
@@ -178,11 +176,15 @@ impl Triangle {
     }
 
     /// Set length counter enabled/disabled (from $4015)
+    /// Set length counter enabled/disabled (from $4015)
+    /// When disabled, the channel is silenced but the length counter value is preserved
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         self.length_counter_enabled = enabled;
-        if !enabled {
-            self.length_counter = 0;
-        }
+    }
+
+    /// Get whether length counter is enabled (from $4015)
+    pub fn is_length_counter_enabled(&self) -> bool {
+        self.length_counter_enabled
     }
 }
 
@@ -451,20 +453,20 @@ mod tests {
         triangle.load_length_counter(5);
         assert_eq!(triangle.get_length_counter(), 4);
 
-        // Disabling should clear the length counter
+        // Disabling should NOT clear the length counter (NES hardware behavior)
         triangle.set_length_counter_enabled(false);
-        assert_eq!(triangle.get_length_counter(), 0);
+        assert_eq!(triangle.get_length_counter(), 4);
 
-        // Load again - should NOT load because disabled
-        triangle.load_length_counter(10);
-        assert_eq!(triangle.get_length_counter(), 0); // Stays 0
-
-        // Enabling should not affect the counter (stays at 0)
-        triangle.set_length_counter_enabled(true);
-        assert_eq!(triangle.get_length_counter(), 0);
-
-        // Now that it's enabled, we can load again
+        // Load again - should still load even when disabled
         triangle.load_length_counter(10);
         assert_eq!(triangle.get_length_counter(), 60); // Index 10 = value 60
+
+        // Enabling should not affect the counter (stays at 60)
+        triangle.set_length_counter_enabled(true);
+        assert_eq!(triangle.get_length_counter(), 60);
+
+        // Now that it's enabled, we can load again with a different value
+        triangle.load_length_counter(11);
+        assert_eq!(triangle.get_length_counter(), 10); // Index 11 = value 10
     }
 }

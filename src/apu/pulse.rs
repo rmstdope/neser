@@ -145,11 +145,9 @@ impl Pulse {
     pub fn write_length_counter_timer_high(&mut self, value: u8) {
         self.write_timer_high(value);
         self.envelope_start_flag = true;
-        // Load length counter from bits 7-3, but only if channel is enabled
-        if self.length_counter_enabled {
-            let index = (value >> 3) as usize;
-            self.length_counter = LENGTH_COUNTER_TABLE[index];
-        }
+        // Load length counter from bits 7-3 (always, even if channel disabled)
+        let index = (value >> 3) as usize;
+        self.length_counter = LENGTH_COUNTER_TABLE[index];
     }
 
     /// Clock the envelope (called by quarter frame from frame counter)
@@ -202,11 +200,19 @@ impl Pulse {
     }
 
     /// Set length counter enabled/disabled (from $4015)
+    /// When disabled, the channel is silenced but the length counter value is preserved
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         self.length_counter_enabled = enabled;
-        if !enabled {
-            self.length_counter = 0;
-        }
+        // Note: We don't clear length_counter to 0 when disabling.
+        // The channel is silenced because length_counter_enabled gates
+        // the length counter clock, preventing it from counting down.
+        // This allows the length counter to retain its value for when
+        // the channel is re-enabled.
+    }
+
+    /// Get whether length counter is enabled (from $4015)
+    pub fn is_length_counter_enabled(&self) -> bool {
+        self.length_counter_enabled
     }
 
     /// Write to sweep register ($4001/$4005)
@@ -282,6 +288,7 @@ impl Pulse {
     pub fn output(&self) -> u8 {
         // Check all muting conditions
         if self.get_sequencer_output() == 0
+            || !self.length_counter_enabled // Channel disabled via $4015
             || self.length_counter == 0
             || self.timer_period < 8
             || self.get_sweep_target_period() > 0x7FF
@@ -748,13 +755,13 @@ mod tests {
         pulse.write_length_counter_timer_high(0b01010_000); // Load some value
         assert_eq!(pulse.get_length_counter(), 60);
 
-        // Disable should clear counter
+        // Disable should NOT clear counter (NES hardware behavior)
         pulse.set_length_counter_enabled(false);
-        assert_eq!(pulse.get_length_counter(), 0);
+        assert_eq!(pulse.get_length_counter(), 60);
 
-        // Enable again - counter stays at current value (0)
+        // Enable again - counter stays at current value (60)
         pulse.set_length_counter_enabled(true);
-        assert_eq!(pulse.get_length_counter(), 0);
+        assert_eq!(pulse.get_length_counter(), 60);
 
         // Now we can load again since it's enabled
         pulse.write_length_counter_timer_high(0b00100_000); // Load different value

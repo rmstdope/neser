@@ -158,16 +158,12 @@ impl Apu {
         self.frame_counter = FrameCounter::new();
         self.pulse1 = Pulse::new(true);
         self.pulse2 = Pulse::new(false);
-        self.triangle = Triangle::new();
+        // At reset, triangle is preserved, but length counter is disabled
+        self.triangle.set_length_counter_enabled(false);
         self.noise = Noise::new();
         self.dmc = Dmc::new();
         self.sample_accumulator = 0.0;
         self.pending_sample = None;
-        self.pulse1_enabled = true;
-        self.pulse2_enabled = true;
-        self.triangle_enabled = true;
-        self.noise_enabled = true;
-        self.dmc_enabled = true;
         self.apu_cycle = 0;
         // Reset: re-write last $4017 value, then 9 cycle delay before CPU execution
         self.frame_counter.write_register(self.last_4017_write);
@@ -176,6 +172,7 @@ impl Apu {
         }
         // Note: sample rate is preserved across resets
         // Note: last_4017_write is preserved (not reset to $00)
+        // Note: triangle channel is preserved (unaffected by reset)
     }
 
     /// Get reference to pulse channel 1
@@ -308,16 +305,17 @@ impl Apu {
     pub fn read_status(&mut self, open_bus: u8) -> u8 {
         let mut status = 0;
 
-        if self.pulse1.get_length_counter() > 0 {
+        // Only report length counter > 0 if channel is also enabled
+        if self.pulse1.is_length_counter_enabled() && self.pulse1.get_length_counter() > 0 {
             status |= STATUS_PULSE1;
         }
-        if self.pulse2.get_length_counter() > 0 {
+        if self.pulse2.is_length_counter_enabled() && self.pulse2.get_length_counter() > 0 {
             status |= STATUS_PULSE2;
         }
-        if self.triangle.get_length_counter() > 0 {
+        if self.triangle.is_length_counter_enabled() && self.triangle.get_length_counter() > 0 {
             status |= STATUS_TRIANGLE;
         }
-        if self.noise.get_length_counter() > 0 {
+        if self.noise.is_length_counter_enabled() && self.noise.get_length_counter() > 0 {
             status |= STATUS_NOISE;
         }
         if self.dmc.has_bytes_remaining() {

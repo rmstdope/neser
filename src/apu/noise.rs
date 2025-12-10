@@ -145,11 +145,9 @@ impl Noise {
     /// Format: llll l---
     /// l = length counter load value (index into lookup table)
     pub fn write_length(&mut self, value: u8) {
-        // Only load length counter if channel is enabled via $4015
-        if self.length_counter_enabled {
-            let length_index = ((value >> 3) & 0x1F) as usize;
-            self.length_counter = LENGTH_COUNTER_TABLE[length_index];
-        }
+        // Always load length counter, even if channel disabled via $4015
+        let length_index = ((value >> 3) & 0x1F) as usize;
+        self.length_counter = LENGTH_COUNTER_TABLE[length_index];
         self.envelope_start = true;
     }
 
@@ -157,8 +155,11 @@ impl Noise {
     /// Returns 0 if muted (length counter == 0 or shift register bit 0 is set)
     /// Otherwise returns envelope volume
     pub fn output(&self) -> u8 {
-        // Muted if length counter is 0 or shift register bit 0 is set
-        if self.length_counter == 0 || (self.shift_register & 1) == 1 {
+        // Muted if length counter is disabled/0 or shift register bit 0 is set
+        if !self.length_counter_enabled
+            || self.length_counter == 0
+            || (self.shift_register & 1) == 1
+        {
             return 0;
         }
 
@@ -172,11 +173,15 @@ impl Noise {
 
     /// Enable or disable the length counter (controlled by APU status register)
     /// When disabled, the length counter is immediately cleared
+    /// Set length counter enabled/disabled (from $4015)
+    /// When disabled, the channel is silenced but the length counter value is preserved
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         self.length_counter_enabled = enabled;
-        if !enabled {
-            self.length_counter = 0;
-        }
+    }
+
+    /// Get whether length counter is enabled (from $4015)
+    pub fn is_length_counter_enabled(&self) -> bool {
+        self.length_counter_enabled
     }
 
     /// Get the current length counter value
@@ -364,6 +369,7 @@ mod tests {
     #[test]
     fn test_output_uses_envelope_volume() {
         let mut noise = Noise::new();
+        noise.set_length_counter_enabled(true); // Must be enabled for output
         noise.length_counter = 5;
         noise.envelope_decay_level = 7;
         noise.envelope_constant_volume = false;
@@ -375,6 +381,7 @@ mod tests {
     #[test]
     fn test_output_uses_constant_volume() {
         let mut noise = Noise::new();
+        noise.set_length_counter_enabled(true); // Must be enabled for output
         noise.length_counter = 5;
         noise.envelope_divider_period = 12;
         noise.envelope_constant_volume = true;
@@ -388,8 +395,9 @@ mod tests {
         let mut noise = Noise::new();
         noise.length_counter = 10;
 
+        // Disabling should NOT clear length counter (NES hardware behavior)
         noise.set_length_counter_enabled(false);
-        assert_eq!(noise.length_counter, 0);
+        assert_eq!(noise.length_counter, 10);
 
         noise.length_counter = 15;
         noise.set_length_counter_enabled(true);
