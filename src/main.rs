@@ -7,7 +7,6 @@ mod joypad;
 mod mapper;
 mod mem_controller;
 mod nes;
-mod opcode;
 mod ppu;
 mod screen_buffer;
 

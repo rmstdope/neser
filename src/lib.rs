@@ -11,6 +11,5 @@ pub mod joypad;
 pub mod mapper;
 pub mod mem_controller;
 pub mod nes;
-pub mod opcode;
 pub mod ppu; // Modular PPU structure
 pub mod screen_buffer;

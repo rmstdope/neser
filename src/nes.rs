@@ -2,7 +2,6 @@ use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::cpu;
 use crate::mem_controller;
-use crate::opcode;
 use crate::ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -281,7 +280,7 @@ impl Nes {
         let memory = self.memory.borrow();
         // Read the opcode and determine instruction size
         let opcode_byte = memory.read(pc);
-        let instruction = opcode::lookup(opcode_byte)
+        let instruction = cpu::lookup(opcode_byte)
             .unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
 
         // Read operand bytes

@@ -1,5 +1,5 @@
 use crate::mem_controller::MemController;
-use crate::opcode::*;
+use super::opcode::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -97,7 +97,7 @@ impl Cpu {
         let opcode_byte = self.memory.borrow().read(self.pc);
         self.pc += 1;
 
-        let opcode = crate::opcode::lookup(opcode_byte)
+        let opcode = super::opcode::lookup(opcode_byte)
             .unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
         let mut cycles = opcode.cycles;
 
