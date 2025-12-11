@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
     // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
     // let rom_data = std::fs::read("roms/blargg/4015_cleared.nes")?;
-    let rom_data = std::fs::read("roms/blargg/branch_timing_tests/1.Branch_Basics.nes")?;
+    let rom_data = std::fs::read("roms/blargg/cpu_dummy_reads/cpu_dummy_reads.nes")?;
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset();
@@ -101,6 +101,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     event_loop
-        .run(&mut nes_instance, false)
+        .run(&mut nes_instance, true)
         .map_err(|e| e.into())
 }

@@ -1896,7 +1896,9 @@ impl Cpu {
         self.update_zero_and_negative_flags(self.a);
     }
 
-    pub fn trigger_nmi(&mut self) {
+    /// Trigger an NMI (Non-Maskable Interrupt)
+    /// Returns the number of cycles consumed (7 cycles)
+    pub fn trigger_nmi(&mut self) -> u8 {
         // Push PC and P onto stack
         self.push_word(self.pc);
         let mut p_with_break = self.p & !FLAG_BREAK; // Clear Break flag
@@ -1908,6 +1910,10 @@ impl Cpu {
 
         // Set Interrupt Disable flag
         self.p |= FLAG_INTERRUPT;
+
+        // NMI takes 7 CPU cycles
+        self.total_cycles += 7;
+        7
     }
 }
 

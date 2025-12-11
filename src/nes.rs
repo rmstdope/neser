@@ -143,6 +143,14 @@ impl Nes {
             // Add DMA cycles to CPU's total cycle counter
             self.cpu.total_cycles += dma_cycles as u64;
 
+            // Check for NMI after DMA
+            if self.ppu.borrow_mut().poll_nmi() {
+                let nmi_cycles = self.cpu.trigger_nmi();
+                // Tick PPU and APU for the NMI handling cycles
+                self.tick_ppu(nmi_cycles);
+                self.tick_apu(nmi_cycles);
+            }
+
             // Return DMA cycles (capped at u8::MAX)
             return dma_cycles.min(255) as u8;
         }
@@ -154,8 +162,13 @@ impl Nes {
         // Clock the APU for each CPU cycle
         self.tick_apu(cpu_cycles);
 
+        // Check for NMI after executing instruction and ticking PPU
+        // NMI is checked after the instruction completes
         if self.ppu.borrow_mut().poll_nmi() {
-            self.cpu.trigger_nmi();
+            let nmi_cycles = self.cpu.trigger_nmi();
+            // Tick PPU and APU for the NMI handling cycles
+            self.tick_ppu(nmi_cycles);
+            self.tick_apu(nmi_cycles);
         }
 
         if self.ppu.borrow_mut().poll_frame_complete() {
