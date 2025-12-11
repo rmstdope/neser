@@ -39,6 +39,7 @@ impl Status {
 
     /// Enter VBlank period
     pub fn enter_vblank(&mut self, nmi_on_vblank: bool) {
+        // println!("PPU Status: Entering VBlank");
         self.vblank_flag = true;
         self.frame_complete = true;
         self.vblank_start_cycle = true;
@@ -49,6 +50,7 @@ impl Status {
 
     /// Exit VBlank period (clear all flags)
     pub fn exit_vblank(&mut self) {
+        // println!("PPU Status: Exiting VBlank");
         self.vblank_flag = false;
         self.nmi_enabled = false;
         self.sprite_0_hit = false;

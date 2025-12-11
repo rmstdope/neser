@@ -356,6 +356,7 @@ impl Ppu {
     pub fn get_status(&mut self) -> u8 {
         let status = self.status.read_status();
         self.registers.clear_w(); // Reading status clears write toggle
+        // println!("Debug: PPU Status Read: {:02X}", status);
         status
     }
 
@@ -412,7 +413,9 @@ impl Ppu {
         let addr = self.registers.v();
         match addr {
             0x0000..=0x1FFF => {
-                // CHR ROM is read-only
+                // CHR memory (ROM or RAM depending on cartridge)
+                self.memory.write_chr(addr, value);
+                // TODO Connect this with the mapper
             }
             0x2000..=0x3EFF => {
                 self.memory.write_nametable(addr, value);
