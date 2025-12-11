@@ -427,7 +427,7 @@ impl EventLoop {
     /// - A: Select button
     /// - S: Start button
     fn handle_key_down(nes: &mut crate::nes::Nes, keycode: Keycode) {
-        use crate::joypad::Button;
+        use crate::controller::Button;
         match keycode {
             Keycode::Up => nes.set_button(1, Button::Up, true),
             Keycode::Down => nes.set_button(1, Button::Down, true),
@@ -443,7 +443,7 @@ impl EventLoop {
 
     /// Handle keyboard key release events
     fn handle_key_up(nes: &mut crate::nes::Nes, keycode: Keycode) {
-        use crate::joypad::Button;
+        use crate::controller::Button;
         match keycode {
             Keycode::Up => nes.set_button(1, Button::Up, false),
             Keycode::Down => nes.set_button(1, Button::Down, false),

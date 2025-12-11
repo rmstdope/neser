@@ -1,9 +1,9 @@
 mod apu;
 mod audio;
 mod cartridge;
+mod controller;
 mod cpu;
 mod eventloop;
-mod joypad;
 mod mem_controller;
 mod nes;
 mod ppu;
