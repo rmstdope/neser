@@ -218,6 +218,9 @@ impl Cpu {
             ASL_ZP => {
                 let addr = self.read_byte() as u16;
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.asl(value);
                 self.memory.borrow_mut().write(addr, result);
             }
@@ -225,18 +228,27 @@ impl Cpu {
                 let base = self.read_byte();
                 let addr = base.wrapping_add(self.x) as u16;
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.asl(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             ASL_ABS => {
                 let addr = self.read_word();
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.asl(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             ASL_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.asl(value);
                 self.memory.borrow_mut().write(addr, result);
             }
@@ -439,25 +451,37 @@ impl Cpu {
             }
             DEC_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory.borrow().read(addr as u16);
+                let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.dec(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             DEC_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                let value = self.memory.borrow().read(addr as u16);
+                let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.dec(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             DEC_ABS => {
                 let addr = self.read_word() as u16;
-                let value = self.memory.borrow().read(addr as u16);
+                let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.dec(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             DEC_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16) as u16;
-                let value = self.memory.borrow().read(addr as u16);
+                let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.dec(value);
                 self.memory.borrow_mut().write(addr, result);
             }
@@ -537,25 +561,37 @@ impl Cpu {
             }
             INC_ZP => {
                 let addr = self.read_byte() as u16;
-                let value = self.memory.borrow().read(addr as u16);
+                let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.inc(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             INC_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
-                let value = self.memory.borrow().read(addr as u16);
+                let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.inc(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             INC_ABS => {
                 let addr = self.read_word() as u16;
-                let value = self.memory.borrow().read(addr as u16);
+                let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.inc(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             INC_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16) as u16;
-                let value = self.memory.borrow().read(addr as u16);
+                let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.inc(value);
                 self.memory.borrow_mut().write(addr, result);
             }
@@ -664,7 +700,8 @@ impl Cpu {
                 if Self::page_crossed(base, addr) {
                     cycles += 1;
                     // Perform dummy read from base + Y (without carry from low byte)
-                    let dummy_addr = (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
+                    let dummy_addr =
+                        (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
                     self.memory.borrow().read(dummy_addr);
                 }
                 let value = self.memory.borrow().read(addr);
@@ -695,7 +732,8 @@ impl Cpu {
                 if Self::page_crossed(base, addr) {
                     cycles += 1;
                     // Perform dummy read from base + X (without carry from low byte)
-                    let dummy_addr = (base & 0xFF00) | ((base.wrapping_add(self.x as u16)) & 0x00FF);
+                    let dummy_addr =
+                        (base & 0xFF00) | ((base.wrapping_add(self.x as u16)) & 0x00FF);
                     self.memory.borrow().read(dummy_addr);
                 }
                 let value = self.memory.borrow().read(addr);
@@ -707,24 +745,36 @@ impl Cpu {
             LSR_ZP => {
                 let addr = self.read_byte() as u16;
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.lsr(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             LSR_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.lsr(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             LSR_ABS => {
                 let addr = self.read_word();
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.lsr(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             LSR_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.lsr(value);
                 self.memory.borrow_mut().write(addr, result);
             }
@@ -814,24 +864,36 @@ impl Cpu {
             ROL_ZP => {
                 let addr = self.read_byte() as u16;
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.rol(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             ROL_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.rol(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             ROL_ABS => {
                 let addr = self.read_word();
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.rol(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             ROL_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.rol(value);
                 self.memory.borrow_mut().write(addr, result);
             }
@@ -841,24 +903,36 @@ impl Cpu {
             ROR_ZP => {
                 let addr = self.read_byte() as u16;
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.ror(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             ROR_ZPX => {
                 let addr = self.read_byte().wrapping_add(self.x) as u16;
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.ror(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             ROR_ABS => {
                 let addr = self.read_word();
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.ror(value);
                 self.memory.borrow_mut().write(addr, result);
             }
             ROR_ABSX => {
                 let addr = self.read_word().wrapping_add(self.x as u16);
                 let value = self.memory.borrow().read(addr);
+                // Dummy write
+                self.memory.borrow_mut().write(addr, value);
+                // Real operation and write
                 let result = self.ror(value);
                 self.memory.borrow_mut().write(addr, result);
             }
@@ -1518,6 +1592,8 @@ impl Cpu {
         value
     }
 
+    /// Perform a read-modify-write operation with dummy write
+    /// All RMW instructions on the 6502 first write the original value back,
     /// Read a 16-bit word from memory at PC (little-endian) and increment PC
     fn read_word(&mut self) -> u16 {
         let lo = self.read_byte() as u16;
@@ -1719,6 +1795,9 @@ impl Cpu {
     /// Decrement and Compare - DCP undocumented operation
     fn dcp(&mut self, addr: u16) {
         let value = self.memory.borrow().read(addr);
+        // Dummy write
+        self.memory.borrow_mut().write(addr, value);
+        // Real operation and write
         let result = self.dec(value);
         self.memory.borrow_mut().write(addr, result);
         self.cmp(result);
@@ -1740,7 +1819,10 @@ impl Cpu {
     /// ISC - Undocumented opcode: Increment memory then subtract from A with borrow
     fn isc(&mut self, addr: u16) {
         let value = self.memory.borrow().read(addr);
-        let incremented = value.wrapping_add(1);
+        // Dummy write
+        self.memory.borrow_mut().write(addr, value);
+        // Real operation and write
+        let incremented = self.inc(value);
         self.memory.borrow_mut().write(addr, incremented);
         self.sbc(incremented);
     }
@@ -1748,6 +1830,9 @@ impl Cpu {
     /// RLA - Undocumented opcode: Rotate left memory then AND with accumulator
     fn rla(&mut self, addr: u16) {
         let value = self.memory.borrow().read(addr);
+        // Dummy write
+        self.memory.borrow_mut().write(addr, value);
+        // Real operation and write
         let rotated = self.rol(value);
         self.memory.borrow_mut().write(addr, rotated);
         self.a &= rotated;
@@ -1757,6 +1842,9 @@ impl Cpu {
     /// RRA - Undocumented opcode: Rotate right memory then ADC with accumulator
     fn rra(&mut self, addr: u16) {
         let value = self.memory.borrow().read(addr);
+        // Dummy write
+        self.memory.borrow_mut().write(addr, value);
+        // Real operation and write
         let rotated = self.ror(value);
         self.memory.borrow_mut().write(addr, rotated);
         self.adc(rotated);
@@ -1765,6 +1853,9 @@ impl Cpu {
     /// SLO - Undocumented opcode: Shift left memory then ORA with accumulator
     fn slo(&mut self, addr: u16) {
         let value = self.memory.borrow().read(addr);
+        // Dummy write
+        self.memory.borrow_mut().write(addr, value);
+        // Real operation and write
         let shifted = self.asl(value);
         self.memory.borrow_mut().write(addr, shifted);
         self.ora(shifted);
@@ -1773,6 +1864,9 @@ impl Cpu {
     /// SRE - Undocumented opcode: Shift right memory then EOR with accumulator
     fn sre(&mut self, addr: u16) {
         let value = self.memory.borrow().read(addr);
+        // Dummy write
+        self.memory.borrow_mut().write(addr, value);
+        // Real operation and write
         let shifted = self.lsr(value);
         self.memory.borrow_mut().write(addr, shifted);
         self.eor(shifted);

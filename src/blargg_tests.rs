@@ -192,6 +192,10 @@ mod tests {
         test_cpu_dummy_writes_oam,
         "roms/blargg/cpu_dummy_writes/cpu_dummy_writes_oam.nes"
     );
+    prg_ram_test!(
+        test_cpu_dummy_writes_ppumem,
+        "roms/blargg/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes"
+    );
 
     // OAM and APU tests
     prg_ram_test!(test_oam_read, "roms/oam_read.nes");

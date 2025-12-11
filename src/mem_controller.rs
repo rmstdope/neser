@@ -54,13 +54,13 @@ impl MemController {
 
             // PPU registers ($2000-$3FFF) with mirroring every 8 bytes
             0x2000..=0x3FFF => match addr & 0x2007 {
-                0x2000 => panic!("Cannot read from write-only PPU register PPUCTRL (0x2000)"),
-                0x2001 => panic!("Cannot read from write-only PPU register PPUMASK (0x2001)"),
+                0x2000 => *self.open_bus.borrow(), // panic!("Cannot read from write-only PPU register PPUCTRL (0x2000)"),
+                0x2001 => *self.open_bus.borrow(), // panic!("Cannot read from write-only PPU register PPUMASK (0x2001)"),
                 0x2002 => self.ppu.borrow_mut().get_status(),
-                0x2003 => panic!("Cannot read from write-only PPU register OAMADDR (0x2003)"),
+                0x2003 => *self.open_bus.borrow(), // panic!("Cannot read from write-only PPU register OAMADDR (0x2003)"),
                 0x2004 => self.ppu.borrow().read_oam_data(),
-                0x2005 => panic!("Cannot read from write-only PPU register PPUSCROLL (0x2005)"),
-                0x2006 => panic!("Cannot read from write-only PPU register PPUADDR (0x2006)"),
+                0x2005 => *self.open_bus.borrow(), // panic!("Cannot read from write-only PPU register PPUSCROLL (0x2005)"),
+                0x2006 => *self.open_bus.borrow(), // panic!("Cannot read from write-only PPU register PPUADDR (0x2006)"),
                 0x2007 => self.ppu.borrow_mut().read_data(),
                 _ => panic!("Should never happen!"),
             },
@@ -215,6 +215,14 @@ impl MemController {
                 if addr == 0x6000 {
                     // For debugging, print writes to $6000
                     println!("Debug: Write to $6000 PRG-RAM: {:02X}", value);
+                    if value == 0x09 {
+                        eprintln!("\n\n=== ERROR 9 DETECTED ===");
+                        eprintln!("Test failed with error 9: Some opcodes failed the test");
+                        eprintln!(
+                            "This means at least one RMW opcode didn't produce the expected dummy write behavior"
+                        );
+                        eprintln!("========================\n");
+                    }
                 }
                 if let Some(ref mut cartridge) = self.cartridge {
                     cartridge.mapper_mut().write_prg(addr, value);
