@@ -550,6 +550,12 @@ impl Ppu {
         self.registers.v()
     }
 
+    /// Read nametable for debugging/testing (doesn't affect PPU state)
+    #[cfg(test)]
+    pub fn read_nametable_for_debug(&self, addr: u16) -> u8 {
+        self.memory.read_nametable(addr)
+    }
+
     /// Get t register (for testing)
     #[cfg(test)]
     pub fn t_register(&self) -> u16 {

@@ -26,23 +26,39 @@ pub enum BlarggTestResult {
 pub struct BlarggTestRunner {
     rom_path: String,
     max_frames: u32,
+    use_console_output: bool,
 }
 
 impl BlarggTestRunner {
-    /// Create a new test runner
+    /// Create a new test runner for $6000-based tests
     pub fn new(rom_path: &str, max_frames: u32) -> Self {
         Self {
             rom_path: rom_path.to_string(),
             max_frames,
+            use_console_output: false,
+        }
+    }
+
+    /// Create a new test runner for console output-based tests (branch timing, etc.)
+    pub fn new_console(rom_path: &str, max_frames: u32) -> Self {
+        Self {
+            rom_path: rom_path.to_string(),
+            max_frames,
+            use_console_output: true,
         }
     }
 
     /// Run the test ROM and return the result
     ///
     /// The test ROM is executed for up to `max_frames` frames.
-    /// Results are checked by reading $6000 in PRG-RAM:
-    /// - 0x00 = Pass
-    /// - 0x01+ = Fail with error code
+    ///
+    /// For $6000-based tests:
+    /// - Results are checked by reading $6000 in PRG-RAM:
+    ///   - 0x00 = Pass
+    ///   - 0x01+ = Fail with error code
+    ///
+    /// For console-based tests:
+    /// - Reads nametable text looking for "PASSED" or "FAILED"
     ///
     /// Returns `Timeout` if no result is found within max_frames.
     pub fn run_test(&self) -> BlarggTestResult {
@@ -67,7 +83,12 @@ impl BlarggTestRunner {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.insert_cartridge(cartridge);
         nes.reset();
-        println!("Running OAM test ROM: {} ... ", self.rom_path);
+
+        if self.use_console_output {
+            println!("Running console-based test ROM: {} ... ", self.rom_path);
+        } else {
+            println!("Running $6000-based test ROM: {} ... ", self.rom_path);
+        }
 
         // Run frames and check for results
         for frame in 1..=self.max_frames {
@@ -78,27 +99,36 @@ impl BlarggTestRunner {
 
             // Check every 60 frames (1 second intervals)
             if frame % 60 == 0 {
-                let status = nes.memory.borrow().read(0x6000);
+                if self.use_console_output {
+                    // Console-based test: read nametable text
+                    // Console output starts at $2081 and spans multiple rows
+                    let text = nes.read_nametable_text(0x2081, 160);
 
-                // Check if test has completed
-                // Status byte 0x00 means "passed"
-                // Status byte 0x01-0x7F means "failed with error code"
-                // Status byte 0x80 means "running"
-                // Status byte 0x81 means "need reset"
-                if status == 0x00 {
-                    // // Additional check: ensure we're not reading uninitialized memory
-                    // // Many blargg tests write additional text after $6000
-                    // let byte1 = nes.memory.borrow().read(0x6004);
-                    // let byte2 = nes.memory.borrow().read(0x6005);
+                    if text.contains("PASSED") {
+                        println!("Test passed (found 'PASSED' in console output)");
+                        return BlarggTestResult::Pass;
+                    } else if text.contains("FAILED") {
+                        // Try to extract error code from "FAILED: #N" pattern
+                        println!("Test failed (found 'FAILED' in console output)");
+                        println!("Console output: {}", text.trim());
+                        return BlarggTestResult::Fail(1);
+                    }
+                } else {
+                    // $6000-based test
+                    let status = nes.memory.borrow().read(0x6000);
 
-                    // // If there's readable text or specific patterns, test has run
-                    // if byte1 != 0x00 || byte2 != 0x00 || frame > 120 {
-                    return BlarggTestResult::Pass;
-                    // }
-                } else if status > 0x00 && status < 0x80 {
-                    return BlarggTestResult::Fail(status);
-                } else if status == 0x81 {
-                    nes.reset();
+                    // Check if test has completed
+                    // Status byte 0x00 means "passed"
+                    // Status byte 0x01-0x7F means "failed with error code"
+                    // Status byte 0x80 means "running"
+                    // Status byte 0x81 means "need reset"
+                    if status == 0x00 {
+                        return BlarggTestResult::Pass;
+                    } else if status > 0x00 && status < 0x80 {
+                        return BlarggTestResult::Fail(status);
+                    } else if status == 0x81 {
+                        nes.reset();
+                    }
                 }
             }
         }
@@ -111,6 +141,20 @@ impl BlarggTestRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_branch_timing() {
+        let runner = BlarggTestRunner::new_console(
+            "roms/blargg/branch_timing_tests/1.Branch_Basics.nes",
+            300,
+        );
+        let result = runner.run_test();
+        assert_eq!(
+            result,
+            BlarggTestResult::Pass,
+            "1.Branch_Basics.nes should pass"
+        );
+    }
 
     #[test]
     fn test_oam_read() {

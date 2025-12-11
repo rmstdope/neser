@@ -476,9 +476,43 @@ impl Nes {
             width = width
         )
     }
+
+    /// Read nametable text for automated test verification
+    ///
+    /// Reads tile indices from the nametable and converts them to ASCII text.
+    /// This is useful for Blargg tests that output results to the screen instead of $6000.
+    ///
+    /// # Arguments
+    /// * `nametable_addr` - Starting address in nametable (e.g., 0x2081)
+    /// * `length` - Number of tiles to read
+    ///
+    /// # Returns
+    /// String containing the decoded text
+    pub fn read_nametable_text(&self, nametable_addr: u16, length: usize) -> String {
+        let ppu = self.ppu.borrow();
+        let mut text = String::new();
+
+        for i in 0..length {
+            let addr = nametable_addr.wrapping_add(i as u16);
+            let tile_index = ppu.read_nametable_for_debug(addr);
+
+            // Decode tile index to character
+            // Blargg's branch timing tests store ASCII values directly as tiles
+            let ch = if tile_index >= 0x20 && tile_index <= 0x7E {
+                tile_index as char
+            } else if tile_index == 0x00 {
+                ' ' // Treat 0x00 as space
+            } else {
+                '?' // Unknown/control character
+            };
+
+            text.push(ch);
+        }
+
+        text
+    }
 }
 
-#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;
