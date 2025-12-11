@@ -95,9 +95,12 @@ impl Nes {
 
     /// Reset the NES system (CPU and PPU)
     pub fn reset(&mut self) {
+        // Get CPU cycle count before reset for coordinated APU timing
+        let cpu_cycle = self.cpu.total_cycles();
+
         self.cpu.reset();
         self.ppu.borrow_mut().reset();
-        self.apu.borrow_mut().reset();
+        self.apu.borrow_mut().reset(cpu_cycle);
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
     }

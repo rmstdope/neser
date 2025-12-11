@@ -460,19 +460,20 @@ mod tests {
         triangle.load_length_counter(5);
         assert_eq!(triangle.get_length_counter(), 4);
 
-        // Disabling should NOT clear the length counter (NES hardware behavior)
+        // Disabling should NOT clear the length counter
         triangle.set_length_counter_enabled(false);
         assert_eq!(triangle.get_length_counter(), 4);
 
-        // Load again - should still load even when disabled
+        // Load again while disabled - should NOT load (NES hardware behavior)
+        // Length counter can only be loaded when channel is enabled via $4015
         triangle.load_length_counter(10);
-        assert_eq!(triangle.get_length_counter(), 60); // Index 10 = value 60
+        assert_eq!(triangle.get_length_counter(), 4); // Stays at 4, not loaded
 
-        // Enabling should not affect the counter (stays at 60)
+        // Enabling should not affect the counter (stays at 4)
         triangle.set_length_counter_enabled(true);
-        assert_eq!(triangle.get_length_counter(), 60);
+        assert_eq!(triangle.get_length_counter(), 4);
 
-        // Now that it's enabled, we can load again with a different value
+        // Now that it's enabled, we can load a value
         triangle.load_length_counter(11);
         assert_eq!(triangle.get_length_counter(), 10); // Index 11 = value 10
     }

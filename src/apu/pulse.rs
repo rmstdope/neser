@@ -210,10 +210,6 @@ impl Pulse {
     /// When disabled, the channel is silenced but the length counter value is preserved
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         self.length_counter_enabled = enabled;
-        // When disabling via $4015, clear the length counter to 0
-        if !enabled {
-            self.length_counter = 0;
-        }
     }
 
     /// Get whether length counter is enabled (from $4015)
@@ -761,7 +757,7 @@ mod tests {
         pulse.write_length_counter_timer_high(0b01010_000); // Load some value
         assert_eq!(pulse.get_length_counter(), 60);
 
-        // Disable should NOT clear counter (NES hardware behavior)
+        // Disable should NOT clear counter
         pulse.set_length_counter_enabled(false);
         assert_eq!(pulse.get_length_counter(), 60);
 

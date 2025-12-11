@@ -156,7 +156,8 @@ impl Apu {
     }
 
     /// Reset the APU to its initial power-on state
-    pub fn reset(&mut self) {
+    /// cpu_cycle: The total CPU cycles executed before this reset (for coordinated timing)
+    pub fn reset(&mut self, cpu_cycle: u64) {
         self.frame_counter = FrameCounter::new();
         self.pulse1 = Pulse::new(true);
         self.pulse2 = Pulse::new(false);
@@ -167,13 +168,34 @@ impl Apu {
         self.sample_accumulator = 0.0;
         self.pending_sample = None;
         self.apu_cycle = 0;
-        // Reset: The APU acts as if $4017 were written 9-12 clocks before first instruction.
-        // The exact timing varies. For now, we use 9 cycles which makes most tests pass.
-        // TODO: Implement the delayed write mechanism like Mesen2 to handle this properly.
-        self.frame_counter.write_register(self.last_4017_write);
+
+        // Coordinated reset timing (similar to Mesen2):
+        // "APU acts as if $4017 were written with $00 from 9 to 12 clocks before first instruction"
+        //
+        // Mesen2's approach:
+        // - Queue delayed write with 3-4 cycle delay (based on CPU cycle parity)
+        // - The frame counter ticks during the delay
+        // - After delay cycles, the write takes effect
+        //
+        // Our approach:
+        // - Queue the delayed write FIRST with appropriate delay
+        // - Then clock the frame counter which will process the write after the delay
+        // - Additional clocking to reach the 9-12 cycle range
+
+        // Delay based on CPU cycle parity: even = 4, odd = 3
+        // This matches Mesen2's behavior
+        let write_delay = if (cpu_cycle % 2) == 0 { 4 } else { 3 };
+        
+        // Queue the delayed write
+        self.frame_counter.queue_delayed_write(self.last_4017_write, write_delay);
+        
+        // Clock the frame counter for the delay period plus additional cycles
+        // Total should be 9-12 cycles to match documented behavior
+        // With delay of 3-4, we clock 9 times total: delay cycles + additional cycles
         for _ in 0..9 {
             self.frame_counter.clock();
         }
+
         // Note: sample rate is preserved across resets
         // Note: last_4017_write is preserved (not reset to $00)
         // Note: triangle channel is preserved (unaffected by reset)

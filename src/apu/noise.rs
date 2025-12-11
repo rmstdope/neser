@@ -402,7 +402,7 @@ mod tests {
         let mut noise = Noise::new();
         noise.length_counter = 10;
 
-        // Disabling should NOT clear length counter (NES hardware behavior)
+        // Disabling should NOT clear length counter
         noise.set_length_counter_enabled(false);
         assert_eq!(noise.length_counter, 10);
 
