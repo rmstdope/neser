@@ -488,6 +488,7 @@ impl Nes {
     ///
     /// # Returns
     /// String containing the decoded text
+    #[cfg(test)]
     pub fn read_nametable_text(&self, nametable_addr: u16, length: usize) -> String {
         let ppu = self.ppu.borrow();
         let mut text = String::new();

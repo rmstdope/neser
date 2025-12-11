@@ -29,6 +29,7 @@ pub struct BlarggTestRunner {
     use_console_output: bool,
 }
 
+#[cfg(test)]
 impl BlarggTestRunner {
     /// Create a new test runner for $6000-based tests
     pub fn new(rom_path: &str, max_frames: u32) -> Self {
