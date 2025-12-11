@@ -155,6 +155,22 @@ mod tests {
         };
     }
 
+    /// Macro to generate $6000-based tests with custom timeout
+    macro_rules! prg_ram_test {
+        ($test_name:ident, $rom_path:expr, $timeout:expr) => {
+            #[test]
+            fn $test_name() {
+                let runner = BlarggTestRunner::new($rom_path, $timeout);
+                let result = runner.run_test();
+                let rom_name = $rom_path.split('/').last().unwrap();
+                assert_eq!(result, BlarggTestResult::Pass, "{} should pass", rom_name);
+            }
+        };
+        ($test_name:ident, $rom_path:expr) => {
+            prg_ram_test!($test_name, $rom_path, 180);
+        };
+    }
+
     // Branch timing tests
     console_test!(
         test_branch_timing,
@@ -172,38 +188,18 @@ mod tests {
         test_cpu_dummy_reads,
         "roms/blargg/cpu_dummy_reads/cpu_dummy_reads.nes"
     );
+    prg_ram_test!(
+        test_cpu_dummy_writes_oam,
+        "roms/blargg/cpu_dummy_writes/cpu_dummy_writes_oam.nes"
+    );
 
-    #[test]
-    fn test_oam_read() {
-        let runner = BlarggTestRunner::new("roms/oam_read.nes", 180);
-        let result = runner.run_test();
-        assert_eq!(result, BlarggTestResult::Pass, "oam_read.nes should pass");
-    }
+    // OAM and APU tests
+    prg_ram_test!(test_oam_read, "roms/oam_read.nes");
 
-    // #[test]
-    // fn test_oam_stress() {
-    //     let runner = BlarggTestRunner::new("roms/oam_stress.nes", 600); // Doubled timeout to 10 seconds
-    //     let result = runner.run_test();
-    //     assert_eq!(result, BlarggTestResult::Pass, "oam_stress.nes should pass");
-    // }
+    // prg_ram_test!(test_oam_stress, "roms/oam_stress.nes", 600);
+    // prg_ram_test!(test_cpu, "roms/cpu.nes");
 
-    // #[test]
-    // fn test_cpu() {
-    //     let runner = BlarggTestRunner::new("roms/cpu.nes", 180);
-    //     let result = runner.run_test();
-    //     assert_eq!(result, BlarggTestResult::Pass, "cpu.nes should pass");
-    // }
-
-    #[test]
-    fn test_4015_cleared() {
-        let runner = BlarggTestRunner::new("roms/blargg/4015_cleared.nes", 180);
-        let result = runner.run_test();
-        assert_eq!(
-            result,
-            BlarggTestResult::Pass,
-            "4015_cleared.nes should pass"
-        );
-    }
+    prg_ram_test!(test_4015_cleared, "roms/blargg/4015_cleared.nes");
 
     #[test]
     #[ignore]
@@ -217,81 +213,12 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_4017_written() {
-        let runner = BlarggTestRunner::new("roms/blargg/4017_written.nes", 180);
-        let result = runner.run_test();
-        assert_eq!(
-            result,
-            BlarggTestResult::Pass,
-            "4017_written.nes should pass"
-        );
-    }
-    #[test]
-    fn test_irq_flag_cleared() {
-        let runner = BlarggTestRunner::new("roms/blargg/irq_flag_cleared.nes", 180);
-        let result = runner.run_test();
-        assert_eq!(
-            result,
-            BlarggTestResult::Pass,
-            "irq_flag_cleared.nes should pass"
-        );
-    }
-    #[test]
-    fn test_len_ctrs_enabled() {
-        let runner = BlarggTestRunner::new("roms/blargg/len_ctrs_enabled.nes", 180);
-        let result = runner.run_test();
-        assert_eq!(
-            result,
-            BlarggTestResult::Pass,
-            "len_ctrs_enabled.nes should pass"
-        );
-    }
-
-    #[test]
-    fn test_works_immediately() {
-        let runner = BlarggTestRunner::new("roms/blargg/works_immediately.nes", 180);
-        let result = runner.run_test();
-        assert_eq!(
-            result,
-            BlarggTestResult::Pass,
-            "works_immediately.nes should pass"
-        );
-    }
-
-    #[test]
-    fn test_1_len_ctr() {
-        let runner = BlarggTestRunner::new("roms/blargg/1-len_ctr.nes", 180);
-        let result = runner.run_test();
-        assert_eq!(result, BlarggTestResult::Pass, "1-len_ctr.nes should pass");
-    }
-
-    #[test]
-    fn test_2_len_table() {
-        let runner = BlarggTestRunner::new("roms/blargg/2-len_table.nes", 180);
-        let result = runner.run_test();
-        assert_eq!(
-            result,
-            BlarggTestResult::Pass,
-            "2-len_table.nes should pass"
-        );
-    }
-
-    #[test]
-    fn test_3_irq_flags() {
-        let runner = BlarggTestRunner::new("roms/blargg/3-irq_flag.nes", 180);
-        let result = runner.run_test();
-        assert_eq!(
-            result,
-            BlarggTestResult::Pass,
-            "3-irq_flags.nes should pass"
-        );
-    }
-
-    #[test]
-    fn test_4_jitter() {
-        let runner = BlarggTestRunner::new("roms/blargg/4-jitter.nes", 180);
-        let result = runner.run_test();
-        assert_eq!(result, BlarggTestResult::Pass, "4-jitter.nes should pass");
-    }
+    prg_ram_test!(test_4017_written, "roms/blargg/4017_written.nes");
+    prg_ram_test!(test_irq_flag_cleared, "roms/blargg/irq_flag_cleared.nes");
+    prg_ram_test!(test_len_ctrs_enabled, "roms/blargg/len_ctrs_enabled.nes");
+    prg_ram_test!(test_works_immediately, "roms/blargg/works_immediately.nes");
+    prg_ram_test!(test_1_len_ctr, "roms/blargg/1-len_ctr.nes");
+    prg_ram_test!(test_2_len_table, "roms/blargg/2-len_table.nes");
+    prg_ram_test!(test_3_irq_flags, "roms/blargg/3-irq_flag.nes");
+    prg_ram_test!(test_4_jitter, "roms/blargg/4-jitter.nes");
 }
