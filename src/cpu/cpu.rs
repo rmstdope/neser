@@ -598,6 +598,10 @@ impl Cpu {
                 let addr = base.wrapping_add(self.x as u16);
                 if Self::page_crossed(base, addr) {
                     cycles += 1;
+                    // Perform dummy read from base + X (without carry from low byte)
+                    let dummy_addr =
+                        (base & 0xFF00) | ((base.wrapping_add(self.x as u16)) & 0x00FF);
+                    self.memory.borrow().read(dummy_addr);
                 }
                 let value = self.memory.borrow().read(addr);
                 self.lda(value);
@@ -607,6 +611,10 @@ impl Cpu {
                 let addr = base.wrapping_add(self.y as u16);
                 if Self::page_crossed(base, addr) {
                     cycles += 1;
+                    // Perform dummy read from base + Y (without carry from low byte)
+                    let dummy_addr =
+                        (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
+                    self.memory.borrow().read(dummy_addr);
                 }
                 let value = self.memory.borrow().read(addr);
                 self.lda(value);
@@ -623,6 +631,10 @@ impl Cpu {
                 let addr = base.wrapping_add(self.y as u16);
                 if Self::page_crossed(base, addr) {
                     cycles += 1;
+                    // Perform dummy read from base + Y (without carry from low byte)
+                    let dummy_addr =
+                        (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
+                    self.memory.borrow().read(dummy_addr);
                 }
                 let value = self.memory.borrow().read(addr);
                 self.lda(value);
@@ -651,6 +663,9 @@ impl Cpu {
                 let addr = base.wrapping_add(self.y as u16);
                 if Self::page_crossed(base, addr) {
                     cycles += 1;
+                    // Perform dummy read from base + Y (without carry from low byte)
+                    let dummy_addr = (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
+                    self.memory.borrow().read(dummy_addr);
                 }
                 let value = self.memory.borrow().read(addr);
                 self.ldx(value);
@@ -679,6 +694,9 @@ impl Cpu {
                 let addr = base.wrapping_add(self.x as u16);
                 if Self::page_crossed(base, addr) {
                     cycles += 1;
+                    // Perform dummy read from base + X (without carry from low byte)
+                    let dummy_addr = (base & 0xFF00) | ((base.wrapping_add(self.x as u16)) & 0x00FF);
+                    self.memory.borrow().read(dummy_addr);
                 }
                 let value = self.memory.borrow().read(addr);
                 self.ldy(value);
@@ -922,7 +940,11 @@ impl Cpu {
                 self.memory.borrow_mut().write(addr, self.a);
             }
             STA_ABSX => {
-                let addr = self.read_word().wrapping_add(self.x as u16);
+                let base = self.read_word();
+                let addr = base.wrapping_add(self.x as u16);
+                // STA always performs a dummy read before the write
+                let dummy_addr = (base & 0xFF00) | ((base.wrapping_add(self.x as u16)) & 0x00FF);
+                self.memory.borrow().read(dummy_addr);
                 self.memory.borrow_mut().write(addr, self.a);
             }
             SXA_ABSY => {
@@ -942,7 +964,11 @@ impl Cpu {
                 self.memory.borrow_mut().write(addr, result);
             }
             STA_ABSY => {
-                let addr = self.read_word().wrapping_add(self.y as u16);
+                let base = self.read_word();
+                let addr = base.wrapping_add(self.y as u16);
+                // STA always performs a dummy read before the write
+                let dummy_addr = (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
+                self.memory.borrow().read(dummy_addr);
                 self.memory.borrow_mut().write(addr, self.a);
             }
             STA_INDX => {
@@ -952,7 +978,11 @@ impl Cpu {
             }
             STA_INDY => {
                 let ptr = self.read_byte();
-                let addr = self.read_word_from_zp(ptr).wrapping_add(self.y as u16);
+                let base = self.read_word_from_zp(ptr);
+                let addr = base.wrapping_add(self.y as u16);
+                // STA always performs a dummy read before the write
+                let dummy_addr = (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
+                self.memory.borrow().read(dummy_addr);
                 self.memory.borrow_mut().write(addr, self.a);
             }
             TXS => {

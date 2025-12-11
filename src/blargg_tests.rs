@@ -106,10 +106,12 @@ mod tests {
                         // Console output starts at $2081 and spans multiple rows
                         let text = nes.read_nametable_text(0x2081, 160);
 
-                        if text.contains("PASSED") {
+                        if text.to_uppercase().contains("PASSED") {
                             println!("Test passed (found 'PASSED' in console output)");
                             return BlarggTestResult::Pass;
-                        } else if text.contains("FAILED") || text.contains("Error") {
+                        } else if text.to_uppercase().contains("FAILED")
+                            || text.to_uppercase().contains("ERROR")
+                        {
                             // Try to extract error code from "FAILED: #N" pattern
                             println!("Test failed (found 'FAILED' or 'Error'in console output)");
                             println!("Console output: {}", text.trim());

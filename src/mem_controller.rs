@@ -126,7 +126,7 @@ impl MemController {
             0x2000..=0x3FFF => match addr & 0x2007 {
                 0x2000 => self.ppu.borrow_mut().write_control(value),
                 0x2001 => self.ppu.borrow_mut().write_mask(value),
-                0x2002 => panic!("Cannot write to read-only PPU register PPUSTATUS (0x2002)"),
+                0x2002 => { /* PPUSTATUS is read-only, ignore writes */ }
                 0x2003 => self.ppu.borrow_mut().write_oam_address(value),
                 0x2004 => self.ppu.borrow_mut().write_oam_data(value),
                 0x2005 => self.ppu.borrow_mut().write_scroll(value),
