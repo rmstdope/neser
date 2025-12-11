@@ -1,6 +1,6 @@
 use crate::apu;
 use crate::cartridge::Cartridge;
-use crate::controller::Joypad;
+use crate::input::Joypad;
 use crate::ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -282,7 +282,7 @@ impl MemController {
     }
 
     /// Set button state for a controller
-    pub fn set_button(&mut self, controller: u8, button: crate::controller::Button, pressed: bool) {
+    pub fn set_button(&mut self, controller: u8, button: crate::input::Button, pressed: bool) {
         match controller {
             1 => self.joypad1.borrow_mut().set_button(button, pressed),
             2 => self.joypad2.borrow_mut().set_button(button, pressed),

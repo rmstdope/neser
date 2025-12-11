@@ -107,16 +107,19 @@ impl Triangle {
     }
 
     /// Set the linear counter reload value
+    #[cfg(test)]
     pub fn set_linear_counter_reload(&mut self, value: u8) {
         self.linear_counter_reload_value = value;
     }
 
     /// Trigger the linear counter to reload from the reload value
+    #[cfg(test)]
     pub fn trigger_linear_counter_reload(&mut self) {
         self.linear_counter = self.linear_counter_reload_value;
     }
 
     /// Clock the linear counter (called by frame counter)
+    #[cfg(test)]
     pub fn clock_linear_counter(&mut self) {
         if self.linear_counter > 0 {
             self.linear_counter -= 1;
@@ -137,16 +140,19 @@ impl Triangle {
     }
 
     /// Set the linear counter reload flag
+    #[cfg(test)]
     pub fn set_linear_counter_reload_flag(&mut self) {
         self.linear_counter_reload_flag = true;
     }
 
     /// Check if the linear counter reload flag is set
+    #[cfg(test)]
     pub fn is_linear_counter_reload_flag_set(&self) -> bool {
         self.linear_counter_reload_flag
     }
 
     /// Set the control flag (also acts as length counter halt)
+    #[cfg(test)]
     pub fn set_control_flag(&mut self, value: bool) {
         self.control_flag = value;
     }
@@ -171,6 +177,7 @@ impl Triangle {
     }
 
     /// Get the current linear counter value
+    #[cfg(test)]
     pub fn get_linear_counter(&self) -> u8 {
         self.linear_counter
     }

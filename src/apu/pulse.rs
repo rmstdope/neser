@@ -99,6 +99,7 @@ impl Pulse {
     }
 
     /// Get current timer period (for testing)
+    #[cfg(test)]
     pub fn get_timer_period(&self) -> u16 {
         self.timer_period
     }
@@ -128,6 +129,7 @@ impl Pulse {
     }
 
     /// Write duty cycle mode (bits 7-6 of $4000)
+    #[cfg(test)]
     pub fn write_duty(&mut self, duty: u8) {
         self.duty_mode = duty & 0x03;
     }
@@ -197,11 +199,13 @@ impl Pulse {
     }
 
     /// Get the envelope start flag state
+    #[cfg(test)]
     pub fn get_envelope_start_flag(&self) -> bool {
         self.envelope_start_flag
     }
 
     /// Get the sweep reload flag state
+    #[cfg(test)]
     pub fn get_sweep_reload(&self) -> bool {
         self.sweep_reload
     }
@@ -253,6 +257,7 @@ impl Pulse {
     /// Check if sweep is muting the channel
     /// Mutes if: current period < 8 OR target period > $7FF
     /// Note: Muting check runs continuously, even when sweep is disabled
+    #[cfg(test)]
     pub fn is_sweep_muting(&self) -> bool {
         self.timer_period < 8 || self.get_sweep_target_period() > 0x7FF
     }

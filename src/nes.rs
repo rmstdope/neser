@@ -263,7 +263,7 @@ impl Nes {
     /// * `controller` - Controller number (1 or 2)
     /// * `button` - Which button to set
     /// * `pressed` - true if pressed, false if released
-    pub fn set_button(&mut self, controller: u8, button: crate::controller::Button, pressed: bool) {
+    pub fn set_button(&mut self, controller: u8, button: crate::input::Button, pressed: bool) {
         self.memory
             .borrow_mut()
             .set_button(controller, button, pressed);

@@ -1,5 +1,6 @@
-use super::mapper::{self, Mapper};
 use std::io;
+
+use crate::cartridge::Mapper;
 
 // Mirroring types for nametables
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +72,8 @@ impl Cartridge {
         let chr_rom = data[chr_rom_start..chr_rom_end].to_vec();
 
         // Create mapper instance
-        let mapper = mapper::create_mapper(mapper_number, prg_rom, chr_rom, mirroring)?;
+        let mapper =
+            crate::cartridge::mapper::create_mapper(mapper_number, prg_rom, chr_rom, mirroring)?;
 
         Ok(Self { mapper })
     }
@@ -89,7 +91,7 @@ impl Cartridge {
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        use super::mapper::NROMMapper;
+        use crate::cartridge::NROMMapper;
         let mapper = Box::new(NROMMapper::new(prg_rom, chr_rom, mirroring));
         Self { mapper }
     }

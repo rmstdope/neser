@@ -5,9 +5,9 @@ pub mod apu;
 pub mod audio;
 pub mod blargg_tests;
 pub mod cartridge;
-pub mod controller;
 pub mod cpu;
 pub mod eventloop;
+pub mod input;
 pub mod mem_controller;
 pub mod nes;
 pub mod ppu; // Modular PPU structure

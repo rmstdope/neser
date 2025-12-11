@@ -67,7 +67,6 @@ impl FrameCounter {
         value: u8,
         apu_cycle: u32,
     ) -> (bool, bool) {
-        let old_mode = self.mode;
         let new_mode = if (value & 0x80) != 0 {
             Mode::FiveStep
         } else {
@@ -104,16 +103,19 @@ impl FrameCounter {
     }
 
     /// Get the current mode
+    #[cfg(test)]
     pub fn get_mode(&self) -> bool {
         self.mode == Mode::FiveStep
     }
 
     /// Check if IRQ is inhibited
+    #[cfg(test)]
     pub fn is_irq_inhibited(&self) -> bool {
         self.irq_inhibit
     }
 
     /// Get the current cycle counter
+    #[cfg(test)]
     pub fn get_cycle_counter(&self) -> u32 {
         self.cycle_counter
     }

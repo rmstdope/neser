@@ -1,5 +1,5 @@
-use crate::mem_controller::MemController;
 use super::opcode::*;
+use crate::mem_controller::MemController;
 use std::cell::RefCell;
 use std::rc::Rc;
 

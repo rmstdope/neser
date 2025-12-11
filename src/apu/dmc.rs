@@ -209,6 +209,7 @@ impl Dmc {
 
     /// Simulate finishing a byte read (decrements bytes_remaining and handles loop/IRQ)
     /// In a real implementation, this would be called after reading from memory
+    #[cfg(test)]
     fn finish_byte(&mut self) {
         if self.bytes_remaining > 0 {
             self.bytes_remaining -= 1;

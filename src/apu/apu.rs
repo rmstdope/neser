@@ -85,7 +85,6 @@ pub struct Apu {
     apu_cycle: u32,
     // Power-on/reset state
     last_4017_write: u8,
-    power_on_delay: Option<u32>, // Countdown for power-on $4017 write (9-12 cycles)
 }
 
 impl Apu {
@@ -110,7 +109,6 @@ impl Apu {
             dmc_enabled: true,
             apu_cycle: 0,
             last_4017_write: 0x00,
-            power_on_delay: None,
         };
 
         // At power-on: $00 written to $4017, then 9-12 cycle delay before CPU execution
@@ -146,7 +144,6 @@ impl Apu {
             dmc_enabled: true,
             apu_cycle: 0,
             last_4017_write: 0x00,
-            power_on_delay: None,
         };
 
         // Initialize frame counter to 0 without power-on delay
@@ -185,10 +182,11 @@ impl Apu {
         // Delay based on CPU cycle parity: even = 4, odd = 3
         // This matches Mesen2's behavior
         let write_delay = if (cpu_cycle % 2) == 0 { 4 } else { 3 };
-        
+
         // Queue the delayed write
-        self.frame_counter.queue_delayed_write(self.last_4017_write, write_delay);
-        
+        self.frame_counter
+            .queue_delayed_write(self.last_4017_write, write_delay);
+
         // Clock the frame counter for the delay period plus additional cycles
         // Total should be 9-12 cycles to match documented behavior
         // With delay of 3-4, we clock 9 times total: delay cycles + additional cycles
@@ -202,6 +200,7 @@ impl Apu {
     }
 
     /// Get reference to pulse channel 1
+    #[cfg(test)]
     pub fn pulse1(&self) -> &Pulse {
         &self.pulse1
     }
@@ -212,6 +211,7 @@ impl Apu {
     }
 
     /// Get reference to pulse channel 2
+    #[cfg(test)]
     pub fn pulse2(&self) -> &Pulse {
         &self.pulse2
     }
@@ -222,11 +222,13 @@ impl Apu {
     }
 
     /// Get reference to frame counter
+    #[cfg(test)]
     pub fn frame_counter(&self) -> &FrameCounter {
         &self.frame_counter
     }
 
     /// Get mutable reference to frame counter
+    #[cfg(test)]
     pub fn frame_counter_mut(&mut self) -> &mut FrameCounter {
         &mut self.frame_counter
     }
@@ -260,6 +262,7 @@ impl Apu {
     }
 
     /// Get reference to triangle channel
+    #[cfg(test)]
     pub fn triangle(&self) -> &Triangle {
         &self.triangle
     }
@@ -270,6 +273,7 @@ impl Apu {
     }
 
     /// Get reference to noise channel
+    #[cfg(test)]
     pub fn noise(&self) -> &Noise {
         &self.noise
     }
@@ -280,6 +284,7 @@ impl Apu {
     }
 
     /// Get reference to DMC channel
+    #[cfg(test)]
     pub fn dmc(&self) -> &Dmc {
         &self.dmc
     }
@@ -486,6 +491,7 @@ impl Apu {
     ///
     /// # Arguments
     /// * `sample_rate` - Target sample rate in Hz (e.g., 44100.0, 48000.0)
+    #[cfg(test)]
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.cycles_per_sample = CPU_CLOCK_NTSC / sample_rate;
         self.sample_accumulator = 0.0;

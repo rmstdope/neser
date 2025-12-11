@@ -53,7 +53,6 @@ impl NesAudio {
             audio_subsystem.open_playback(None, &desired_spec, |_spec| AudioCallbackImpl {
                 sample_receiver: receiver,
                 volume: volume_clone,
-                prev_sample: 0.0,
             })?;
 
         Ok(Self {
@@ -108,8 +107,6 @@ impl NesAudio {
 struct AudioCallbackImpl {
     sample_receiver: Receiver<f32>,
     volume: Arc<AtomicU32>,
-    // Simple low-pass filter state (previous sample for smoothing)
-    prev_sample: f32,
 }
 
 impl AudioCallback for AudioCallbackImpl {
