@@ -1,7 +1,7 @@
 use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::joypad::Joypad;
-use crate::ppu_modules;
+use crate::ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -9,7 +9,7 @@ use std::rc::Rc;
 pub struct MemController {
     cpu_ram: Vec<u8>,
     cartridge: Option<Cartridge>,
-    ppu: Rc<RefCell<ppu_modules::PPUModular>>,
+    ppu: Rc<RefCell<ppu::Ppu>>,
     apu: Rc<RefCell<apu::Apu>>,
     oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
     joypad1: RefCell<Joypad>,
@@ -19,7 +19,7 @@ pub struct MemController {
 
 impl MemController {
     /// Create a new memory instance with 64KB of RAM initialized to 0
-    pub fn new(ppu: Rc<RefCell<ppu_modules::PPUModular>>, apu: Rc<RefCell<apu::Apu>>) -> Self {
+    pub fn new(ppu: Rc<RefCell<ppu::Ppu>>, apu: Rc<RefCell<apu::Apu>>) -> Self {
         Self {
             cpu_ram: vec![0; 0x10000],
             cartridge: None,
@@ -212,10 +212,10 @@ impl MemController {
 
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
-                if addr == 0x6000 {
-                    // For debugging, print writes to $6000
-                    println!("Debug: Write to $6000 PRG-RAM: {:02X}", value);
-                }
+                // if addr == 0x6000 {
+                //     // For debugging, print writes to $6000
+                //     println!("Debug: Write to $6000 PRG-RAM: {:02X}", value);
+                // }
                 if let Some(ref mut cartridge) = self.cartridge {
                     cartridge.mapper_mut().write_prg(addr, value);
                 } else {
@@ -296,9 +296,7 @@ mod tests {
     use super::*;
 
     fn create_test_memory() -> MemController {
-        let ppu = Rc::new(RefCell::new(ppu_modules::PPUModular::new(
-            crate::nes::TvSystem::Ntsc,
-        )));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(crate::nes::TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         MemController::new(ppu, apu)
     }

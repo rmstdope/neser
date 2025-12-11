@@ -8,7 +8,7 @@ mod mapper;
 mod mem_controller;
 mod nes;
 mod opcode;
-mod ppu_modules;
+mod ppu;
 mod screen_buffer;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -1920,7 +1920,7 @@ mod tests {
 
     // Test helper function to create a Memory instance with a PPU for testing
     fn create_test_memory() -> MemController {
-        let ppu = Rc::new(RefCell::new(crate::ppu_modules::PPUModular::new(
+        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(
             crate::nes::TvSystem::Ntsc,
         )));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));

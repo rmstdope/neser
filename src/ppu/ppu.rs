@@ -1,9 +1,9 @@
 use crate::cartridge::MirroringMode;
 use crate::nes::TvSystem;
-use crate::ppu_modules::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
+use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
 
 /// Refactored PPU using modular components
-pub struct PPUModular {
+pub struct Ppu {
     /// Timing and cycle management
     timing: Timing,
     /// Status flags (VBlank, sprite 0 hit, NMI)
@@ -22,7 +22,7 @@ pub struct PPUModular {
     prev_a12: bool,
 }
 
-impl PPUModular {
+impl Ppu {
     /// Create a new modular PPU instance
     pub fn new(tv_system: TvSystem) -> Self {
         Self {
@@ -588,14 +588,14 @@ mod tests {
 
     #[test]
     fn test_ppu_modular_new() {
-        let ppu = PPUModular::new(TvSystem::Ntsc);
+        let ppu = Ppu::new(TvSystem::Ntsc);
         assert_eq!(ppu.scanline(), 0);
         assert_eq!(ppu.pixel(), 0);
     }
 
     #[test]
     fn test_ppu_modular_reset() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.run_ppu_cycles(100);
         ppu.reset();
         assert_eq!(ppu.scanline(), 0);
@@ -604,14 +604,14 @@ mod tests {
 
     #[test]
     fn test_ppu_modular_write_control() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_control(0b1000_0000);
         // Control register should be set (verified internally)
     }
 
     #[test]
     fn test_ppu_modular_read_write_data() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_address(0x3F);
         ppu.write_address(0x00);
         ppu.write_data(0x42);
@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_ppu_modular_vblank() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         // Advance to VBlank (scanline 241, pixel 1)
         ppu.run_ppu_cycles(241 * 341 + 1);
 
@@ -646,7 +646,7 @@ mod tests {
     // PPU Data tests
     #[test]
     fn test_read_data_from_palette() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_address(0x3F);
         ppu.write_address(0x00);
         ppu.write_data(0x42);
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn test_read_data_increments_address() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_address(0x3F);
         ppu.write_address(0x00);
         ppu.write_data(0x10);
@@ -672,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_write_data_to_nametable() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_address(0x20);
         ppu.write_address(0x00);
         ppu.write_data(0x42);
@@ -686,7 +686,7 @@ mod tests {
     // OAM tests
     #[test]
     fn test_oam_write_and_read() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_oam_address(0x00);
         ppu.write_oam_data(0x42);
         ppu.write_oam_address(0x00);
@@ -695,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_oam_data_increments_address() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_oam_address(0x00);
         ppu.write_oam_data(0x11); // Byte 0: Y position
         ppu.write_oam_data(0x22); // Byte 1: Tile index
@@ -715,7 +715,7 @@ mod tests {
     #[test]
     fn test_oam_full_256_bytes() {
         // Test writing and reading all 256 bytes of OAM
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Write all 256 bytes with a pattern that accounts for attribute byte masking
         ppu.write_oam_address(0x00);
@@ -748,7 +748,7 @@ mod tests {
     fn test_oamaddr_cleared_during_sprite_loading() {
         // OAMADDR is automatically set to 0 during pixels 257-320 of visible and pre-render scanlines
         // This is critical hardware behavior that many test ROMs rely on
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Enable rendering (otherwise OAMADDR clearing doesn't happen)
         ppu.write_control(0x00);
@@ -793,7 +793,7 @@ mod tests {
     #[test]
     fn test_oamaddr_cleared_on_prerender_scanline() {
         // OAMADDR clearing also happens on the pre-render scanline
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Enable rendering
         ppu.write_mask(0x18);
@@ -813,7 +813,7 @@ mod tests {
     #[test]
     fn test_oamaddr_not_cleared_when_rendering_disabled() {
         // OAMADDR should NOT be cleared if rendering is disabled
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Rendering disabled (mask = 0)
         ppu.write_mask(0x00);
@@ -835,7 +835,7 @@ mod tests {
     fn test_oamaddr_corruption_at_rendering_start() {
         // If OAMADDR >= 8 when rendering starts (during pre-render sprite tile loading),
         // the 8 bytes at (OAMADDR & 0xF8) are copied to OAM[0..7]
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Enable rendering
         ppu.write_mask(0x18);
@@ -885,7 +885,7 @@ mod tests {
     #[test]
     fn test_no_oamaddr_corruption_when_less_than_8() {
         // If OAMADDR < 8 when rendering starts, no corruption occurs
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Enable rendering
         ppu.write_mask(0x18);
@@ -925,7 +925,7 @@ mod tests {
     #[test]
     fn test_oam_write_during_rendering_ignored() {
         // Writes to OAMDATA during rendering should NOT modify OAM
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Enable rendering
         ppu.write_mask(0x18);
@@ -955,7 +955,7 @@ mod tests {
     fn test_oam_write_during_rendering_increments_address() {
         // Writes to OAMDATA during rendering should still increment OAMADDR (glitchy increment)
         // The glitchy increment bumps only the high 6 bits (adds 4 instead of 1)
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Enable rendering
         ppu.write_mask(0x18);
@@ -988,7 +988,7 @@ mod tests {
     #[test]
     fn test_oam_write_outside_rendering_works() {
         // Writes to OAMDATA outside rendering should work normally
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Enable rendering
         ppu.write_mask(0x18);
@@ -1012,7 +1012,7 @@ mod tests {
     // Control register tests
     #[test]
     fn test_ppuctrl_nmi_enable() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_control(0x80); // Bit 7: NMI enable
         assert!(ppu.should_generate_nmi());
 
@@ -1023,7 +1023,7 @@ mod tests {
     // Address register tests
     #[test]
     fn test_address_write_sequence() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_address(0x20); // High byte
         ppu.write_address(0x00); // Low byte
         assert_eq!(ppu.v_register(), 0x2000);
@@ -1031,7 +1031,7 @@ mod tests {
 
     #[test]
     fn test_address_wraps_correctly() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_address(0xFF); // High byte
         ppu.write_address(0xFF); // Low byte
         // Address should be masked to 14 bits (0x3FFF)
@@ -1041,7 +1041,7 @@ mod tests {
     // Scroll register tests
     #[test]
     fn test_scroll_write_updates_registers() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_scroll(0xFF); // X scroll
         ppu.write_scroll(0xFF); // Y scroll
         // Verify write toggle was used
@@ -1051,7 +1051,7 @@ mod tests {
     // Timing tests
     #[test]
     fn test_scanline_increments() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.run_ppu_cycles(341); // One full scanline
         assert_eq!(ppu.scanline(), 1);
         assert_eq!(ppu.pixel(), 0);
@@ -1059,7 +1059,7 @@ mod tests {
 
     #[test]
     fn test_frame_wraps_at_262_scanlines() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.run_ppu_cycles(262 * 341); // One full frame
         assert_eq!(ppu.scanline(), 0);
         assert_eq!(ppu.pixel(), 0);
@@ -1068,7 +1068,7 @@ mod tests {
     // Status register tests
     #[test]
     fn test_status_read_clears_vblank() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.run_ppu_cycles(241 * 341 + 2); // Past vblank start
 
         let status1 = ppu.get_status();
@@ -1080,7 +1080,7 @@ mod tests {
 
     #[test]
     fn test_status_read_clears_write_toggle() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_scroll(0x00); // First write, sets w=true
         assert!(ppu.w_register());
 
@@ -1091,7 +1091,7 @@ mod tests {
     // CHR ROM and mirroring tests
     #[test]
     fn test_load_chr_rom() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         let chr_data = vec![0x42; 8192];
         ppu.load_chr_rom(chr_data);
         // CHR ROM should be loaded (tested via read operations)
@@ -1099,7 +1099,7 @@ mod tests {
 
     #[test]
     fn test_vertical_mirroring() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.set_mirroring(crate::cartridge::MirroringMode::Vertical);
 
         // Write to nametable 0
@@ -1116,7 +1116,7 @@ mod tests {
 
     #[test]
     fn test_horizontal_mirroring() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.set_mirroring(crate::cartridge::MirroringMode::Horizontal);
 
         // Write to nametable 0
@@ -1135,7 +1135,7 @@ mod tests {
     // NMI and frame complete tests
     #[test]
     fn test_nmi_polling() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_control(0x80); // Enable NMI
         ppu.run_ppu_cycles(241 * 341 + 1); // Enter VBlank
 
@@ -1145,7 +1145,7 @@ mod tests {
 
     #[test]
     fn test_frame_complete_polling() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.run_ppu_cycles(241 * 341 + 1); // Enter VBlank
 
         assert!(ppu.poll_frame_complete()); // Should return true once
@@ -1154,7 +1154,7 @@ mod tests {
 
     #[test]
     fn test_pixel_zero_no_panic() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         // Enable rendering
         ppu.write_mask(0x18); // Enable background and sprite rendering
 
@@ -1168,7 +1168,7 @@ mod tests {
 
     #[test]
     fn test_rendering_with_pixel_transitions() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         // Enable rendering
         ppu.write_mask(0x18);
 
@@ -1183,7 +1183,7 @@ mod tests {
 
     #[test]
     fn test_palette_access_with_correct_addressing() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Write to palette using full address
         ppu.write_address(0x3F);
@@ -1205,7 +1205,7 @@ mod tests {
 
     #[test]
     fn test_shift_register_load_timing() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         // Enable background rendering
         ppu.write_mask(0x08);
 
@@ -1233,7 +1233,7 @@ mod tests {
 
     #[test]
     fn test_scroll_register_updates_at_correct_pixels() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         // Enable rendering
         ppu.write_mask(0x18);
 
@@ -1265,7 +1265,7 @@ mod tests {
 
     #[test]
     fn test_pre_render_scanline_prefetch() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         // Enable rendering
         ppu.write_mask(0x18);
 
@@ -1292,7 +1292,7 @@ mod tests {
 
     #[test]
     fn test_rendering_enabled_background_fetch_cycles() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         // Enable background rendering
         ppu.write_mask(0x08);
 
@@ -1314,7 +1314,7 @@ mod tests {
 
     #[test]
     fn test_dummy_nametable_fetches() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         // Enable rendering
         ppu.write_mask(0x18);
 
@@ -1333,7 +1333,7 @@ mod tests {
 
     #[test]
     fn test_coarse_x_increment_timing() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
         // Enable rendering
         ppu.write_mask(0x18);
 
@@ -1361,7 +1361,7 @@ mod tests {
 
     #[test]
     fn test_a12_rising_edge_detection() {
-        let mut ppu = PPUModular::new(TvSystem::Ntsc);
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // A12 is bit 12 of address (0x1000)
         // Initially prev_a12 should be false
