@@ -4,7 +4,6 @@ mod cartridge;
 mod cpu;
 mod eventloop;
 mod joypad;
-mod mapper;
 mod mem_controller;
 mod nes;
 mod ppu;

@@ -1,4 +1,4 @@
-use crate::mapper::{self, Mapper};
+use super::mapper::{self, Mapper};
 use std::io;
 
 // Mirroring types for nametables
@@ -89,7 +89,7 @@ impl Cartridge {
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        use crate::mapper::NROMMapper;
+        use super::mapper::NROMMapper;
         let mapper = Box::new(NROMMapper::new(prg_rom, chr_rom, mirroring));
         Self { mapper }
     }
