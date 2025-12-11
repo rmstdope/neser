@@ -265,3 +265,343 @@ impl Mapper for MMC1Mapper {
         self.get_mirroring_mode()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cartridge::mapper::create_mapper;
+
+    #[test]
+    fn test_mmc1_shift_register_load() {
+        // MMC1 requires 5 sequential writes to load a register
+        // Each write shifts bit 0 into the shift register
+        // Writing with bit 7 set resets the shift register and control register
+
+        let prg_rom = vec![0; 128 * 1024]; // 128KB = 8 banks of 16KB
+        let chr_rom = vec![0; 32 * 1024]; // 32KB = 8 banks of 4KB
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Load value 0b00011 (3) into control register at $8000-$9FFF
+        // This requires 5 writes, each with bit 0 containing the next bit of the value
+        mapper.write_prg(0x8000, 0b00000001); // bit 0
+        mapper.write_prg(0x8000, 0b00000001); // bit 1
+        mapper.write_prg(0x8000, 0b00000000); // bit 2
+        mapper.write_prg(0x8000, 0b00000000); // bit 3
+        mapper.write_prg(0x8000, 0b00000000); // bit 4 (5th write triggers load)
+
+        // After loading 0b00011 into control register:
+        // Bits 0-1: Mirroring = 0b11 = Horizontal
+        // Bits 2-3: PRG ROM bank mode = 0b00
+        // Bit 4: CHR ROM bank mode = 0
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+    }
+
+    #[test]
+    fn test_mmc1_shift_register_reset() {
+        // Writing with bit 7 set should reset the shift register
+        let prg_rom = vec![0; 256 * 1024];
+        let chr_rom = vec![0; 128 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Start loading a value
+        mapper.write_prg(0x8000, 0b00000001);
+        mapper.write_prg(0x8000, 0b00000001);
+        mapper.write_prg(0x8000, 0b00000001);
+
+        // Reset the shift register (bit 7 set)
+        mapper.write_prg(0x8000, 0b10000000);
+
+        // Control register should be reset to default: PRG mode 3 (fix last bank)
+        // Start a new load with value 0b00000 (mirroring mode 0 = one screen)
+        for _ in 0..5 {
+            mapper.write_prg(0x8000, 0b00000000);
+        }
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+    }
+
+    #[test]
+    fn test_mmc1_control_register_mirroring() {
+        // Control register bits 0-1 control mirroring:
+        // 0: one-screen, lower bank
+        // 1: one-screen, upper bank
+        // 2: vertical
+        // 3: horizontal
+        let prg_rom = vec![0; 256 * 1024];
+        let chr_rom = vec![0; 128 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Load 0b00000 (mirroring = 0)
+        for _ in 0..5 {
+            mapper.write_prg(0x8000, 0b00000000);
+        }
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+
+        // Load 0b00001 (mirroring = 1)
+        mapper.write_prg(0x8000, 0b00000001);
+        for _ in 0..4 {
+            mapper.write_prg(0x8000, 0b00000000);
+        }
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+
+        // Load 0b00010 (mirroring = 2)
+        mapper.write_prg(0x8000, 0b00000000);
+        mapper.write_prg(0x8000, 0b00000001);
+        for _ in 0..3 {
+            mapper.write_prg(0x8000, 0b00000000);
+        }
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+
+        // Load 0b00011 (mirroring = 3)
+        mapper.write_prg(0x8000, 0b00000001);
+        mapper.write_prg(0x8000, 0b00000001);
+        for _ in 0..3 {
+            mapper.write_prg(0x8000, 0b00000000);
+        }
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+    }
+
+    #[test]
+    fn test_mmc1_prg_bank_mode_0_32kb() {
+        // PRG ROM bank mode 0 or 1: switch 32 KB at $8000, ignoring low bit of bank number
+        let mut prg_rom = vec![0; 256 * 1024]; // 256KB = 16 banks of 16KB = 8 banks of 32KB
+
+        // Fill each 32KB bank with a unique value
+        for bank in 0..8 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 10) as u8;
+            }
+        }
+
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Set control register to PRG mode 0 (bits 2-3 = 0b00) and mirroring
+        // Value: 0b00000 (mirroring=0, prg_mode=0, chr_mode=0)
+        for _ in 0..5 {
+            mapper.write_prg(0x8000, 0b00000000);
+        }
+
+        // Select 32KB bank 0 via PRG bank register (address $E000-$FFFF)
+        // Load value 0b00000 (bank 0)
+        for _ in 0..5 {
+            mapper.write_prg(0xE000, 0b00000000);
+        }
+        assert_eq!(mapper.read_prg(0x8000), 10);
+        assert_eq!(mapper.read_prg(0xC000), 10);
+
+        // Select 32KB bank 1 (write 0b00010 = 2, but low bit ignored, so bank 1)
+        mapper.write_prg(0xE000, 0b00000000);
+        mapper.write_prg(0xE000, 0b00000001);
+        for _ in 0..3 {
+            mapper.write_prg(0xE000, 0b00000000);
+        }
+        assert_eq!(mapper.read_prg(0x8000), 11);
+        assert_eq!(mapper.read_prg(0xC000), 11);
+    }
+
+    #[test]
+    fn test_mmc1_prg_bank_mode_2_fix_first() {
+        // PRG ROM bank mode 2: fix first bank at $8000 and switch 16 KB bank at $C000
+        let mut prg_rom = vec![0; 256 * 1024]; // 256KB = 16 banks of 16KB
+
+        // Fill each 16KB bank with a unique value
+        for bank in 0..16 {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 20) as u8;
+            }
+        }
+
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Set control register to PRG mode 2 (bits 2-3 = 0b10)
+        // Value: 0b01000 (mirroring=0, prg_mode=2, chr_mode=0)
+        mapper.write_prg(0x8000, 0b00000000);
+        mapper.write_prg(0x8000, 0b00000000);
+        mapper.write_prg(0x8000, 0b00000000);
+        mapper.write_prg(0x8000, 0b00000001);
+        mapper.write_prg(0x8000, 0b00000000);
+
+        // First bank at $8000 should be fixed to bank 0
+        assert_eq!(mapper.read_prg(0x8000), 20);
+
+        // Select bank 3 at $C000
+        mapper.write_prg(0xE000, 0b00000001);
+        mapper.write_prg(0xE000, 0b00000001);
+        for _ in 0..3 {
+            mapper.write_prg(0xE000, 0b00000000);
+        }
+        assert_eq!(mapper.read_prg(0x8000), 20); // First bank still fixed
+        assert_eq!(mapper.read_prg(0xC000), 23); // Bank 3 at $C000
+    }
+
+    #[test]
+    fn test_mmc1_prg_bank_mode_3_fix_last() {
+        // PRG ROM bank mode 3: fix last bank at $C000 and switch 16 KB bank at $8000
+        let mut prg_rom = vec![0; 256 * 1024]; // 256KB = 16 banks of 16KB
+
+        // Fill each 16KB bank with a unique value
+        for bank in 0..16 {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 30) as u8;
+            }
+        }
+
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Set control register to PRG mode 3 (bits 2-3 = 0b11) - this is the default
+        // Value: 0b01100 (mirroring=0, prg_mode=3, chr_mode=0)
+        mapper.write_prg(0x8000, 0b00000000);
+        mapper.write_prg(0x8000, 0b00000000);
+        mapper.write_prg(0x8000, 0b00000001);
+        mapper.write_prg(0x8000, 0b00000001);
+        mapper.write_prg(0x8000, 0b00000000);
+
+        // Last bank at $C000 should be fixed to bank 15 (last bank)
+        assert_eq!(mapper.read_prg(0xC000), 45); // Bank 15 = 30 + 15
+
+        // Select bank 2 at $8000
+        mapper.write_prg(0xE000, 0b00000000);
+        mapper.write_prg(0xE000, 0b00000001);
+        for _ in 0..3 {
+            mapper.write_prg(0xE000, 0b00000000);
+        }
+        assert_eq!(mapper.read_prg(0x8000), 32); // Bank 2 at $8000
+        assert_eq!(mapper.read_prg(0xC000), 45); // Last bank still fixed
+    }
+
+    #[test]
+    fn test_mmc1_chr_bank_mode_0_8kb() {
+        // CHR ROM bank mode 0: switch 8 KB at a time
+        let mut chr_rom = vec![0; 128 * 1024]; // 128KB = 16 banks of 8KB
+
+        // Fill each 8KB bank with a unique value
+        for bank in 0..16 {
+            let start = bank * 8 * 1024;
+            let end = start + 8 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = (bank + 40) as u8;
+            }
+        }
+
+        let prg_rom = vec![0; 32 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Set control register to CHR mode 0 (bit 4 = 0)
+        // Value: 0b00000 (mirroring=0, prg_mode=0, chr_mode=0)
+        for _ in 0..5 {
+            mapper.write_prg(0x8000, 0b00000000);
+        }
+
+        // Select 8KB bank 2 via CHR bank 0 register (address $A000-$BFFF)
+        // In 8KB mode, only CHR bank 0 matters, and low bit is ignored
+        // Load value 0b00100 (4, but low bit ignored = bank 2)
+        mapper.write_prg(0xA000, 0b00000000);
+        mapper.write_prg(0xA000, 0b00000000);
+        mapper.write_prg(0xA000, 0b00000001);
+        for _ in 0..2 {
+            mapper.write_prg(0xA000, 0b00000000);
+        }
+        assert_eq!(mapper.read_chr(0x0000), 42); // Bank 2
+        assert_eq!(mapper.read_chr(0x1000), 42); // Still bank 2
+    }
+
+    #[test]
+    fn test_mmc1_chr_bank_mode_1_4kb() {
+        // CHR ROM bank mode 1: switch two separate 4 KB banks
+        let mut chr_rom = vec![0; 128 * 1024]; // 128KB = 32 banks of 4KB
+
+        // Fill each 4KB bank with a unique value
+        for bank in 0..32 {
+            let start = bank * 4 * 1024;
+            let end = start + 4 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = (bank + 50) as u8;
+            }
+        }
+
+        let prg_rom = vec![0; 32 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Set control register to CHR mode 1 (bit 4 = 1)
+        // Value: 0b10000 (mirroring=0, prg_mode=0, chr_mode=1)
+        mapper.write_prg(0x8000, 0b00000000);
+        for _ in 0..3 {
+            mapper.write_prg(0x8000, 0b00000000);
+        }
+        mapper.write_prg(0x8000, 0b00000001);
+
+        // Select 4KB bank 3 at $0000 via CHR bank 0 register
+        mapper.write_prg(0xA000, 0b00000001);
+        mapper.write_prg(0xA000, 0b00000001);
+        for _ in 0..3 {
+            mapper.write_prg(0xA000, 0b00000000);
+        }
+        assert_eq!(mapper.read_chr(0x0000), 53); // Bank 3 at $0000
+
+        // Select 4KB bank 5 at $1000 via CHR bank 1 register
+        mapper.write_prg(0xC000, 0b00000001);
+        mapper.write_prg(0xC000, 0b00000000);
+        mapper.write_prg(0xC000, 0b00000001);
+        for _ in 0..2 {
+            mapper.write_prg(0xC000, 0b00000000);
+        }
+        assert_eq!(mapper.read_chr(0x0000), 53); // Bank 3 still at $0000
+        assert_eq!(mapper.read_chr(0x1000), 55); // Bank 5 at $1000
+    }
+
+    #[test]
+    fn test_mmc1_prg_ram_support() {
+        // MMC1 should support 8KB PRG-RAM at $6000-$7FFF
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Write to PRG-RAM
+        mapper.write_prg(0x6000, 0xAA);
+        mapper.write_prg(0x7000, 0xBB);
+        mapper.write_prg(0x7FFF, 0xCC);
+
+        // Read back
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+        assert_eq!(mapper.read_prg(0x7000), 0xBB);
+        assert_eq!(mapper.read_prg(0x7FFF), 0xCC);
+    }
+
+    #[test]
+    fn test_mmc1_chr_ram_when_no_chr_rom() {
+        // If CHR ROM is empty, MMC1 should use CHR-RAM
+        let prg_rom = vec![0; 128 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, vec![], MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Initially should read 0
+        assert_eq!(mapper.read_chr(0x0000), 0x00);
+
+        // Write to CHR-RAM
+        mapper.write_chr(0x0000, 0xAA);
+        mapper.write_chr(0x1000, 0xBB);
+        mapper.write_chr(0x1FFF, 0xCC);
+
+        // Read back the values
+        assert_eq!(mapper.read_chr(0x0000), 0xAA);
+        assert_eq!(mapper.read_chr(0x1000), 0xBB);
+        assert_eq!(mapper.read_chr(0x1FFF), 0xCC);
+    }
+}

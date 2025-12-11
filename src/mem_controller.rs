@@ -212,10 +212,10 @@ impl MemController {
 
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
-                // if addr == 0x6000 {
-                //     // For debugging, print writes to $6000
-                //     println!("Debug: Write to $6000 PRG-RAM: {:02X}", value);
-                // }
+                if addr == 0x6000 {
+                    // For debugging, print writes to $6000
+                    println!("Debug: Write to $6000 PRG-RAM: {:02X}", value);
+                }
                 if let Some(ref mut cartridge) = self.cartridge {
                     cartridge.mapper_mut().write_prg(addr, value);
                 } else {

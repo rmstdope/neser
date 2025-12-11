@@ -111,3 +111,176 @@ impl Mapper for AxROMMapper {
         MirroringMode::SingleScreen
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cartridge::mapper::create_mapper;
+
+    #[test]
+    fn test_axrom_256kb_prg_bank_switching() {
+        // AxROM with 256KB (8 banks × 32KB)
+        let mut prg_rom = vec![0; 256 * 1024];
+
+        // Fill each 32KB bank with its bank number
+        for bank in 0..8 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        let mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
+            .expect("Failed to create AxROM mapper");
+
+        // Default bank should be 0
+        assert_eq!(mapper.read_prg(0x8000), 0);
+        assert_eq!(mapper.read_prg(0xFFFF), 0);
+    }
+
+    #[test]
+    fn test_axrom_bank_select_bits_0_2() {
+        // Test that bits 0-2 select the bank (3-bit bank select = 8 banks max)
+        let mut prg_rom = vec![0; 256 * 1024];
+
+        for bank in 0..8 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 100) as u8;
+            }
+        }
+
+        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
+            .expect("Failed to create AxROM mapper");
+
+        // Write to $8000 with different bank values
+        mapper.write_prg(0x8000, 0x00); // Bank 0
+        assert_eq!(mapper.read_prg(0x8000), 100);
+
+        mapper.write_prg(0x8000, 0x01); // Bank 1
+        assert_eq!(mapper.read_prg(0x8000), 101);
+
+        mapper.write_prg(0x8000, 0x07); // Bank 7
+        assert_eq!(mapper.read_prg(0x8000), 107);
+
+        // Test that upper bits are ignored (only bits 0-2 matter for bank)
+        mapper.write_prg(0x8000, 0xF2); // 0b11110010 -> bank 2
+        assert_eq!(mapper.read_prg(0x8000), 102);
+    }
+
+    #[test]
+    fn test_axrom_chr_ram() {
+        // AxROM uses 8KB CHR-RAM (no CHR ROM)
+        let prg_rom = vec![0; 128 * 1024];
+        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
+            .expect("Failed to create AxROM mapper");
+
+        // Write to CHR-RAM
+        mapper.write_chr(0x0000, 0x42);
+        mapper.write_chr(0x1FFF, 0x99);
+
+        // Read back
+        assert_eq!(mapper.read_chr(0x0000), 0x42);
+        assert_eq!(mapper.read_chr(0x1FFF), 0x99);
+    }
+
+    #[test]
+    fn test_axrom_one_screen_mirroring_lower() {
+        // Bit 4 = 0 selects lower nametable (single-screen A)
+        let prg_rom = vec![0; 128 * 1024];
+        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
+            .expect("Failed to create AxROM mapper");
+
+        // Write with bit 4 = 0 (lower nametable)
+        mapper.write_prg(0x8000, 0x00); // Bits: 0000 0000
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+
+        // Write with bit 4 = 0 but other bits set
+        mapper.write_prg(0x8000, 0x07); // Bits: 0000 0111
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+    }
+
+    #[test]
+    fn test_axrom_one_screen_mirroring_upper() {
+        // Bit 4 = 1 selects upper nametable (single-screen B)
+        let prg_rom = vec![0; 128 * 1024];
+        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
+            .expect("Failed to create AxROM mapper");
+
+        // Write with bit 4 = 1 (upper nametable)
+        mapper.write_prg(0x8000, 0x10); // Bits: 0001 0000
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+    }
+
+    #[test]
+    fn test_axrom_128kb_rom_4_banks() {
+        // Test with 128KB ROM (4 banks × 32KB)
+        let mut prg_rom = vec![0; 128 * 1024];
+
+        for bank in 0..4 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 50) as u8;
+            }
+        }
+
+        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
+            .expect("Failed to create AxROM mapper");
+
+        // Select each of the 4 banks
+        for bank in 0..4 {
+            mapper.write_prg(0x8000, bank as u8);
+            assert_eq!(mapper.read_prg(0x8000), (bank + 50) as u8);
+        }
+
+        // Bank numbers wrap (bank 7 % 4 = 3)
+        mapper.write_prg(0x8000, 0x07);
+        assert_eq!(mapper.read_prg(0x8000), 53); // Bank 3
+    }
+
+    #[test]
+    fn test_axrom_register_write_any_address() {
+        // Writes anywhere in $8000-$FFFF should change the bank
+        let mut prg_rom = vec![0; 128 * 1024];
+
+        for bank in 0..4 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 10) as u8;
+            }
+        }
+
+        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
+            .expect("Failed to create AxROM mapper");
+
+        // Write to different addresses in PRG ROM space
+        mapper.write_prg(0x8000, 0x00);
+        assert_eq!(mapper.read_prg(0x8000), 10);
+
+        mapper.write_prg(0xC000, 0x01);
+        assert_eq!(mapper.read_prg(0x8000), 11);
+
+        mapper.write_prg(0xFFFF, 0x02);
+        assert_eq!(mapper.read_prg(0x8000), 12);
+    }
+
+    #[test]
+    fn test_axrom_prg_ram_support() {
+        // AxROM should support PRG-RAM at $6000-$7FFF
+        let prg_rom = vec![0; 128 * 1024];
+        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
+            .expect("Failed to create AxROM mapper");
+
+        // Write to PRG-RAM
+        mapper.write_prg(0x6000, 0xAA);
+        mapper.write_prg(0x7FFF, 0xBB);
+
+        // Read back
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+        assert_eq!(mapper.read_prg(0x7FFF), 0xBB);
+    }
+}
