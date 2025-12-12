@@ -31,6 +31,9 @@ pub struct Cpu {
     pub halted: bool,
     /// Total cycles executed since last reset
     pub total_cycles: u64,
+    /// IRQ inhibit delay flag - when true, skip IRQ check for one instruction
+    /// This implements the 1-instruction delay for CLI/SEI/PLP
+    irq_inhibit_delay: bool,
 }
 
 // Status register flags
@@ -60,6 +63,7 @@ impl Cpu {
             memory,
             halted: false,
             total_cycles: 0,
+            irq_inhibit_delay: false,
         }
     }
 
@@ -77,6 +81,7 @@ impl Cpu {
         self.p = 0x24;
         self.halted = false;
         self.total_cycles = 0;
+        self.irq_inhibit_delay = false;
         self.pc = self.read_reset_vector();
     }
 
@@ -94,12 +99,20 @@ impl Cpu {
             return 0;
         }
 
+        // Clear the IRQ inhibit delay from the previous instruction
+        // This implements the 1-instruction delay for CLI/SEI/PLP
+        let had_delay = self.irq_inhibit_delay;
+        self.irq_inhibit_delay = false;
+
         let opcode_byte = self.memory.borrow().read(self.pc);
         self.pc += 1;
 
         let opcode = super::opcode::lookup(opcode_byte)
             .unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
         let mut cycles = opcode.cycles;
+
+        // Track if this instruction modifies the I flag (for IRQ delay)
+        let mut sets_irq_delay = false;
 
         match opcode_byte {
             ADC_IMM => {
@@ -548,6 +561,7 @@ impl Cpu {
             }
             CLI => {
                 self.p &= !FLAG_INTERRUPT;
+                sets_irq_delay = true;
             }
             CLV => {
                 self.p &= !FLAG_OVERFLOW;
@@ -560,6 +574,7 @@ impl Cpu {
             }
             SEI => {
                 self.p |= FLAG_INTERRUPT;
+                sets_irq_delay = true;
             }
             INC_ZP => {
                 let addr = self.read_byte() as u16;
@@ -1088,6 +1103,7 @@ impl Cpu {
                 // PLP ignores B flag (bit 4) and unused bit (bit 5)
                 // Load bits 0-3 and 6-7 from stack, always set unused bit to 1, clear B flag
                 self.p = (value & !(FLAG_BREAK | FLAG_UNUSED)) | FLAG_UNUSED;
+                sets_irq_delay = true;
             }
             STX_ZP => {
                 let addr = self.read_byte() as u16;
@@ -1582,7 +1598,14 @@ impl Cpu {
             }
         }
 
+        // Set IRQ inhibit delay if this instruction modified the I flag
+        if sets_irq_delay {
+            self.irq_inhibit_delay = true;
+        }
+
         self.total_cycles += cycles as u64;
+        // Suppress unused variable warning for had_delay (used for tracking but not in logic)
+        let _ = had_delay;
         cycles
     }
 
@@ -2042,6 +2065,38 @@ impl Cpu {
         self.p |= FLAG_INTERRUPT;
 
         // NMI takes 7 CPU cycles
+        self.total_cycles += 7;
+        7
+    }
+
+    /// Check if IRQ should be allowed to trigger
+    /// Returns true if IRQ polling should happen (not during the 1-instruction delay)
+    pub fn should_poll_irq(&self) -> bool {
+        !self.irq_inhibit_delay
+    }
+
+    /// Trigger an IRQ (Interrupt Request)
+    /// Returns the number of cycles consumed (7 cycles)
+    /// IRQ is maskable - it will not trigger if the I flag is set
+    pub fn trigger_irq(&mut self) -> u8 {
+        // IRQ is maskable - check if interrupts are disabled
+        if self.p & FLAG_INTERRUPT != 0 {
+            return 0; // IRQ masked, no cycles consumed
+        }
+
+        // Push PC and P onto stack
+        self.push_word(self.pc);
+        let mut p_with_break = self.p & !FLAG_BREAK; // Clear Break flag
+        p_with_break |= FLAG_UNUSED; // Set unused flag
+        self.push_byte(p_with_break);
+
+        // Set PC to IRQ vector
+        self.pc = self.memory.borrow().read_u16(IRQ_VECTOR);
+
+        // Set Interrupt Disable flag
+        self.p |= FLAG_INTERRUPT;
+
+        // IRQ takes 7 CPU cycles
         self.total_cycles += 7;
         7
     }

@@ -341,6 +341,13 @@ impl Apu {
         }
     }
 
+    /// Poll the APU IRQ flag (frame counter or DMC IRQ)
+    /// Returns true if an IRQ should be triggered
+    /// This method does NOT clear the IRQ flags - they are cleared by reading $4015
+    pub fn poll_irq(&self) -> bool {
+        self.frame_counter.get_irq_flag() || self.dmc.get_irq_flag()
+    }
+
     /// Read the APU status register ($4015)
     /// Returns: IF-D NT21
     /// - Bit 7 (I): DMC interrupt flag

@@ -171,6 +171,18 @@ impl Nes {
             self.tick_apu(nmi_cycles);
         }
 
+        // Check for IRQ after executing instruction and ticking APU
+        // IRQ is maskable and checked after NMI
+        // Skip IRQ check if there's a 1-instruction delay (CLI/SEI/PLP)
+        if self.cpu.should_poll_irq() && self.apu.borrow().poll_irq() {
+            let irq_cycles = self.cpu.trigger_irq();
+            if irq_cycles > 0 {
+                // Only tick if IRQ was actually taken (not masked)
+                self.tick_ppu(irq_cycles);
+                self.tick_apu(irq_cycles);
+            }
+        }
+
         if self.ppu.borrow_mut().poll_frame_complete() {
             self.ready_to_render = true;
         }
