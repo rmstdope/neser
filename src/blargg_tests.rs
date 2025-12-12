@@ -104,7 +104,7 @@ mod tests {
                     if self.use_console_output {
                         // Console-based test: read nametable text
                         // Console output starts at $2081 and spans multiple rows
-                        let text = nes.read_nametable_text(0x2081, 32*32);
+                        let text = nes.read_nametable_text(0x2081, 32 * 32);
 
                         if text.to_uppercase().contains("PASSED") {
                             println!("Test passed (found 'PASSED' in console output)");
@@ -114,7 +114,12 @@ mod tests {
                         {
                             // Try to extract error code from "FAILED: #N" pattern
                             println!("Test failed (found 'FAILED' or 'Error'in console output)");
-                            println!("Console output: {}", text.trim());
+                            println!("Console output:");
+                            // Split into 32-character rows (nametable width)
+                            for line in text.as_bytes().chunks(32) {
+                                let line_str = String::from_utf8_lossy(line);
+                                println!("{}", line_str.trim_end());
+                            }
                             return BlarggTestResult::Fail(1);
                         }
                     } else {
