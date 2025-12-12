@@ -239,17 +239,12 @@ impl MemController {
 
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
-                if addr == 0x6000 {
-                    // For debugging, print writes to $6000
-                    println!("Debug: Write to $6000 PRG-RAM: {:02X}", value);
-                    if value == 0x09 {
-                        eprintln!("\n\n=== ERROR 9 DETECTED ===");
-                        eprintln!("Test failed with error 9: Some opcodes failed the test");
-                        eprintln!(
-                            "This means at least one RMW opcode didn't produce the expected dummy write behavior"
-                        );
-                        eprintln!("========================\n");
-                    }
+                if addr >= 0x6000 && addr <= 0x6003 {
+                    // For debugging, print writes to $6000-$6003 (test output area)
+                    println!(
+                        "Debug: Write to ${:04X} PRG-RAM: {:02X} ({})",
+                        addr, value, value as char
+                    );
                 }
                 if let Some(ref mut cartridge) = self.cartridge {
                     cartridge.mapper_mut().write_prg(addr, value);

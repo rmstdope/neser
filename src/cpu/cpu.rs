@@ -31,9 +31,11 @@ pub struct Cpu {
     pub halted: bool,
     /// Total cycles executed since last reset
     pub total_cycles: u64,
-    /// IRQ inhibit delay flag - when true, skip IRQ check for one instruction
-    /// This implements the 1-instruction delay for CLI/SEI/PLP
-    irq_inhibit_delay: bool,
+    /// Delayed I flag value for IRQ polling
+    /// When Some(value), use this value instead of the actual I flag for IRQ polling
+    /// This implements the 1-instruction delay for CLI/PLP
+    /// Set to Some(old_i_value) when CLI/PLP modifies I flag, cleared after next instruction
+    delayed_i_flag: Option<bool>,
 }
 
 // Status register flags
@@ -63,7 +65,7 @@ impl Cpu {
             memory,
             halted: false,
             total_cycles: 0,
-            irq_inhibit_delay: false,
+            delayed_i_flag: None,
         }
     }
 
@@ -81,7 +83,7 @@ impl Cpu {
         self.p = 0x24;
         self.halted = false;
         self.total_cycles = 0;
-        self.irq_inhibit_delay = false;
+        self.delayed_i_flag = None;
         self.pc = self.read_reset_vector();
     }
 
@@ -99,10 +101,8 @@ impl Cpu {
             return 0;
         }
 
-        // Clear the IRQ inhibit delay from the previous instruction
-        // This implements the 1-instruction delay for CLI/SEI/PLP
-        let had_delay = self.irq_inhibit_delay;
-        self.irq_inhibit_delay = false;
+        // Track if we're setting a new delay this instruction
+        let mut new_delayed_i_flag: Option<bool> = None;
 
         let opcode_byte = self.memory.borrow().read(self.pc);
         self.pc += 1;
@@ -110,9 +110,6 @@ impl Cpu {
         let opcode = super::opcode::lookup(opcode_byte)
             .unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
         let mut cycles = opcode.cycles;
-
-        // Track if this instruction modifies the I flag (for IRQ delay)
-        let mut sets_irq_delay = false;
 
         match opcode_byte {
             ADC_IMM => {
@@ -560,8 +557,11 @@ impl Cpu {
                 self.p &= !FLAG_DECIMAL;
             }
             CLI => {
+                // Save the old I flag value before clearing it
+                let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
                 self.p &= !FLAG_INTERRUPT;
-                sets_irq_delay = true;
+                // Set delay: use the OLD value (true = interrupts inhibited) for next instruction
+                new_delayed_i_flag = Some(old_i_flag);
             }
             CLV => {
                 self.p &= !FLAG_OVERFLOW;
@@ -573,8 +573,11 @@ impl Cpu {
                 self.p |= FLAG_DECIMAL;
             }
             SEI => {
+                // Save the old I flag value before setting it
+                let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
                 self.p |= FLAG_INTERRUPT;
-                sets_irq_delay = true;
+                // SEI also delays - use the OLD value for next instruction's IRQ polling
+                new_delayed_i_flag = Some(old_i_flag);
             }
             INC_ZP => {
                 let addr = self.read_byte() as u16;
@@ -961,6 +964,8 @@ impl Cpu {
                 // Load bits 0-3 and 6-7 from stack, always set unused bit to 1, clear B flag
                 self.p = (value & !(FLAG_BREAK | FLAG_UNUSED)) | FLAG_UNUSED;
                 self.pc = self.pop_word();
+                // RTI affects IRQ inhibition immediately - clear any pending delay
+                self.delayed_i_flag = None;
             }
             RTS => {
                 // Dummy read of next byte (after RTS opcode) before popping return address
@@ -1102,8 +1107,13 @@ impl Cpu {
                 let value = self.pop_byte();
                 // PLP ignores B flag (bit 4) and unused bit (bit 5)
                 // Load bits 0-3 and 6-7 from stack, always set unused bit to 1, clear B flag
+                let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
                 self.p = (value & !(FLAG_BREAK | FLAG_UNUSED)) | FLAG_UNUSED;
-                sets_irq_delay = true;
+                let new_i_flag = (self.p & FLAG_INTERRUPT) != 0;
+                // Delay if I flag changed: use OLD value for IRQ polling
+                if old_i_flag != new_i_flag {
+                    new_delayed_i_flag = Some(old_i_flag);
+                }
             }
             STX_ZP => {
                 let addr = self.read_byte() as u16;
@@ -1598,14 +1608,13 @@ impl Cpu {
             }
         }
 
-        // Set IRQ inhibit delay if this instruction modified the I flag
-        if sets_irq_delay {
-            self.irq_inhibit_delay = true;
-        }
+        // Update the delayed I flag:
+        // - If we just set a new delay, use that
+        // - Otherwise, clear any existing delay (it's been consumed by this instruction)
+        // - Exception: RTI clears it immediately during execution
+        self.delayed_i_flag = new_delayed_i_flag;
 
         self.total_cycles += cycles as u64;
-        // Suppress unused variable warning for had_delay (used for tracking but not in logic)
-        let _ = had_delay;
         cycles
     }
 
@@ -2069,18 +2078,25 @@ impl Cpu {
         7
     }
 
+    /// Get the effective I flag value for IRQ polling
+    /// If there's a delayed I flag value, use that; otherwise use the current I flag
+    fn get_effective_i_flag(&self) -> bool {
+        self.delayed_i_flag
+            .unwrap_or_else(|| (self.p & FLAG_INTERRUPT) != 0)
+    }
+
     /// Check if IRQ should be allowed to trigger
-    /// Returns true if IRQ polling should happen (not during the 1-instruction delay)
+    /// Returns true if the effective I flag (considering delays) allows IRQs
     pub fn should_poll_irq(&self) -> bool {
-        !self.irq_inhibit_delay
+        !self.get_effective_i_flag()
     }
 
     /// Trigger an IRQ (Interrupt Request)
     /// Returns the number of cycles consumed (7 cycles)
-    /// IRQ is maskable - it will not trigger if the I flag is set
+    /// IRQ is maskable - it will not trigger if the effective I flag is set
     pub fn trigger_irq(&mut self) -> u8 {
-        // IRQ is maskable - check if interrupts are disabled
-        if self.p & FLAG_INTERRUPT != 0 {
+        // IRQ is maskable - check if interrupts are disabled using EFFECTIVE I flag
+        if self.get_effective_i_flag() {
             return 0; // IRQ masked, no cycles consumed
         }
 

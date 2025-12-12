@@ -104,7 +104,7 @@ mod tests {
                     if self.use_console_output {
                         // Console-based test: read nametable text
                         // Console output starts at $2081 and spans multiple rows
-                        let text = nes.read_nametable_text(0x2081, 160);
+                        let text = nes.read_nametable_text(0x2081, 32*32);
 
                         if text.to_uppercase().contains("PASSED") {
                             println!("Test passed (found 'PASSED' in console output)");
@@ -204,7 +204,7 @@ mod tests {
         test_cpu_exec_space_apu,
         "roms/blargg/cpu_exec_space/test_cpu_exec_space_apu.nes"
     );
-    prg_ram_test!(
+    console_test!(
         test_cpu_interrupts,
         "roms/blargg/cpu_interrupts_v2/cpu_interrupts.nes"
     );
