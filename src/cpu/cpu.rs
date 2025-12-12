@@ -352,6 +352,8 @@ impl Cpu {
             }
             BRK => {
                 // BRK is a software interrupt instruction
+                // Dummy read of next byte (padding byte) - all one-byte opcodes do this
+                let _ = self.memory.borrow().read(self.pc);
                 // Push PC+2 to stack (PC has already been incremented past BRK opcode,
                 // so we push PC+1 which points to the byte after BRK's padding byte)
                 let return_addr = self.pc.wrapping_add(1);
@@ -937,6 +939,8 @@ impl Cpu {
                 self.memory.borrow_mut().write(addr, result, false);
             }
             RTI => {
+                // Dummy read of next byte (after RTI opcode) before popping from stack
+                let _ = self.memory.borrow().read(self.pc);
                 let value = self.pop_byte();
                 // RTI behaves like PLP - ignores B flag and unused bit
                 // Load bits 0-3 and 6-7 from stack, always set unused bit to 1, clear B flag
@@ -944,6 +948,8 @@ impl Cpu {
                 self.pc = self.pop_word();
             }
             RTS => {
+                // Dummy read of next byte (after RTS opcode) before popping return address
+                let _ = self.memory.borrow().read(self.pc);
                 self.pc = self.pop_word();
                 self.pc = self.pc.wrapping_add(1);
             }

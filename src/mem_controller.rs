@@ -75,8 +75,21 @@ impl MemController {
             0x4000..=0x4013 => *self.open_bus.borrow(), // APU write-only registers
             0x4014 => *self.open_bus.borrow(),          // OAM DMA (write-only)
             0x4015 => self.apu.borrow_mut().read_status(*self.open_bus.borrow()),
-            0x4016 => self.joypad1.borrow_mut().read(),
-            0x4017 => self.joypad2.borrow_mut().read(),
+            0x4016 => {
+                // Joypad 1: bit 0 = button state, bits 1-7 = open bus
+                let button_state = self.joypad1.borrow_mut().read();
+                let open_bus = *self.open_bus.borrow();
+                (open_bus & 0xFE) | button_state
+            }
+            0x4017 => {
+                // Joypad 2: bit 0 = button state, bits 1-7 = open bus
+                let button_state = self.joypad2.borrow_mut().read();
+                let open_bus = *self.open_bus.borrow();
+                (open_bus & 0xFE) | button_state
+            }
+
+            // Unallocated I/O space ($4018-$40FF) returns open bus
+            0x4018..=0x40FF => *self.open_bus.borrow(),
 
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
@@ -217,6 +230,12 @@ impl MemController {
                     );
                 }
             },
+
+            // Unallocated I/O space ($4018-$40FF)
+            // Writes are ignored (no side effects)
+            0x4018..=0x40FF => {
+                // Silently ignore writes to unallocated I/O space
+            }
 
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {

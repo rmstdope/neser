@@ -69,7 +69,7 @@ mod tests {
                 Ok(data) => data,
                 Err(e) => {
                     eprintln!("Failed to load ROM {}: {}", self.rom_path, e);
-                    return BlarggTestResult::Timeout;
+                    return BlarggTestResult::Fail(0x80 as u8);
                 }
             };
 
@@ -77,7 +77,7 @@ mod tests {
                 Ok(cart) => cart,
                 Err(e) => {
                     eprintln!("Failed to parse ROM {}: {}", self.rom_path, e);
-                    return BlarggTestResult::Timeout;
+                    return BlarggTestResult::Fail(0x81 as u8);
                 }
             };
 
@@ -195,6 +195,18 @@ mod tests {
     prg_ram_test!(
         test_cpu_dummy_writes_ppumem,
         "roms/blargg/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes"
+    );
+    prg_ram_test!(
+        test_cpu_exec_space_ppuio,
+        "roms/blargg/cpu_exec_space/test_cpu_exec_space_ppuio.nes"
+    );
+    prg_ram_test!(
+        test_cpu_exec_space_apu,
+        "roms/blargg/cpu_exec_space/test_cpu_exec_space_apu.nes"
+    );
+    prg_ram_test!(
+        test_cpu_interrupts,
+        "roms/blargg/cpu_interrupts_v2/cpu_interrupts.nes"
     );
 
     // OAM and APU tests
