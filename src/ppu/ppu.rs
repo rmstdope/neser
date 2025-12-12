@@ -9,7 +9,8 @@ pub struct Ppu {
     /// Status flags (VBlank, sprite 0 hit, NMI)
     status: Status,
     /// Register management (PPUCTRL, PPUMASK, Loopy registers)
-    registers: Registers,
+    /// Public to allow MemController to access I/O bus latch
+    pub registers: Registers,
     /// Memory management (VRAM, palette, CHR ROM)
     memory: Memory,
     /// Background rendering
@@ -345,29 +346,36 @@ impl Ppu {
     /// Write to control register ($2000)
     pub fn write_control(&mut self, value: u8) {
         self.registers.write_control(value);
+        self.registers.set_io_bus(value); // Update I/O bus
     }
 
     /// Write to mask register ($2001)
     pub fn write_mask(&mut self, value: u8) {
         self.registers.write_mask(value);
+        self.registers.set_io_bus(value); // Update I/O bus
     }
 
     /// Read status register ($2002)
     pub fn get_status(&mut self) -> u8 {
         let status = self.status.read_status();
         self.registers.clear_w(); // Reading status clears write toggle
-        // println!("Debug: PPU Status Read: {:02X}", status);
-        status
+        // Update I/O bus: status bits go to bits 5-7, bits 0-4 remain from previous value
+        let io_bus = self.registers.io_bus();
+        let new_io_bus = (status & 0xE0) | (io_bus & 0x1F);
+        self.registers.set_io_bus(new_io_bus);
+        new_io_bus
     }
 
     /// Write to scroll register ($2005)
-    pub fn write_scroll(&mut self, value: u8) {
-        self.registers.write_scroll(value);
+    pub fn write_scroll(&mut self, value: u8, is_dummy_write: bool) {
+        self.registers.write_scroll(value, is_dummy_write);
+        self.registers.set_io_bus(value); // Update I/O bus
     }
 
     /// Write to address register ($2006)
-    pub fn write_address(&mut self, value: u8) {
-        self.registers.write_address(value);
+    pub fn write_address(&mut self, value: u8, is_dummy_write: bool) {
+        self.registers.write_address(value, is_dummy_write);
+        self.registers.set_io_bus(value); // Update I/O bus
     }
 
     /// Read from data register ($2007)
@@ -405,11 +413,13 @@ impl Ppu {
         } else {
             self.registers.increment_vram_address();
         }
+        self.registers.set_io_bus(result); // Update I/O bus with value read
         result
     }
 
     /// Write to data register ($2007)
     pub fn write_data(&mut self, value: u8) {
+        self.registers.set_io_bus(value); // Update I/O bus
         let addr = self.registers.v();
         match addr {
             0x0000..=0x1FFF => {
@@ -467,10 +477,12 @@ impl Ppu {
     /// Write to OAM address register ($2003)
     pub fn write_oam_address(&mut self, value: u8) {
         self.registers.oam_address = value;
+        self.registers.set_io_bus(value); // Update I/O bus
     }
 
     /// Write to OAM data register ($2004)
     pub fn write_oam_data(&mut self, value: u8) {
+        self.registers.set_io_bus(value); // Update I/O bus
         let is_rendering = self.is_actively_rendering();
 
         // During rendering, writes to OAMDATA are ignored (but address still increments)
@@ -488,8 +500,10 @@ impl Ppu {
     }
 
     /// Read from OAM data register ($2004)
-    pub fn read_oam_data(&self) -> u8 {
-        self.sprites.read_oam(self.registers.oam_address)
+    pub fn read_oam_data(&mut self) -> u8 {
+        let value = self.sprites.read_oam(self.registers.oam_address);
+        self.registers.set_io_bus(value); // Update I/O bus
+        value
     }
 
     /// Get reference to screen buffer
@@ -621,12 +635,12 @@ mod tests {
     #[test]
     fn test_ppu_modular_read_write_data() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
-        ppu.write_address(0x3F);
-        ppu.write_address(0x00);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
         ppu.write_data(0x42);
 
-        ppu.write_address(0x3F);
-        ppu.write_address(0x00);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
         assert_eq!(ppu.read_data(), 0x42);
     }
 
@@ -656,25 +670,25 @@ mod tests {
     #[test]
     fn test_read_data_from_palette() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
-        ppu.write_address(0x3F);
-        ppu.write_address(0x00);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
         ppu.write_data(0x42);
 
-        ppu.write_address(0x3F);
-        ppu.write_address(0x00);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
         assert_eq!(ppu.read_data(), 0x42);
     }
 
     #[test]
     fn test_read_data_increments_address() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
-        ppu.write_address(0x3F);
-        ppu.write_address(0x00);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
         ppu.write_data(0x10);
         ppu.write_data(0x20);
 
-        ppu.write_address(0x3F);
-        ppu.write_address(0x00);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
         assert_eq!(ppu.read_data(), 0x10);
         assert_eq!(ppu.read_data(), 0x20);
     }
@@ -682,12 +696,12 @@ mod tests {
     #[test]
     fn test_write_data_to_nametable() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
-        ppu.write_address(0x20);
-        ppu.write_address(0x00);
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
         ppu.write_data(0x42);
 
-        ppu.write_address(0x20);
-        ppu.write_address(0x00);
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
         let _ = ppu.read_data(); // Dummy read for buffer
         assert_eq!(ppu.read_data(), 0x42);
     }
@@ -1033,16 +1047,16 @@ mod tests {
     #[test]
     fn test_address_write_sequence() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
-        ppu.write_address(0x20); // High byte
-        ppu.write_address(0x00); // Low byte
+        ppu.write_address(0x20, false); // High byte
+        ppu.write_address(0x00, false); // Low byte
         assert_eq!(ppu.v_register(), 0x2000);
     }
 
     #[test]
     fn test_address_wraps_correctly() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
-        ppu.write_address(0xFF); // High byte
-        ppu.write_address(0xFF); // Low byte
+        ppu.write_address(0xFF, false); // High byte
+        ppu.write_address(0xFF, false); // Low byte
         // Address should be masked to 14 bits (0x3FFF)
         assert_eq!(ppu.v_register() & 0x3FFF, 0x3FFF);
     }
@@ -1051,8 +1065,8 @@ mod tests {
     #[test]
     fn test_scroll_write_updates_registers() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
-        ppu.write_scroll(0xFF); // X scroll
-        ppu.write_scroll(0xFF); // Y scroll
+        ppu.write_scroll(0xFF, false); // X scroll
+        ppu.write_scroll(0xFF, false); // Y scroll
         // Verify write toggle was used
         assert!(!ppu.w_register()); // Should be false after two writes
     }
@@ -1090,7 +1104,7 @@ mod tests {
     #[test]
     fn test_status_read_clears_write_toggle() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
-        ppu.write_scroll(0x00); // First write, sets w=true
+        ppu.write_scroll(0x00, false); // First write, sets w=true
         assert!(ppu.w_register());
 
         ppu.get_status(); // Should clear w
@@ -1112,13 +1126,13 @@ mod tests {
         ppu.set_mirroring(crate::cartridge::MirroringMode::Vertical);
 
         // Write to nametable 0
-        ppu.write_address(0x20);
-        ppu.write_address(0x00);
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
         ppu.write_data(0x42);
 
         // Read from nametable 2 (should mirror to 0)
-        ppu.write_address(0x28);
-        ppu.write_address(0x00);
+        ppu.write_address(0x28, false);
+        ppu.write_address(0x00, false);
         let _ = ppu.read_data(); // Dummy read
         assert_eq!(ppu.read_data(), 0x42);
     }
@@ -1129,13 +1143,13 @@ mod tests {
         ppu.set_mirroring(crate::cartridge::MirroringMode::Horizontal);
 
         // Write to nametable 0
-        ppu.write_address(0x20);
-        ppu.write_address(0x00);
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
         ppu.write_data(0x55);
 
         // Read from nametable 1 (should mirror to 0 in horizontal)
-        ppu.write_address(0x24);
-        ppu.write_address(0x00);
+        ppu.write_address(0x24, false);
+        ppu.write_address(0x00, false);
         let _ = ppu.read_data(); // Dummy read
         let val = ppu.read_data();
         assert_eq!(val, 0x55); // Should be mirrored
@@ -1195,13 +1209,13 @@ mod tests {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
 
         // Write to palette using full address
-        ppu.write_address(0x3F);
-        ppu.write_address(0x00);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
         ppu.write_data(0x30); // Write to backdrop color
 
         // Write to another palette entry
-        ppu.write_address(0x3F);
-        ppu.write_address(0x01);
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x01, false);
         ppu.write_data(0x16);
 
         // Enable rendering and run one scanline
@@ -1219,8 +1233,8 @@ mod tests {
         ppu.write_mask(0x08);
 
         // Set up a known scroll position
-        ppu.write_scroll(0);
-        ppu.write_scroll(0);
+        ppu.write_scroll(0, false);
+        ppu.write_scroll(0, false);
 
         // Run to pixel 8 of scanline 0 (first shift register load)
         ppu.run_ppu_cycles(8);
@@ -1248,8 +1262,8 @@ mod tests {
 
         // Set up scroll and nametable
         ppu.write_control(0x00); // Nametable at $2000
-        ppu.write_scroll(0);
-        ppu.write_scroll(0);
+        ppu.write_scroll(0, false);
+        ppu.write_scroll(0, false);
 
         let v_before_256 = ppu.v_register();
 
@@ -1347,8 +1361,8 @@ mod tests {
         ppu.write_mask(0x18);
 
         // Set up scroll
-        ppu.write_scroll(0);
-        ppu.write_scroll(0);
+        ppu.write_scroll(0, false);
+        ppu.write_scroll(0, false);
 
         let v_initial = ppu.v_register();
 

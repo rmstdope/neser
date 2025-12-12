@@ -617,7 +617,7 @@ mod tests {
     fn test_ntsc_ppu_runs_3x_cpu_cycles() {
         let mut nes = Nes::new(TvSystem::Ntsc);
         // Write NOP to RAM and set PC directly (skip reset to avoid ROM requirement)
-        nes.memory.borrow_mut().write(0x0000, 0xEA); // NOP in RAM
+        nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
         nes.cpu.pc = 0x0000; // Set PC to RAM address
 
         // NOP takes 2 CPU cycles, so PPU should run 6 cycles (3x ratio for NTSC)
@@ -629,7 +629,7 @@ mod tests {
     fn test_pal_ppu_runs_3_2x_cpu_cycles() {
         let mut nes = Nes::new(TvSystem::Pal);
         // Write NOP to RAM and set PC directly
-        nes.memory.borrow_mut().write(0x0000, 0xEA); // NOP in RAM
+        nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
         nes.cpu.pc = 0x0000;
 
         // NOP takes 2 CPU cycles, PAL ratio is 3.2, so 2 * 3.2 = 6.4
@@ -643,7 +643,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Pal);
         // Write NOP instructions to RAM
         for i in 0..10 {
-            nes.memory.borrow_mut().write(i, 0xEA); // NOP
+            nes.memory.borrow_mut().write(i, 0xEA, false); // NOP
         }
         nes.cpu.pc = 0x0000;
 
@@ -660,7 +660,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         // Write NOP instructions to RAM
         for i in 0..3 {
-            nes.memory.borrow_mut().write(i, 0xEA); // NOP (2 cycles each)
+            nes.memory.borrow_mut().write(i, 0xEA, false); // NOP (2 cycles each)
         }
         nes.cpu.pc = 0x0000;
 
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn test_ppu_cycles_reset_on_nes_reset() {
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory.borrow_mut().write(0x0000, 0xEA); // NOP
+        nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP
         nes.cpu.pc = 0x0000;
 
         nes.run_cpu_tick();
@@ -756,7 +756,7 @@ mod tests {
         assert_eq!(cycles_before % 2, 0, "Should start on even cycle");
 
         // Trigger OAM DMA by writing to $4014
-        nes.memory.borrow_mut().write(0x4014, 0x02);
+        nes.memory.borrow_mut().write(0x4014, 0x02, false);
 
         // Run one CPU tick which should process the DMA
         nes.run_cpu_tick();
@@ -785,7 +785,7 @@ mod tests {
         assert_eq!(cycles_before % 2, 1, "Should start on odd cycle");
 
         // Trigger OAM DMA by writing to $4014
-        nes.memory.borrow_mut().write(0x4014, 0x02);
+        nes.memory.borrow_mut().write(0x4014, 0x02, false);
 
         // Run one CPU tick which should process the DMA
         nes.run_cpu_tick();
@@ -809,17 +809,17 @@ mod tests {
 
         // Set up test data in RAM at page $02 ($0200-$02FF)
         for i in 0..256u16 {
-            nes.memory.borrow_mut().write(0x0200 + i, (i & 0xFF) as u8);
+            nes.memory.borrow_mut().write(0x0200 + i, (i & 0xFF) as u8, false);
         }
 
         // Trigger OAM DMA from page $02
-        nes.memory.borrow_mut().write(0x4014, 0x02);
+        nes.memory.borrow_mut().write(0x4014, 0x02, false);
         nes.run_cpu_tick();
 
         // Verify all 256 bytes were copied to OAM by reading through $2004
         for i in 0..256 {
             // Set OAM address via $2003
-            nes.memory.borrow_mut().write(0x2003, i as u8);
+            nes.memory.borrow_mut().write(0x2003, i as u8, false);
             // Read OAM data via $2004
             let oam_byte = nes.memory.borrow().read(0x2004);
             let expected = if (i & 0x03) == 2 {
@@ -847,17 +847,17 @@ mod tests {
         // Set up distinct data in different pages
         // Page $03: $0300-$03FF
         for i in 0..256u16 {
-            nes.memory.borrow_mut().write(0x0300 + i, 0xAA); // Marker value
+            nes.memory.borrow_mut().write(0x0300 + i, 0xAA, false); // Marker value
         }
 
         // Trigger OAM DMA from page $03
-        nes.memory.borrow_mut().write(0x4014, 0x03);
+        nes.memory.borrow_mut().write(0x4014, 0x03, false);
         nes.run_cpu_tick();
 
         // Verify bytes came from page $03 by reading through $2004
         for i in 0..256 {
             // Set OAM address via $2003
-            nes.memory.borrow_mut().write(0x2003, i as u8);
+            nes.memory.borrow_mut().write(0x2003, i as u8, false);
             // Read OAM data via $2004
             let oam_byte = nes.memory.borrow().read(0x2004);
             let expected = if (i & 0x03) == 2 {
@@ -889,7 +889,7 @@ mod tests {
         let initial_ppu_cycles = nes.ppu.borrow().total_cycles();
 
         // Trigger OAM DMA
-        nes.memory.borrow_mut().write(0x4014, 0x02);
+        nes.memory.borrow_mut().write(0x4014, 0x02, false);
         nes.run_cpu_tick();
 
         // PPU should have advanced by 513 CPU cycles * 3 PPU cycles per CPU cycle
@@ -985,7 +985,7 @@ mod tests {
         let initial_cycle = nes.apu.borrow().frame_counter().get_cycle_counter();
 
         // Trigger an OAM DMA by writing to $4014
-        nes.memory.borrow_mut().write(0x4014, 0x02);
+        nes.memory.borrow_mut().write(0x4014, 0x02, false);
 
         // Run a CPU tick which should execute the DMA
         let dma_cycles = nes.run_cpu_tick();

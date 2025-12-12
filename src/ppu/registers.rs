@@ -26,6 +26,9 @@ pub struct Registers {
     pub oam_address: u8,
     /// PPU data read buffer
     data_buffer: u8,
+    /// PPU I/O bus latch - holds last value written or read from PPU registers
+    /// This is separate from the CPU data bus!
+    io_bus: u8,
     /// v: Current VRAM address (15 bits)
     v: u16,
     /// t: Temporary VRAM address (15 bits)
@@ -44,6 +47,7 @@ impl Registers {
             mask_register: 0,
             oam_address: 0,
             data_buffer: 0,
+            io_bus: 0,
             v: 0,
             t: 0,
             x: 0,
@@ -57,6 +61,7 @@ impl Registers {
         self.mask_register = 0;
         self.oam_address = 0;
         self.data_buffer = 0;
+        self.io_bus = 0;
         self.v = 0;
         self.t = 0;
         self.x = 0;
@@ -77,8 +82,23 @@ impl Registers {
         self.mask_register = value;
     }
 
+    /// Get the current PPU I/O bus latch value
+    pub fn io_bus(&self) -> u8 {
+        self.io_bus
+    }
+
+    /// Update the PPU I/O bus latch (called on PPU register reads/writes)
+    pub fn set_io_bus(&mut self, value: u8) {
+        self.io_bus = value;
+    }
+
     /// Write to scroll register ($2005)
-    pub fn write_scroll(&mut self, value: u8) {
+    pub fn write_scroll(&mut self, value: u8, is_dummy_write: bool) {
+        // Dummy writes from RMW instructions DO toggle w and modify registers
+        // They just write the unmodified value (which was already there)
+        // So the behavior is the same as a normal write - no special handling needed
+        let _ = is_dummy_write; // Dummy writes behave identically to normal writes
+        
         if !self.w {
             // First write: X scroll
             // t: ....... ...ABCDE <- d: ABCDE...
@@ -98,7 +118,12 @@ impl Registers {
     }
 
     /// Write to address register ($2006)
-    pub fn write_address(&mut self, value: u8) {
+    pub fn write_address(&mut self, value: u8, is_dummy_write: bool) {
+        // Dummy writes from RMW instructions DO toggle w and modify registers
+        // They just write the unmodified value (which was already there)
+        // So the behavior is the same as a normal write - no special handling needed
+        let _ = is_dummy_write; // Dummy writes behave identically to normal writes
+        
         if !self.w {
             // First write: high byte
             // t: .CDEFGH ........ <- d: ..CDEFGH
@@ -320,7 +345,7 @@ mod tests {
     #[test]
     fn test_write_scroll_first() {
         let mut regs = Registers::new();
-        regs.write_scroll(0b11111111);
+        regs.write_scroll(0b11111111, false);
         assert_eq!(regs.t() & 0x1F, 0b11111);
         assert_eq!(regs.x(), 0b111);
         assert!(regs.w());
@@ -329,16 +354,16 @@ mod tests {
     #[test]
     fn test_write_scroll_second() {
         let mut regs = Registers::new();
-        regs.write_scroll(0);
-        regs.write_scroll(0b11111111);
+        regs.write_scroll(0, false);
+        regs.write_scroll(0b11111111, false);
         assert!(!regs.w());
     }
 
     #[test]
     fn test_write_address() {
         let mut regs = Registers::new();
-        regs.write_address(0x3F);
-        regs.write_address(0x00);
+        regs.write_address(0x3F, false);
+        regs.write_address(0x00, false);
         assert_eq!(regs.v(), 0x3F00);
     }
 

@@ -54,13 +54,18 @@ impl MemController {
 
             // PPU registers ($2000-$3FFF) with mirroring every 8 bytes
             0x2000..=0x3FFF => match addr & 0x2007 {
-                0x2000 => *self.open_bus.borrow(), // panic!("Cannot read from write-only PPU register PPUCTRL (0x2000)"),
-                0x2001 => *self.open_bus.borrow(), // panic!("Cannot read from write-only PPU register PPUMASK (0x2001)"),
-                0x2002 => self.ppu.borrow_mut().get_status(),
-                0x2003 => *self.open_bus.borrow(), // panic!("Cannot read from write-only PPU register OAMADDR (0x2003)"),
-                0x2004 => self.ppu.borrow().read_oam_data(),
-                0x2005 => *self.open_bus.borrow(), // panic!("Cannot read from write-only PPU register PPUSCROLL (0x2005)"),
-                0x2006 => *self.open_bus.borrow(), // panic!("Cannot read from write-only PPU register PPUADDR (0x2006)"),
+                // Write-only registers return the PPU I/O bus latch
+                // The PPU I/O bus is separate from the CPU data bus!
+                0x2000 => self.ppu.borrow().registers.io_bus(),
+                0x2001 => self.ppu.borrow().registers.io_bus(),
+                0x2002 => {
+                    // PPUSTATUS: get_status() already handles updating I/O bus correctly
+                    self.ppu.borrow_mut().get_status()
+                }
+                0x2003 => self.ppu.borrow().registers.io_bus(),
+                0x2004 => self.ppu.borrow_mut().read_oam_data(),
+                0x2005 => self.ppu.borrow().registers.io_bus(),
+                0x2006 => self.ppu.borrow().registers.io_bus(),
                 0x2007 => self.ppu.borrow_mut().read_data(),
                 _ => panic!("Should never happen!"),
             },
@@ -112,7 +117,7 @@ impl MemController {
 
     /// Write a byte to memory
     /// Returns true if an OAM DMA was triggered (at $4014)
-    pub fn write(&mut self, addr: u16, value: u8) -> bool {
+    pub fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool {
         // Update open bus with the value being written
         *self.open_bus.borrow_mut() = value;
 
@@ -126,11 +131,14 @@ impl MemController {
             0x2000..=0x3FFF => match addr & 0x2007 {
                 0x2000 => self.ppu.borrow_mut().write_control(value),
                 0x2001 => self.ppu.borrow_mut().write_mask(value),
-                0x2002 => { /* PPUSTATUS is read-only, ignore writes */ }
+                0x2002 => {
+                    // PPUSTATUS is read-only, but writes still update the I/O bus!
+                    self.ppu.borrow_mut().registers.set_io_bus(value);
+                }
                 0x2003 => self.ppu.borrow_mut().write_oam_address(value),
                 0x2004 => self.ppu.borrow_mut().write_oam_data(value),
-                0x2005 => self.ppu.borrow_mut().write_scroll(value),
-                0x2006 => self.ppu.borrow_mut().write_address(value),
+                0x2005 => self.ppu.borrow_mut().write_scroll(value, is_dummy_write),
+                0x2006 => self.ppu.borrow_mut().write_address(value, is_dummy_write),
                 0x2007 => self.ppu.borrow_mut().write_data(value),
                 _ => panic!("Should never happen!"),
             },
@@ -270,8 +278,8 @@ impl MemController {
     pub fn write_u16(&mut self, addr: u16, value: u16) {
         let lo = (value & 0xFF) as u8;
         let hi = (value >> 8) as u8;
-        self.write(addr, lo);
-        self.write(addr.wrapping_add(1), hi);
+        self.write(addr, lo, false);
+        self.write(addr.wrapping_add(1), hi, false);
     }
 
     /// Check if an OAM DMA is pending and get the page value
@@ -320,7 +328,7 @@ mod tests {
     #[test]
     fn test_write_and_read_byte() {
         let mut memory = create_test_memory();
-        let dma = memory.write(0x1234, 0x42);
+        let dma = memory.write(0x1234, 0x42, false);
         assert_eq!(dma, false);
         assert_eq!(memory.read(0x1234), 0x42);
     }
@@ -336,8 +344,8 @@ mod tests {
     #[test]
     fn test_read_u16_little_endian() {
         let mut memory = create_test_memory();
-        memory.write(0x1234, 0xCD); // Low byte
-        memory.write(0x1235, 0xAB); // High byte
+        memory.write(0x1234, 0xCD, false); // Low byte
+        memory.write(0x1235, 0xAB, false); // High byte
         let result = memory.read_u16(0x1234);
         assert_eq!(result, 0xABCD);
     }
@@ -353,7 +361,7 @@ mod tests {
     #[test]
     fn test_ram_mirror_0800() {
         let mut memory = create_test_memory();
-        memory.write(0x0000, 0x42);
+        memory.write(0x0000, 0x42, false);
         assert_eq!(memory.read(0x0800), 0x42);
         assert_eq!(memory.read(0x1000), 0x42);
         assert_eq!(memory.read(0x1800), 0x42);
@@ -362,7 +370,7 @@ mod tests {
     #[test]
     fn test_ram_mirror_write_to_mirror() {
         let mut memory = create_test_memory();
-        memory.write(0x0800, 0x55);
+        memory.write(0x0800, 0x55, false);
         assert_eq!(memory.read(0x0000), 0x55);
         assert_eq!(memory.read(0x1000), 0x55);
         assert_eq!(memory.read(0x1800), 0x55);
@@ -371,7 +379,7 @@ mod tests {
     #[test]
     fn test_ram_mirror_different_addresses() {
         let mut memory = create_test_memory();
-        memory.write(0x01FF, 0xAA);
+        memory.write(0x01FF, 0xAA, false);
         assert_eq!(memory.read(0x09FF), 0xAA);
         assert_eq!(memory.read(0x11FF), 0xAA);
         assert_eq!(memory.read(0x19FF), 0xAA);
@@ -443,11 +451,11 @@ mod tests {
         memory.map_cartridge(cartridge);
 
         // RAM should still be writable
-        memory.write(0x0000, 0x55);
+        memory.write(0x0000, 0x55, false);
         assert_eq!(memory.read(0x0000), 0x55);
 
         // Another RAM location should still be writable
-        memory.write(0x0100, 0x66);
+        memory.write(0x0100, 0x66, false);
         assert_eq!(memory.read(0x0100), 0x66);
     }
 
@@ -456,16 +464,16 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Set PPU address to nametable ($2000)
-        memory.write(0x2006, 0x20);
-        memory.write(0x2006, 0x00);
+        memory.write(0x2006, 0x20, false);
+        memory.write(0x2006, 0x00, false);
 
         // Write data to PPUDATA register
-        memory.write(0x2007, 0x42);
+        memory.write(0x2007, 0x42, false);
 
         // Verify the data was written to PPU memory by reading it back
         // Reset PPU address
-        memory.write(0x2006, 0x20);
-        memory.write(0x2006, 0x00);
+        memory.write(0x2006, 0x20, false);
+        memory.write(0x2006, 0x00, false);
 
         // Read from PPUDATA (first read returns buffer, second returns actual value)
         memory.read(0x2007); // Skip buffered read
@@ -477,14 +485,14 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Write to OAMADDR register (use address 0x40 to avoid attribute byte)
-        memory.write(0x2003, 0x40);
+        memory.write(0x2003, 0x40, false);
 
         // Verify by writing to OAMDATA and checking the address incremented
-        memory.write(0x2004, 0xAA);
-        memory.write(0x2004, 0xBB);
+        memory.write(0x2004, 0xAA, false);
+        memory.write(0x2004, 0xBB, false);
 
         // Reset OAM address and read back
-        memory.write(0x2003, 0x40);
+        memory.write(0x2003, 0x40, false);
         assert_eq!(memory.read(0x2004), 0xAA);
         assert_eq!(memory.read(0x2004), 0xAA); // Reading doesn't increment
     }
@@ -494,21 +502,21 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Set OAM address to 0
-        memory.write(0x2003, 0x00);
+        memory.write(0x2003, 0x00, false);
 
         // Write sequence of values
-        memory.write(0x2004, 0x11);
-        memory.write(0x2004, 0x22);
-        memory.write(0x2004, 0x33);
+        memory.write(0x2004, 0x11, false);
+        memory.write(0x2004, 0x22, false);
+        memory.write(0x2004, 0x33, false);
 
         // Reset OAM address and read back
-        memory.write(0x2003, 0x00);
+        memory.write(0x2003, 0x00, false);
         assert_eq!(memory.read(0x2004), 0x11);
 
-        memory.write(0x2003, 0x01);
+        memory.write(0x2003, 0x01, false);
         assert_eq!(memory.read(0x2004), 0x22);
 
-        memory.write(0x2003, 0x02);
+        memory.write(0x2003, 0x02, false);
         // Attribute byte: 0x33 with masking = 0x33 & 0xE3 = 0x23
         assert_eq!(memory.read(0x2004), 0x23);
     }
@@ -518,17 +526,17 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Set OAM address to 0xFF
-        memory.write(0x2003, 0xFF);
-        memory.write(0x2004, 0xAA);
+        memory.write(0x2003, 0xFF, false);
+        memory.write(0x2004, 0xAA, false);
 
         // Address should wrap to 0x00
-        memory.write(0x2004, 0xBB);
+        memory.write(0x2004, 0xBB, false);
 
         // Verify wrap
-        memory.write(0x2003, 0xFF);
+        memory.write(0x2003, 0xFF, false);
         assert_eq!(memory.read(0x2004), 0xAA);
 
-        memory.write(0x2003, 0x00);
+        memory.write(0x2003, 0x00, false);
         assert_eq!(memory.read(0x2004), 0xBB);
     }
 
@@ -537,11 +545,11 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Set OAM address and write data
-        memory.write(0x2003, 0x10);
-        memory.write(0x2004, 0x88);
+        memory.write(0x2003, 0x10, false);
+        memory.write(0x2004, 0x88, false);
 
         // Reset address and read multiple times
-        memory.write(0x2003, 0x10);
+        memory.write(0x2003, 0x10, false);
         assert_eq!(memory.read(0x2004), 0x88);
         assert_eq!(memory.read(0x2004), 0x88);
         assert_eq!(memory.read(0x2004), 0x88);
@@ -552,20 +560,20 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Write a full sprite (4 bytes) to OAM
-        memory.write(0x2003, 0x00);
-        memory.write(0x2004, 0x10); // Y position
-        memory.write(0x2004, 0x20); // Tile index
-        memory.write(0x2004, 0xE3); // Attributes (valid value with all implemented bits set)
-        memory.write(0x2004, 0x40); // X position
+        memory.write(0x2003, 0x00, false);
+        memory.write(0x2004, 0x10, false); // Y position
+        memory.write(0x2004, 0x20, false); // Tile index
+        memory.write(0x2004, 0xE3, false); // Attributes (valid value with all implemented bits set)
+        memory.write(0x2004, 0x40, false); // X position
 
         // Read back the sprite data
-        memory.write(0x2003, 0x00);
+        memory.write(0x2003, 0x00, false);
         assert_eq!(memory.read(0x2004), 0x10);
-        memory.write(0x2003, 0x01);
+        memory.write(0x2003, 0x01, false);
         assert_eq!(memory.read(0x2004), 0x20);
-        memory.write(0x2003, 0x02);
+        memory.write(0x2003, 0x02, false);
         assert_eq!(memory.read(0x2004), 0xE3);
-        memory.write(0x2003, 0x03);
+        memory.write(0x2003, 0x03, false);
         assert_eq!(memory.read(0x2004), 0x40);
     }
 
@@ -580,9 +588,9 @@ mod tests {
         memory.map_cartridge(cartridge);
 
         // Write to PRG-RAM
-        memory.write(0x6000, 0x42);
-        memory.write(0x6001, 0x43);
-        memory.write(0x7FFF, 0xFF);
+        memory.write(0x6000, 0x42, false);
+        memory.write(0x6001, 0x43, false);
+        memory.write(0x7FFF, 0xFF, false);
 
         // Read back from PRG-RAM
         assert_eq!(
@@ -611,7 +619,7 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
 
-        memory.write(0x6100, 0xAB);
+        memory.write(0x6100, 0xAB, false);
 
         // Multiple reads should return the same value
         assert_eq!(memory.read(0x6100), 0xAB);
@@ -629,8 +637,8 @@ mod tests {
         memory.map_cartridge(cartridge);
 
         // Write to first and last byte of 8KB range
-        memory.write(0x6000, 0x01);
-        memory.write(0x7FFF, 0xFF);
+        memory.write(0x6000, 0x01, false);
+        memory.write(0x7FFF, 0xFF, false);
 
         assert_eq!(memory.read(0x6000), 0x01);
         assert_eq!(memory.read(0x7FFF), 0xFF);
@@ -729,19 +737,19 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Enable pulse 1 first
-        memory.write(0x4015, 0b00000001);
+        memory.write(0x4015, 0b00000001, false);
 
         // Write to $4000 (control register)
-        memory.write(0x4000, 0b10111111);
+        memory.write(0x4000, 0b10111111, false);
 
         // Write to $4001 (sweep register)
-        memory.write(0x4001, 0b10101010);
+        memory.write(0x4001, 0b10101010, false);
 
         // Write to $4002 (timer low)
-        memory.write(0x4002, 0xAB);
+        memory.write(0x4002, 0xAB, false);
 
         // Write to $4003 (length/timer high)
-        memory.write(0x4003, 0b11111000);
+        memory.write(0x4003, 0b11111000, false);
 
         // Verify writes reached the APU by checking pulse1 length counter
         let apu = memory.apu.borrow();
@@ -754,13 +762,13 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Enable pulse 2 first
-        memory.write(0x4015, 0b00000010);
+        memory.write(0x4015, 0b00000010, false);
 
         // Write to $4004 (control register)
-        memory.write(0x4004, 0b11001111);
+        memory.write(0x4004, 0b11001111, false);
 
         // Write to $4007 (length/timer high)
-        memory.write(0x4007, 0b11110000);
+        memory.write(0x4007, 0b11110000, false);
 
         // Verify writes reached the APU
         let apu = memory.apu.borrow();
@@ -773,13 +781,13 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Enable triangle first
-        memory.write(0x4015, 0b00000100);
+        memory.write(0x4015, 0b00000100, false);
 
         // Write to $4008 (linear counter)
-        memory.write(0x4008, 0b11111111);
+        memory.write(0x4008, 0b11111111, false);
 
         // Write to $400B (length/timer high)
-        memory.write(0x400B, 0b11110000);
+        memory.write(0x400B, 0b11110000, false);
 
         // Verify writes reached the APU
         let apu = memory.apu.borrow();
@@ -792,13 +800,13 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Enable noise first
-        memory.write(0x4015, 0b00001000);
+        memory.write(0x4015, 0b00001000, false);
 
         // Write to $400C (control)
-        memory.write(0x400C, 0b00111111);
+        memory.write(0x400C, 0b00111111, false);
 
         // Write to $400F (length counter load)
-        memory.write(0x400F, 0b11110000);
+        memory.write(0x400F, 0b11110000, false);
 
         // Verify writes reached the APU
         let apu = memory.apu.borrow();
@@ -811,16 +819,16 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Write to $4010 (flags and rate)
-        memory.write(0x4010, 0b00001111);
+        memory.write(0x4010, 0b00001111, false);
 
         // Write to $4011 (direct load)
-        memory.write(0x4011, 0x40);
+        memory.write(0x4011, 0x40, false);
 
         // Write to $4012 (sample address)
-        memory.write(0x4012, 0xC0);
+        memory.write(0x4012, 0xC0, false);
 
         // Write to $4013 (sample length)
-        memory.write(0x4013, 0xFF);
+        memory.write(0x4013, 0xFF, false);
 
         // Verify write reached the APU (no panic means success)
     }
@@ -831,11 +839,11 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Enable pulse 1 and pulse 2
-        memory.write(0x4015, 0b00000011);
+        memory.write(0x4015, 0b00000011, false);
 
         // Write length counters to make them non-zero
-        memory.write(0x4003, 0b11110000);
-        memory.write(0x4007, 0b11110000);
+        memory.write(0x4003, 0b11110000, false);
+        memory.write(0x4007, 0b11110000, false);
 
         // Read status to verify both are enabled
         let status = memory.read(0x4015);
@@ -848,7 +856,7 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Write to frame counter register - 5-step mode (bit 7 set)
-        memory.write(0x4017, 0b10000000);
+        memory.write(0x4017, 0b10000000, false);
 
         // Verify write reached the APU
         let apu = memory.apu.borrow();
