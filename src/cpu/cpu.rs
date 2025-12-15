@@ -73,15 +73,21 @@ const RESET_VECTOR: u16 = 0xFFFC;
 const IRQ_VECTOR: u16 = 0xFFFE;
 
 impl Cpu {
-    /// Create a new CPU with default register values
+    /// Create a new CPU with default register values at power-on
     pub fn new(memory: Rc<RefCell<MemController>>) -> Self {
         Self {
             a: 0,
             x: 0,
             y: 0,
-            sp: 0xFD, // Stack pointer starts at 0xFD
+            sp: 0x00, // Stack pointer starts at 0x00 at power-on. The automatic reset
+                      // sequence then subtracts 3, resulting in SP=0xFD when the reset
+                      // handler first runs.
             pc: 0,    // Program counter will be loaded from reset vector
-            p: 0x24,  // Status: IRQ disabled, unused bit set
+            p: 0x20,  // Status at power-on before reset: only unused bit set (bit 5)
+                      // 0x20 = 0b00100000
+                      // The reset sequence will set the I flag, resulting in 0x24.
+                      // Note: B flag (bit 4) is not actually stored in P register,
+                      // it only appears when P is pushed to stack during BRK/PHP
             memory,
             halted: false,
             total_cycles: 0,
@@ -99,18 +105,31 @@ impl Cpu {
 
     /// Reset the CPU to initial state
     pub fn reset(&mut self) {
-        self.a = 0;
-        self.x = 0;
-        self.y = 0;
-        self.sp = 0xFD;
-        self.p = 0x24;
+        // On reset, the CPU:
+        // - Sets the I (Interrupt Disable) flag
+        // - Subtracts 3 from SP (simulating the interrupt sequence without writing to stack)
+        // - Reads the reset vector and sets PC
+        // - Does NOT modify A, X, Y, or other flags
+        // - Takes 7 cycles (but we don't track power-on vs reset cycles here)
+        
+        // Set I flag (bit 2)
+        self.p |= FLAG_INTERRUPT;
+        
+        // Subtract 3 from SP (wrapping if necessary)
+        self.sp = self.sp.wrapping_sub(3);
+        
+        // Clear cycle-accurate instruction state
         self.halted = false;
-        self.total_cycles = 0;
         self.delayed_i_flag = None;
         self.nmi_pending = false;
         self.current_instruction = None;
         self.cycle_in_instruction = 0;
+        
+        // Read reset vector and set PC
         self.pc = self.read_reset_vector();
+        
+        // Reset takes 7 cycles
+        self.total_cycles = 7;
     }
 
     // /// Load a program and run the CPU emulation
@@ -2486,9 +2505,9 @@ mod tests {
         assert_eq!(cpu.a, 0);
         assert_eq!(cpu.x, 0);
         assert_eq!(cpu.y, 0);
-        assert_eq!(cpu.sp, 0xFD);
+        assert_eq!(cpu.sp, 0x00); // SP starts at 0x00 before reset
         assert_eq!(cpu.pc, 0);
-        assert_eq!(cpu.p, 0x24);
+        assert_eq!(cpu.p, 0x20); // P starts at 0x20 before reset (only unused bit set)
     }
 
     #[test]
@@ -2507,11 +2526,14 @@ mod tests {
 
         cpu.reset();
 
-        assert_eq!(cpu.a, 0);
-        assert_eq!(cpu.x, 0);
-        assert_eq!(cpu.y, 0);
+        // Reset should NOT modify A, X, Y
+        assert_eq!(cpu.a, 0xFF);
+        assert_eq!(cpu.x, 0xFF);
+        assert_eq!(cpu.y, 0xFF);
+        // Reset should subtract 3 from SP: 0x00 - 3 = 0xFD
         assert_eq!(cpu.sp, 0xFD);
-        assert_eq!(cpu.p, 0x24);
+        // Reset should set I flag: 0xFF | 0x04 = 0xFF (all flags set)
+        assert_eq!(cpu.p, 0xFF);
     }
 
     #[test]
@@ -6623,9 +6645,9 @@ mod tests {
         let program = vec![LDA_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
-        assert_eq!(cpu.total_cycles(), 0);
+        assert_eq!(cpu.total_cycles(), 7); // Reset takes 7 cycles
         cpu.run_opcode();
-        assert_eq!(cpu.total_cycles(), 2);
+        assert_eq!(cpu.total_cycles(), 9); // 7 + 2 = 9
     }
 
     #[test]
@@ -6635,13 +6657,13 @@ mod tests {
         // LDA #$42 (2 cycles), LDX #$10 (2 cycles), LDY #$20 (2 cycles)
         let program = vec![LDA_IMM, 0x42, LDX_IMM, 0x10, LDY_IMM, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(); // Takes 7 cycles
         cpu.run_opcode(); // LDA - 2 cycles
-        assert_eq!(cpu.total_cycles(), 2);
+        assert_eq!(cpu.total_cycles(), 9); // 7 + 2 = 9
         cpu.run_opcode(); // LDX - 2 cycles
-        assert_eq!(cpu.total_cycles(), 4);
+        assert_eq!(cpu.total_cycles(), 11); // 7 + 2 + 2 = 11
         cpu.run_opcode(); // LDY - 2 cycles
-        assert_eq!(cpu.total_cycles(), 6);
+        assert_eq!(cpu.total_cycles(), 13); // 7 + 2 + 2 + 2 = 13
     }
 
     #[test]
@@ -6652,9 +6674,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.run_opcode();
-        assert_eq!(cpu.total_cycles(), 2);
+        assert_eq!(cpu.total_cycles(), 9); // 7 + 2 = 9
         cpu.reset();
-        assert_eq!(cpu.total_cycles(), 0);
+        assert_eq!(cpu.total_cycles(), 7); // Reset sets to 7 cycles
     }
 
     #[test]
@@ -6668,7 +6690,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x1304, 0x99, false);
         cpu.x = 0x05;
         cpu.run_opcode();
-        assert_eq!(cpu.total_cycles(), 5);
+        assert_eq!(cpu.total_cycles(), 12); // 7 + 5 = 12
     }
 
     #[test]
