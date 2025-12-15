@@ -156,17 +156,23 @@ impl Nes {
         }
 
         // Normal opcode execution
-        let cpu_cycles = self.cpu.run_opcode();
-        self.tick_ppu(cpu_cycles);
+        // Update NMI pending flag before executing instruction
+        // This allows BRK to check for NMI hijacking at the right time
+        if self.ppu.borrow_mut().poll_nmi() {
+            self.cpu.set_nmi_pending(true);
+        }
 
-        // Clock the APU for each CPU cycle
+        let cpu_cycles = self.cpu.run_opcode();
+
+        // Tick PPU and APU for all CPU cycles
+        self.tick_ppu(cpu_cycles);
         self.tick_apu(cpu_cycles);
 
-        // Check for NMI after executing instruction and ticking PPU
-        // NMI is checked after the instruction completes
-        if self.ppu.borrow_mut().poll_nmi() {
+        // Check for NMI after ticking PPU
+        // If BRK hasn't consumed the NMI (via hijacking), trigger it now
+        if self.ppu.borrow_mut().poll_nmi() && !self.cpu.nmi_pending {
+            // Trigger NMI immediately
             let nmi_cycles = self.cpu.trigger_nmi();
-            // Tick PPU and APU for the NMI handling cycles
             self.tick_ppu(nmi_cycles);
             self.tick_apu(nmi_cycles);
         }
@@ -821,7 +827,9 @@ mod tests {
 
         // Set up test data in RAM at page $02 ($0200-$02FF)
         for i in 0..256u16 {
-            nes.memory.borrow_mut().write(0x0200 + i, (i & 0xFF) as u8, false);
+            nes.memory
+                .borrow_mut()
+                .write(0x0200 + i, (i & 0xFF) as u8, false);
         }
 
         // Trigger OAM DMA from page $02
