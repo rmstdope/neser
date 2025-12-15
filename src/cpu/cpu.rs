@@ -3,6 +3,19 @@ use crate::mem_controller::MemController;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+/// Tracks the state of an instruction being executed across multiple cycles
+#[derive(Debug, Clone)]
+pub struct InstructionState {
+    /// The opcode being executed
+    pub opcode: OpCode,
+    /// Number of cycles remaining for this instruction
+    pub cycles_remaining: u8,
+    /// Temporary address storage for multi-cycle operations
+    pub temp_addr: Option<u16>,
+    /// Temporary value storage for multi-cycle operations
+    pub temp_value: Option<u8>,
+}
+
 /// NES 6502 CPU
 pub struct Cpu {
     /// Accumulator
@@ -39,6 +52,10 @@ pub struct Cpu {
     /// NMI pending flag - set by external hardware (NES loop)
     /// Checked during BRK execution to determine vector hijacking
     pub nmi_pending: bool,
+    /// Current instruction being executed (for cycle-by-cycle execution)
+    pub current_instruction: Option<InstructionState>,
+    /// Current cycle within the instruction (0-based)
+    pub cycle_in_instruction: u8,
 }
 
 // Status register flags
@@ -70,6 +87,8 @@ impl Cpu {
             total_cycles: 0,
             delayed_i_flag: None,
             nmi_pending: false,
+            current_instruction: None,
+            cycle_in_instruction: 0,
         }
     }
 
@@ -89,6 +108,8 @@ impl Cpu {
         self.total_cycles = 0;
         self.delayed_i_flag = None;
         self.nmi_pending = false;
+        self.current_instruction = None;
+        self.cycle_in_instruction = 0;
         self.pc = self.read_reset_vector();
     }
 
@@ -1638,6 +1659,58 @@ impl Cpu {
 
         self.total_cycles += cycles as u64;
         cycles
+    }
+
+    /// Execute a single CPU cycle
+    /// Returns true when the current instruction completes
+    pub fn tick_cycle(&mut self) -> bool {
+        if self.halted {
+            return true;
+        }
+
+        // If no instruction is in progress, execute a new one
+        if self.current_instruction.is_none() {
+            // Read the opcode byte before executing
+            let opcode_byte = self.memory.borrow().read(self.pc);
+            let opcode = super::opcode::lookup(opcode_byte)
+                .unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
+            
+            let saved_total_cycles = self.total_cycles;
+            
+            // Execute the full instruction using run_opcode
+            // This handles all the instruction logic, PC updates, memory access, etc.
+            let cycles = self.run_opcode();
+            
+            // run_opcode already incremented total_cycles, so restore it
+            // We'll increment it one cycle at a time as we "replay" the cycles
+            self.total_cycles = saved_total_cycles;
+            
+            // Create instruction state to track cycle-by-cycle progress
+            self.current_instruction = Some(InstructionState {
+                opcode: opcode.clone(),
+                cycles_remaining: cycles,
+                temp_addr: None,
+                temp_value: None,
+            });
+            self.cycle_in_instruction = 0;
+        }
+
+        // Tick one cycle
+        if let Some(ref mut inst) = self.current_instruction {
+            self.total_cycles += 1;
+            inst.cycles_remaining -= 1;
+
+            // Check if instruction is complete
+            if inst.cycles_remaining == 0 {
+                self.current_instruction = None;
+                self.cycle_in_instruction = 0;
+                return true;
+            } else {
+                self.cycle_in_instruction += 1;
+            }
+        }
+
+        false
     }
 
     /// Check if two addresses are on different pages
@@ -6607,6 +6680,93 @@ mod tests {
         assert_eq!(
             value, 0xAB,
             "Value at PPU $3040 should be $AB - dummy writes do affect PPU state"
+        );
+    }
+
+    #[test]
+    fn test_tick_cycle_basic() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Load a simple program: LDA #$42 (2 cycles), then BRK (7 cycles)
+        let program = vec![
+            0xA9, 0x42, // LDA #$42
+            0x00, // BRK
+        ];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        let start_cycles = cpu.total_cycles();
+
+        // Execute LDA #$42 cycle by cycle (2 cycles)
+        assert_eq!(cpu.tick_cycle(), false, "Cycle 1 of LDA should not complete");
+        assert_eq!(cpu.total_cycles(), start_cycles + 1);
+        assert_eq!(cpu.tick_cycle(), true, "Cycle 2 of LDA should complete");
+        assert_eq!(cpu.total_cycles(), start_cycles + 2);
+        assert_eq!(cpu.a, 0x42, "A register should be loaded with 0x42");
+
+        // Execute BRK cycle by cycle (7 cycles)
+        for i in 1..=6 {
+            assert_eq!(
+                cpu.tick_cycle(),
+                false,
+                "Cycle {} of BRK should not complete",
+                i
+            );
+            assert_eq!(cpu.total_cycles(), start_cycles + 2 + i);
+        }
+        assert_eq!(cpu.tick_cycle(), true, "Cycle 7 of BRK should complete");
+        assert_eq!(cpu.total_cycles(), start_cycles + 9);
+    }
+
+    #[test]
+    fn test_tick_cycle_matches_run_opcode() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu1 = Cpu::new(memory.clone());
+        let mut cpu2 = Cpu::new(memory.clone());
+
+        // Load a program with various instructions
+        let program = vec![
+            0xA9, 0x10, // LDA #$10
+            0x85, 0x20, // STA $20
+            0xA5, 0x20, // LDA $20
+            0x69, 0x05, // ADC #$05
+            0x00, // BRK
+        ];
+        fake_cartridge(&mut cpu1, &program);
+        fake_cartridge(&mut cpu2, &program);
+        cpu1.reset();
+        cpu2.reset();
+
+        // Execute using run_opcode
+        for _ in 0..5 {
+            cpu1.run_opcode();
+        }
+
+        // Execute using tick_cycle
+        loop {
+            if cpu2.tick_cycle() {
+                // Instruction completed, check if we should continue
+                if cpu2.halted {
+                    break;
+                }
+                // Check if we've executed enough instructions
+                if cpu2.total_cycles() >= cpu1.total_cycles() {
+                    break;
+                }
+            }
+        }
+
+        // Both CPUs should be in the same state
+        assert_eq!(cpu2.a, cpu1.a, "A register should match");
+        assert_eq!(cpu2.x, cpu1.x, "X register should match");
+        assert_eq!(cpu2.y, cpu1.y, "Y register should match");
+        assert_eq!(cpu2.sp, cpu1.sp, "Stack pointer should match");
+        assert_eq!(cpu2.p, cpu1.p, "Status register should match");
+        assert_eq!(
+            cpu2.total_cycles(),
+            cpu1.total_cycles(),
+            "Total cycles should match"
         );
     }
 }
