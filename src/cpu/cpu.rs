@@ -36,6 +36,9 @@ pub struct Cpu {
     /// This implements the 1-instruction delay for CLI/PLP
     /// Set to Some(old_i_value) when CLI/PLP modifies I flag, cleared after next instruction
     delayed_i_flag: Option<bool>,
+    /// NMI pending flag - set by external hardware (NES loop)
+    /// Checked during BRK execution to determine vector hijacking
+    pub nmi_pending: bool,
 }
 
 // Status register flags
@@ -66,6 +69,7 @@ impl Cpu {
             halted: false,
             total_cycles: 0,
             delayed_i_flag: None,
+            nmi_pending: false,
         }
     }
 
@@ -84,6 +88,7 @@ impl Cpu {
         self.halted = false;
         self.total_cycles = 0;
         self.delayed_i_flag = None;
+        self.nmi_pending = false;
         self.pc = self.read_reset_vector();
     }
 
@@ -361,22 +366,39 @@ impl Cpu {
                 }
             }
             BRK => {
-                // BRK is a software interrupt instruction
-                // Dummy read of next byte (padding byte) - all one-byte opcodes do this
+                // BRK - Software Interrupt (7 cycles)
+                // Following Mesen2's approach but without per-cycle PPU ticking
+                // The NES loop must set nmi_pending before calling run_opcode if NMI is active
+
+                // Cycles 1-2: Dummy reads
                 let _ = self.memory.borrow().read(self.pc);
-                // Push PC+2 to stack (PC has already been incremented past BRK opcode,
-                // so we push PC+1 which points to the byte after BRK's padding byte)
-                let return_addr = self.pc.wrapping_add(1);
-                self.push_word(return_addr);
+                let _ = self.memory.borrow().read(self.pc);
+                self.pc += 1; // Move past padding byte
 
-                // Push P with B flag and unused flag set to distinguish BRK from IRQ
-                self.push_byte(self.p | FLAG_BREAK | FLAG_UNUSED);
+                // Cycles 3-4: Push PC
+                let return_addr = self.pc;
+                self.push_byte((return_addr >> 8) as u8);
+                self.push_byte((return_addr & 0xFF) as u8);
 
-                // Set Interrupt Disable flag to prevent further interrupts
+                // CRITICAL POINT: Check if NMI is pending to hijack the vector
+                // This must happen AFTER pushing PC but BEFORE reading the vector
+                let use_nmi = self.nmi_pending;
+                if use_nmi {
+                    self.nmi_pending = false; // Acknowledge NMI
+                }
+
+                // Cycle 5: Push status with B flag set
+                let flags = self.p | FLAG_BREAK | FLAG_UNUSED;
+                self.push_byte(flags);
+
+                // Set Interrupt Disable flag
                 self.p |= FLAG_INTERRUPT;
 
-                // Load PC from IRQ/BRK vector
-                self.pc = self.memory.borrow().read_u16(IRQ_VECTOR);
+                // Cycles 6-7: Read interrupt vector (NMI if hijacked, otherwise IRQ)
+                let vector = if use_nmi { NMI_VECTOR } else { IRQ_VECTOR };
+                self.pc = self.memory.borrow().read_u16(vector);
+
+                cycles = 7;
             }
             CMP_IMM => {
                 let value = self.read_byte();
@@ -2115,6 +2137,12 @@ impl Cpu {
         // IRQ takes 7 CPU cycles
         self.total_cycles += 7;
         7
+    }
+
+    /// Set the NMI pending flag
+    /// This should be called by the NES loop when NMI is detected
+    pub fn set_nmi_pending(&mut self, pending: bool) {
+        self.nmi_pending = pending;
     }
 }
 
@@ -6401,7 +6429,7 @@ mod tests {
         let initial_p = cpu.p;
         let initial_sp = cpu.sp;
 
-        // Execute BRK
+        // Execute BRK (single phase now)
         cpu.run_opcode();
 
         // Verify PC was loaded from IRQ vector

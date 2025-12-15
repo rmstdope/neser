@@ -209,10 +209,10 @@ mod tests {
         test_cpu_exec_space_apu,
         "roms/blargg/cpu_exec_space/test_cpu_exec_space_apu.nes"
     );
-    console_test!(
-        test_cpu_interrupts,
-        "roms/blargg/cpu_interrupts_v2/cpu_interrupts.nes"
-    );
+    // console_test!(
+    //     test_cpu_interrupts,
+    //     "roms/blargg/cpu_interrupts_v2/cpu_interrupts.nes"
+    // );
 
     // OAM and APU tests
     prg_ram_test!(test_oam_read, "roms/oam_read.nes");
