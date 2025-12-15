@@ -1668,31 +1668,59 @@ impl Cpu {
             return true;
         }
 
-        // If no instruction is in progress, execute a new one
+        // If no instruction is in progress, start a new one
         if self.current_instruction.is_none() {
             // Read the opcode byte before executing
             let opcode_byte = self.memory.borrow().read(self.pc);
             let opcode = super::opcode::lookup(opcode_byte)
                 .unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
             
-            let saved_total_cycles = self.total_cycles;
+            // Check if this instruction has cycle-accurate implementation
+            let has_cycle_accurate = matches!(opcode.code, BRK);
             
-            // Execute the full instruction using run_opcode
-            // This handles all the instruction logic, PC updates, memory access, etc.
-            let cycles = self.run_opcode();
+            if has_cycle_accurate {
+                // Start cycle-accurate execution without calling run_opcode
+                self.current_instruction = Some(InstructionState {
+                    opcode: opcode.clone(),
+                    cycles_remaining: opcode.cycles,
+                    temp_addr: None,
+                    temp_value: None,
+                });
+                self.cycle_in_instruction = 0;
+            } else {
+                // Use the legacy run_opcode approach for non-cycle-accurate instructions
+                let saved_total_cycles = self.total_cycles;
+                
+                // Execute the full instruction using run_opcode
+                let cycles = self.run_opcode();
+                
+                // run_opcode already incremented total_cycles, so restore it
+                self.total_cycles = saved_total_cycles;
+                
+                // Create instruction state to "replay" cycles
+                self.current_instruction = Some(InstructionState {
+                    opcode: opcode.clone(),
+                    cycles_remaining: cycles,
+                    temp_addr: None,
+                    temp_value: None,
+                });
+                self.cycle_in_instruction = 0;
+            }
+        }
+
+        // Execute one cycle of the current instruction
+        if let Some(ref inst) = self.current_instruction.clone() {
+            // Check if this instruction has cycle-accurate implementation
+            let has_cycle_accurate = matches!(inst.opcode.code, BRK);
             
-            // run_opcode already incremented total_cycles, so restore it
-            // We'll increment it one cycle at a time as we "replay" the cycles
-            self.total_cycles = saved_total_cycles;
+            if has_cycle_accurate && self.cycle_in_instruction == 0 {
+                // Skip PC increment for cycle-accurate instructions (handled in execute_instruction_cycle)
+            } else if !has_cycle_accurate && self.cycle_in_instruction == 0 {
+                // For non-cycle-accurate instructions, PC was already incremented by run_opcode
+            }
             
-            // Create instruction state to track cycle-by-cycle progress
-            self.current_instruction = Some(InstructionState {
-                opcode: opcode.clone(),
-                cycles_remaining: cycles,
-                temp_addr: None,
-                temp_value: None,
-            });
-            self.cycle_in_instruction = 0;
+            // Execute the cycle-specific logic
+            self.execute_instruction_cycle();
         }
 
         // Tick one cycle
@@ -1711,6 +1739,88 @@ impl Cpu {
         }
 
         false
+    }
+
+    /// Execute one cycle of the current instruction
+    /// Routes to cycle-specific handlers for cycle-accurate instructions
+    fn execute_instruction_cycle(&mut self) {
+        if let Some(ref inst) = self.current_instruction.clone() {
+            match inst.opcode.code {
+                BRK => self.execute_brk_cycle(),
+                _ => {
+                    // For non-cycle-accurate instructions, do nothing
+                    // The instruction was already executed by run_opcode
+                }
+            }
+        }
+    }
+
+    /// Execute one cycle of BRK instruction (7 cycles total)
+    /// Cycle 0 is opcode fetch (implicit, happens in tick_cycle)
+    /// Cycles 1-6 are handled here (indices 0-5 in this function)
+    fn execute_brk_cycle(&mut self) {
+        match self.cycle_in_instruction {
+            0 => {
+                // Cycle 1: Increment PC past opcode, first dummy read
+                self.pc += 1;
+                let _ = self.memory.borrow().read(self.pc);
+            }
+            1 => {
+                // Cycle 2: Second dummy read at PC (padding byte), then increment PC
+                let _ = self.memory.borrow().read(self.pc);
+                self.pc += 1;
+            }
+            2 => {
+                // Cycle 3: Push PCH
+                let return_addr = self.pc;
+                self.push_byte((return_addr >> 8) as u8);
+            }
+            3 => {
+                // Cycle 4: Push PCL
+                let return_addr = self.pc;
+                self.push_byte((return_addr & 0xFF) as u8);
+            }
+            4 => {
+                // Cycle 5: CRITICAL - Check NMI pending, push status with B flag
+                // This is where NMI hijacking happens
+                let use_nmi = self.nmi_pending;
+                if use_nmi {
+                    self.nmi_pending = false; // Acknowledge NMI
+                }
+                
+                // Store which vector to use
+                if let Some(ref mut inst) = self.current_instruction {
+                    inst.temp_addr = Some(if use_nmi { NMI_VECTOR } else { IRQ_VECTOR });
+                }
+                
+                // Push status with B flag set (even when hijacked by NMI!)
+                let flags = self.p | FLAG_BREAK | FLAG_UNUSED;
+                self.push_byte(flags);
+                
+                // Set Interrupt Disable flag
+                self.p |= FLAG_INTERRUPT;
+            }
+            5 => {
+                // Cycle 6: Read vector low byte
+                if let Some(ref inst) = self.current_instruction.clone() {
+                    let vector = inst.temp_addr.unwrap();
+                    let lo = self.memory.borrow().read(vector) as u16;
+                    if let Some(ref mut inst) = self.current_instruction {
+                        inst.temp_value = Some(lo as u8);
+                    }
+                }
+            }
+            6 => {
+                // Cycle 7: Read vector high byte and jump
+                if let Some(ref inst) = self.current_instruction.clone() {
+                    let vector = inst.temp_addr.unwrap();
+                    let lo = inst.temp_value.unwrap() as u16;
+                    let hi = self.memory.borrow().read(vector + 1) as u16;
+                    self.pc = (hi << 8) | lo;
+                }
+            }
+            _ => unreachable!("BRK has exactly 7 cycles (0-6)"),
+        }
     }
 
     /// Check if two addresses are on different pages
