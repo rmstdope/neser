@@ -1672,12 +1672,35 @@ impl Cpu {
         if self.current_instruction.is_none() {
             // Read the opcode byte before executing
             let opcode_byte = self.memory.borrow().read(self.pc);
+            // Debug output only for addresses near the critical test section
+            if self.pc >= 0xC000
+                && self.pc < 0xC100
+                && [0x18, 0x38, 0x00, 0xEA].contains(&opcode_byte)
+            {
+                eprintln!(
+                    "[INSTR START] PC=0x{:04X}, opcode=0x{:02X} ({}), cycle={}, C={}",
+                    self.pc,
+                    opcode_byte,
+                    match opcode_byte {
+                        0x18 => "CLC",
+                        0x38 => "SEC",
+                        0x00 => "BRK",
+                        0xEA => "NOP",
+                        _ => "???",
+                    },
+                    self.total_cycles,
+                    if self.p & FLAG_CARRY != 0 { "1" } else { "0" }
+                );
+            }
             let opcode = super::opcode::lookup(opcode_byte)
                 .unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
-            
+
             // Check if this instruction has cycle-accurate implementation
-            let has_cycle_accurate = matches!(opcode.code, BRK);
-            
+            let has_cycle_accurate = matches!(
+                opcode.code,
+                BRK | BPL | BMI | BVC | BVS | BCC | BCS | BNE | BEQ
+            );
+
             if has_cycle_accurate {
                 // Start cycle-accurate execution without calling run_opcode
                 self.current_instruction = Some(InstructionState {
@@ -1690,13 +1713,13 @@ impl Cpu {
             } else {
                 // Use the legacy run_opcode approach for non-cycle-accurate instructions
                 let saved_total_cycles = self.total_cycles;
-                
+
                 // Execute the full instruction using run_opcode
                 let cycles = self.run_opcode();
-                
+
                 // run_opcode already incremented total_cycles, so restore it
                 self.total_cycles = saved_total_cycles;
-                
+
                 // Create instruction state to "replay" cycles
                 self.current_instruction = Some(InstructionState {
                     opcode: opcode.clone(),
@@ -1711,14 +1734,17 @@ impl Cpu {
         // Execute one cycle of the current instruction
         if let Some(ref inst) = self.current_instruction.clone() {
             // Check if this instruction has cycle-accurate implementation
-            let has_cycle_accurate = matches!(inst.opcode.code, BRK);
-            
+            let has_cycle_accurate = matches!(
+                inst.opcode.code,
+                BRK | BPL | BMI | BVC | BVS | BCC | BCS | BNE | BEQ
+            );
+
             if has_cycle_accurate && self.cycle_in_instruction == 0 {
                 // Skip PC increment for cycle-accurate instructions (handled in execute_instruction_cycle)
             } else if !has_cycle_accurate && self.cycle_in_instruction == 0 {
                 // For non-cycle-accurate instructions, PC was already incremented by run_opcode
             }
-            
+
             // Execute the cycle-specific logic
             self.execute_instruction_cycle();
         }
@@ -1747,6 +1773,7 @@ impl Cpu {
         if let Some(ref inst) = self.current_instruction.clone() {
             match inst.opcode.code {
                 BRK => self.execute_brk_cycle(),
+                BPL | BMI | BVC | BVS | BCC | BCS | BNE | BEQ => self.execute_branch_cycle(),
                 _ => {
                     // For non-cycle-accurate instructions, do nothing
                     // The instruction was already executed by run_opcode
@@ -1787,16 +1814,16 @@ impl Cpu {
                 if use_nmi {
                     self.nmi_pending = false; // Acknowledge NMI
                 }
-                
+
                 // Store which vector to use
                 if let Some(ref mut inst) = self.current_instruction {
                     inst.temp_addr = Some(if use_nmi { NMI_VECTOR } else { IRQ_VECTOR });
                 }
-                
+
                 // Push status with B flag set (even when hijacked by NMI!)
                 let flags = self.p | FLAG_BREAK | FLAG_UNUSED;
                 self.push_byte(flags);
-                
+
                 // Set Interrupt Disable flag
                 self.p |= FLAG_INTERRUPT;
             }
@@ -1820,6 +1847,81 @@ impl Cpu {
                 }
             }
             _ => unreachable!("BRK has exactly 7 cycles (0-6)"),
+        }
+    }
+
+    /// Execute one cycle of branch instruction (2-4 cycles depending on branch taken and page crossing)
+    /// Cycle 0: Fetch opcode (implicit, happens in tick_cycle before this function)
+    /// Cycle 1: Increment PC past opcode (index 0 in this function)
+    /// Cycle 2: Read offset byte, decide if branch taken (index 1)
+    /// Cycle 3: (if taken) Add offset to PC, check page crossing (index 2)
+    /// Cycle 4: (if page crossed) Page crossing penalty cycle (index 3)
+    fn execute_branch_cycle(&mut self) {
+        match self.cycle_in_instruction {
+            0 => {
+                // Cycle 1: Increment PC past opcode
+                self.pc += 1;
+            }
+            1 => {
+                // Cycle 2: Read offset byte and check branch condition
+                let offset = self.read_byte() as i8;
+
+                // Determine if branch should be taken based on opcode
+                let should_branch = if let Some(ref inst) = self.current_instruction {
+                    match inst.opcode.code {
+                        BCC => self.p & FLAG_CARRY == 0,    // Branch if Carry Clear
+                        BCS => self.p & FLAG_CARRY != 0,    // Branch if Carry Set
+                        BEQ => self.p & FLAG_ZERO != 0,     // Branch if Equal (Zero set)
+                        BMI => self.p & FLAG_NEGATIVE != 0, // Branch if Minus (Negative set)
+                        BNE => self.p & FLAG_ZERO == 0,     // Branch if Not Equal (Zero clear)
+                        BPL => self.p & FLAG_NEGATIVE == 0, // Branch if Plus (Negative clear)
+                        BVC => self.p & FLAG_OVERFLOW == 0, // Branch if Overflow Clear
+                        BVS => self.p & FLAG_OVERFLOW != 0, // Branch if Overflow Set
+                        _ => unreachable!("Invalid branch opcode"),
+                    }
+                } else {
+                    false
+                };
+
+                if should_branch {
+                    // Store offset and old PC for next cycle
+                    // Branch is taken - add 1 extra cycle (total 3 for same page, or 4 if page crossed)
+                    if let Some(ref mut inst) = self.current_instruction {
+                        inst.temp_value = Some(offset as u8);
+                        inst.temp_addr = Some(self.pc);
+                        inst.cycles_remaining += 1; // Add 1 cycle for taken branch
+                    }
+                }
+                // Branch not taken: instruction completes after this cycle (2 cycles total)
+            }
+            2 => {
+                // Cycle 3: Branch was taken, add offset to PC
+                if let Some(ref inst) = self.current_instruction.clone() {
+                    let offset = inst.temp_value.unwrap() as i8;
+                    let old_pc = inst.temp_addr.unwrap();
+                    let new_pc = self.pc.wrapping_add(offset as u16);
+
+                    // Check if page boundary was crossed
+                    let page_crossed = Self::page_crossed(old_pc, new_pc);
+
+                    self.pc = new_pc;
+
+                    if page_crossed {
+                        // Page crossed - add 1 more cycle (total 4)
+                        if let Some(ref mut inst) = self.current_instruction {
+                            inst.cycles_remaining += 1;
+                        }
+                    }
+                    // If no page cross, instruction completes after this cycle (3 cycles total)
+                    // If page crossed, continue to cycle 3 for the penalty cycle
+                }
+            }
+            3 => {
+                // Cycle 4: Page crossing penalty cycle
+                // PC has already been updated in cycle 3, this is just a dummy cycle
+                // Instruction completes after this cycle (4 cycles total)
+            }
+            _ => unreachable!("Branch has at most 5 cycles (0-4)"),
         }
     }
 
@@ -6809,7 +6911,11 @@ mod tests {
         let start_cycles = cpu.total_cycles();
 
         // Execute LDA #$42 cycle by cycle (2 cycles)
-        assert_eq!(cpu.tick_cycle(), false, "Cycle 1 of LDA should not complete");
+        assert_eq!(
+            cpu.tick_cycle(),
+            false,
+            "Cycle 1 of LDA should not complete"
+        );
         assert_eq!(cpu.total_cycles(), start_cycles + 1);
         assert_eq!(cpu.tick_cycle(), true, "Cycle 2 of LDA should complete");
         assert_eq!(cpu.total_cycles(), start_cycles + 2);
@@ -6877,6 +6983,144 @@ mod tests {
             cpu2.total_cycles(),
             cpu1.total_cycles(),
             "Total cycles should match"
+        );
+    }
+
+    #[test]
+    fn test_brk_cycle_by_cycle() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Create a proper cartridge with interrupt vectors
+        let mut prg_rom = vec![0; 0x4000]; // 16KB
+        // BRK at 0x8000
+        prg_rom[0x0000] = 0x00; // BRK
+        prg_rom[0x0001] = 0x00; // Padding
+        // Reset vector at 0xFFFC
+        prg_rom[0x3FFC] = 0x00;
+        prg_rom[0x3FFD] = 0x80;
+        // IRQ vector at 0xFFFE
+        prg_rom[0x3FFE] = 0x00;
+        prg_rom[0x3FFF] = 0x90;
+
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.reset();
+
+        let start_pc = cpu.pc;
+        let start_cycles = cpu.total_cycles();
+
+        // Execute BRK cycle by cycle (7 cycles)
+        let mut cycles_executed = 0;
+        loop {
+            let complete = cpu.tick_cycle();
+            cycles_executed += 1;
+            if complete {
+                break;
+            }
+        }
+
+        // BRK should take exactly 7 cycles
+        assert_eq!(cycles_executed, 7, "BRK should execute in 7 cycles");
+        assert_eq!(
+            cpu.total_cycles(),
+            start_cycles + 7,
+            "Total cycles should increase by 7"
+        );
+
+        // Verify PC jumped to interrupt vector
+        assert_eq!(cpu.pc, 0x9000, "PC should jump to IRQ vector (0x9000)");
+
+        // Verify stack has return address (start_pc + 2) and status
+        let sp_after = cpu.sp;
+        assert_eq!(
+            sp_after,
+            0xFD - 3,
+            "Stack pointer should be decremented by 3"
+        );
+
+        // Check stack contents
+        let stack_base = 0x0100;
+        let pch = cpu.memory.borrow().read(stack_base + 0xFD as u16);
+        let pcl = cpu.memory.borrow().read(stack_base + 0xFC as u16);
+        let status = cpu.memory.borrow().read(stack_base + 0xFB as u16);
+
+        let return_addr = ((pch as u16) << 8) | (pcl as u16);
+        assert_eq!(return_addr, start_pc + 2, "Return address should be PC + 2");
+        assert_eq!(
+            status & FLAG_BREAK,
+            FLAG_BREAK,
+            "Status on stack should have B flag set"
+        );
+    }
+
+    #[test]
+    fn test_brk_nmi_hijacking() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Create a proper cartridge with interrupt vectors
+        let mut prg_rom = vec![0; 0x4000]; // 16KB
+        // BRK at 0x8000
+        prg_rom[0x0000] = 0x00; // BRK
+        prg_rom[0x0001] = 0x00; // Padding
+        // Reset vector at 0xFFFC
+        prg_rom[0x3FFC] = 0x00;
+        prg_rom[0x3FFD] = 0x80;
+        // NMI vector at 0xFFFA
+        prg_rom[0x3FFA] = 0x00;
+        prg_rom[0x3FFB] = 0x80;
+        // IRQ vector at 0xFFFE
+        prg_rom[0x3FFE] = 0x00;
+        prg_rom[0x3FFF] = 0x90;
+
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.reset();
+
+        // Set NMI pending BEFORE starting BRK
+        cpu.set_nmi_pending(true);
+
+        let start_cycles = cpu.total_cycles();
+
+        // Execute BRK cycle by cycle
+        let mut cycles_executed = 0;
+        loop {
+            let complete = cpu.tick_cycle();
+            cycles_executed += 1;
+            if complete {
+                break;
+            }
+        }
+
+        // BRK should still take exactly 7 cycles even when hijacked
+        assert_eq!(cycles_executed, 7, "BRK should execute in 7 cycles");
+        assert_eq!(
+            cpu.total_cycles(),
+            start_cycles + 7,
+            "Total cycles should increase by 7"
+        );
+
+        // CRITICAL: Verify PC jumped to NMI vector, not IRQ vector
+        assert_eq!(
+            cpu.pc, 0x8000,
+            "PC should jump to NMI vector (0x8000) due to hijacking"
+        );
+
+        // Verify NMI pending flag was cleared
+        assert_eq!(
+            cpu.nmi_pending, false,
+            "NMI pending flag should be cleared after hijacking"
+        );
+
+        // Verify B flag is STILL set on stack (BRK's B flag, not NMI's)
+        let status = cpu.memory.borrow().read(0x0100 + 0xFB as u16);
+        assert_eq!(
+            status & FLAG_BREAK,
+            FLAG_BREAK,
+            "Status on stack should STILL have B flag set (BRK characteristic)"
         );
     }
 }

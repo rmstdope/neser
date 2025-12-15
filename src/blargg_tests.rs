@@ -100,7 +100,7 @@ mod tests {
                 }
 
                 // Check every 60 frames (1 second intervals)
-                if frame % 60 == 0 {
+                if frame % 1 == 0 {
                     if self.use_console_output {
                         // Console-based test: read nametable text
                         // Console output starts at $2081 and spans multiple rows
