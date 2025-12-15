@@ -155,29 +155,42 @@ impl Nes {
             return dma_cycles.min(255) as u8;
         }
 
-        // Normal opcode execution
-        // Update NMI pending flag before executing instruction
-        // This allows BRK to check for NMI hijacking at the right time
-        if self.ppu.borrow_mut().poll_nmi() {
-            self.cpu.set_nmi_pending(true);
+        // Execute CPU instruction cycle-by-cycle
+        let mut cpu_cycles = 0;
+        loop {
+            // Execute one CPU cycle
+            let instruction_complete = self.cpu.tick_cycle();
+            cpu_cycles += 1;
+
+            // Tick PPU and APU for this single CPU cycle
+            self.tick_ppu(1);
+            self.tick_apu(1);
+
+            // Check for NMI edge after every CPU cycle
+            // This allows detection of NMI mid-instruction (e.g., during BRK)
+            if self.ppu.borrow_mut().poll_nmi() {
+                self.cpu.set_nmi_pending(true);
+            }
+
+            // Break after instruction completes
+            if instruction_complete {
+                break;
+            }
         }
 
-        let cpu_cycles = self.cpu.run_opcode();
-
-        // Tick PPU and APU for all CPU cycles
-        self.tick_ppu(cpu_cycles);
-        self.tick_apu(cpu_cycles);
-
-        // Check for NMI after ticking PPU
-        // If BRK hasn't consumed the NMI (via hijacking), trigger it now
-        if self.ppu.borrow_mut().poll_nmi() && !self.cpu.nmi_pending {
-            // Trigger NMI immediately
+        // Only trigger interrupts after instruction completes
+        // Check if NMI needs to be triggered
+        // (BRK may have consumed it via vector hijacking)
+        if self.cpu.nmi_pending {
+            self.cpu.set_nmi_pending(false);
             let nmi_cycles = self.cpu.trigger_nmi();
+            // Tick PPU and APU for the NMI handling cycles
             self.tick_ppu(nmi_cycles);
             self.tick_apu(nmi_cycles);
+            cpu_cycles += nmi_cycles;
         }
 
-        // Check for IRQ after executing instruction and ticking APU
+        // Check for IRQ after executing instruction
         // IRQ is maskable and checked after NMI
         // Skip IRQ check if there's a 1-instruction delay (CLI/SEI/PLP)
         if self.cpu.should_poll_irq() && self.apu.borrow().poll_irq() {
@@ -186,6 +199,7 @@ impl Nes {
                 // Only tick if IRQ was actually taken (not masked)
                 self.tick_ppu(irq_cycles);
                 self.tick_apu(irq_cycles);
+                cpu_cycles += irq_cycles;
             }
         }
 
