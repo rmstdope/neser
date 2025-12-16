@@ -1213,27 +1213,51 @@ impl Cpu {
                 self.memory.borrow_mut().write(addr, self.a, false);
             }
             SXA_ABSY => {
-                // Undocumented: Store X AND (HIGH(addr) + 1) at addr,Y
+                // Undocumented: SHX a,Y - Store X AND (HIGH(addr) + 1) at addr,Y
+                // However, on page crossing, the high byte of the address is ANDed with X
                 let base_addr = self.read_word();
-                let addr = base_addr.wrapping_add(self.y as u16);
+                let addr_no_cross = base_addr.wrapping_add(self.y as u16);
                 // Write instructions ALWAYS perform dummy read during indexed address calculation
                 let dummy_addr =
                     (base_addr & 0xFF00) | ((base_addr.wrapping_add(self.y as u16)) & 0x00FF);
                 self.memory.borrow().read(dummy_addr);
-                let high_byte = (base_addr >> 8) as u8;
-                let result = self.x & high_byte.wrapping_add(1);
+
+                let page_crossed = (base_addr & 0xFF00) != (addr_no_cross & 0xFF00);
+                let high_byte = ((base_addr >> 8) as u8).wrapping_add(1);
+                let result = self.x & high_byte;
+
+                // On page crossing, the high byte of the target address is ANDed with X
+                let addr = if page_crossed {
+                    let modified_high = ((addr_no_cross >> 8) as u8) & self.x;
+                    ((modified_high as u16) << 8) | (addr_no_cross & 0x00FF)
+                } else {
+                    addr_no_cross
+                };
+
                 self.memory.borrow_mut().write(addr, result, false);
             }
             SYA_ABSX => {
-                // Undocumented: Store Y AND (HIGH(addr) + 1) at addr,X
+                // Undocumented: SHY a,X - Store Y AND (HIGH(addr) + 1) at addr,X
+                // However, on page crossing, the high byte of the address is ANDed with Y
                 let base_addr = self.read_word();
-                let addr = base_addr.wrapping_add(self.x as u16);
+                let addr_no_cross = base_addr.wrapping_add(self.x as u16);
                 // Write instructions ALWAYS perform dummy read during indexed address calculation
                 let dummy_addr =
                     (base_addr & 0xFF00) | ((base_addr.wrapping_add(self.x as u16)) & 0x00FF);
                 self.memory.borrow().read(dummy_addr);
-                let high_byte = (base_addr >> 8) as u8;
-                let result = self.y & high_byte.wrapping_add(1);
+
+                let page_crossed = (base_addr & 0xFF00) != (addr_no_cross & 0xFF00);
+                let high_byte = ((base_addr >> 8) as u8).wrapping_add(1);
+                let result = self.y & high_byte;
+
+                // On page crossing, the high byte of the target address is ANDed with Y
+                let addr = if page_crossed {
+                    let modified_high = ((addr_no_cross >> 8) as u8) & self.y;
+                    ((modified_high as u16) << 8) | (addr_no_cross & 0x00FF)
+                } else {
+                    addr_no_cross
+                };
+
                 self.memory.borrow_mut().write(addr, result, false);
             }
             STA_ABSY => {
@@ -1346,20 +1370,25 @@ impl Cpu {
                 self.memory.borrow_mut().write(addr, value, false);
             }
             ARR_IMM => {
-                // Undocumented: AND then rotate right
+                // Undocumented: AND then rotate right with special flag handling
+                // ARR #{imm} = AND #{imm} + ROR, but flags are set specially:
+                // 1. A = A & imm
+                // 2. A = ROR A (using OLD carry)
+                // 3. C = bit 6 of result (AFTER ROR)
+                // 4. V = bit 6 XOR bit 5 of result (AFTER ROR)
+                // 5. N, Z = normal (from result)
                 let value = self.read_byte();
                 self.a &= value;
 
-                // Rotate right using current carry flag
+                // Rotate right using OLD carry flag
                 let old_carry = if self.p & FLAG_CARRY != 0 { 0x80 } else { 0 };
-                let new_carry = if self.a & 0x01 != 0 { FLAG_CARRY } else { 0 };
-
                 self.a = (self.a >> 1) | old_carry;
 
-                // Set carry from bit 0 of AND result
+                // Set carry to bit 6 of result (after ROR)
+                let new_carry = if self.a & 0x40 != 0 { FLAG_CARRY } else { 0 };
                 self.p = (self.p & !FLAG_CARRY) | new_carry;
 
-                // Set overflow to bit 6 XOR bit 5 of result
+                // Set overflow to bit 6 XOR bit 5 of result (after ROR)
                 let bit6 = (self.a >> 6) & 1;
                 let bit5 = (self.a >> 5) & 1;
                 let overflow = if bit6 ^ bit5 != 0 { FLAG_OVERFLOW } else { 0 };
@@ -1382,10 +1411,14 @@ impl Cpu {
                 self.update_zero_and_negative_flags(self.a);
             }
             ATX_IMM => {
-                // Undocumented: AND then transfer to both A and X
+                // Undocumented: LAX #i (also known as ATX, OAL)
+                // Highly unstable on real hardware: A := (A | CONST) & #{imm}; X := A
+                // where CONST is a "magic constant" that varies between machines
+                // Oxyron docs say: "A,X:=#{imm}" - just load immediate into both registers
+                // This is the stable behavior that blargg's tests seem to expect
                 let value = self.read_byte();
-                self.a &= value;
-                self.x = self.a;
+                self.a = value;
+                self.x = value;
                 self.update_zero_and_negative_flags(self.a);
             }
             AXA_INDY => {
@@ -5854,10 +5887,11 @@ mod tests {
         cpu.p = 0x00;
         run(&mut cpu);
         // A = 0b11111111 AND 0b01100001 = 0b01100001
-        // Then shift right: 0b01100001 >> 1 = 0b00110000 (bit 0 was 1, sets carry)
+        // Then shift right: 0b01100001 >> 1 = 0b00110000
         assert_eq!(cpu.a, 0b00110000);
-        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // bit 0 was 1
-        // Overflow is bit 6 XOR bit 5 of result
+        // Carry = bit 6 of result = bit 6 of 0b00110000 = 0
+        assert_eq!(cpu.p & FLAG_CARRY, 0);
+        // Overflow = bit 6 XOR bit 5 of result
         // Result is 0b00110000: bit 6 = 0, bit 5 = 1, so 0 XOR 1 = 1
         assert_eq!(cpu.p & FLAG_OVERFLOW, FLAG_OVERFLOW);
     }
@@ -5924,8 +5958,7 @@ mod tests {
         cpu.a = 0b11111111;
         cpu.x = 0x00;
         run(&mut cpu);
-        // A = A AND immediate = 0b11111111 AND 0b11110000 = 0b11110000
-        // Then transfer to both A and X
+        // A,X = immediate value (stable behavior for blargg tests)
         assert_eq!(cpu.a, 0b11110000);
         assert_eq!(cpu.x, 0b11110000);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -5942,10 +5975,10 @@ mod tests {
         cpu.a = 0b11110000;
         cpu.x = 0xFF;
         run(&mut cpu);
-        // A = A AND immediate = 0b11110000 AND 0b00001111 = 0b00000000
-        assert_eq!(cpu.a, 0b00000000);
-        assert_eq!(cpu.x, 0b00000000);
-        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
+        // A,X = immediate value (0b00001111 is not zero)
+        assert_eq!(cpu.a, 0b00001111);
+        assert_eq!(cpu.x, 0b00001111);
+        assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -5959,9 +5992,9 @@ mod tests {
         cpu.a = 0b11001100;
         cpu.x = 0x33;
         run(&mut cpu);
-        // A = A AND immediate = 0b11001100 AND 0b10101010 = 0b10001000
-        assert_eq!(cpu.a, 0b10001000);
-        assert_eq!(cpu.x, 0b10001000);
+        // A,X = immediate value
+        assert_eq!(cpu.a, 0b10101010);
+        assert_eq!(cpu.x, 0b10101010);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 

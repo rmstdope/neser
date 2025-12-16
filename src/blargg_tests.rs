@@ -202,7 +202,70 @@ mod tests {
         "roms/blargg/cpu_timing_test6/cpu_timing_test.nes"
     );
     blargg_test!(test_instr_misc, "roms/blargg/instr_misc/instr_misc.nes");
-
+    blargg_test!(
+        test_instr_01_basics,
+        "roms/blargg/instr_test-v5/rom_singles/01-basics.nes"
+    );
+    blargg_test!(
+        test_instr_02_implied,
+        "roms/blargg/instr_test-v5/rom_singles/02-implied.nes"
+    );
+    blargg_test!(
+        test_instr_03_immediate,
+        "roms/blargg/instr_test-v5/rom_singles/03-immediate.nes"
+    );
+    blargg_test!(
+        test_instr_04_zero_page,
+        "roms/blargg/instr_test-v5/rom_singles/04-zero_page.nes"
+    );
+    blargg_test!(
+        test_instr_05_zp_xy,
+        "roms/blargg/instr_test-v5/rom_singles/05-zp_xy.nes"
+    );
+    blargg_test!(
+        test_instr_06_absolute,
+        "roms/blargg/instr_test-v5/rom_singles/06-absolute.nes"
+    );
+    blargg_test!(
+        test_instr_07_abs_xy,
+        "roms/blargg/instr_test-v5/rom_singles/07-abs_xy.nes"
+    );
+    blargg_test!(
+        test_instr_08_ind_x,
+        "roms/blargg/instr_test-v5/rom_singles/08-ind_x.nes"
+    );
+    blargg_test!(
+        test_instr_09_ind_y,
+        "roms/blargg/instr_test-v5/rom_singles/09-ind_y.nes"
+    );
+    blargg_test!(
+        test_instr_10_branches,
+        "roms/blargg/instr_test-v5/rom_singles/10-branches.nes"
+    );
+    blargg_test!(
+        test_instr_11_stack,
+        "roms/blargg/instr_test-v5/rom_singles/11-stack.nes"
+    );
+    blargg_test!(
+        test_instr_12_jmp_jsr,
+        "roms/blargg/instr_test-v5/rom_singles/12-jmp_jsr.nes"
+    );
+    blargg_test!(
+        test_instr_13_rts,
+        "roms/blargg/instr_test-v5/rom_singles/13-rts.nes"
+    );
+    blargg_test!(
+        test_instr_14_rti,
+        "roms/blargg/instr_test-v5/rom_singles/14-rti.nes"
+    );
+    blargg_test!(
+        test_instr_15_brk,
+        "roms/blargg/instr_test-v5/rom_singles/15-brk.nes"
+    );
+    blargg_test!(
+        test_instr_16_special,
+        "roms/blargg/instr_test-v5/rom_singles/16-special.nes"
+    );
     // OAM and APU tests
     blargg_test!(test_oam_read, "roms/oam_read.nes");
 
@@ -212,7 +275,6 @@ mod tests {
     blargg_test!(test_4015_cleared, "roms/blargg/4015_cleared.nes");
 
     #[test]
-    #[ignore]
     fn test_4017_timing() {
         let mut runner = BlarggTestRunner::new("roms/blargg/4017_timing.nes", 180);
         let result = runner.run_test();

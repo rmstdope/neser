@@ -194,8 +194,7 @@ impl Ppu {
             } else if pixel >= 65 && pixel <= 256 {
                 // Evaluate sprites for next scanline
                 let sprite_height = self.registers.sprite_height();
-                let sprite_0_found = self
-                    .sprites
+                self.sprites
                     .evaluate_sprites(pixel, scanline, sprite_height);
 
                 if pixel == 256 {

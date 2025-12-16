@@ -12,9 +12,8 @@ const SHOW_SPRITES: u8 = 0b0001_0000;
 const SHOW_BACKGROUND_LEFT: u8 = 0b0000_0010;
 const SHOW_SPRITES_LEFT: u8 = 0b0000_0100;
 const GRAYSCALE: u8 = 0b0000_0001;
-const EMPHASIZE_RED: u8 = 0b0010_0000;
-const EMPHASIZE_GREEN: u8 = 0b0100_0000;
-const EMPHASIZE_BLUE: u8 = 0b1000_0000;
+// const EMPHASIZE_GREEN: u8 = 0b0100_0000;
+// const EMPHASIZE_BLUE: u8 = 0b1000_0000;
 
 /// Manages PPU registers including PPUCTRL, PPUMASK, and Loopy scroll registers
 pub struct Registers {
@@ -437,6 +436,8 @@ mod tests {
         regs.write_mask(GRAYSCALE);
         assert!(regs.is_grayscale());
     }
+
+    const EMPHASIZE_RED: u8 = 0b0010_0000;
 
     #[test]
     fn test_color_emphasis() {
