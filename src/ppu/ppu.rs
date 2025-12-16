@@ -1,6 +1,8 @@
-use crate::cartridge::MirroringMode;
+use crate::cartridge::{Cartridge, MirroringMode};
 use crate::nes::TvSystem;
 use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Refactored PPU using modular components
 pub struct Ppu {
@@ -21,6 +23,13 @@ pub struct Ppu {
     rendering: Rendering,
     /// Previous A12 state for change detection (bit 12 of PPU address)
     prev_a12: bool,
+    /// Cartridge reference for dynamic CHR ROM/RAM access through mapper
+    ///
+    /// The PPU holds a shared reference to the cartridge to enable:
+    /// - Real-time CHR bank switching during rendering
+    /// - Proper mapper integration for pattern table access
+    /// - Hardware-accurate CHR-ROM and CHR-RAM behavior
+    cartridge: Option<Rc<RefCell<Cartridge>>>,
 }
 
 impl Ppu {
@@ -35,6 +44,7 @@ impl Ppu {
             sprites: Sprites::new(),
             rendering: Rendering::new(),
             prev_a12: false,
+            cartridge: None,
         }
     }
 
@@ -122,18 +132,20 @@ impl Ppu {
                         // Fetch pattern table low byte
                         let v = self.registers.v();
                         let bg_pattern_table = self.registers.bg_pattern_table_addr();
+                        let cartridge = &self.cartridge;
                         self.background
                             .fetch_pattern_lo(bg_pattern_table, v, |addr| {
-                                self.memory.read_chr(addr)
+                                self.memory.read_chr(addr, cartridge)
                             });
                     }
                     3 => {
                         // Fetch pattern table high byte
                         let v = self.registers.v();
                         let bg_pattern_table = self.registers.bg_pattern_table_addr();
+                        let cartridge = &self.cartridge;
                         self.background
                             .fetch_pattern_hi(bg_pattern_table, v, |addr| {
-                                self.memory.read_chr(addr)
+                                self.memory.read_chr(addr, cartridge)
                             });
                     }
                     _ => {}
@@ -215,12 +227,13 @@ impl Ppu {
                 // Fetch sprite patterns for next scanline
                 let sprite_height = self.registers.sprite_height();
                 let sprite_pattern_table = self.registers.sprite_pattern_table_addr();
+                let cartridge = &self.cartridge;
                 self.sprites.fetch_sprite_pattern(
                     pixel,
                     scanline,
                     sprite_height,
                     sprite_pattern_table,
-                    |addr| self.memory.read_chr(addr),
+                    |addr| self.memory.read_chr(addr, cartridge),
                 );
             } else if pixel == 321 {
                 // Swap sprite buffers for rendering
@@ -391,7 +404,8 @@ impl Ppu {
             0x0000..=0x1FFF => {
                 // CHR ROM: buffered read
                 let buffered = self.registers.data_buffer();
-                self.registers.set_data_buffer(self.memory.read_chr(addr));
+                self.registers
+                    .set_data_buffer(self.memory.read_chr(addr, &self.cartridge));
                 buffered
             }
             0x2000..=0x3EFF => {
@@ -440,9 +454,8 @@ impl Ppu {
         let addr = self.registers.v();
         match addr {
             0x0000..=0x1FFF => {
-                // CHR memory (ROM or RAM depending on cartridge)
-                self.memory.write_chr(addr, value);
-                // TODO Connect this with the mapper
+                // CHR memory - routes through mapper for ROM/RAM handling
+                self.memory.write_chr(addr, value, &self.cartridge);
             }
             0x2000..=0x3EFF => {
                 self.memory.write_nametable(addr, value);
@@ -461,9 +474,13 @@ impl Ppu {
         }
     }
 
-    /// Load CHR ROM
-    pub fn load_chr_rom(&mut self, chr_rom: Vec<u8>) {
-        self.memory.load_chr_rom(chr_rom);
+    /// Set the cartridge reference for dynamic CHR ROM/RAM access
+    ///
+    /// This establishes the connection between the PPU and the cartridge mapper,
+    /// enabling hardware-accurate CHR access with bank switching support.
+    /// Must be called after inserting a cartridge into the system.
+    pub fn set_cartridge(&mut self, cartridge: Rc<RefCell<Cartridge>>) {
+        self.cartridge = Some(cartridge);
     }
 
     /// Set mirroring mode
@@ -1142,13 +1159,8 @@ mod tests {
     }
 
     // CHR ROM and mirroring tests
-    #[test]
-    fn test_load_chr_rom() {
-        let mut ppu = Ppu::new(TvSystem::Ntsc);
-        let chr_data = vec![0x42; 8192];
-        ppu.load_chr_rom(chr_data);
-        // CHR ROM should be loaded (tested via read operations)
-    }
+    // Note: CHR ROM is now loaded dynamically through cartridge mapper
+    // No longer need test_load_chr_rom
 
     #[test]
     fn test_vertical_mirroring() {

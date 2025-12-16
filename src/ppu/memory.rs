@@ -1,9 +1,9 @@
-use crate::cartridge::MirroringMode;
+use crate::cartridge::{Cartridge, MirroringMode};
+use std::cell::RefCell;
+use std::rc::Rc;
 
 /// Manages PPU memory including VRAM, palette RAM, and CHR ROM
 pub struct Memory {
-    /// Pattern tables (CHR ROM/RAM) - 8KB
-    chr_rom: Vec<u8>,
     /// Nametables - 4KB (supports all four nametables for FourScreen mode)
     ppu_ram: [u8; 4096],
     /// Palette RAM - 32 bytes
@@ -16,7 +16,6 @@ impl Memory {
     /// Create a new Memory instance
     pub fn new() -> Self {
         Self {
-            chr_rom: vec![0; 8192],
             ppu_ram: [0; 4096],
             palette: [0; 32],
             mirroring_mode: MirroringMode::Horizontal,
@@ -29,28 +28,44 @@ impl Memory {
         self.palette = [0; 32];
     }
 
-    /// Load CHR ROM data
-    pub fn load_chr_rom(&mut self, chr_rom: Vec<u8>) {
-        self.chr_rom = chr_rom;
-    }
-
     /// Set mirroring mode
     pub fn set_mirroring(&mut self, mirroring: MirroringMode) {
         self.mirroring_mode = mirroring;
     }
 
-    /// Read from CHR ROM at the specified address
-    pub fn read_chr(&self, addr: u16) -> u8 {
-        self.chr_rom.get(addr as usize).copied().unwrap_or(0)
+    /// Read from CHR ROM/RAM at the specified address through the mapper
+    ///
+    /// CHR (Character ROM/RAM) contains pattern tables for tiles and sprites.
+    /// The address is masked to 13 bits (0x0000-0x1FFF, 8KB range).
+    ///
+    /// This method routes the read through the cartridge mapper, which allows:
+    /// - Bank switching (e.g., CNROM, MMC1, MMC3)
+    /// - CHR-RAM support for mappers with writable pattern tables
+    /// - Proper hardware-accurate memory access
+    ///
+    /// Returns 0 if no cartridge is loaded.
+    pub fn read_chr(&self, addr: u16, cartridge: &Option<Rc<RefCell<Cartridge>>>) -> u8 {
+        let masked_addr = addr & 0x1FFF;
+        if let Some(cart) = cartridge {
+            cart.borrow().mapper().read_chr(masked_addr)
+        } else {
+            0 // No cartridge loaded, return 0
+        }
     }
 
-    /// Write to CHR memory at the specified address
-    /// Only works if CHR-RAM is present (not CHR-ROM)
-    /// For now, we allow writes - mapper will handle ROM vs RAM distinction later
-    pub fn write_chr(&mut self, addr: u16, value: u8) {
-        let index = (addr & 0x1FFF) as usize;
-        if index < self.chr_rom.len() {
-            self.chr_rom[index] = value;
+    /// Write to CHR memory at the specified address through the mapper
+    ///
+    /// This method routes the write through the cartridge mapper.
+    /// The mapper determines whether the write is allowed:
+    /// - CHR-RAM: Write is performed
+    /// - CHR-ROM: Write is typically ignored (hardware characteristic)
+    ///
+    /// The address is masked to 13 bits (0x0000-0x1FFF, 8KB range).
+    /// No-op if no cartridge is loaded.
+    pub fn write_chr(&mut self, addr: u16, value: u8, cartridge: &Option<Rc<RefCell<Cartridge>>>) {
+        let masked_addr = addr & 0x1FFF;
+        if let Some(cart) = cartridge {
+            cart.borrow_mut().mapper_mut().write_chr(masked_addr, value);
         }
     }
 
@@ -141,7 +156,7 @@ mod tests {
     #[test]
     fn test_memory_new() {
         let mem = Memory::new();
-        assert_eq!(mem.read_chr(0), 0);
+        assert_eq!(mem.read_chr(0, &None), 0);
         assert_eq!(mem.read_palette(0x3F00), 0);
     }
 
@@ -151,14 +166,6 @@ mod tests {
         mem.write_palette(0x3F00, 0x42);
         mem.reset();
         assert_eq!(mem.read_palette(0x3F00), 0);
-    }
-
-    #[test]
-    fn test_load_chr_rom() {
-        let mut mem = Memory::new();
-        let chr_data = vec![0x42; 8192];
-        mem.load_chr_rom(chr_data);
-        assert_eq!(mem.read_chr(0), 0x42);
     }
 
     #[test]
@@ -378,19 +385,19 @@ mod tests {
     }
 
     #[test]
-    fn test_chr_write() {
+    fn test_chr_write_no_cartridge() {
         let mut mem = Memory::new();
-        // Initially should read 0
-        assert_eq!(mem.read_chr(0x0000), 0x00);
+        // With no cartridge, reads return 0
+        assert_eq!(mem.read_chr(0x0000, &None), 0x00);
 
-        // Write to CHR memory
-        mem.write_chr(0x0000, 0xAA);
-        mem.write_chr(0x1000, 0xBB);
-        mem.write_chr(0x1FFF, 0xCC);
+        // Write to CHR memory (no-op without cartridge)
+        mem.write_chr(0x0000, 0xAA, &None);
+        mem.write_chr(0x1000, 0xBB, &None);
+        mem.write_chr(0x1FFF, 0xCC, &None);
 
-        // Read back the values
-        assert_eq!(mem.read_chr(0x0000), 0xAA);
-        assert_eq!(mem.read_chr(0x1000), 0xBB);
-        assert_eq!(mem.read_chr(0x1FFF), 0xCC);
+        // Reads still return 0 (no cartridge to store data)
+        assert_eq!(mem.read_chr(0x0000, &None), 0x00);
+        assert_eq!(mem.read_chr(0x1000, &None), 0x00);
+        assert_eq!(mem.read_chr(0x1FFF, &None), 0x00);
     }
 }
