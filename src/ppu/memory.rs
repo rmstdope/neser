@@ -73,9 +73,10 @@ impl Memory {
     }
 
     /// Write to palette at the specified address (with mirroring)
+    /// Palette RAM only stores 6 bits (0-5), bits 6-7 are ignored
     pub fn write_palette(&mut self, addr: u16, value: u8) {
         let mirrored = self.mirror_palette_address(addr);
-        self.palette[mirrored] = value;
+        self.palette[mirrored] = value & 0x3F; // Only store bits 5-0
     }
 
     /// Mirror VRAM address based on nametable mirroring mode
@@ -171,21 +172,24 @@ mod tests {
     fn test_palette_read_write() {
         let mut mem = Memory::new();
         mem.write_palette(0x3F00, 0x42);
-        assert_eq!(mem.read_palette(0x3F00), 0x42);
+        // Palette RAM only stores 6 bits (0x42 & 0x3F = 0x02)
+        assert_eq!(mem.read_palette(0x3F00), 0x02);
     }
 
     #[test]
     fn test_palette_mirroring_3f10_to_3f00() {
         let mut mem = Memory::new();
         mem.write_palette(0x3F00, 0x42);
-        assert_eq!(mem.read_palette(0x3F10), 0x42);
+        // Palette RAM only stores 6 bits (0x42 & 0x3F = 0x02)
+        assert_eq!(mem.read_palette(0x3F10), 0x02);
     }
 
     #[test]
     fn test_palette_mirroring_3f14_to_3f04() {
         let mut mem = Memory::new();
         mem.write_palette(0x3F04, 0x55);
-        assert_eq!(mem.read_palette(0x3F14), 0x55);
+        // Palette RAM only stores 6 bits (0x55 & 0x3F = 0x15)
+        assert_eq!(mem.read_palette(0x3F14), 0x15);
     }
 
     #[test]

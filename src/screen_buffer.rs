@@ -1,7 +1,5 @@
 /// ScreenBuffer holds RGB values for each pixel on the screen.
 pub struct ScreenBuffer {
-    width: u32,
-    height: u32,
     buffer: Vec<u8>,
 }
 
@@ -15,8 +13,6 @@ impl ScreenBuffer {
         let buffer_size = (Self::WIDTH * Self::HEIGHT) as usize * Self::BYTES_PER_PIXEL;
 
         ScreenBuffer {
-            width: Self::WIDTH,
-            height: Self::HEIGHT,
             buffer: vec![0; buffer_size],
         }
     }
@@ -24,18 +20,18 @@ impl ScreenBuffer {
     /// Returns the width of the screen buffer.
     #[cfg(test)]
     pub fn width(&self) -> u32 {
-        self.width
+        Self::WIDTH
     }
 
     /// Returns the height of the screen buffer.
     #[cfg(test)]
     pub fn height(&self) -> u32 {
-        self.height
+        Self::HEIGHT
     }
 
     /// Calculates the buffer offset for a given pixel coordinate.
     fn pixel_offset(&self, x: u32, y: u32) -> usize {
-        ((y * self.width + x) as usize) * Self::BYTES_PER_PIXEL
+        ((y * Self::WIDTH + x) as usize) * Self::BYTES_PER_PIXEL
     }
 
     /// Sets the RGB color of a pixel at the specified coordinates.

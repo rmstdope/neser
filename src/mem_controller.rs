@@ -125,6 +125,15 @@ impl MemController {
 
         // Update open bus with the value read
         *self.open_bus.borrow_mut() = value;
+        // self.print_open_bus();
+        value
+    }
+
+    #[cfg(test)]
+    pub fn read_for_testing(&self, addr: u16) -> u8 {
+        let old_open_bus = *self.open_bus.borrow_mut();
+        let value = self.read(addr);
+        *self.open_bus.borrow_mut() = old_open_bus;
         value
     }
 
@@ -318,6 +327,11 @@ impl MemController {
             2 => self.joypad2.borrow_mut().set_button(button, pressed),
             _ => {}
         }
+    }
+
+    /// Print the current open bus value to stdout (for debugging)
+    pub fn print_open_bus(&self) {
+        println!("Open bus: 0x{:02X}", *self.open_bus.borrow());
     }
 }
 

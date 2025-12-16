@@ -57,6 +57,11 @@ impl Status {
         self.sprite_overflow = false;
     }
 
+    /// Trigger NMI edge (used when NMI is enabled mid-VBlank)
+    pub fn trigger_nmi(&mut self) {
+        self.nmi_enabled = true;
+    }
+
     /// Clear the VBlank start cycle flag
     pub fn clear_vblank_start_cycle(&mut self) {
         self.vblank_start_cycle = false;

@@ -61,6 +61,9 @@ impl Ppu {
         // Advance timing
         let _skipped = self.timing.tick(self.registers.is_rendering_enabled());
 
+        // Tick the registers for decay timing
+        self.registers.tick();
+
         // Clear VBlank start cycle flag from previous cycle
         self.status.clear_vblank_start_cycle();
 
@@ -70,12 +73,15 @@ impl Ppu {
                 .enter_vblank(self.registers.should_generate_nmi());
         }
 
-        // Exit VBlank at pre-render scanline, pixel 1
+        // Exit VBlank at the end of scanline 260 (one scanline before pre-render)
+        // The hardware clears VBL slightly before the pre-render scanline starts
+        // This happens approximately 2270 CPU cycles after VBlank starts
         let prerender_scanline = match self.timing.tv_system() {
             TvSystem::Ntsc => 261,
             TvSystem::Pal => 311,
         };
-        if self.timing.scanline() == prerender_scanline && self.timing.pixel() == 1 {
+        let vblank_end_scanline = prerender_scanline - 1;
+        if self.timing.scanline() == vblank_end_scanline && self.timing.pixel() == 340 {
             self.status.exit_vblank();
         }
 
@@ -194,8 +200,7 @@ impl Ppu {
             } else if pixel >= 65 && pixel <= 256 {
                 // Evaluate sprites for next scanline
                 let sprite_height = self.registers.sprite_height();
-                let sprite_0_found = self
-                    .sprites
+                self.sprites
                     .evaluate_sprites(pixel, scanline, sprite_height);
 
                 if pixel == 256 {
@@ -362,7 +367,8 @@ impl Ppu {
         // Update I/O bus: status bits go to bits 5-7, bits 0-4 remain from previous value
         let io_bus = self.registers.io_bus();
         let new_io_bus = (status & 0xE0) | (io_bus & 0x1F);
-        self.registers.set_io_bus(new_io_bus);
+        // Only refresh bits 5-7, not bits 0-4
+        self.registers.set_io_bus_with_mask(new_io_bus, 0xE0);
         new_io_bus
     }
 
@@ -397,12 +403,15 @@ impl Ppu {
             }
             0x3F00..=0x3FFF => {
                 // Palette: immediate read
+                // Bits 5-0 come from palette, bits 7-6 from open bus
                 let palette_data = self.memory.read_palette(addr);
                 // Update buffer with nametable data underneath
                 let mirrored_addr = addr & 0x2FFF;
                 self.registers
                     .set_data_buffer(self.memory.read_nametable(mirrored_addr));
-                palette_data
+                // Combine palette data (bits 5-0) with open bus (bits 7-6)
+                let io_bus = self.registers.io_bus();
+                (io_bus & 0xC0) | (palette_data & 0x3F)
             }
             _ => self.registers.data_buffer(),
         };
@@ -413,7 +422,15 @@ impl Ppu {
         } else {
             self.registers.increment_vram_address();
         }
-        self.registers.set_io_bus(result); // Update I/O bus with value read
+
+        // Update I/O bus with value read
+        // For palette reads (addr 0x3F00-0x3FFF), only refresh bits 5-0
+        // For other reads, refresh all 8 bits
+        if (0x3F00..=0x3FFF).contains(&addr) {
+            self.registers.set_io_bus_with_mask(result, 0x3F);
+        } else {
+            self.registers.set_io_bus(result);
+        }
         result
     }
 
@@ -570,6 +587,12 @@ impl Ppu {
         self.memory.read_nametable(addr)
     }
 
+    /// Get base nametable address from PPUCTRL (for testing)
+    #[cfg(test)]
+    pub fn base_nametable_addr(&self) -> u16 {
+        self.registers.base_nametable_addr()
+    }
+
     /// Get t register (for testing)
     #[cfg(test)]
     pub fn t_register(&self) -> u16 {
@@ -597,6 +620,7 @@ impl Ppu {
     /// Check if A12 changed from 0 to 1 (rising edge)
     /// This is used for mapper IRQ counters (e.g., MMC3)
     /// Returns true if A12 went from 0 to 1
+    #[cfg(test)]
     fn check_a12_rising_edge(&mut self, addr: u16) -> bool {
         let current_a12 = (addr & 0x1000) != 0;
         let rising_edge = !self.prev_a12 && current_a12;
@@ -641,7 +665,10 @@ mod tests {
 
         ppu.write_address(0x3F, false);
         ppu.write_address(0x00, false);
-        assert_eq!(ppu.read_data(), 0x42);
+        // Palette RAM only stores 6 bits (0x42 & 0x3F = 0x02)
+        // Reading returns palette bits 5-0 combined with open bus bits 7-6
+        // After writing 0x00 to address, io_bus = 0x00, so result is 0x02
+        assert_eq!(ppu.read_data(), 0x02);
     }
 
     #[test]
@@ -676,7 +703,10 @@ mod tests {
 
         ppu.write_address(0x3F, false);
         ppu.write_address(0x00, false);
-        assert_eq!(ppu.read_data(), 0x42);
+        // Palette RAM only stores 6 bits (0x42 & 0x3F = 0x02)
+        // Reading returns palette bits 5-0 combined with open bus bits 7-6
+        // After writing 0x00 to address, io_bus = 0x00, so result is 0x02
+        assert_eq!(ppu.read_data(), 0x02);
     }
 
     #[test]
@@ -1265,7 +1295,7 @@ mod tests {
         ppu.write_scroll(0, false);
         ppu.write_scroll(0, false);
 
-        let v_before_256 = ppu.v_register();
+        let _v_before_256 = ppu.v_register();
 
         // Run to pixel 256 (increment_fine_y happens here)
         ppu.run_ppu_cycles(256);
