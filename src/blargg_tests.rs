@@ -187,6 +187,10 @@ mod tests {
         test_cpu_reset_ram_after_reset,
         "roms/blargg/cpu_reset/ram_after_reset.nes"
     );
+    blargg_test!(
+        test_cpu_timing_test,
+        "roms/blargg/cpu_timing_test6/cpu_timing_test.nes"
+    );
 
 
     // OAM and APU tests
