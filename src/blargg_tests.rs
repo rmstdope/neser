@@ -341,7 +341,8 @@ mod tests {
         "roms/blargg/blargg_ppu_tests_2005.09.15b/vram_access.nes"
     );
     blargg_test!(test_oam_read, "roms/blargg/oam_read/oam_read.nes");
-    blargg_test!(test_oam_stress, "roms/oam_stress.nes", 60 * 10);
+    blargg_test!(test_oam_stress, "roms/blargg/oam_stress/oam_stress.nes", 60 * 10);
+    blargg_test!(test_ppu_open_bus, "roms/blargg/ppu_open_bus/ppu_open_bus.nes");
 
     // blargg_test!(test_cpu, "roms/cpu.nes");
 

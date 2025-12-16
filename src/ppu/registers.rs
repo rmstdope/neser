@@ -28,6 +28,11 @@ pub struct Registers {
     /// PPU I/O bus latch - holds last value written or read from PPU registers
     /// This is separate from the CPU data bus!
     io_bus: u8,
+    /// Time (in cycles) when each bit of io_bus was last refreshed
+    /// Bits decay to 0 after ~600ms (36M cycles for NTSC) if not refreshed
+    io_bus_refresh_time: [u64; 8],
+    /// Current cycle count for decay timing
+    cycle_count: u64,
     /// v: Current VRAM address (15 bits)
     v: u16,
     /// t: Temporary VRAM address (15 bits)
@@ -47,6 +52,8 @@ impl Registers {
             oam_address: 0,
             data_buffer: 0,
             io_bus: 0,
+            io_bus_refresh_time: [0; 8],
+            cycle_count: 0,
             v: 0,
             t: 0,
             x: 0,
@@ -61,6 +68,8 @@ impl Registers {
         self.oam_address = 0;
         self.data_buffer = 0;
         self.io_bus = 0;
+        self.io_bus_refresh_time = [0; 8];
+        self.cycle_count = 0;
         self.v = 0;
         self.t = 0;
         self.x = 0;
@@ -81,14 +90,55 @@ impl Registers {
         self.mask_register = value;
     }
 
-    /// Get the current PPU I/O bus latch value
+    /// Get the current PPU I/O bus latch value (with decay applied)
+    /// Bits that haven't been refreshed for ~600ms decay to 0
     pub fn io_bus(&self) -> u8 {
-        self.io_bus
+        // 600ms = 36 frames at 60Hz, each frame ~89342 PPU cycles = 3,216,312 cycles
+        const DECAY_CYCLES: u64 = 3_216_312;
+        let mut result = self.io_bus;
+
+        // Check each bit for decay
+        for i in 0..8 {
+            if (result & (1 << i)) != 0 {
+                // If bit is set, check if it should decay
+                let cycles_since_refresh =
+                    self.cycle_count.saturating_sub(self.io_bus_refresh_time[i]);
+                if cycles_since_refresh > DECAY_CYCLES {
+                    result &= !(1 << i); // Clear the decayed bit
+                }
+            }
+        }
+
+        result
     }
 
     /// Update the PPU I/O bus latch (called on PPU register reads/writes)
+    /// Refreshes the decay timer for bits that are set to 1
     pub fn set_io_bus(&mut self, value: u8) {
         self.io_bus = value;
+        // Refresh the timer for any bit that is being set to 1
+        for i in 0..8 {
+            if (value & (1 << i)) != 0 {
+                self.io_bus_refresh_time[i] = self.cycle_count;
+            }
+        }
+    }
+
+    /// Update the PPU I/O bus latch with selective bit refresh
+    /// Only refreshes decay timer for bits specified in refresh_mask
+    pub fn set_io_bus_with_mask(&mut self, value: u8, refresh_mask: u8) {
+        self.io_bus = value;
+        // Only refresh the timer for bits that are both set to 1 AND in the mask
+        for i in 0..8 {
+            if (value & (1 << i)) != 0 && (refresh_mask & (1 << i)) != 0 {
+                self.io_bus_refresh_time[i] = self.cycle_count;
+            }
+        }
+    }
+
+    /// Tick the cycle counter for decay timing (call every PPU cycle)
+    pub fn tick(&mut self) {
+        self.cycle_count = self.cycle_count.wrapping_add(1);
     }
 
     /// Write to scroll register ($2005)
@@ -97,7 +147,7 @@ impl Registers {
         // They just write the unmodified value (which was already there)
         // So the behavior is the same as a normal write - no special handling needed
         let _ = is_dummy_write; // Dummy writes behave identically to normal writes
-        
+
         if !self.w {
             // First write: X scroll
             // t: ....... ...ABCDE <- d: ABCDE...
@@ -122,7 +172,7 @@ impl Registers {
         // They just write the unmodified value (which was already there)
         // So the behavior is the same as a normal write - no special handling needed
         let _ = is_dummy_write; // Dummy writes behave identically to normal writes
-        
+
         if !self.w {
             // First write: high byte
             // t: .CDEFGH ........ <- d: ..CDEFGH

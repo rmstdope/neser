@@ -58,16 +58,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, audio)?;
     let mut nes_instance = nes::Nes::new(tv_system);
 
+    // Palette display requiring only scanline-based palette changes,
+    // intended to demonstrate the full palette even on less advanced emulators
+    // Seems to work ok!
+    // let rom_data = std::fs::read("roms/rainwarrior/palette.nes")?;
+
+    // Simple display of any chosen color full-screen
+    // Seems to work ok!
+    // let rom_data = std::fs::read("roms/rainwarrior/color_test.nes")?;
+
+    // NTSC Torture Test displays visual patterns to demonstrate NTSC signal artifacts
+    // Shows a but for x < 8 pixels on each scanline where the leftmost 8 pixels are incorrect
+    // but otherwise seems to work well
+    // let rom_data = std::fs::read("roms/rainwarrior/ntsc_torture.nes")?;
+
+    // Verifies NMI timing by creating a specific pattern on the screen (NTSC & PAL versions)
+    // Not working ok right now. NMI sync seems off.
+    // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
+
     // let rom_data = std::fs::read("roms/cpu_interrupts.nes")?;
-
-    // Palette test - shows timing issues due to PPU timing limitations
-    // let rom_data = std::fs::read("roms/palette.nes")?;
-
-    // Color test - Run when input is implemented
-    // let rom_data = std::fs::read("roms/color_test.nes")?;
-
-    // NTSC Torture test - Run when input is implemented
-    // let rom_data = std::fs::read("roms/ntsc_torture.nes")?;
 
     // Load game cartridge
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
@@ -79,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
     // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
     // let rom_data = std::fs::read("roms/blargg/4015_cleared.nes")?;
-    let rom_data = std::fs::read("roms/blargg/oam_stress/oam_stress.nes")?;
+    let rom_data = std::fs::read("roms/blargg/ppu_open_bus/ppu_open_bus.nes")?;
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset();
