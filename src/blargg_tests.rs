@@ -266,6 +266,12 @@ mod tests {
         test_instr_16_special,
         "roms/blargg/instr_test-v5/rom_singles/16-special.nes"
     );
+    blargg_test!(
+        test_instr_timing,
+        "roms/blargg/instr_timing/instr_timing.nes",
+        30 * 60 // According to README, this test can take up to 25 seconds, so let's run it for 30*60 frames
+    );
+
     // OAM and APU tests
     blargg_test!(test_oam_read, "roms/oam_read.nes");
 

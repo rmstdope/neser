@@ -1599,6 +1599,7 @@ impl Cpu {
                 let base = self.read_word();
                 let addr = base.wrapping_add(self.y as u16);
                 if Self::page_crossed(base, addr) {
+                    cycles += 1;
                     // Perform dummy read from wrong address (without carry)
                     let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
                     self.memory.borrow().read(wrong_addr);
