@@ -58,12 +58,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, audio)?;
     let mut nes_instance = nes::Nes::new(tv_system);
 
-    // OADM Read test - PASS
-    // let rom_data = std::fs::read("roms/oam_read.nes")?;
-
-    // OAM Stress test - PASS
-    // let rom_data = std::fs::read("roms/oam_stress.nes")?;
-
     // let rom_data = std::fs::read("roms/cpu_interrupts.nes")?;
 
     // Palette test - shows timing issues due to PPU timing limitations
@@ -85,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
     // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
     // let rom_data = std::fs::read("roms/blargg/4015_cleared.nes")?;
-    let rom_data = std::fs::read("roms/blargg/blargg_ppu_tests_2005.09.15b/power_up_palette.nes")?;
+    let rom_data = std::fs::read("roms/blargg/oam_stress/oam_stress.nes")?;
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset();

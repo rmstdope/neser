@@ -340,11 +340,9 @@ mod tests {
         test_vram_access,
         "roms/blargg/blargg_ppu_tests_2005.09.15b/vram_access.nes"
     );
+    blargg_test!(test_oam_read, "roms/blargg/oam_read/oam_read.nes");
+    blargg_test!(test_oam_stress, "roms/oam_stress.nes", 60 * 10);
 
-    // OAM and APU tests
-    blargg_test!(test_oam_read, "roms/oam_read.nes");
-
-    // blargg_test!(test_oam_stress, "roms/oam_stress.nes", 600);
     // blargg_test!(test_cpu, "roms/cpu.nes");
 
     blargg_test!(test_4015_cleared, "roms/blargg/4015_cleared.nes");
