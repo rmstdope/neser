@@ -130,10 +130,10 @@ mod tests {
                         return BlarggTestResult::Fail(status);
                     } else if status == 0x81 {
                         if self.wait_reset > 0 {
-                            println!(
-                                // "Test indicates reset, waiting {} frames...",
-                                self.wait_reset
-                            );
+                            // println!(
+                            //     "Test indicates reset, waiting {} frames...",
+                            //     self.wait_reset
+                            // );
                             self.wait_reset -= 1;
                         } else {
                             // println!("Test indicates reset, restarting NES...");
@@ -335,6 +335,10 @@ mod tests {
     blargg_console_test!(
         test_vbl_clear_time,
         "roms/blargg/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes"
+    );
+    blargg_console_test!(
+        test_vram_access,
+        "roms/blargg/blargg_ppu_tests_2005.09.15b/vram_access.nes"
     );
 
     // OAM and APU tests
