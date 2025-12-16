@@ -570,6 +570,12 @@ impl Ppu {
         self.memory.read_nametable(addr)
     }
 
+    /// Get base nametable address from PPUCTRL (for testing)
+    #[cfg(test)]
+    pub fn base_nametable_addr(&self) -> u16 {
+        self.registers.base_nametable_addr()
+    }
+
     /// Get t register (for testing)
     #[cfg(test)]
     pub fn t_register(&self) -> u16 {

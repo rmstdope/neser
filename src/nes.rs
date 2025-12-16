@@ -528,6 +528,12 @@ impl Nes {
         )
     }
 
+    /// Get base nametable address from PPUCTRL (for testing)
+    #[cfg(test)]
+    pub fn base_nametable_addr(&self) -> u16 {
+        self.ppu.borrow().base_nametable_addr()
+    }
+
     /// Read nametable text for automated test verification
     ///
     /// Reads tile indices from the nametable and converts them to ASCII text.

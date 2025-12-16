@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
     // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
     // let rom_data = std::fs::read("roms/blargg/4015_cleared.nes")?;
-    let rom_data = std::fs::read("roms/blargg/cpu_reset/registers.nes")?;
+    let rom_data = std::fs::read("roms/blargg/cpu_reset/ram_after_reset.nes")?;
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset();

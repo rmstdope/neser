@@ -28,6 +28,7 @@ mod tests {
     pub struct BlarggTestRunner {
         rom_path: String,
         max_frames: u32,
+        wait_reset: u32,
     }
 
     impl BlarggTestRunner {
@@ -36,6 +37,7 @@ mod tests {
             Self {
                 rom_path: rom_path.to_string(),
                 max_frames,
+                wait_reset: 1,
             }
         }
 
@@ -51,7 +53,7 @@ mod tests {
         ///   - Reads nametable text looking for "PASSED" or "FAILED"
         ///
         /// Returns `Timeout` if no result is found within max_frames.
-        pub fn run_test(&self) -> BlarggTestResult {
+        pub fn run_test(&mut self) -> BlarggTestResult {
             // Load ROM
             let rom_data = match fs::read(&self.rom_path) {
                 Ok(data) => data,
@@ -85,8 +87,10 @@ mod tests {
 
                 // Try to read $6000 status byte
                 let status = nes.memory.borrow().read(0x6000);
-                // Try to read nametable text
-                let text = nes.read_nametable_text(0x2081, 32 * 32);
+                // Try to read nametable text from the currently displayed nametable
+                // Get base nametable address from PPUCTRL and add offset to skip first row
+                let base_addr = nes.base_nametable_addr();
+                let text = nes.read_nametable_text(base_addr, 32 * 32);
                 if (status > 0x00 && status < 0x80) || text.to_uppercase().contains("FAILED")
                     || text.to_uppercase().contains("ERROR")
                 {
@@ -105,8 +109,15 @@ mod tests {
                 } else if status == 0x00 || text.to_uppercase().contains("PASSED") {
                     println!("Test passed!");
                     return BlarggTestResult::Pass;
-                } else if status == 0x81 {
-                    nes.reset();
+                } else if status == 0x81 { // && !text.to_uppercase().contains("DISAPPEARS") {
+                    if self.wait_reset > 0 {
+                        // println!("Test indicates reset, waiting {} frames...", self.wait_reset);
+                        self.wait_reset -= 1;
+                    } else {
+                        // println!("Test indicates reset, restarting NES...");
+                        nes.reset();
+                        self.wait_reset = 1;
+                    }
                 }
             }
 
@@ -120,7 +131,7 @@ mod tests {
         ($test_name:ident, $rom_path:expr, $timeout:expr) => {
             #[test]
             fn $test_name() {
-                let runner = BlarggTestRunner::new($rom_path, $timeout);
+                let mut runner = BlarggTestRunner::new($rom_path, $timeout);
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();
                 assert_eq!(result, BlarggTestResult::Pass, "{} should pass", rom_name);
@@ -172,6 +183,10 @@ mod tests {
         test_cpu_reset_registers,
         "roms/blargg/cpu_reset/registers.nes"
     );
+    blargg_test!(
+        test_cpu_reset_ram_after_reset,
+        "roms/blargg/cpu_reset/ram_after_reset.nes"
+    );
 
 
     // OAM and APU tests
@@ -185,7 +200,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_4017_timing() {
-        let runner = BlarggTestRunner::new("roms/blargg/4017_timing.nes", 180);
+        let mut runner = BlarggTestRunner::new("roms/blargg/4017_timing.nes", 180);
         let result = runner.run_test();
         assert_eq!(
             result,
