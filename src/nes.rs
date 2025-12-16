@@ -596,20 +596,10 @@ mod tests {
         nes.ppu.borrow_mut().run_ppu_cycles(21); // 7 * 3 = 21 PPU cycles for NTSC
         nes.cpu.total_cycles = 7; // Account for reset cycles
 
-        let mut line_num = 0;
         for line in golden_log.lines() {
             let expected = line.to_string();
             let actual = nes.trace(true);
 
-            line_num += 1;
-            if line_num >= 10 && line_num <= 15 {
-                eprintln!("Line {}: Expected: {}", line_num, expected);
-                eprintln!("Line {}: Actual:   {}", line_num, actual);
-            }
-
-            // Note: Full comparison temporarily disabled due to opcode table alignment issues
-            // The opcode table has several missing entries causing misalignment (e.g., missing DOP at 0x14, 0x34 was missing)
-            // This causes some opcodes to execute with wrong cycle counts
             assert_eq!(expected, actual);
             nes.run_cpu_tick();
         }

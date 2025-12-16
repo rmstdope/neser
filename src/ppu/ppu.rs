@@ -602,6 +602,7 @@ impl Ppu {
     /// Check if A12 changed from 0 to 1 (rising edge)
     /// This is used for mapper IRQ counters (e.g., MMC3)
     /// Returns true if A12 went from 0 to 1
+    #[cfg(test)]
     fn check_a12_rising_edge(&mut self, addr: u16) -> bool {
         let current_a12 = (addr & 0x1000) != 0;
         let rising_edge = !self.prev_a12 && current_a12;
@@ -1270,7 +1271,7 @@ mod tests {
         ppu.write_scroll(0, false);
         ppu.write_scroll(0, false);
 
-        let v_before_256 = ppu.v_register();
+        let _v_before_256 = ppu.v_register();
 
         // Run to pixel 256 (increment_fine_y happens here)
         ppu.run_ppu_cycles(256);

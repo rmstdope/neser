@@ -76,10 +76,10 @@ mod tests {
             nes.insert_cartridge(cartridge);
             nes.reset();
 
-            println!("Running Blargg-based test ROM: {} ... ", self.rom_path);
+            // println!("Running Blargg-based test ROM: {} ... ", self.rom_path);
 
             // Run frames and check for results
-            for frame in 1..=self.max_frames {
+            for _frame in 1..=self.max_frames {
                 // Run one frame (roughly 29780 CPU cycles for NTSC)
                 for _ in 0..29780 {
                     nes.run_cpu_tick();

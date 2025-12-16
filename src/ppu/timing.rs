@@ -282,7 +282,7 @@ mod tests {
 
     #[test]
     fn test_dots_per_scanline() {
-        let timing = Timing::new(TvSystem::Ntsc);
+        let _timing = Timing::new(TvSystem::Ntsc);
         
         // Both NTSC and PAL use 341 dots per scanline (0-340)
         // This is already verified by PIXELS_PER_SCANLINE constant
