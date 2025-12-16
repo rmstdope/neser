@@ -91,7 +91,8 @@ mod tests {
                 // Get base nametable address from PPUCTRL and add offset to skip first row
                 let base_addr = nes.base_nametable_addr();
                 let text = nes.read_nametable_text(base_addr, 32 * 32);
-                if (status > 0x00 && status < 0x80) || text.to_uppercase().contains("FAILED")
+                if (status > 0x00 && status < 0x80)
+                    || text.to_uppercase().contains("FAILED")
                     || text.to_uppercase().contains("ERROR")
                 {
                     // Try to extract error code from "FAILED: #N" pattern
@@ -106,10 +107,19 @@ mod tests {
                         }
                     }
                     return BlarggTestResult::Fail(1);
-                } else if status == 0x00 || text.to_uppercase().contains("PASSED") {
+                } else if status == 0x00 {
+                    // || text.to_uppercase().contains("PASSED") {
                     println!("Test passed!");
+                    // for line in text.as_bytes().chunks(32) {
+                    //     let line_str = String::from_utf8_lossy(line);
+                    //     let trimmed = line_str.trim_end();
+                    //     if trimmed != "" {
+                    //         println!("{}", trimmed);
+                    //     }
+                    // }
                     return BlarggTestResult::Pass;
-                } else if status == 0x81 { // && !text.to_uppercase().contains("DISAPPEARS") {
+                } else if status == 0x81 {
+                    // && !text.to_uppercase().contains("DISAPPEARS") {
                     if self.wait_reset > 0 {
                         // println!("Test indicates reset, waiting {} frames...", self.wait_reset);
                         self.wait_reset -= 1;
@@ -191,7 +201,7 @@ mod tests {
         test_cpu_timing_test,
         "roms/blargg/cpu_timing_test6/cpu_timing_test.nes"
     );
-
+    blargg_test!(test_instr_misc, "roms/blargg/instr_misc/instr_misc.nes");
 
     // OAM and APU tests
     blargg_test!(test_oam_read, "roms/oam_read.nes");
