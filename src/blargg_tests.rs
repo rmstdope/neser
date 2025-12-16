@@ -112,32 +112,31 @@ mod tests {
                     continue;
                 }
                 let base_addr = nes.base_nametable_addr();
-                let text = nes.read_nametable_text(base_addr, 32 * 32);
+                let mut text = nes.read_nametable_text(base_addr, 32 * 32);
+                text = text
+                    .as_bytes()
+                    .chunks(32)
+                    .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 if self.verification == BlarggTestVerification::StatusByte {
                     if status == 0x00 {
                         println!("Test passed!");
                         return BlarggTestResult::Pass;
                     } else if status > 0x00 && status < 0x80 {
                         println!("Test failed with status code: 0x{:02X}", status);
-                        println!("Console output:");
-                        // Split into 32-character rows (nametable width)
-                        for line in text.as_bytes().chunks(32) {
-                            let line_str = String::from_utf8_lossy(line);
-                            let trimmed = line_str.trim_end();
-                            if trimmed != "" {
-                                println!("{}", trimmed);
-                            }
-                        }
+                        println!("Console output:\n{}", text);
                         return BlarggTestResult::Fail(status);
                     } else if status == 0x81 {
                         if self.wait_reset > 0 {
                             println!(
-                                "Test indicates reset, waiting {} frames...",
+                                // "Test indicates reset, waiting {} frames...",
                                 self.wait_reset
                             );
                             self.wait_reset -= 1;
                         } else {
-                            println!("Test indicates reset, restarting NES...");
+                            // println!("Test indicates reset, restarting NES...");
                             nes.reset();
                             self.wait_reset = 1;
                         }
@@ -146,22 +145,17 @@ mod tests {
                         continue;
                     }
                 } else if self.verification == BlarggTestVerification::Console {
-                    if text.to_uppercase().contains("PASSED") {
-                        println!("Test passed!");
+                    // Check if $0x test
+                    let is_0x = text.len() == 3 && text.starts_with("$0");
+                    if text.to_uppercase().contains("PASSED") || text == "$01" {
+                        // println!("Test passed!");
                         return BlarggTestResult::Pass;
                     } else if text.to_uppercase().contains("FAILED")
                         || text.to_uppercase().contains("ERROR")
+                        || is_0x
                     {
                         println!("Test failed!");
-                        println!("Console output:");
-                        // Split into 32-character rows (nametable width)
-                        for line in text.as_bytes().chunks(32) {
-                            let line_str = String::from_utf8_lossy(line);
-                            let trimmed = line_str.trim_end();
-                            if trimmed != "" {
-                                println!("{}", trimmed);
-                            }
-                        }
+                        println!("Console output:\n{}", text);
                         return BlarggTestResult::Fail(1);
                     }
                 }
@@ -325,10 +319,23 @@ mod tests {
         "roms/blargg/instr_timing/instr_timing.nes",
         30 * 60 // According to README, this test can take up to 25 seconds, so let's run it for 30*60 frames
     );
-    // blargg_test!(
-    //     test_palette_ram,
-    //     "roms/blargg/blargg_ppu_tests_2005.09.15b/palette_ram.nes"
+    blargg_console_test!(
+        test_palette_ram,
+        "roms/blargg/blargg_ppu_tests_2005.09.15b/palette_ram.nes"
+    );
+    // DISABLED since it matches against the palette values of Blargg's NES
+    // blargg_console_test!(
+    //     test_power_up_palette,
+    //     "roms/blargg/blargg_ppu_tests_2005.09.15b/power_up_palette.nes"
     // );
+    blargg_console_test!(
+        test_sprite_ram,
+        "roms/blargg/blargg_ppu_tests_2005.09.15b/sprite_ram.nes"
+    );
+    blargg_console_test!(
+        test_vbl_clear_time,
+        "roms/blargg/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes"
+    );
 
     // OAM and APU tests
     blargg_test!(test_oam_read, "roms/oam_read.nes");

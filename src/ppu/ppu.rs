@@ -70,12 +70,15 @@ impl Ppu {
                 .enter_vblank(self.registers.should_generate_nmi());
         }
 
-        // Exit VBlank at pre-render scanline, pixel 1
+        // Exit VBlank at the end of scanline 260 (one scanline before pre-render)
+        // The hardware clears VBL slightly before the pre-render scanline starts
+        // This happens approximately 2270 CPU cycles after VBlank starts
         let prerender_scanline = match self.timing.tv_system() {
             TvSystem::Ntsc => 261,
             TvSystem::Pal => 311,
         };
-        if self.timing.scanline() == prerender_scanline && self.timing.pixel() == 1 {
+        let vblank_end_scanline = prerender_scanline - 1;
+        if self.timing.scanline() == vblank_end_scanline && self.timing.pixel() == 340 {
             self.status.exit_vblank();
         }
 
