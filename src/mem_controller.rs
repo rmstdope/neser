@@ -8,7 +8,7 @@ use std::rc::Rc;
 /// NES Memory (64KB address space)
 pub struct MemController {
     cpu_ram: Vec<u8>,
-    cartridge: Option<Cartridge>,
+    cartridge: Option<Rc<RefCell<Cartridge>>>,
     ppu: Rc<RefCell<ppu::Ppu>>,
     apu: Rc<RefCell<apu::Apu>>,
     oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
@@ -33,17 +33,26 @@ impl MemController {
     }
 
     /// Map a cartridge into memory
+    ///
+    /// This method:
+    /// 1. Wraps the cartridge in Rc<RefCell<>> for shared ownership
+    /// 2. Shares the cartridge with the PPU for CHR ROM/RAM access
+    /// 3. Configures initial PPU mirroring mode from mapper
+    /// 4. Makes cartridge accessible to CPU for PRG ROM/RAM operations
+    ///
+    /// The shared reference pattern allows both CPU (via MemController) and PPU
+    /// to access the cartridge mapper independently while maintaining proper
+    /// bank switching state.
     pub fn map_cartridge(&mut self, cartridge: Cartridge) {
-        // Extract CHR data from mapper (8KB)
-        let mut chr_data = Vec::with_capacity(8192);
-        for addr in 0..8192 {
-            chr_data.push(cartridge.mapper().read_chr(addr));
-        }
+        // Wrap cartridge in Rc<RefCell<>> for shared access between CPU and PPU
+        let cartridge_rc = Rc::new(RefCell::new(cartridge));
 
+        // Share cartridge reference with PPU for dynamic CHR access
         let mut ppu = self.ppu.borrow_mut();
-        ppu.load_chr_rom(chr_data);
-        ppu.set_mirroring(cartridge.mapper().get_mirroring());
-        self.cartridge = Some(cartridge);
+        ppu.set_cartridge(cartridge_rc.clone());
+        ppu.set_mirroring(cartridge_rc.borrow().mapper().get_mirroring());
+
+        self.cartridge = Some(cartridge_rc);
     }
 
     /// Read a byte from memory
@@ -94,7 +103,7 @@ impl MemController {
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
                 if let Some(ref cartridge) = self.cartridge {
-                    cartridge.mapper().read_prg(addr)
+                    cartridge.borrow().mapper().read_prg(addr)
                 } else {
                     eprintln!(
                         "Warning: Read from PRG-RAM {:04X} without cartridge, returning 0",
@@ -107,7 +116,7 @@ impl MemController {
             // PRG ROM ($8000-$FFFF)
             0x8000..=0xFFFF => {
                 if let Some(ref cartridge) = self.cartridge {
-                    cartridge.mapper().read_prg(addr)
+                    cartridge.borrow().mapper().read_prg(addr)
                 } else {
                     panic!("No cartridge mapped, cannot read from {:04X}", addr);
                 }
@@ -255,8 +264,8 @@ impl MemController {
                         addr, value, value as char
                     );
                 }
-                if let Some(ref mut cartridge) = self.cartridge {
-                    cartridge.mapper_mut().write_prg(addr, value);
+                if let Some(ref cartridge) = self.cartridge {
+                    cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
                 } else {
                     eprintln!(
                         "Warning: Write to PRG-RAM {:04X} without cartridge, ignored",
@@ -268,8 +277,8 @@ impl MemController {
             // PRG ROM area ($8000-$FFFF)
             // Writes here are typically mapper register writes, not ROM writes
             0x8000..=0xFFFF => {
-                if let Some(ref mut cartridge) = self.cartridge {
-                    cartridge.mapper_mut().write_prg(addr, value);
+                if let Some(ref cartridge) = self.cartridge {
+                    cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
                 } else {
                     eprintln!(
                         "Warning: Write to PRG ROM area {:04X} without cartridge, ignored",
