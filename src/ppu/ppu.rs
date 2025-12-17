@@ -264,9 +264,29 @@ impl Ppu {
                 let sprite_pixel = self.sprites.get_pixel(screen_x as i16, show_sprites_left);
 
                 // Check for sprite 0 hit
-                if let Some((_palette_idx, sprite_idx, _priority)) = sprite_pixel {
-                    if self.sprites.is_sprite_0(sprite_idx) && bg_pixel != 0 {
-                        self.status.set_sprite_0_hit();
+                // Hardware has a special quirk: clipping behavior differs for sprite X=0 vs X>0
+                // X=0: BOTH clipping flags must be OFF for any hits to occur (complete blockage)
+                // X>0: Hit detection uses unclipped pattern data (clipping doesn't affect hits)
+                if self.registers.is_background_enabled() && self.registers.is_sprite_enabled() {
+                    let sprite_0_x = self.sprites.sprite_0_x_position().unwrap_or(255);
+                    let show_bg_left = self.registers.show_background_left();
+                    let show_sp_left = self.registers.show_sprites_left();
+                    
+                    let should_check_hit = if sprite_0_x == 0 {
+                        // X=0: Both clipping flags must be OFF (true) to allow hits
+                        show_bg_left && show_sp_left
+                    } else {
+                        // X>0: Always check (clipping doesn't block hits)
+                        true
+                    };
+                    
+                    if should_check_hit {
+                        let sprite_0_present = self.sprites.sprite_0_pixel_at(screen_x as i16);
+                        
+                        // Sprite 0 hit when both background and sprite have non-transparent pixels
+                        if sprite_0_present && bg_pixel != 0 {
+                            self.status.set_sprite_0_hit();
+                        }
                     }
                 }
 

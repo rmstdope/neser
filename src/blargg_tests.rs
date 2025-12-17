@@ -355,6 +355,14 @@ mod tests {
         "roms/blargg/ppu_read_buffer/test_ppu_read_buffer.nes",
         60 * 25 // Takes about 20 seconds according to readme
     );
+    blargg_test!(
+        test_sprite_hit,
+        "roms/blargg/ppu_sprite_hit/ppu_sprite_hit.nes"
+    );
+    // blargg_console_test!(
+    //     test_sprite_hit_tests_06,
+    //     "roms/blargg/sprite_hit_tests_2005.10.05/06.right_edge.nes"
+    // );
 
     // blargg_test!(test_cpu, "roms/cpu.nes");
 

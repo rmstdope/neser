@@ -302,7 +302,8 @@ impl Sprites {
 
         for sprite_idx in 0..(self.sprite_count as usize) {
             let sprite_x = self.sprite_x_positions[sprite_idx] as i16;
-            // Adjust X position: add 2 to move sprites 2 pixels left
+            // Sprites render with a 2-pixel pipeline offset
+            // This emerges from how the sprite shifters are loaded and advanced
             let shift = screen_x - (sprite_x - 2);
 
             if shift >= 0 && shift < 8 {
@@ -333,6 +334,36 @@ impl Sprites {
     /// Check if sprite 0 is in the current sprite buffer at the given index
     pub fn is_sprite_0(&self, sprite_idx: usize) -> bool {
         self.sprite_0_index.map_or(false, |idx| idx == sprite_idx)
+    }
+
+    /// Get sprite 0 X position (if sprite 0 is in the current scanline)
+    pub fn sprite_0_x_position(&self) -> Option<u8> {
+        self.sprite_0_index.map(|idx| self.sprite_x_positions[idx])
+    }
+
+    /// Check if sprite 0 has a non-transparent pixel at the given screen position
+    /// This is used for sprite 0 hit detection and doesn't apply sprite clipping
+    /// (clipping is handled separately in hit detection logic)
+    pub fn sprite_0_pixel_at(&self, screen_x: i16) -> bool {
+        if let Some(sprite_0_idx) = self.sprite_0_index {
+            let sprite_x = self.sprite_x_positions[sprite_0_idx] as i16;
+            
+            // Check if sprite 0 has a pixel at this screen position
+            // Uses same offset as sprite rendering (pipeline effect)
+            let shift = screen_x - (sprite_x - 2);
+
+            if shift >= 0 && shift < 8 {
+                let bit_pos = 7 - (shift as u8);
+                let pattern_lo_bit =
+                    ((self.sprite_pattern_shift_lo[sprite_0_idx] >> bit_pos) & 0x01) as u8;
+                let pattern_hi_bit =
+                    ((self.sprite_pattern_shift_hi[sprite_0_idx] >> bit_pos) & 0x01) as u8;
+                let pattern = (pattern_hi_bit << 1) | pattern_lo_bit;
+
+                return pattern != 0;
+            }
+        }
+        false
     }
 
     /// Get sprite count for rendering
