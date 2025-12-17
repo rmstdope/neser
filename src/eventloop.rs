@@ -208,7 +208,7 @@ impl EventLoop {
         texture
             .with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 // Get the PPU screen buffer and copy its RGB data to the texture
-                let screen_buffer = nes.get_screen_buffer();
+                let mut screen_buffer = nes.get_screen_buffer();
 
                 // Check if we can do a direct copy (pitch == width * 3 bytes per pixel)
                 if pitch == (TEXTURE_WIDTH as usize * 3) {

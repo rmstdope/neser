@@ -347,7 +347,7 @@ impl Sprites {
     pub fn sprite_0_pixel_at(&self, screen_x: i16) -> bool {
         if let Some(sprite_0_idx) = self.sprite_0_index {
             let sprite_x = self.sprite_x_positions[sprite_0_idx] as i16;
-            
+
             // Check if sprite 0 has a pixel at this screen position
             // Uses same offset as sprite rendering (pipeline effect)
             let shift = screen_x - (sprite_x - 2);

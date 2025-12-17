@@ -105,6 +105,12 @@ impl Ppu {
         let is_rendering_scanline = is_visible_scanline || is_prerender;
         let is_rendering_pixel = pixel >= 1 && pixel <= 256;
 
+        // Shift background registers during rendering pixels
+        // This happens BEFORE fetching/loading to avoid shifting newly loaded data
+        if is_rendering_enabled && is_rendering_scanline && is_rendering_pixel {
+            self.background.shift_registers();
+        }
+
         // Background rendering pipeline during rendering cycles
         // Fetches happen during pixels 1-256 (visible) and 321-336 (pre-fetch for next scanline)
         // Also during pixels 337-340 (two single nametable byte fetches)
@@ -154,6 +160,7 @@ impl Ppu {
                 // Load shift registers every 8 pixels (pixels 8, 16, 24, etc during visible,
                 // and pixels 328, 336 during pre-fetch)
                 // This happens after all 4 fetches for the tile completed
+                // Note: This happens AFTER the shift (above) so newly loaded data isn't immediately shifted
                 if pixel % 8 == 0 {
                     self.background.load_shift_registers(self.registers.v());
                     self.registers.increment_coarse_x();
@@ -248,10 +255,8 @@ impl Ppu {
             let screen_y = scanline as u32;
 
             if is_rendering_enabled {
-                // Shift registers before rendering (matches NES hardware timing)
-                self.background.shift_registers();
-
                 // Get background pixel (only if background rendering is enabled)
+                // Note: Shift registers have already been shifted at the top of this cycle
                 let fine_x = self.registers.x();
                 let bg_pixel = if self.registers.is_background_enabled() {
                     self.background.get_pixel(fine_x)
@@ -271,7 +276,7 @@ impl Ppu {
                     let sprite_0_x = self.sprites.sprite_0_x_position().unwrap_or(255);
                     let show_bg_left = self.registers.show_background_left();
                     let show_sp_left = self.registers.show_sprites_left();
-                    
+
                     let should_check_hit = if sprite_0_x == 0 {
                         // X=0: Both clipping flags must be OFF (true) to allow hits
                         show_bg_left && show_sp_left
@@ -279,10 +284,10 @@ impl Ppu {
                         // X>0: Always check (clipping doesn't block hits)
                         true
                     };
-                    
+
                     if should_check_hit {
                         let sprite_0_present = self.sprites.sprite_0_pixel_at(screen_x as i16);
-                        
+
                         // Sprite 0 hit when both background and sprite have non-transparent pixels
                         if sprite_0_present && bg_pixel != 0 {
                             self.status.set_sprite_0_hit();

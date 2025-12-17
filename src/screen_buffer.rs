@@ -74,7 +74,16 @@ impl ScreenBuffer {
     /// # Arguments
     ///
     /// * `dest` - Destination buffer slice to copy to. Must be at least as large as the source buffer.
-    pub fn copy_buffer(&self, dest: &mut [u8]) {
+    pub fn copy_buffer(&mut self, dest: &mut [u8]) {
+        // // Set pixels at y=10, x=[0..7] to red for testing
+        // for y in 148..150 {
+        //     for x in 0..8 {
+        //         self.set_pixel(x, y, 255, 0, 0);
+        //     }
+        //     for x in 8..14 {
+        //         self.set_pixel(x, y, 0, 255, 0);
+        //     }
+        // }
         dest[..self.buffer.len()].copy_from_slice(&self.buffer);
     }
 }
