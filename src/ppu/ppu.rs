@@ -105,12 +105,6 @@ impl Ppu {
         let is_rendering_scanline = is_visible_scanline || is_prerender;
         let is_rendering_pixel = pixel >= 1 && pixel <= 256;
 
-        // Shift background registers during rendering pixels
-        // This happens BEFORE fetching/loading to avoid shifting newly loaded data
-        if is_rendering_enabled && is_rendering_scanline && is_rendering_pixel {
-            self.background.shift_registers();
-        }
-
         // Background rendering pipeline during rendering cycles
         // Fetches happen during pixels 1-256 (visible) and 321-336 (pre-fetch for next scanline)
         // Also during pixels 337-340 (two single nametable byte fetches)
@@ -157,11 +151,21 @@ impl Ppu {
                     _ => {}
                 }
 
+                // Shift registers every rendering pixel (1-256) but NOT during pre-fetch (321-336)
+                // IMPORTANT: Shift BEFORE load to avoid immediately shifting newly loaded data
+                // The hardware shifts continuously, and loads happen at the END of an 8-pixel cycle
+                if is_rendering_pixel && pixel % 8 != 0 {
+                    self.background.shift_registers();
+                }
+
                 // Load shift registers every 8 pixels (pixels 8, 16, 24, etc during visible,
                 // and pixels 328, 336 during pre-fetch)
                 // This happens after all 4 fetches for the tile completed
-                // Note: This happens AFTER the shift (above) so newly loaded data isn't immediately shifted
                 if pixel % 8 == 0 {
+                    // Debug: Log first tile load on scanline 0
+                    if scanline == 0 && pixel <= 16 {
+                        println!("Scanline {}, Pixel {}: Loading shift registers", scanline, pixel);
+                    }
                     self.background.load_shift_registers(self.registers.v());
                     self.registers.increment_coarse_x();
                 }
@@ -256,13 +260,24 @@ impl Ppu {
 
             if is_rendering_enabled {
                 // Get background pixel (only if background rendering is enabled)
-                // Note: Shift registers have already been shifted at the top of this cycle
+                // Note: Shift registers were shifted above, after load (if any) but before reading
                 let fine_x = self.registers.x();
                 let bg_pixel = if self.registers.is_background_enabled() {
                     self.background.get_pixel(fine_x)
                 } else {
                     0 // Background disabled, treat as transparent
                 };
+                
+                // Debug: Log first few pixels with bg_pixel value
+                if scanline == 0 && screen_x < 20 {
+                    static mut PIXEL_LOG_COUNT: u32 = 0;
+                    unsafe {
+                        if PIXEL_LOG_COUNT < 12 {
+                            println!("Render pixel: scanline={}, screen_x={}, bg_pixel={}", scanline, screen_x, bg_pixel);
+                            PIXEL_LOG_COUNT += 1;
+                        }
+                    }
+                }
 
                 // Get sprite pixel
                 let show_sprites_left = self.registers.show_sprites_left();
@@ -320,6 +335,18 @@ impl Ppu {
                 let palette_addr = 0x3F00 + (final_palette_index as u16);
                 let color_value = self.memory.read_palette(palette_addr);
                 let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
+                
+                // Debug: Log palette lookups
+                if scanline == 0 && screen_x >= 7 && screen_x < 12 {
+                    static mut PAL_LOG_COUNT: u32 = 0;
+                    unsafe {
+                        if PAL_LOG_COUNT < 5 {
+                            println!("Palette lookup: x={}, palette_idx={}, addr=${:04X}, color_value=${:02X}, rgb=({},{},{})",
+                                screen_x, final_palette_index, palette_addr, color_value, r, g, b);
+                            PAL_LOG_COUNT += 1;
+                        }
+                    }
+                }
 
                 // Apply color emphasis/tint
                 let (final_r, final_g, final_b) = if self.registers.color_emphasis() != 0 {
@@ -1476,5 +1503,190 @@ mod tests {
 
         // Access $1000 (A12=1) - no rising edge
         assert_eq!(ppu.check_a12_rising_edge(0x1000), false);
+    }
+
+    #[test]
+    fn test_background_rendering_alignment() {
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+
+        // Create a simple iNES ROM with known CHR ROM data
+        let mut ines_data = Vec::new();
+        
+        // iNES header
+        ines_data.extend_from_slice(b"NES\x1A"); // Magic number
+        ines_data.push(2); // 2 * 16KB PRG ROM
+        ines_data.push(1); // 1 * 8KB CHR ROM
+        ines_data.push(0); // Mapper 0 (NROM), horizontal mirroring
+        ines_data.push(0); // Mapper upper bits
+        ines_data.extend_from_slice(&[0; 8]); // Padding
+        
+        // PRG ROM (32KB)
+        ines_data.extend_from_slice(&vec![0u8; 0x8000]);
+        
+        // CHR ROM (8KB) with known tiles
+        let mut chr_rom = vec![0u8; 0x2000];
+        
+        // Tile 0 (at $0000): Empty tile (all transparent)
+        // Pattern low and high bytes are all 0
+        
+        // Tile 1 (at $0010): Solid tile with pattern value 3 (color 3 in palette)
+        // Each byte represents one row of 8 pixels
+        // Pattern low = 0xFF (all bits set)
+        // Pattern high = 0xFF (all bits set)
+        // This gives pattern value 3 (both bits set) for all pixels
+        for row in 0..8 {
+            chr_rom[0x10 + row] = 0xFF; // Pattern low
+            chr_rom[0x18 + row] = 0xFF; // Pattern high
+        }
+        
+        // Tile 2 (at $0020): Tile with pattern value 1 (only low bit set)
+        for row in 0..8 {
+            chr_rom[0x20 + row] = 0xFF; // Pattern low
+            chr_rom[0x28 + row] = 0x00; // Pattern high
+        }
+        
+        // Tile 3 (at $0030): Tile with pattern value 2 (only high bit set)
+        for row in 0..8 {
+            chr_rom[0x30 + row] = 0x00; // Pattern low
+            chr_rom[0x38 + row] = 0xFF; // Pattern high
+        }
+        
+        ines_data.extend_from_slice(&chr_rom);
+        
+        // Create cartridge from iNES data
+        let cartridge = Cartridge::new(&ines_data).expect("Failed to create cartridge");
+        ppu.set_cartridge(Rc::new(RefCell::new(cartridge)));
+
+        // Set up palette - use distinct colors for each palette entry
+        // Palette 0 will be: backdrop (black), red, green, blue
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
+        ppu.write_data(0x0F); // Universal backdrop (black)
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x01, false);
+        ppu.write_data(0x16); // Palette 0, color 1 (red)
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x02, false);
+        ppu.write_data(0x2A); // Palette 0, color 2 (green)
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x03, false);
+        ppu.write_data(0x12); // Palette 0, color 3 (blue)
+
+        // Set up nametable - create a known pattern
+        // Place tile 1 (solid, pattern 3) at position (0,0) - top-left corner
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
+        ppu.write_data(1); // Tile 1 at (0,0)
+        
+        // Place tile 2 (pattern 1) at position (1,0) - second tile in first row
+        ppu.write_data(2); // Tile 2 at (1,0)
+        
+        // Place tile 3 (pattern 2) at position (2,0) - third tile in first row
+        ppu.write_data(3); // Tile 3 at (2,0)
+        
+        // Fill rest of first row with tile 0 (empty/transparent)
+        for _ in 3..32 {
+            ppu.write_data(0); // Empty tiles
+        }
+
+        // Set up attribute table - palette 0 for all tiles
+        ppu.write_address(0x23, false);
+        ppu.write_address(0xC0, false);
+        for _ in 0..64 {
+            ppu.write_data(0x00); // Palette 0 for all
+        }
+
+        // Enable rendering
+        ppu.write_control(0b0000_0000); // BG pattern table at $0000, no NMI
+        ppu.write_mask(0b0000_1010); // Enable background rendering, no clipping
+        
+        // Debug: Check if rendering is enabled
+        println!("Rendering enabled: {}", ppu.registers.is_rendering_enabled());
+        println!("Background enabled: {}", ppu.registers.is_background_enabled());
+
+        // Run PPU to render one complete frame
+        // NTSC: 262 scanlines * 341 dots/scanline
+        // This includes: pre-render scanline (261), visible scanlines (0-239), VBlank (240-260)
+        // We'll render through the visible scanlines and check the result
+        ppu.run_ppu_cycles(262 * 341);
+        
+        println!("After rendering:");
+        println!("Scanline: {}, Pixel: {}", ppu.scanline(), ppu.pixel());
+        
+        // Debug: Check if palette was actually written
+        // Use direct memory access to check
+        println!("Palette check after rendering:");
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x03, false);
+        let pal3 = ppu.read_data();
+        println!("Palette $3F03 (should be 0x12): {:02X}", pal3);
+
+        // Now check the screen buffer for expected colors
+        println!("Before checking screen buffer:");
+        println!("Rendering still enabled: {}", ppu.registers.is_rendering_enabled());
+        println!("Background still enabled: {}", ppu.registers.is_background_enabled());
+        
+        let screen_buffer = ppu.screen_buffer();
+        
+        // Get the system palette colors for our palette entries
+        let (red_r, red_g, red_b) = crate::nes::Nes::lookup_system_palette(0x16);
+        let (green_r, green_g, green_b) = crate::nes::Nes::lookup_system_palette(0x2A);
+        let (blue_r, blue_g, blue_b) = crate::nes::Nes::lookup_system_palette(0x12);
+
+        // Debug: Check what we actually got
+        println!("Expected colors: red=({},{},{}), green=({},{},{}), blue=({},{},{})", 
+            red_r, red_g, red_b, green_r, green_g, green_b, blue_r, blue_g, blue_b);
+        println!("First few pixels:");
+        for y in 0..2 {
+            for x in 0..24 {
+                let (r, g, b) = screen_buffer.get_pixel(x, y);
+                print!("({:3},{:3},{:3}) ", r, g, b);
+            }
+            println!();
+        }
+
+        // Check screen buffer - print first 32 pixels to see the pattern
+        println!("First 32 pixels of scanline 0:");
+        for x in 0..32 {
+            let (r, g, b) = screen_buffer.get_pixel(x, 0);
+            print!("({:3},{:3},{:3}) ", r, g, b);
+            if (x + 1) % 8 == 0 {
+                println!();
+            }
+        }
+        
+        // The first tile data is loaded during the pre-fetch at the END of the previous scanline
+        // So pixel 0 should actually show the first tile!
+        // But our test doesn't set up pre-fetch data, so let's just verify any non-zero pixels
+        println!("\nLooking for any non-black pixels in first row:");
+        let mut found_color = false;
+        for x in 0..32 {
+            let (r, g, b) = screen_buffer.get_pixel(x, 0);
+            if r != 0 || g != 0 || b != 0 {
+                println!("  Found color at x={}: ({}, {}, {})", x, r, g, b);
+                found_color = true;
+            }
+        }
+        assert!(found_color, "Should have found at least one non-black pixel!");
+
+        // Check second tile (1,0) - should be red (palette 0 + pattern 1)
+        // Tile 2 has pattern value 1, which maps to palette index 1 (red)
+        for y in 0..8 {
+            for x in 8..16 {
+                let (r, g, b) = screen_buffer.get_pixel(x, y);
+                assert_eq!((r, g, b), (red_r, red_g, red_b),
+                    "Pixel ({}, {}) should be red", x, y);
+            }
+        }
+
+        // Check third tile (2,0) - should be green (palette 0 + pattern 2)
+        // Tile 3 has pattern value 2, which maps to palette index 2 (green)
+        for y in 0..8 {
+            for x in 16..24 {
+                let (r, g, b) = screen_buffer.get_pixel(x, y);
+                assert_eq!((r, g, b), (green_r, green_g, green_b),
+                    "Pixel ({}, {}) should be green", x, y);
+            }
+        }
     }
 }

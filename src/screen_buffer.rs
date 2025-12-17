@@ -45,6 +45,19 @@ impl ScreenBuffer {
     /// * `b` - Blue component (0-255)
     pub fn set_pixel(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8) {
         let offset = self.pixel_offset(x, y);
+    
+        // Debug: Track writes to offset 21 (which is x=7, y=0)
+        if offset == 21 {
+            static mut OFFSET_21_WRITES: u32 = 0;
+            unsafe {
+                let write_count = OFFSET_21_WRITES + 1;
+                OFFSET_21_WRITES = write_count;
+                if write_count <= 10 || (r == 0 && g == 0 && b == 0) {
+                    println!("Writing to offset 21: x={}, y={}, rgb=({},{},{}), write #{}", x, y, r, g, b, write_count);
+                }
+            }
+        }
+        
         self.buffer[offset] = r;
         self.buffer[offset + 1] = g;
         self.buffer[offset + 2] = b;
@@ -62,11 +75,24 @@ impl ScreenBuffer {
     /// A tuple containing the (r, g, b) color components
     pub fn get_pixel(&self, x: u32, y: u32) -> (u8, u8, u8) {
         let offset = self.pixel_offset(x, y);
-        (
+        let result = (
             self.buffer[offset],
             self.buffer[offset + 1],
             self.buffer[offset + 2],
-        )
+        );
+        // Debug: Log first few reads on scanline 0
+        if y == 0 && x >= 7 && x < 12 {
+            static mut GET_LOG_COUNT: u32 = 0;
+            unsafe {
+                if GET_LOG_COUNT < 5 {
+                    println!("get_pixel: x={}, y={}, offset={}, rgb={:?}, buffer[offset]={:02X} {:02X} {:02X}",
+                        x, y, offset, result,
+                        self.buffer[offset], self.buffer[offset+1], self.buffer[offset+2]);
+                    GET_LOG_COUNT += 1;
+                }
+            }
+        }
+        result
     }
 
     /// Copies the entire buffer to the specified destination buffer.

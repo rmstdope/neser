@@ -52,6 +52,17 @@ impl Background {
     {
         let addr = 0x2000 | (v & 0x0FFF);
         self.nametable_latch = read_nametable(addr);
+        // Debug: Log nametable fetches - limit to scanline 0 only to avoid spam
+        // but log ALL fetches on scanline 0
+        // (We'll detect this indirectly - just log the first 50 fetches total which covers both frames' scanline 0)
+        static mut FETCH_COUNT: u32 = 0;
+        unsafe {
+            let count = FETCH_COUNT + 1;
+            FETCH_COUNT = count;
+            if count <= 10 || (count >= 42 && count <= 52) {
+                println!("  Fetch NT #{}: addr=${:04X}, tile={:02X}", count, addr, self.nametable_latch);
+            }
+        }
     }
 
     /// Fetch attribute byte from memory
@@ -87,9 +98,10 @@ impl Background {
 
     /// Load shift registers from latches
     pub fn load_shift_registers(&mut self, v: u16) {
-        // Load pattern data into low 8 bits of 16-bit shift registers
-        self.bg_pattern_shift_lo = (self.bg_pattern_shift_lo & 0xFF00) | (self.pattern_lo_latch as u16);
-        self.bg_pattern_shift_hi = (self.bg_pattern_shift_hi & 0xFF00) | (self.pattern_hi_latch as u16);
+        // Load pattern data into high 8 bits of 16-bit shift registers
+        // The shifters shift left, so new data goes in the high bits
+        self.bg_pattern_shift_lo = (self.bg_pattern_shift_lo & 0x00FF) | ((self.pattern_lo_latch as u16) << 8);
+        self.bg_pattern_shift_hi = (self.bg_pattern_shift_hi & 0x00FF) | ((self.pattern_hi_latch as u16) << 8);
 
         // Extract the correct 2-bit palette from the attribute byte
         let coarse_x = v & 0x1F;
@@ -97,12 +109,23 @@ impl Background {
         let shift = ((coarse_y & 0x02) << 1) | (coarse_x & 0x02);
         let palette = (self.attribute_latch >> shift) & 0x03;
 
-        // Load attribute data into low 8 bits
+        // Load attribute data into high 8 bits
         let palette_lo_bits = if (palette & 0x01) != 0 { 0xFF } else { 0x00 };
         let palette_hi_bits = if (palette & 0x02) != 0 { 0xFF } else { 0x00 };
 
-        self.bg_attribute_shift_lo = (self.bg_attribute_shift_lo & 0xFF00) | (palette_lo_bits as u16);
-        self.bg_attribute_shift_hi = (self.bg_attribute_shift_hi & 0xFF00) | (palette_hi_bits as u16);
+        self.bg_attribute_shift_lo = (self.bg_attribute_shift_lo & 0x00FF) | ((palette_lo_bits as u16) << 8);
+        self.bg_attribute_shift_hi = (self.bg_attribute_shift_hi & 0x00FF) | ((palette_hi_bits as u16) << 8);
+        
+        // Debug: Log first few loads
+        static mut LOAD_COUNT: u32 = 0;
+        unsafe {
+            if LOAD_COUNT < 5 {
+                println!("  Load shift: tile={:02X}, pattern_lo={:02X}, pattern_hi={:02X}, palette={}, shift_lo={:04X}, shift_hi={:04X}", 
+                    self.nametable_latch, self.pattern_lo_latch, self.pattern_hi_latch, palette,
+                    self.bg_pattern_shift_lo, self.bg_pattern_shift_hi);
+                LOAD_COUNT += 1;
+            }
+        }
     }
 
     /// Shift all background rendering shift registers left by 1
@@ -122,6 +145,17 @@ impl Background {
         let pattern_lo_bit = ((self.bg_pattern_shift_lo >> bit_position) & 0x01) as u8;
         let pattern_hi_bit = ((self.bg_pattern_shift_hi >> bit_position) & 0x01) as u8;
         let pattern = (pattern_hi_bit << 1) | pattern_lo_bit;
+
+        // Debug: Log first few pixel reads
+        static mut PIXEL_COUNT: u32 = 0;
+        unsafe {
+            if PIXEL_COUNT < 10 {
+                println!("  Get pixel: fine_x={}, bit_pos={}, shift_lo={:04X}, shift_hi={:04X}, pattern={}, result={}", 
+                    fine_x, bit_position, self.bg_pattern_shift_lo, self.bg_pattern_shift_hi, pattern,
+                    if pattern == 0 { 0 } else { pattern });
+                PIXEL_COUNT += 1;
+            }
+        }
 
         // If pattern is 0, pixel is transparent
         if pattern == 0 {
