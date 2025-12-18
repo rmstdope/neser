@@ -115,24 +115,24 @@ impl Background {
             (self.bg_attribute_shift_hi & 0xFF00) | (palette_hi_bits as u16);
 
         // Debug: Log loads
-        static mut LOAD_COUNT: u32 = 0;
-        unsafe {
-            let count = LOAD_COUNT;
-            // Log first 100 loads, plus log loads when nametable_latch is 1, 2, or 3 (our test tiles)
-            if count < 100 || self.nametable_latch >= 1 && self.nametable_latch <= 3 {
-                println!(
-                    "  Load #{} shift: tile={:02X}, pattern_lo={:02X}, pattern_hi={:02X}, palette={}, shift_lo={:04X}, shift_hi={:04X}",
-                    count,
-                    self.nametable_latch,
-                    self.pattern_lo_latch,
-                    self.pattern_hi_latch,
-                    palette,
-                    self.bg_pattern_shift_lo,
-                    self.bg_pattern_shift_hi
-                );
-                LOAD_COUNT += 1;
-            }
-        }
+        // static mut LOAD_COUNT: u32 = 0;
+        // unsafe {
+        //     let count = LOAD_COUNT;
+        //     // Log first 100 loads, plus log loads when nametable_latch is 1, 2, or 3 (our test tiles)
+        //     if count < 100 || self.nametable_latch >= 1 && self.nametable_latch <= 3 {
+        //         println!(
+        //             "  Load #{} shift: tile={:02X}, pattern_lo={:02X}, pattern_hi={:02X}, palette={}, shift_lo={:04X}, shift_hi={:04X}",
+        //             count,
+        //             self.nametable_latch,
+        //             self.pattern_lo_latch,
+        //             self.pattern_hi_latch,
+        //             palette,
+        //             self.bg_pattern_shift_lo,
+        //             self.bg_pattern_shift_hi
+        //         );
+        //         LOAD_COUNT += 1;
+        //     }
+        // }
     }
 
     /// Shift all background rendering shift registers left by 1
@@ -150,21 +150,21 @@ impl Background {
         // After loading into LOW byte and shifting left, data ends up in HIGH byte for reading
 
         // Debug: Log shift register state for first 10 pixels
-        static mut GET_PIXEL_COUNT: u32 = 0;
-        unsafe {
-            let count = GET_PIXEL_COUNT;
-            if count < 10 {
-                println!(
-                    "get_pixel #{}: shift_lo={:04X}, shift_hi={:04X}, fine_x={}, bit_pos={}",
-                    count,
-                    self.bg_pattern_shift_lo,
-                    self.bg_pattern_shift_hi,
-                    fine_x,
-                    15 - fine_x
-                );
-                GET_PIXEL_COUNT += 1;
-            }
-        }
+        // static mut GET_PIXEL_COUNT: u32 = 0;
+        // unsafe {
+        //     let count = GET_PIXEL_COUNT;
+        //     if count < 10 {
+        //         println!(
+        //             "get_pixel #{}: shift_lo={:04X}, shift_hi={:04X}, fine_x={}, bit_pos={}",
+        //             count,
+        //             self.bg_pattern_shift_lo,
+        //             self.bg_pattern_shift_hi,
+        //             fine_x,
+        //             15 - fine_x
+        //         );
+        //         GET_PIXEL_COUNT += 1;
+        //     }
+        // }
 
         let bit_position = 15 - fine_x;
 
@@ -174,21 +174,21 @@ impl Background {
         let pattern = (pattern_hi_bit << 1) | pattern_lo_bit;
 
         // Debug: Log first few pixel reads
-        static mut PIXEL_COUNT: u32 = 0;
-        unsafe {
-            if PIXEL_COUNT < 10 {
-                println!(
-                    "  Get pixel: fine_x={}, bit_pos={}, shift_lo={:04X}, shift_hi={:04X}, pattern={}, result={}",
-                    fine_x,
-                    bit_position,
-                    self.bg_pattern_shift_lo,
-                    self.bg_pattern_shift_hi,
-                    pattern,
-                    if pattern == 0 { 0 } else { pattern }
-                );
-                PIXEL_COUNT += 1;
-            }
-        }
+        // static mut PIXEL_COUNT: u32 = 0;
+        // unsafe {
+        //     if PIXEL_COUNT < 10 {
+        //         println!(
+        //             "  Get pixel: fine_x={}, bit_pos={}, shift_lo={:04X}, shift_hi={:04X}, pattern={}, result={}",
+        //             fine_x,
+        //             bit_position,
+        //             self.bg_pattern_shift_lo,
+        //             self.bg_pattern_shift_hi,
+        //             pattern,
+        //             if pattern == 0 { 0 } else { pattern }
+        //         );
+        //         PIXEL_COUNT += 1;
+        //     }
+        // }
 
         // If pattern is 0, pixel is transparent
         if pattern == 0 {

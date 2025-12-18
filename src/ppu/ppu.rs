@@ -117,14 +117,14 @@ impl Ppu {
             let should_fetch = (pixel >= 1 && pixel <= 256) || (pixel >= 321 && pixel <= 336);
 
             // Debug: Log v register at start of pre-fetch and during pre-fetch fetches
-            if is_prerender && pixel == 321 {
-                println!(
-                    "*** PRE-FETCH START: v=${:04X}, coarse_x={}, coarse_y={}",
-                    self.registers.v(),
-                    self.registers.v() & 0x1F,
-                    (self.registers.v() >> 5) & 0x1F
-                );
-            }
+            // if is_prerender && pixel == 321 {
+            //     println!(
+            //         "*** PRE-FETCH START: v=${:04X}, coarse_x={}, coarse_y={}",
+            //         self.registers.v(),
+            //         self.registers.v() & 0x1F,
+            //         (self.registers.v() >> 5) & 0x1F
+            //     );
+            // }
 
             if should_fetch {
                 // Perform background tile fetches based on cycle (every 8 pixels)
@@ -283,13 +283,13 @@ impl Ppu {
             let screen_y = scanline as u32;
 
             // Debug: Log shift register state at very start of rendering
-            if scanline == 0 && pixel == 1 {
-                let (lo, hi) = self.background.debug_shift_registers();
-                println!(
-                    "*** START OF SCANLINE 0 RENDERING: shift_lo={:04X}, shift_hi={:04X}",
-                    lo, hi
-                );
-            }
+            // if scanline == 0 && pixel == 1 {
+            //     let (lo, hi) = self.background.debug_shift_registers();
+            //     println!(
+            //         "*** START OF SCANLINE 0 RENDERING: shift_lo={:04X}, shift_hi={:04X}",
+            //         lo, hi
+            //     );
+            // }
 
             if is_rendering_enabled {
                 // Get background pixel (only if background rendering is enabled)
@@ -302,18 +302,18 @@ impl Ppu {
                 };
 
                 // Debug: Log first few pixels with bg_pixel value
-                if scanline == 0 && screen_x < 20 {
-                    static mut PIXEL_LOG_COUNT: u32 = 0;
-                    unsafe {
-                        if PIXEL_LOG_COUNT < 12 {
-                            println!(
-                                "Render pixel: scanline={}, screen_x={}, bg_pixel={}",
-                                scanline, screen_x, bg_pixel
-                            );
-                            PIXEL_LOG_COUNT += 1;
-                        }
-                    }
-                }
+                // if scanline == 0 && screen_x < 20 {
+                //     static mut PIXEL_LOG_COUNT: u32 = 0;
+                //     unsafe {
+                //         if PIXEL_LOG_COUNT < 12 {
+                //             println!(
+                //                 "Render pixel: scanline={}, screen_x={}, bg_pixel={}",
+                //                 scanline, screen_x, bg_pixel
+                //             );
+                //             PIXEL_LOG_COUNT += 1;
+                //         }
+                //     }
+                // }
 
                 // Get sprite pixel
                 let show_sprites_left = self.registers.show_sprites_left();
@@ -373,18 +373,18 @@ impl Ppu {
                 let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
 
                 // Debug: Log palette lookups
-                if scanline == 0 && screen_x >= 7 && screen_x < 12 {
-                    static mut PAL_LOG_COUNT: u32 = 0;
-                    unsafe {
-                        if PAL_LOG_COUNT < 5 {
-                            println!(
-                                "Palette lookup: x={}, palette_idx={}, addr=${:04X}, color_value=${:02X}, rgb=({},{},{})",
-                                screen_x, final_palette_index, palette_addr, color_value, r, g, b
-                            );
-                            PAL_LOG_COUNT += 1;
-                        }
-                    }
-                }
+                // if scanline == 0 && screen_x >= 7 && screen_x < 12 {
+                //     static mut PAL_LOG_COUNT: u32 = 0;
+                //     unsafe {
+                //         if PAL_LOG_COUNT < 5 {
+                //             println!(
+                //                 "Palette lookup: x={}, palette_idx={}, addr=${:04X}, color_value=${:02X}, rgb=({},{},{})",
+                //                 screen_x, final_palette_index, palette_addr, color_value, r, g, b
+                //             );
+                //             PAL_LOG_COUNT += 1;
+                //         }
+                //     }
+                // }
 
                 // Apply color emphasis/tint
                 let (final_r, final_g, final_b) = if self.registers.color_emphasis() != 0 {
@@ -1653,14 +1653,14 @@ mod tests {
         ppu.write_mask(0b0000_1010); // Enable background rendering, no clipping
 
         // Debug: Check if rendering is enabled
-        println!(
-            "Rendering enabled: {}",
-            ppu.registers.is_rendering_enabled()
-        );
-        println!(
-            "Background enabled: {}",
-            ppu.registers.is_background_enabled()
-        );
+        // println!(
+        //     "Rendering enabled: {}",
+        //     ppu.registers.is_rendering_enabled()
+        // );
+        // println!(
+        //     "Background enabled: {}",
+        //     ppu.registers.is_background_enabled()
+        // );
 
         // Run PPU to render two complete frames
         // NTSC: 262 scanlines * 341 dots/scanline
@@ -1669,19 +1669,19 @@ mod tests {
         //               so second frame renders correctly with tiles at positions 0-7, 8-15, etc.
         ppu.run_ppu_cycles(2 * 262 * 341);
 
-        println!("After rendering:");
-        println!("Scanline: {}, Pixel: {}", ppu.scanline(), ppu.pixel());
+        // println!("After rendering:");
+        // println!("Scanline: {}, Pixel: {}", ppu.scanline(), ppu.pixel());
 
         // Debug: Check if palette was actually written
         // Use direct memory access to check
-        println!("Palette check after rendering:");
+        // println!("Palette check after rendering:");
         ppu.write_address(0x3F, false);
         ppu.write_address(0x03, false);
-        let pal3 = ppu.read_data();
-        println!("Palette $3F03 (should be 0x12): {:02X}", pal3);
+        let _pal3 = ppu.read_data();
+        // println!("Palette $3F03 (should be 0x12): {:02X}", pal3);
 
         // Now check the screen buffer for expected colors
-        println!("Before checking screen buffer:");
+        // println!("Before checking screen buffer:");
         let screen_buffer = ppu.screen_buffer();
 
         // Get the system palette colors for our palette entries
@@ -1691,22 +1691,22 @@ mod tests {
         let (black_r, black_g, black_b) = crate::nes::Nes::lookup_system_palette(0x0F);
 
         // Debug: Print first 32 pixels of row 0 for analysis
-        println!("\nFirst 32 pixels of row 0:");
-        for x in 0..32 {
-            let (r, g, b) = screen_buffer.get_pixel(x, 0);
-            let color_name = if (r, g, b) == (blue_r, blue_g, blue_b) {
-                "BLUE"
-            } else if (r, g, b) == (red_r, red_g, red_b) {
-                "RED"
-            } else if (r, g, b) == (green_r, green_g, green_b) {
-                "GREEN"
-            } else if (r, g, b) == (black_r, black_g, black_b) {
-                "BLACK"
-            } else {
-                "UNKNOWN"
-            };
-            println!("  Pixel {}: ({},{},{}) = {}", x, r, g, b, color_name);
-        }
+        // println!("\nFirst 32 pixels of row 0:");
+        // for x in 0..32 {
+        //     let (r, g, b) = screen_buffer.get_pixel(x, 0);
+        //     let color_name = if (r, g, b) == (blue_r, blue_g, blue_b) {
+        //         "BLUE"
+        //     } else if (r, g, b) == (red_r, red_g, red_b) {
+        //         "RED"
+        //     } else if (r, g, b) == (green_r, green_g, green_b) {
+        //         "GREEN"
+        //     } else if (r, g, b) == (black_r, black_g, black_b) {
+        //         "BLACK"
+        //     } else {
+        //         "UNKNOWN"
+        //     };
+        //     println!("  Pixel {}: ({},{},{}) = {}", x, r, g, b, color_name);
+        // }
 
         // Verify all pixels in the topmost 16 rows
         // After running two complete frames, the pre-render scanline has properly loaded
