@@ -96,6 +96,7 @@ impl Status {
             status |= 0b0100_0000; // Bit 6: Sprite 0 hit
         }
         if self.sprite_overflow {
+            // println!("PPU Status: Reading status with Sprite Overflow flag set");
             status |= 0b0010_0000; // Bit 5: Sprite overflow
         }
 
@@ -148,6 +149,7 @@ impl Status {
 
     /// Set sprite overflow flag
     pub fn set_sprite_overflow(&mut self) {
+        // println!("PPU Status: Setting Sprite Overflow flag");
         self.sprite_overflow = true;
     }
 

@@ -243,8 +243,9 @@ impl Ppu {
             self.registers.oam_address = 0;
         }
 
-        // Sprite evaluation during visible scanlines
+        // Sprite evaluation during visible scanlines only (NOT pre-render)
         // Only happens when rendering is enabled (either sprites or background)
+        // Per NESdev: "Sprite evaluation does not happen on the pre-render scanline"
         if is_visible_scanline && is_rendering_enabled {
             if pixel == 0 {
                 // Reset sprite evaluation at start of scanline
@@ -255,9 +256,10 @@ impl Ppu {
             } else if pixel >= 65 && pixel <= 256 {
                 // Evaluate sprites for next scanline
                 let sprite_height = self.registers.sprite_height();
-                let overflow = self.sprites
+                let overflow = self
+                    .sprites
                     .evaluate_sprites(pixel, scanline, sprite_height);
-                
+
                 // Set overflow flag immediately when detected during evaluation
                 if overflow {
                     self.status.set_sprite_overflow();
