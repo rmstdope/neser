@@ -340,6 +340,11 @@ impl Sprites {
         self.sprite_0_index.map(|idx| self.sprite_x_positions[idx])
     }
 
+    /// Get sprite 0's Y position from OAM (byte 0 of sprite 0)
+    pub fn sprite_0_oam_y(&self) -> u8 {
+        self.oam_data[0]
+    }
+
     /// Check if sprite 0 has a non-transparent pixel at the given screen position
     /// This is used for sprite 0 hit detection and doesn't apply sprite clipping
     /// (clipping is handled separately in hit detection logic)

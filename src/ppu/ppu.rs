@@ -325,21 +325,26 @@ impl Ppu {
                 //   in the leftmost 8 screen pixels (X=0-7) do not trigger hits
                 // - If background clipping is enabled (show_background_left=false), background
                 //   pixels in the leftmost 8 screen pixels (X=0-7) do not trigger hits
+                // - Sprite 0 with Y >= 239 (0xEF) never triggers hits
                 if self.registers.is_background_enabled() && self.registers.is_sprite_enabled() {
-                    let show_bg_left = self.registers.show_background_left();
-                    let show_sp_left = self.registers.show_sprites_left();
+                    // Sprite 0 hit never occurs when sprite 0's OAM Y >= 239
+                    let sprite_0_y = self.sprites.sprite_0_oam_y();
+                    if sprite_0_y < 0xEF {
+                        let show_bg_left = self.registers.show_background_left();
+                        let show_sp_left = self.registers.show_sprites_left();
 
-                    // Check if clipping should prevent the hit at this screen position
-                    let bg_clipped = screen_x < 8 && !show_bg_left;
-                    let sp_clipped = screen_x < 8 && !show_sp_left;
+                        // Check if clipping should prevent the hit at this screen position
+                        let bg_clipped = screen_x < 8 && !show_bg_left;
+                        let sp_clipped = screen_x < 8 && !show_sp_left;
 
-                    // Only check for hit if neither sprite nor background is clipped here
-                    if !bg_clipped && !sp_clipped {
-                        let sprite_0_present = self.sprites.sprite_0_pixel_at(screen_x as i16);
+                        // Only check for hit if neither sprite nor background is clipped here
+                        if !bg_clipped && !sp_clipped {
+                            let sprite_0_present = self.sprites.sprite_0_pixel_at(screen_x as i16);
 
-                        // Sprite 0 hit when both background and sprite have non-transparent pixels
-                        if sprite_0_present && bg_pixel != 0 {
-                            self.status.set_sprite_0_hit();
+                            // Sprite 0 hit when both background and sprite have non-transparent pixels
+                            if sprite_0_present && bg_pixel != 0 {
+                                self.status.set_sprite_0_hit();
+                            }
                         }
                     }
                 }
