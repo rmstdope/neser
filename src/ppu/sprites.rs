@@ -128,10 +128,14 @@ impl Sprites {
         // If we've already found 8 sprites, enter overflow checking mode
         if self.sprites_found >= 8 {
             // NES PPU Hardware Bug: Sprite Overflow Detection
-            // This also needs cycle-accurate timing (takes 2 cycles to check Y)
+            // Checking takes 2 cycles, but flag is set on second cycle (when comparison completes)
             
             if self.sprite_eval_cycle == 0 {
-                // First cycle: read and check Y byte
+                // First cycle: read Y byte
+                self.sprite_eval_cycle = 1;
+                return false;
+            } else {
+                // Second cycle: check if in range and set overflow if so
                 let oam_index = (self.sprite_eval_n as usize) * 4 + (self.sprite_eval_m as usize);
 
                 if oam_index < 256 {
@@ -147,11 +151,6 @@ impl Sprites {
                     }
                 }
 
-                // Second cycle will complete the check
-                self.sprite_eval_cycle = 1;
-                return overflow;
-            } else {
-                // Second cycle: finish check and increment
                 // THE BUG: Increment BOTH n and m
                 self.sprite_eval_n += 1;
                 self.sprite_eval_m += 1;
@@ -161,7 +160,7 @@ impl Sprites {
                 }
                 
                 self.sprite_eval_cycle = 0; // Reset for next sprite
-                return false;
+                return overflow;
             }
         }
 
