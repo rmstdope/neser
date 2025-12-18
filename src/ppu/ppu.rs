@@ -1506,20 +1506,21 @@ mod tests {
 
         let v_initial = ppu.v_register();
 
-        // Run to pixel 8 (first coarse X increment)
-        ppu.run_ppu_cycles(8);
-        let v_after_8 = ppu.v_register();
+        // Run to pixel 9 (first coarse X increment)
+        // Per NES Dev wiki, shifters are reloaded at ticks 9, 17, 25, ..., 257
+        ppu.run_ppu_cycles(9);
+        let v_after_9 = ppu.v_register();
 
         // Coarse X should have incremented (bits 0-4 of v register)
         let coarse_x_initial = v_initial & 0x001F;
-        let coarse_x_after_8 = v_after_8 & 0x001F;
-        assert_eq!(coarse_x_after_8, (coarse_x_initial + 1) & 0x001F);
+        let coarse_x_after_9 = v_after_9 & 0x001F;
+        assert_eq!(coarse_x_after_9, (coarse_x_initial + 1) & 0x001F);
 
-        // Run to pixel 16 (second coarse X increment)
+        // Run to pixel 17 (second coarse X increment)
         ppu.run_ppu_cycles(8);
-        let v_after_16 = ppu.v_register();
-        let coarse_x_after_16 = v_after_16 & 0x001F;
-        assert_eq!(coarse_x_after_16, (coarse_x_initial + 2) & 0x001F);
+        let v_after_17 = ppu.v_register();
+        let coarse_x_after_17 = v_after_17 & 0x001F;
+        assert_eq!(coarse_x_after_17, (coarse_x_initial + 2) & 0x001F);
     }
 
     #[test]
