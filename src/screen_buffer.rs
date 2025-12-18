@@ -45,7 +45,7 @@ impl ScreenBuffer {
     /// * `b` - Blue component (0-255)
     pub fn set_pixel(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8) {
         let offset = self.pixel_offset(x, y);
-    
+
         // Debug: Track writes to offset 21 (which is x=7, y=0)
         if offset == 21 {
             static mut OFFSET_21_WRITES: u32 = 0;
@@ -53,11 +53,14 @@ impl ScreenBuffer {
                 let write_count = OFFSET_21_WRITES + 1;
                 OFFSET_21_WRITES = write_count;
                 if write_count <= 10 || (r == 0 && g == 0 && b == 0) {
-                    println!("Writing to offset 21: x={}, y={}, rgb=({},{},{}), write #{}", x, y, r, g, b, write_count);
+                    println!(
+                        "Writing to offset 21: x={}, y={}, rgb=({},{},{}), write #{}",
+                        x, y, r, g, b, write_count
+                    );
                 }
             }
         }
-        
+
         self.buffer[offset] = r;
         self.buffer[offset + 1] = g;
         self.buffer[offset + 2] = b;
@@ -85,9 +88,16 @@ impl ScreenBuffer {
             static mut GET_LOG_COUNT: u32 = 0;
             unsafe {
                 if GET_LOG_COUNT < 5 {
-                    println!("get_pixel: x={}, y={}, offset={}, rgb={:?}, buffer[offset]={:02X} {:02X} {:02X}",
-                        x, y, offset, result,
-                        self.buffer[offset], self.buffer[offset+1], self.buffer[offset+2]);
+                    println!(
+                        "get_pixel: x={}, y={}, offset={}, rgb={:?}, buffer[offset]={:02X} {:02X} {:02X}",
+                        x,
+                        y,
+                        offset,
+                        result,
+                        self.buffer[offset],
+                        self.buffer[offset + 1],
+                        self.buffer[offset + 2]
+                    );
                     GET_LOG_COUNT += 1;
                 }
             }
@@ -101,15 +111,23 @@ impl ScreenBuffer {
     ///
     /// * `dest` - Destination buffer slice to copy to. Must be at least as large as the source buffer.
     pub fn copy_buffer(&mut self, dest: &mut [u8]) {
-        // // Set pixels at y=10, x=[0..7] to red for testing
-        // for y in 148..150 {
-        //     for x in 0..8 {
-        //         self.set_pixel(x, y, 255, 0, 0);
-        //     }
-        //     for x in 8..14 {
-        //         self.set_pixel(x, y, 0, 255, 0);
-        //     }
-        // }
+        // Set pixels at y=10, x=[0..7] to red for testing
+        for y in 148..150 {
+            for x in 0..8 {
+                if x % 2 == 1 {
+                    self.set_pixel(x, y, 255, 0, 0);
+                } else {
+                    self.set_pixel(x, y, 0, 255, 0);
+                }
+            }
+            for x in 8..14 {
+                if x % 2 == 1 {
+                    self.set_pixel(x, y, 0, 0, 255);
+                } else {
+                    self.set_pixel(x, y, 0, 255, 255);
+                }
+            }
+        }
         dest[..self.buffer.len()].copy_from_slice(&self.buffer);
     }
 }
