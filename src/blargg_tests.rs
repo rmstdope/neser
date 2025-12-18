@@ -357,7 +357,8 @@ mod tests {
     );
     blargg_test!(
         test_sprite_hit,
-        "roms/blargg/ppu_sprite_hit/ppu_sprite_hit.nes"
+        "roms/blargg/ppu_sprite_hit/ppu_sprite_hit.nes",
+        60 * 5
     );
 
     // blargg_test!(test_cpu, "roms/cpu.nes");

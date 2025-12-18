@@ -52,11 +52,16 @@ impl Status {
         }
     }
 
-    /// Exit VBlank period (clear all flags)
+    /// Exit VBlank period (clear VBL flag and NMI, but NOT sprite flags)
     pub fn exit_vblank(&mut self) {
         // println!("PPU Status: Exiting VBlank");
         self.vblank_flag = false;
         self.nmi_enabled = false;
+        // Note: Sprite 0 hit and sprite overflow are cleared separately at scanline 261, pixel 0
+    }
+
+    /// Clear sprite 0 hit and sprite overflow flags (happens at scanline 261, pixel 0)
+    pub fn clear_sprite_flags(&mut self) {
         self.sprite_0_hit = false;
         self.pending_sprite_0_hit = false;
         self.sprite_overflow = false;
@@ -87,7 +92,7 @@ impl Status {
             // println!("PPU Status: VBlank flag set");
         }
         if self.sprite_0_hit {
-            println!("PPU Status: Sprite 0 Hit flag set");
+            // println!("PPU Status: Sprite 0 Hit flag set");
             status |= 0b0100_0000; // Bit 6: Sprite 0 hit
         }
         if self.sprite_overflow {

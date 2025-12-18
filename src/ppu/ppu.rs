@@ -102,6 +102,13 @@ impl Ppu {
 
         let scanline = self.timing.scanline();
         let pixel = self.timing.pixel();
+
+        // Clear sprite 0 hit and sprite overflow at dot 0 of pre-render scanline
+        // This is 1 cycle after VBL flag is cleared (scanline 260, pixel 340)
+        // For sprite_hit timing test: clear_time = 6819 cycles after VBL = scanline 261, pixel 0
+        if scanline == prerender_scanline && pixel == 0 {
+            self.status.clear_sprite_flags();
+        }
         let is_rendering_enabled = self.registers.is_rendering_enabled();
 
         // Background rendering pipeline during rendering cycles
