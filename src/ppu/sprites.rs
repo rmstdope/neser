@@ -302,9 +302,8 @@ impl Sprites {
 
         for sprite_idx in 0..(self.sprite_count as usize) {
             let sprite_x = self.sprite_x_positions[sprite_idx] as i16;
-            // Sprites render with a 2-pixel pipeline offset
-            // This emerges from how the sprite shifters are loaded and advanced
-            let shift = screen_x - (sprite_x - 2);
+            // X coordinate maps directly per NES hardware specification
+            let shift = screen_x - sprite_x;
 
             if shift >= 0 && shift < 8 {
                 let bit_pos = 7 - (shift as u8);
@@ -349,8 +348,8 @@ impl Sprites {
             let sprite_x = self.sprite_x_positions[sprite_0_idx] as i16;
 
             // Check if sprite 0 has a pixel at this screen position
-            // Uses same offset as sprite rendering (pipeline effect)
-            let shift = screen_x - (sprite_x - 2);
+            // X coordinate maps directly per NES hardware specification
+            let shift = screen_x - sprite_x;
 
             if shift >= 0 && shift < 8 {
                 let bit_pos = 7 - (shift as u8);
@@ -420,21 +419,23 @@ mod tests {
         sprites.sprite_pattern_shift_hi[0] = 0b00000000;
         sprites.sprite_attributes[0] = 0x00; // Palette 0, foreground
 
-        // With our 2-pixel left adjustment, screen_x 8 should hit sprite at X=10
-        // because: shift = 8 - (10 - 2) = 8 - 8 = 0
-        let result = sprites.get_pixel(8, true);
+        // Per NES hardware spec: X coordinate maps directly (screen_x = OAM.X)
+        // Sprite at X=10 should render at screen pixels 10-17
+        // screen_x 10 should hit sprite at X=10
+        // because: shift = 10 - 10 = 0
+        let result = sprites.get_pixel(10, true);
         assert!(result.is_some());
 
-        // screen_x 7 should miss (shift = 7 - 8 = -1, which is < 0)
-        let result = sprites.get_pixel(7, true);
+        // screen_x 9 should miss (shift = 9 - 10 = -1, which is < 0)
+        let result = sprites.get_pixel(9, true);
         assert!(result.is_none());
 
-        // screen_x 15 should hit (shift = 15 - 8 = 7, which is < 8)
-        let result = sprites.get_pixel(15, true);
+        // screen_x 17 should hit (shift = 17 - 10 = 7, which is < 8)
+        let result = sprites.get_pixel(17, true);
         assert!(result.is_some());
 
-        // screen_x 16 should miss (shift = 16 - 8 = 8, which is >= 8)
-        let result = sprites.get_pixel(16, true);
+        // screen_x 18 should miss (shift = 18 - 10 = 8, which is >= 8)
+        let result = sprites.get_pixel(18, true);
         assert!(result.is_none());
     }
 
@@ -499,9 +500,9 @@ mod tests {
     #[test]
     fn test_sprite_clipping_left_8_pixels() {
         let mut sprites = Sprites::new();
-        // Set up a sprite at X position 2 (which with -2 offset becomes screen X 0)
+        // Set up a sprite at X position 0 (maps directly to screen X 0-7)
         sprites.sprite_count = 1;
-        sprites.sprite_x_positions[0] = 2;
+        sprites.sprite_x_positions[0] = 0;
         sprites.sprite_pattern_shift_lo[0] = 0xFF;
         sprites.sprite_pattern_shift_hi[0] = 0x00;
         sprites.sprite_attributes[0] = 0x00;
@@ -525,12 +526,12 @@ mod tests {
         sprites.sprite_pattern_shift_hi[0] = 0b00000000;
         sprites.sprite_attributes[0] = 0x00;
 
-        // screen_x 8 should hit non-transparent pixel (bit 7 of lo = 1)
-        let result = sprites.get_pixel(8, true);
+        // screen_x 10 should hit non-transparent pixel (bit 7 of lo = 1)
+        let result = sprites.get_pixel(10, true);
         assert!(result.is_some());
 
-        // screen_x 9 should be transparent (bit 6 of lo = 0, bit 6 of hi = 0)
-        let result = sprites.get_pixel(9, true);
+        // screen_x 11 should be transparent (bit 6 of lo = 0, bit 6 of hi = 0)
+        let result = sprites.get_pixel(11, true);
         assert!(result.is_none());
     }
 }

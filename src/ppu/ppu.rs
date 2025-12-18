@@ -1855,35 +1855,29 @@ mod tests {
         let (magenta_r, magenta_g, magenta_b) = crate::nes::Nes::lookup_system_palette(0x14);
         let (black_r, black_g, black_b) = crate::nes::Nes::lookup_system_palette(0x0F);
 
-        // Verify sprite rendering
-        // Per NES hardware specification:
+        // Verify sprite rendering according to NES hardware specification:
         // - X coordinate: Direct mapping, screen_x = OAM.X (no offset)
         // - Y coordinate: +1 offset, screen_y = OAM.Y + 1
-        // 
-        // KNOWN BUG: Current implementation renders sprites 2 pixels to the left!
-        // TODO: Fix sprite X coordinate rendering
+        //
         // Sprites with Y=N are rendered on scanlines N+1 to N+8
-        // 
-        // Current buggy behavior (what we're testing):
-        // Sprite 0 (magenta) at OAM (X=16, Y=16) renders at pixels (14-21, 17-24) [WRONG: should be 16-23]
-        // Sprite 1 (yellow) at OAM (X=32, Y=16) renders at pixels (30-37, 17-24) [WRONG: should be 32-39]
-        // Sprite 2 (cyan) at OAM (X=48, Y=16) renders at pixels (46-53, 17-24) [WRONG: should be 48-55]
-        // 
-        // This test documents the current buggy behavior. When the bug is fixed,
-        // these X ranges should be updated to match the hardware specification.
+        //
+        // Expected correct behavior:
+        // Sprite 0 (magenta) at OAM (X=16, Y=16) should render at pixels (16-23, 17-24)
+        // Sprite 1 (yellow) at OAM (X=32, Y=16) should render at pixels (32-39, 17-24)
+        // Sprite 2 (cyan) at OAM (X=48, Y=16) should render at pixels (48-55, 17-24)
 
         for y in 0..240 {
             for x in 0..256 {
                 let (r, g, b) = screen_buffer.get_pixel(x, y);
                 let expected_color = if y >= 17 && y <= 24 {
                     // Scanlines where sprites are visible (Y position 16 + 1, for 8 rows)
-                    // Using buggy X coordinates (2 pixels left of correct position)
-                    if x >= 14 && x <= 21 {
-                        (magenta_r, magenta_g, magenta_b) // Sprite 0 (buggy position)
-                    } else if x >= 30 && x <= 37 {
-                        (yellow_r, yellow_g, yellow_b) // Sprite 1 (buggy position)
-                    } else if x >= 46 && x <= 53 {
-                        (cyan_r, cyan_g, cyan_b) // Sprite 2 (buggy position)
+                    // Using CORRECT X coordinates per hardware specification
+                    if x >= 16 && x <= 23 {
+                        (magenta_r, magenta_g, magenta_b) // Sprite 0 (correct position)
+                    } else if x >= 32 && x <= 39 {
+                        (yellow_r, yellow_g, yellow_b) // Sprite 1 (correct position)
+                    } else if x >= 48 && x <= 55 {
+                        (cyan_r, cyan_g, cyan_b) // Sprite 2 (correct position)
                     } else {
                         (black_r, black_g, black_b) // Backdrop
                     }

@@ -46,20 +46,20 @@ impl ScreenBuffer {
     pub fn set_pixel(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8) {
         let offset = self.pixel_offset(x, y);
 
-        // Debug: Track writes to offset 21 (which is x=7, y=0)
-        if offset == 21 {
-            static mut OFFSET_21_WRITES: u32 = 0;
-            unsafe {
-                let write_count = OFFSET_21_WRITES + 1;
-                OFFSET_21_WRITES = write_count;
-                if write_count <= 10 || (r == 0 && g == 0 && b == 0) {
-                    println!(
-                        "Writing to offset 21: x={}, y={}, rgb=({},{},{}), write #{}",
-                        x, y, r, g, b, write_count
-                    );
-                }
-            }
-        }
+        // // Debug: Track writes to offset 21 (which is x=7, y=0)
+        // if offset == 21 {
+        //     static mut OFFSET_21_WRITES: u32 = 0;
+        //     unsafe {
+        //         let write_count = OFFSET_21_WRITES + 1;
+        //         OFFSET_21_WRITES = write_count;
+        //         if write_count <= 10 || (r == 0 && g == 0 && b == 0) {
+        //             println!(
+        //                 "Writing to offset 21: x={}, y={}, rgb=({},{},{}), write #{}",
+        //                 x, y, r, g, b, write_count
+        //             );
+        //         }
+        //     }
+        // }
 
         self.buffer[offset] = r;
         self.buffer[offset + 1] = g;
