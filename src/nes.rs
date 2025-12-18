@@ -165,6 +165,7 @@ impl Nes {
             // that affects tests requiring sub-scanline timing precision (e.g., cpu_interrupts test 2).
             // This is a known limitation even on real NES hardware, as documented in the test itself:
             // "Occasionally fails on NES due to PPU-CPU synchronization."
+            // print!("*");
             self.tick_ppu(1);
             self.tick_apu(1);
 
@@ -175,6 +176,7 @@ impl Nes {
             }
 
             // Execute one CPU cycle
+            // print!(".");
             let instruction_complete = self.cpu.tick_cycle();
             cpu_cycles += 1;
 
@@ -183,6 +185,7 @@ impl Nes {
                 break;
             }
         }
+        // println!("");
 
         // Only trigger interrupts after instruction completes
         // Check if NMI needs to be triggered

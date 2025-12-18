@@ -281,6 +281,7 @@ impl Ppu {
         if is_visible_scanline && is_rendering_pixel {
             let screen_x = (pixel - 1) as u32;
             let screen_y = scanline as u32;
+            let mut bg_pixel_for_hit = 0u8; // Save for sprite 0 hit detection after shift
 
             // Debug: Log shift register state at very start of rendering
             // if scanline == 0 && pixel == 1 {
@@ -319,35 +320,8 @@ impl Ppu {
                 let show_sprites_left = self.registers.show_sprites_left();
                 let sprite_pixel = self.sprites.get_pixel(screen_x as i16, show_sprites_left);
 
-                // Check for sprite 0 hit
-                // Sprite 0 hit detection respects the clipping settings:
-                // - If sprite clipping is enabled (show_sprites_left=false), sprite pixels
-                //   in the leftmost 8 screen pixels (X=0-7) do not trigger hits
-                // - If background clipping is enabled (show_background_left=false), background
-                //   pixels in the leftmost 8 screen pixels (X=0-7) do not trigger hits
-                // - Sprite 0 with Y >= 239 (0xEF) never triggers hits
-                if self.registers.is_background_enabled() && self.registers.is_sprite_enabled() {
-                    // Sprite 0 hit never occurs when sprite 0's OAM Y >= 239
-                    let sprite_0_y = self.sprites.sprite_0_oam_y();
-                    if sprite_0_y < 0xEF {
-                        let show_bg_left = self.registers.show_background_left();
-                        let show_sp_left = self.registers.show_sprites_left();
-
-                        // Check if clipping should prevent the hit at this screen position
-                        let bg_clipped = screen_x < 8 && !show_bg_left;
-                        let sp_clipped = screen_x < 8 && !show_sp_left;
-
-                        // Only check for hit if neither sprite nor background is clipped here
-                        if !bg_clipped && !sp_clipped {
-                            let sprite_0_present = self.sprites.sprite_0_pixel_at(screen_x as i16);
-
-                            // Sprite 0 hit when both background and sprite have non-transparent pixels
-                            if sprite_0_present && bg_pixel != 0 {
-                                self.status.set_sprite_0_hit();
-                            }
-                        }
-                    }
-                }
+                // Save bg_pixel for sprite 0 hit detection after pixel output
+                bg_pixel_for_hit = bg_pixel;
 
                 // Determine final palette index
                 let palette_index =
@@ -457,7 +431,51 @@ impl Ppu {
             // attributes shift registers, which are then shifted."
             // So shift happens AFTER rendering, on every visible pixel
             if is_rendering_enabled {
+                //Shift registers first
                 self.background.shift_registers();
+
+                // Sprite 0 hit detection respects the clipping settings:
+                // - If sprite clipping is enabled (show_sprites_left=false), sprite pixels
+                //   in the leftmost 8 screen pixels (X=0-7) do not trigger hits
+                // - If background clipping is enabled (show_background_left=false), background
+                //   pixels in the leftmost 8 screen pixels (X=0-7) do not trigger hits
+                // - Sprite 0 with Y >= 239 (0xEF) never triggers hits
+                // Check for sprite 0 hit AFTER shift_registers (timing fix attempt)
+                if self.registers.is_background_enabled() && self.registers.is_sprite_enabled() {
+                    // Sprite 0 hit never occurs when sprite 0's OAM Y >= 239
+                    let sprite_0_y = self.sprites.sprite_0_oam_y();
+                    if sprite_0_y < 0xEF {
+                        // Sprite 0 must be on this scanline to trigger hit
+                        // Sprites render starting at scanline (Y+1), so check range
+                        // Use actual sprite height (8 or 16) from PPUCTRL
+                        let sprite_height = self.registers.sprite_height() as u16;
+                        let sprite_render_start = (sprite_0_y as u16).wrapping_add(1);
+                        let sprite_render_end = sprite_render_start.wrapping_add(sprite_height);
+                        let in_y_range =
+                            scanline >= sprite_render_start && scanline < sprite_render_end;
+
+                        if in_y_range {
+                            let show_bg_left = self.registers.show_background_left();
+                            let show_sp_left = self.registers.show_sprites_left();
+
+                            // Check if clipping should prevent the hit at this screen position
+                            let bg_clipped = screen_x < 8 && !show_bg_left;
+                            let sp_clipped = screen_x < 8 && !show_sp_left;
+
+                            // Only check for hit if neither sprite nor background is clipped here
+                            if !bg_clipped && !sp_clipped {
+                                let sprite_0_present =
+                                    self.sprites.sprite_0_pixel_at(screen_x as i16);
+
+                                // Sprite 0 hit when both background and sprite have non-transparent pixels
+                                // Use bg_pixel from before shift
+                                if sprite_0_present && bg_pixel_for_hit != 0 {
+                                    self.status.set_sprite_0_hit();
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

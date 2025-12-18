@@ -4,6 +4,8 @@ pub struct Status {
     vblank_flag: bool,
     /// Sprite 0 Hit flag (bit 6 of status register)
     sprite_0_hit: bool,
+    /// Pending sprite 0 hit (becomes readable next cycle)
+    pending_sprite_0_hit: bool,
     /// Sprite Overflow flag (bit 5 of status register)
     sprite_overflow: bool,
     /// NMI enabled flag
@@ -20,6 +22,7 @@ impl Status {
         Self {
             vblank_flag: false,
             sprite_0_hit: false,
+            pending_sprite_0_hit: false,
             sprite_overflow: false,
             nmi_enabled: false,
             frame_complete: false,
@@ -31,6 +34,7 @@ impl Status {
     pub fn reset(&mut self) {
         self.vblank_flag = false;
         self.sprite_0_hit = false;
+        self.pending_sprite_0_hit = false;
         self.sprite_overflow = false;
         self.nmi_enabled = false;
         self.frame_complete = false;
@@ -54,6 +58,7 @@ impl Status {
         self.vblank_flag = false;
         self.nmi_enabled = false;
         self.sprite_0_hit = false;
+        self.pending_sprite_0_hit = false;
         self.sprite_overflow = false;
     }
 
@@ -82,6 +87,7 @@ impl Status {
             // println!("PPU Status: VBlank flag set");
         }
         if self.sprite_0_hit {
+            println!("PPU Status: Sprite 0 Hit flag set");
             status |= 0b0100_0000; // Bit 6: Sprite 0 hit
         }
         if self.sprite_overflow {
@@ -115,9 +121,24 @@ impl Status {
         self.vblank_flag
     }
 
-    /// Set sprite 0 hit flag
+    /// Set sprite 0 hit flag immediately
     pub fn set_sprite_0_hit(&mut self) {
+        // println!("PPU Status: Setting Sprite 0 Hit flag");
         self.sprite_0_hit = true;
+    }
+
+    /// Set pending sprite 0 hit (will be applied next cycle)
+    pub fn set_pending_sprite_0_hit(&mut self) {
+        self.pending_sprite_0_hit = true;
+    }
+
+    /// Apply pending sprite 0 hit flag (call at start of cycle)
+    pub fn apply_pending_sprite_0_hit(&mut self) {
+        if self.pending_sprite_0_hit {
+            // println!("PPU Status: Applying pending Sprite 0 Hit flag");
+            self.sprite_0_hit = true;
+            self.pending_sprite_0_hit = false;
+        }
     }
 
     /// Set sprite overflow flag

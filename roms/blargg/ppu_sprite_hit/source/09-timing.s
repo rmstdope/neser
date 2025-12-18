@@ -18,6 +18,7 @@ earliest_time   = 7502
 	sta $2005
 	setb $2001,$1E
 	delay n_/3 - 3 + 29781 - 43
+	;E5A6LDA
 	lda $2002
 	tax
 	and #$40
