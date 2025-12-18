@@ -360,6 +360,10 @@ mod tests {
         "roms/blargg/ppu_sprite_hit/ppu_sprite_hit.nes",
         60 * 5
     );
+    blargg_test!(
+        test_sprite_overflow,
+        "roms/blargg/ppu_sprite_overflow/ppu_sprite_overflow.nes"
+    );
 
     // blargg_test!(test_cpu, "roms/cpu.nes");
 
