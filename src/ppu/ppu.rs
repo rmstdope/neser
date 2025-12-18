@@ -244,7 +244,8 @@ impl Ppu {
         }
 
         // Sprite evaluation during visible scanlines
-        if is_visible_scanline {
+        // Only happens when rendering is enabled (either sprites or background)
+        if is_visible_scanline && is_rendering_enabled {
             if pixel == 0 {
                 // Reset sprite evaluation at start of scanline
                 self.sprites.reset_evaluation();
@@ -254,16 +255,17 @@ impl Ppu {
             } else if pixel >= 65 && pixel <= 256 {
                 // Evaluate sprites for next scanline
                 let sprite_height = self.registers.sprite_height();
-                self.sprites
+                let overflow = self.sprites
                     .evaluate_sprites(pixel, scanline, sprite_height);
+                
+                // Set overflow flag immediately when detected during evaluation
+                if overflow {
+                    self.status.set_sprite_overflow();
+                }
 
                 if pixel == 256 {
                     // Finalize evaluation
                     self.sprites.finalize_evaluation();
-                    // Set sprite overflow if more than 8 sprites found
-                    if self.sprites.sprite_count() > 8 {
-                        self.status.set_sprite_overflow();
-                    }
                 }
             } else if pixel >= 257 && pixel <= 320 {
                 // Fetch sprite patterns for next scanline
