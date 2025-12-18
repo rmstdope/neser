@@ -126,9 +126,11 @@ impl Sprites {
                 let sprite_y = self.oam_data[oam_index];
 
                 let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
-                let diff = next_scanline.wrapping_sub(sprite_y as u16);
+                // Adjust Y position: add 1 to sprite_y (same as normal evaluation)
+                let diff = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16);
 
-                if diff < sprite_height as u16 && sprite_y < 0xEF {
+                // Sprites with Y < 240 (0xF0) participate in overflow detection
+                if diff < sprite_height as u16 && sprite_y < 0xF0 {
                     overflow = true;
                 }
             }
@@ -148,7 +150,8 @@ impl Sprites {
         let oam_index = (self.sprite_eval_n as usize) * 4;
         let sprite_y = self.oam_data[oam_index];
 
-        if sprite_y >= 0xEF {
+        // Sprites with Y >= 240 (0xF0) don't render and are skipped
+        if sprite_y >= 0xF0 {
             self.sprite_eval_n += 1;
             return false;
         }
