@@ -344,6 +344,11 @@ impl Sprites {
     /// This is used for sprite 0 hit detection and doesn't apply sprite clipping
     /// (clipping is handled separately in hit detection logic)
     pub fn sprite_0_pixel_at(&self, screen_x: i16) -> bool {
+        // Sprite 0 hit never occurs at screen X=255 (hardware quirk)
+        if screen_x == 255 {
+            return false;
+        }
+
         if let Some(sprite_0_idx) = self.sprite_0_index {
             let sprite_x = self.sprite_x_positions[sprite_0_idx] as i16;
 
