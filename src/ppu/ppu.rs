@@ -320,23 +320,21 @@ impl Ppu {
                 let sprite_pixel = self.sprites.get_pixel(screen_x as i16, show_sprites_left);
 
                 // Check for sprite 0 hit
-                // Hardware has a special quirk: clipping behavior differs for sprite X=0 vs X>0
-                // X=0: BOTH clipping flags must be OFF for any hits to occur (complete blockage)
-                // X>0: Hit detection uses unclipped pattern data (clipping doesn't affect hits)
+                // Sprite 0 hit detection respects the clipping settings:
+                // - If sprite clipping is enabled (show_sprites_left=false), sprite pixels
+                //   in the leftmost 8 screen pixels (X=0-7) do not trigger hits
+                // - If background clipping is enabled (show_background_left=false), background
+                //   pixels in the leftmost 8 screen pixels (X=0-7) do not trigger hits
                 if self.registers.is_background_enabled() && self.registers.is_sprite_enabled() {
-                    let sprite_0_x = self.sprites.sprite_0_x_position().unwrap_or(255);
                     let show_bg_left = self.registers.show_background_left();
                     let show_sp_left = self.registers.show_sprites_left();
 
-                    let should_check_hit = if sprite_0_x == 0 {
-                        // X=0: Both clipping flags must be OFF (true) to allow hits
-                        show_bg_left && show_sp_left
-                    } else {
-                        // X>0: Always check (clipping doesn't block hits)
-                        true
-                    };
+                    // Check if clipping should prevent the hit at this screen position
+                    let bg_clipped = screen_x < 8 && !show_bg_left;
+                    let sp_clipped = screen_x < 8 && !show_sp_left;
 
-                    if should_check_hit {
+                    // Only check for hit if neither sprite nor background is clipped here
+                    if !bg_clipped && !sp_clipped {
                         let sprite_0_present = self.sprites.sprite_0_pixel_at(screen_x as i16);
 
                         // Sprite 0 hit when both background and sprite have non-transparent pixels
