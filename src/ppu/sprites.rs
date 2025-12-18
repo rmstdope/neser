@@ -20,6 +20,10 @@ pub struct Sprites {
     sprite_eval_n: u8,
     /// Byte offset (0-3) within sprite during overflow checking (for buggy behavior)
     sprite_eval_m: u8,
+    /// Cycle counter for sprite evaluation timing (0-7 for copying sprite data)
+    sprite_eval_cycle: u8,
+    /// Whether current sprite being evaluated is in range
+    sprite_eval_in_range: bool,
     /// Sprite pattern shift registers - low bit plane (8 sprites) - CURRENT scanline
     sprite_pattern_shift_lo: [u8; 8],
     /// Sprite pattern shift registers - high bit plane (8 sprites) - CURRENT scanline
@@ -56,6 +60,8 @@ impl Sprites {
             next_sprite_0_index: None,
             sprite_eval_n: 0,
             sprite_eval_m: 0,
+            sprite_eval_cycle: 0,
+            sprite_eval_in_range: false,
             sprite_pattern_shift_lo: [0; 8],
             sprite_pattern_shift_hi: [0; 8],
             sprite_x_positions: [0; 8],
@@ -74,6 +80,8 @@ impl Sprites {
         self.sprites_found = 0;
         self.sprite_eval_n = 0;
         self.sprite_eval_m = 0;
+        self.sprite_eval_cycle = 0;
+        self.sprite_eval_in_range = false;
     }
 
     /// Get OAM data at specified address
@@ -103,7 +111,7 @@ impl Sprites {
         }
     }
 
-    /// Evaluate sprites for the current scanline
+    /// Evaluate sprites for the current scanline (cycle-accurate)
     pub fn evaluate_sprites(&mut self, pixel: u16, scanline: u16, sprite_height: u8) -> bool {
         // Only evaluate on odd cycles
         if pixel % 2 == 0 {
@@ -120,62 +128,111 @@ impl Sprites {
         // If we've already found 8 sprites, enter overflow checking mode
         if self.sprites_found >= 8 {
             // NES PPU Hardware Bug: Sprite Overflow Detection
-            let oam_index = (self.sprite_eval_n as usize) * 4 + (self.sprite_eval_m as usize);
+            // This also needs cycle-accurate timing (takes 2 cycles to check Y)
+            
+            if self.sprite_eval_cycle == 0 {
+                // First cycle: read and check Y byte
+                let oam_index = (self.sprite_eval_n as usize) * 4 + (self.sprite_eval_m as usize);
 
-            if oam_index < 256 {
-                let sprite_y = self.oam_data[oam_index];
+                if oam_index < 256 {
+                    let sprite_y = self.oam_data[oam_index];
 
-                let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
-                // Adjust Y position: add 1 to sprite_y (same as normal evaluation)
-                let diff = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16);
+                    let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
+                    // Adjust Y position: add 1 to sprite_y (same as normal evaluation)
+                    let diff = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16);
 
-                // Sprites with Y < 240 (0xF0) participate in overflow detection
-                if diff < sprite_height as u16 && sprite_y < 0xF0 {
-                    overflow = true;
+                    // Sprites with Y < 240 (0xF0) participate in overflow detection
+                    if diff < sprite_height as u16 && sprite_y < 0xF0 {
+                        overflow = true;
+                    }
                 }
+
+                // Second cycle will complete the check
+                self.sprite_eval_cycle = 1;
+                return overflow;
+            } else {
+                // Second cycle: finish check and increment
+                // THE BUG: Increment BOTH n and m
+                self.sprite_eval_n += 1;
+                self.sprite_eval_m += 1;
+
+                if self.sprite_eval_m >= 4 {
+                    self.sprite_eval_m = 0;
+                }
+                
+                self.sprite_eval_cycle = 0; // Reset for next sprite
+                return false;
             }
-
-            // THE BUG: Increment BOTH n and m
-            self.sprite_eval_n += 1;
-            self.sprite_eval_m += 1;
-
-            if self.sprite_eval_m >= 4 {
-                self.sprite_eval_m = 0;
-            }
-
-            return overflow;
         }
 
-        // Normal sprite evaluation (first 8 sprites)
-        let oam_index = (self.sprite_eval_n as usize) * 4;
-        let sprite_y = self.oam_data[oam_index];
+        // Normal sprite evaluation (first 8 sprites) - cycle accurate
+        // Cycle 0 (odd): Read Y byte and check if in range
+        // Cycles 1-7 (even/odd): If in range, copy remaining 3 bytes
+        
+        if self.sprite_eval_cycle == 0 {
+            // Read Y byte on first cycle
+            let oam_index = (self.sprite_eval_n as usize) * 4;
+            let sprite_y = self.oam_data[oam_index];
 
-        // Sprites with Y >= 240 (0xF0) don't render and are skipped
-        if sprite_y >= 0xF0 {
-            self.sprite_eval_n += 1;
+            // Sprites with Y >= 240 (0xF0) don't render and are skipped
+            if sprite_y >= 0xF0 {
+                self.sprite_eval_n += 1;
+                // Stay at cycle 0 for next sprite
+                return false;
+            }
+
+            let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
+            // Adjust Y position: add 1 to sprite_y
+            let diff = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16);
+
+            self.sprite_eval_in_range = diff < sprite_height as u16;
+            
+            if !self.sprite_eval_in_range {
+                // Not in range, move to next sprite
+                self.sprite_eval_n += 1;
+                // Stay at cycle 0 for next sprite
+                return false;
+            }
+            
+            // In range - in overflow mode this would set the flag
+            // But we're still finding first 8 sprites, so just start copying
+            self.sprite_eval_cycle = 1;
             return false;
         }
-
-        let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
-        // Adjust Y position: add 1 to sprite_y to move sprites 2 pixels down
-        let diff = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16);
-
-        if diff < sprite_height as u16 {
-            // Sprite is in range, copy all 4 bytes to secondary OAM
+        
+        // Cycles 1-7: Copy sprite data
+        if self.sprite_eval_cycle < 8 {
+            let oam_index = (self.sprite_eval_n as usize) * 4;
             let sec_oam_index = (self.sprites_found as usize) * 4;
-            for i in 0..4 {
-                self.secondary_oam[sec_oam_index + i] = self.oam_data[oam_index + i];
+            
+            // Copy one byte per cycle (but only on specific cycles)
+            if self.sprite_eval_cycle == 1 {
+                // Copy Y byte
+                self.secondary_oam[sec_oam_index] = self.oam_data[oam_index];
+            } else if self.sprite_eval_cycle == 3 {
+                // Copy tile byte
+                self.secondary_oam[sec_oam_index + 1] = self.oam_data[oam_index + 1];
+            } else if self.sprite_eval_cycle == 5 {
+                // Copy attribute byte
+                self.secondary_oam[sec_oam_index + 2] = self.oam_data[oam_index + 2];
+            } else if self.sprite_eval_cycle == 7 {
+                // Copy X byte
+                self.secondary_oam[sec_oam_index + 3] = self.oam_data[oam_index + 3];
+                
+                // Track if this is sprite 0
+                if self.sprite_eval_n == 0 {
+                    self.next_sprite_0_index = Some(self.sprites_found as usize);
+                }
+                
+                self.sprites_found += 1;
+                self.sprite_eval_n += 1;
+                self.sprite_eval_cycle = 0; // Reset for next sprite
+                return false;
             }
-
-            // Track if this is sprite 0
-            if self.sprite_eval_n == 0 {
-                self.next_sprite_0_index = Some(self.sprites_found as usize);
-            }
-
-            self.sprites_found += 1;
+            
+            self.sprite_eval_cycle += 1;
         }
-
-        self.sprite_eval_n += 1;
+        
         false
     }
 
@@ -282,6 +339,8 @@ impl Sprites {
         self.sprites_found = 0;
         self.sprite_eval_n = 0;
         self.sprite_eval_m = 0;
+        self.sprite_eval_cycle = 0;
+        self.sprite_eval_in_range = false;
         self.next_sprite_0_index = None;
     }
 
@@ -464,20 +523,27 @@ mod tests {
         // Evaluate sprites for scanline 11 (evaluates for next scanline 12)
         // With our +1 adjustment: diff = 12 - (10 + 1) = 1, which is < 8 (sprite height)
         // So the sprite should be included
+        // With cycle-accurate evaluation, need to run multiple cycles
         sprites.reset_evaluation();
-        sprites.evaluate_sprites(65, 11, 8); // pixel 65 triggers evaluation
+        for pixel in (65..=79).step_by(2) {
+            sprites.evaluate_sprites(pixel, 11, 8);
+        }
         assert_eq!(sprites.sprites_found, 1);
 
         // Evaluate sprite for scanline 10 (evaluates for next scanline 11)
         // diff = 11 - (10 + 1) = 0, which is < 8, should be included
         sprites.reset_evaluation();
-        sprites.evaluate_sprites(65, 10, 8);
+        for pixel in (65..=79).step_by(2) {
+            sprites.evaluate_sprites(pixel, 10, 8);
+        }
         assert_eq!(sprites.sprites_found, 1);
 
         // Evaluate sprite for scanline 18 (evaluates for next scanline 19)
         // diff = 19 - (10 + 1) = 8, which is >= 8, should NOT be included
         sprites.reset_evaluation();
-        sprites.evaluate_sprites(65, 18, 8);
+        for pixel in (65..=75).step_by(2) {
+            sprites.evaluate_sprites(pixel, 18, 8);
+        }
         assert_eq!(sprites.sprites_found, 0);
     }
 
