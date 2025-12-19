@@ -10,5 +10,6 @@ pub mod eventloop;
 pub mod input;
 pub mod mem_controller;
 pub mod nes;
+pub mod newcpu; // New cycle-accurate CPU implementation
 pub mod ppu; // Modular PPU structure
 pub mod screen_buffer;
