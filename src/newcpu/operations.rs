@@ -505,6 +505,10 @@ impl Operation for CLI {
     fn execute(&self, state: &mut CpuState, _operand: u8) {
         state.p &= !FLAG_I;
     }
+
+    fn inhibits_irq(&self) -> bool {
+        true // CLI polls interrupts before clearing I, creating one-instruction delay
+    }
 }
 
 /// SEI - Set Interrupt Disable
@@ -514,6 +518,10 @@ pub struct SEI;
 impl Operation for SEI {
     fn execute(&self, state: &mut CpuState, _operand: u8) {
         state.p |= FLAG_I;
+    }
+
+    fn inhibits_irq(&self) -> bool {
+        true // SEI polls interrupts before setting I, creating one-instruction delay
     }
 }
 
@@ -613,6 +621,10 @@ impl Operation for PLP {
         state.sp = state.sp.wrapping_add(1);
         // B flag is always clear, U flag is always set
         state.p = (value & !FLAG_B) | FLAG_U;
+    }
+
+    fn inhibits_irq(&self) -> bool {
+        true // PLP polls interrupts before restoring P, creating one-instruction delay
     }
 }
 
