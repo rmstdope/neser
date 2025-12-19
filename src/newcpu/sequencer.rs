@@ -107,7 +107,8 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                         // Check for page cross penalty
                         if is_page_crossed(addressing_mode, state, addr) {
                             // Page crossed: add extra cycle with dummy read from wrong address
-                            let dummy_addr = calculate_dummy_read_address(addressing_mode, addr, state);
+                            let dummy_addr =
+                                calculate_dummy_read_address(addressing_mode, addr, state);
                             let _dummy = read_fn(dummy_addr);
                             // Move to Execute phase for the actual read
                             (TickResult::InProgress, InstructionPhase::Execute)
@@ -126,9 +127,7 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                     }
 
                     InstructionType::RMW => {
-                        // RMW: read operand first
-                        let value = read_fn(addr);
-                        state.value = Some(value);
+                        // RMW: move to Execute for dummy read (if indexed), then real read
                         (TickResult::InProgress, InstructionPhase::Execute)
                     }
 
@@ -166,16 +165,45 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                 }
 
                 InstructionType::RMW => {
-                    // Execute RMW operation
-                    let value = state.value.unwrap();
-                    let result = operation.execute_rmw(cpu_state, value);
-                    state.value = Some(result);
-                    (TickResult::InProgress, InstructionPhase::Writeback)
+                    // Read-Modify-Write cycle sequence (per NesDev wiki):
+                    // 1. Fetch opcode (handled in Opcode phase)
+                    // 2-3. Address resolution (handled in Addressing phase)
+                    // 4. Dummy read (from wrong page if crossed) - first Execute cycle
+                    // 5. Real read - second Execute cycle
+                    // 6. Dummy write (original value) - first Writeback cycle
+                    // 7. Real write (modified value) - second Writeback cycle
+                    let addr = state.addr.unwrap();
+
+                    if !state.dummy_read_done {
+                        // Cycle 4: Dummy read from potentially incorrect address
+                        let dummy_addr = calculate_dummy_read_address(addressing_mode, addr, state);
+                        let _dummy = read_fn(dummy_addr);
+                        state.dummy_read_done = true;
+                        (TickResult::InProgress, InstructionPhase::Execute)
+                    } else {
+                        // Cycle 5: Real read and execute the operation
+                        let value = read_fn(addr);
+                        state.original_value = Some(value); // Store for dummy write
+
+                        // Perform the operation
+                        let result = operation.execute_rmw(cpu_state, value);
+                        state.value = Some(result);
+
+                        (TickResult::InProgress, InstructionPhase::Writeback)
+                    }
                 }
 
                 InstructionType::Branch | InstructionType::Stack | InstructionType::Control => {
                     // These are handled specially - for now just mark complete
                     (TickResult::Complete, InstructionPhase::Opcode)
+                }
+
+                _ => {
+                    // Should not reach here for Read (handled in Addressing phase)
+                    panic!(
+                        "Unexpected instruction type in Execute phase: {:?}",
+                        instruction_type
+                    );
                 }
             }
         }
@@ -189,14 +217,28 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                     (TickResult::Complete, InstructionPhase::Opcode)
                 }
                 InstructionType::RMW => {
-                    // For RMW operations, write back the modified value
                     let addr = state.addr.unwrap();
-                    let value = state.value.unwrap();
-                    write_fn(addr, value);
-                    (TickResult::Complete, InstructionPhase::Opcode)
+
+                    if !state.dummy_write_done {
+                        // Cycle 6: Dummy write - write back the original (unmodified) value
+                        // This is a quirk of the 6502 hardware: it writes the old value
+                        // back before writing the new value (per NesDev wiki)
+                        let original = state.original_value.unwrap();
+                        write_fn(addr, original);
+                        state.dummy_write_done = true;
+                        (TickResult::InProgress, InstructionPhase::Writeback)
+                    } else {
+                        // Cycle 7: Real write - write the modified value
+                        let modified_value = state.value.unwrap();
+                        write_fn(addr, modified_value);
+                        (TickResult::Complete, InstructionPhase::Opcode)
+                    }
                 }
                 _ => {
-                    panic!("Unexpected instruction type in Writeback phase: {:?}", instruction_type);
+                    panic!(
+                        "Unexpected instruction type in Writeback phase: {:?}",
+                        instruction_type
+                    );
                 }
             }
         }
@@ -352,7 +394,7 @@ mod tests {
         // STA $10FF,X with X=1 causes page cross ($10FF -> $1100)
         // Should perform dummy read from $1000 before writing to $1100
         use std::cell::RefCell;
-        
+
         let addressing = AbsoluteX;
         let operation = STA;
         let mut pc = 0x8000;
@@ -424,12 +466,15 @@ mod tests {
 
         // Should take 5 cycles: 1 opcode + 2 addressing + 1 dummy read + 1 write
         assert_eq!(cycles, 5);
-        
+
         let reads = read_addresses.borrow();
         // Should have dummy read from $1000 (wrong page)
-        assert!(reads.contains(&0x1000), 
-                "Expected dummy read from 0x1000, got reads: {:?}", reads);
-        
+        assert!(
+            reads.contains(&0x1000),
+            "Expected dummy read from 0x1000, got reads: {:?}",
+            reads
+        );
+
         // Should write to correct address
         assert_eq!(written_addr, Some(0x1100));
         assert_eq!(written_value, Some(0x42));
@@ -440,7 +485,7 @@ mod tests {
         // STA $1000,X with X=1 does not cross page ($1000 -> $1001)
         // But write instructions ALWAYS perform dummy read according to NesDev
         use std::cell::RefCell;
-        
+
         let addressing = AbsoluteX;
         let operation = STA;
         let mut pc = 0x8000;
@@ -512,14 +557,210 @@ mod tests {
 
         // Should take 5 cycles even without page cross: 1 opcode + 2 addressing + 1 dummy read + 1 write
         assert_eq!(cycles, 5);
-        
+
         let reads = read_addresses.borrow();
         // Should have dummy read from $1001 (same address we'll write to)
-        assert!(reads.contains(&0x1001), 
-                "Expected dummy read from 0x1001, got reads: {:?}", reads);
-        
+        assert!(
+            reads.contains(&0x1001),
+            "Expected dummy read from 0x1001, got reads: {:?}",
+            reads
+        );
+
         // Should write to same address
         assert_eq!(written_addr, Some(0x1001));
         assert_eq!(written_value, Some(0x42));
+    }
+
+    #[test]
+    fn test_rmw_with_page_cross_dummy_read() {
+        // INC $10FF,X with X=1 causes page cross ($10FF -> $1100)
+        // RMW instructions should perform dummy read like write instructions
+        use std::cell::RefCell;
+
+        let addressing = AbsoluteX;
+        let operation = INC;
+        let mut pc = 0x8000;
+        let x = 1;
+        let mut cpu_state = CpuState {
+            a: 0,
+            x,
+            y: 0,
+            sp: 0xFF,
+            p: 0,
+        };
+        let mut state = AddressingState::default();
+
+        let read_addresses = RefCell::new(Vec::new());
+        let read_fn = |addr: u16| {
+            read_addresses.borrow_mut().push(addr);
+            match addr {
+                0x8000 => 0xFF, // Low byte
+                0x8001 => 0x10, // High byte
+                0x1100 => 0x42, // Value at final address
+                _ => 0x00,
+            }
+        };
+
+        let mut written_addr = None;
+        let mut written_value = None;
+        let mut write_fn = |addr: u16, val: u8| {
+            written_addr = Some(addr);
+            written_value = Some(val);
+        };
+
+        // Opcode phase
+        let (result, mut phase) = tick_instruction(
+            InstructionType::RMW,
+            InstructionPhase::Opcode,
+            &addressing,
+            &operation,
+            &mut pc,
+            x,
+            0,
+            &mut cpu_state,
+            &mut state,
+            &read_fn,
+            &mut write_fn,
+        );
+        assert_eq!(result, TickResult::InProgress);
+
+        // Execute all cycles
+        let mut cycles = 1;
+        loop {
+            let (result, next_phase) = tick_instruction(
+                InstructionType::RMW,
+                phase,
+                &addressing,
+                &operation,
+                &mut pc,
+                x,
+                0,
+                &mut cpu_state,
+                &mut state,
+                &read_fn,
+                &mut write_fn,
+            );
+            cycles += 1;
+            phase = next_phase;
+            if result == TickResult::Complete {
+                break;
+            }
+        }
+
+        // RMW should take 7 cycles: 1 opcode + 2 addressing + 1 dummy read + 1 real read + 1 dummy write + 1 real write
+        assert_eq!(cycles, 7);
+
+        let reads = read_addresses.borrow();
+        // Should have dummy read from $1000 (wrong page)
+        assert!(
+            reads.contains(&0x1000),
+            "Expected dummy read from 0x1000, got reads: {:?}",
+            reads
+        );
+
+        // Should have real read from correct address
+        assert!(
+            reads.contains(&0x1100),
+            "Expected real read from 0x1100, got reads: {:?}",
+            reads
+        );
+
+        // Should write incremented value to correct address
+        assert_eq!(written_addr, Some(0x1100));
+        assert_eq!(written_value, Some(0x43)); // 0x42 + 1
+    }
+
+    #[test]
+    fn test_rmw_without_page_cross_still_has_dummy_read() {
+        // INC $1000,X with X=1 does not cross page ($1000 -> $1001)
+        // But RMW instructions ALWAYS perform dummy read according to NesDev
+        use std::cell::RefCell;
+
+        let addressing = AbsoluteX;
+        let operation = INC;
+        let mut pc = 0x8000;
+        let x = 1;
+        let mut cpu_state = CpuState {
+            a: 0,
+            x,
+            y: 0,
+            sp: 0xFF,
+            p: 0,
+        };
+        let mut state = AddressingState::default();
+
+        let read_addresses = RefCell::new(Vec::new());
+        let read_fn = |addr: u16| {
+            read_addresses.borrow_mut().push(addr);
+            match addr {
+                0x8000 => 0x00, // Low byte
+                0x8001 => 0x10, // High byte
+                0x1001 => 0x42, // Value at final address
+                _ => 0x00,
+            }
+        };
+
+        let mut written_addr = None;
+        let mut written_value = None;
+        let mut write_fn = |addr: u16, val: u8| {
+            written_addr = Some(addr);
+            written_value = Some(val);
+        };
+
+        // Opcode phase
+        let (result, mut phase) = tick_instruction(
+            InstructionType::RMW,
+            InstructionPhase::Opcode,
+            &addressing,
+            &operation,
+            &mut pc,
+            x,
+            0,
+            &mut cpu_state,
+            &mut state,
+            &read_fn,
+            &mut write_fn,
+        );
+        assert_eq!(result, TickResult::InProgress);
+
+        // Execute all cycles
+        let mut cycles = 1;
+        loop {
+            let (result, next_phase) = tick_instruction(
+                InstructionType::RMW,
+                phase,
+                &addressing,
+                &operation,
+                &mut pc,
+                x,
+                0,
+                &mut cpu_state,
+                &mut state,
+                &read_fn,
+                &mut write_fn,
+            );
+            cycles += 1;
+            phase = next_phase;
+            if result == TickResult::Complete {
+                break;
+            }
+        }
+
+        // RMW should take 7 cycles even without page cross
+        assert_eq!(cycles, 7);
+
+        let reads = read_addresses.borrow();
+        // Should have at least 2 reads from the same address (dummy + real)
+        let reads_from_1001 = reads.iter().filter(|&&addr| addr == 0x1001).count();
+        assert!(
+            reads_from_1001 >= 2,
+            "Expected at least 2 reads from 0x1001 (dummy + real), got {} reads: {:?}",
+            reads_from_1001,
+            reads
+        );
+
+        // Should write incremented value
+        assert_eq!(written_addr, Some(0x1001));
+        assert_eq!(written_value, Some(0x43)); // 0x42 + 1
     }
 }

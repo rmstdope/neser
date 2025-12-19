@@ -27,10 +27,16 @@ pub struct AddressingState {
     pub addr: Option<u16>,
     /// The value read from memory (for RMW operations)
     pub value: Option<u8>,
+    /// The original value before modification (for RMW dummy write)
+    pub original_value: Option<u8>,
     /// Base address before indexing (for page crossing detection)
     pub base_addr: Option<u16>,
     /// Temporary bytes collected during address resolution (max 4 bytes needed)
     pub temp_bytes: [u8; 4],
+    /// Track if dummy read has been performed (for RMW operations)
+    pub dummy_read_done: bool,
+    /// Track if dummy write has been performed (for RMW operations)
+    pub dummy_write_done: bool,
 }
 
 impl Default for AddressingState {
@@ -38,8 +44,11 @@ impl Default for AddressingState {
         Self {
             addr: None,
             value: None,
+            original_value: None,
             base_addr: None,
             temp_bytes: [0; 4],
+            dummy_read_done: false,
+            dummy_write_done: false,
         }
     }
 }
