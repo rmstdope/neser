@@ -50,6 +50,8 @@ pub struct NewCpu {
     pub total_cycles: u64,
     /// NMI pending flag
     pub nmi_pending: bool,
+    /// IRQ inhibit flag (delays IRQ by one instruction after CLI/SEI/PLP)
+    irq_inhibit: bool,
     /// Current instruction execution state
     instruction_state: Option<InstructionExecutionState>,
 }
@@ -77,6 +79,7 @@ impl NewCpu {
             halted: false,
             total_cycles: 0,
             nmi_pending: false,
+            irq_inhibit: false,
             instruction_state: None,
         }
     }
@@ -92,6 +95,7 @@ impl NewCpu {
         // Clear state
         self.halted = false;
         self.nmi_pending = false;
+        self.irq_inhibit = false;
         self.instruction_state = None;
 
         // Read reset vector and set PC
@@ -146,6 +150,11 @@ impl NewCpu {
 
     /// Fetch the next opcode and initialize instruction state
     fn fetch_opcode(&mut self) {
+        // Clear IRQ inhibit flag when starting a new instruction.
+        // This implements the one-instruction delay: if CLI/SEI/PLP set this flag,
+        // it prevents IRQ during the next instruction, then clears for the one after.
+        self.irq_inhibit = false;
+        
         let opcode = self.memory.borrow().read(self.pc);
 
         self.pc = self.pc.wrapping_add(1);
@@ -212,6 +221,12 @@ impl NewCpu {
                 state.phase = next_phase;
             }
             TickResult::Complete => {
+                // CLI, SEI, and PLP delay IRQ by one instruction due to interrupt
+                // polling happening before flag modification. Set inhibit flag so
+                // trigger_irq() will return 0 cycles until the next instruction completes.
+                if state.operation.inhibits_irq() {
+                    self.irq_inhibit = true;
+                }
                 self.instruction_state = None;
             }
         }
@@ -275,6 +290,11 @@ impl NewCpu {
         // IRQ is maskable - check if interrupts are disabled
         if (self.p & FLAG_INTERRUPT) != 0 {
             return 0; // IRQ masked
+        }
+
+        // IRQ is also inhibited for one instruction after CLI/SEI/PLP
+        if self.irq_inhibit {
+            return 0; // IRQ inhibited
         }
 
         // Push PC onto stack
@@ -644,5 +664,73 @@ mod tests {
             FLAG_BREAK,
             "B flag should be set on stack even when hijacked by NMI"
         );
+    }
+
+    #[test]
+    fn test_cli_delays_irq_by_one_instruction() {
+        // Test that CLI delays IRQ response by one instruction
+        // Per NesDev wiki: CLI polls interrupts at end of first cycle, then modifies I flag,
+        // so a pending IRQ won't be serviced until after the next instruction.
+
+        // Program: CLI (0x58), NOP (0xEA), NOP (0xEA)
+        let mut program = vec![0x58, 0xEA, 0xEA];
+
+        // Set up IRQ vector in ROM at 0xB000
+        program.resize(0x3FFE, 0xEA); // Fill with NOP
+        program.push(0x00); // IRQ vector low byte (0xB000)
+        program.push(0xB0); // IRQ vector high byte
+
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+        cpu.reset();
+
+        // Set I flag initially (interrupts disabled)
+        cpu.p |= FLAG_INTERRUPT;
+
+        // Execute CLI instruction - should clear I flag but delay IRQ by one instruction
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break; // CLI completed
+            }
+        }
+
+        // I flag should now be clear
+        assert_eq!(
+            cpu.p & FLAG_INTERRUPT,
+            0,
+            "I flag should be clear after CLI"
+        );
+
+        // Trigger IRQ immediately after CLI completes
+        // According to spec, this IRQ should NOT be taken until after next instruction
+        let cycles_consumed = cpu.trigger_irq();
+
+        // IRQ should be inhibited (delayed), so trigger_irq should return 0
+        assert_eq!(
+            cycles_consumed, 0,
+            "IRQ should be inhibited immediately after CLI"
+        );
+
+        // PC should still be at NOP instruction after CLI (0x8001)
+        assert_eq!(cpu.pc, 0x8001, "PC should be at first NOP after CLI");
+
+        // Execute the NOP instruction (this is the "delay" instruction)
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break; // NOP completed
+            }
+        }
+
+        // After NOP completes, PC should be at 0x8002 (second NOP)
+        assert_eq!(cpu.pc, 0x8002, "PC should be at second NOP after first NOP");
+
+        // Now try to trigger IRQ again - it should succeed this time
+        let cycles_consumed = cpu.trigger_irq();
+        assert_eq!(
+            cycles_consumed, 7,
+            "IRQ should be taken after delay instruction"
+        );
+
+        // PC should now be at IRQ handler (0xB000)
+        assert_eq!(cpu.pc, 0xB000, "PC should jump to IRQ vector after delay");
     }
 }

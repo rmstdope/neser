@@ -264,6 +264,22 @@ pub trait Operation {
     fn execute_brk(&self, _state: &mut CpuState, _current_pc: u16, _nmi_pending: bool) -> (u8, u8, u8) {
         panic!("execute_brk not implemented for this operation");
     }
+
+    /// Check if this operation should inhibit IRQ for one instruction.
+    ///
+    /// On the 6502, CLI, SEI, and PLP instructions poll for interrupts at the end
+    /// of their first cycle, before the I flag is modified in the second cycle.
+    /// This means a pending IRQ will not be serviced until after the next instruction
+    /// completes, creating a one-instruction delay.
+    ///
+    /// RTI does NOT have this behavior - it affects the I flag immediately.
+    ///
+    /// # Returns
+    /// - `true` for CLI, SEI, PLP
+    /// - `false` for all other operations (default)
+    fn inhibits_irq(&self) -> bool {
+        false // Default: most operations don't inhibit IRQ
+    }
 }
 
 #[cfg(test)]
