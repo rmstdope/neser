@@ -31,6 +31,18 @@ fn update_nz_flags(p: &mut u8, value: u8) {
     set_flag(p, FLAG_Z, value == 0);
 }
 
+/// Helper to split a 16-bit address into high and low bytes
+fn split_address(addr: u16) -> (u8, u8) {
+    let high = (addr >> 8) as u8;
+    let low = (addr & 0xFF) as u8;
+    (high, low)
+}
+
+/// Helper to combine high and low bytes into a 16-bit address
+fn combine_address(low: u8, high: u8) -> u16 {
+    ((high as u16) << 8) | (low as u16)
+}
+
 // ============================================================================
 // Load/Store Operations
 // ============================================================================
@@ -652,8 +664,7 @@ impl Operation for JSR {
     fn execute_jsr(&self, state: &mut CpuState, _target_addr: u16, current_pc: u16) -> (u8, u8) {
         // JSR pushes PC-1 to stack (return address points to last byte of JSR instruction)
         let return_addr = current_pc.wrapping_sub(1);
-        let high_byte = (return_addr >> 8) as u8;
-        let low_byte = (return_addr & 0xFF) as u8;
+        let (high_byte, low_byte) = split_address(return_addr);
         
         // Decrement SP twice (high byte pushed first, then low byte)
         state.sp = state.sp.wrapping_sub(2);
@@ -676,7 +687,7 @@ impl Operation for RTS {
         state.sp = state.sp.wrapping_add(2);
         
         // RTS pulls address and increments it (to skip past JSR instruction)
-        let addr = ((high_byte as u16) << 8) | (low_byte as u16);
+        let addr = combine_address(low_byte, high_byte);
         addr.wrapping_add(1)
     }
 }
@@ -698,7 +709,7 @@ impl Operation for RTI {
         state.p = (status & !FLAG_B) | FLAG_U;
         
         // Restore PC
-        ((pc_high as u16) << 8) | (pc_low as u16)
+        combine_address(pc_low, pc_high)
     }
 }
 
@@ -1701,5 +1712,53 @@ mod tests {
         assert_eq!(new_pc, 0x1234);
         assert_eq!(state.p, (0xA5 & !FLAG_B) | FLAG_U); // P with B clear, U set
         assert_eq!(state.sp, 0xFF); // SP incremented three times
+    }
+
+    #[test]
+    fn test_jsr_stack_wraps() {
+        let mut state = create_state();
+        state.sp = 0x01;
+        let op = JSR;
+
+        // SP should wrap: 0x01 -> 0xFF after decrementing by 2
+        let (high, low) = op.execute_jsr(&mut state, 0x5678, 0x1234);
+        assert_eq!(high, 0x12);
+        assert_eq!(low, 0x33);
+        assert_eq!(state.sp, 0xFF);
+    }
+
+    #[test]
+    fn test_rts_stack_wraps() {
+        let mut state = create_state();
+        state.sp = 0xFE;
+        let op = RTS;
+
+        // SP should wrap: 0xFE -> 0x00 after incrementing by 2
+        let new_pc = op.execute_rts(&mut state, 0x33, 0x12);
+        assert_eq!(new_pc, 0x1234);
+        assert_eq!(state.sp, 0x00);
+    }
+
+    #[test]
+    fn test_rti_stack_wraps() {
+        let mut state = create_state();
+        state.sp = 0xFD;
+        let op = RTI;
+
+        // SP should wrap: 0xFD -> 0x00 after incrementing by 3
+        let new_pc = op.execute_rti(&mut state, 0xA5, 0x34, 0x12);
+        assert_eq!(new_pc, 0x1234);
+        assert_eq!(state.sp, 0x00);
+    }
+
+    #[test]
+    fn test_rts_increments_address() {
+        let mut state = create_state();
+        state.sp = 0xFD;
+        let op = RTS;
+
+        // RTS should pull 0xFFFF and return 0x0000 (wraps)
+        let new_pc = op.execute_rts(&mut state, 0xFF, 0xFF);
+        assert_eq!(new_pc, 0x0000);
     }
 }
