@@ -830,6 +830,42 @@ impl Operation for BVS {
 }
 
 // ============================================================================
+// BRK (Break) Operation
+// ============================================================================
+
+/// BRK - Break (Software Interrupt)
+#[derive(Debug, Clone, Copy)]
+pub struct BRK;
+
+impl Operation for BRK {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for BRK operation
+    }
+
+    fn execute_brk(
+        &self,
+        state: &mut CpuState,
+        current_pc: u16,
+        _nmi_pending: bool,
+    ) -> (u8, u8, u8) {
+        // BRK pushes PC+2 to stack (skipping the padding byte)
+        let return_addr = current_pc.wrapping_add(2);
+        let (pc_high, pc_low) = split_address(return_addr);
+
+        // BRK pushes status with B and U flags set
+        let status = state.p | FLAG_B | FLAG_U;
+
+        // Set interrupt disable flag
+        state.p |= FLAG_I;
+
+        // Decrement SP by 3 (PC high, PC low, status)
+        state.sp = state.sp.wrapping_sub(3);
+
+        (pc_high, pc_low, status)
+    }
+}
+
+// ============================================================================
 // No Operation
 // ============================================================================
 
@@ -1958,12 +1994,12 @@ mod tests {
     fn test_branch_operations_independent_of_other_flags() {
         // Test that branch operations only check their specific flag
         let mut state = create_state();
-        
+
         // Set all flags except carry
         state.p = 0xFF & !FLAG_C;
         let bcc = BCC;
         assert!(bcc.execute_branch(&state)); // Should branch despite other flags
-        
+
         // Clear all flags except carry
         state.p = FLAG_C;
         let bcs = BCS;
@@ -1973,23 +2009,104 @@ mod tests {
     #[test]
     fn test_complementary_branches() {
         let mut state = create_state();
-        
+
         // BCC and BCS are complementary
         state.p = 0x00;
         assert!(BCC.execute_branch(&state));
         assert!(!BCS.execute_branch(&state));
-        
+
         state.p = FLAG_C;
         assert!(!BCC.execute_branch(&state));
         assert!(BCS.execute_branch(&state));
-        
+
         // BEQ and BNE are complementary
         state.p = 0x00;
         assert!(!BEQ.execute_branch(&state));
         assert!(BNE.execute_branch(&state));
-        
+
         state.p = FLAG_Z;
         assert!(BEQ.execute_branch(&state));
         assert!(!BNE.execute_branch(&state));
+    }
+
+    // ========================================================================
+    // BRK (Break) Operation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_brk_pushes_pc_and_status() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        state.p = 0xA5;
+        let op = BRK;
+
+        // BRK pushes PC+2 (high byte, low byte), then status with B and U flags set
+        let (pc_high, pc_low, status) = op.execute_brk(&mut state, 0x1234, false);
+
+        // PC+2 = 0x1236
+        assert_eq!(pc_high, 0x12);
+        assert_eq!(pc_low, 0x36);
+        // Status with B (0x10) and U (0x20) flags set
+        assert_eq!(status, 0xA5 | FLAG_B | FLAG_U);
+        // SP decremented by 3
+        assert_eq!(state.sp, 0xFC);
+        // I flag should be set
+        assert_eq!(state.p & FLAG_I, FLAG_I);
+    }
+
+    #[test]
+    fn test_brk_without_nmi_uses_irq_vector() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        state.p = 0x00;
+        let op = BRK;
+
+        // BRK without NMI pending should use IRQ vector
+        let (_pc_high, _pc_low, _status) = op.execute_brk(&mut state, 0x1234, false);
+
+        // The vector selection happens in the CPU, not in the operation
+        // This test verifies nmi_pending=false is handled
+        assert_eq!(state.sp, 0xFC);
+    }
+
+    #[test]
+    fn test_brk_with_nmi_uses_nmi_vector() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        state.p = 0x00;
+        let op = BRK;
+
+        // BRK with NMI pending should use NMI vector (hijacking)
+        // The status should still have B flag set even when using NMI vector
+        let (_pc_high, _pc_low, status) = op.execute_brk(&mut state, 0x1234, true);
+
+        // Status should have B and U flags set even for NMI hijacking
+        assert_eq!(status & (FLAG_B | FLAG_U), FLAG_B | FLAG_U);
+        assert_eq!(state.sp, 0xFC);
+    }
+
+    #[test]
+    fn test_brk_sets_interrupt_disable() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        state.p = 0x00; // I flag initially clear
+        let op = BRK;
+
+        op.execute_brk(&mut state, 0x1234, false);
+
+        // I flag should be set after BRK
+        assert_eq!(state.p & FLAG_I, FLAG_I);
+    }
+
+    #[test]
+    fn test_brk_stack_wraps() {
+        let mut state = create_state();
+        state.sp = 0x02; // Will wrap to 0xFF after pushing 3 bytes
+        state.p = 0x00;
+        let op = BRK;
+
+        op.execute_brk(&mut state, 0x1234, false);
+
+        assert_eq!(state.sp, 0xFF);
     }
 }

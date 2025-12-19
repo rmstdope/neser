@@ -251,6 +251,19 @@ pub trait Operation {
     fn execute_branch(&self, _state: &CpuState) -> bool {
         panic!("execute_branch not implemented for this operation");
     }
+
+    /// Execute BRK (Break) instruction - pushes PC+2 and status to stack
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `current_pc` - The current PC value
+    /// * `nmi_pending` - Whether NMI is pending (for NMI hijacking)
+    ///
+    /// # Returns
+    /// Tuple of (pc_high, pc_low, status) to push to stack
+    fn execute_brk(&self, _state: &mut CpuState, _current_pc: u16, _nmi_pending: bool) -> (u8, u8, u8) {
+        panic!("execute_brk not implemented for this operation");
+    }
 }
 
 #[cfg(test)]
