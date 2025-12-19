@@ -569,9 +569,8 @@ impl Operation for PHA {
     }
 
     fn execute_stack(&self, state: &mut CpuState) -> u8 {
-        let value = state.a;
-        state.sp = state.sp.wrapping_sub(1);
-        value
+        // SP decrement handled by sequencer after writing
+        state.a
     }
 }
 
@@ -586,9 +585,8 @@ impl Operation for PHP {
 
     fn execute_stack(&self, state: &mut CpuState) -> u8 {
         // PHP pushes P with B and U flags set
-        let value = state.p | FLAG_B | FLAG_U;
-        state.sp = state.sp.wrapping_sub(1);
-        value
+        // SP decrement handled by sequencer after writing
+        state.p | FLAG_B | FLAG_U
     }
 }
 
@@ -601,8 +599,12 @@ impl Operation for PLA {
         // Not used for stack operations
     }
 
+    fn is_pull(&self) -> bool {
+        true // PLA is a pull operation
+    }
+
     fn execute_pull(&self, state: &mut CpuState, value: u8) {
-        state.sp = state.sp.wrapping_add(1);
+        // SP increment handled by sequencer
         state.a = value;
         update_nz_flags(&mut state.p, value);
     }
@@ -617,8 +619,12 @@ impl Operation for PLP {
         // Not used for stack operations
     }
 
+    fn is_pull(&self) -> bool {
+        true // PLP is a pull operation
+    }
+
     fn execute_pull(&self, state: &mut CpuState, value: u8) {
-        state.sp = state.sp.wrapping_add(1);
+        // SP increment handled by sequencer
         // B flag is always clear, U flag is always set
         state.p = (value & !FLAG_B) | FLAG_U;
     }
@@ -852,6 +858,10 @@ pub struct BRK;
 impl Operation for BRK {
     fn execute(&self, _state: &mut CpuState, _operand: u8) {
         // Not used for BRK operation
+    }
+
+    fn is_brk(&self) -> bool {
+        true // This is BRK
     }
 
     fn execute_brk(
@@ -1861,8 +1871,8 @@ mod tests {
         // PHA should return the value to push (accumulator)
         let value = op.execute_stack(&mut state);
         assert_eq!(value, 0x42);
-        // SP should be decremented after push
-        assert_eq!(state.sp, 0xFE);
+        // SP is now managed by sequencer, not by execute_stack
+        assert_eq!(state.sp, 0xFF);
     }
 
     #[test]
@@ -1876,7 +1886,8 @@ mod tests {
         let value = op.execute_stack(&mut state);
         // PHP pushes P with B (0x10) and U (0x20) flags set
         assert_eq!(value, 0xA5 | 0x30);
-        assert_eq!(state.sp, 0xFE);
+        // SP is now managed by sequencer, not by execute_stack
+        assert_eq!(state.sp, 0xFF);
     }
 
     #[test]
@@ -1889,7 +1900,8 @@ mod tests {
         // PLA should pull a value and update A and flags
         op.execute_pull(&mut state, 0x42);
         assert_eq!(state.a, 0x42);
-        assert_eq!(state.sp, 0xFE);
+        // SP is now managed by sequencer, not by execute_pull
+        assert_eq!(state.sp, 0xFD);
         assert_eq!(state.p & FLAG_Z, 0);
         assert_eq!(state.p & FLAG_N, 0);
 
@@ -1899,7 +1911,6 @@ mod tests {
         assert_eq!(state.p & FLAG_Z, FLAG_Z);
 
         // Test negative flag
-        state.sp = 0xFD;
         op.execute_pull(&mut state, 0x80);
         assert_eq!(state.a, 0x80);
         assert_eq!(state.p & FLAG_N, FLAG_N);
@@ -1916,7 +1927,8 @@ mod tests {
         op.execute_pull(&mut state, 0xFF);
         // B flag is always clear, U flag is always set
         assert_eq!(state.p, (0xFF & !FLAG_B) | FLAG_U);
-        assert_eq!(state.sp, 0xFE);
+        // SP is now managed by sequencer, not by execute_pull
+        assert_eq!(state.sp, 0xFD);
     }
 
     #[test]
@@ -1926,10 +1938,11 @@ mod tests {
         state.sp = 0x00;
         let op = PHA;
 
-        // SP should wrap from 0x00 to 0xFF
+        // SP wrapping is now handled by sequencer
         let value = op.execute_stack(&mut state);
         assert_eq!(value, 0x42);
-        assert_eq!(state.sp, 0xFF);
+        // SP unchanged by execute_stack
+        assert_eq!(state.sp, 0x00);
     }
 
     #[test]
@@ -1938,10 +1951,11 @@ mod tests {
         state.sp = 0xFF;
         let op = PLA;
 
-        // SP should wrap from 0xFF to 0x00
+        // SP wrapping is now handled by sequencer
         op.execute_pull(&mut state, 0x42);
         assert_eq!(state.a, 0x42);
-        assert_eq!(state.sp, 0x00);
+        // SP unchanged by execute_pull
+        assert_eq!(state.sp, 0xFF);
     }
 
     // ========================================================================

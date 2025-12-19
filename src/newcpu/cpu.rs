@@ -870,7 +870,62 @@ mod tests {
         assert_eq!(cpu.p & FLAG_DECIMAL, 0, "D flag should be clear after CLD");
     }
 
-    // TODO: test_d_flag_preserved_through_php_plp skipped because PHP (0x08) is not
-    // properly decoded in decoder.rs (currently mapped to NOP). This is a separate
-    // issue from decimal mode verification and should be fixed separately.
+    #[test]
+    fn test_d_flag_preserved_through_php_plp() {
+        // Verify D flag is correctly pushed and pulled with PHP/PLP
+        // Program: SED (0xF8), PHP (0x08), CLD (0xD8), PLP (0x28)
+        let program = vec![0xF8, 0x08, 0xD8, 0x28];
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+        cpu.reset();
+
+        // Execute SED
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break;
+            }
+        }
+        assert_eq!(
+            cpu.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "D flag should be set after SED"
+        );
+
+        let sp_before_php = cpu.sp;
+
+        // Execute PHP (should push status with D flag set)
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break;
+            }
+        }
+        assert_eq!(
+            cpu.sp,
+            sp_before_php.wrapping_sub(1),
+            "Stack pointer should decrement after PHP"
+        );
+
+        // Execute CLD
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break;
+            }
+        }
+        assert_eq!(cpu.p & FLAG_DECIMAL, 0, "D flag should be clear after CLD");
+
+        // Execute PLP (should restore status with D flag set)
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break;
+            }
+        }
+        assert_eq!(
+            cpu.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "D flag should be restored after PLP"
+        );
+        assert_eq!(
+            cpu.sp, sp_before_php,
+            "Stack pointer should return to original"
+        );
+    }
 }

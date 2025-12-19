@@ -324,16 +324,16 @@ pub fn decode_opcode(
         ),
 
         // PHA - Push Accumulator
-        0x48 => (Box::new(Implied), Box::new(NOP), InstructionType::Stack, 3),
+        0x48 => (Box::new(Implied), Box::new(PHA), InstructionType::Stack, 3),
 
         // PHP - Push Processor Status
-        0x08 => (Box::new(Implied), Box::new(NOP), InstructionType::Stack, 3),
+        0x08 => (Box::new(Implied), Box::new(PHP), InstructionType::Stack, 3),
 
         // PLA - Pull Accumulator
-        0x68 => (Box::new(Implied), Box::new(NOP), InstructionType::Stack, 4),
+        0x68 => (Box::new(Implied), Box::new(PLA), InstructionType::Stack, 4),
 
         // PLP - Pull Processor Status
-        0x28 => (Box::new(Implied), Box::new(NOP), InstructionType::Stack, 4),
+        0x28 => (Box::new(Implied), Box::new(PLP), InstructionType::Stack, 4),
 
         // ROL - Rotate Left
         0x2A => (Box::new(Implied), Box::new(ROL), InstructionType::Read, 2),

@@ -200,37 +200,68 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                 }
 
                 InstructionType::Branch | InstructionType::Stack | InstructionType::Control => {
-                    // BRK instruction sequence:
-                    // 1-2: Fetch opcode and padding byte (already done)
-                    // 3-5: Push PC+2 and status with B flag to stack
-                    // 6-7: Fetch interrupt vector
-                    //
-                    // Interrupt hijacking: If NMI is asserted during BRK execution,
-                    // the B flag is still set on the stack, but execution jumps to
-                    // the NMI vector instead of the IRQ/BRK vector.
-                    let current_pc = *pc;
-                    let (pc_high, pc_low, status) =
-                        operation.execute_brk(cpu_state, current_pc.wrapping_sub(1), nmi_pending);
+                    // Check if this is BRK (special interrupt-like instruction)
+                    if operation.is_brk() {
+                        // BRK instruction sequence:
+                        // 1-2: Fetch opcode and padding byte (already done)
+                        // 3-5: Push PC+2 and status with B flag to stack
+                        // 6-7: Fetch interrupt vector
+                        //
+                        // Interrupt hijacking: If NMI is asserted during BRK execution,
+                        // the B flag is still set on the stack, but execution jumps to
+                        // the NMI vector instead of the IRQ/BRK vector.
+                        let current_pc = *pc;
+                        let (pc_high, pc_low, status) = operation.execute_brk(
+                            cpu_state,
+                            current_pc.wrapping_sub(1),
+                            nmi_pending,
+                        );
 
-                    // Push PC+2 to stack (high byte first)
-                    write_fn(0x0100 + cpu_state.sp as u16, pc_high);
-                    cpu_state.sp = cpu_state.sp.wrapping_sub(1);
-                    write_fn(0x0100 + cpu_state.sp as u16, pc_low);
-                    cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+                        // Push PC+2 to stack (high byte first)
+                        write_fn(0x0100 + cpu_state.sp as u16, pc_high);
+                        cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+                        write_fn(0x0100 + cpu_state.sp as u16, pc_low);
+                        cpu_state.sp = cpu_state.sp.wrapping_sub(1);
 
-                    // Push status with B flag set to stack
-                    write_fn(0x0100 + cpu_state.sp as u16, status);
-                    cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+                        // Push status with B flag set to stack
+                        write_fn(0x0100 + cpu_state.sp as u16, status);
+                        cpu_state.sp = cpu_state.sp.wrapping_sub(1);
 
-                    // Vector selection happens HERE (during fetch), not at BRK start.
-                    // This allows NMI to hijack BRK even if asserted mid-execution.
-                    let vector_addr = if nmi_pending { NMI_VECTOR } else { IRQ_VECTOR };
-                    let lo = read_fn(vector_addr);
-                    let hi = read_fn(vector_addr + 1);
-                    let new_pc = u16::from_le_bytes([lo, hi]);
-                    *pc = new_pc;
+                        // Vector selection happens HERE (during fetch), not at BRK start.
+                        // This allows NMI to hijack BRK even if asserted mid-execution.
+                        let vector_addr = if nmi_pending { NMI_VECTOR } else { IRQ_VECTOR };
+                        let lo = read_fn(vector_addr);
+                        let hi = read_fn(vector_addr + 1);
+                        let new_pc = u16::from_le_bytes([lo, hi]);
+                        *pc = new_pc;
 
-                    (TickResult::Complete, InstructionPhase::Opcode)
+                        (TickResult::Complete, InstructionPhase::Opcode)
+                    } else if instruction_type == InstructionType::Stack {
+                        // Stack push/pull operations (PHA/PHP/PLA/PLP)
+                        // Push operations (PHA/PHP): 3 cycles - execute_stack returns value, write to stack
+                        // Pull operations (PLA/PLP): 4 cycles - read from stack, execute_pull with value
+
+                        if operation.is_pull() {
+                            // Pull operation (PLA/PLP)
+                            // 6502 stack pull: increment SP, then read from 0x0100+SP
+                            cpu_state.sp = cpu_state.sp.wrapping_add(1);
+                            let value = read_fn(0x0100 + cpu_state.sp as u16);
+                            // Execute pull with the value to update register (SP already incremented)
+                            operation.execute_pull(cpu_state, value);
+                            (TickResult::Complete, InstructionPhase::Opcode)
+                        } else {
+                            // Push operation (PHA/PHP)
+                            // 6502 stack push: write to 0x0100+SP, then decrement SP
+                            let value = operation.execute_stack(cpu_state);
+                            write_fn(0x0100 + cpu_state.sp as u16, value);
+                            cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+                            (TickResult::Complete, InstructionPhase::Opcode)
+                        }
+                    } else {
+                        // Other control flow operations (handled elsewhere if needed)
+                        // For now, complete immediately
+                        (TickResult::Complete, InstructionPhase::Opcode)
+                    }
                 }
 
                 _ => {

@@ -178,6 +178,14 @@ pub trait Operation {
         panic!("execute_stack not implemented for this operation");
     }
 
+    /// Check if this operation is a stack pull operation (PLA/PLP)
+    ///
+    /// # Returns
+    /// `true` if this is a pull operation, `false` otherwise
+    fn is_pull(&self) -> bool {
+        false // Default: not a pull operation
+    }
+
     /// Execute a stack pull operation
     ///
     /// # Arguments
@@ -268,6 +276,14 @@ pub trait Operation {
         _nmi_pending: bool,
     ) -> (u8, u8, u8) {
         panic!("execute_brk not implemented for this operation");
+    }
+
+    /// Check if this operation is a BRK instruction.
+    ///
+    /// # Returns
+    /// `true` if this is BRK, `false` otherwise
+    fn is_brk(&self) -> bool {
+        false // Default: not BRK
     }
 
     /// Check if this operation should inhibit IRQ for one instruction.
