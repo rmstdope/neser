@@ -21,7 +21,7 @@ pub enum InstructionPhase {
 }
 
 /// Holds intermediate state during multi-cycle address resolution
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AddressingState {
     /// The resolved address (once addressing phase completes)
     pub addr: Option<u16>,
@@ -29,8 +29,19 @@ pub struct AddressingState {
     pub value: Option<u8>,
     /// Base address before indexing (for page crossing detection)
     pub base_addr: Option<u16>,
-    /// Temporary bytes collected during address resolution
-    pub temp_bytes: Vec<u8>,
+    /// Temporary bytes collected during address resolution (max 4 bytes needed)
+    pub temp_bytes: [u8; 4],
+}
+
+impl Default for AddressingState {
+    fn default() -> Self {
+        Self {
+            addr: None,
+            value: None,
+            base_addr: None,
+            temp_bytes: [0; 4],
+        }
+    }
 }
 
 /// Tracks the state of an instruction being executed across multiple cycles
@@ -77,7 +88,10 @@ mod tests {
 
         assert_eq!(opcode_phase, InstructionPhase::Opcode);
         assert_eq!(addressing_phase, InstructionPhase::Addressing(0));
-        assert_ne!(InstructionPhase::Addressing(0), InstructionPhase::Addressing(1));
+        assert_ne!(
+            InstructionPhase::Addressing(0),
+            InstructionPhase::Addressing(1)
+        );
         assert_eq!(execute_phase, InstructionPhase::Execute);
         assert_eq!(writeback_phase, InstructionPhase::Writeback);
     }
@@ -86,28 +100,29 @@ mod tests {
     fn test_addressing_state_default() {
         // Test that AddressingState can be created with defaults
         let state = AddressingState::default();
-        
+
         assert_eq!(state.addr, None);
         assert_eq!(state.value, None);
         assert_eq!(state.base_addr, None);
-        assert!(state.temp_bytes.is_empty());
+        assert_eq!(state.temp_bytes, [0; 4]);
     }
 
     #[test]
     fn test_addressing_state_can_store_values() {
         // Test that AddressingState can store intermediate values
         let mut state = AddressingState::default();
-        
-        state.temp_bytes.push(0x34);
-        state.temp_bytes.push(0x12);
-        assert_eq!(state.temp_bytes.len(), 2);
-        
+
+        state.temp_bytes[0] = 0x34;
+        state.temp_bytes[1] = 0x12;
+        assert_eq!(state.temp_bytes[0], 0x34);
+        assert_eq!(state.temp_bytes[1], 0x12);
+
         state.addr = Some(0x1234);
         assert_eq!(state.addr, Some(0x1234));
-        
+
         state.value = Some(0x42);
         assert_eq!(state.value, Some(0x42));
-        
+
         state.base_addr = Some(0x1200);
         assert_eq!(state.base_addr, Some(0x1200));
     }
@@ -132,7 +147,7 @@ mod tests {
         // Test that instruction types can be compared
         assert_eq!(InstructionType::Read, InstructionType::Read);
         assert_ne!(InstructionType::Read, InstructionType::Write);
-        
+
         let instr_type = InstructionType::RMW;
         match instr_type {
             InstructionType::RMW => { /* expected */ }
