@@ -1064,6 +1064,137 @@ impl Operation for RRA {
     }
 }
 
+/// AAC (ANC) - AND then copy N to C
+#[derive(Debug, Clone, Copy)]
+pub struct AAC;
+
+impl Operation for AAC {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        state.a &= operand;
+        update_nz_flags(&mut state.p, state.a);
+        // Copy N flag to C flag
+        let n_flag_set = state.p & FLAG_N != 0;
+        set_flag(&mut state.p, FLAG_C, n_flag_set);
+    }
+}
+
+/// ARR - AND then ROR with special flag handling
+#[derive(Debug, Clone, Copy)]
+pub struct ARR;
+
+impl Operation for ARR {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        // AND first
+        state.a &= operand;
+        
+        // Then ROR
+        let carry_in = if state.p & FLAG_C != 0 { 0x80 } else { 0 };
+        state.a = (state.a >> 1) | carry_in;
+        
+        // Update N and Z flags
+        update_nz_flags(&mut state.p, state.a);
+        
+        // Special carry and overflow logic for ARR
+        // Bit 6 of result -> C
+        let bit_6 = state.a & 0x40 != 0;
+        set_flag(&mut state.p, FLAG_C, bit_6);
+        
+        // Bit 6 XOR bit 5 -> V
+        let bit_5 = state.a & 0x20 != 0;
+        set_flag(&mut state.p, FLAG_V, bit_6 ^ bit_5);
+    }
+}
+
+/// ASR (ALR) - AND then LSR
+#[derive(Debug, Clone, Copy)]
+pub struct ASR;
+
+impl Operation for ASR {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        state.a &= operand;
+        let carry_out = state.a & 0x01 != 0;
+        state.a >>= 1;
+        update_nz_flags(&mut state.p, state.a);
+        set_flag(&mut state.p, FLAG_C, carry_out);
+    }
+}
+
+/// ATX (LXA) - (A | 0xEE) AND operand -> A, X
+/// This is a highly unstable operation
+#[derive(Debug, Clone, Copy)]
+pub struct ATX;
+
+impl Operation for ATX {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        // Magic constant 0xEE is used in some implementations
+        state.a = (state.a | 0xEE) & operand;
+        state.x = state.a;
+        update_nz_flags(&mut state.p, state.a);
+    }
+}
+
+/// AXS (SBX) - (A & X) - operand -> X (no borrow)
+#[derive(Debug, Clone, Copy)]
+pub struct AXS;
+
+impl Operation for AXS {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        let temp = state.a & state.x;
+        let result = temp.wrapping_sub(operand);
+        state.x = result;
+        
+        // Set carry if no borrow (temp >= operand)
+        set_flag(&mut state.p, FLAG_C, temp >= operand);
+        update_nz_flags(&mut state.p, state.x);
+    }
+}
+
+/// XAA - Highly unstable operation: A = X & operand
+/// Behavior varies between different CPU revisions
+#[derive(Debug, Clone, Copy)]
+pub struct XAA;
+
+impl Operation for XAA {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        // Simplified stable behavior: A = X & operand
+        state.a = state.x & operand;
+        update_nz_flags(&mut state.p, state.a);
+    }
+}
+
+/// DOP - Double NOP (2-byte NOP that reads but ignores operand)
+#[derive(Debug, Clone, Copy)]
+pub struct DOP;
+
+impl Operation for DOP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Do nothing - just a 2-byte NOP
+    }
+}
+
+/// TOP - Triple NOP (3-byte NOP that reads but ignores operand)
+#[derive(Debug, Clone, Copy)]
+pub struct TOP;
+
+impl Operation for TOP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Do nothing - just a 3-byte NOP
+    }
+}
+
+/// KIL - Halt/Jam the CPU
+/// This locks up the CPU until reset
+#[derive(Debug, Clone, Copy)]
+pub struct KIL;
+
+impl Operation for KIL {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // In a real implementation, this would halt the CPU
+        // For our purposes, we just acknowledge it exists
+        // The CPU wrapper should handle this specially
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2108,5 +2239,174 @@ mod tests {
         op.execute_brk(&mut state, 0x1234, false);
 
         assert_eq!(state.sp, 0xFF);
+    }
+
+    // ========================================================================
+    // Unofficial Opcode Tests (Remaining)
+    // ========================================================================
+
+    #[test]
+    fn test_aac() {
+        let mut state = create_state();
+        state.a = 0x0F;
+        let op = AAC;
+
+        op.execute(&mut state, 0xF0);
+
+        // AAC: AND then copy N to C
+        assert_eq!(state.a, 0x00);
+        assert_eq!(state.p & FLAG_Z, FLAG_Z);
+        assert_eq!(state.p & FLAG_N, 0);
+        assert_eq!(state.p & FLAG_C, 0); // N was 0, so C is 0
+    }
+
+    #[test]
+    fn test_aac_sets_carry_from_negative() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        let op = AAC;
+
+        op.execute(&mut state, 0x80);
+
+        assert_eq!(state.a, 0x80);
+        assert_eq!(state.p & FLAG_N, FLAG_N);
+        assert_eq!(state.p & FLAG_C, FLAG_C); // N is set, so C is set
+    }
+
+    #[test]
+    fn test_arr() {
+        let mut state = create_state();
+        state.a = 0x80;
+        state.p |= FLAG_C; // Set carry
+        let op = ARR;
+
+        op.execute(&mut state, 0x80);
+
+        // ARR: AND then ROR, then set C and V based on bits 6 and 5
+        // 0x80 & 0x80 = 0x80, then ROR with C=1 gives 0xC0
+        assert_eq!(state.a, 0xC0);
+    }
+
+    #[test]
+    fn test_asr() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        let op = ASR;
+
+        op.execute(&mut state, 0x82);
+
+        // ASR: AND then LSR
+        // 0xFF & 0x82 = 0x82, then 0x82 >> 1 = 0x41
+        assert_eq!(state.a, 0x41);
+        assert_eq!(state.p & FLAG_C, 0); // Bit 0 of 0x82 is 0
+        assert_eq!(state.p & FLAG_N, 0);
+    }
+
+    #[test]
+    fn test_atx() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        state.x = 0x00;
+        let op = ATX;
+
+        op.execute(&mut state, 0x42);
+
+        // ATX (LXA): A = X = (A | 0xEE) & operand
+        let result = (0xFF | 0xEE) & 0x42;
+        assert_eq!(state.a, result);
+        assert_eq!(state.x, result);
+    }
+
+    #[test]
+    fn test_axs() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        state.x = 0x10;
+        let op = AXS;
+
+        op.execute(&mut state, 0x05);
+
+        // AXS: X = (A & X) - operand (no borrow)
+        // (0xFF & 0x10) - 0x05 = 0x10 - 0x05 = 0x0B
+        assert_eq!(state.x, 0x0B);
+        assert_eq!(state.p & FLAG_C, FLAG_C); // No borrow
+    }
+
+    #[test]
+    fn test_xaa() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        state.x = 0x42;
+        let op = XAA;
+
+        op.execute(&mut state, 0x0F);
+
+        // XAA: A = X & operand (highly unstable)
+        assert_eq!(state.a, 0x42 & 0x0F);
+    }
+
+    #[test]
+    fn test_dop() {
+        let mut state = create_state();
+        state.a = 0x42;
+        let op = DOP;
+
+        op.execute(&mut state, 0xFF);
+
+        // DOP: Double NOP - does nothing
+        assert_eq!(state.a, 0x42);
+    }
+
+    #[test]
+    fn test_top() {
+        let mut state = create_state();
+        state.a = 0x42;
+        let op = TOP;
+
+        op.execute(&mut state, 0xFF);
+
+        // TOP: Triple NOP - does nothing
+        assert_eq!(state.a, 0x42);
+    }
+
+    #[test]
+    fn test_kil() {
+        let mut state = create_state();
+        let op = KIL;
+
+        // KIL halts the CPU - just test it doesn't panic
+        op.execute(&mut state, 0x00);
+        // In actual implementation, this would halt the CPU
+    }
+
+    #[test]
+    fn test_asr_with_carry() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        let op = ASR;
+
+        op.execute(&mut state, 0x83);
+
+        // ASR: AND then LSR
+        // 0xFF & 0x83 = 0x83, then 0x83 >> 1 = 0x41
+        assert_eq!(state.a, 0x41);
+        assert_eq!(state.p & FLAG_C, FLAG_C); // Bit 0 of 0x83 is 1
+        assert_eq!(state.p & FLAG_N, 0);
+    }
+
+    #[test]
+    fn test_axs_with_borrow() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        state.x = 0x10;
+        let op = AXS;
+
+        op.execute(&mut state, 0x20);
+
+        // AXS: X = (A & X) - operand
+        // (0xFF & 0x10) - 0x20 = 0x10 - 0x20 = 0xF0 (wraps)
+        assert_eq!(state.x, 0xF0);
+        assert_eq!(state.p & FLAG_C, 0); // Borrow occurred (0x10 < 0x20)
+        assert_eq!(state.p & FLAG_N, FLAG_N); // Result is negative
     }
 }
