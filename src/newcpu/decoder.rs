@@ -130,7 +130,7 @@ pub fn decode_opcode(
         // BRK - Break
         0x00 => (
             Box::new(Implied),
-            Box::new(NOP),
+            Box::new(BRK),
             InstructionType::Control,
             7,
         ),

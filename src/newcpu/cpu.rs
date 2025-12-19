@@ -21,11 +21,12 @@ const FLAG_UNUSED: u8 = 0b0010_0000;
 const FLAG_OVERFLOW: u8 = 0b0100_0000;
 const FLAG_NEGATIVE: u8 = 0b1000_0000;
 
+// Interrupt vector addresses in memory
 #[allow(dead_code)]
-const NMI_VECTOR: u16 = 0xFFFA;
-const RESET_VECTOR: u16 = 0xFFFC;
+const NMI_VECTOR: u16 = 0xFFFA; // Non-Maskable Interrupt vector
+const RESET_VECTOR: u16 = 0xFFFC; // Reset vector
 #[allow(dead_code)]
-const IRQ_VECTOR: u16 = 0xFFFE;
+const IRQ_VECTOR: u16 = 0xFFFE; // IRQ and BRK vector
 
 /// New cycle-accurate 6502 CPU implementation
 pub struct NewCpu {
@@ -110,6 +111,11 @@ impl NewCpu {
     /// Execute one CPU cycle
     /// Returns true on every successful cycle
     pub fn tick(&mut self) -> bool {
+        eprintln!(
+            "DEBUG tick: halted={}, has_state={}",
+            self.halted,
+            self.instruction_state.is_some()
+        );
         if self.halted {
             return false;
         }
@@ -133,7 +139,7 @@ impl NewCpu {
         let was_executing = self.instruction_state.is_some();
         self.tick();
         let now_idle = self.instruction_state.is_none();
-        
+
         // Instruction completed if we were executing and now we're idle
         was_executing && now_idle
     }
@@ -141,6 +147,7 @@ impl NewCpu {
     /// Fetch the next opcode and initialize instruction state
     fn fetch_opcode(&mut self) {
         let opcode = self.memory.borrow().read(self.pc);
+
         self.pc = self.pc.wrapping_add(1);
 
         let (addressing_mode, operation, instruction_type, _cycles) = decode_opcode(opcode);
@@ -157,6 +164,10 @@ impl NewCpu {
     /// Execute one cycle of the current instruction
     fn execute_instruction_cycle(&mut self) {
         let state = self.instruction_state.as_mut().unwrap();
+        eprintln!(
+            "DEBUG execute_instruction_cycle: phase={:?}, type={:?}",
+            state.phase, state.instruction_type
+        );
 
         // Create CpuState for operations
         let mut cpu_state = CpuState {
@@ -185,6 +196,7 @@ impl NewCpu {
             &mut state.addressing_state,
             &read_fn,
             &mut write_fn,
+            self.nmi_pending,
         );
 
         // Update CPU state from operation
@@ -238,20 +250,20 @@ impl NewCpu {
     pub fn trigger_nmi(&mut self) -> u8 {
         // Push PC onto stack
         self.push_word(self.pc);
-        
+
         // Push P onto stack with B flag clear and unused flag set
         let mut p_with_flags = self.p & !FLAG_BREAK;
         p_with_flags |= FLAG_UNUSED;
         self.push_byte(p_with_flags);
-        
+
         // Read NMI vector and set PC
         let lo = self.memory.borrow().read(NMI_VECTOR);
         let hi = self.memory.borrow().read(NMI_VECTOR + 1);
         self.pc = u16::from_le_bytes([lo, hi]);
-        
+
         // Set Interrupt Disable flag
         self.p |= FLAG_INTERRUPT;
-        
+
         // NMI takes 7 cycles
         self.total_cycles += 7;
         7
@@ -264,23 +276,23 @@ impl NewCpu {
         if (self.p & FLAG_INTERRUPT) != 0 {
             return 0; // IRQ masked
         }
-        
+
         // Push PC onto stack
         self.push_word(self.pc);
-        
+
         // Push P onto stack with B flag clear and unused flag set
         let mut p_with_flags = self.p & !FLAG_BREAK;
         p_with_flags |= FLAG_UNUSED;
         self.push_byte(p_with_flags);
-        
+
         // Read IRQ vector and set PC
         let lo = self.memory.borrow().read(IRQ_VECTOR);
         let hi = self.memory.borrow().read(IRQ_VECTOR + 1);
         self.pc = u16::from_le_bytes([lo, hi]);
-        
+
         // Set Interrupt Disable flag
         self.p |= FLAG_INTERRUPT;
-        
+
         // IRQ takes 7 cycles
         self.total_cycles += 7;
         7
@@ -410,12 +422,12 @@ mod tests {
     #[test]
     fn test_set_nmi_pending() {
         let mut cpu = setup_cpu();
-        
+
         assert!(!cpu.nmi_pending);
-        
+
         cpu.set_nmi_pending(true);
         assert!(cpu.nmi_pending);
-        
+
         cpu.set_nmi_pending(false);
         assert!(!cpu.nmi_pending);
     }
@@ -424,7 +436,7 @@ mod tests {
     fn test_trigger_nmi() {
         let mut cpu = setup_cpu_with_rom(0x8000, &[]);
         cpu.reset();
-        
+
         // Set up NMI vector to point to 0x9000
         let mut prg_rom = vec![0; 0x4000];
         prg_rom[0x3FFA] = 0x00; // NMI vector low byte (0xFFFA - 0x8000 + 0x4000 = 0x3FFA)
@@ -432,23 +444,23 @@ mod tests {
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
-        
+
         let initial_pc = cpu.pc;
         let initial_sp = cpu.sp;
         let initial_cycles = cpu.total_cycles();
-        
+
         let cycles = cpu.trigger_nmi();
-        
+
         // NMI should take 7 cycles
         assert_eq!(cycles, 7);
         assert_eq!(cpu.total_cycles(), initial_cycles + 7);
-        
+
         // PC should be set to NMI vector
         assert_eq!(cpu.pc, 0x9000);
-        
+
         // Stack should have PC and P pushed (3 bytes)
         assert_eq!(cpu.sp, initial_sp.wrapping_sub(3));
-        
+
         // I flag should be set
         assert_eq!(cpu.p & FLAG_INTERRUPT, FLAG_INTERRUPT);
     }
@@ -457,7 +469,7 @@ mod tests {
     fn test_trigger_irq_when_enabled() {
         let mut cpu = setup_cpu_with_rom(0x8000, &[]);
         cpu.reset();
-        
+
         // Set up IRQ vector to point to 0xA000
         let mut prg_rom = vec![0; 0x4000];
         prg_rom[0x3FFE] = 0x00; // IRQ vector low byte (0xFFFE - 0x8000 + 0x4000 = 0x3FFE)
@@ -465,20 +477,20 @@ mod tests {
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
-        
+
         // Clear I flag to enable IRQ
         cpu.p &= !FLAG_INTERRUPT;
-        
+
         let initial_cycles = cpu.total_cycles();
         let cycles = cpu.trigger_irq();
-        
+
         // IRQ should take 7 cycles when enabled
         assert_eq!(cycles, 7);
         assert_eq!(cpu.total_cycles(), initial_cycles + 7);
-        
+
         // PC should be set to IRQ vector
         assert_eq!(cpu.pc, 0xA000);
-        
+
         // I flag should be set
         assert_eq!(cpu.p & FLAG_INTERRUPT, FLAG_INTERRUPT);
     }
@@ -487,19 +499,19 @@ mod tests {
     fn test_trigger_irq_when_disabled() {
         let mut cpu = setup_cpu_with_rom(0x8000, &[]);
         cpu.reset();
-        
+
         // I flag is set by reset, so IRQ should be disabled
         assert_eq!(cpu.p & FLAG_INTERRUPT, FLAG_INTERRUPT);
-        
+
         let initial_pc = cpu.pc;
         let initial_cycles = cpu.total_cycles();
-        
+
         let cycles = cpu.trigger_irq();
-        
+
         // IRQ should be masked and take 0 cycles
         assert_eq!(cycles, 0);
         assert_eq!(cpu.total_cycles(), initial_cycles);
-        
+
         // PC should not change
         assert_eq!(cpu.pc, initial_pc);
     }
@@ -507,14 +519,14 @@ mod tests {
     #[test]
     fn test_should_poll_irq() {
         let mut cpu = setup_cpu();
-        
+
         // Initially I flag is clear, so IRQ should be allowed
         assert!(cpu.should_poll_irq());
-        
+
         // Set I flag
         cpu.p |= FLAG_INTERRUPT;
         assert!(!cpu.should_poll_irq());
-        
+
         // Clear I flag
         cpu.p &= !FLAG_INTERRUPT;
         assert!(cpu.should_poll_irq());
@@ -526,13 +538,111 @@ mod tests {
         let program = vec![0xA9, 0x42];
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
         cpu.reset();
-        
+
         // First cycle: fetch opcode - instruction not complete
         assert!(!cpu.tick_cycle());
-        
+
         // Second cycle: execute - instruction complete
         assert!(cpu.tick_cycle());
-        
+
         assert_eq!(cpu.a, 0x42);
+    }
+
+    #[test]
+    fn test_brk_basic_execution() {
+        // Simple test to verify BRK executes at all
+        let mut program = vec![0x00, 0x00]; // BRK + padding
+
+        // We need to set up the ROM with the IRQ vector
+        // 16KB ROM is mirrored, so 0xFFFE maps to offset 0x3FFE in the ROM
+        // Fill with NOPs up to the vector
+        program.resize(0x3FFE, 0xEA); // Fill with NOP
+        program.push(0x00); // IRQ vector low byte (0xA000)
+        program.push(0xA0); // IRQ vector high byte
+
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+
+        cpu.reset();
+        let initial_sp = cpu.sp;
+
+        // Execute BRK instruction
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break; // Instruction completed
+            }
+        }
+
+        // PC should be at IRQ vector
+        assert_eq!(cpu.pc, 0xA000, "BRK should jump to IRQ vector");
+
+        // Stack should have 3 bytes pushed
+        assert_eq!(
+            cpu.sp,
+            initial_sp.wrapping_sub(3),
+            "SP should have 3 bytes pushed"
+        );
+    }
+
+    #[test]
+    fn test_nmi_hijacks_brk_uses_nmi_vector_but_sets_b_flag() {
+        // Test interrupt hijacking per NesDev wiki:
+        // https://www.nesdev.org/wiki/CPU_interrupts#Interrupt_hijacking
+        //
+        // When NMI is asserted during the first 4 ticks of BRK, the BRK executes
+        // normally (PC increments, B flag set on stack), but execution branches
+        // to the NMI vector instead of IRQ/BRK vector.
+
+        // BRK opcode (0x00) followed by padding byte
+        let mut program = vec![0x00, 0x00];
+
+        // Set up vectors in ROM
+        // 16KB ROM is mirrored, so vectors map to offset 0x3FF8 onwards
+        program.resize(0x3FFA, 0xEA); // Fill with NOP up to NMI vector
+        program.push(0x00); // NMI vector low byte (0x9000)
+        program.push(0x90); // NMI vector high byte
+        program.push(0x00); // Reserved vector low (not used)
+        program.push(0x00); // Reserved vector high (not used)
+        program.push(0x00); // IRQ vector low byte (0xA000)
+        program.push(0xA0); // IRQ vector high byte
+
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+
+        cpu.reset();
+
+        // Execute BRK instruction while setting NMI pending during execution
+        // BRK takes 7 cycles:
+        // 1. Fetch opcode
+        // 2. Read next byte (padding), increment PC
+        // 3. Push PCH
+        // 4. Push PCL
+        // 5. Push P (with B flag)
+        // 6. Fetch PCL from vector
+        // 7. Fetch PCH from vector
+
+        // Cycle 1: Fetch BRK opcode
+        cpu.tick_cycle();
+
+        // Cycle 2: Read padding byte - assert NMI here (during cycle 2)
+        cpu.set_nmi_pending(true);
+        cpu.tick_cycle();
+
+        // Cycles 3-7: Complete BRK sequence
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break; // Instruction completed
+            }
+        }
+
+        // PC should point to NMI vector (0x9000), not IRQ vector (0xA000)
+        assert_eq!(cpu.pc, 0x9000, "BRK should be hijacked to use NMI vector");
+
+        // Check stack: should have PC+2 and status with B flag set
+        // Stack layout (from top): P, PCL, PCH
+        let status_on_stack = cpu.memory.borrow().read(0x0100 + cpu.sp as u16 + 1);
+        assert_eq!(
+            status_on_stack & FLAG_BREAK,
+            FLAG_BREAK,
+            "B flag should be set on stack even when hijacked by NMI"
+        );
     }
 }

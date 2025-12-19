@@ -848,19 +848,19 @@ impl Operation for BRK {
         current_pc: u16,
         _nmi_pending: bool,
     ) -> (u8, u8, u8) {
-        // BRK pushes PC+2 to stack (skipping the padding byte)
+        // Calculate return address: PC+2 (current PC + opcode + padding byte)
         let return_addr = current_pc.wrapping_add(2);
         let (pc_high, pc_low) = split_address(return_addr);
 
-        // BRK pushes status with B and U flags set
+        // Prepare status byte with B (BRK) and U (unused) flags set
+        // This distinguishes BRK from hardware interrupts on the stack
         let status = state.p | FLAG_B | FLAG_U;
 
-        // Set interrupt disable flag
+        // Set interrupt disable flag to prevent IRQ during handler
         state.p |= FLAG_I;
 
-        // Decrement SP by 3 (PC high, PC low, status)
-        state.sp = state.sp.wrapping_sub(3);
-
+        // Return values to push - actual stack operations handled by sequencer
+        // nmi_pending parameter used by sequencer for vector selection
         (pc_high, pc_low, status)
     }
 }
@@ -1086,19 +1086,19 @@ impl Operation for ARR {
     fn execute(&self, state: &mut CpuState, operand: u8) {
         // AND first
         state.a &= operand;
-        
+
         // Then ROR
         let carry_in = if state.p & FLAG_C != 0 { 0x80 } else { 0 };
         state.a = (state.a >> 1) | carry_in;
-        
+
         // Update N and Z flags
         update_nz_flags(&mut state.p, state.a);
-        
+
         // Special carry and overflow logic for ARR
         // Bit 6 of result -> C
         let bit_6 = state.a & 0x40 != 0;
         set_flag(&mut state.p, FLAG_C, bit_6);
-        
+
         // Bit 6 XOR bit 5 -> V
         let bit_5 = state.a & 0x20 != 0;
         set_flag(&mut state.p, FLAG_V, bit_6 ^ bit_5);
@@ -1142,7 +1142,7 @@ impl Operation for AXS {
         let temp = state.a & state.x;
         let result = temp.wrapping_sub(operand);
         state.x = result;
-        
+
         // Set carry if no borrow (temp >= operand)
         set_flag(&mut state.p, FLAG_C, temp >= operand);
         update_nz_flags(&mut state.p, state.x);
@@ -2179,8 +2179,8 @@ mod tests {
         assert_eq!(pc_low, 0x36);
         // Status with B (0x10) and U (0x20) flags set
         assert_eq!(status, 0xA5 | FLAG_B | FLAG_U);
-        // SP decremented by 3
-        assert_eq!(state.sp, 0xFC);
+        // SP NOT decremented - sequencer handles that
+        assert_eq!(state.sp, 0xFF);
         // I flag should be set
         assert_eq!(state.p & FLAG_I, FLAG_I);
     }
@@ -2195,9 +2195,9 @@ mod tests {
         // BRK without NMI pending should use IRQ vector
         let (_pc_high, _pc_low, _status) = op.execute_brk(&mut state, 0x1234, false);
 
-        // The vector selection happens in the CPU, not in the operation
-        // This test verifies nmi_pending=false is handled
-        assert_eq!(state.sp, 0xFC);
+        // The vector selection happens in the sequencer, not in the operation
+        // SP NOT modified by execute_brk
+        assert_eq!(state.sp, 0xFF);
     }
 
     #[test]
@@ -2213,7 +2213,8 @@ mod tests {
 
         // Status should have B and U flags set even for NMI hijacking
         assert_eq!(status & (FLAG_B | FLAG_U), FLAG_B | FLAG_U);
-        assert_eq!(state.sp, 0xFC);
+        // SP NOT modified by execute_brk
+        assert_eq!(state.sp, 0xFF);
     }
 
     #[test]
@@ -2232,13 +2233,14 @@ mod tests {
     #[test]
     fn test_brk_stack_wraps() {
         let mut state = create_state();
-        state.sp = 0x02; // Will wrap to 0xFF after pushing 3 bytes
+        state.sp = 0x02; // Would wrap to 0xFF after pushing 3 bytes (done by sequencer)
         state.p = 0x00;
         let op = BRK;
 
         op.execute_brk(&mut state, 0x1234, false);
 
-        assert_eq!(state.sp, 0xFF);
+        // SP NOT modified by execute_brk - sequencer handles stack operations
+        assert_eq!(state.sp, 0x02);
     }
 
     // ========================================================================
