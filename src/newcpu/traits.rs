@@ -261,7 +261,12 @@ pub trait Operation {
     ///
     /// # Returns
     /// Tuple of (pc_high, pc_low, status) to push to stack
-    fn execute_brk(&self, _state: &mut CpuState, _current_pc: u16, _nmi_pending: bool) -> (u8, u8, u8) {
+    fn execute_brk(
+        &self,
+        _state: &mut CpuState,
+        _current_pc: u16,
+        _nmi_pending: bool,
+    ) -> (u8, u8, u8) {
         panic!("execute_brk not implemented for this operation");
     }
 
