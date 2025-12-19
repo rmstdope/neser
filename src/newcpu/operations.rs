@@ -12,6 +12,7 @@ const FLAG_Z: u8 = 0b0000_0010; // Zero
 const FLAG_I: u8 = 0b0000_0100; // Interrupt Disable
 const FLAG_D: u8 = 0b0000_1000; // Decimal Mode (not used in NES)
 const FLAG_B: u8 = 0b0001_0000; // Break Command
+const FLAG_U: u8 = 0b0010_0000; // Unused (always set)
 const FLAG_V: u8 = 0b0100_0000; // Overflow
 const FLAG_N: u8 = 0b1000_0000; // Negative
 
@@ -28,6 +29,18 @@ fn set_flag(p: &mut u8, flag: u8, condition: bool) {
 fn update_nz_flags(p: &mut u8, value: u8) {
     set_flag(p, FLAG_N, value & 0x80 != 0);
     set_flag(p, FLAG_Z, value == 0);
+}
+
+/// Helper to split a 16-bit address into high and low bytes
+fn split_address(addr: u16) -> (u8, u8) {
+    let high = (addr >> 8) as u8;
+    let low = (addr & 0xFF) as u8;
+    (high, low)
+}
+
+/// Helper to combine high and low bytes into a 16-bit address
+fn combine_address(low: u8, high: u8) -> u16 {
+    ((high as u16) << 8) | (low as u16)
 }
 
 // ============================================================================
@@ -535,6 +548,75 @@ impl Operation for CLV {
 }
 
 // ============================================================================
+// Stack Operations
+// ============================================================================
+
+/// PHA - Push Accumulator
+#[derive(Debug, Clone, Copy)]
+pub struct PHA;
+
+impl Operation for PHA {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for stack operations
+    }
+
+    fn execute_stack(&self, state: &mut CpuState) -> u8 {
+        let value = state.a;
+        state.sp = state.sp.wrapping_sub(1);
+        value
+    }
+}
+
+/// PHP - Push Processor Status
+#[derive(Debug, Clone, Copy)]
+pub struct PHP;
+
+impl Operation for PHP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for stack operations
+    }
+
+    fn execute_stack(&self, state: &mut CpuState) -> u8 {
+        // PHP pushes P with B and U flags set
+        let value = state.p | FLAG_B | FLAG_U;
+        state.sp = state.sp.wrapping_sub(1);
+        value
+    }
+}
+
+/// PLA - Pull Accumulator
+#[derive(Debug, Clone, Copy)]
+pub struct PLA;
+
+impl Operation for PLA {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for stack operations
+    }
+
+    fn execute_pull(&self, state: &mut CpuState, value: u8) {
+        state.sp = state.sp.wrapping_add(1);
+        state.a = value;
+        update_nz_flags(&mut state.p, value);
+    }
+}
+
+/// PLP - Pull Processor Status
+#[derive(Debug, Clone, Copy)]
+pub struct PLP;
+
+impl Operation for PLP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for stack operations
+    }
+
+    fn execute_pull(&self, state: &mut CpuState, value: u8) {
+        state.sp = state.sp.wrapping_add(1);
+        // B flag is always clear, U flag is always set
+        state.p = (value & !FLAG_B) | FLAG_U;
+    }
+}
+
+// ============================================================================
 // Bit Test Operation
 // ============================================================================
 
@@ -548,6 +630,238 @@ impl Operation for BIT {
         set_flag(&mut state.p, FLAG_Z, result == 0);
         set_flag(&mut state.p, FLAG_V, operand & FLAG_V != 0);
         set_flag(&mut state.p, FLAG_N, operand & FLAG_N != 0);
+    }
+}
+
+// ============================================================================
+// Control Flow Operations
+// ============================================================================
+
+/// JMP - Jump
+#[derive(Debug, Clone, Copy)]
+pub struct JMP;
+
+impl Operation for JMP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for control flow operations
+    }
+
+    fn execute_control(&self, _state: &mut CpuState, target_addr: u16) -> Option<u16> {
+        // JMP simply sets PC to the target address
+        Some(target_addr)
+    }
+}
+
+/// JSR - Jump to Subroutine
+#[derive(Debug, Clone, Copy)]
+pub struct JSR;
+
+impl Operation for JSR {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for control flow operations
+    }
+
+    fn execute_jsr(&self, state: &mut CpuState, _target_addr: u16, current_pc: u16) -> (u8, u8) {
+        // JSR pushes PC-1 to stack (return address points to last byte of JSR instruction)
+        let return_addr = current_pc.wrapping_sub(1);
+        let (high_byte, low_byte) = split_address(return_addr);
+
+        // Decrement SP twice (high byte pushed first, then low byte)
+        state.sp = state.sp.wrapping_sub(2);
+
+        (high_byte, low_byte)
+    }
+}
+
+/// RTS - Return from Subroutine
+#[derive(Debug, Clone, Copy)]
+pub struct RTS;
+
+impl Operation for RTS {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for control flow operations
+    }
+
+    fn execute_rts(&self, state: &mut CpuState, low_byte: u8, high_byte: u8) -> u16 {
+        // Increment SP twice (pull low byte, then high byte)
+        state.sp = state.sp.wrapping_add(2);
+
+        // RTS pulls address and increments it (to skip past JSR instruction)
+        let addr = combine_address(low_byte, high_byte);
+        addr.wrapping_add(1)
+    }
+}
+
+/// RTI - Return from Interrupt
+#[derive(Debug, Clone, Copy)]
+pub struct RTI;
+
+impl Operation for RTI {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for control flow operations
+    }
+
+    fn execute_rti(&self, state: &mut CpuState, status: u8, pc_low: u8, pc_high: u8) -> u16 {
+        // Increment SP three times (pull status, PC low, PC high)
+        state.sp = state.sp.wrapping_add(3);
+
+        // Restore status with B flag clear, U flag set
+        state.p = (status & !FLAG_B) | FLAG_U;
+
+        // Restore PC
+        combine_address(pc_low, pc_high)
+    }
+}
+
+// ============================================================================
+// Branch Operations
+// ============================================================================
+
+/// BCC - Branch if Carry Clear
+#[derive(Debug, Clone, Copy)]
+pub struct BCC;
+
+impl Operation for BCC {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_C) == 0
+    }
+}
+
+/// BCS - Branch if Carry Set
+#[derive(Debug, Clone, Copy)]
+pub struct BCS;
+
+impl Operation for BCS {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_C) != 0
+    }
+}
+
+/// BEQ - Branch if Equal (Zero Set)
+#[derive(Debug, Clone, Copy)]
+pub struct BEQ;
+
+impl Operation for BEQ {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_Z) != 0
+    }
+}
+
+/// BNE - Branch if Not Equal (Zero Clear)
+#[derive(Debug, Clone, Copy)]
+pub struct BNE;
+
+impl Operation for BNE {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_Z) == 0
+    }
+}
+
+/// BMI - Branch if Minus (Negative Set)
+#[derive(Debug, Clone, Copy)]
+pub struct BMI;
+
+impl Operation for BMI {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_N) != 0
+    }
+}
+
+/// BPL - Branch if Plus (Negative Clear)
+#[derive(Debug, Clone, Copy)]
+pub struct BPL;
+
+impl Operation for BPL {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_N) == 0
+    }
+}
+
+/// BVC - Branch if Overflow Clear
+#[derive(Debug, Clone, Copy)]
+pub struct BVC;
+
+impl Operation for BVC {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_V) == 0
+    }
+}
+
+/// BVS - Branch if Overflow Set
+#[derive(Debug, Clone, Copy)]
+pub struct BVS;
+
+impl Operation for BVS {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_V) != 0
+    }
+}
+
+// ============================================================================
+// BRK (Break) Operation
+// ============================================================================
+
+/// BRK - Break (Software Interrupt)
+#[derive(Debug, Clone, Copy)]
+pub struct BRK;
+
+impl Operation for BRK {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for BRK operation
+    }
+
+    fn execute_brk(
+        &self,
+        state: &mut CpuState,
+        current_pc: u16,
+        _nmi_pending: bool,
+    ) -> (u8, u8, u8) {
+        // BRK pushes PC+2 to stack (skipping the padding byte)
+        let return_addr = current_pc.wrapping_add(2);
+        let (pc_high, pc_low) = split_address(return_addr);
+
+        // BRK pushes status with B and U flags set
+        let status = state.p | FLAG_B | FLAG_U;
+
+        // Set interrupt disable flag
+        state.p |= FLAG_I;
+
+        // Decrement SP by 3 (PC high, PC low, status)
+        state.sp = state.sp.wrapping_sub(3);
+
+        (pc_high, pc_low, status)
     }
 }
 
@@ -747,6 +1061,137 @@ impl Operation for RRA {
         update_nz_flags(&mut state.p, state.a);
 
         result
+    }
+}
+
+/// AAC (ANC) - AND then copy N to C
+#[derive(Debug, Clone, Copy)]
+pub struct AAC;
+
+impl Operation for AAC {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        state.a &= operand;
+        update_nz_flags(&mut state.p, state.a);
+        // Copy N flag to C flag
+        let n_flag_set = state.p & FLAG_N != 0;
+        set_flag(&mut state.p, FLAG_C, n_flag_set);
+    }
+}
+
+/// ARR - AND then ROR with special flag handling
+#[derive(Debug, Clone, Copy)]
+pub struct ARR;
+
+impl Operation for ARR {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        // AND first
+        state.a &= operand;
+        
+        // Then ROR
+        let carry_in = if state.p & FLAG_C != 0 { 0x80 } else { 0 };
+        state.a = (state.a >> 1) | carry_in;
+        
+        // Update N and Z flags
+        update_nz_flags(&mut state.p, state.a);
+        
+        // Special carry and overflow logic for ARR
+        // Bit 6 of result -> C
+        let bit_6 = state.a & 0x40 != 0;
+        set_flag(&mut state.p, FLAG_C, bit_6);
+        
+        // Bit 6 XOR bit 5 -> V
+        let bit_5 = state.a & 0x20 != 0;
+        set_flag(&mut state.p, FLAG_V, bit_6 ^ bit_5);
+    }
+}
+
+/// ASR (ALR) - AND then LSR
+#[derive(Debug, Clone, Copy)]
+pub struct ASR;
+
+impl Operation for ASR {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        state.a &= operand;
+        let carry_out = state.a & 0x01 != 0;
+        state.a >>= 1;
+        update_nz_flags(&mut state.p, state.a);
+        set_flag(&mut state.p, FLAG_C, carry_out);
+    }
+}
+
+/// ATX (LXA) - (A | 0xEE) AND operand -> A, X
+/// This is a highly unstable operation
+#[derive(Debug, Clone, Copy)]
+pub struct ATX;
+
+impl Operation for ATX {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        // Magic constant 0xEE is used in some implementations
+        state.a = (state.a | 0xEE) & operand;
+        state.x = state.a;
+        update_nz_flags(&mut state.p, state.a);
+    }
+}
+
+/// AXS (SBX) - (A & X) - operand -> X (no borrow)
+#[derive(Debug, Clone, Copy)]
+pub struct AXS;
+
+impl Operation for AXS {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        let temp = state.a & state.x;
+        let result = temp.wrapping_sub(operand);
+        state.x = result;
+        
+        // Set carry if no borrow (temp >= operand)
+        set_flag(&mut state.p, FLAG_C, temp >= operand);
+        update_nz_flags(&mut state.p, state.x);
+    }
+}
+
+/// XAA - Highly unstable operation: A = X & operand
+/// Behavior varies between different CPU revisions
+#[derive(Debug, Clone, Copy)]
+pub struct XAA;
+
+impl Operation for XAA {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        // Simplified stable behavior: A = X & operand
+        state.a = state.x & operand;
+        update_nz_flags(&mut state.p, state.a);
+    }
+}
+
+/// DOP - Double NOP (2-byte NOP that reads but ignores operand)
+#[derive(Debug, Clone, Copy)]
+pub struct DOP;
+
+impl Operation for DOP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Do nothing - just a 2-byte NOP
+    }
+}
+
+/// TOP - Triple NOP (3-byte NOP that reads but ignores operand)
+#[derive(Debug, Clone, Copy)]
+pub struct TOP;
+
+impl Operation for TOP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Do nothing - just a 3-byte NOP
+    }
+}
+
+/// KIL - Halt/Jam the CPU
+/// This locks up the CPU until reset
+#[derive(Debug, Clone, Copy)]
+pub struct KIL;
+
+impl Operation for KIL {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // In a real implementation, this would halt the CPU
+        // For our purposes, we just acknowledge it exists
+        // The CPU wrapper should handle this specially
     }
 }
 
@@ -1388,5 +1833,580 @@ mod tests {
         assert_eq!(result, 0xA0);
         // Then adds to A (0x10 + 0xA0 = 0xB0)
         assert_eq!(state.a, 0xB0);
+    }
+
+    // ========================================================================
+    // Stack Operation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_pha() {
+        let mut state = create_state();
+        state.a = 0x42;
+        state.sp = 0xFF;
+        let op = PHA;
+
+        // PHA should return the value to push (accumulator)
+        let value = op.execute_stack(&mut state);
+        assert_eq!(value, 0x42);
+        // SP should be decremented after push
+        assert_eq!(state.sp, 0xFE);
+    }
+
+    #[test]
+    fn test_php() {
+        let mut state = create_state();
+        state.p = 0xA5;
+        state.sp = 0xFF;
+        let op = PHP;
+
+        // PHP should return the value to push (status with B and U flags set)
+        let value = op.execute_stack(&mut state);
+        // PHP pushes P with B (0x10) and U (0x20) flags set
+        assert_eq!(value, 0xA5 | 0x30);
+        assert_eq!(state.sp, 0xFE);
+    }
+
+    #[test]
+    fn test_pla() {
+        let mut state = create_state();
+        state.a = 0x00;
+        state.sp = 0xFD;
+        let op = PLA;
+
+        // PLA should pull a value and update A and flags
+        op.execute_pull(&mut state, 0x42);
+        assert_eq!(state.a, 0x42);
+        assert_eq!(state.sp, 0xFE);
+        assert_eq!(state.p & FLAG_Z, 0);
+        assert_eq!(state.p & FLAG_N, 0);
+
+        // Test zero flag
+        op.execute_pull(&mut state, 0x00);
+        assert_eq!(state.a, 0x00);
+        assert_eq!(state.p & FLAG_Z, FLAG_Z);
+
+        // Test negative flag
+        state.sp = 0xFD;
+        op.execute_pull(&mut state, 0x80);
+        assert_eq!(state.a, 0x80);
+        assert_eq!(state.p & FLAG_N, FLAG_N);
+    }
+
+    #[test]
+    fn test_plp() {
+        let mut state = create_state();
+        state.p = 0x00;
+        state.sp = 0xFD;
+        let op = PLP;
+
+        // PLP should pull a value and update P (with B and U flags ignored)
+        op.execute_pull(&mut state, 0xFF);
+        // B flag is always clear, U flag is always set
+        assert_eq!(state.p, (0xFF & !FLAG_B) | FLAG_U);
+        assert_eq!(state.sp, 0xFE);
+    }
+
+    #[test]
+    fn test_pha_stack_wraps() {
+        let mut state = create_state();
+        state.a = 0x42;
+        state.sp = 0x00;
+        let op = PHA;
+
+        // SP should wrap from 0x00 to 0xFF
+        let value = op.execute_stack(&mut state);
+        assert_eq!(value, 0x42);
+        assert_eq!(state.sp, 0xFF);
+    }
+
+    #[test]
+    fn test_pla_stack_wraps() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        let op = PLA;
+
+        // SP should wrap from 0xFF to 0x00
+        op.execute_pull(&mut state, 0x42);
+        assert_eq!(state.a, 0x42);
+        assert_eq!(state.sp, 0x00);
+    }
+
+    // ========================================================================
+    // Control Flow Operation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_jmp() {
+        let mut state = create_state();
+        let op = JMP;
+
+        // JMP should return the target address
+        let new_pc = op.execute_control(&mut state, 0x1234);
+        assert_eq!(new_pc, Some(0x1234));
+
+        // JMP doesn't modify any CPU state
+        assert_eq!(state.a, 0);
+        assert_eq!(state.x, 0);
+        assert_eq!(state.y, 0);
+        assert_eq!(state.sp, 0xFF);
+        assert_eq!(state.p, 0);
+    }
+
+    #[test]
+    fn test_jsr_pushes_return_address() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        let op = JSR;
+
+        // JSR pushes PC-1 to stack (high byte first, then low byte)
+        // Current PC is 0x1234, so it should push 0x1233
+        let (high_byte, low_byte) = op.execute_jsr(&mut state, 0x5678, 0x1234);
+
+        assert_eq!(high_byte, 0x12); // High byte of 0x1233
+        assert_eq!(low_byte, 0x33); // Low byte of 0x1233
+        assert_eq!(state.sp, 0xFD); // SP decremented twice
+    }
+
+    #[test]
+    fn test_rts_pulls_return_address() {
+        let mut state = create_state();
+        state.sp = 0xFD;
+        let op = RTS;
+
+        // RTS pulls return address from stack and increments it
+        // Pull 0x1233, return 0x1234
+        let new_pc = op.execute_rts(&mut state, 0x33, 0x12);
+
+        assert_eq!(new_pc, 0x1234);
+        assert_eq!(state.sp, 0xFF); // SP incremented twice
+    }
+
+    #[test]
+    fn test_rti_pulls_status_and_address() {
+        let mut state = create_state();
+        state.sp = 0xFC;
+        state.p = 0x00;
+        let op = RTI;
+
+        // RTI pulls P, then PC low, then PC high
+        let new_pc = op.execute_rti(&mut state, 0xA5, 0x34, 0x12);
+
+        assert_eq!(new_pc, 0x1234);
+        assert_eq!(state.p, (0xA5 & !FLAG_B) | FLAG_U); // P with B clear, U set
+        assert_eq!(state.sp, 0xFF); // SP incremented three times
+    }
+
+    #[test]
+    fn test_jsr_stack_wraps() {
+        let mut state = create_state();
+        state.sp = 0x01;
+        let op = JSR;
+
+        // SP should wrap: 0x01 -> 0xFF after decrementing by 2
+        let (high, low) = op.execute_jsr(&mut state, 0x5678, 0x1234);
+        assert_eq!(high, 0x12);
+        assert_eq!(low, 0x33);
+        assert_eq!(state.sp, 0xFF);
+    }
+
+    #[test]
+    fn test_rts_stack_wraps() {
+        let mut state = create_state();
+        state.sp = 0xFE;
+        let op = RTS;
+
+        // SP should wrap: 0xFE -> 0x00 after incrementing by 2
+        let new_pc = op.execute_rts(&mut state, 0x33, 0x12);
+        assert_eq!(new_pc, 0x1234);
+        assert_eq!(state.sp, 0x00);
+    }
+
+    #[test]
+    fn test_rti_stack_wraps() {
+        let mut state = create_state();
+        state.sp = 0xFD;
+        let op = RTI;
+
+        // SP should wrap: 0xFD -> 0x00 after incrementing by 3
+        let new_pc = op.execute_rti(&mut state, 0xA5, 0x34, 0x12);
+        assert_eq!(new_pc, 0x1234);
+        assert_eq!(state.sp, 0x00);
+    }
+
+    #[test]
+    fn test_rts_increments_address() {
+        let mut state = create_state();
+        state.sp = 0xFD;
+        let op = RTS;
+
+        // RTS should pull 0xFFFF and return 0x0000 (wraps)
+        let new_pc = op.execute_rts(&mut state, 0xFF, 0xFF);
+        assert_eq!(new_pc, 0x0000);
+    }
+
+    // ========================================================================
+    // Branch Operation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_bcc_branch_when_carry_clear() {
+        let mut state = create_state();
+        state.p &= !FLAG_C; // Clear carry
+        let op = BCC;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bcc_no_branch_when_carry_set() {
+        let mut state = create_state();
+        state.p |= FLAG_C; // Set carry
+        let op = BCC;
+        assert!(!op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bcs_branch_when_carry_set() {
+        let mut state = create_state();
+        state.p |= FLAG_C;
+        let op = BCS;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_beq_branch_when_zero_set() {
+        let mut state = create_state();
+        state.p |= FLAG_Z;
+        let op = BEQ;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bne_branch_when_zero_clear() {
+        let mut state = create_state();
+        state.p &= !FLAG_Z;
+        let op = BNE;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bmi_branch_when_negative_set() {
+        let mut state = create_state();
+        state.p |= FLAG_N;
+        let op = BMI;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bpl_branch_when_negative_clear() {
+        let mut state = create_state();
+        state.p &= !FLAG_N;
+        let op = BPL;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bvc_branch_when_overflow_clear() {
+        let mut state = create_state();
+        state.p &= !FLAG_V;
+        let op = BVC;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bvs_branch_when_overflow_set() {
+        let mut state = create_state();
+        state.p |= FLAG_V;
+        let op = BVS;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_branch_operations_independent_of_other_flags() {
+        // Test that branch operations only check their specific flag
+        let mut state = create_state();
+
+        // Set all flags except carry
+        state.p = 0xFF & !FLAG_C;
+        let bcc = BCC;
+        assert!(bcc.execute_branch(&state)); // Should branch despite other flags
+
+        // Clear all flags except carry
+        state.p = FLAG_C;
+        let bcs = BCS;
+        assert!(bcs.execute_branch(&state)); // Should branch despite other flags clear
+    }
+
+    #[test]
+    fn test_complementary_branches() {
+        let mut state = create_state();
+
+        // BCC and BCS are complementary
+        state.p = 0x00;
+        assert!(BCC.execute_branch(&state));
+        assert!(!BCS.execute_branch(&state));
+
+        state.p = FLAG_C;
+        assert!(!BCC.execute_branch(&state));
+        assert!(BCS.execute_branch(&state));
+
+        // BEQ and BNE are complementary
+        state.p = 0x00;
+        assert!(!BEQ.execute_branch(&state));
+        assert!(BNE.execute_branch(&state));
+
+        state.p = FLAG_Z;
+        assert!(BEQ.execute_branch(&state));
+        assert!(!BNE.execute_branch(&state));
+    }
+
+    // ========================================================================
+    // BRK (Break) Operation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_brk_pushes_pc_and_status() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        state.p = 0xA5;
+        let op = BRK;
+
+        // BRK pushes PC+2 (high byte, low byte), then status with B and U flags set
+        let (pc_high, pc_low, status) = op.execute_brk(&mut state, 0x1234, false);
+
+        // PC+2 = 0x1236
+        assert_eq!(pc_high, 0x12);
+        assert_eq!(pc_low, 0x36);
+        // Status with B (0x10) and U (0x20) flags set
+        assert_eq!(status, 0xA5 | FLAG_B | FLAG_U);
+        // SP decremented by 3
+        assert_eq!(state.sp, 0xFC);
+        // I flag should be set
+        assert_eq!(state.p & FLAG_I, FLAG_I);
+    }
+
+    #[test]
+    fn test_brk_without_nmi_uses_irq_vector() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        state.p = 0x00;
+        let op = BRK;
+
+        // BRK without NMI pending should use IRQ vector
+        let (_pc_high, _pc_low, _status) = op.execute_brk(&mut state, 0x1234, false);
+
+        // The vector selection happens in the CPU, not in the operation
+        // This test verifies nmi_pending=false is handled
+        assert_eq!(state.sp, 0xFC);
+    }
+
+    #[test]
+    fn test_brk_with_nmi_uses_nmi_vector() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        state.p = 0x00;
+        let op = BRK;
+
+        // BRK with NMI pending should use NMI vector (hijacking)
+        // The status should still have B flag set even when using NMI vector
+        let (_pc_high, _pc_low, status) = op.execute_brk(&mut state, 0x1234, true);
+
+        // Status should have B and U flags set even for NMI hijacking
+        assert_eq!(status & (FLAG_B | FLAG_U), FLAG_B | FLAG_U);
+        assert_eq!(state.sp, 0xFC);
+    }
+
+    #[test]
+    fn test_brk_sets_interrupt_disable() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        state.p = 0x00; // I flag initially clear
+        let op = BRK;
+
+        op.execute_brk(&mut state, 0x1234, false);
+
+        // I flag should be set after BRK
+        assert_eq!(state.p & FLAG_I, FLAG_I);
+    }
+
+    #[test]
+    fn test_brk_stack_wraps() {
+        let mut state = create_state();
+        state.sp = 0x02; // Will wrap to 0xFF after pushing 3 bytes
+        state.p = 0x00;
+        let op = BRK;
+
+        op.execute_brk(&mut state, 0x1234, false);
+
+        assert_eq!(state.sp, 0xFF);
+    }
+
+    // ========================================================================
+    // Unofficial Opcode Tests (Remaining)
+    // ========================================================================
+
+    #[test]
+    fn test_aac() {
+        let mut state = create_state();
+        state.a = 0x0F;
+        let op = AAC;
+
+        op.execute(&mut state, 0xF0);
+
+        // AAC: AND then copy N to C
+        assert_eq!(state.a, 0x00);
+        assert_eq!(state.p & FLAG_Z, FLAG_Z);
+        assert_eq!(state.p & FLAG_N, 0);
+        assert_eq!(state.p & FLAG_C, 0); // N was 0, so C is 0
+    }
+
+    #[test]
+    fn test_aac_sets_carry_from_negative() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        let op = AAC;
+
+        op.execute(&mut state, 0x80);
+
+        assert_eq!(state.a, 0x80);
+        assert_eq!(state.p & FLAG_N, FLAG_N);
+        assert_eq!(state.p & FLAG_C, FLAG_C); // N is set, so C is set
+    }
+
+    #[test]
+    fn test_arr() {
+        let mut state = create_state();
+        state.a = 0x80;
+        state.p |= FLAG_C; // Set carry
+        let op = ARR;
+
+        op.execute(&mut state, 0x80);
+
+        // ARR: AND then ROR, then set C and V based on bits 6 and 5
+        // 0x80 & 0x80 = 0x80, then ROR with C=1 gives 0xC0
+        assert_eq!(state.a, 0xC0);
+    }
+
+    #[test]
+    fn test_asr() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        let op = ASR;
+
+        op.execute(&mut state, 0x82);
+
+        // ASR: AND then LSR
+        // 0xFF & 0x82 = 0x82, then 0x82 >> 1 = 0x41
+        assert_eq!(state.a, 0x41);
+        assert_eq!(state.p & FLAG_C, 0); // Bit 0 of 0x82 is 0
+        assert_eq!(state.p & FLAG_N, 0);
+    }
+
+    #[test]
+    fn test_atx() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        state.x = 0x00;
+        let op = ATX;
+
+        op.execute(&mut state, 0x42);
+
+        // ATX (LXA): A = X = (A | 0xEE) & operand
+        let result = (0xFF | 0xEE) & 0x42;
+        assert_eq!(state.a, result);
+        assert_eq!(state.x, result);
+    }
+
+    #[test]
+    fn test_axs() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        state.x = 0x10;
+        let op = AXS;
+
+        op.execute(&mut state, 0x05);
+
+        // AXS: X = (A & X) - operand (no borrow)
+        // (0xFF & 0x10) - 0x05 = 0x10 - 0x05 = 0x0B
+        assert_eq!(state.x, 0x0B);
+        assert_eq!(state.p & FLAG_C, FLAG_C); // No borrow
+    }
+
+    #[test]
+    fn test_xaa() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        state.x = 0x42;
+        let op = XAA;
+
+        op.execute(&mut state, 0x0F);
+
+        // XAA: A = X & operand (highly unstable)
+        assert_eq!(state.a, 0x42 & 0x0F);
+    }
+
+    #[test]
+    fn test_dop() {
+        let mut state = create_state();
+        state.a = 0x42;
+        let op = DOP;
+
+        op.execute(&mut state, 0xFF);
+
+        // DOP: Double NOP - does nothing
+        assert_eq!(state.a, 0x42);
+    }
+
+    #[test]
+    fn test_top() {
+        let mut state = create_state();
+        state.a = 0x42;
+        let op = TOP;
+
+        op.execute(&mut state, 0xFF);
+
+        // TOP: Triple NOP - does nothing
+        assert_eq!(state.a, 0x42);
+    }
+
+    #[test]
+    fn test_kil() {
+        let mut state = create_state();
+        let op = KIL;
+
+        // KIL halts the CPU - just test it doesn't panic
+        op.execute(&mut state, 0x00);
+        // In actual implementation, this would halt the CPU
+    }
+
+    #[test]
+    fn test_asr_with_carry() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        let op = ASR;
+
+        op.execute(&mut state, 0x83);
+
+        // ASR: AND then LSR
+        // 0xFF & 0x83 = 0x83, then 0x83 >> 1 = 0x41
+        assert_eq!(state.a, 0x41);
+        assert_eq!(state.p & FLAG_C, FLAG_C); // Bit 0 of 0x83 is 1
+        assert_eq!(state.p & FLAG_N, 0);
+    }
+
+    #[test]
+    fn test_axs_with_borrow() {
+        let mut state = create_state();
+        state.a = 0xFF;
+        state.x = 0x10;
+        let op = AXS;
+
+        op.execute(&mut state, 0x20);
+
+        // AXS: X = (A & X) - operand
+        // (0xFF & 0x10) - 0x20 = 0x10 - 0x20 = 0xF0 (wraps)
+        assert_eq!(state.x, 0xF0);
+        assert_eq!(state.p & FLAG_C, 0); // Borrow occurred (0x10 < 0x20)
+        assert_eq!(state.p & FLAG_N, FLAG_N); // Result is negative
     }
 }

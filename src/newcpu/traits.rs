@@ -165,6 +165,105 @@ pub trait Operation {
         self.execute(state, operand);
         operand
     }
+
+    /// Execute a stack push operation
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    ///
+    /// # Returns
+    /// The value to push onto the stack
+    fn execute_stack(&self, state: &mut CpuState) -> u8 {
+        // Default implementation - should not be called for non-stack operations
+        panic!("execute_stack not implemented for this operation");
+    }
+
+    /// Execute a stack pull operation
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `value` - The value pulled from the stack
+    fn execute_pull(&self, state: &mut CpuState, value: u8) {
+        // Default implementation - should not be called for non-stack operations
+        panic!("execute_pull not implemented for this operation");
+    }
+
+    /// Execute a control flow operation
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `target_addr` - The target address for the control flow operation
+    ///
+    /// # Returns
+    /// The new PC value, or None if PC should not be modified
+    fn execute_control(&self, _state: &mut CpuState, target_addr: u16) -> Option<u16> {
+        // Default implementation - return the target address for simple jumps
+        Some(target_addr)
+    }
+
+    /// Execute JSR (Jump to Subroutine) - pushes return address to stack
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `target_addr` - The target address to jump to
+    /// * `current_pc` - The current PC value
+    ///
+    /// # Returns
+    /// Tuple of (high_byte, low_byte) to push to stack
+    fn execute_jsr(&self, _state: &mut CpuState, _target_addr: u16, _current_pc: u16) -> (u8, u8) {
+        panic!("execute_jsr not implemented for this operation");
+    }
+
+    /// Execute RTS (Return from Subroutine) - pulls return address from stack
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `low_byte` - Low byte pulled from stack
+    /// * `high_byte` - High byte pulled from stack
+    ///
+    /// # Returns
+    /// The new PC value
+    fn execute_rts(&self, _state: &mut CpuState, _low_byte: u8, _high_byte: u8) -> u16 {
+        panic!("execute_rts not implemented for this operation");
+    }
+
+    /// Execute RTI (Return from Interrupt) - pulls status and return address from stack
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `status` - Status byte pulled from stack
+    /// * `pc_low` - Low byte of PC pulled from stack
+    /// * `pc_high` - High byte of PC pulled from stack
+    ///
+    /// # Returns
+    /// The new PC value
+    fn execute_rti(&self, _state: &mut CpuState, _status: u8, _pc_low: u8, _pc_high: u8) -> u16 {
+        panic!("execute_rti not implemented for this operation");
+    }
+
+    /// Execute a branch instruction - checks if branch condition is met
+    ///
+    /// # Arguments
+    /// * `state` - CPU state (used to check status flags)
+    ///
+    /// # Returns
+    /// True if the branch should be taken, false otherwise
+    fn execute_branch(&self, _state: &CpuState) -> bool {
+        panic!("execute_branch not implemented for this operation");
+    }
+
+    /// Execute BRK (Break) instruction - pushes PC+2 and status to stack
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `current_pc` - The current PC value
+    /// * `nmi_pending` - Whether NMI is pending (for NMI hijacking)
+    ///
+    /// # Returns
+    /// Tuple of (pc_high, pc_low, status) to push to stack
+    fn execute_brk(&self, _state: &mut CpuState, _current_pc: u16, _nmi_pending: bool) -> (u8, u8, u8) {
+        panic!("execute_brk not implemented for this operation");
+    }
 }
 
 #[cfg(test)]

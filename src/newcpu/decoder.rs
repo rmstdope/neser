@@ -615,7 +615,98 @@ pub fn decode_opcode(
         0x7B => (Box::new(AbsoluteY), Box::new(RRA), InstructionType::RMW, 7),
         0x7F => (Box::new(AbsoluteX), Box::new(RRA), InstructionType::RMW, 7),
 
-        // NOPs and other unofficial opcodes that just behave like NOP
+        // AAC (ANC) - AND then copy N to C
+        0x0B => (Box::new(Immediate), Box::new(AAC), InstructionType::Read, 2),
+        0x2B => (Box::new(Immediate), Box::new(AAC), InstructionType::Read, 2),
+
+        // ARR - AND then ROR with special flags
+        0x6B => (Box::new(Immediate), Box::new(ARR), InstructionType::Read, 2),
+
+        // ASR (ALR) - AND then LSR
+        0x4B => (Box::new(Immediate), Box::new(ASR), InstructionType::Read, 2),
+
+        // ATX (LXA) - (A | 0xEE) & operand -> A, X
+        0xAB => (Box::new(Immediate), Box::new(ATX), InstructionType::Read, 2),
+
+        // AXS (SBX) - (A & X) - operand -> X
+        0xCB => (Box::new(Immediate), Box::new(AXS), InstructionType::Read, 2),
+
+        // XAA - X & operand -> A
+        0x8B => (Box::new(Immediate), Box::new(XAA), InstructionType::Read, 2),
+
+        // DOP - Double NOP (2-byte NOP)
+        0x04 => (Box::new(ZeroPage), Box::new(DOP), InstructionType::Read, 3),
+        0x14 => (Box::new(ZeroPageX), Box::new(DOP), InstructionType::Read, 4),
+        0x34 => (Box::new(ZeroPageX), Box::new(DOP), InstructionType::Read, 4),
+        0x44 => (Box::new(ZeroPage), Box::new(DOP), InstructionType::Read, 3),
+        0x54 => (Box::new(ZeroPageX), Box::new(DOP), InstructionType::Read, 4),
+        0x64 => (Box::new(ZeroPage), Box::new(DOP), InstructionType::Read, 3),
+        0x74 => (Box::new(ZeroPageX), Box::new(DOP), InstructionType::Read, 4),
+        0x80 => (Box::new(Immediate), Box::new(DOP), InstructionType::Read, 2),
+        0x82 => (Box::new(Immediate), Box::new(DOP), InstructionType::Read, 2),
+        0x89 => (Box::new(Immediate), Box::new(DOP), InstructionType::Read, 2),
+        0xC2 => (Box::new(Immediate), Box::new(DOP), InstructionType::Read, 2),
+        0xD4 => (Box::new(ZeroPageX), Box::new(DOP), InstructionType::Read, 4),
+        0xE2 => (Box::new(Immediate), Box::new(DOP), InstructionType::Read, 2),
+        0xF4 => (Box::new(ZeroPageX), Box::new(DOP), InstructionType::Read, 4),
+
+        // TOP - Triple NOP (3-byte NOP)
+        0x0C => (Box::new(Absolute), Box::new(TOP), InstructionType::Read, 4),
+        0x1C => (Box::new(AbsoluteX), Box::new(TOP), InstructionType::Read, 4),
+        0x3C => (Box::new(AbsoluteX), Box::new(TOP), InstructionType::Read, 4),
+        0x5C => (Box::new(AbsoluteX), Box::new(TOP), InstructionType::Read, 4),
+        0x7C => (Box::new(AbsoluteX), Box::new(TOP), InstructionType::Read, 4),
+        0xDC => (Box::new(AbsoluteX), Box::new(TOP), InstructionType::Read, 4),
+        0xFC => (Box::new(AbsoluteX), Box::new(TOP), InstructionType::Read, 4),
+
+        // KIL - Halt/Jam CPU
+        0x02 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0x12 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0x22 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0x32 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0x42 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0x52 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0x62 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0x72 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0x92 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0xB2 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0xD2 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+        0xF2 => (Box::new(Implied), Box::new(KIL), InstructionType::Read, 2),
+
+        // Single-byte NOPs (Implied addressing)
+        0x1A => (Box::new(Implied), Box::new(NOP), InstructionType::Read, 2),
+        0x3A => (Box::new(Implied), Box::new(NOP), InstructionType::Read, 2),
+        0x5A => (Box::new(Implied), Box::new(NOP), InstructionType::Read, 2),
+        0x7A => (Box::new(Implied), Box::new(NOP), InstructionType::Read, 2),
+        0xDA => (Box::new(Implied), Box::new(NOP), InstructionType::Read, 2),
+        0xFA => (Box::new(Implied), Box::new(NOP), InstructionType::Read, 2),
+
+        // Duplicate SBC (same as official 0xE9)
+        0xEB => (Box::new(Immediate), Box::new(SBC), InstructionType::Read, 2),
+
+        // Highly unstable unofficial operations (mapped as NOP with correct addressing)
+        // SHA/AHX - Store A & X & (H+1) - highly unstable, mapped as NOP
+        0x93 => (
+            Box::new(IndirectIndexed),
+            Box::new(NOP),
+            InstructionType::Read,
+            6,
+        ),
+        0x9F => (Box::new(AbsoluteY), Box::new(NOP), InstructionType::Read, 5),
+
+        // SHY - Store Y & (H+1) - highly unstable, mapped as NOP
+        0x9C => (Box::new(AbsoluteX), Box::new(NOP), InstructionType::Read, 5),
+
+        // SHX - Store X & (H+1) - highly unstable, mapped as NOP
+        0x9E => (Box::new(AbsoluteY), Box::new(NOP), InstructionType::Read, 5),
+
+        // SHS/TAS - Store A & X in SP and A & X & (H+1) - highly unstable, mapped as NOP
+        0x9B => (Box::new(AbsoluteY), Box::new(NOP), InstructionType::Read, 5),
+
+        // LAS - Load A, X, SP with memory & SP - unstable, mapped as NOP
+        0xBB => (Box::new(AbsoluteY), Box::new(NOP), InstructionType::Read, 4),
+
+        // Catch-all for any remaining unmapped opcodes (should not be reached)
         _ => (Box::new(Implied), Box::new(NOP), InstructionType::Read, 2),
     }
 }

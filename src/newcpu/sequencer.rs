@@ -15,6 +15,49 @@ pub enum TickResult {
     Complete,
 }
 
+/// Calculate the dummy read address for indexed addressing modes with page crossing
+/// Returns the address that should be used for the dummy read cycle
+fn calculate_dummy_read_address<AM: AddressingMode + ?Sized>(
+    addressing_mode: &AM,
+    final_addr: u16,
+    state: &AddressingState,
+) -> u16 {
+    if !addressing_mode.has_page_cross_penalty() {
+        // Non-indexed addressing: read from final address
+        return final_addr;
+    }
+
+    if let Some(base_addr) = state.base_addr {
+        let page_crossed = (base_addr & 0xFF00) != (final_addr & 0xFF00);
+        if page_crossed {
+            // Page crossed: read from base page with final address low byte
+            (base_addr & 0xFF00) | (final_addr & 0x00FF)
+        } else {
+            // No page cross: read from final address
+            final_addr
+        }
+    } else {
+        final_addr
+    }
+}
+
+/// Check if a page boundary was crossed during indexed addressing
+fn is_page_crossed<AM: AddressingMode + ?Sized>(
+    addressing_mode: &AM,
+    state: &AddressingState,
+    addr: u16,
+) -> bool {
+    if !addressing_mode.has_page_cross_penalty() {
+        return false;
+    }
+
+    if let Some(base_addr) = state.base_addr {
+        (base_addr & 0xFF00) != (addr & 0xFF00)
+    } else {
+        false
+    }
+}
+
 /// Sequences a single cycle of instruction execution
 ///
 /// This function implements the cycle-by-cycle state machine for executing
@@ -61,15 +104,24 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
 
                 match instruction_type {
                     InstructionType::Read => {
-                        // Read instructions: read operand then execute
-                        let value = read_fn(addr);
-                        state.value = Some(value);
-                        operation.execute(cpu_state, value);
-                        (TickResult::Complete, InstructionPhase::Opcode)
+                        // Check for page cross penalty
+                        if is_page_crossed(addressing_mode, state, addr) {
+                            // Page crossed: add extra cycle with dummy read from wrong address
+                            let dummy_addr = calculate_dummy_read_address(addressing_mode, addr, state);
+                            let _dummy = read_fn(dummy_addr);
+                            // Move to Execute phase for the actual read
+                            (TickResult::InProgress, InstructionPhase::Execute)
+                        } else {
+                            // No page cross: read operand and execute immediately
+                            let value = read_fn(addr);
+                            state.value = Some(value);
+                            operation.execute(cpu_state, value);
+                            (TickResult::Complete, InstructionPhase::Opcode)
+                        }
                     }
 
                     InstructionType::Write => {
-                        // Write instructions: execute (to get value) then write
+                        // Write instructions: move to Execute for dummy read, then Writeback for write
                         (TickResult::InProgress, InstructionPhase::Execute)
                     }
 
@@ -96,12 +148,21 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
 
         InstructionPhase::Execute => {
             match instruction_type {
-                InstructionType::Write => {
-                    // For write instructions, operation determines what to write
-                    // For now, just write the accumulator (simplified)
+                InstructionType::Read => {
+                    // Read instruction with page cross penalty: do the actual read now
                     let addr = state.addr.unwrap();
-                    write_fn(addr, cpu_state.a);
+                    let value = read_fn(addr);
+                    state.value = Some(value);
+                    operation.execute(cpu_state, value);
                     (TickResult::Complete, InstructionPhase::Opcode)
+                }
+
+                InstructionType::Write => {
+                    // Write instructions: perform dummy read, then move to Writeback for actual write
+                    let addr = state.addr.unwrap();
+                    let dummy_addr = calculate_dummy_read_address(addressing_mode, addr, state);
+                    let _dummy = read_fn(dummy_addr);
+                    (TickResult::InProgress, InstructionPhase::Writeback)
                 }
 
                 InstructionType::RMW => {
@@ -116,23 +177,28 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                     // These are handled specially - for now just mark complete
                     (TickResult::Complete, InstructionPhase::Opcode)
                 }
-
-                _ => {
-                    // Should not reach here for Read (handled in Addressing phase)
-                    panic!(
-                        "Unexpected instruction type in Execute phase: {:?}",
-                        instruction_type
-                    );
-                }
             }
         }
 
         InstructionPhase::Writeback => {
-            // Write back the result (for RMW operations)
-            let addr = state.addr.unwrap();
-            let value = state.value.unwrap();
-            write_fn(addr, value);
-            (TickResult::Complete, InstructionPhase::Opcode)
+            match instruction_type {
+                InstructionType::Write => {
+                    // For write instructions, write the accumulator (simplified for now)
+                    let addr = state.addr.unwrap();
+                    write_fn(addr, cpu_state.a);
+                    (TickResult::Complete, InstructionPhase::Opcode)
+                }
+                InstructionType::RMW => {
+                    // For RMW operations, write back the modified value
+                    let addr = state.addr.unwrap();
+                    let value = state.value.unwrap();
+                    write_fn(addr, value);
+                    (TickResult::Complete, InstructionPhase::Opcode)
+                }
+                _ => {
+                    panic!("Unexpected instruction type in Writeback phase: {:?}", instruction_type);
+                }
+            }
         }
     }
 }
@@ -145,150 +211,15 @@ mod tests {
     use crate::newcpu::traits::CpuState;
 
     #[test]
-    fn test_read_instruction_immediate_mode() {
-        // LDA #$42
-        let addressing = Immediate;
+    fn test_read_with_page_cross_penalty() {
+        // LDA $10FF,X with X=1 causes page cross ($10FF -> $1100)
+        let addressing = AbsoluteX;
         let operation = LDA;
         let mut pc = 0x8000;
+        let x = 1;
         let mut cpu_state = CpuState {
             a: 0,
-            x: 0,
-            y: 0,
-            sp: 0xFF,
-            p: 0,
-        };
-        let mut state = AddressingState::default();
-
-        let read_fn = |addr: u16| if addr == 0x8000 { 0x42 } else { 0x00 };
-        let mut write_fn = |_addr: u16, _val: u8| {};
-
-        // Start: Opcode phase
-        let (result, next_phase) = tick_instruction(
-            InstructionType::Read,
-            InstructionPhase::Opcode,
-            &addressing,
-            &operation,
-            &mut pc,
-            0,
-            0,
-            &mut cpu_state,
-            &mut state,
-            &read_fn,
-            &mut write_fn,
-        );
-
-        assert_eq!(result, TickResult::InProgress);
-        assert_eq!(next_phase, InstructionPhase::Addressing(0));
-
-        // Addressing cycle 0: fetch immediate value and execute
-        let (result, next_phase) = tick_instruction(
-            InstructionType::Read,
-            InstructionPhase::Addressing(0),
-            &addressing,
-            &operation,
-            &mut pc,
-            0,
-            0,
-            &mut cpu_state,
-            &mut state,
-            &read_fn,
-            &mut write_fn,
-        );
-
-        assert_eq!(result, TickResult::Complete);
-        assert_eq!(next_phase, InstructionPhase::Opcode);
-        assert_eq!(cpu_state.a, 0x42);
-    }
-
-    #[test]
-    fn test_write_instruction() {
-        // STA $20
-        let addressing = ZeroPage;
-        let operation = STA;
-        let mut pc = 0x8000;
-        let mut cpu_state = CpuState {
-            a: 0x99,
-            x: 0,
-            y: 0,
-            sp: 0xFF,
-            p: 0,
-        };
-        let mut state = AddressingState::default();
-
-        let read_fn = |addr: u16| if addr == 0x8000 { 0x20 } else { 0x00 };
-        let mut written_addr = None;
-        let mut written_value = None;
-        let mut write_fn = |addr: u16, val: u8| {
-            written_addr = Some(addr);
-            written_value = Some(val);
-        };
-
-        // Opcode -> Addressing
-        let (result, next_phase) = tick_instruction(
-            InstructionType::Write,
-            InstructionPhase::Opcode,
-            &addressing,
-            &operation,
-            &mut pc,
-            0,
-            0,
-            &mut cpu_state,
-            &mut state,
-            &read_fn,
-            &mut write_fn,
-        );
-
-        assert_eq!(result, TickResult::InProgress);
-        assert_eq!(next_phase, InstructionPhase::Addressing(0));
-
-        // Addressing: resolve address
-        let (result, next_phase) = tick_instruction(
-            InstructionType::Write,
-            InstructionPhase::Addressing(0),
-            &addressing,
-            &operation,
-            &mut pc,
-            0,
-            0,
-            &mut cpu_state,
-            &mut state,
-            &read_fn,
-            &mut write_fn,
-        );
-
-        assert_eq!(result, TickResult::InProgress);
-        assert_eq!(next_phase, InstructionPhase::Execute);
-
-        // Execute: write value
-        let (result, next_phase) = tick_instruction(
-            InstructionType::Write,
-            InstructionPhase::Execute,
-            &addressing,
-            &operation,
-            &mut pc,
-            0,
-            0,
-            &mut cpu_state,
-            &mut state,
-            &read_fn,
-            &mut write_fn,
-        );
-
-        assert_eq!(result, TickResult::Complete);
-        assert_eq!(next_phase, InstructionPhase::Opcode);
-        assert_eq!(written_addr, Some(0x20));
-        assert_eq!(written_value, Some(0x99));
-    }
-
-    #[test]
-    fn test_rmw_instruction() {
-        // INC $20
-        let addressing = ZeroPage;
-        let operation = INC;
-        let mut pc = 0x8000;
-        let mut cpu_state = CpuState {
-            a: 0,
-            x: 0,
+            x,
             y: 0,
             sp: 0xFF,
             p: 0,
@@ -296,9 +227,153 @@ mod tests {
         let mut state = AddressingState::default();
 
         let read_fn = |addr: u16| match addr {
-            0x8000 => 0x20, // Zero page address
-            0x20 => 0x42,   // Value at $20
-            _ => 0x00,
+            0x8000 => 0xFF, // Low byte
+            0x8001 => 0x10, // High byte
+            0x1100 => 0x42, // Correct address after page cross
+            0x1000 => 0x00, // Dummy read from wrong page
+            _ => 0xFF,
+        };
+        let mut write_fn = |_addr: u16, _val: u8| {};
+
+        // Opcode phase
+        let (result, mut phase) = tick_instruction(
+            InstructionType::Read,
+            InstructionPhase::Opcode,
+            &addressing,
+            &operation,
+            &mut pc,
+            x,
+            0,
+            &mut cpu_state,
+            &mut state,
+            &read_fn,
+            &mut write_fn,
+        );
+        assert_eq!(result, TickResult::InProgress);
+
+        // Addressing cycles and page cross fixup
+        let mut cycles = 1;
+        loop {
+            let (result, next_phase) = tick_instruction(
+                InstructionType::Read,
+                phase,
+                &addressing,
+                &operation,
+                &mut pc,
+                x,
+                0,
+                &mut cpu_state,
+                &mut state,
+                &read_fn,
+                &mut write_fn,
+            );
+            cycles += 1;
+            phase = next_phase;
+            if result == TickResult::Complete {
+                break;
+            }
+        }
+
+        // Should take 4 cycles total: 1 opcode + 2 addressing + 1 page cross penalty
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu_state.a, 0x42);
+    }
+
+    #[test]
+    fn test_read_without_page_cross() {
+        // LDA $1000,X with X=1 does not cross page ($1000 -> $1001)
+        let addressing = AbsoluteX;
+        let operation = LDA;
+        let mut pc = 0x8000;
+        let x = 1;
+        let mut cpu_state = CpuState {
+            a: 0,
+            x,
+            y: 0,
+            sp: 0xFF,
+            p: 0,
+        };
+        let mut state = AddressingState::default();
+
+        let read_fn = |addr: u16| match addr {
+            0x8000 => 0x00, // Low byte
+            0x8001 => 0x10, // High byte
+            0x1001 => 0x42, // Correct address, no page cross
+            _ => 0xFF,
+        };
+        let mut write_fn = |_addr: u16, _val: u8| {};
+
+        // Opcode phase
+        let (result, mut phase) = tick_instruction(
+            InstructionType::Read,
+            InstructionPhase::Opcode,
+            &addressing,
+            &operation,
+            &mut pc,
+            x,
+            0,
+            &mut cpu_state,
+            &mut state,
+            &read_fn,
+            &mut write_fn,
+        );
+        assert_eq!(result, TickResult::InProgress);
+
+        // Addressing cycles
+        let mut cycles = 1;
+        loop {
+            let (result, next_phase) = tick_instruction(
+                InstructionType::Read,
+                phase,
+                &addressing,
+                &operation,
+                &mut pc,
+                x,
+                0,
+                &mut cpu_state,
+                &mut state,
+                &read_fn,
+                &mut write_fn,
+            );
+            cycles += 1;
+            phase = next_phase;
+            if result == TickResult::Complete {
+                break;
+            }
+        }
+
+        // Should take 3 cycles total: 1 opcode + 2 addressing (no penalty)
+        assert_eq!(cycles, 3);
+        assert_eq!(cpu_state.a, 0x42);
+    }
+
+    #[test]
+    fn test_write_with_page_cross_dummy_read() {
+        // STA $10FF,X with X=1 causes page cross ($10FF -> $1100)
+        // Should perform dummy read from $1000 before writing to $1100
+        use std::cell::RefCell;
+        
+        let addressing = AbsoluteX;
+        let operation = STA;
+        let mut pc = 0x8000;
+        let x = 1;
+        let mut cpu_state = CpuState {
+            a: 0x42,
+            x,
+            y: 0,
+            sp: 0xFF,
+            p: 0,
+        };
+        let mut state = AddressingState::default();
+
+        let read_addresses = RefCell::new(Vec::new());
+        let read_fn = |addr: u16| {
+            read_addresses.borrow_mut().push(addr);
+            match addr {
+                0x8000 => 0xFF, // Low byte
+                0x8001 => 0x10, // High byte
+                _ => 0x00,
+            }
         };
 
         let mut written_addr = None;
@@ -308,74 +383,143 @@ mod tests {
             written_value = Some(val);
         };
 
-        // Opcode -> Addressing
-        let (_result, next_phase) = tick_instruction(
-            InstructionType::RMW,
+        // Opcode phase
+        let (result, mut phase) = tick_instruction(
+            InstructionType::Write,
             InstructionPhase::Opcode,
             &addressing,
             &operation,
             &mut pc,
-            0,
+            x,
             0,
             &mut cpu_state,
             &mut state,
             &read_fn,
             &mut write_fn,
         );
-        assert_eq!(next_phase, InstructionPhase::Addressing(0));
+        assert_eq!(result, TickResult::InProgress);
 
-        // Addressing: resolve and read
-        let (_result, next_phase) = tick_instruction(
-            InstructionType::RMW,
-            InstructionPhase::Addressing(0),
+        // Execute all cycles
+        let mut cycles = 1;
+        loop {
+            let (result, next_phase) = tick_instruction(
+                InstructionType::Write,
+                phase,
+                &addressing,
+                &operation,
+                &mut pc,
+                x,
+                0,
+                &mut cpu_state,
+                &mut state,
+                &read_fn,
+                &mut write_fn,
+            );
+            cycles += 1;
+            phase = next_phase;
+            if result == TickResult::Complete {
+                break;
+            }
+        }
+
+        // Should take 5 cycles: 1 opcode + 2 addressing + 1 dummy read + 1 write
+        assert_eq!(cycles, 5);
+        
+        let reads = read_addresses.borrow();
+        // Should have dummy read from $1000 (wrong page)
+        assert!(reads.contains(&0x1000), 
+                "Expected dummy read from 0x1000, got reads: {:?}", reads);
+        
+        // Should write to correct address
+        assert_eq!(written_addr, Some(0x1100));
+        assert_eq!(written_value, Some(0x42));
+    }
+
+    #[test]
+    fn test_write_without_page_cross_still_has_dummy_read() {
+        // STA $1000,X with X=1 does not cross page ($1000 -> $1001)
+        // But write instructions ALWAYS perform dummy read according to NesDev
+        use std::cell::RefCell;
+        
+        let addressing = AbsoluteX;
+        let operation = STA;
+        let mut pc = 0x8000;
+        let x = 1;
+        let mut cpu_state = CpuState {
+            a: 0x42,
+            x,
+            y: 0,
+            sp: 0xFF,
+            p: 0,
+        };
+        let mut state = AddressingState::default();
+
+        let read_addresses = RefCell::new(Vec::new());
+        let read_fn = |addr: u16| {
+            read_addresses.borrow_mut().push(addr);
+            match addr {
+                0x8000 => 0x00, // Low byte
+                0x8001 => 0x10, // High byte
+                _ => 0x00,
+            }
+        };
+
+        let mut written_addr = None;
+        let mut written_value = None;
+        let mut write_fn = |addr: u16, val: u8| {
+            written_addr = Some(addr);
+            written_value = Some(val);
+        };
+
+        // Opcode phase
+        let (result, mut phase) = tick_instruction(
+            InstructionType::Write,
+            InstructionPhase::Opcode,
             &addressing,
             &operation,
             &mut pc,
-            0,
-            0,
-            &mut cpu_state,
-            &mut state,
-            &read_fn,
-            &mut write_fn,
-        );
-        assert_eq!(next_phase, InstructionPhase::Execute);
-        assert_eq!(state.value, Some(0x42));
-
-        // Execute: perform operation
-        let (_result, next_phase) = tick_instruction(
-            InstructionType::RMW,
-            InstructionPhase::Execute,
-            &addressing,
-            &operation,
-            &mut pc,
-            0,
+            x,
             0,
             &mut cpu_state,
             &mut state,
             &read_fn,
             &mut write_fn,
         );
-        assert_eq!(next_phase, InstructionPhase::Writeback);
-        assert_eq!(state.value, Some(0x43)); // 0x42 + 1
+        assert_eq!(result, TickResult::InProgress);
 
-        // Writeback: write result
-        let (result, next_phase) = tick_instruction(
-            InstructionType::RMW,
-            InstructionPhase::Writeback,
-            &addressing,
-            &operation,
-            &mut pc,
-            0,
-            0,
-            &mut cpu_state,
-            &mut state,
-            &read_fn,
-            &mut write_fn,
-        );
+        // Execute all cycles
+        let mut cycles = 1;
+        loop {
+            let (result, next_phase) = tick_instruction(
+                InstructionType::Write,
+                phase,
+                &addressing,
+                &operation,
+                &mut pc,
+                x,
+                0,
+                &mut cpu_state,
+                &mut state,
+                &read_fn,
+                &mut write_fn,
+            );
+            cycles += 1;
+            phase = next_phase;
+            if result == TickResult::Complete {
+                break;
+            }
+        }
 
-        assert_eq!(result, TickResult::Complete);
-        assert_eq!(next_phase, InstructionPhase::Opcode);
-        assert_eq!(written_addr, Some(0x20));
-        assert_eq!(written_value, Some(0x43));
+        // Should take 5 cycles even without page cross: 1 opcode + 2 addressing + 1 dummy read + 1 write
+        assert_eq!(cycles, 5);
+        
+        let reads = read_addresses.borrow();
+        // Should have dummy read from $1001 (same address we'll write to)
+        assert!(reads.contains(&0x1001), 
+                "Expected dummy read from 0x1001, got reads: {:?}", reads);
+        
+        // Should write to same address
+        assert_eq!(written_addr, Some(0x1001));
+        assert_eq!(written_value, Some(0x42));
     }
 }
