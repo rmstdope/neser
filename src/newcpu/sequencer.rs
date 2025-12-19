@@ -6,6 +6,10 @@
 use super::traits::{AddressingMode, Operation};
 use super::types::{AddressingState, InstructionPhase, InstructionType};
 
+// Interrupt vector addresses
+const NMI_VECTOR: u16 = 0xFFFA; // Non-Maskable Interrupt vector
+const IRQ_VECTOR: u16 = 0xFFFE; // IRQ and BRK vector
+
 /// Result of ticking one cycle of an instruction
 #[derive(Debug, Clone, PartialEq)]
 pub enum TickResult {
@@ -74,6 +78,7 @@ fn is_page_crossed<AM: AddressingMode + ?Sized>(
 /// * `state` - Addressing state
 /// * `read_fn` - Function to read from memory
 /// * `write_fn` - Function to write to memory
+/// * `nmi_pending` - Whether NMI is currently pending (for interrupt hijacking)
 ///
 /// # Returns
 /// * `(TickResult, InstructionPhase)` - Result and next phase
@@ -89,6 +94,7 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
     state: &mut AddressingState,
     read_fn: &dyn Fn(u16) -> u8,
     write_fn: &mut dyn FnMut(u16, u8),
+    nmi_pending: bool,
 ) -> (TickResult, InstructionPhase) {
     match phase {
         InstructionPhase::Opcode => {
@@ -194,7 +200,36 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                 }
 
                 InstructionType::Branch | InstructionType::Stack | InstructionType::Control => {
-                    // These are handled specially - for now just mark complete
+                    // BRK instruction sequence:
+                    // 1-2: Fetch opcode and padding byte (already done)
+                    // 3-5: Push PC+2 and status with B flag to stack
+                    // 6-7: Fetch interrupt vector
+                    //
+                    // Interrupt hijacking: If NMI is asserted during BRK execution,
+                    // the B flag is still set on the stack, but execution jumps to
+                    // the NMI vector instead of the IRQ/BRK vector.
+                    let current_pc = *pc;
+                    let (pc_high, pc_low, status) =
+                        operation.execute_brk(cpu_state, current_pc.wrapping_sub(1), nmi_pending);
+
+                    // Push PC+2 to stack (high byte first)
+                    write_fn(0x0100 + cpu_state.sp as u16, pc_high);
+                    cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+                    write_fn(0x0100 + cpu_state.sp as u16, pc_low);
+                    cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+
+                    // Push status with B flag set to stack
+                    write_fn(0x0100 + cpu_state.sp as u16, status);
+                    cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+
+                    // Vector selection happens HERE (during fetch), not at BRK start.
+                    // This allows NMI to hijack BRK even if asserted mid-execution.
+                    let vector_addr = if nmi_pending { NMI_VECTOR } else { IRQ_VECTOR };
+                    let lo = read_fn(vector_addr);
+                    let hi = read_fn(vector_addr + 1);
+                    let new_pc = u16::from_le_bytes([lo, hi]);
+                    *pc = new_pc;
+
                     (TickResult::Complete, InstructionPhase::Opcode)
                 }
 
@@ -290,6 +325,7 @@ mod tests {
             &mut state,
             &read_fn,
             &mut write_fn,
+            false,
         );
         assert_eq!(result, TickResult::InProgress);
 
@@ -308,6 +344,7 @@ mod tests {
                 &mut state,
                 &read_fn,
                 &mut write_fn,
+                false,
             );
             cycles += 1;
             phase = next_phase;
@@ -358,6 +395,7 @@ mod tests {
             &mut state,
             &read_fn,
             &mut write_fn,
+            false,
         );
         assert_eq!(result, TickResult::InProgress);
 
@@ -376,6 +414,7 @@ mod tests {
                 &mut state,
                 &read_fn,
                 &mut write_fn,
+                false,
             );
             cycles += 1;
             phase = next_phase;
@@ -438,6 +477,7 @@ mod tests {
             &mut state,
             &read_fn,
             &mut write_fn,
+            false,
         );
         assert_eq!(result, TickResult::InProgress);
 
@@ -456,6 +496,7 @@ mod tests {
                 &mut state,
                 &read_fn,
                 &mut write_fn,
+                false,
             );
             cycles += 1;
             phase = next_phase;
@@ -529,6 +570,7 @@ mod tests {
             &mut state,
             &read_fn,
             &mut write_fn,
+            false,
         );
         assert_eq!(result, TickResult::InProgress);
 
@@ -547,6 +589,7 @@ mod tests {
                 &mut state,
                 &read_fn,
                 &mut write_fn,
+                false,
             );
             cycles += 1;
             phase = next_phase;
@@ -621,6 +664,7 @@ mod tests {
             &mut state,
             &read_fn,
             &mut write_fn,
+            false,
         );
         assert_eq!(result, TickResult::InProgress);
 
@@ -639,6 +683,7 @@ mod tests {
                 &mut state,
                 &read_fn,
                 &mut write_fn,
+                false,
             );
             cycles += 1;
             phase = next_phase;
@@ -720,6 +765,7 @@ mod tests {
             &mut state,
             &read_fn,
             &mut write_fn,
+            false,
         );
         assert_eq!(result, TickResult::InProgress);
 
@@ -738,6 +784,7 @@ mod tests {
                 &mut state,
                 &read_fn,
                 &mut write_fn,
+                false,
             );
             cycles += 1;
             phase = next_phase;
