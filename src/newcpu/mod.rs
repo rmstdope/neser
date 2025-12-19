@@ -5,6 +5,7 @@
 //! existing CPU implementation during development.
 
 pub mod addressing;
+pub mod decoder;
 pub mod opcode;
 pub mod operations;
 pub mod sequencer;
@@ -12,6 +13,7 @@ pub mod traits;
 pub mod types;
 
 pub use addressing::*;
+pub use decoder::*;
 pub use opcode::*;
 pub use operations::*;
 pub use sequencer::*;
