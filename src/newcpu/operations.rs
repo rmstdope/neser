@@ -622,6 +622,87 @@ impl Operation for BIT {
 }
 
 // ============================================================================
+// Control Flow Operations
+// ============================================================================
+
+/// JMP - Jump
+#[derive(Debug, Clone, Copy)]
+pub struct JMP;
+
+impl Operation for JMP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for control flow operations
+    }
+
+    fn execute_control(&self, _state: &mut CpuState, target_addr: u16) -> Option<u16> {
+        // JMP simply sets PC to the target address
+        Some(target_addr)
+    }
+}
+
+/// JSR - Jump to Subroutine
+#[derive(Debug, Clone, Copy)]
+pub struct JSR;
+
+impl Operation for JSR {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for control flow operations
+    }
+
+    fn execute_jsr(&self, state: &mut CpuState, _target_addr: u16, current_pc: u16) -> (u8, u8) {
+        // JSR pushes PC-1 to stack (return address points to last byte of JSR instruction)
+        let return_addr = current_pc.wrapping_sub(1);
+        let high_byte = (return_addr >> 8) as u8;
+        let low_byte = (return_addr & 0xFF) as u8;
+        
+        // Decrement SP twice (high byte pushed first, then low byte)
+        state.sp = state.sp.wrapping_sub(2);
+        
+        (high_byte, low_byte)
+    }
+}
+
+/// RTS - Return from Subroutine
+#[derive(Debug, Clone, Copy)]
+pub struct RTS;
+
+impl Operation for RTS {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for control flow operations
+    }
+
+    fn execute_rts(&self, state: &mut CpuState, low_byte: u8, high_byte: u8) -> u16 {
+        // Increment SP twice (pull low byte, then high byte)
+        state.sp = state.sp.wrapping_add(2);
+        
+        // RTS pulls address and increments it (to skip past JSR instruction)
+        let addr = ((high_byte as u16) << 8) | (low_byte as u16);
+        addr.wrapping_add(1)
+    }
+}
+
+/// RTI - Return from Interrupt
+#[derive(Debug, Clone, Copy)]
+pub struct RTI;
+
+impl Operation for RTI {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for control flow operations
+    }
+
+    fn execute_rti(&self, state: &mut CpuState, status: u8, pc_low: u8, pc_high: u8) -> u16 {
+        // Increment SP three times (pull status, PC low, PC high)
+        state.sp = state.sp.wrapping_add(3);
+        
+        // Restore status with B flag clear, U flag set
+        state.p = (status & !FLAG_B) | FLAG_U;
+        
+        // Restore PC
+        ((pc_high as u16) << 8) | (pc_low as u16)
+    }
+}
+
+// ============================================================================
 // No Operation
 // ============================================================================
 
@@ -1555,5 +1636,70 @@ mod tests {
         op.execute_pull(&mut state, 0x42);
         assert_eq!(state.a, 0x42);
         assert_eq!(state.sp, 0x00);
+    }
+
+    // ========================================================================
+    // Control Flow Operation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_jmp() {
+        let mut state = create_state();
+        let op = JMP;
+
+        // JMP should return the target address
+        let new_pc = op.execute_control(&mut state, 0x1234);
+        assert_eq!(new_pc, Some(0x1234));
+
+        // JMP doesn't modify any CPU state
+        assert_eq!(state.a, 0);
+        assert_eq!(state.x, 0);
+        assert_eq!(state.y, 0);
+        assert_eq!(state.sp, 0xFF);
+        assert_eq!(state.p, 0);
+    }
+
+    #[test]
+    fn test_jsr_pushes_return_address() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        let op = JSR;
+
+        // JSR pushes PC-1 to stack (high byte first, then low byte)
+        // Current PC is 0x1234, so it should push 0x1233
+        let (high_byte, low_byte) = op.execute_jsr(&mut state, 0x5678, 0x1234);
+        
+        assert_eq!(high_byte, 0x12); // High byte of 0x1233
+        assert_eq!(low_byte, 0x33);  // Low byte of 0x1233
+        assert_eq!(state.sp, 0xFD);  // SP decremented twice
+    }
+
+    #[test]
+    fn test_rts_pulls_return_address() {
+        let mut state = create_state();
+        state.sp = 0xFD;
+        let op = RTS;
+
+        // RTS pulls return address from stack and increments it
+        // Pull 0x1233, return 0x1234
+        let new_pc = op.execute_rts(&mut state, 0x33, 0x12);
+        
+        assert_eq!(new_pc, 0x1234);
+        assert_eq!(state.sp, 0xFF); // SP incremented twice
+    }
+
+    #[test]
+    fn test_rti_pulls_status_and_address() {
+        let mut state = create_state();
+        state.sp = 0xFC;
+        state.p = 0x00;
+        let op = RTI;
+
+        // RTI pulls P, then PC low, then PC high
+        let new_pc = op.execute_rti(&mut state, 0xA5, 0x34, 0x12);
+        
+        assert_eq!(new_pc, 0x1234);
+        assert_eq!(state.p, (0xA5 & !FLAG_B) | FLAG_U); // P with B clear, U set
+        assert_eq!(state.sp, 0xFF); // SP incremented three times
     }
 }

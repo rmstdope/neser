@@ -187,6 +187,59 @@ pub trait Operation {
         // Default implementation - should not be called for non-stack operations
         panic!("execute_pull not implemented for this operation");
     }
+
+    /// Execute a control flow operation
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `target_addr` - The target address for the control flow operation
+    ///
+    /// # Returns
+    /// The new PC value, or None if PC should not be modified
+    fn execute_control(&self, _state: &mut CpuState, target_addr: u16) -> Option<u16> {
+        // Default implementation - return the target address for simple jumps
+        Some(target_addr)
+    }
+
+    /// Execute JSR (Jump to Subroutine) - pushes return address to stack
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `target_addr` - The target address to jump to
+    /// * `current_pc` - The current PC value
+    ///
+    /// # Returns
+    /// Tuple of (high_byte, low_byte) to push to stack
+    fn execute_jsr(&self, _state: &mut CpuState, _target_addr: u16, _current_pc: u16) -> (u8, u8) {
+        panic!("execute_jsr not implemented for this operation");
+    }
+
+    /// Execute RTS (Return from Subroutine) - pulls return address from stack
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `low_byte` - Low byte pulled from stack
+    /// * `high_byte` - High byte pulled from stack
+    ///
+    /// # Returns
+    /// The new PC value
+    fn execute_rts(&self, _state: &mut CpuState, _low_byte: u8, _high_byte: u8) -> u16 {
+        panic!("execute_rts not implemented for this operation");
+    }
+
+    /// Execute RTI (Return from Interrupt) - pulls status and return address from stack
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `status` - Status byte pulled from stack
+    /// * `pc_low` - Low byte of PC pulled from stack
+    /// * `pc_high` - High byte of PC pulled from stack
+    ///
+    /// # Returns
+    /// The new PC value
+    fn execute_rti(&self, _state: &mut CpuState, _status: u8, _pc_low: u8, _pc_high: u8) -> u16 {
+        panic!("execute_rti not implemented for this operation");
+    }
 }
 
 #[cfg(test)]
