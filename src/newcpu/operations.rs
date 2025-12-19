@@ -665,10 +665,10 @@ impl Operation for JSR {
         // JSR pushes PC-1 to stack (return address points to last byte of JSR instruction)
         let return_addr = current_pc.wrapping_sub(1);
         let (high_byte, low_byte) = split_address(return_addr);
-        
+
         // Decrement SP twice (high byte pushed first, then low byte)
         state.sp = state.sp.wrapping_sub(2);
-        
+
         (high_byte, low_byte)
     }
 }
@@ -685,7 +685,7 @@ impl Operation for RTS {
     fn execute_rts(&self, state: &mut CpuState, low_byte: u8, high_byte: u8) -> u16 {
         // Increment SP twice (pull low byte, then high byte)
         state.sp = state.sp.wrapping_add(2);
-        
+
         // RTS pulls address and increments it (to skip past JSR instruction)
         let addr = combine_address(low_byte, high_byte);
         addr.wrapping_add(1)
@@ -704,10 +704,10 @@ impl Operation for RTI {
     fn execute_rti(&self, state: &mut CpuState, status: u8, pc_low: u8, pc_high: u8) -> u16 {
         // Increment SP three times (pull status, PC low, PC high)
         state.sp = state.sp.wrapping_add(3);
-        
+
         // Restore status with B flag clear, U flag set
         state.p = (status & !FLAG_B) | FLAG_U;
-        
+
         // Restore PC
         combine_address(pc_low, pc_high)
     }
@@ -1795,10 +1795,10 @@ mod tests {
         // JSR pushes PC-1 to stack (high byte first, then low byte)
         // Current PC is 0x1234, so it should push 0x1233
         let (high_byte, low_byte) = op.execute_jsr(&mut state, 0x5678, 0x1234);
-        
+
         assert_eq!(high_byte, 0x12); // High byte of 0x1233
-        assert_eq!(low_byte, 0x33);  // Low byte of 0x1233
-        assert_eq!(state.sp, 0xFD);  // SP decremented twice
+        assert_eq!(low_byte, 0x33); // Low byte of 0x1233
+        assert_eq!(state.sp, 0xFD); // SP decremented twice
     }
 
     #[test]
@@ -1810,7 +1810,7 @@ mod tests {
         // RTS pulls return address from stack and increments it
         // Pull 0x1233, return 0x1234
         let new_pc = op.execute_rts(&mut state, 0x33, 0x12);
-        
+
         assert_eq!(new_pc, 0x1234);
         assert_eq!(state.sp, 0xFF); // SP incremented twice
     }
@@ -1824,7 +1824,7 @@ mod tests {
 
         // RTI pulls P, then PC low, then PC high
         let new_pc = op.execute_rti(&mut state, 0xA5, 0x34, 0x12);
-        
+
         assert_eq!(new_pc, 0x1234);
         assert_eq!(state.p, (0xA5 & !FLAG_B) | FLAG_U); // P with B clear, U set
         assert_eq!(state.sp, 0xFF); // SP incremented three times
@@ -1952,5 +1952,44 @@ mod tests {
         state.p |= FLAG_V;
         let op = BVS;
         assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_branch_operations_independent_of_other_flags() {
+        // Test that branch operations only check their specific flag
+        let mut state = create_state();
+        
+        // Set all flags except carry
+        state.p = 0xFF & !FLAG_C;
+        let bcc = BCC;
+        assert!(bcc.execute_branch(&state)); // Should branch despite other flags
+        
+        // Clear all flags except carry
+        state.p = FLAG_C;
+        let bcs = BCS;
+        assert!(bcs.execute_branch(&state)); // Should branch despite other flags clear
+    }
+
+    #[test]
+    fn test_complementary_branches() {
+        let mut state = create_state();
+        
+        // BCC and BCS are complementary
+        state.p = 0x00;
+        assert!(BCC.execute_branch(&state));
+        assert!(!BCS.execute_branch(&state));
+        
+        state.p = FLAG_C;
+        assert!(!BCC.execute_branch(&state));
+        assert!(BCS.execute_branch(&state));
+        
+        // BEQ and BNE are complementary
+        state.p = 0x00;
+        assert!(!BEQ.execute_branch(&state));
+        assert!(BNE.execute_branch(&state));
+        
+        state.p = FLAG_Z;
+        assert!(BEQ.execute_branch(&state));
+        assert!(!BNE.execute_branch(&state));
     }
 }
