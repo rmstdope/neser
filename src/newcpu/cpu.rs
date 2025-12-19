@@ -197,6 +197,82 @@ impl NewCpu {
     pub fn total_cycles(&self) -> u64 {
         self.total_cycles
     }
+
+    /// Set the NMI pending flag
+    pub fn set_nmi_pending(&mut self, pending: bool) {
+        self.nmi_pending = pending;
+    }
+
+    /// Check if IRQ should be polled (I flag is clear)
+    pub fn should_poll_irq(&self) -> bool {
+        (self.p & FLAG_INTERRUPT) == 0
+    }
+
+    /// Push a byte onto the stack
+    fn push_byte(&mut self, value: u8) {
+        let addr = 0x0100 | (self.sp as u16);
+        self.memory.borrow_mut().write(addr, value, false);
+        self.sp = self.sp.wrapping_sub(1);
+    }
+
+    /// Push a word onto the stack (high byte first)
+    fn push_word(&mut self, value: u16) {
+        self.push_byte((value >> 8) as u8); // High byte
+        self.push_byte((value & 0xFF) as u8); // Low byte
+    }
+
+    /// Trigger an NMI (Non-Maskable Interrupt)
+    /// Returns the number of cycles consumed (7 cycles)
+    pub fn trigger_nmi(&mut self) -> u8 {
+        // Push PC onto stack
+        self.push_word(self.pc);
+        
+        // Push P onto stack with B flag clear and unused flag set
+        let mut p_with_flags = self.p & !FLAG_BREAK;
+        p_with_flags |= FLAG_UNUSED;
+        self.push_byte(p_with_flags);
+        
+        // Read NMI vector and set PC
+        let lo = self.memory.borrow().read(NMI_VECTOR);
+        let hi = self.memory.borrow().read(NMI_VECTOR + 1);
+        self.pc = u16::from_le_bytes([lo, hi]);
+        
+        // Set Interrupt Disable flag
+        self.p |= FLAG_INTERRUPT;
+        
+        // NMI takes 7 cycles
+        self.total_cycles += 7;
+        7
+    }
+
+    /// Trigger an IRQ (Interrupt Request)
+    /// Returns the number of cycles consumed (7 cycles if triggered, 0 if masked)
+    pub fn trigger_irq(&mut self) -> u8 {
+        // IRQ is maskable - check if interrupts are disabled
+        if (self.p & FLAG_INTERRUPT) != 0 {
+            return 0; // IRQ masked
+        }
+        
+        // Push PC onto stack
+        self.push_word(self.pc);
+        
+        // Push P onto stack with B flag clear and unused flag set
+        let mut p_with_flags = self.p & !FLAG_BREAK;
+        p_with_flags |= FLAG_UNUSED;
+        self.push_byte(p_with_flags);
+        
+        // Read IRQ vector and set PC
+        let lo = self.memory.borrow().read(IRQ_VECTOR);
+        let hi = self.memory.borrow().read(IRQ_VECTOR + 1);
+        self.pc = u16::from_le_bytes([lo, hi]);
+        
+        // Set Interrupt Disable flag
+        self.p |= FLAG_INTERRUPT;
+        
+        // IRQ takes 7 cycles
+        self.total_cycles += 7;
+        7
+    }
 }
 
 #[cfg(test)]
@@ -303,7 +379,7 @@ mod tests {
 
         // Execute instruction cycle by cycle
         // LDA immediate is 2 cycles: fetch opcode + execute addressing and operation
-        
+
         // Cycle 1: Fetch opcode and start addressing
         cpu.tick();
         assert_eq!(cpu.total_cycles(), 8); // 7 from reset + 1
@@ -317,5 +393,118 @@ mod tests {
         assert_eq!(cpu.pc, 0x8002); // PC should have advanced by 2
         assert_eq!(cpu.p & FLAG_ZERO, 0); // Zero flag clear
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0); // Negative flag clear
+    }
+
+    #[test]
+    fn test_set_nmi_pending() {
+        let mut cpu = setup_cpu();
+        
+        assert!(!cpu.nmi_pending);
+        
+        cpu.set_nmi_pending(true);
+        assert!(cpu.nmi_pending);
+        
+        cpu.set_nmi_pending(false);
+        assert!(!cpu.nmi_pending);
+    }
+
+    #[test]
+    fn test_trigger_nmi() {
+        let mut cpu = setup_cpu_with_rom(0x8000, &[]);
+        cpu.reset();
+        
+        // Set up NMI vector to point to 0x9000
+        let mut prg_rom = vec![0; 0x4000];
+        prg_rom[0x3FFA] = 0x00; // NMI vector low byte (0xFFFA - 0x8000 + 0x4000 = 0x3FFA)
+        prg_rom[0x3FFB] = 0x90; // NMI vector high byte
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        
+        let initial_pc = cpu.pc;
+        let initial_sp = cpu.sp;
+        let initial_cycles = cpu.total_cycles();
+        
+        let cycles = cpu.trigger_nmi();
+        
+        // NMI should take 7 cycles
+        assert_eq!(cycles, 7);
+        assert_eq!(cpu.total_cycles(), initial_cycles + 7);
+        
+        // PC should be set to NMI vector
+        assert_eq!(cpu.pc, 0x9000);
+        
+        // Stack should have PC and P pushed (3 bytes)
+        assert_eq!(cpu.sp, initial_sp.wrapping_sub(3));
+        
+        // I flag should be set
+        assert_eq!(cpu.p & FLAG_INTERRUPT, FLAG_INTERRUPT);
+    }
+
+    #[test]
+    fn test_trigger_irq_when_enabled() {
+        let mut cpu = setup_cpu_with_rom(0x8000, &[]);
+        cpu.reset();
+        
+        // Set up IRQ vector to point to 0xA000
+        let mut prg_rom = vec![0; 0x4000];
+        prg_rom[0x3FFE] = 0x00; // IRQ vector low byte (0xFFFE - 0x8000 + 0x4000 = 0x3FFE)
+        prg_rom[0x3FFF] = 0xA0; // IRQ vector high byte
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        
+        // Clear I flag to enable IRQ
+        cpu.p &= !FLAG_INTERRUPT;
+        
+        let initial_cycles = cpu.total_cycles();
+        let cycles = cpu.trigger_irq();
+        
+        // IRQ should take 7 cycles when enabled
+        assert_eq!(cycles, 7);
+        assert_eq!(cpu.total_cycles(), initial_cycles + 7);
+        
+        // PC should be set to IRQ vector
+        assert_eq!(cpu.pc, 0xA000);
+        
+        // I flag should be set
+        assert_eq!(cpu.p & FLAG_INTERRUPT, FLAG_INTERRUPT);
+    }
+
+    #[test]
+    fn test_trigger_irq_when_disabled() {
+        let mut cpu = setup_cpu_with_rom(0x8000, &[]);
+        cpu.reset();
+        
+        // I flag is set by reset, so IRQ should be disabled
+        assert_eq!(cpu.p & FLAG_INTERRUPT, FLAG_INTERRUPT);
+        
+        let initial_pc = cpu.pc;
+        let initial_cycles = cpu.total_cycles();
+        
+        let cycles = cpu.trigger_irq();
+        
+        // IRQ should be masked and take 0 cycles
+        assert_eq!(cycles, 0);
+        assert_eq!(cpu.total_cycles(), initial_cycles);
+        
+        // PC should not change
+        assert_eq!(cpu.pc, initial_pc);
+    }
+
+    #[test]
+    fn test_should_poll_irq() {
+        let mut cpu = setup_cpu();
+        
+        // Initially I flag is clear, so IRQ should be allowed
+        assert!(cpu.should_poll_irq());
+        
+        // Set I flag
+        cpu.p |= FLAG_INTERRUPT;
+        assert!(!cpu.should_poll_irq());
+        
+        // Clear I flag
+        cpu.p &= !FLAG_INTERRUPT;
+        assert!(cpu.should_poll_irq());
     }
 }
