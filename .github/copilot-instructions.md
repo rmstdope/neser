@@ -50,6 +50,8 @@ When working on a sub-issue, this is important:
 
 When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized.
 
+Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh.
+
 ### Fixing Bugs
 
 When a bug is discovered in the application, always consider updating existing or adding a test that triggers the error before fixing it. This ensures that the bug is properly documented and helps to prevent regressions in the future. After the test is in place, proceed to fix the bug and verify that the new test passes along with all existing tests.
