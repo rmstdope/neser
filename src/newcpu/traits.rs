@@ -10,9 +10,9 @@ pub trait AddressingMode {
     /// Returns the number of cycles needed to resolve the address
     /// This may vary based on page crossings or instruction type
     fn address_cycles(&self) -> u8;
-    
+
     /// Execute one cycle of address resolution
-    /// 
+    ///
     /// # Arguments
     /// * `cycle` - The current cycle within address resolution (0-indexed)
     /// * `pc` - Current program counter
@@ -20,7 +20,7 @@ pub trait AddressingMode {
     /// * `y` - Y register (for indexed modes)
     /// * `state` - Mutable addressing state for storing intermediate values
     /// * `read_fn` - Function to read a byte from memory
-    /// 
+    ///
     /// # Returns
     /// * `Some(addr)` - The resolved address (when resolution completes)
     /// * `None` - Address not yet resolved, needs more cycles
@@ -33,7 +33,7 @@ pub trait AddressingMode {
         state: &mut AddressingState,
         read_fn: &dyn Fn(u16) -> u8,
     ) -> Option<u16>;
-    
+
     /// Returns true if this addressing mode has page crossing penalty for reads
     fn has_page_cross_penalty(&self) -> bool {
         false
@@ -44,39 +44,97 @@ pub trait AddressingMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mnemonic {
     // Arithmetic
-    ADC, SBC,
+    ADC,
+    SBC,
     // Logical
-    AND, ORA, EOR,
+    AND,
+    ORA,
+    EOR,
     // Shift/Rotate
-    ASL, LSR, ROL, ROR,
+    ASL,
+    LSR,
+    ROL,
+    ROR,
     // Load/Store
-    LDA, LDX, LDY, STA, STX, STY,
+    LDA,
+    LDX,
+    LDY,
+    STA,
+    STX,
+    STY,
     // Transfer
-    TAX, TAY, TXA, TYA, TSX, TXS,
+    TAX,
+    TAY,
+    TXA,
+    TYA,
+    TSX,
+    TXS,
     // Compare
-    CMP, CPX, CPY,
+    CMP,
+    CPX,
+    CPY,
     // Increment/Decrement
-    INC, INX, INY, DEC, DEX, DEY,
+    INC,
+    INX,
+    INY,
+    DEC,
+    DEX,
+    DEY,
     // Stack
-    PHA, PLA, PHP, PLP,
+    PHA,
+    PLA,
+    PHP,
+    PLP,
     // Flags
-    CLC, SEC, CLI, SEI, CLD, SED, CLV,
+    CLC,
+    SEC,
+    CLI,
+    SEI,
+    CLD,
+    SED,
+    CLV,
     // Branches
-    BCC, BCS, BEQ, BNE, BMI, BPL, BVC, BVS,
+    BCC,
+    BCS,
+    BEQ,
+    BNE,
+    BMI,
+    BPL,
+    BVC,
+    BVS,
     // Control
-    JMP, JSR, RTS, RTI, BRK, NOP,
+    JMP,
+    JSR,
+    RTS,
+    RTI,
+    BRK,
+    NOP,
     // Bit test
     BIT,
     // Unofficial opcodes
-    LAX, SAX, DCP, ISC, RLA, RRA, SLO, SRE,
-    AAC, ARR, ASR, ATX, AXS, XAA,
+    LAX,
+    SAX,
+    DCP,
+    ISC,
+    RLA,
+    RRA,
+    SLO,
+    SRE,
+    AAC,
+    ARR,
+    ASR,
+    ATX,
+    AXS,
+    XAA,
     // Unofficial NOP variants
-    DOP, TOP,
+    DOP,
+    TOP,
     // KIL (halts CPU)
     KIL,
 }
 
 /// CPU state needed for operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuState {
     pub a: u8,
     pub x: u8,
@@ -88,18 +146,18 @@ pub struct CpuState {
 /// Trait for CPU operations that execute on operands
 pub trait Operation {
     /// Execute the operation for a read instruction
-    /// 
+    ///
     /// # Arguments
     /// * `state` - Mutable CPU state
     /// * `operand` - The operand value
     fn execute(&self, state: &mut CpuState, operand: u8);
-    
+
     /// Execute the operation for a read-modify-write instruction
-    /// 
+    ///
     /// # Arguments
     /// * `state` - Mutable CPU state
     /// * `operand` - The operand value read from memory
-    /// 
+    ///
     /// # Returns
     /// The modified value to write back to memory
     fn execute_rmw(&self, state: &mut CpuState, operand: u8) -> u8 {
