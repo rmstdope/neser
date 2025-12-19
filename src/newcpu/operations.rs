@@ -565,6 +565,191 @@ impl Operation for NOP {
     }
 }
 
+// ============================================================================
+// Unofficial/Undocumented Operations
+// ============================================================================
+
+/// LAX - Load A and X (LDA + LDX combined)
+#[derive(Debug, Clone, Copy)]
+pub struct LAX;
+
+impl Operation for LAX {
+    fn execute(&self, state: &mut CpuState, operand: u8) {
+        state.a = operand;
+        state.x = operand;
+        update_nz_flags(&mut state.p, operand);
+    }
+}
+
+/// SAX - Store A AND X
+#[derive(Debug, Clone, Copy)]
+pub struct SAX;
+
+impl Operation for SAX {
+    fn execute(&self, state: &mut CpuState, _operand: u8) {
+        // For write instructions, the value to write is A & X
+        // This is handled by the instruction sequencing
+        // We just need to make sure state has the right value
+        let _ = state.a & state.x; // Value will be used by sequencer
+    }
+}
+
+/// DCP - Decrement memory then Compare with A (DEC + CMP)
+#[derive(Debug, Clone, Copy)]
+pub struct DCP;
+
+impl Operation for DCP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Read-side effects if any
+    }
+
+    fn execute_rmw(&self, state: &mut CpuState, operand: u8) -> u8 {
+        // Decrement
+        let result = operand.wrapping_sub(1);
+
+        // Compare A with result (same as CMP)
+        let diff = state.a.wrapping_sub(result);
+        set_flag(&mut state.p, FLAG_C, state.a >= result);
+        update_nz_flags(&mut state.p, diff);
+
+        result
+    }
+}
+
+/// ISB (ISC) - Increment memory then SBC (INC + SBC)
+#[derive(Debug, Clone, Copy)]
+pub struct ISB;
+
+impl Operation for ISB {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Read-side effects if any
+    }
+
+    fn execute_rmw(&self, state: &mut CpuState, operand: u8) -> u8 {
+        // Increment
+        let result = operand.wrapping_add(1);
+
+        // SBC with result
+        let carry = if state.p & FLAG_C != 0 { 1 } else { 0 };
+        let diff = state.a.wrapping_sub(result).wrapping_sub(1 - carry);
+
+        set_flag(
+            &mut state.p,
+            FLAG_C,
+            (state.a as u16) >= (result as u16 + 1 - carry as u16),
+        );
+        set_flag(
+            &mut state.p,
+            FLAG_V,
+            ((state.a ^ result) & (state.a ^ diff) & 0x80) != 0,
+        );
+        update_nz_flags(&mut state.p, diff);
+
+        state.a = diff;
+        result
+    }
+}
+
+/// SLO - Shift Left then OR with A (ASL + ORA)
+#[derive(Debug, Clone, Copy)]
+pub struct SLO;
+
+impl Operation for SLO {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Read-side effects if any
+    }
+
+    fn execute_rmw(&self, state: &mut CpuState, operand: u8) -> u8 {
+        // Shift left
+        let result = operand << 1;
+        set_flag(&mut state.p, FLAG_C, operand & 0x80 != 0);
+
+        // OR with A
+        state.a |= result;
+        update_nz_flags(&mut state.p, state.a);
+
+        result
+    }
+}
+
+/// RLA - Rotate Left then AND with A (ROL + AND)
+#[derive(Debug, Clone, Copy)]
+pub struct RLA;
+
+impl Operation for RLA {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Read-side effects if any
+    }
+
+    fn execute_rmw(&self, state: &mut CpuState, operand: u8) -> u8 {
+        // Rotate left
+        let carry_in = if state.p & FLAG_C != 0 { 1 } else { 0 };
+        let result = (operand << 1) | carry_in;
+        set_flag(&mut state.p, FLAG_C, operand & 0x80 != 0);
+
+        // AND with A
+        state.a &= result;
+        update_nz_flags(&mut state.p, state.a);
+
+        result
+    }
+}
+
+/// SRE - Shift Right then XOR with A (LSR + EOR)
+#[derive(Debug, Clone, Copy)]
+pub struct SRE;
+
+impl Operation for SRE {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Read-side effects if any
+    }
+
+    fn execute_rmw(&self, state: &mut CpuState, operand: u8) -> u8 {
+        // Shift right
+        let result = operand >> 1;
+        set_flag(&mut state.p, FLAG_C, operand & 0x01 != 0);
+
+        // XOR with A
+        state.a ^= result;
+        update_nz_flags(&mut state.p, state.a);
+
+        result
+    }
+}
+
+/// RRA - Rotate Right then ADC (ROR + ADC)
+#[derive(Debug, Clone, Copy)]
+pub struct RRA;
+
+impl Operation for RRA {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Read-side effects if any
+    }
+
+    fn execute_rmw(&self, state: &mut CpuState, operand: u8) -> u8 {
+        // Rotate right
+        let carry_in = if state.p & FLAG_C != 0 { 0x80 } else { 0 };
+        let result = (operand >> 1) | carry_in;
+        let carry_out = operand & 0x01 != 0;
+
+        // ADC with result
+        let carry = if carry_out { 1 } else { 0 };
+        let sum = state.a as u16 + result as u16 + carry as u16;
+
+        set_flag(&mut state.p, FLAG_C, sum > 0xFF);
+        set_flag(
+            &mut state.p,
+            FLAG_V,
+            ((state.a ^ result) & 0x80 == 0) && ((state.a ^ sum as u8) & 0x80 != 0),
+        );
+
+        state.a = sum as u8;
+        update_nz_flags(&mut state.p, state.a);
+
+        result
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1081,5 +1266,127 @@ mod tests {
         assert_eq!(state.y, state_before.y);
         assert_eq!(state.sp, state_before.sp);
         assert_eq!(state.p, state_before.p);
+    }
+
+    // ============================================================================
+    // Unofficial Operations Tests
+    // ============================================================================
+
+    #[test]
+    fn test_lax() {
+        let mut state = create_state();
+        let op = LAX;
+
+        op.execute(&mut state, 0x42);
+
+        assert_eq!(state.a, 0x42);
+        assert_eq!(state.x, 0x42);
+        assert_eq!(state.p & FLAG_Z, 0);
+        assert_eq!(state.p & FLAG_N, 0);
+    }
+
+    #[test]
+    fn test_sax() {
+        let mut state = create_state();
+        state.a = 0xF0;
+        state.x = 0x0F;
+        let op = SAX;
+
+        op.execute(&mut state, 0x00); // operand not used for SAX
+
+        // SAX stores A AND X, but doesn't modify CPU state
+        // The actual value is returned/used by instruction sequencing
+    }
+
+    #[test]
+    fn test_dcp() {
+        let mut state = create_state();
+        state.a = 0x10;
+        let op = DCP;
+
+        let result = op.execute_rmw(&mut state, 0x05);
+
+        // DCP decrements memory value
+        assert_eq!(result, 0x04);
+        // Then compares with A (0x10 > 0x04, so carry set, not zero, not negative)
+        assert_eq!(state.p & FLAG_C, FLAG_C);
+        assert_eq!(state.p & FLAG_Z, 0);
+        assert_eq!(state.p & FLAG_N, 0);
+    }
+
+    #[test]
+    fn test_isb() {
+        let mut state = create_state();
+        state.a = 0x10;
+        state.p |= FLAG_C; // Set carry for SBC
+        let op = ISB;
+
+        let result = op.execute_rmw(&mut state, 0x05);
+
+        // ISB increments memory value
+        assert_eq!(result, 0x06);
+        // Then subtracts from A: 0x10 - 0x06 - 0 = 0x0A
+        assert_eq!(state.a, 0x0A);
+    }
+
+    #[test]
+    fn test_slo() {
+        let mut state = create_state();
+        state.a = 0x0F;
+        let op = SLO;
+
+        let result = op.execute_rmw(&mut state, 0x40);
+
+        // SLO shifts left (0x40 << 1 = 0x80)
+        assert_eq!(result, 0x80);
+        // Then ORs with A (0x80 | 0x0F = 0x8F)
+        assert_eq!(state.a, 0x8F);
+        assert_eq!(state.p & FLAG_N, FLAG_N);
+    }
+
+    #[test]
+    fn test_rla() {
+        let mut state = create_state();
+        state.a = 0x0F;
+        state.p &= !FLAG_C; // Clear carry
+        let op = RLA;
+
+        let result = op.execute_rmw(&mut state, 0x40);
+
+        // RLA rotates left (0x40 << 1 with carry 0 = 0x80)
+        assert_eq!(result, 0x80);
+        // Then ANDs with A (0x80 & 0x0F = 0x00)
+        assert_eq!(state.a, 0x00);
+        assert_eq!(state.p & FLAG_Z, FLAG_Z);
+    }
+
+    #[test]
+    fn test_sre() {
+        let mut state = create_state();
+        state.a = 0xF0;
+        let op = SRE;
+
+        let result = op.execute_rmw(&mut state, 0x81);
+
+        // SRE shifts right (0x81 >> 1 = 0x40, carry = 1)
+        assert_eq!(result, 0x40);
+        assert_eq!(state.p & FLAG_C, FLAG_C);
+        // Then XORs with A (0x40 ^ 0xF0 = 0xB0)
+        assert_eq!(state.a, 0xB0);
+    }
+
+    #[test]
+    fn test_rra() {
+        let mut state = create_state();
+        state.a = 0x10;
+        state.p |= FLAG_C; // Set carry
+        let op = RRA;
+
+        let result = op.execute_rmw(&mut state, 0x40);
+
+        // RRA rotates right (0x40 >> 1 with carry 1 = 0xA0)
+        assert_eq!(result, 0xA0);
+        // Then adds to A (0x10 + 0xA0 = 0xB0)
+        assert_eq!(state.a, 0xB0);
     }
 }
