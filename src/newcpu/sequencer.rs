@@ -34,7 +34,7 @@ pub enum TickResult {
 ///
 /// # Returns
 /// * `(TickResult, InstructionPhase)` - Result and next phase
-pub fn tick_instruction<AM: AddressingMode, OP: Operation>(
+pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
     instruction_type: InstructionType,
     phase: InstructionPhase,
     addressing_mode: &AM,
@@ -52,20 +52,13 @@ pub fn tick_instruction<AM: AddressingMode, OP: Operation>(
             // Opcode already fetched, move to addressing
             (TickResult::InProgress, InstructionPhase::Addressing(0))
         }
-        
+
         InstructionPhase::Addressing(cycle) => {
             // Execute one cycle of address resolution
-            if let Some(addr) = addressing_mode.tick_addressing(
-                cycle,
-                pc,
-                x,
-                y,
-                state,
-                read_fn,
-            ) {
+            if let Some(addr) = addressing_mode.tick_addressing(cycle, pc, x, y, state, read_fn) {
                 // Address resolved, determine next phase based on instruction type
                 state.addr = Some(addr);
-                
+
                 match instruction_type {
                     InstructionType::Read => {
                         // Read instructions: read operand then execute
@@ -74,19 +67,19 @@ pub fn tick_instruction<AM: AddressingMode, OP: Operation>(
                         operation.execute(cpu_state, value);
                         (TickResult::Complete, InstructionPhase::Opcode)
                     }
-                    
+
                     InstructionType::Write => {
                         // Write instructions: execute (to get value) then write
                         (TickResult::InProgress, InstructionPhase::Execute)
                     }
-                    
+
                     InstructionType::RMW => {
                         // RMW: read operand first
                         let value = read_fn(addr);
                         state.value = Some(value);
                         (TickResult::InProgress, InstructionPhase::Execute)
                     }
-                    
+
                     InstructionType::Branch | InstructionType::Stack | InstructionType::Control => {
                         // These need special handling in Execute phase
                         (TickResult::InProgress, InstructionPhase::Execute)
@@ -94,10 +87,13 @@ pub fn tick_instruction<AM: AddressingMode, OP: Operation>(
                 }
             } else {
                 // Address not yet resolved, continue addressing
-                (TickResult::InProgress, InstructionPhase::Addressing(cycle + 1))
+                (
+                    TickResult::InProgress,
+                    InstructionPhase::Addressing(cycle + 1),
+                )
             }
         }
-        
+
         InstructionPhase::Execute => {
             match instruction_type {
                 InstructionType::Write => {
@@ -107,7 +103,7 @@ pub fn tick_instruction<AM: AddressingMode, OP: Operation>(
                     write_fn(addr, cpu_state.a);
                     (TickResult::Complete, InstructionPhase::Opcode)
                 }
-                
+
                 InstructionType::RMW => {
                     // Execute RMW operation
                     let value = state.value.unwrap();
@@ -115,19 +111,22 @@ pub fn tick_instruction<AM: AddressingMode, OP: Operation>(
                     state.value = Some(result);
                     (TickResult::InProgress, InstructionPhase::Writeback)
                 }
-                
+
                 InstructionType::Branch | InstructionType::Stack | InstructionType::Control => {
                     // These are handled specially - for now just mark complete
                     (TickResult::Complete, InstructionPhase::Opcode)
                 }
-                
+
                 _ => {
                     // Should not reach here for Read (handled in Addressing phase)
-                    panic!("Unexpected instruction type in Execute phase: {:?}", instruction_type);
+                    panic!(
+                        "Unexpected instruction type in Execute phase: {:?}",
+                        instruction_type
+                    );
                 }
             }
         }
-        
+
         InstructionPhase::Writeback => {
             // Write back the result (for RMW operations)
             let addr = state.addr.unwrap();
@@ -151,12 +150,18 @@ mod tests {
         let addressing = Immediate;
         let operation = LDA;
         let mut pc = 0x8000;
-        let mut cpu_state = CpuState { a: 0, x: 0, y: 0, sp: 0xFF, p: 0 };
+        let mut cpu_state = CpuState {
+            a: 0,
+            x: 0,
+            y: 0,
+            sp: 0xFF,
+            p: 0,
+        };
         let mut state = AddressingState::default();
-        
+
         let read_fn = |addr: u16| if addr == 0x8000 { 0x42 } else { 0x00 };
         let mut write_fn = |_addr: u16, _val: u8| {};
-        
+
         // Start: Opcode phase
         let (result, next_phase) = tick_instruction(
             InstructionType::Read,
@@ -171,10 +176,10 @@ mod tests {
             &read_fn,
             &mut write_fn,
         );
-        
+
         assert_eq!(result, TickResult::InProgress);
         assert_eq!(next_phase, InstructionPhase::Addressing(0));
-        
+
         // Addressing cycle 0: fetch immediate value and execute
         let (result, next_phase) = tick_instruction(
             InstructionType::Read,
@@ -189,7 +194,7 @@ mod tests {
             &read_fn,
             &mut write_fn,
         );
-        
+
         assert_eq!(result, TickResult::Complete);
         assert_eq!(next_phase, InstructionPhase::Opcode);
         assert_eq!(cpu_state.a, 0x42);
@@ -201,9 +206,15 @@ mod tests {
         let addressing = ZeroPage;
         let operation = STA;
         let mut pc = 0x8000;
-        let mut cpu_state = CpuState { a: 0x99, x: 0, y: 0, sp: 0xFF, p: 0 };
+        let mut cpu_state = CpuState {
+            a: 0x99,
+            x: 0,
+            y: 0,
+            sp: 0xFF,
+            p: 0,
+        };
         let mut state = AddressingState::default();
-        
+
         let read_fn = |addr: u16| if addr == 0x8000 { 0x20 } else { 0x00 };
         let mut written_addr = None;
         let mut written_value = None;
@@ -211,7 +222,7 @@ mod tests {
             written_addr = Some(addr);
             written_value = Some(val);
         };
-        
+
         // Opcode -> Addressing
         let (result, next_phase) = tick_instruction(
             InstructionType::Write,
@@ -226,10 +237,10 @@ mod tests {
             &read_fn,
             &mut write_fn,
         );
-        
+
         assert_eq!(result, TickResult::InProgress);
         assert_eq!(next_phase, InstructionPhase::Addressing(0));
-        
+
         // Addressing: resolve address
         let (result, next_phase) = tick_instruction(
             InstructionType::Write,
@@ -244,10 +255,10 @@ mod tests {
             &read_fn,
             &mut write_fn,
         );
-        
+
         assert_eq!(result, TickResult::InProgress);
         assert_eq!(next_phase, InstructionPhase::Execute);
-        
+
         // Execute: write value
         let (result, next_phase) = tick_instruction(
             InstructionType::Write,
@@ -262,7 +273,7 @@ mod tests {
             &read_fn,
             &mut write_fn,
         );
-        
+
         assert_eq!(result, TickResult::Complete);
         assert_eq!(next_phase, InstructionPhase::Opcode);
         assert_eq!(written_addr, Some(0x20));
@@ -275,22 +286,28 @@ mod tests {
         let addressing = ZeroPage;
         let operation = INC;
         let mut pc = 0x8000;
-        let mut cpu_state = CpuState { a: 0, x: 0, y: 0, sp: 0xFF, p: 0 };
+        let mut cpu_state = CpuState {
+            a: 0,
+            x: 0,
+            y: 0,
+            sp: 0xFF,
+            p: 0,
+        };
         let mut state = AddressingState::default();
-        
+
         let read_fn = |addr: u16| match addr {
-            0x8000 => 0x20,  // Zero page address
-            0x20 => 0x42,    // Value at $20
+            0x8000 => 0x20, // Zero page address
+            0x20 => 0x42,   // Value at $20
             _ => 0x00,
         };
-        
+
         let mut written_addr = None;
         let mut written_value = None;
         let mut write_fn = |addr: u16, val: u8| {
             written_addr = Some(addr);
             written_value = Some(val);
         };
-        
+
         // Opcode -> Addressing
         let (_result, next_phase) = tick_instruction(
             InstructionType::RMW,
@@ -306,7 +323,7 @@ mod tests {
             &mut write_fn,
         );
         assert_eq!(next_phase, InstructionPhase::Addressing(0));
-        
+
         // Addressing: resolve and read
         let (_result, next_phase) = tick_instruction(
             InstructionType::RMW,
@@ -323,7 +340,7 @@ mod tests {
         );
         assert_eq!(next_phase, InstructionPhase::Execute);
         assert_eq!(state.value, Some(0x42));
-        
+
         // Execute: perform operation
         let (_result, next_phase) = tick_instruction(
             InstructionType::RMW,
@@ -340,7 +357,7 @@ mod tests {
         );
         assert_eq!(next_phase, InstructionPhase::Writeback);
         assert_eq!(state.value, Some(0x43)); // 0x42 + 1
-        
+
         // Writeback: write result
         let (result, next_phase) = tick_instruction(
             InstructionType::RMW,
@@ -355,7 +372,7 @@ mod tests {
             &read_fn,
             &mut write_fn,
         );
-        
+
         assert_eq!(result, TickResult::Complete);
         assert_eq!(next_phase, InstructionPhase::Opcode);
         assert_eq!(written_addr, Some(0x20));
