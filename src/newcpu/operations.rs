@@ -12,6 +12,7 @@ const FLAG_Z: u8 = 0b0000_0010; // Zero
 const FLAG_I: u8 = 0b0000_0100; // Interrupt Disable
 const FLAG_D: u8 = 0b0000_1000; // Decimal Mode (not used in NES)
 const FLAG_B: u8 = 0b0001_0000; // Break Command
+const FLAG_U: u8 = 0b0010_0000; // Unused (always set)
 const FLAG_V: u8 = 0b0100_0000; // Overflow
 const FLAG_N: u8 = 0b1000_0000; // Negative
 
@@ -564,8 +565,8 @@ impl Operation for PHP {
     }
 
     fn execute_stack(&self, state: &mut CpuState) -> u8 {
-        // PHP pushes P with B (0x10) and U (0x20) flags set
-        let value = state.p | 0x30;
+        // PHP pushes P with B and U flags set
+        let value = state.p | FLAG_B | FLAG_U;
         state.sp = state.sp.wrapping_sub(1);
         value
     }
@@ -583,8 +584,7 @@ impl Operation for PLA {
     fn execute_pull(&self, state: &mut CpuState, value: u8) {
         state.sp = state.sp.wrapping_add(1);
         state.a = value;
-        set_flag(&mut state.p, FLAG_Z, value == 0);
-        set_flag(&mut state.p, FLAG_N, value & FLAG_N != 0);
+        update_nz_flags(&mut state.p, value);
     }
 }
 
@@ -599,8 +599,8 @@ impl Operation for PLP {
 
     fn execute_pull(&self, state: &mut CpuState, value: u8) {
         state.sp = state.sp.wrapping_add(1);
-        // B flag (0x10) is always clear, U flag (0x20) is always set
-        state.p = (value & !0x10) | 0x20;
+        // B flag is always clear, U flag is always set
+        state.p = (value & !FLAG_B) | FLAG_U;
     }
 }
 
@@ -1527,8 +1527,33 @@ mod tests {
 
         // PLP should pull a value and update P (with B and U flags ignored)
         op.execute_pull(&mut state, 0xFF);
-        // B (0x10) flag is always clear, U (0x20) flag is always set
-        assert_eq!(state.p, (0xFF & !0x10) | 0x20);
+        // B flag is always clear, U flag is always set
+        assert_eq!(state.p, (0xFF & !FLAG_B) | FLAG_U);
         assert_eq!(state.sp, 0xFE);
+    }
+
+    #[test]
+    fn test_pha_stack_wraps() {
+        let mut state = create_state();
+        state.a = 0x42;
+        state.sp = 0x00;
+        let op = PHA;
+
+        // SP should wrap from 0x00 to 0xFF
+        let value = op.execute_stack(&mut state);
+        assert_eq!(value, 0x42);
+        assert_eq!(state.sp, 0xFF);
+    }
+
+    #[test]
+    fn test_pla_stack_wraps() {
+        let mut state = create_state();
+        state.sp = 0xFF;
+        let op = PLA;
+
+        // SP should wrap from 0xFF to 0x00
+        op.execute_pull(&mut state, 0x42);
+        assert_eq!(state.a, 0x42);
+        assert_eq!(state.sp, 0x00);
     }
 }
