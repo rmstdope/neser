@@ -6,10 +6,12 @@
 
 pub mod addressing;
 pub mod opcode;
+pub mod operations;
 pub mod traits;
 pub mod types;
 
 pub use addressing::*;
 pub use opcode::*;
+pub use operations::*;
 pub use traits::*;
 pub use types::*;
