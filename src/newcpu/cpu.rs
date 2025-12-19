@@ -154,7 +154,7 @@ impl NewCpu {
         // This implements the one-instruction delay: if CLI/SEI/PLP set this flag,
         // it prevents IRQ during the next instruction, then clears for the one after.
         self.irq_inhibit = false;
-        
+
         let opcode = self.memory.borrow().read(self.pc);
 
         self.pc = self.pc.wrapping_add(1);
@@ -733,4 +733,144 @@ mod tests {
         // PC should now be at IRQ handler (0xB000)
         assert_eq!(cpu.pc, 0xB000, "PC should jump to IRQ vector after delay");
     }
+
+    #[test]
+    fn test_adc_ignores_decimal_flag() {
+        // Verify ADC always performs binary addition, never BCD
+        // Program: SED (0xF8), ADC #$09 (0x69 0x09)
+        let program = vec![0xF8, 0x69, 0x09];
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+        cpu.reset();
+        cpu.a = 0;
+
+        // Execute SED
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break; // SED completed
+            }
+        }
+        assert_eq!(
+            cpu.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "D flag should be set after SED"
+        );
+
+        // Execute ADC with D flag set
+        // A = 0, operand = 9, result should be binary 9
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break; // ADC completed
+            }
+        }
+        assert_eq!(cpu.a, 9, "ADC should perform binary addition");
+
+        // Try a more obvious case: 9 + 9 = 18 in binary (0x12)
+        // In BCD mode (if it were implemented), 09 + 09 = 18, but stored differently
+        cpu.pc = 0x8003;
+        cpu.a = 0x09;
+
+        let program2 = vec![0x00, 0x00, 0x00, 0x69, 0x09]; // ADC #$09 at 0x8003
+        let mut cpu2 = setup_cpu_with_rom(0x8000, &program2);
+        cpu2.reset();
+        cpu2.pc = 0x8003;
+        cpu2.a = 0x09;
+        cpu2.p |= FLAG_DECIMAL; // Set D flag
+
+        for _ in 0..10 {
+            if cpu2.tick_cycle() {
+                break;
+            }
+        }
+        // Binary: 0x09 + 0x09 = 0x12 (18)
+        // BCD would adjust to 0x18
+        assert_eq!(cpu2.a, 0x12, "ADC result should be binary 0x12, not BCD");
+    }
+
+    #[test]
+    fn test_sbc_ignores_decimal_flag() {
+        // Verify SBC always performs binary subtraction, never BCD
+        // Program: SED (0xF8), SEC (0x38), SBC #$05 (0xE9 0x05)
+        let program = vec![0xF8, 0x38, 0xE9, 0x05];
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+        cpu.reset();
+        cpu.a = 0x10; // 16 in binary
+
+        // Execute SED
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break;
+            }
+        }
+        assert_eq!(
+            cpu.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "D flag should be set after SED"
+        );
+
+        // Execute SEC
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break;
+            }
+        }
+
+        // Execute SBC with D flag set
+        // A = 0x10, operand = 0x05, result should be 0x0B (binary 11)
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break;
+            }
+        }
+        // Binary: 0x10 - 0x05 = 0x0B (11)
+        // BCD would be: 16 - 05 = 11, stored as 0x11
+        assert_eq!(cpu.a, 0x0B, "SBC should perform binary subtraction");
+    }
+
+    #[test]
+    fn test_sed_cld_modify_d_flag() {
+        // Verify SED sets and CLD clears the D flag
+        // Program: SED (0xF8), NOP (0xEA), CLD (0xD8)
+        let program = vec![0xF8, 0xEA, 0xD8];
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+        cpu.reset();
+
+        // Initially D flag should be clear
+        assert_eq!(cpu.p & FLAG_DECIMAL, 0, "D flag should be clear initially");
+
+        // Execute SED
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break;
+            }
+        }
+        assert_eq!(
+            cpu.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "D flag should be set after SED"
+        );
+
+        // Execute NOP
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break;
+            }
+        }
+        assert_eq!(
+            cpu.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "D flag should remain set after NOP"
+        );
+
+        // Execute CLD
+        for _ in 0..10 {
+            if cpu.tick_cycle() {
+                break;
+            }
+        }
+        assert_eq!(cpu.p & FLAG_DECIMAL, 0, "D flag should be clear after CLD");
+    }
+
+    // TODO: test_d_flag_preserved_through_php_plp skipped because PHP (0x08) is not
+    // properly decoded in decoder.rs (currently mapped to NOP). This is a separate
+    // issue from decimal mode verification and should be fixed separately.
 }
