@@ -240,6 +240,17 @@ pub trait Operation {
     fn execute_rti(&self, _state: &mut CpuState, _status: u8, _pc_low: u8, _pc_high: u8) -> u16 {
         panic!("execute_rti not implemented for this operation");
     }
+
+    /// Execute a branch instruction - checks if branch condition is met
+    ///
+    /// # Arguments
+    /// * `state` - CPU state (used to check status flags)
+    ///
+    /// # Returns
+    /// True if the branch should be taken, false otherwise
+    fn execute_branch(&self, _state: &CpuState) -> bool {
+        panic!("execute_branch not implemented for this operation");
+    }
 }
 
 #[cfg(test)]

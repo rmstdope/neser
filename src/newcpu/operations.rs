@@ -714,6 +714,122 @@ impl Operation for RTI {
 }
 
 // ============================================================================
+// Branch Operations
+// ============================================================================
+
+/// BCC - Branch if Carry Clear
+#[derive(Debug, Clone, Copy)]
+pub struct BCC;
+
+impl Operation for BCC {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_C) == 0
+    }
+}
+
+/// BCS - Branch if Carry Set
+#[derive(Debug, Clone, Copy)]
+pub struct BCS;
+
+impl Operation for BCS {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_C) != 0
+    }
+}
+
+/// BEQ - Branch if Equal (Zero Set)
+#[derive(Debug, Clone, Copy)]
+pub struct BEQ;
+
+impl Operation for BEQ {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_Z) != 0
+    }
+}
+
+/// BNE - Branch if Not Equal (Zero Clear)
+#[derive(Debug, Clone, Copy)]
+pub struct BNE;
+
+impl Operation for BNE {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_Z) == 0
+    }
+}
+
+/// BMI - Branch if Minus (Negative Set)
+#[derive(Debug, Clone, Copy)]
+pub struct BMI;
+
+impl Operation for BMI {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_N) != 0
+    }
+}
+
+/// BPL - Branch if Plus (Negative Clear)
+#[derive(Debug, Clone, Copy)]
+pub struct BPL;
+
+impl Operation for BPL {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_N) == 0
+    }
+}
+
+/// BVC - Branch if Overflow Clear
+#[derive(Debug, Clone, Copy)]
+pub struct BVC;
+
+impl Operation for BVC {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_V) == 0
+    }
+}
+
+/// BVS - Branch if Overflow Set
+#[derive(Debug, Clone, Copy)]
+pub struct BVS;
+
+impl Operation for BVS {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for branch operations
+    }
+
+    fn execute_branch(&self, state: &CpuState) -> bool {
+        (state.p & FLAG_V) != 0
+    }
+}
+
+// ============================================================================
 // No Operation
 // ============================================================================
 
@@ -1760,5 +1876,81 @@ mod tests {
         // RTS should pull 0xFFFF and return 0x0000 (wraps)
         let new_pc = op.execute_rts(&mut state, 0xFF, 0xFF);
         assert_eq!(new_pc, 0x0000);
+    }
+
+    // ========================================================================
+    // Branch Operation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_bcc_branch_when_carry_clear() {
+        let mut state = create_state();
+        state.p &= !FLAG_C; // Clear carry
+        let op = BCC;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bcc_no_branch_when_carry_set() {
+        let mut state = create_state();
+        state.p |= FLAG_C; // Set carry
+        let op = BCC;
+        assert!(!op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bcs_branch_when_carry_set() {
+        let mut state = create_state();
+        state.p |= FLAG_C;
+        let op = BCS;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_beq_branch_when_zero_set() {
+        let mut state = create_state();
+        state.p |= FLAG_Z;
+        let op = BEQ;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bne_branch_when_zero_clear() {
+        let mut state = create_state();
+        state.p &= !FLAG_Z;
+        let op = BNE;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bmi_branch_when_negative_set() {
+        let mut state = create_state();
+        state.p |= FLAG_N;
+        let op = BMI;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bpl_branch_when_negative_clear() {
+        let mut state = create_state();
+        state.p &= !FLAG_N;
+        let op = BPL;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bvc_branch_when_overflow_clear() {
+        let mut state = create_state();
+        state.p &= !FLAG_V;
+        let op = BVC;
+        assert!(op.execute_branch(&state));
+    }
+
+    #[test]
+    fn test_bvs_branch_when_overflow_set() {
+        let mut state = create_state();
+        state.p |= FLAG_V;
+        let op = BVS;
+        assert!(op.execute_branch(&state));
     }
 }
