@@ -535,6 +535,76 @@ impl Operation for CLV {
 }
 
 // ============================================================================
+// Stack Operations
+// ============================================================================
+
+/// PHA - Push Accumulator
+#[derive(Debug, Clone, Copy)]
+pub struct PHA;
+
+impl Operation for PHA {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for stack operations
+    }
+
+    fn execute_stack(&self, state: &mut CpuState) -> u8 {
+        let value = state.a;
+        state.sp = state.sp.wrapping_sub(1);
+        value
+    }
+}
+
+/// PHP - Push Processor Status
+#[derive(Debug, Clone, Copy)]
+pub struct PHP;
+
+impl Operation for PHP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for stack operations
+    }
+
+    fn execute_stack(&self, state: &mut CpuState) -> u8 {
+        // PHP pushes P with B (0x10) and U (0x20) flags set
+        let value = state.p | 0x30;
+        state.sp = state.sp.wrapping_sub(1);
+        value
+    }
+}
+
+/// PLA - Pull Accumulator
+#[derive(Debug, Clone, Copy)]
+pub struct PLA;
+
+impl Operation for PLA {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for stack operations
+    }
+
+    fn execute_pull(&self, state: &mut CpuState, value: u8) {
+        state.sp = state.sp.wrapping_add(1);
+        state.a = value;
+        set_flag(&mut state.p, FLAG_Z, value == 0);
+        set_flag(&mut state.p, FLAG_N, value & FLAG_N != 0);
+    }
+}
+
+/// PLP - Pull Processor Status
+#[derive(Debug, Clone, Copy)]
+pub struct PLP;
+
+impl Operation for PLP {
+    fn execute(&self, _state: &mut CpuState, _operand: u8) {
+        // Not used for stack operations
+    }
+
+    fn execute_pull(&self, state: &mut CpuState, value: u8) {
+        state.sp = state.sp.wrapping_add(1);
+        // B flag (0x10) is always clear, U flag (0x20) is always set
+        state.p = (value & !0x10) | 0x20;
+    }
+}
+
+// ============================================================================
 // Bit Test Operation
 // ============================================================================
 
@@ -1388,5 +1458,77 @@ mod tests {
         assert_eq!(result, 0xA0);
         // Then adds to A (0x10 + 0xA0 = 0xB0)
         assert_eq!(state.a, 0xB0);
+    }
+
+    // ========================================================================
+    // Stack Operation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_pha() {
+        let mut state = create_state();
+        state.a = 0x42;
+        state.sp = 0xFF;
+        let op = PHA;
+
+        // PHA should return the value to push (accumulator)
+        let value = op.execute_stack(&mut state);
+        assert_eq!(value, 0x42);
+        // SP should be decremented after push
+        assert_eq!(state.sp, 0xFE);
+    }
+
+    #[test]
+    fn test_php() {
+        let mut state = create_state();
+        state.p = 0xA5;
+        state.sp = 0xFF;
+        let op = PHP;
+
+        // PHP should return the value to push (status with B and U flags set)
+        let value = op.execute_stack(&mut state);
+        // PHP pushes P with B (0x10) and U (0x20) flags set
+        assert_eq!(value, 0xA5 | 0x30);
+        assert_eq!(state.sp, 0xFE);
+    }
+
+    #[test]
+    fn test_pla() {
+        let mut state = create_state();
+        state.a = 0x00;
+        state.sp = 0xFD;
+        let op = PLA;
+
+        // PLA should pull a value and update A and flags
+        op.execute_pull(&mut state, 0x42);
+        assert_eq!(state.a, 0x42);
+        assert_eq!(state.sp, 0xFE);
+        assert_eq!(state.p & FLAG_Z, 0);
+        assert_eq!(state.p & FLAG_N, 0);
+
+        // Test zero flag
+        op.execute_pull(&mut state, 0x00);
+        assert_eq!(state.a, 0x00);
+        assert_eq!(state.p & FLAG_Z, FLAG_Z);
+
+        // Test negative flag
+        state.sp = 0xFD;
+        op.execute_pull(&mut state, 0x80);
+        assert_eq!(state.a, 0x80);
+        assert_eq!(state.p & FLAG_N, FLAG_N);
+    }
+
+    #[test]
+    fn test_plp() {
+        let mut state = create_state();
+        state.p = 0x00;
+        state.sp = 0xFD;
+        let op = PLP;
+
+        // PLP should pull a value and update P (with B and U flags ignored)
+        op.execute_pull(&mut state, 0xFF);
+        // B (0x10) flag is always clear, U (0x20) flag is always set
+        assert_eq!(state.p, (0xFF & !0x10) | 0x20);
+        assert_eq!(state.sp, 0xFE);
     }
 }

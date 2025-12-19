@@ -165,6 +165,28 @@ pub trait Operation {
         self.execute(state, operand);
         operand
     }
+
+    /// Execute a stack push operation
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    ///
+    /// # Returns
+    /// The value to push onto the stack
+    fn execute_stack(&self, state: &mut CpuState) -> u8 {
+        // Default implementation - should not be called for non-stack operations
+        panic!("execute_stack not implemented for this operation");
+    }
+
+    /// Execute a stack pull operation
+    ///
+    /// # Arguments
+    /// * `state` - Mutable CPU state
+    /// * `value` - The value pulled from the stack
+    fn execute_pull(&self, state: &mut CpuState, value: u8) {
+        // Default implementation - should not be called for non-stack operations
+        panic!("execute_pull not implemented for this operation");
+    }
 }
 
 #[cfg(test)]

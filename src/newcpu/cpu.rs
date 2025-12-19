@@ -108,6 +108,7 @@ impl NewCpu {
     }
 
     /// Execute one CPU cycle
+    /// Returns true on every successful cycle
     pub fn tick(&mut self) -> bool {
         if self.halted {
             return false;
@@ -124,6 +125,17 @@ impl NewCpu {
         // Execute one cycle of the current instruction
         self.execute_instruction_cycle();
         true
+    }
+
+    /// Execute one CPU cycle (compat with old CPU interface)
+    /// Returns true if an instruction completed in this cycle, false otherwise
+    pub fn tick_cycle(&mut self) -> bool {
+        let was_executing = self.instruction_state.is_some();
+        self.tick();
+        let now_idle = self.instruction_state.is_none();
+        
+        // Instruction completed if we were executing and now we're idle
+        was_executing && now_idle
     }
 
     /// Fetch the next opcode and initialize instruction state
@@ -506,5 +518,21 @@ mod tests {
         // Clear I flag
         cpu.p &= !FLAG_INTERRUPT;
         assert!(cpu.should_poll_irq());
+    }
+
+    #[test]
+    fn test_tick_cycle_returns_completion() {
+        // LDA immediate: 2 cycles
+        let program = vec![0xA9, 0x42];
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+        cpu.reset();
+        
+        // First cycle: fetch opcode - instruction not complete
+        assert!(!cpu.tick_cycle());
+        
+        // Second cycle: execute - instruction complete
+        assert!(cpu.tick_cycle());
+        
+        assert_eq!(cpu.a, 0x42);
     }
 }
