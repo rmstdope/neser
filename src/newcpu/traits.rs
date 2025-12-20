@@ -301,6 +301,28 @@ pub trait Operation {
     fn inhibits_irq(&self) -> bool {
         false // Default: most operations don't inhibit IRQ
     }
+
+    /// Check if this operation is a JMP instruction.
+    ///
+    /// JMP completes immediately when addressing finishes, without an Execute phase.
+    ///
+    /// # Returns
+    /// `true` if this is JMP, `false` otherwise
+    fn is_jmp(&self) -> bool {
+        false // Default: not JMP
+    }
+
+    /// Get the value to write for Write instructions (STA, STX, STY)
+    ///
+    /// # Arguments
+    /// * `state` - CPU state containing register values
+    ///
+    /// # Returns
+    /// The byte value to write to memory
+    fn get_write_value(&self, state: &CpuState) -> u8 {
+        // Default: write accumulator (for STA)
+        state.a
+    }
 }
 
 #[cfg(test)]

@@ -6,6 +6,7 @@ mod eventloop;
 mod input;
 mod mem_controller;
 mod nes;
+mod newcpu;
 mod ppu;
 mod screen_buffer;
 

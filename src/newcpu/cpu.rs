@@ -58,6 +58,10 @@ pub struct NewCpu {
     reset_state: Option<ResetExecutionState>,
     /// Current instruction execution state
     instruction_state: Option<InstructionExecutionState>,
+    /// Flag set when an instruction completes in the current cycle
+    just_completed: bool,
+    /// PC at the start of the current instruction (for debugging/tracing)
+    pub instruction_pc: u16,
 }
 
 /// Tracks the state of RESET execution
@@ -92,6 +96,8 @@ impl NewCpu {
             reset_pending: false,
             reset_state: None,
             instruction_state: None,
+            just_completed: false,
+            instruction_pc: 0,
         }
     }
 
@@ -121,14 +127,17 @@ impl NewCpu {
     /// Execute one CPU cycle
     /// Returns true on every successful cycle
     pub fn tick(&mut self) -> bool {
-        eprintln!(
-            "DEBUG tick: halted={}, has_state={}",
-            self.halted,
-            self.instruction_state.is_some()
-        );
+        // eprintln!(
+        //     "DEBUG tick: halted={}, has_state={}",
+        //     self.halted,
+        //     self.instruction_state.is_some()
+        // );
         if self.halted {
             return false;
         }
+
+        // Clear the completion flag from the previous cycle
+        self.just_completed = false;
 
         self.total_cycles += 1;
 
@@ -151,12 +160,8 @@ impl NewCpu {
             return self.tick_reset();
         }
 
-        let was_executing = self.instruction_state.is_some();
         self.tick();
-        let now_idle = self.instruction_state.is_none();
-
-        // Instruction completed if we were executing and now we're idle
-        was_executing && now_idle
+        self.just_completed
     }
 
     /// Execute one cycle of the RESET sequence
@@ -212,11 +217,15 @@ impl NewCpu {
     }
 
     /// Fetch the next opcode and initialize instruction state
-    fn fetch_opcode(&mut self) {
+    /// This is public to allow tests to manually fetch after modifying PC
+    pub fn fetch_opcode(&mut self) {
         // Clear IRQ inhibit flag when starting a new instruction.
         // This implements the one-instruction delay: if CLI/SEI/PLP set this flag,
         // it prevents IRQ during the next instruction, then clears for the one after.
         self.irq_inhibit = false;
+
+        // Store the PC of this instruction for tracing/debugging
+        self.instruction_pc = self.pc;
 
         let opcode = self.memory.borrow().read(self.pc);
 
@@ -286,6 +295,9 @@ impl NewCpu {
                 if state.operation.inhibits_irq() {
                     self.irq_inhibit = true;
                 }
+                // Mark that an instruction just completed
+                self.just_completed = true;
+                // Clear instruction state - next tick will fetch the next opcode
                 self.instruction_state = None;
             }
         }
@@ -304,6 +316,11 @@ impl NewCpu {
     /// Check if IRQ should be polled (I flag is clear)
     pub fn should_poll_irq(&self) -> bool {
         (self.p & FLAG_INTERRUPT) == 0
+    }
+
+    /// Check if an instruction has been fetched and is ready to execute
+    pub fn has_instruction(&self) -> bool {
+        self.instruction_state.is_some()
     }
 
     /// Push a byte onto the stack
@@ -1102,22 +1119,22 @@ mod tests {
     fn test_branch_interrupt_polling_before_cycle_2() {
         // Test that branch instructions poll interrupts before cycle 2 (operand fetch)
         // Per NesDev wiki: "Interrupts are always polled before the second CPU cycle (the operand fetch)"
-        
+
         // Program: BEQ +2 (0xF0 0x02) - branch forward 2 bytes
         // At 0x8000: BEQ +2, at 0x8002: NOP, at 0x8003: NOP
         let program = vec![0xF0, 0x02, 0xEA, 0xEA]; // BEQ +2, NOP, NOP
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
         complete_reset(&mut cpu);
-        
+
         // Set Z flag so branch is taken
         cpu.p |= FLAG_ZERO;
-        
+
         // Cycle 1: Fetch BEQ opcode
         cpu.tick_cycle();
-        
+
         // Assert NMI before cycle 2 starts
         cpu.set_nmi_pending(true);
-        
+
         // Continue execution - branch should complete, then NMI should be serviced
         for _ in 0..20 {
             if cpu.tick_cycle() {
@@ -1127,9 +1144,12 @@ mod tests {
                 }
             }
         }
-        
+
         // PC should be at NMI vector, indicating interrupt was polled before cycle 2
-        assert_eq!(cpu.pc, 0x9000, "NMI should be serviced after branch completes when asserted before cycle 2");
+        assert_eq!(
+            cpu.pc, 0x9000,
+            "NMI should be serviced after branch completes when asserted before cycle 2"
+        );
     }
 
     #[test]
@@ -1137,24 +1157,24 @@ mod tests {
         // Test that branch instructions do NOT poll interrupts before cycle 3 (taken branch calculation)
         // Per NesDev wiki: "but not before the third CPU cycle on a taken branch"
         // This means if NMI is asserted during cycle 2, it won't be detected until after the branch
-        
+
         // Program: BEQ +2 (0xF0 0x02) - branch forward 2 bytes
         let program = vec![0xF0, 0x02, 0xEA, 0xEA]; // BEQ +2, NOP, NOP
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
         complete_reset(&mut cpu);
-        
+
         // Set Z flag so branch is taken
         cpu.p |= FLAG_ZERO;
-        
+
         // Cycle 1: Fetch BEQ opcode
         cpu.tick_cycle();
-        
+
         // Cycle 2: Fetch operand - this is when we SHOULD poll
         cpu.tick_cycle();
-        
+
         // After cycle 2, assert NMI (during what would be cycle 3 execution)
         cpu.set_nmi_pending(true);
-        
+
         // Continue execution - branch should complete first
         let mut instruction_count = 0;
         for _ in 0..20 {
@@ -1163,10 +1183,16 @@ mod tests {
                 // After branch completes, we should be at 0x8004 (PC was 0x8000, +2 for instruction, +2 for branch)
                 // Then NMI should be serviced on the NEXT instruction
                 if instruction_count == 1 {
-                    assert_eq!(cpu.pc, 0x8004, "Branch should complete to 0x8004 before NMI is serviced");
+                    assert_eq!(
+                        cpu.pc, 0x8004,
+                        "Branch should complete to 0x8004 before NMI is serviced"
+                    );
                 } else if cpu.pc == 0x9000 {
                     // NMI serviced after at least one more instruction
-                    assert!(instruction_count >= 2, "NMI should not be serviced until after next instruction when asserted during cycle 3");
+                    assert!(
+                        instruction_count >= 2,
+                        "NMI should not be serviced until after next instruction when asserted during cycle 3"
+                    );
                     break;
                 }
             }
@@ -1177,34 +1203,34 @@ mod tests {
     fn test_branch_polling_before_cycle_4_page_cross() {
         // Test that branch instructions poll interrupts before cycle 4 (page boundary fixup)
         // Per NesDev wiki: "for taken branches that cross a page boundary, interrupts are polled before the PCH fixup cycle"
-        
+
         // Program at 0x80FE: BEQ +5 - this will cross page boundary (0x80FE -> 0x8105)
         // We need to place the program near a page boundary
         let mut rom_data = vec![0xEA; 0x0100]; // Fill with NOPs
         rom_data[0xFE] = 0xF0; // BEQ at 0x80FE
         rom_data[0xFF] = 0x05; // offset +5
-        
+
         let mut cpu = setup_cpu_with_rom(0x8000, &rom_data);
         complete_reset(&mut cpu);
-        
+
         // Set PC to 0x80FE
         cpu.pc = 0x80FE;
-        
+
         // Set Z flag so branch is taken
         cpu.p |= FLAG_ZERO;
-        
+
         // Cycle 1: Fetch BEQ opcode at 0x80FE
         cpu.tick_cycle();
-        
+
         // Cycle 2: Fetch operand (0x05) at 0x80FF
         cpu.tick_cycle();
-        
+
         // Cycle 3: Branch taken, calculate new PC (crosses page boundary)
         cpu.tick_cycle();
-        
+
         // Assert NMI before cycle 4 (page fixup cycle)
         cpu.set_nmi_pending(true);
-        
+
         // Continue execution - NMI should be serviced after branch completes
         for _ in 0..20 {
             if cpu.tick_cycle() {
@@ -1214,8 +1240,11 @@ mod tests {
                 }
             }
         }
-        
+
         // PC should be at NMI vector, indicating interrupt was polled before cycle 4
-        assert_eq!(cpu.pc, 0x9000, "NMI should be serviced after branch completes when asserted before page fixup cycle");
+        assert_eq!(
+            cpu.pc, 0x9000,
+            "NMI should be serviced after branch completes when asserted before page fixup cycle"
+        );
     }
 }

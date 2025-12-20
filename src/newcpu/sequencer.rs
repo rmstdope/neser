@@ -128,8 +128,9 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                     }
 
                     InstructionType::Write => {
-                        // Write instructions: move to Execute for dummy read, then Writeback for write
-                        (TickResult::InProgress, InstructionPhase::Execute)
+                        // Write instructions: move to Writeback phase for the actual write
+                        // (no dummy read needed for non-indexed modes, but we still need a cycle)
+                        (TickResult::InProgress, InstructionPhase::Writeback)
                     }
 
                     InstructionType::RMW => {
@@ -143,8 +144,18 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                     }
 
                     InstructionType::Stack | InstructionType::Control => {
-                        // These need special handling in Execute phase
-                        (TickResult::InProgress, InstructionPhase::Execute)
+                        // JMP completes immediately when addressing finishes (no Execute phase needed)
+                        if operation.is_jmp() {
+                            let target_addr = state.addr.unwrap();
+                            if let Some(new_pc) = operation.execute_control(cpu_state, target_addr)
+                            {
+                                *pc = new_pc;
+                            }
+                            (TickResult::Complete, InstructionPhase::Opcode)
+                        } else {
+                            // Other control/stack operations need Execute phase
+                            (TickResult::InProgress, InstructionPhase::Execute)
+                        }
                     }
                 }
             } else {
@@ -307,8 +318,11 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                             (TickResult::Complete, InstructionPhase::Opcode)
                         }
                     } else {
-                        // Other control flow operations (handled elsewhere if needed)
-                        // For now, complete immediately
+                        // Control flow operations (JMP, JSR, RTS, RTI)
+                        let target_addr = state.addr.unwrap_or(0);
+                        if let Some(new_pc) = operation.execute_control(cpu_state, target_addr) {
+                            *pc = new_pc;
+                        }
                         (TickResult::Complete, InstructionPhase::Opcode)
                     }
                 }

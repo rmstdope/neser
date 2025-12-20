@@ -240,13 +240,13 @@ pub fn decode_opcode(
         // JMP - Jump
         0x4C => (
             Box::new(Absolute),
-            Box::new(NOP),
+            Box::new(JMP),
             InstructionType::Control,
             3,
         ),
         0x6C => (
             Box::new(Indirect),
-            Box::new(NOP),
+            Box::new(JMP),
             InstructionType::Control,
             5,
         ),

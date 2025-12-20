@@ -99,6 +99,10 @@ impl Operation for STX {
     fn execute(&self, _state: &mut CpuState, _operand: u8) {
         // Store operations don't need to do anything in execute
     }
+
+    fn get_write_value(&self, state: &CpuState) -> u8 {
+        state.x
+    }
 }
 
 /// STY - Store Y Register
@@ -108,6 +112,10 @@ pub struct STY;
 impl Operation for STY {
     fn execute(&self, _state: &mut CpuState, _operand: u8) {
         // Store operations don't need to do anything in execute
+    }
+
+    fn get_write_value(&self, state: &CpuState) -> u8 {
+        state.y
     }
 }
 
@@ -667,6 +675,10 @@ impl Operation for JMP {
     fn execute_control(&self, _state: &mut CpuState, target_addr: u16) -> Option<u16> {
         // JMP simply sets PC to the target address
         Some(target_addr)
+    }
+
+    fn is_jmp(&self) -> bool {
+        true
     }
 }
 
