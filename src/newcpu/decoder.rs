@@ -78,7 +78,7 @@ pub fn decode_opcode(
         // BCC - Branch if Carry Clear
         0x90 => (
             Box::new(Relative),
-            Box::new(NOP),
+            Box::new(BCC),
             InstructionType::Branch,
             2,
         ),
@@ -86,7 +86,7 @@ pub fn decode_opcode(
         // BCS - Branch if Carry Set
         0xB0 => (
             Box::new(Relative),
-            Box::new(NOP),
+            Box::new(BCS),
             InstructionType::Branch,
             2,
         ),
@@ -94,7 +94,7 @@ pub fn decode_opcode(
         // BEQ - Branch if Equal
         0xF0 => (
             Box::new(Relative),
-            Box::new(NOP),
+            Box::new(BEQ),
             InstructionType::Branch,
             2,
         ),
@@ -106,7 +106,7 @@ pub fn decode_opcode(
         // BMI - Branch if Minus
         0x30 => (
             Box::new(Relative),
-            Box::new(NOP),
+            Box::new(BMI),
             InstructionType::Branch,
             2,
         ),
@@ -114,7 +114,7 @@ pub fn decode_opcode(
         // BNE - Branch if Not Equal
         0xD0 => (
             Box::new(Relative),
-            Box::new(NOP),
+            Box::new(BNE),
             InstructionType::Branch,
             2,
         ),
@@ -122,7 +122,7 @@ pub fn decode_opcode(
         // BPL - Branch if Positive
         0x10 => (
             Box::new(Relative),
-            Box::new(NOP),
+            Box::new(BPL),
             InstructionType::Branch,
             2,
         ),
@@ -138,7 +138,7 @@ pub fn decode_opcode(
         // BVC - Branch if Overflow Clear
         0x50 => (
             Box::new(Relative),
-            Box::new(NOP),
+            Box::new(BVC),
             InstructionType::Branch,
             2,
         ),
@@ -146,7 +146,7 @@ pub fn decode_opcode(
         // BVS - Branch if Overflow Set
         0x70 => (
             Box::new(Relative),
-            Box::new(NOP),
+            Box::new(BVS),
             InstructionType::Branch,
             2,
         ),

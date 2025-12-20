@@ -137,7 +137,12 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                         (TickResult::InProgress, InstructionPhase::Execute)
                     }
 
-                    InstructionType::Branch | InstructionType::Stack | InstructionType::Control => {
+                    InstructionType::Branch => {
+                        // Branch instructions: move to Execute phase for branch logic
+                        (TickResult::InProgress, InstructionPhase::Execute)
+                    }
+
+                    InstructionType::Stack | InstructionType::Control => {
                         // These need special handling in Execute phase
                         (TickResult::InProgress, InstructionPhase::Execute)
                     }
@@ -199,7 +204,51 @@ pub fn tick_instruction<AM: AddressingMode + ?Sized, OP: Operation + ?Sized>(
                     }
                 }
 
-                InstructionType::Branch | InstructionType::Stack | InstructionType::Control => {
+                InstructionType::Branch => {
+                    // Branch instructions: BCC, BCS, BEQ, BNE, BMI, BPL, BVC, BVS
+                    // Cycle sequence:
+                    // 1. Fetch opcode (in Opcode phase)
+                    // 2. Fetch offset operand (in Addressing phase) - already done
+                    // 3. If branch not taken: complete (2 cycles total)
+                    //    If branch taken: calculate new PC, add 1 cycle (3 cycles)
+                    // 4. If page crossed: fix PCH, add 1 cycle (4 cycles total)
+                    //
+                    // Interrupt polling (per NesDev wiki):
+                    // - Poll before cycle 2 (operand fetch) - handled in Opcode phase
+                    // - Do NOT poll before cycle 3 (branch calculation)
+                    // - Poll before cycle 4 (page fixup) if page crossed
+
+                    // The offset was fetched and stored in temp_bytes[0] by Relative addressing
+                    let offset = state.temp_bytes[0] as i8;
+
+                    // Check if branch should be taken
+                    let branch_taken = operation.execute_branch(cpu_state);
+
+                    if !branch_taken {
+                        // Branch not taken - complete immediately (2 cycles total)
+                        (TickResult::Complete, InstructionPhase::Opcode)
+                    } else {
+                        // Branch taken - calculate new PC
+                        let old_pc = *pc;
+                        let new_pc = pc.wrapping_add(offset as u16);
+                        *pc = new_pc;
+
+                        // Check if page boundary was crossed
+                        let page_crossed = (old_pc & 0xFF00) != (new_pc & 0xFF00);
+
+                        if page_crossed {
+                            // Page crossed - need one more cycle for fixup (4 cycles total)
+                            // Interrupt will be polled at start of next instruction (cycle 4)
+                            // The actual PC is already correct, but we need to consume the extra cycle
+                            (TickResult::Complete, InstructionPhase::Opcode)
+                        } else {
+                            // No page cross - complete (3 cycles total)
+                            (TickResult::Complete, InstructionPhase::Opcode)
+                        }
+                    }
+                }
+
+                InstructionType::Stack | InstructionType::Control => {
                     // Check if this is BRK (special interrupt-like instruction)
                     if operation.is_brk() {
                         // BRK instruction sequence:

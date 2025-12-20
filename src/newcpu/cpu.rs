@@ -100,13 +100,13 @@ impl NewCpu {
         // Set flags for RESET sequence
         self.reset_pending = true;
         self.reset_state = Some(ResetExecutionState { cycle: 0 });
-        
+
         // Clear other state
         self.halted = false;
         self.nmi_pending = false;
         self.irq_inhibit = false;
         self.instruction_state = None;
-        
+
         // RESET sequence will execute over 7 cycles via tick_cycle()
         // Don't increment total_cycles here - let the tick logic do it
     }
@@ -150,7 +150,7 @@ impl NewCpu {
         if self.reset_pending {
             return self.tick_reset();
         }
-        
+
         let was_executing = self.instruction_state.is_some();
         self.tick();
         let now_idle = self.instruction_state.is_none();
@@ -163,15 +163,15 @@ impl NewCpu {
     /// Returns true when RESET completes
     fn tick_reset(&mut self) -> bool {
         self.total_cycles += 1;
-        
+
         let state = self.reset_state.as_mut().unwrap();
         let cycle = state.cycle;
-        
+
         // RESET sequence (7 cycles):
         // Cycle 0-1: Internal operations
         // Cycle 2-4: Attempt to push PC high, PC low, and P (reads instead of writes, SP decrements)
         // Cycle 5-6: Fetch reset vector from $FFFC/$FFFD
-        
+
         match cycle {
             0 | 1 => {
                 // Internal operations
@@ -197,7 +197,7 @@ impl NewCpu {
                 let hi = self.memory.borrow().read(RESET_VECTOR + 1);
                 // Combine with low byte
                 self.pc = (self.pc & 0x00FF) | ((hi as u16) << 8);
-                
+
                 // RESET complete
                 self.reset_pending = false;
                 self.reset_state = None;
@@ -205,7 +205,7 @@ impl NewCpu {
             }
             _ => unreachable!("Invalid RESET cycle: {}", cycle),
         }
-        
+
         // Increment cycle counter
         state.cycle += 1;
         false
@@ -236,10 +236,6 @@ impl NewCpu {
     /// Execute one cycle of the current instruction
     fn execute_instruction_cycle(&mut self) {
         let state = self.instruction_state.as_mut().unwrap();
-        eprintln!(
-            "DEBUG execute_instruction_cycle: phase={:?}, type={:?}",
-            state.phase, state.instruction_type
-        );
 
         // Create CpuState for operations
         let mut cpu_state = CpuState {
@@ -413,6 +409,12 @@ mod tests {
         prg_rom[0x3FFC] = (reset_addr & 0xFF) as u8; // Low byte
         prg_rom[0x3FFD] = (reset_addr >> 8) as u8; // High byte
 
+        // Set NMI vector to 0x9000 for tests
+        // NMI vector is at 0xFFFA-0xFFFB
+        // For 16KB ROM: (0xFFFA - 0x8000) % 0x4000 = 0x3FFA
+        prg_rom[0x3FFA] = 0x00; // Low byte (0x9000)
+        prg_rom[0x3FFB] = 0x90; // High byte
+
         // Create CHR ROM (8KB)
         let chr_rom = vec![0; 0x2000];
 
@@ -424,6 +426,8 @@ mod tests {
 
     /// Helper function to complete a RESET sequence
     fn complete_reset(cpu: &mut NewCpu) {
+        // Trigger RESET
+        cpu.reset();
         // Execute all 7 cycles of the RESET sequence
         for _ in 0..7 {
             cpu.tick_cycle();
@@ -1021,24 +1025,24 @@ mod tests {
         // Program doesn't matter since reset jumps to reset vector
         let program = vec![0xEA]; // NOP
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
-        
+
         // Set initial SP to a known value
         cpu.sp = 0xFD;
         let sp_before = cpu.sp;
-        
+
         // Fill stack area with known values to verify no writes occur
         for i in 0..=255 {
             cpu.memory.borrow_mut().write(0x0100 + i, 0xFF, false);
         }
-        
+
         // Trigger reset
         cpu.reset();
-        
+
         // RESET should be pending but not complete yet
         assert_eq!(cpu.total_cycles, 0, "No cycles should have elapsed yet");
-        
+
         let cycles_before = cpu.total_cycles;
-        
+
         // Execute cycles - reset takes 7 cycles
         for i in 0..7 {
             cpu.tick_cycle();
@@ -1048,32 +1052,32 @@ mod tests {
                 "Cycle count should increment"
             );
         }
-        
+
         // After 7 cycles, reset should be complete
         assert_eq!(
             cpu.total_cycles,
             cycles_before + 7,
             "RESET should take exactly 7 cycles"
         );
-        
+
         // SP should have decremented by 3 (like IRQ/NMI but without writes)
         assert_eq!(
             cpu.sp,
             sp_before.wrapping_sub(3),
             "SP should decrement by 3 during RESET"
         );
-        
+
         // I flag should be set
         assert_eq!(
             cpu.p & FLAG_INTERRUPT,
             FLAG_INTERRUPT,
             "I flag should be set after RESET"
         );
-        
+
         // PC should be loaded from reset vector
         // Reset vector is at 0xFFFC/0xFFFD, should point to 0x8000
         assert_eq!(cpu.pc, 0x8000, "PC should be loaded from reset vector");
-        
+
         // Verify no writes occurred during RESET
         // Stack would have been written at sp, sp-1, sp-2 (0xFD, 0xFC, 0xFB)
         // All should still contain 0xFF
@@ -1092,5 +1096,126 @@ mod tests {
             0xFF,
             "No write should occur at stack location 0x01FB"
         );
+    }
+
+    #[test]
+    fn test_branch_interrupt_polling_before_cycle_2() {
+        // Test that branch instructions poll interrupts before cycle 2 (operand fetch)
+        // Per NesDev wiki: "Interrupts are always polled before the second CPU cycle (the operand fetch)"
+        
+        // Program: BEQ +2 (0xF0 0x02) - branch forward 2 bytes
+        // At 0x8000: BEQ +2, at 0x8002: NOP, at 0x8003: NOP
+        let program = vec![0xF0, 0x02, 0xEA, 0xEA]; // BEQ +2, NOP, NOP
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+        complete_reset(&mut cpu);
+        
+        // Set Z flag so branch is taken
+        cpu.p |= FLAG_ZERO;
+        
+        // Cycle 1: Fetch BEQ opcode
+        cpu.tick_cycle();
+        
+        // Assert NMI before cycle 2 starts
+        cpu.set_nmi_pending(true);
+        
+        // Continue execution - branch should complete, then NMI should be serviced
+        for _ in 0..20 {
+            if cpu.tick_cycle() {
+                // Check if we've jumped to NMI vector
+                if cpu.pc == 0x9000 {
+                    break;
+                }
+            }
+        }
+        
+        // PC should be at NMI vector, indicating interrupt was polled before cycle 2
+        assert_eq!(cpu.pc, 0x9000, "NMI should be serviced after branch completes when asserted before cycle 2");
+    }
+
+    #[test]
+    fn test_branch_no_polling_before_cycle_3() {
+        // Test that branch instructions do NOT poll interrupts before cycle 3 (taken branch calculation)
+        // Per NesDev wiki: "but not before the third CPU cycle on a taken branch"
+        // This means if NMI is asserted during cycle 2, it won't be detected until after the branch
+        
+        // Program: BEQ +2 (0xF0 0x02) - branch forward 2 bytes
+        let program = vec![0xF0, 0x02, 0xEA, 0xEA]; // BEQ +2, NOP, NOP
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+        complete_reset(&mut cpu);
+        
+        // Set Z flag so branch is taken
+        cpu.p |= FLAG_ZERO;
+        
+        // Cycle 1: Fetch BEQ opcode
+        cpu.tick_cycle();
+        
+        // Cycle 2: Fetch operand - this is when we SHOULD poll
+        cpu.tick_cycle();
+        
+        // After cycle 2, assert NMI (during what would be cycle 3 execution)
+        cpu.set_nmi_pending(true);
+        
+        // Continue execution - branch should complete first
+        let mut instruction_count = 0;
+        for _ in 0..20 {
+            if cpu.tick_cycle() {
+                instruction_count += 1;
+                // After branch completes, we should be at 0x8004 (PC was 0x8000, +2 for instruction, +2 for branch)
+                // Then NMI should be serviced on the NEXT instruction
+                if instruction_count == 1 {
+                    assert_eq!(cpu.pc, 0x8004, "Branch should complete to 0x8004 before NMI is serviced");
+                } else if cpu.pc == 0x9000 {
+                    // NMI serviced after at least one more instruction
+                    assert!(instruction_count >= 2, "NMI should not be serviced until after next instruction when asserted during cycle 3");
+                    break;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_branch_polling_before_cycle_4_page_cross() {
+        // Test that branch instructions poll interrupts before cycle 4 (page boundary fixup)
+        // Per NesDev wiki: "for taken branches that cross a page boundary, interrupts are polled before the PCH fixup cycle"
+        
+        // Program at 0x80FE: BEQ +5 - this will cross page boundary (0x80FE -> 0x8105)
+        // We need to place the program near a page boundary
+        let mut rom_data = vec![0xEA; 0x0100]; // Fill with NOPs
+        rom_data[0xFE] = 0xF0; // BEQ at 0x80FE
+        rom_data[0xFF] = 0x05; // offset +5
+        
+        let mut cpu = setup_cpu_with_rom(0x8000, &rom_data);
+        complete_reset(&mut cpu);
+        
+        // Set PC to 0x80FE
+        cpu.pc = 0x80FE;
+        
+        // Set Z flag so branch is taken
+        cpu.p |= FLAG_ZERO;
+        
+        // Cycle 1: Fetch BEQ opcode at 0x80FE
+        cpu.tick_cycle();
+        
+        // Cycle 2: Fetch operand (0x05) at 0x80FF
+        cpu.tick_cycle();
+        
+        // Cycle 3: Branch taken, calculate new PC (crosses page boundary)
+        cpu.tick_cycle();
+        
+        // Assert NMI before cycle 4 (page fixup cycle)
+        cpu.set_nmi_pending(true);
+        
+        // Continue execution - NMI should be serviced after branch completes
+        for _ in 0..20 {
+            if cpu.tick_cycle() {
+                // Check if we've jumped to NMI vector
+                if cpu.pc == 0x9000 {
+                    break;
+                }
+            }
+        }
+        
+        // PC should be at NMI vector, indicating interrupt was polled before cycle 4
+        assert_eq!(cpu.pc, 0x9000, "NMI should be serviced after branch completes when asserted before page fixup cycle");
     }
 }

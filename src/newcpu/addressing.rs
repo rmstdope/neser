@@ -569,20 +569,15 @@ impl AddressingMode for Relative {
     ) -> Option<u16> {
         match cycle {
             0 => {
-                // Fetch signed offset
-                let offset = read_fn(*pc) as i8;
+                // Fetch signed offset and store in temp_bytes for branch logic
+                let offset = read_fn(*pc);
+                state.temp_bytes[0] = offset;
                 *pc = pc.wrapping_add(1);
 
-                // Calculate target address
-                let target = if offset >= 0 {
-                    pc.wrapping_add(offset as u16)
-                } else {
-                    pc.wrapping_sub((-offset) as u16)
-                };
-
-                state.base_addr = Some(*pc); // Store PC for page cross detection
-                state.addr = Some(target);
-                Some(target)
+                // For branch instructions, return the offset as a pseudo-address
+                // The actual branch logic happens in the Execute phase
+                // Return Some to indicate addressing is complete
+                Some(offset as u16)
             }
             _ => panic!("Relative addressing mode only takes 1 cycle"),
         }
@@ -974,8 +969,9 @@ mod tests {
 
         let result = mode.tick_addressing(0, &mut pc, 0, 0, &mut state, &read_fn);
 
-        // PC after fetch = 0x8001, +0x10 = 0x8011
-        assert_eq!(result, Some(0x8011));
+        // Should store offset in temp_bytes and return the offset as u16
+        assert_eq!(result, Some(0x10));
+        assert_eq!(state.temp_bytes[0], 0x10);
         assert_eq!(pc, 0x8001);
     }
 
@@ -988,7 +984,8 @@ mod tests {
 
         let result = mode.tick_addressing(0, &mut pc, 0, 0, &mut state, &read_fn);
 
-        // PC after fetch = 0x8001, -16 = 0x7FF1
-        assert_eq!(result, Some(0x7FF1));
+        // Should store offset in temp_bytes and return the offset as u16
+        assert_eq!(result, Some(0xF0));
+        assert_eq!(state.temp_bytes[0], 0xF0);
     }
 }
