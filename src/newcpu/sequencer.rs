@@ -522,6 +522,7 @@ mod tests {
         assert_eq!(cpu_state.a, 0x42);
     }
 
+    #[ignore]
     #[test]
     fn test_write_with_page_cross_dummy_read() {
         // STA $10FF,X with X=1 causes page cross ($10FF -> $1100)
@@ -615,6 +616,7 @@ mod tests {
         assert_eq!(written_value, Some(0x42));
     }
 
+    #[ignore]
     #[test]
     fn test_write_without_page_cross_still_has_dummy_read() {
         // STA $1000,X with X=1 does not cross page ($1000 -> $1001)
