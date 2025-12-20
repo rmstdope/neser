@@ -52,8 +52,17 @@ pub struct NewCpu {
     pub nmi_pending: bool,
     /// IRQ inhibit flag (delays IRQ by one instruction after CLI/SEI/PLP)
     irq_inhibit: bool,
+    /// RESET pending flag
+    reset_pending: bool,
+    /// RESET execution state
+    reset_state: Option<ResetExecutionState>,
     /// Current instruction execution state
     instruction_state: Option<InstructionExecutionState>,
+}
+
+/// Tracks the state of RESET execution
+struct ResetExecutionState {
+    cycle: u8, // Which cycle of the 7-cycle sequence (0-6)
 }
 
 /// Tracks the state of an instruction being executed
@@ -80,29 +89,26 @@ impl NewCpu {
             total_cycles: 0,
             nmi_pending: false,
             irq_inhibit: false,
+            reset_pending: false,
+            reset_state: None,
             instruction_state: None,
         }
     }
 
     /// Reset the CPU to initial state
     pub fn reset(&mut self) {
-        // Set I flag
-        self.p |= FLAG_INTERRUPT;
-
-        // Subtract 3 from SP
-        self.sp = self.sp.wrapping_sub(3);
-
-        // Clear state
+        // Set flags for RESET sequence
+        self.reset_pending = true;
+        self.reset_state = Some(ResetExecutionState { cycle: 0 });
+        
+        // Clear other state
         self.halted = false;
         self.nmi_pending = false;
         self.irq_inhibit = false;
         self.instruction_state = None;
-
-        // Read reset vector and set PC
-        self.pc = self.read_reset_vector();
-
-        // Reset takes 7 cycles
-        self.total_cycles = 7;
+        
+        // RESET sequence will execute over 7 cycles via tick_cycle()
+        // Don't increment total_cycles here - let the tick logic do it
     }
 
     /// Read the reset vector from memory
@@ -140,12 +146,69 @@ impl NewCpu {
     /// Execute one CPU cycle (compat with old CPU interface)
     /// Returns true if an instruction completed in this cycle, false otherwise
     pub fn tick_cycle(&mut self) -> bool {
+        // Handle RESET sequence if pending
+        if self.reset_pending {
+            return self.tick_reset();
+        }
+        
         let was_executing = self.instruction_state.is_some();
         self.tick();
         let now_idle = self.instruction_state.is_none();
 
         // Instruction completed if we were executing and now we're idle
         was_executing && now_idle
+    }
+
+    /// Execute one cycle of the RESET sequence
+    /// Returns true when RESET completes
+    fn tick_reset(&mut self) -> bool {
+        self.total_cycles += 1;
+        
+        let state = self.reset_state.as_mut().unwrap();
+        let cycle = state.cycle;
+        
+        // RESET sequence (7 cycles):
+        // Cycle 0-1: Internal operations
+        // Cycle 2-4: Attempt to push PC high, PC low, and P (reads instead of writes, SP decrements)
+        // Cycle 5-6: Fetch reset vector from $FFFC/$FFFD
+        
+        match cycle {
+            0 | 1 => {
+                // Internal operations
+                if cycle == 0 {
+                    // Set I flag on first cycle
+                    self.p |= FLAG_INTERRUPT;
+                }
+            }
+            2 | 3 | 4 => {
+                // Suppress writes (do reads instead), but still decrement SP
+                // Read from stack to match hardware behavior (open bus)
+                let _dummy_read = self.memory.borrow().read(0x0100 + self.sp as u16);
+                self.sp = self.sp.wrapping_sub(1);
+            }
+            5 => {
+                // Read low byte of reset vector
+                let lo = self.memory.borrow().read(RESET_VECTOR);
+                // Store in temporary (we'll combine in cycle 6)
+                self.pc = lo as u16;
+            }
+            6 => {
+                // Read high byte of reset vector
+                let hi = self.memory.borrow().read(RESET_VECTOR + 1);
+                // Combine with low byte
+                self.pc = (self.pc & 0x00FF) | ((hi as u16) << 8);
+                
+                // RESET complete
+                self.reset_pending = false;
+                self.reset_state = None;
+                return true;
+            }
+            _ => unreachable!("Invalid RESET cycle: {}", cycle),
+        }
+        
+        // Increment cycle counter
+        state.cycle += 1;
+        false
     }
 
     /// Fetch the next opcode and initialize instruction state
@@ -359,6 +422,14 @@ mod tests {
         cpu
     }
 
+    /// Helper function to complete a RESET sequence
+    fn complete_reset(cpu: &mut NewCpu) {
+        // Execute all 7 cycles of the RESET sequence
+        for _ in 0..7 {
+            cpu.tick_cycle();
+        }
+    }
+
     #[test]
     fn test_new_cpu_initial_state() {
         let cpu = setup_cpu();
@@ -379,6 +450,7 @@ mod tests {
         let mut cpu = setup_cpu_with_rom(0x8000, &[]);
 
         cpu.reset();
+        complete_reset(&mut cpu);
 
         assert_eq!(cpu.pc, 0x8000);
         assert_eq!(cpu.sp, 0xFD); // 0x00 - 3 = 0xFD
@@ -392,6 +464,7 @@ mod tests {
     fn test_tick_executes_single_cycle() {
         let mut cpu = setup_cpu_with_rom(0x8000, &[]);
         cpu.reset();
+        complete_reset(&mut cpu);
 
         let initial_cycles = cpu.total_cycles();
         cpu.tick();
@@ -417,6 +490,7 @@ mod tests {
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
 
         cpu.reset();
+        complete_reset(&mut cpu);
 
         assert_eq!(cpu.pc, 0x8000);
         assert_eq!(cpu.a, 0);
@@ -456,6 +530,7 @@ mod tests {
     fn test_trigger_nmi() {
         let mut cpu = setup_cpu_with_rom(0x8000, &[]);
         cpu.reset();
+        complete_reset(&mut cpu);
 
         // Set up NMI vector to point to 0x9000
         let mut prg_rom = vec![0; 0x4000];
@@ -489,6 +564,7 @@ mod tests {
     fn test_trigger_irq_when_enabled() {
         let mut cpu = setup_cpu_with_rom(0x8000, &[]);
         cpu.reset();
+        complete_reset(&mut cpu);
 
         // Set up IRQ vector to point to 0xA000
         let mut prg_rom = vec![0; 0x4000];
@@ -519,6 +595,7 @@ mod tests {
     fn test_trigger_irq_when_disabled() {
         let mut cpu = setup_cpu_with_rom(0x8000, &[]);
         cpu.reset();
+        complete_reset(&mut cpu);
 
         // I flag is set by reset, so IRQ should be disabled
         assert_eq!(cpu.p & FLAG_INTERRUPT, FLAG_INTERRUPT);
@@ -558,6 +635,7 @@ mod tests {
         let program = vec![0xA9, 0x42];
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
         cpu.reset();
+        complete_reset(&mut cpu);
 
         // First cycle: fetch opcode - instruction not complete
         assert!(!cpu.tick_cycle());
@@ -583,6 +661,7 @@ mod tests {
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
 
         cpu.reset();
+        complete_reset(&mut cpu);
         let initial_sp = cpu.sp;
 
         // Execute BRK instruction
@@ -628,6 +707,7 @@ mod tests {
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
 
         cpu.reset();
+        complete_reset(&mut cpu);
 
         // Execute BRK instruction while setting NMI pending during execution
         // BRK takes 7 cycles:
@@ -682,6 +762,7 @@ mod tests {
 
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
         cpu.reset();
+        complete_reset(&mut cpu);
 
         // Set I flag initially (interrupts disabled)
         cpu.p |= FLAG_INTERRUPT;
@@ -741,6 +822,7 @@ mod tests {
         let program = vec![0xF8, 0x69, 0x09];
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
         cpu.reset();
+        complete_reset(&mut cpu);
         cpu.a = 0;
 
         // Execute SED
@@ -772,6 +854,7 @@ mod tests {
         let program2 = vec![0x00, 0x00, 0x00, 0x69, 0x09]; // ADC #$09 at 0x8003
         let mut cpu2 = setup_cpu_with_rom(0x8000, &program2);
         cpu2.reset();
+        complete_reset(&mut cpu2);
         cpu2.pc = 0x8003;
         cpu2.a = 0x09;
         cpu2.p |= FLAG_DECIMAL; // Set D flag
@@ -793,6 +876,7 @@ mod tests {
         let program = vec![0xF8, 0x38, 0xE9, 0x05];
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
         cpu.reset();
+        complete_reset(&mut cpu);
         cpu.a = 0x10; // 16 in binary
 
         // Execute SED
@@ -833,6 +917,7 @@ mod tests {
         let program = vec![0xF8, 0xEA, 0xD8];
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
         cpu.reset();
+        complete_reset(&mut cpu);
 
         // Initially D flag should be clear
         assert_eq!(cpu.p & FLAG_DECIMAL, 0, "D flag should be clear initially");
@@ -877,6 +962,7 @@ mod tests {
         let program = vec![0xF8, 0x08, 0xD8, 0x28];
         let mut cpu = setup_cpu_with_rom(0x8000, &program);
         cpu.reset();
+        complete_reset(&mut cpu);
 
         // Execute SED
         for _ in 0..10 {
@@ -926,6 +1012,85 @@ mod tests {
         assert_eq!(
             cpu.sp, sp_before_php,
             "Stack pointer should return to original"
+        );
+    }
+
+    #[test]
+    fn test_reset_cycle_accurate() {
+        // Test that RESET executes over 7 cycles, suppresses writes, and decrements SP by 3
+        // Program doesn't matter since reset jumps to reset vector
+        let program = vec![0xEA]; // NOP
+        let mut cpu = setup_cpu_with_rom(0x8000, &program);
+        
+        // Set initial SP to a known value
+        cpu.sp = 0xFD;
+        let sp_before = cpu.sp;
+        
+        // Fill stack area with known values to verify no writes occur
+        for i in 0..=255 {
+            cpu.memory.borrow_mut().write(0x0100 + i, 0xFF, false);
+        }
+        
+        // Trigger reset
+        cpu.reset();
+        
+        // RESET should be pending but not complete yet
+        assert_eq!(cpu.total_cycles, 0, "No cycles should have elapsed yet");
+        
+        let cycles_before = cpu.total_cycles;
+        
+        // Execute cycles - reset takes 7 cycles
+        for i in 0..7 {
+            cpu.tick_cycle();
+            assert_eq!(
+                cpu.total_cycles,
+                cycles_before + i + 1,
+                "Cycle count should increment"
+            );
+        }
+        
+        // After 7 cycles, reset should be complete
+        assert_eq!(
+            cpu.total_cycles,
+            cycles_before + 7,
+            "RESET should take exactly 7 cycles"
+        );
+        
+        // SP should have decremented by 3 (like IRQ/NMI but without writes)
+        assert_eq!(
+            cpu.sp,
+            sp_before.wrapping_sub(3),
+            "SP should decrement by 3 during RESET"
+        );
+        
+        // I flag should be set
+        assert_eq!(
+            cpu.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "I flag should be set after RESET"
+        );
+        
+        // PC should be loaded from reset vector
+        // Reset vector is at 0xFFFC/0xFFFD, should point to 0x8000
+        assert_eq!(cpu.pc, 0x8000, "PC should be loaded from reset vector");
+        
+        // Verify no writes occurred during RESET
+        // Stack would have been written at sp, sp-1, sp-2 (0xFD, 0xFC, 0xFB)
+        // All should still contain 0xFF
+        assert_eq!(
+            cpu.memory.borrow().read(0x01FD),
+            0xFF,
+            "No write should occur at stack location 0x01FD"
+        );
+        assert_eq!(
+            cpu.memory.borrow().read(0x01FC),
+            0xFF,
+            "No write should occur at stack location 0x01FC"
+        );
+        assert_eq!(
+            cpu.memory.borrow().read(0x01FB),
+            0xFF,
+            "No write should occur at stack location 0x01FB"
         );
     }
 }
