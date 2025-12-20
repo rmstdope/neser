@@ -6,6 +6,7 @@ pub mod audio;
 pub mod blargg_tests;
 pub mod cartridge;
 pub mod cpu;
+pub mod cpu2; // Second attempt at cycle-accurate CPU
 pub mod eventloop;
 pub mod input;
 pub mod mem_controller;
