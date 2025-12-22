@@ -30,6 +30,15 @@ fn set_carry_flag(p: &mut u8, carry: bool) {
     *p = (*p & !FLAG_CARRY) | if carry { FLAG_CARRY } else { 0 };
 }
 
+/// Helper function to perform arithmetic shift left
+/// Returns the shifted value and sets the carry flag based on bit 7
+#[inline]
+fn shift_left(value: u8) -> (u8, bool) {
+    let carry = (value & 0x80) != 0;
+    let shifted = value << 1;
+    (shifted, carry)
+}
+
 /// JSR - Jump to Subroutine
 ///
 /// Pushes the address of the next instruction minus 1 onto the stack
@@ -242,6 +251,58 @@ impl InstructionType for Brk {
                 let pch = memory.borrow().read(IRQ_VECTOR + 1);
                 cpu_state.pc |= (pch as u16) << 8;
                 self.cycle = 6;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// PHP - Push Processor Status
+///
+/// Pushes a copy of the status register (with B and unused flags set) onto the stack.
+///
+/// Addressing mode: Implied
+/// Cycles: 3
+///   1. Internal operation (increment PC, prepare for push)
+///   2. Push status register to stack
+///   3. Complete
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Php {
+    cycle: u8,
+}
+
+impl Php {
+    /// Create a new PHP instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Php {
+    fn is_done(&self) -> bool {
+        self.cycle == 2
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 2, "Php::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Internal operation (does nothing, overlaps with fetch)
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Push status register with B and unused flags set
+                let status = cpu_state.p | FLAG_BREAK | FLAG_UNUSED;
+                let stack_addr = 0x0100 | (cpu_state.sp as u16);
+                memory.borrow_mut().write(stack_addr, status, false);
+                cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+                self.cycle = 2;
             }
             _ => unreachable!(),
         }
@@ -570,21 +631,19 @@ impl InstructionType for Slo {
             }
             3 => {
                 // Cycle 4: Shift left, write back, OR with accumulator
-                // ASL operation: shift left, bit 7 goes to carry
-                let carry = (self.value & 0x80) != 0;
-                let shifted = self.value << 1;
-                
+                let (shifted, carry) = shift_left(self.value);
+
                 // Write shifted value back to memory
                 memory.borrow_mut().write(self.address, shifted, false);
-                
+
                 // OR with accumulator
                 cpu_state.a |= shifted;
-                
+
                 // Set flags based on accumulator result
                 set_zero_flag(&mut cpu_state.p, cpu_state.a);
                 set_negative_flag(&mut cpu_state.p, cpu_state.a);
                 set_carry_flag(&mut cpu_state.p, carry);
-                
+
                 self.cycle = 4;
             }
             _ => unreachable!(),
@@ -628,7 +687,7 @@ impl InstructionType for Dop {
         addressing_mode: &dyn super::traits::AddressingMode,
     ) {
         debug_assert!(self.cycle < 2, "Dop::tick called after already done");
-        
+
         match self.cycle {
             0 => {
                 // Cycle 1: Does nothing (overlaps with addressing completion)
@@ -640,6 +699,81 @@ impl InstructionType for Dop {
                 let _value = memory.borrow().read(address);
                 // Value is intentionally ignored - this is a no-op
                 self.cycle = 2;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// ASL - Arithmetic Shift Left
+///
+/// Shifts all bits left one position. Bit 0 is set to 0 and bit 7 is placed in the carry flag.
+/// This is a Read-Modify-Write instruction.
+///
+/// Operation: M = M << 1 (or A = A << 1 for accumulator mode)
+/// Flags: N, Z, C
+///
+/// Cycles: 4 (after addressing completes)
+///   0. First cycle overlaps with addressing completion (does nothing)
+///   1. Read value from memory
+///   2. Write original value back (dummy write)
+///   3. Write modified value, set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Asl {
+    cycle: u8,
+    address: u16,
+    value: u8,
+}
+
+impl Asl {
+    /// Create a new ASL instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Asl {
+    fn is_done(&self) -> bool {
+        self.cycle == 4
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 4, "Asl::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Does nothing (overlaps with addressing completion)
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Read value from memory
+                self.address = addressing_mode.get_address();
+                self.value = memory.borrow().read(self.address);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Write original value back (dummy write)
+                memory.borrow_mut().write(self.address, self.value, false);
+                self.cycle = 3;
+            }
+            3 => {
+                // Cycle 4: Shift left and write back
+                let (shifted, carry) = shift_left(self.value);
+
+                // Write shifted value back to memory
+                memory.borrow_mut().write(self.address, shifted, false);
+
+                // Set flags based on result
+                set_zero_flag(&mut cpu_state.p, shifted);
+                set_negative_flag(&mut cpu_state.p, shifted);
+                set_carry_flag(&mut cpu_state.p, carry);
+
+                self.cycle = 4;
             }
             _ => unreachable!(),
         }
