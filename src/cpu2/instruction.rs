@@ -34,7 +34,8 @@ impl Instruction {
     ///
     /// Coordinates between addressing mode and instruction execution:
     /// 1. First, ticks the addressing mode until it's done
-    /// 2. Then, ticks the instruction type until it's done
+    /// 2. Then, ticks the instruction type until it's done. Note that first tick is done on the same cycle
+    /// as the final addressing mode tick
     pub fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
         debug_assert!(
             !self.is_done(),
@@ -46,8 +47,10 @@ impl Instruction {
             self.addressing_mode.tick(cpu_state, Rc::clone(&memory));
         }
         // Once addressing is done, execute the instruction
-        else if !self.instruction_type.is_done() {
-            self.instruction_type.tick(cpu_state, memory);
+        // Note that the first tick is done on the same cycle as the final addressing mode tick
+        if self.addressing_mode.is_done() {
+            self.instruction_type
+                .tick(cpu_state, memory, self.addressing_mode.as_ref());
         }
     }
 

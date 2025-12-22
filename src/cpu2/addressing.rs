@@ -512,13 +512,12 @@ impl AddressingMode for Indirect {
 /// Then a 16-bit pointer is read from that zero-page location.
 /// Examples: LDA ($20,X)
 ///
-/// Cycles: 6
+/// Cycles: 5 (addressing completes, then instruction executes on cycle 6)
 ///   1. Fetch zero-page base address from PC
-///   2. Add X register to base (internal operation)
-///   3. Dummy cycle (CPU performs internal operations)
-///   4. Read pointer low byte from (base+X) in zero page
-///   5. Read pointer high byte from (base+X+1) in zero page
-///   6. Final preparation cycle
+///   2. Dummy read at zero page address, add X register to base
+///   3. Read pointer low byte from (base+X) in zero page
+///   4. Read pointer high byte from (base+X+1) in zero page
+///   5. Addressing complete (instruction reads and operates on cycle 6)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IndexedIndirect {
     cycle: u8,
@@ -535,12 +534,12 @@ impl IndexedIndirect {
 
 impl AddressingMode for IndexedIndirect {
     fn is_done(&self) -> bool {
-        self.cycle == 6
+        self.cycle == 4
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
         debug_assert!(
-            self.cycle < 6,
+            self.cycle < 4,
             "IndexedIndirect::tick called after already done"
         );
 
@@ -554,29 +553,22 @@ impl AddressingMode for IndexedIndirect {
                 self.cycle = 1;
             }
             1 => {
-                // Cycle 2: Internal operation (addition of X to base, already done above)
+                // Cycle 2: Dummy read at zero page base address (CPU performs internal X addition)
+                let _ = memory.borrow().read(self.pointer_addr as u16);
                 self.cycle = 2;
             }
             2 => {
-                // Cycle 3: Dummy cycle for internal operations
+                // Cycle 3: Read low byte of pointer from zero page
+                let low = memory.borrow().read(self.pointer_addr as u16);
+                self.address = low as u16;
                 self.cycle = 3;
             }
             3 => {
-                // Cycle 4: Read low byte of pointer from zero page
-                let low = memory.borrow().read(self.pointer_addr as u16);
-                self.address = low as u16;
-                self.cycle = 4;
-            }
-            4 => {
-                // Cycle 5: Read high byte of pointer from zero page (wraps within zero page)
+                // Cycle 4: Read high byte of pointer from zero page (wraps within zero page)
                 let high_addr = self.pointer_addr.wrapping_add(1);
                 let high = memory.borrow().read(high_addr as u16);
                 self.address |= (high as u16) << 8;
-                self.cycle = 5;
-            }
-            5 => {
-                // Cycle 6: Final cycle
-                self.cycle = 6;
+                self.cycle = 4;
             }
             _ => unreachable!(),
         }
@@ -584,7 +576,7 @@ impl AddressingMode for IndexedIndirect {
 
     fn get_address(&self) -> u16 {
         debug_assert!(
-            self.cycle == 6,
+            self.cycle == 4,
             "IndexedIndirect::get_address called before addressing complete"
         );
         self.address
@@ -1631,14 +1623,14 @@ mod new_tests {
 
         let mut mode = IndexedIndirect::new();
 
-        for i in 1..=6 {
+        for i in 1..=4 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
-            if i < 6 {
+            if i < 4 {
                 assert!(!mode.is_done(), "Should not be done after tick {}", i);
             }
         }
 
-        assert!(mode.is_done(), "Should be done after six ticks");
+        assert!(mode.is_done(), "Should be done after four ticks");
         assert_eq!(mode.get_address(), 0x1234, "Should return correct address");
     }
 
@@ -1680,11 +1672,11 @@ mod new_tests {
 
         let mut mode = IndexedIndirect::new();
 
-        for _ in 0..6 {
+        for _ in 0..4 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
         }
 
-        assert!(mode.is_done(), "Should be done after six ticks");
+        assert!(mode.is_done(), "Should be done after four ticks");
         assert_eq!(
             mode.get_address(),
             0x5678,
@@ -1725,11 +1717,11 @@ mod new_tests {
 
         let mut mode = IndexedIndirect::new();
 
-        for _ in 0..6 {
+        for _ in 0..4 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
         }
 
-        assert!(mode.is_done(), "Should be done after six ticks");
+        assert!(mode.is_done(), "Should be done after four ticks");
         assert_eq!(
             mode.get_address(),
             0xCDAB,

@@ -4,10 +4,31 @@
 //! cycle-by-cycle following the InstructionType trait.
 
 use super::traits::InstructionType;
-use super::types::CpuState;
+use super::types::{
+    CpuState, FLAG_BREAK, FLAG_CARRY, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_UNUSED, FLAG_ZERO,
+    IRQ_VECTOR,
+};
 use crate::mem_controller::MemController;
 use std::cell::RefCell;
 use std::rc::Rc;
+
+/// Helper function to set or clear the Zero flag based on a value
+#[inline]
+fn set_zero_flag(p: &mut u8, value: u8) {
+    *p = (*p & !FLAG_ZERO) | if value == 0 { FLAG_ZERO } else { 0 };
+}
+
+/// Helper function to set or clear the Negative flag based on a value
+#[inline]
+fn set_negative_flag(p: &mut u8, value: u8) {
+    *p = (*p & !FLAG_NEGATIVE) | (value & FLAG_NEGATIVE);
+}
+
+/// Helper function to set or clear the Carry flag
+#[inline]
+fn set_carry_flag(p: &mut u8, carry: bool) {
+    *p = (*p & !FLAG_CARRY) | if carry { FLAG_CARRY } else { 0 };
+}
 
 /// JSR - Jump to Subroutine
 ///
@@ -40,7 +61,12 @@ impl InstructionType for Jsr {
         self.cycle == 6
     }
 
-    fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
         debug_assert!(self.cycle < 6, "Jsr::tick called after already done");
 
         match self.cycle {
@@ -91,10 +117,196 @@ impl InstructionType for Jsr {
     }
 }
 
+/// JMP - Jump
+///
+/// Sets PC to the target address without affecting the stack.
+///
+/// Cycles: 1
+///   1. Copy target to PC
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Jmp {
+    cycle: u8,
+}
+
+impl Jmp {
+    /// Create a new JMP
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Jmp {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Jmp::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Copy target address to PC from addressing mode
+                cpu_state.pc = addressing_mode.get_address();
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// BRK - Break / Software Interrupt
+///
+/// Pushes the return address (PC+2) and status register onto the stack,
+/// sets the I flag, and loads PC from the IRQ vector at $FFFE-$FFFF.
+///
+/// Total cycles: 7 (opcode fetch + 5 execution cycles + completion cycle)
+///   1. Opcode fetch (handled by CPU)
+///   2. Fetch next byte (padding byte, ignored)
+///   3. Push PCH (high byte of PC+2) to stack
+///   4. Push PCL (low byte of PC+2) to stack
+///   5. Push status register with B flag set to stack
+///   6. Load PCL from IRQ vector ($FFFE), set I flag
+///   7. Load PCH from IRQ vector ($FFFF) (completion handled by CPU)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Brk {
+    cycle: u8,
+    return_address: u16,
+}
+
+impl Brk {
+    /// Create a new BRK instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Brk {
+    fn is_done(&self) -> bool {
+        self.cycle == 6
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 6, "Brk::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 2: Fetch padding byte (ignored) and calculate return address (PC+2)
+                let _padding = memory.borrow().read(cpu_state.pc);
+                self.return_address = cpu_state.pc.wrapping_add(1); // PC+2 after opcode+padding
+                cpu_state.pc = cpu_state.pc.wrapping_add(1);
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 3: Push PCH (high byte of return address) to stack
+                let pch = (self.return_address >> 8) as u8;
+                let stack_addr = 0x0100 | (cpu_state.sp as u16);
+                memory.borrow_mut().write(stack_addr, pch, false);
+                cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 4: Push PCL (low byte of return address) to stack
+                let pcl = (self.return_address & 0xFF) as u8;
+                let stack_addr = 0x0100 | (cpu_state.sp as u16);
+                memory.borrow_mut().write(stack_addr, pcl, false);
+                cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+                self.cycle = 3;
+            }
+            3 => {
+                // Cycle 5: Push status register with B and unused flags set
+                let status = cpu_state.p | FLAG_BREAK | FLAG_UNUSED;
+                let stack_addr = 0x0100 | (cpu_state.sp as u16);
+                memory.borrow_mut().write(stack_addr, status, false);
+                cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+                self.cycle = 4;
+            }
+            4 => {
+                // Cycle 6: Load PCL from IRQ vector and set I flag
+                let pcl = memory.borrow().read(IRQ_VECTOR);
+                cpu_state.pc = pcl as u16;
+                cpu_state.p |= FLAG_INTERRUPT;
+                self.cycle = 5;
+            }
+            5 => {
+                // Cycle 7: Load PCH from IRQ vector
+                let pch = memory.borrow().read(IRQ_VECTOR + 1);
+                cpu_state.pc |= (pch as u16) << 8;
+                self.cycle = 6;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// ORA - Logical Inclusive OR
+///
+/// Performs a bitwise OR between the accumulator and the value at the target address,
+/// storing the result in the accumulator. Sets N and Z flags based on the result.
+///
+/// Cycles: 1
+///   1. Read value from target address, OR with A, set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Ora {
+    cycle: u8,
+}
+
+impl Ora {
+    /// Create a new ORA instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Ora {
+    fn is_done(&self) -> bool {
+        self.cycle == 2
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 2, "Ora::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Does nothing (overlaps with addressing completion)
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Read value from target address, OR with A
+                let address = addressing_mode.get_address();
+                let value = memory.borrow().read(address);
+                cpu_state.a |= value;
+
+                // Set N and Z flags based on result
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+
+                self.cycle = 2;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::apu::Apu;
+    use crate::cpu2::traits::AddressingMode;
     use crate::nes::TvSystem;
     use crate::ppu::Ppu;
 
@@ -126,8 +338,9 @@ mod tests {
         let mut jsr = Jsr::new();
 
         // Execute 6 cycles
+        let addressing_mode = crate::cpu2::addressing::Implied;
         for i in 1..=6 {
-            jsr.tick(&mut cpu_state, Rc::clone(&memory));
+            jsr.tick(&mut cpu_state, Rc::clone(&memory), &addressing_mode);
             if i < 6 {
                 assert!(!jsr.is_done(), "Should not be done after cycle {}", i);
             }
@@ -135,7 +348,10 @@ mod tests {
 
         assert!(jsr.is_done(), "Should be done after 6 cycles");
         assert_eq!(cpu_state.pc, 0x1234, "PC should be set to target address");
-        assert_eq!(cpu_state.sp, 0xFB, "Stack pointer should have decremented by 2");
+        assert_eq!(
+            cpu_state.sp, 0xFB,
+            "Stack pointer should have decremented by 2"
+        );
 
         // Check return address on stack (PC was 0x0402 when returning, so we push 0x0401)
         // Stack grows downward: PCH at 0x01FD, PCL at 0x01FC
@@ -169,8 +385,9 @@ mod tests {
 
         let mut jsr = Jsr::new();
 
+        let addressing_mode = crate::cpu2::addressing::Implied;
         for _ in 0..6 {
-            jsr.tick(&mut cpu_state, Rc::clone(&memory));
+            jsr.tick(&mut cpu_state, Rc::clone(&memory), &addressing_mode);
         }
 
         assert!(jsr.is_done());
@@ -204,12 +421,227 @@ mod tests {
 
         let mut jsr = Jsr::new();
 
+        let addressing_mode = crate::cpu2::addressing::Implied;
         for _ in 0..6 {
-            jsr.tick(&mut cpu_state, Rc::clone(&memory));
+            jsr.tick(&mut cpu_state, Rc::clone(&memory), &addressing_mode);
         }
 
         assert!(jsr.is_done());
         assert_eq!(cpu_state.pc, 0x0600);
         assert_eq!(cpu_state.sp, 0xFF, "Stack pointer should wrap around");
+    }
+
+    #[test]
+    fn test_jmp_starts_not_done() {
+        let jmp = Jmp::new();
+        assert!(!jmp.is_done(), "Should not be done initially");
+    }
+
+    #[test]
+    fn test_jmp_completes_after_one_cycle() {
+        let ppu = Rc::new(RefCell::new(Ppu::new(TvSystem::Ntsc)));
+        let apu = Rc::new(RefCell::new(Apu::new()));
+        let memory = Rc::new(RefCell::new(MemController::new(ppu, apu)));
+
+        let mut cpu_state = CpuState {
+            a: 0xAA,
+            x: 0xBB,
+            y: 0xCC,
+            sp: 0xFD,
+            pc: 0x0400,
+            p: 0xDD,
+        };
+
+        let mut jmp = Jmp::new();
+
+        // Create addressing mode that will provide the target address
+        let mut absolute_addr = crate::cpu2::addressing::Absolute::new();
+        // Simulate that addressing mode has resolved to 0x1234
+        memory.borrow_mut().write(0x0400, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0401, 0x12, false); // High byte
+        // Tick addressing mode to completion
+        while !absolute_addr.is_done() {
+            absolute_addr.tick(&mut cpu_state, Rc::clone(&memory));
+        }
+
+        // Execute 1 cycle
+        jmp.tick(&mut cpu_state, Rc::clone(&memory), &absolute_addr);
+
+        assert!(jmp.is_done(), "Should be done after 1 cycle");
+        assert_eq!(cpu_state.pc, 0x1234, "PC should be set to target address");
+        assert_eq!(cpu_state.sp, 0xFD, "Stack pointer should not change");
+        assert_eq!(cpu_state.a, 0xAA, "A should not change");
+        assert_eq!(cpu_state.x, 0xBB, "X should not change");
+        assert_eq!(cpu_state.y, 0xCC, "Y should not change");
+        assert_eq!(cpu_state.p, 0xDD, "P should not change");
+    }
+}
+
+/// KIL - Halt/Jam/Kill (Illegal Opcode)
+///
+/// An illegal/undocumented opcode that halts the CPU by entering an infinite loop.
+/// The CPU becomes stuck and will not respond to interrupts (NMI still works).
+/// Used by some games to intentionally crash on copy protection failure.
+///
+/// Addressing mode: Implied
+/// This instruction never completes - it halts the CPU permanently.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Kil;
+
+impl Kil {
+    /// Create a new KIL instruction
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl InstructionType for Kil {
+    fn is_done(&self) -> bool {
+        // KIL never completes - it halts the CPU
+        false
+    }
+
+    fn tick(
+        &mut self,
+        _cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        // KIL does nothing - it just loops forever
+        // The CPU will be stuck calling tick() repeatedly
+    }
+}
+
+/// SLO - Shift Left then OR (Illegal Opcode)
+///
+/// An illegal/undocumented opcode that performs ASL on a memory location,
+/// then ORs the result with the accumulator.
+/// This is a Read-Modify-Write instruction.
+///
+/// Operation: M = M << 1, A = A | M
+/// Flags: N, Z, C
+///
+/// Cycles: 3 (after addressing completes)
+///   1. Read value from memory
+///   2. Write original value back (dummy write)
+///   3. Write modified value, update accumulator and flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Slo {
+    cycle: u8,
+    address: u16,
+    value: u8,
+}
+
+impl Slo {
+    /// Create a new SLO instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Slo {
+    fn is_done(&self) -> bool {
+        self.cycle == 4
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 4, "Slo::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Does nothing (overlaps with addressing completion)
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Read value from memory
+                self.address = addressing_mode.get_address();
+                self.value = memory.borrow().read(self.address);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Write original value back (dummy write)
+                memory.borrow_mut().write(self.address, self.value, false);
+                self.cycle = 3;
+            }
+            3 => {
+                // Cycle 4: Shift left, write back, OR with accumulator
+                // ASL operation: shift left, bit 7 goes to carry
+                let carry = (self.value & 0x80) != 0;
+                let shifted = self.value << 1;
+                
+                // Write shifted value back to memory
+                memory.borrow_mut().write(self.address, shifted, false);
+                
+                // OR with accumulator
+                cpu_state.a |= shifted;
+                
+                // Set flags based on accumulator result
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+                set_carry_flag(&mut cpu_state.p, carry);
+                
+                self.cycle = 4;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// DOP - Double NOP (Illegal Opcode)
+///
+/// An illegal/undocumented opcode that reads from memory but does nothing.
+/// It's essentially a NOP that takes an extra cycle to read a value that is ignored.
+/// Used by some programs as a skip operation (skip next byte).
+///
+/// Operation: Read value (do nothing with it)
+/// Flags: None affected
+///
+/// Cycles: 2 (after addressing completes)
+///   1. First cycle overlaps with addressing completion (does nothing)
+///   2. Read value from memory (value is discarded)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Dop {
+    cycle: u8,
+}
+
+impl Dop {
+    /// Create a new DOP instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Dop {
+    fn is_done(&self) -> bool {
+        self.cycle == 2
+    }
+
+    fn tick(
+        &mut self,
+        _cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 2, "Dop::tick called after already done");
+        
+        match self.cycle {
+            0 => {
+                // Cycle 1: Does nothing (overlaps with addressing completion)
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Read value from memory and discard it
+                let address = addressing_mode.get_address();
+                let _value = memory.borrow().read(address);
+                // Value is intentionally ignored - this is a no-op
+                self.cycle = 2;
+            }
+            _ => unreachable!(),
+        }
     }
 }

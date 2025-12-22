@@ -40,12 +40,18 @@ pub trait InstructionType {
     fn is_done(&self) -> bool;
 
     /// Ticks the instruction type by one cycle
-    fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>);
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn AddressingMode,
+    );
 }
 
 // Opcode constants for use in match patterns
 pub const BRK: u8 = 0x00;
 pub const ORA_INDX: u8 = 0x01;
+pub const KIL: u8 = 0x02;
 pub const ORA_ZP: u8 = 0x05;
 pub const ASL_ZP: u8 = 0x06;
 pub const PHP: u8 = 0x08;
@@ -237,7 +243,6 @@ pub const ISB_INDY: u8 = 0xF3;
 pub const ISB_ZPX: u8 = 0xF7;
 pub const ISB_ABSY: u8 = 0xFB;
 pub const ISB_ABSX: u8 = 0xFF;
-pub const KIL: u8 = 0x02;
 pub const KIL2: u8 = 0x12;
 pub const KIL3: u8 = 0x22;
 pub const KIL4: u8 = 0x32;

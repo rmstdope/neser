@@ -6,6 +6,21 @@
 //! 2. **Operations** - What to do with operands (timing-independent)  
 //! 3. **Instruction Types** - Read/Write/RMW sequences (affects cycle flow)
 
+// Status register flags
+pub const FLAG_CARRY: u8 = 0b0000_0001;
+pub const FLAG_ZERO: u8 = 0b0000_0010;
+pub const FLAG_INTERRUPT: u8 = 0b0000_0100;
+pub const FLAG_DECIMAL: u8 = 0b0000_1000;
+pub const FLAG_BREAK: u8 = 0b0001_0000;
+pub const FLAG_UNUSED: u8 = 0b0010_0000;
+pub const FLAG_OVERFLOW: u8 = 0b0100_0000;
+pub const FLAG_NEGATIVE: u8 = 0b1000_0000;
+
+// Interrupt vectors
+pub const NMI_VECTOR: u16 = 0xFFFA;
+pub const RESET_VECTOR: u16 = 0xFFFC;
+pub const IRQ_VECTOR: u16 = 0xFFFE;
+
 /// Represents the complete state of the CPU registers
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuState {

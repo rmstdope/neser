@@ -11,8 +11,5 @@ pub mod traits;
 pub mod types;
 
 // Re-export commonly used types
-pub use cpu::Cpu;
-pub use traits::AddressingMode;
-pub use traits::InstructionType;
+pub use cpu::Cpu2;
 pub use types::CpuState;
-pub use crate::mem_controller::MemController;

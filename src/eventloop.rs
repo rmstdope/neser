@@ -326,7 +326,7 @@ impl EventLoop {
                 // The PPU runs at 3x CPU clock (NTSC) or 3.2x (PAL), so run_cpu_tick()
                 // automatically runs the correct number of PPU cycles per CPU instruction.
                 // A full frame is 262 scanlines × 341 pixels = 89,342 PPU cycles for NTSC
-                while !nes.is_ready_to_render() && !nes.cpu.halted {
+                while !nes.is_ready_to_render() && !nes.cpu.is_halted() {
                     if trace {
                         println!("{}", nes.trace(false));
                     }

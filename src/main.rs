@@ -2,6 +2,7 @@ mod apu;
 mod audio;
 mod cartridge;
 mod cpu;
+mod cpu2;
 mod eventloop;
 mod input;
 mod mem_controller;

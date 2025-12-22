@@ -1,6 +1,7 @@
 use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::cpu;
+use crate::cpu2;
 use crate::mem_controller;
 use crate::ppu;
 use std::cell::RefCell;
@@ -55,7 +56,7 @@ pub struct Nes {
     pub ppu: Rc<RefCell<ppu::Ppu>>,
     pub apu: Rc<RefCell<apu::Apu>>,
     pub memory: Rc<RefCell<mem_controller::MemController>>,
-    pub cpu: cpu::Cpu,
+    pub cpu: cpu2::Cpu2,
     tv_system: TvSystem,
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
@@ -69,7 +70,7 @@ impl Nes {
             ppu.clone(),
             apu.clone(),
         )));
-        let cpu = cpu::Cpu::new(memory.clone());
+        let cpu = cpu2::Cpu2::new(memory.clone());
         Self {
             ppu,
             apu,
@@ -95,7 +96,7 @@ impl Nes {
     /// Reset the NES system (CPU and PPU)
     pub fn reset(&mut self) {
         // Get CPU cycle count before reset for coordinated APU timing
-        let cpu_cycle = self.cpu.total_cycles();
+        let cpu_cycle = self.cpu.get_total_cycles();
 
         self.cpu.reset();
         self.ppu.borrow_mut().reset();
@@ -128,7 +129,7 @@ impl Nes {
         if let Some(page) = oam_dma_page {
             // OAM DMA takes 513 cycles on even CPU cycle, or 514 cycles on odd CPU cycle
             // Check current CPU cycle parity
-            let is_odd_cycle = self.cpu.total_cycles % 2 == 1;
+            let is_odd_cycle = self.cpu.get_total_cycles() % 2 == 1;
             let dma_cycles = if is_odd_cycle { 514u16 } else { 513u16 };
 
             // Execute the DMA transfer
@@ -141,7 +142,7 @@ impl Nes {
             self.tick_apu_u16(dma_cycles);
 
             // Add DMA cycles to CPU's total cycle counter
-            self.cpu.total_cycles += dma_cycles as u64;
+            self.cpu.add_cycles(dma_cycles as u64);
 
             // Check for NMI after DMA
             if self.ppu.borrow_mut().poll_nmi() {
@@ -190,7 +191,7 @@ impl Nes {
         // Only trigger interrupts after instruction completes
         // Check if NMI needs to be triggered
         // (BRK may have consumed it via vector hijacking)
-        if self.cpu.nmi_pending {
+        if self.cpu.is_nmi_pending() {
             self.cpu.set_nmi_pending(false);
             let nmi_cycles = self.cpu.trigger_nmi();
             // Tick PPU and APU for the NMI handling cycles
@@ -330,7 +331,7 @@ impl Nes {
     ///
     /// Format: `PC  OPCODE  INSTRUCTION                 A:XX X:XX Y:XX P:XX SP:XX PPU:SSS,PPP CYC:C`
     pub fn trace(&mut self, nestest: bool) -> String {
-        let pc = self.cpu.pc;
+        let pc = self.cpu.get_state().pc;
         let memory = self.memory.borrow();
         // Read the opcode and determine instruction size
         let opcode_byte = memory.read(pc);
@@ -375,7 +376,7 @@ impl Nes {
                 }
             }
             "ZPX" => {
-                let addr = byte1.wrapping_add(self.cpu.x) as u16;
+                let addr = byte1.wrapping_add(self.cpu.get_state().x) as u16;
                 if nestest {
                     let mut value = memory.read(addr);
                     if addr >= 0x4000 && addr < 0x4100 {
@@ -390,7 +391,7 @@ impl Nes {
                 }
             }
             "ZPY" => {
-                let addr = byte1.wrapping_add(self.cpu.y) as u16;
+                let addr = byte1.wrapping_add(self.cpu.get_state().y) as u16;
                 if nestest {
                     let mut value = memory.read(addr);
                     if addr >= 0x4000 && addr < 0x4100 {
@@ -422,7 +423,7 @@ impl Nes {
             "ABSX" => {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
-                    let effective_addr = addr.wrapping_add(self.cpu.x as u16);
+                    let effective_addr = addr.wrapping_add(self.cpu.get_state().x as u16);
                     let value = memory.read(effective_addr);
                     format!(
                         "{} ${:04X},X @ {:04X} = {:02X}",
@@ -435,7 +436,7 @@ impl Nes {
             "ABSY" => {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
-                    let effective_addr = addr.wrapping_add(self.cpu.y as u16);
+                    let effective_addr = addr.wrapping_add(self.cpu.get_state().y as u16);
                     let value = memory.read(effective_addr);
                     format!(
                         "{} ${:04X},Y @ {:04X} = {:02X}",
@@ -447,7 +448,7 @@ impl Nes {
             }
             "INDX" => {
                 if nestest {
-                    let zp_addr = byte1.wrapping_add(self.cpu.x);
+                    let zp_addr = byte1.wrapping_add(self.cpu.get_state().x);
                     let addr_lo = memory.read(zp_addr as u16);
                     let addr_hi = memory.read(zp_addr.wrapping_add(1) as u16);
                     let addr = u16::from_le_bytes([addr_lo, addr_hi]);
@@ -465,7 +466,7 @@ impl Nes {
                     let addr_lo = memory.read(byte1 as u16);
                     let addr_hi = memory.read(byte1.wrapping_add(1) as u16);
                     let base_addr = u16::from_le_bytes([addr_lo, addr_hi]);
-                    let effective_addr = base_addr.wrapping_add(self.cpu.y as u16);
+                    let effective_addr = base_addr.wrapping_add(self.cpu.get_state().y as u16);
                     let value = memory.read(effective_addr);
                     format!(
                         "{} (${:02X}),Y = {:04X} @ {:04X} = {:02X}",
@@ -512,6 +513,8 @@ impl Nes {
             ("  ", 31)
         };
 
+        let total_cycles = self.cpu.get_total_cycles();
+        let state = self.cpu.get_state();
         let ppu = self.ppu.borrow();
         format!(
             "{:04X}  {}{}{:<width$} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3},{:3} CYC:{}",
@@ -519,14 +522,14 @@ impl Nes {
             hex_dump,
             pad_before,
             asm,
-            self.cpu.a,
-            self.cpu.x,
-            self.cpu.y,
-            self.cpu.p,
-            self.cpu.sp,
+            state.a,
+            state.x,
+            state.y,
+            state.p,
+            state.sp,
             ppu.scanline(),
             ppu.pixel(),
-            self.cpu.total_cycles(),
+            total_cycles,
             width = width
         )
     }
@@ -594,10 +597,10 @@ mod tests {
         nes.insert_cartridge(cartridge);
         nes.cpu.reset();
         // nestest automated test starts execution at $C000 (not reset vector $C004)
-        nes.cpu.pc = 0xC000;
+        nes.cpu.get_state().pc = 0xC000;
         // CPU reset takes 7 cycles, manually sync PPU and CPU cycle counters
         nes.ppu.borrow_mut().run_ppu_cycles(21); // 7 * 3 = 21 PPU cycles for NTSC
-        nes.cpu.total_cycles = 7; // Account for reset cycles
+        nes.cpu.set_total_cycles(7); // Account for reset cycles
 
         for line in golden_log.lines() {
             let expected = line.to_string();
@@ -662,7 +665,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         // Write NOP to RAM and set PC directly (skip reset to avoid ROM requirement)
         nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
-        nes.cpu.pc = 0x0000; // Set PC to RAM address
+        nes.cpu.get_state().pc = 0x0000; // Set PC to RAM address
 
         // NOP takes 2 CPU cycles, so PPU should run 6 cycles (3x ratio for NTSC)
         nes.run_cpu_tick();
@@ -674,7 +677,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Pal);
         // Write NOP to RAM and set PC directly
         nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
-        nes.cpu.pc = 0x0000;
+        nes.cpu.get_state().pc = 0x0000;
 
         // NOP takes 2 CPU cycles, PAL ratio is 3.2, so 2 * 3.2 = 6.4
         // Should accumulate fractional part
@@ -689,7 +692,7 @@ mod tests {
         for i in 0..10 {
             nes.memory.borrow_mut().write(i, 0xEA, false); // NOP
         }
-        nes.cpu.pc = 0x0000;
+        nes.cpu.get_state().pc = 0x0000;
 
         // Run 5 NOPs: 5 instructions * 2 cycles = 10 CPU cycles
         // 10 * 3.2 = 32 PPU cycles
@@ -706,7 +709,7 @@ mod tests {
         for i in 0..3 {
             nes.memory.borrow_mut().write(i, 0xEA, false); // NOP (2 cycles each)
         }
-        nes.cpu.pc = 0x0000;
+        nes.cpu.get_state().pc = 0x0000;
 
         // 3 NOPs = 6 CPU cycles, 18 PPU cycles (6 * 3)
         nes.run_cpu_tick();
@@ -719,7 +722,7 @@ mod tests {
     fn test_ppu_cycles_reset_on_nes_reset() {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP
-        nes.cpu.pc = 0x0000;
+        nes.cpu.get_state().pc = 0x0000;
 
         nes.run_cpu_tick();
         assert_eq!(nes.ppu.borrow().total_cycles(), 6);
@@ -794,9 +797,9 @@ mod tests {
         nes.cpu.reset();
 
         // Set CPU to an even cycle (8)
-        nes.cpu.total_cycles = 8;
+        nes.cpu.set_total_cycles(8);
 
-        let cycles_before = nes.cpu.total_cycles;
+        let cycles_before = nes.cpu.get_total_cycles();
         assert_eq!(cycles_before % 2, 0, "Should start on even cycle");
 
         // Trigger OAM DMA by writing to $4014
@@ -806,7 +809,7 @@ mod tests {
         nes.run_cpu_tick();
 
         // On even alignment, DMA should take 513 CPU cycles
-        let cycles_after = nes.cpu.total_cycles;
+        let cycles_after = nes.cpu.get_total_cycles();
         assert_eq!(
             cycles_after - cycles_before,
             513,
@@ -823,9 +826,9 @@ mod tests {
         nes.cpu.reset();
 
         // Set CPU to an odd cycle (7)
-        nes.cpu.total_cycles = 7;
+        nes.cpu.set_total_cycles(7);
 
-        let cycles_before = nes.cpu.total_cycles;
+        let cycles_before = nes.cpu.get_total_cycles();
         assert_eq!(cycles_before % 2, 1, "Should start on odd cycle");
 
         // Trigger OAM DMA by writing to $4014
@@ -835,7 +838,7 @@ mod tests {
         nes.run_cpu_tick();
 
         // On odd alignment, DMA should take 514 CPU cycles (513 + 1 wait cycle)
-        let cycles_after = nes.cpu.total_cycles;
+        let cycles_after = nes.cpu.get_total_cycles();
         assert_eq!(
             cycles_after - cycles_before,
             514,
@@ -929,7 +932,7 @@ mod tests {
         nes.cpu.reset();
 
         // Set CPU to an even cycle (8)
-        nes.cpu.total_cycles = 8;
+        nes.cpu.set_total_cycles(8);
 
         // Get initial PPU state
         let initial_ppu_cycles = nes.ppu.borrow().total_cycles();
