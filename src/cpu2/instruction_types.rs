@@ -2221,15 +2221,15 @@ impl InstructionType for Adc {
         let value = addressing_mode.get_u8_value();
         let a = cpu_state.a;
         let carry = if cpu_state.p & FLAG_CARRY != 0 { 1 } else { 0 };
-        
+
         let sum = a as u16 + value as u16 + carry as u16;
         let result = sum as u8;
-        
+
         // Set flags
         set_zero_flag(&mut cpu_state.p, result);
         set_negative_flag(&mut cpu_state.p, result);
         set_carry_flag(&mut cpu_state.p, sum > 0xFF);
-        
+
         // Set overflow flag: (A^result) & (value^result) & 0x80
         let overflow = (a ^ result) & (value ^ result) & 0x80 != 0;
         if overflow {
@@ -2237,7 +2237,7 @@ impl InstructionType for Adc {
         } else {
             cpu_state.p &= !super::types::FLAG_OVERFLOW;
         }
-        
+
         cpu_state.a = result;
         self.cycle = 1;
     }
@@ -2286,11 +2286,11 @@ impl InstructionType for Ror {
                 let old_carry = if cpu_state.p & FLAG_CARRY != 0 { 1 } else { 0 };
                 let new_carry = self.value & 0x01 != 0;
                 self.value = (self.value >> 1) | (old_carry << 7);
-                
+
                 set_zero_flag(&mut cpu_state.p, self.value);
                 set_negative_flag(&mut cpu_state.p, self.value);
                 set_carry_flag(&mut cpu_state.p, new_carry);
-                
+
                 memory.borrow_mut().write(self.address, self.value, false);
                 self.cycle = 3;
             }
@@ -2326,11 +2326,11 @@ impl InstructionType for RorA {
         let old_carry = if cpu_state.p & FLAG_CARRY != 0 { 1 } else { 0 };
         let new_carry = cpu_state.a & 0x01 != 0;
         cpu_state.a = (cpu_state.a >> 1) | (old_carry << 7);
-        
+
         set_zero_flag(&mut cpu_state.p, cpu_state.a);
         set_negative_flag(&mut cpu_state.p, cpu_state.a);
         set_carry_flag(&mut cpu_state.p, new_carry);
-        
+
         self.cycle = 1;
     }
 }
@@ -2426,24 +2426,24 @@ impl InstructionType for Rra {
                 let old_carry = if cpu_state.p & FLAG_CARRY != 0 { 1 } else { 0 };
                 let new_carry = self.value & 0x01 != 0;
                 self.value = (self.value >> 1) | (old_carry << 7);
-                
+
                 // ADC with rotated value
                 let a = cpu_state.a;
                 let carry = if new_carry { 1 } else { 0 };
                 let sum = a as u16 + self.value as u16 + carry as u16;
                 let result = sum as u8;
-                
+
                 set_zero_flag(&mut cpu_state.p, result);
                 set_negative_flag(&mut cpu_state.p, result);
                 set_carry_flag(&mut cpu_state.p, sum > 0xFF);
-                
+
                 let overflow = (a ^ result) & (self.value ^ result) & 0x80 != 0;
                 if overflow {
                     cpu_state.p |= super::types::FLAG_OVERFLOW;
                 } else {
                     cpu_state.p &= !super::types::FLAG_OVERFLOW;
                 }
-                
+
                 cpu_state.a = result;
                 memory.borrow_mut().write(self.address, self.value, false);
                 self.cycle = 3;
@@ -2478,19 +2478,19 @@ impl InstructionType for Arr {
         debug_assert!(self.cycle < 1, "Arr::tick called after already done");
 
         let value = addressing_mode.get_u8_value();
-        
+
         // AND with accumulator
         cpu_state.a &= value;
-        
+
         // Rotate right
         let old_carry = if cpu_state.p & FLAG_CARRY != 0 { 1 } else { 0 };
         let new_carry = cpu_state.a & 0x01 != 0;
         cpu_state.a = (cpu_state.a >> 1) | (old_carry << 7);
-        
+
         set_zero_flag(&mut cpu_state.p, cpu_state.a);
         set_negative_flag(&mut cpu_state.p, cpu_state.a);
         set_carry_flag(&mut cpu_state.p, new_carry);
-        
+
         // Set overflow flag based on bit 6 XOR bit 5
         let overflow = ((cpu_state.a >> 6) & 1) ^ ((cpu_state.a >> 5) & 1) != 0;
         if overflow {
@@ -2498,7 +2498,7 @@ impl InstructionType for Arr {
         } else {
             cpu_state.p &= !super::types::FLAG_OVERFLOW;
         }
-        
+
         self.cycle = 1;
     }
 }
@@ -2592,6 +2592,275 @@ impl InstructionType for Sei {
             0 => {
                 // Cycle 1: Set interrupt disable flag
                 cpu_state.p |= super::types::FLAG_INTERRUPT;
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Sta {
+    cycle: u8,
+}
+
+impl Sta {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Sta {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Sta::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Write A to memory at the address
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, cpu_state.a, false);
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Sty {
+    cycle: u8,
+}
+
+impl Sty {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Sty {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Sty::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Write Y to memory at the address
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, cpu_state.y, false);
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Stx {
+    cycle: u8,
+}
+
+impl Stx {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Stx {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Stx::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Write X to memory at the address
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, cpu_state.x, false);
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Dey {
+    cycle: u8,
+}
+
+impl Dey {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Dey {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Dey::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Decrement Y
+                cpu_state.y = cpu_state.y.wrapping_sub(1);
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.y);
+                set_negative_flag(&mut cpu_state.p, cpu_state.y);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Txa {
+    cycle: u8,
+}
+
+impl Txa {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Txa {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Txa::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Transfer X to A
+                cpu_state.a = cpu_state.x;
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Sax {
+    cycle: u8,
+}
+
+impl Sax {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Sax {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Sax::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Store A AND X to memory (illegal opcode)
+                let value = cpu_state.a & cpu_state.x;
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, value, false);
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Xaa {
+    cycle: u8,
+}
+
+impl Xaa {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Xaa {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Xaa::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: XAA - highly unstable illegal opcode
+                // Basic implementation: A = (A | CONST) & X & IMM
+                // Where CONST is typically 0xEE or 0xFF depending on chip/temperature
+                // We'll use 0xFF for simplicity (most common behavior)
+                let imm = addressing_mode.get_u8_value();
+                cpu_state.a = (cpu_state.a | 0xFF) & cpu_state.x & imm;
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+
                 self.cycle = 1;
             }
             _ => unreachable!(),

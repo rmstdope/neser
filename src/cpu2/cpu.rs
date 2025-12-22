@@ -4,24 +4,25 @@ use super::addressing::{
 };
 use super::instruction::Instruction;
 use super::instruction_types::{
-    Aac, Adc, And, Arr, Asl, AslA, Asr, Bit, Bmi, Bpl, Brk, Bvc, Bvs, Clc, Cli, Dop, Eor, Jmp, Jsr,
-    Kil, Lsr, LsrA, Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, RolA, Ror, RorA, Rra, Rti, Rts, Sec,
-    Sei, Slo, Sre, Top,
+    Aac, Adc, And, Arr, Asl, AslA, Asr, Bit, Bmi, Bpl, Brk, Bvc, Bvs, Clc, Cli, Dey, Dop, Eor, Jmp,
+    Jsr, Kil, Lsr, LsrA, Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, RolA, Ror, RorA, Rra, Rti, Rts,
+    Sax, Sec, Sei, Slo, Sre, Sta, Stx, Sty, Top, Txa, Xaa,
 };
 use super::traits::{
     AAC_IMM, AAC_IMM2, ADC_ABS, ADC_ABSX, ADC_ABSY, ADC_IMM, ADC_INDX, ADC_INDY, ADC_ZP, ADC_ZPX,
     AND_ABS, AND_ABSX, AND_ABSY, AND_IMM, AND_INDX, AND_INDY, AND_ZP, AND_ZPX, ARR_IMM, ASL_A,
     ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, BIT_ABS, BIT_ZP, BMI, BPL, BRK, BVC, BVS, CLC,
-    CLI, DOP_ZP, DOP_ZP2, DOP_ZP3, DOP_ZPX, DOP_ZPX2, DOP_ZPX3, DOP_ZPX4, EOR_ABS, EOR_ABSX,
-    EOR_ABSY, EOR_IMM, EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3,
-    KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12, LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP,
-    LSR_ZPX, NOP_IMP, NOP_IMP2, NOP_IMP3, NOP_IMP4, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX,
-    ORA_INDY, ORA_ZP, ORA_ZPX, PHA, PHP, PLA, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY,
-    RLA_ZP, RLA_ZPX, ROL_ABS, ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, ROR_ABS, ROR_ABSX, ROR_ACC,
-    ROR_ZP, ROR_ZPX, RRA_ABS, RRA_ABSX, RRA_ABSY, RRA_INDX, RRA_INDY, RRA_ZP, RRA_ZPX, RTI, RTS,
-    SEC, SEI, SLO_ABS, SLO_ABSX, SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX,
-    SRE_ABSY, SRE_INDX, SRE_INDY, SRE_ZP, SRE_ZPX, TOP_ABS, TOP_ABSX, TOP_ABSX2, TOP_ABSX3,
-    TOP_ABSX4,
+    CLI, DEY, DOP_IMM, DOP_IMM2, DOP_IMM3, DOP_ZP, DOP_ZP2, DOP_ZP3, DOP_ZPX, DOP_ZPX2, DOP_ZPX3,
+    DOP_ZPX4, EOR_ABS, EOR_ABSX, EOR_ABSY, EOR_IMM, EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, JMP_ABS,
+    JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12,
+    LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP, LSR_ZPX, NOP_IMP, NOP_IMP2, NOP_IMP3, NOP_IMP4, ORA_ABS,
+    ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX, ORA_INDY, ORA_ZP, ORA_ZPX, PHA, PHP, PLA, PLP, RLA_ABS,
+    RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY, RLA_ZP, RLA_ZPX, ROL_ABS, ROL_ABSX, ROL_ACC, ROL_ZP,
+    ROL_ZPX, ROR_ABS, ROR_ABSX, ROR_ACC, ROR_ZP, ROR_ZPX, RRA_ABS, RRA_ABSX, RRA_ABSY, RRA_INDX,
+    RRA_INDY, RRA_ZP, RRA_ZPX, RTI, RTS, SAX_ABS, SAX_INDX, SAX_ZP, SEC, SEI, SLO_ABS, SLO_ABSX,
+    SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX, SRE_ABSY, SRE_INDX, SRE_INDY,
+    SRE_ZP, SRE_ZPX, STA_ABS, STA_INDX, STA_ZP, STX_ABS, STX_ZP, STY_ABS, STY_ZP, TOP_ABS,
+    TOP_ABSX, TOP_ABSX2, TOP_ABSX3, TOP_ABSX4, TXA, XAA_IMM,
 };
 use super::types::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_OVERFLOW,
@@ -894,6 +895,112 @@ impl Cpu2 {
                 Some(Instruction::new(
                     Box::new(AbsoluteX::new(true)),
                     Box::new(Rra::new()),
+                ))
+            }
+            DOP_IMM => {
+                // DOP Immediate (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Dop::new()),
+                ))
+            }
+            STA_INDX => {
+                // STA (Indirect,X): STA ($nn,X)
+                Some(Instruction::new(
+                    Box::new(IndexedIndirect::new()),
+                    Box::new(Sta::new()),
+                ))
+            }
+            DOP_IMM2 => {
+                // DOP Immediate (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Dop::new()),
+                ))
+            }
+            SAX_INDX => {
+                // SAX (Indirect,X): SAX ($nn,X) (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(IndexedIndirect::new()),
+                    Box::new(Sax::new()),
+                ))
+            }
+            STY_ZP => {
+                // STY Zero Page: STY $nn
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Sty::new()),
+                ))
+            }
+            STA_ZP => {
+                // STA Zero Page: STA $nn
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Sta::new()),
+                ))
+            }
+            STX_ZP => {
+                // STX Zero Page: STX $nn
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Stx::new()),
+                ))
+            }
+            SAX_ZP => {
+                // SAX Zero Page: SAX $nn (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Sax::new()),
+                ))
+            }
+            DEY => {
+                // DEY: Decrement Y
+                Some(Instruction::new(Box::new(Implied), Box::new(Dey::new())))
+            }
+            DOP_IMM3 => {
+                // DOP Immediate (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Dop::new()),
+                ))
+            }
+            TXA => {
+                // TXA: Transfer X to A
+                Some(Instruction::new(Box::new(Implied), Box::new(Txa::new())))
+            }
+            XAA_IMM => {
+                // XAA Immediate (illegal opcode, highly unstable)
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Xaa::new()),
+                ))
+            }
+            STY_ABS => {
+                // STY Absolute: STY $nnnn
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Sty::new()),
+                ))
+            }
+            STA_ABS => {
+                // STA Absolute: STA $nnnn
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Sta::new()),
+                ))
+            }
+            STX_ABS => {
+                // STX Absolute: STX $nnnn
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Stx::new()),
+                ))
+            }
+            SAX_ABS => {
+                // SAX Absolute: SAX $nnnn (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Sax::new()),
                 ))
             }
             EOR_ABSY => {
@@ -4656,4 +4763,342 @@ mod tests {
         assert_eq!(cycles, 7, "RRA absolute,X should take 7 cycles");
     }
 
+    #[test]
+    fn test_opcode_80() {
+        let memory = create_test_memory();
+
+        // Set up DOP #$12 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, DOP_IMM, false); // DOP Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x12, false); // Immediate value (ignored)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x11;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // DOP does nothing
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+        assert_eq!(cycles, 2, "DOP immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_81() {
+        let memory = create_test_memory();
+
+        // Set up STA ($20,X) instruction
+        memory.borrow_mut().write(0x0400, STA_INDX, false); // STA (Indirect,X) opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+
+        // Set up pointer at $24 (0x20 + 0x04)
+        memory.borrow_mut().write(0x0024, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0025, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+        cpu.state.x = 0x04;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be stored at $1234
+        let result = memory.borrow().read(0x1234);
+        assert_eq!(result, 0x42, "A should be stored at target address");
+        assert_eq!(cycles, 6, "STA (indirect,X) should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_82() {
+        let memory = create_test_memory();
+
+        // Set up DOP #$12 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, DOP_IMM2, false); // DOP Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x12, false); // Immediate value (ignored)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x11;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // DOP does nothing
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+        assert_eq!(cycles, 2, "DOP immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_83() {
+        let memory = create_test_memory();
+
+        // Set up SAX ($20,X) instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, SAX_INDX, false); // SAX (Indirect,X) opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+
+        // Set up pointer at $24 (0x20 + 0x04)
+        memory.borrow_mut().write(0x0024, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0025, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.x = 0x04;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A AND X should be stored at $1234
+        let result = memory.borrow().read(0x1234);
+        assert_eq!(result, 0b0000_0000, "A AND X should be stored");
+        assert_eq!(cycles, 6, "SAX (indirect,X) should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_84() {
+        let memory = create_test_memory();
+
+        // Set up STY $20 instruction
+        memory.borrow_mut().write(0x0400, STY_ZP, false); // STY Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x42;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y should be stored at $20
+        let result = memory.borrow().read(0x0020);
+        assert_eq!(result, 0x42, "Y should be stored at zero page address");
+        assert_eq!(cycles, 3, "STY zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_85() {
+        let memory = create_test_memory();
+
+        // Set up STA $20 instruction
+        memory.borrow_mut().write(0x0400, STA_ZP, false); // STA Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be stored at $20
+        let result = memory.borrow().read(0x0020);
+        assert_eq!(result, 0x42, "A should be stored at zero page address");
+        assert_eq!(cycles, 3, "STA zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_86() {
+        let memory = create_test_memory();
+
+        // Set up STX $20 instruction
+        memory.borrow_mut().write(0x0400, STX_ZP, false); // STX Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x42;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // X should be stored at $20
+        let result = memory.borrow().read(0x0020);
+        assert_eq!(result, 0x42, "X should be stored at zero page address");
+        assert_eq!(cycles, 3, "STX zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_87() {
+        let memory = create_test_memory();
+
+        // Set up SAX $20 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, SAX_ZP, false); // SAX Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.x = 0b1010_1010;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A AND X should be stored at $20
+        let result = memory.borrow().read(0x0020);
+        assert_eq!(result, 0b1010_0000, "A AND X should be stored");
+        assert_eq!(cycles, 3, "SAX zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_88() {
+        let memory = create_test_memory();
+
+        // Set up DEY instruction
+        memory.borrow_mut().write(0x0400, DEY, false); // DEY opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x42;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y should be decremented
+        assert_eq!(cpu.state.y, 0x41, "Y should be decremented");
+        assert_eq!(cycles, 2, "DEY should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_89() {
+        let memory = create_test_memory();
+
+        // Set up DOP #$12 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, DOP_IMM3, false); // DOP Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x12, false); // Immediate value (ignored)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x11;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // DOP does nothing
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+        assert_eq!(cycles, 2, "DOP immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_8a() {
+        let memory = create_test_memory();
+
+        // Set up TXA instruction
+        memory.borrow_mut().write(0x0400, TXA, false); // TXA opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x42;
+        cpu.state.a = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should contain X
+        assert_eq!(cpu.state.a, 0x42, "A should contain X");
+        assert_eq!(cycles, 2, "TXA should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_8b() {
+        let memory = create_test_memory();
+
+        // Set up XAA #$12 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, XAA_IMM, false); // XAA Immediate opcode
+        memory.borrow_mut().write(0x0401, 0b1111_0000, false); // Immediate value
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1010_1010;
+        cpu.state.x = 0b0011_1100;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be (A OR MAGIC) AND X AND IMM
+        // XAA is highly unstable, but we'll implement a basic version
+        assert_eq!(cycles, 2, "XAA immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_8c() {
+        let memory = create_test_memory();
+
+        // Set up STY $1234 instruction
+        memory.borrow_mut().write(0x0400, STY_ABS, false); // STY Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x42;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y should be stored at $1234
+        let result = memory.borrow().read(0x1234);
+        assert_eq!(result, 0x42, "Y should be stored at absolute address");
+        assert_eq!(cycles, 4, "STY absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_8d() {
+        let memory = create_test_memory();
+
+        // Set up STA $1234 instruction
+        memory.borrow_mut().write(0x0400, STA_ABS, false); // STA Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be stored at $1234
+        let result = memory.borrow().read(0x1234);
+        assert_eq!(result, 0x42, "A should be stored at absolute address");
+        assert_eq!(cycles, 4, "STA absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_8e() {
+        let memory = create_test_memory();
+
+        // Set up STX $1234 instruction
+        memory.borrow_mut().write(0x0400, STX_ABS, false); // STX Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x42;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // X should be stored at $1234
+        let result = memory.borrow().read(0x1234);
+        assert_eq!(result, 0x42, "X should be stored at absolute address");
+        assert_eq!(cycles, 4, "STX absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_8f() {
+        let memory = create_test_memory();
+
+        // Set up SAX $1234 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, SAX_ABS, false); // SAX Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.x = 0b1010_1010;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A AND X should be stored at $1234
+        let result = memory.borrow().read(0x1234);
+        assert_eq!(result, 0b1010_0000, "A AND X should be stored");
+        assert_eq!(cycles, 4, "SAX absolute should take 4 cycles");
+    }
 }
