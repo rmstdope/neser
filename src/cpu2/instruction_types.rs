@@ -3154,3 +3154,184 @@ impl InstructionType for Atx {
         }
     }
 }
+
+#[derive(Default)]
+pub struct Bcs {
+    cycle: u8,
+    branch_taken: bool,
+    page_crossed: bool,
+}
+
+impl Bcs {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Bcs {
+    fn is_done(&self) -> bool {
+        (!self.branch_taken && self.cycle == 1)
+            || (self.branch_taken && !self.page_crossed && self.cycle == 2)
+            || (self.branch_taken && self.page_crossed && self.cycle == 3)
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(!self.is_done(), "Bcs::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Check carry flag and decide if branch is taken
+                self.branch_taken = (cpu_state.p & FLAG_CARRY) != 0;
+
+                if !self.branch_taken {
+                    // Branch not taken - we're done
+                    self.cycle = 1;
+                } else {
+                    // Branch taken - get target address and check for page cross
+                    let target = addressing_mode.get_address();
+                    let current_page = cpu_state.pc & 0xFF00;
+                    let target_page = target & 0xFF00;
+                    self.page_crossed = current_page != target_page;
+
+                    // Update PC to target
+                    cpu_state.pc = target;
+                    self.cycle = 1;
+                }
+            }
+            1 => {
+                // Cycle 2: Additional cycle for branch taken (same page)
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Additional cycle for page boundary crossed
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Clv {
+    cycle: u8,
+}
+
+impl Clv {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Clv {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Clv::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Clear overflow flag
+                cpu_state.p &= !super::types::FLAG_OVERFLOW;
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Tsx {
+    cycle: u8,
+}
+
+impl Tsx {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Tsx {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Tsx::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Transfer SP to X
+                cpu_state.x = cpu_state.sp;
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.x);
+                set_negative_flag(&mut cpu_state.p, cpu_state.x);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Lar {
+    cycle: u8,
+}
+
+impl Lar {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Lar {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Lar::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: LAR (also called LAS) - illegal opcode
+                // Operation: A = X = SP = (SP AND M)
+                let value = addressing_mode.get_u8_value();
+                let result = cpu_state.sp & value;
+                cpu_state.a = result;
+                cpu_state.x = result;
+                cpu_state.sp = result;
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, result);
+                set_negative_flag(&mut cpu_state.p, result);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
