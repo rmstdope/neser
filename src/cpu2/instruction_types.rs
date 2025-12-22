@@ -2362,6 +2362,65 @@ impl InstructionType for Adc {
     }
 }
 
+/// SBC - Subtract with Carry
+///
+/// Subtracts a value from the accumulator with borrow (inverted carry).
+///
+/// Operation: A = A - M - (1 - C)
+/// Flags: N, V, Z, C
+///
+/// Cycles: 1
+#[derive(Default)]
+pub struct Sbc {
+    cycle: u8,
+}
+
+impl Sbc {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Sbc {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Sbc::tick called after already done");
+
+        let value = addressing_mode.get_u8_value();
+        let a = cpu_state.a;
+        let carry = if cpu_state.p & FLAG_CARRY != 0 { 1 } else { 0 };
+
+        // SBC is A - M - (1 - C), which is the same as A + ~M + C
+        let inverted_value = !value;
+        let sum = a as u16 + inverted_value as u16 + carry as u16;
+        let result = sum as u8;
+
+        // Set flags
+        set_zero_flag(&mut cpu_state.p, result);
+        set_negative_flag(&mut cpu_state.p, result);
+        set_carry_flag(&mut cpu_state.p, sum > 0xFF);
+
+        // Set overflow flag: (A^result) & (~M^result) & 0x80
+        let overflow = (a ^ result) & (inverted_value ^ result) & 0x80 != 0;
+        if overflow {
+            cpu_state.p |= super::types::FLAG_OVERFLOW;
+        } else {
+            cpu_state.p &= !super::types::FLAG_OVERFLOW;
+        }
+
+        cpu_state.a = result;
+        self.cycle = 1;
+    }
+}
+
 #[derive(Default)]
 pub struct Ror {
     cycle: u8,
@@ -3551,6 +3610,62 @@ impl InstructionType for Cmp {
     }
 }
 
+/// CPX - Compare X with Memory
+///
+/// Compares the X register with a value from memory by performing a subtraction
+/// (X - M) and setting the Z, C, and N flags based on the result.
+///
+/// Operation: X - M
+/// Flags: N, Z, C
+///
+/// Cycles: 1
+#[derive(Default)]
+pub struct Cpx {
+    cycle: u8,
+}
+
+impl Cpx {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Cpx {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Cpx::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Compare X with memory
+                let value = addressing_mode.get_u8_value();
+                let result = cpu_state.x.wrapping_sub(value);
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, result);
+                set_negative_flag(&mut cpu_state.p, result);
+                // Carry flag: set if X >= value (no borrow)
+                if cpu_state.x >= value {
+                    cpu_state.p |= FLAG_CARRY;
+                } else {
+                    cpu_state.p &= !FLAG_CARRY;
+                }
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 // DEC - Decrement Memory
 #[derive(Default)]
 pub struct Dec {
@@ -3643,6 +3758,120 @@ impl InstructionType for Iny {
                 // Set flags
                 set_zero_flag(&mut cpu_state.p, cpu_state.y);
                 set_negative_flag(&mut cpu_state.p, cpu_state.y);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// INC - Increment Memory
+///
+/// Increments a value in memory by 1.
+///
+/// Operation: M = M + 1
+/// Flags: N, Z
+///
+/// Cycles: 3 (RMW instruction)
+///   1. Read value from memory
+///   2. Write original value back (dummy write)
+///   3. Write incremented value
+#[derive(Default)]
+pub struct Inc {
+    cycle: u8,
+    value: u8,
+}
+
+impl Inc {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Inc {
+    fn is_done(&self) -> bool {
+        self.cycle == 3
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 3, "Inc::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Read value from memory
+                self.value = addressing_mode.get_u8_value();
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Write original value back (dummy write)
+                memory
+                    .borrow_mut()
+                    .write(addressing_mode.get_address(), self.value, false);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Write back incremented value
+                let result = self.value.wrapping_add(1);
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, result, false);
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, result);
+                set_negative_flag(&mut cpu_state.p, result);
+
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// INX - Increment X
+///
+/// Increments the X register by 1.
+///
+/// Operation: X = X + 1
+/// Flags: N, Z
+///
+/// Cycles: 1
+#[derive(Default)]
+pub struct Inx {
+    cycle: u8,
+}
+
+impl Inx {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Inx {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Inx::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Increment X
+                cpu_state.x = cpu_state.x.wrapping_add(1);
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.x);
+                set_negative_flag(&mut cpu_state.p, cpu_state.x);
 
                 self.cycle = 1;
             }
@@ -3803,6 +4032,91 @@ impl InstructionType for Dcp {
                     cpu_state.p &= !FLAG_CARRY;
                 }
 
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// ISB - Illegal: INC then SBC
+///
+/// Increments a value in memory, then performs SBC with the result.
+///
+/// Operation: M = M + 1, A = A - M - (1 - C)
+/// Flags: N, V, Z, C
+///
+/// Cycles: 3 (RMW instruction)
+///   1. Read value from memory
+///   2. Write original value back (dummy write)
+///   3. Write incremented value and perform SBC
+#[derive(Default)]
+pub struct Isb {
+    cycle: u8,
+    value: u8,
+}
+
+impl Isb {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Isb {
+    fn is_done(&self) -> bool {
+        self.cycle == 3
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 3, "Isb::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Read value from memory
+                self.value = addressing_mode.get_u8_value();
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Write original value back (dummy write)
+                memory
+                    .borrow_mut()
+                    .write(addressing_mode.get_address(), self.value, false);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Increment and write back, then perform SBC with A
+                let result = self.value.wrapping_add(1);
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, result, false);
+
+                // Perform SBC: A = A - result - (1 - C)
+                let a = cpu_state.a;
+                let carry = if cpu_state.p & FLAG_CARRY != 0 { 1 } else { 0 };
+
+                // SBC is A - M - (1 - C), which is the same as A + ~M + C
+                let inverted_value = !result;
+                let sum = a as u16 + inverted_value as u16 + carry as u16;
+                let sbc_result = sum as u8;
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, sbc_result);
+                set_negative_flag(&mut cpu_state.p, sbc_result);
+                set_carry_flag(&mut cpu_state.p, sum > 0xFF);
+
+                // Set overflow flag
+                let overflow = (a ^ sbc_result) & (inverted_value ^ sbc_result) & 0x80 != 0;
+                if overflow {
+                    cpu_state.p |= super::types::FLAG_OVERFLOW;
+                } else {
+                    cpu_state.p &= !super::types::FLAG_OVERFLOW;
+                }
+
+                cpu_state.a = sbc_result;
                 self.cycle = 3;
             }
             _ => unreachable!(),
