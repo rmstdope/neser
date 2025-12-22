@@ -4,19 +4,22 @@ use super::addressing::{
 };
 use super::instruction::Instruction;
 use super::instruction_types::{
-    Aac, And, Asl, AslA, Asr, Bit, Bmi, Bpl, Brk, Bvc, Clc, Cli, Dop, Eor, Jmp, Jsr, Kil, Lsr,
-    LsrA, Nop, Ora, Pha, Php, Plp, Rla, Rol, RolA, Rti, Sec, Slo, Sre, Top,
+    Aac, Adc, And, Arr, Asl, AslA, Asr, Bit, Bmi, Bpl, Brk, Bvc, Clc, Cli, Dop, Eor, Jmp, Jsr, Kil,
+    Lsr, LsrA, Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, RolA, Ror, RorA, Rra, Rti, Rts, Sec, Slo,
+    Sre, Top,
 };
 use super::traits::{
-    AAC_IMM, AAC_IMM2, AND_ABS, AND_ABSX, AND_ABSY, AND_IMM, AND_INDX, AND_INDY, AND_ZP, AND_ZPX,
-    ASL_A, ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, BIT_ABS, BIT_ZP, BMI, BPL, BRK, BVC, CLC,
-    CLI, DOP_ZP, DOP_ZP2, DOP_ZPX, DOP_ZPX2, DOP_ZPX3, EOR_ABS, EOR_ABSX, EOR_ABSY, EOR_IMM,
-    EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5,
-    KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12, LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP, LSR_ZPX,
-    NOP_IMP, NOP_IMP2, NOP_IMP3, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX, ORA_INDY,
-    ORA_ZP, ORA_ZPX, PHA, PHP, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY, RLA_ZP,
-    RLA_ZPX, ROL_ABS, ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, RTI, SEC, SLO_ABS, SLO_ABSX, SLO_ABSY,
-    SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX, SRE_ABSY, SRE_INDX, SRE_INDY,
+    AAC_IMM, AAC_IMM2, ADC_ABS, ADC_ABSX, ADC_ABSY, ADC_IMM, ADC_INDX, ADC_INDY, ADC_ZP, ADC_ZPX,
+    AND_ABS, AND_ABSX, AND_ABSY, AND_IMM, AND_INDX, AND_INDY, AND_ZP, AND_ZPX, ARR_IMM, ASL_A,
+    ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, BIT_ABS, BIT_ZP, BMI, BPL, BRK, BVC, CLC, CLI,
+    DOP_ZP, DOP_ZP2, DOP_ZP3, DOP_ZPX, DOP_ZPX2, DOP_ZPX3, EOR_ABS, EOR_ABSX, EOR_ABSY, EOR_IMM,
+    EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6,
+    KIL7, KIL8, KIL9, KIL10, KIL11, KIL12, LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP, LSR_ZPX, NOP_IMP,
+    NOP_IMP2, NOP_IMP3, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX, ORA_INDY, ORA_ZP, ORA_ZPX,
+    PHA, PHP, PLA, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY, RLA_ZP, RLA_ZPX, ROL_ABS,
+    ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, ROR_ABS, ROR_ABSX, ROR_ACC, ROR_ZP, ROR_ZPX, RRA_ABS,
+    RRA_ABSX, RRA_ABSY, RRA_INDX, RRA_INDY, RRA_ZP, RRA_ZPX, RTI, RTS, SEC, SLO_ABS, SLO_ABSX,
+    SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX, SRE_ABSY, SRE_INDX, SRE_INDY,
     SRE_ZP, SRE_ZPX, TOP_ABS, TOP_ABSX, TOP_ABSX2, TOP_ABSX3,
 };
 use super::types::{
@@ -588,7 +591,10 @@ impl Cpu2 {
             }
             EOR_IMM => {
                 // EOR Immediate: EOR #$nn
-                Some(Instruction::new(Box::new(Immediate::new()), Box::new(Eor::new())))
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Eor::new()),
+                ))
             }
             LSR_ACC => {
                 // LSR Accumulator: LSR A
@@ -596,7 +602,10 @@ impl Cpu2 {
             }
             ASR_IMM => {
                 // ASR Immediate: ASR #$nn (illegal opcode)
-                Some(Instruction::new(Box::new(Immediate::new()), Box::new(Asr::new())))
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Asr::new()),
+                ))
             }
             JMP_ABS => {
                 // JMP Absolute handles its own address fetching internally, like JSR
@@ -631,6 +640,106 @@ impl Cpu2 {
                 Some(Instruction::new(
                     Box::new(Relative::new()),
                     Box::new(Bvc::new()),
+                ))
+            }
+            RTS => {
+                // RTS: Return from Subroutine
+                Some(Instruction::new(Box::new(Implied), Box::new(Rts::new())))
+            }
+            ADC_INDX => {
+                // ADC: Add with Carry (Indexed Indirect)
+                Some(Instruction::new(
+                    Box::new(IndexedIndirect::new()),
+                    Box::new(Adc::new()),
+                ))
+            }
+            KIL7 => {
+                // KIL: Halt and Catch Fire
+                Some(Instruction::new(Box::new(Implied), Box::new(Kil::new())))
+            }
+            RRA_INDX => {
+                // RRA: Rotate Right then Add with Carry (Indexed Indirect, illegal)
+                Some(Instruction::new(
+                    Box::new(IndexedIndirect::new()),
+                    Box::new(Rra::new()),
+                ))
+            }
+            DOP_ZP3 => {
+                // DOP: Double NOP (Zero Page, illegal)
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Dop::new()),
+                ))
+            }
+            ADC_ZP => {
+                // ADC: Add with Carry (Zero Page)
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Adc::new()),
+                ))
+            }
+            ROR_ZP => {
+                // ROR: Rotate Right (Zero Page)
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Ror::new()),
+                ))
+            }
+            RRA_ZP => {
+                // RRA: Rotate Right then Add with Carry (Zero Page, illegal)
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Rra::new()),
+                ))
+            }
+            PLA => {
+                // PLA: Pull Accumulator from Stack
+                Some(Instruction::new(Box::new(Implied), Box::new(Pla::new())))
+            }
+            ADC_IMM => {
+                // ADC: Add with Carry (Immediate)
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Adc::new()),
+                ))
+            }
+            ROR_ACC => {
+                // ROR: Rotate Right (Accumulator)
+                Some(Instruction::new(Box::new(Implied), Box::new(RorA::new())))
+            }
+            ARR_IMM => {
+                // ARR: AND then Rotate Right (Immediate, illegal)
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Arr::new()),
+                ))
+            }
+            JMP_IND => {
+                // JMP: Jump (Indirect)
+                Some(Instruction::new(
+                    Box::new(Indirect::new()),
+                    Box::new(Jmp::new()),
+                ))
+            }
+            ADC_ABS => {
+                // ADC: Add with Carry (Absolute)
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Adc::new()),
+                ))
+            }
+            ROR_ABS => {
+                // ROR: Rotate Right (Absolute)
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Ror::new()),
+                ))
+            }
+            RRA_ABS => {
+                // RRA: Rotate Right then Add with Carry (Absolute, illegal)
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Rra::new()),
                 ))
             }
             EOR_INDY => {
@@ -3225,7 +3334,10 @@ mod tests {
 
         // Branch should be taken
         assert_eq!(cpu.state.pc, 0x0412, "PC should branch to 0x0412");
-        assert_eq!(cycles, 3, "BVC with branch taken (no page cross) should take 3 cycles");
+        assert_eq!(
+            cycles, 3,
+            "BVC with branch taken (no page cross) should take 3 cycles"
+        );
     }
 
     #[test]
@@ -3253,7 +3365,10 @@ mod tests {
 
         // A should be 0b1111_0000 ^ 0b1010_1010 = 0b0101_1010
         assert_eq!(cpu.state.a, 0b0101_1010, "A should contain result of EOR");
-        assert_eq!(cycles, 5, "EOR indirect indexed should take 5 cycles (no page cross)");
+        assert_eq!(
+            cycles, 5,
+            "EOR indirect indexed should take 5 cycles (no page cross)"
+        );
     }
 
     #[test]
@@ -3440,7 +3555,10 @@ mod tests {
 
         // A should be 0b1111_0000 ^ 0b1010_1010 = 0b0101_1010
         assert_eq!(cpu.state.a, 0b0101_1010, "A should contain result of EOR");
-        assert_eq!(cycles, 4, "EOR absolute,Y should take 4 cycles (no page cross)");
+        assert_eq!(
+            cycles, 4,
+            "EOR absolute,Y should take 4 cycles (no page cross)"
+        );
     }
 
     #[test]
@@ -3511,7 +3629,10 @@ mod tests {
         // TOP does nothing
         assert_eq!(cpu.state.a, 0x11, "A should not change");
         assert_eq!(cpu.state.p, 0x33, "P should not change");
-        assert_eq!(cycles, 4, "TOP absolute,X should take 4 cycles (no page cross)");
+        assert_eq!(
+            cycles, 4,
+            "TOP absolute,X should take 4 cycles (no page cross)"
+        );
     }
 
     #[test]
@@ -3536,7 +3657,10 @@ mod tests {
 
         // A should be 0b1111_0000 ^ 0b1010_1010 = 0b0101_1010
         assert_eq!(cpu.state.a, 0b0101_1010, "A should contain result of EOR");
-        assert_eq!(cycles, 4, "EOR absolute,X should take 4 cycles (no page cross)");
+        assert_eq!(
+            cycles, 4,
+            "EOR absolute,X should take 4 cycles (no page cross)"
+        );
     }
 
     #[test]
@@ -3591,6 +3715,377 @@ mod tests {
         // A should be EORed with result
         assert_eq!(cpu.state.a, 0b1010_0101, "A should contain EOR result");
         assert_eq!(cycles, 7, "SRE absolute,X should take 7 cycles");
+    }
+
+    #[test]
+    fn test_opcode_60() {
+        let memory = create_test_memory();
+
+        // Set up RTS instruction
+        memory.borrow_mut().write(0x0400, RTS, false); // RTS opcode
+
+        // Push return address to stack (RTS pulls PC-1, so push 0x1233)
+        memory.borrow_mut().write(0x01FD, 0x33, false); // PCL
+        memory.borrow_mut().write(0x01FE, 0x12, false); // PCH
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.sp = 0xFC;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        assert_eq!(
+            cpu.state.pc, 0x1234,
+            "PC should be set to return address + 1"
+        );
+        assert_eq!(cpu.state.sp, 0xFE, "SP should be incremented by 2");
+        assert_eq!(cycles, 6, "RTS should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_61() {
+        let memory = create_test_memory();
+
+        // Set up ADC ($20,X) instruction
+        memory.borrow_mut().write(0x0400, ADC_INDX, false); // ADC (Indirect,X) opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base
+
+        // Set up pointer at $24 (base $20 + X $04)
+        memory.borrow_mut().write(0x0024, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0025, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x05, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.x = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0x10 + 0x05 = 0x15
+        assert_eq!(cpu.state.a, 0x15, "A should contain sum");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
+        assert_eq!(cycles, 6, "ADC indexed indirect should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_62() {
+        let memory = create_test_memory();
+
+        // Set up KIL instruction
+        memory.borrow_mut().write(0x0400, KIL7, false); // KIL opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        assert!(cpu.is_halted(), "CPU should be halted");
+        assert_eq!(cycles, 1, "KIL should take 1 cycle");
+    }
+
+    #[test]
+    fn test_opcode_63() {
+        let memory = create_test_memory();
+
+        // Set up RRA ($20,X) instruction (illegal opcode - ROR + ADC)
+        memory.borrow_mut().write(0x0400, RRA_INDX, false); // RRA (Indirect,X) opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base
+
+        // Set up pointer at $24
+        memory.borrow_mut().write(0x0024, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0025, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.x = 0x04;
+        cpu.state.p = FLAG_CARRY; // Set carry flag
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right: 0b1010_1010 ROR with C=1 = 0b1101_0101
+        let mem_result = memory.borrow().read(0x1234);
+        assert_eq!(mem_result, 0b1101_0101, "Memory should be rotated right");
+        // A should be ADCed with result: 0x10 + 0xD5 = 0xE5
+        assert_eq!(cpu.state.a, 0xE5, "A should contain ADC result");
+        assert_eq!(cycles, 8, "RRA indexed indirect should take 8 cycles");
+    }
+
+    #[test]
+    fn test_opcode_64() {
+        let memory = create_test_memory();
+
+        // Set up DOP $20 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, DOP_ZP3, false); // DOP Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x11;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // DOP does nothing
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+        assert_eq!(cycles, 3, "DOP zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_65() {
+        let memory = create_test_memory();
+
+        // Set up ADC $20 instruction
+        memory.borrow_mut().write(0x0400, ADC_ZP, false); // ADC Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up value at $20
+        memory.borrow_mut().write(0x0020, 0x05, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0x10 + 0x05 = 0x15
+        assert_eq!(cpu.state.a, 0x15, "A should contain sum");
+        assert_eq!(cycles, 3, "ADC zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_66() {
+        let memory = create_test_memory();
+
+        // Set up ROR $20 instruction
+        memory.borrow_mut().write(0x0400, ROR_ZP, false); // ROR Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up value at $20
+        memory.borrow_mut().write(0x0020, 0b0101_0101, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = FLAG_CARRY; // Set carry flag
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right: 0b0101_0101 ROR with C=1 = 0b1010_1010
+        let result = memory.borrow().read(0x0020);
+        assert_eq!(result, 0b1010_1010, "Memory should be rotated right");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "C flag should be set (bit 0 was 1)"
+        );
+        assert_eq!(cycles, 5, "ROR zero page should take 5 cycles");
+    }
+
+    #[test]
+    fn test_opcode_67() {
+        let memory = create_test_memory();
+
+        // Set up RRA $20 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, RRA_ZP, false); // RRA Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up value at $20
+        memory.borrow_mut().write(0x0020, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.p = FLAG_CARRY; // Set carry flag
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right
+        let mem_result = memory.borrow().read(0x0020);
+        assert_eq!(mem_result, 0b1101_0101, "Memory should be rotated right");
+        // A should be ADCed with result
+        assert_eq!(cpu.state.a, 0xE5, "A should contain ADC result");
+        assert_eq!(cycles, 5, "RRA zero page should take 5 cycles");
+    }
+
+    #[test]
+    fn test_opcode_68() {
+        let memory = create_test_memory();
+
+        // Set up PLA instruction
+        memory.borrow_mut().write(0x0400, PLA, false); // PLA opcode
+
+        // Push value to stack
+        memory.borrow_mut().write(0x01FD, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.sp = 0xFC;
+        cpu.state.a = 0x00;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        assert_eq!(cpu.state.a, 0x42, "A should be pulled from stack");
+        assert_eq!(cpu.state.sp, 0xFD, "SP should be incremented");
+        assert_eq!(cycles, 4, "PLA should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_69() {
+        let memory = create_test_memory();
+
+        // Set up ADC #$05 instruction
+        memory.borrow_mut().write(0x0400, ADC_IMM, false); // ADC Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x05, false); // Immediate value
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0x10 + 0x05 = 0x15
+        assert_eq!(cpu.state.a, 0x15, "A should contain sum");
+        assert_eq!(cycles, 2, "ADC immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_6a() {
+        let memory = create_test_memory();
+
+        // Set up ROR A instruction
+        memory.borrow_mut().write(0x0400, ROR_ACC, false); // ROR Accumulator opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b0101_0101;
+        cpu.state.p = FLAG_CARRY; // Set carry flag
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be rotated right: 0b0101_0101 ROR with C=1 = 0b1010_1010
+        assert_eq!(cpu.state.a, 0b1010_1010, "A should be rotated right");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "C flag should be set (bit 0 was 1)"
+        );
+        assert_eq!(cycles, 2, "ROR accumulator should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_6b() {
+        let memory = create_test_memory();
+
+        // Set up ARR #$AA instruction (illegal opcode - AND + ROR)
+        memory.borrow_mut().write(0x0400, ARR_IMM, false); // ARR Immediate opcode
+        memory.borrow_mut().write(0x0401, 0b1010_1010, false); // Immediate value
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0011;
+        cpu.state.p = FLAG_CARRY; // Set carry flag
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be ANDed then rotated: (0b1111_0011 & 0b1010_1010) ROR with C=1 = 0b1010_0010 ROR = 0b1101_0001
+        assert_eq!(cpu.state.a, 0b1101_0001, "A should contain AND+ROR result");
+        assert_eq!(cycles, 2, "ARR immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_6d() {
+        let memory = create_test_memory();
+
+        // Set up ADC $1234 instruction
+        memory.borrow_mut().write(0x0400, ADC_ABS, false); // ADC Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x05, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0x10 + 0x05 = 0x15
+        assert_eq!(cpu.state.a, 0x15, "A should contain sum");
+        assert_eq!(cycles, 4, "ADC absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_6e() {
+        let memory = create_test_memory();
+
+        // Set up ROR $1234 instruction
+        memory.borrow_mut().write(0x0400, ROR_ABS, false); // ROR Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0b0101_0101, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = FLAG_CARRY; // Set carry flag
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right
+        let result = memory.borrow().read(0x1234);
+        assert_eq!(result, 0b1010_1010, "Memory should be rotated right");
+        assert_eq!(cpu.state.p & FLAG_CARRY, FLAG_CARRY, "C flag should be set");
+        assert_eq!(cycles, 6, "ROR absolute should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_6f() {
+        let memory = create_test_memory();
+
+        // Set up RRA $1234 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, RRA_ABS, false); // RRA Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.p = FLAG_CARRY; // Set carry flag
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right
+        let mem_result = memory.borrow().read(0x1234);
+        assert_eq!(mem_result, 0b1101_0101, "Memory should be rotated right");
+        // A should be ADCed with result
+        assert_eq!(cpu.state.a, 0xE5, "A should contain ADC result");
+        assert_eq!(cycles, 6, "RRA absolute should take 6 cycles");
     }
 
     #[test]
