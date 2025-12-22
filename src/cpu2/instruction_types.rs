@@ -690,12 +690,12 @@ impl InstructionType for Dop {
     }
 }
 
-/// ASL - Arithmetic Shift Left
+/// ASL - Arithmetic Shift Left (Memory)
 ///
 /// Shifts all bits left one position. Bit 0 is set to 0 and bit 7 is placed in the carry flag.
 /// This is a Read-Modify-Write instruction.
 ///
-/// Operation: M = M << 1 (or A = A << 1 for accumulator mode)
+/// Operation: M = M << 1
 /// Flags: N, Z, C
 ///
 /// Cycles: 3
@@ -756,6 +756,59 @@ impl InstructionType for Asl {
                 set_carry_flag(&mut cpu_state.p, carry);
 
                 self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// ASL A - Arithmetic Shift Left (Accumulator)
+///
+/// Shifts all bits of the accumulator left one position.
+/// Bit 0 is set to 0 and bit 7 is placed in the carry flag.
+///
+/// Operation: A = A << 1
+/// Flags: N, Z, C
+///
+/// Cycles: 1
+///   1. Shift accumulator left and set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AslA {
+    cycle: u8,
+}
+
+impl AslA {
+    /// Create a new ASL A instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for AslA {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "AslA::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Shift accumulator left
+                let (shifted, carry) = shift_left(cpu_state.a);
+                cpu_state.a = shifted;
+
+                // Set flags based on result
+                set_zero_flag(&mut cpu_state.p, shifted);
+                set_negative_flag(&mut cpu_state.p, shifted);
+                set_carry_flag(&mut cpu_state.p, carry);
+
+                self.cycle = 1;
             }
             _ => unreachable!(),
         }

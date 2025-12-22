@@ -1,9 +1,9 @@
 use super::addressing::{Immediate, Implied, IndexedIndirect, Indirect, ZeroPage};
 use super::instruction::Instruction;
-use super::instruction_types::{Asl, Brk, Dop, Jmp, Jsr, Kil, Ora, Php, Slo};
+use super::instruction_types::{Asl, AslA, Brk, Dop, Jmp, Jsr, Kil, Ora, Php, Slo};
 use super::traits::{
-    ASL_ZP, BRK, DOP_ZP, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6, KIL7, KIL8,
-    KIL9, KIL10, KIL11, KIL12, ORA_IMM, ORA_INDX, ORA_ZP, PHP, SLO_INDX, SLO_ZP,
+    ASL_A, ASL_ZP, BRK, DOP_ZP, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6, KIL7,
+    KIL8, KIL9, KIL10, KIL11, KIL12, ORA_ABS, ORA_IMM, ORA_INDX, ORA_ZP, PHP, SLO_INDX, SLO_ZP,
 };
 use super::types::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_OVERFLOW,
@@ -171,6 +171,17 @@ impl Cpu2 {
                 // ORA Immediate: ORA #imm
                 Some(Instruction::new(
                     Box::new(Immediate::new()),
+                    Box::new(Ora::new()),
+                ))
+            }
+            ASL_A => {
+                // ASL A - Arithmetic Shift Left Accumulator
+                Some(Instruction::new(Box::new(Implied), Box::new(AslA::new())))
+            }
+            ORA_ABS => {
+                // ORA Absolute: ORA abs
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
                     Box::new(Ora::new()),
                 ))
             }
@@ -757,6 +768,64 @@ mod tests {
         // ORA with immediate should take 3 cycles
         // (1 opcode fetch + 1 immediate addressing and operate)
         assert_eq!(cycles, 2, "ORA immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_0a() {
+        let memory = create_test_memory();
+
+        // Set up ASL A instruction at address $0400
+        memory.borrow_mut().write(0x0400, ASL_A, false); // ASL A opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b0101_0101; // Value to shift left
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be shifted left: 0b0101_0101 << 1 = 0b1010_1010
+        assert_eq!(
+            cpu.state.a, 0b1010_1010,
+            "A should be shifted left to 0b1010_1010"
+        );
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+
+        // ASL A should take 2 cycles (1 opcode fetch + 1 operation)
+        assert_eq!(cycles, 2, "ASL A should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_0d() {
+        let memory = create_test_memory();
+
+        // Set up ORA $1234 instruction at address $0400
+        memory.borrow_mut().write(0x0400, ORA_ABS, false); // ORA Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte of address
+        memory.borrow_mut().write(0x1234, 0b1010_1010, false); // Value at $1234
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0b1100_0011 | 0b1010_1010 = 0b1110_1011
+        assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+
+        // ORA with absolute should take 4 cycles
+        // (1 opcode fetch + 3 absolute addressing)
+        assert_eq!(cycles, 4, "ORA absolute should take 4 cycles");
     }
 
     #[test]
