@@ -4,19 +4,20 @@ use super::addressing::{
 };
 use super::instruction::Instruction;
 use super::instruction_types::{
-    Aac, And, Asl, AslA, Asr, Bit, Bmi, Bpl, Brk, Clc, Dop, Eor, Jmp, Jsr, Kil, Lsr, LsrA, Nop,
-    Ora, Pha, Php, Plp, Rla, Rol, RolA, Rti, Sec, Slo, Sre, Top,
+    Aac, And, Asl, AslA, Asr, Bit, Bmi, Bpl, Brk, Bvc, Clc, Cli, Dop, Eor, Jmp, Jsr, Kil, Lsr,
+    LsrA, Nop, Ora, Pha, Php, Plp, Rla, Rol, RolA, Rti, Sec, Slo, Sre, Top,
 };
 use super::traits::{
     AAC_IMM, AAC_IMM2, AND_ABS, AND_ABSX, AND_ABSY, AND_IMM, AND_INDX, AND_INDY, AND_ZP, AND_ZPX,
-    ASL_A, ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, BIT_ABS, BIT_ZP, BMI, BPL, BRK, CLC,
-    DOP_ZP, DOP_ZP2, DOP_ZPX, DOP_ZPX2, EOR_ABS, EOR_IMM, EOR_INDX, EOR_ZP, JMP_ABS, JMP_IND,
-    JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12, LSR_ABS,
-    LSR_ACC, LSR_ZP, NOP_IMP, NOP_IMP2, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX,
-    ORA_INDY, ORA_ZP, ORA_ZPX, PHA, PHP, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY,
-    RLA_ZP, RLA_ZPX, ROL_ABS, ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, RTI, SEC, SLO_ABS, SLO_ABSX,
-    SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_INDX, SRE_ZP, TOP_ABS, TOP_ABSX,
-    TOP_ABSX2,
+    ASL_A, ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, BIT_ABS, BIT_ZP, BMI, BPL, BRK, BVC, CLC,
+    CLI, DOP_ZP, DOP_ZP2, DOP_ZPX, DOP_ZPX2, DOP_ZPX3, EOR_ABS, EOR_ABSX, EOR_ABSY, EOR_IMM,
+    EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5,
+    KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12, LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP, LSR_ZPX,
+    NOP_IMP, NOP_IMP2, NOP_IMP3, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX, ORA_INDY,
+    ORA_ZP, ORA_ZPX, PHA, PHP, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY, RLA_ZP,
+    RLA_ZPX, ROL_ABS, ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, RTI, SEC, SLO_ABS, SLO_ABSX, SLO_ABSY,
+    SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX, SRE_ABSY, SRE_INDX, SRE_INDY,
+    SRE_ZP, SRE_ZPX, TOP_ABS, TOP_ABSX, TOP_ABSX2, TOP_ABSX3,
 };
 use super::types::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_OVERFLOW,
@@ -622,6 +623,109 @@ impl Cpu2 {
                 // SRE Absolute: SRE $nnnn (illegal opcode)
                 Some(Instruction::new(
                     Box::new(Absolute::new(true)),
+                    Box::new(Sre::new()),
+                ))
+            }
+            BVC => {
+                // BVC: Branch if Overflow Clear
+                Some(Instruction::new(
+                    Box::new(Relative::new()),
+                    Box::new(Bvc::new()),
+                ))
+            }
+            EOR_INDY => {
+                // EOR (Indirect),Y: EOR ($nn),Y
+                Some(Instruction::new(
+                    Box::new(IndirectIndexed::new(false)),
+                    Box::new(Eor::new()),
+                ))
+            }
+            KIL6 => {
+                // KIL (illegal opcode)
+                Some(Instruction::new(Box::new(Implied), Box::new(Kil::new())))
+            }
+            SRE_INDY => {
+                // SRE (Indirect),Y: SRE ($nn),Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(IndirectIndexed::new(true)),
+                    Box::new(Sre::new()),
+                ))
+            }
+            DOP_ZPX3 => {
+                // DOP Zero Page,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Dop::new()),
+                ))
+            }
+            EOR_ZPX => {
+                // EOR Zero Page,X: EOR $nn,X
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Eor::new()),
+                ))
+            }
+            LSR_ZPX => {
+                // LSR Zero Page,X: LSR $nn,X
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Lsr::new()),
+                ))
+            }
+            SRE_ZPX => {
+                // SRE Zero Page,X: SRE $nn,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Sre::new()),
+                ))
+            }
+            CLI => {
+                // CLI: Clear Interrupt Disable Flag
+                Some(Instruction::new(Box::new(Implied), Box::new(Cli::new())))
+            }
+            EOR_ABSY => {
+                // EOR Absolute,Y: EOR $nnnn,Y
+                Some(Instruction::new(
+                    Box::new(AbsoluteY::new(false)),
+                    Box::new(Eor::new()),
+                ))
+            }
+            NOP_IMP3 => {
+                // NOP Implied (illegal opcode)
+                Some(Instruction::new(Box::new(Implied), Box::new(Nop::new())))
+            }
+            SRE_ABSY => {
+                // SRE Absolute,Y: SRE $nnnn,Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteY::new(true)),
+                    Box::new(Sre::new()),
+                ))
+            }
+            TOP_ABSX3 => {
+                // TOP Absolute,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(false)),
+                    Box::new(Top::new()),
+                ))
+            }
+            EOR_ABSX => {
+                // EOR Absolute,X: EOR $nnnn,X
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(false)),
+                    Box::new(Eor::new()),
+                ))
+            }
+            LSR_ABSX => {
+                // LSR Absolute,X: LSR $nnnn,X
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(true)),
+                    Box::new(Lsr::new()),
+                ))
+            }
+            SRE_ABSX => {
+                // SRE Absolute,X: SRE $nnnn,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(true)),
                     Box::new(Sre::new()),
                 ))
             }
@@ -3103,6 +3207,390 @@ mod tests {
         // A should be EORed with result
         assert_eq!(cpu.state.a, 0b1010_0101, "A should contain EOR result");
         assert_eq!(cycles, 6, "SRE absolute should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_50() {
+        let memory = create_test_memory();
+
+        // Set up BVC instruction (Branch if Overflow Clear)
+        memory.borrow_mut().write(0x0400, 0x50, false); // BVC opcode
+        memory.borrow_mut().write(0x0401, 0x10, false); // Relative offset (+16)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = 0; // V flag clear
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Branch should be taken
+        assert_eq!(cpu.state.pc, 0x0412, "PC should branch to 0x0412");
+        assert_eq!(cycles, 3, "BVC with branch taken (no page cross) should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_51() {
+        let memory = create_test_memory();
+
+        // Set up EOR ($20),Y instruction
+        memory.borrow_mut().write(0x0400, 0x51, false); // EOR (Indirect),Y opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up pointer at $20
+        memory.borrow_mut().write(0x0020, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0021, 0x12, false); // High byte
+
+        // Set up value at $1234 + Y
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.y = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0b1111_0000 ^ 0b1010_1010 = 0b0101_1010
+        assert_eq!(cpu.state.a, 0b0101_1010, "A should contain result of EOR");
+        assert_eq!(cycles, 5, "EOR indirect indexed should take 5 cycles (no page cross)");
+    }
+
+    #[test]
+    fn test_opcode_52() {
+        let memory = create_test_memory();
+
+        // Set up KIL instruction
+        memory.borrow_mut().write(0x0400, 0x52, false); // KIL opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        assert!(cpu.is_halted(), "CPU should be halted");
+        assert_eq!(cycles, 1, "KIL should take 1 cycle");
+    }
+
+    #[test]
+    fn test_opcode_53() {
+        let memory = create_test_memory();
+
+        // Set up SRE ($20),Y instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x53, false); // SRE (Indirect),Y opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up pointer at $20
+        memory.borrow_mut().write(0x0020, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0021, 0x12, false); // High byte
+
+        // Set up value at $1234 + Y
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.y = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be shifted right
+        let mem_result = memory.borrow().read(0x1238);
+        assert_eq!(mem_result, 0b0101_0101, "Memory should be shifted right");
+        // A should be EORed with result
+        assert_eq!(cpu.state.a, 0b1010_0101, "A should contain EOR result");
+        assert_eq!(cycles, 8, "SRE indirect indexed should take 8 cycles");
+    }
+
+    #[test]
+    fn test_opcode_54() {
+        let memory = create_test_memory();
+
+        // Set up DOP $20,X instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x54, false); // DOP Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x05;
+        cpu.state.a = 0x11;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // DOP does nothing
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+        assert_eq!(cycles, 4, "DOP zero page,X should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_55() {
+        let memory = create_test_memory();
+
+        // Set up EOR $20,X instruction
+        memory.borrow_mut().write(0x0400, 0x55, false); // EOR Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base
+
+        // Set up value at $25
+        memory.borrow_mut().write(0x0025, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.x = 0x05;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0b1111_0000 ^ 0b1010_1010 = 0b0101_1010
+        assert_eq!(cpu.state.a, 0b0101_1010, "A should contain result of EOR");
+        assert_eq!(cycles, 4, "EOR zero page,X should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_56() {
+        let memory = create_test_memory();
+
+        // Set up LSR $20,X instruction
+        memory.borrow_mut().write(0x0400, 0x56, false); // LSR Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base
+
+        // Set up value at $25
+        memory.borrow_mut().write(0x0025, 0b1010_1011, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x05;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be shifted right
+        let result = memory.borrow().read(0x0025);
+        assert_eq!(result, 0b0101_0101, "Memory should be shifted right");
+        assert_eq!(cpu.state.p & 0x01, 1, "C flag should be set (bit 0 was 1)");
+        assert_eq!(cycles, 6, "LSR zero page,X should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_57() {
+        let memory = create_test_memory();
+
+        // Set up SRE $20,X instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x57, false); // SRE Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base
+
+        // Set up value at $25
+        memory.borrow_mut().write(0x0025, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.x = 0x05;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be shifted right
+        let mem_result = memory.borrow().read(0x0025);
+        assert_eq!(mem_result, 0b0101_0101, "Memory should be shifted right");
+        // A should be EORed with result
+        assert_eq!(cpu.state.a, 0b1010_0101, "A should contain EOR result");
+        assert_eq!(cycles, 6, "SRE zero page,X should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_58() {
+        let memory = create_test_memory();
+
+        // Set up CLI instruction
+        memory.borrow_mut().write(0x0400, 0x58, false); // CLI opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = 0xFF; // All flags set
+
+        let cycles = execute_instruction(&mut cpu);
+
+        assert_eq!(cpu.state.p & 0x04, 0, "I flag should be clear");
+        assert_eq!(cycles, 2, "CLI should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_59() {
+        let memory = create_test_memory();
+
+        // Set up EOR $1234,Y instruction
+        memory.borrow_mut().write(0x0400, 0x59, false); // EOR Absolute,Y opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234 + Y
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.y = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0b1111_0000 ^ 0b1010_1010 = 0b0101_1010
+        assert_eq!(cpu.state.a, 0b0101_1010, "A should contain result of EOR");
+        assert_eq!(cycles, 4, "EOR absolute,Y should take 4 cycles (no page cross)");
+    }
+
+    #[test]
+    fn test_opcode_5a() {
+        let memory = create_test_memory();
+
+        // Set up NOP instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x5A, false); // NOP opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x11;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // NOP does nothing
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+        assert_eq!(cycles, 2, "NOP should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_5b() {
+        let memory = create_test_memory();
+
+        // Set up SRE $1234,Y instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x5B, false); // SRE Absolute,Y opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234 + Y
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.y = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be shifted right
+        let mem_result = memory.borrow().read(0x1238);
+        assert_eq!(mem_result, 0b0101_0101, "Memory should be shifted right");
+        // A should be EORed with result
+        assert_eq!(cpu.state.a, 0b1010_0101, "A should contain EOR result");
+        assert_eq!(cycles, 7, "SRE absolute,Y should take 7 cycles");
+    }
+
+    #[test]
+    fn test_opcode_5c() {
+        let memory = create_test_memory();
+
+        // Set up TOP $1234,X instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x5C, false); // TOP Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x04;
+        cpu.state.a = 0x11;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // TOP does nothing
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+        assert_eq!(cycles, 4, "TOP absolute,X should take 4 cycles (no page cross)");
+    }
+
+    #[test]
+    fn test_opcode_5d() {
+        let memory = create_test_memory();
+
+        // Set up EOR $1234,X instruction
+        memory.borrow_mut().write(0x0400, 0x5D, false); // EOR Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234 + X
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.x = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0b1111_0000 ^ 0b1010_1010 = 0b0101_1010
+        assert_eq!(cpu.state.a, 0b0101_1010, "A should contain result of EOR");
+        assert_eq!(cycles, 4, "EOR absolute,X should take 4 cycles (no page cross)");
+    }
+
+    #[test]
+    fn test_opcode_5e() {
+        let memory = create_test_memory();
+
+        // Set up LSR $1234,X instruction
+        memory.borrow_mut().write(0x0400, 0x5E, false); // LSR Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234 + X
+        memory.borrow_mut().write(0x1238, 0b1010_1011, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be shifted right
+        let result = memory.borrow().read(0x1238);
+        assert_eq!(result, 0b0101_0101, "Memory should be shifted right");
+        assert_eq!(cpu.state.p & 0x01, 1, "C flag should be set");
+        assert_eq!(cycles, 7, "LSR absolute,X should take 7 cycles");
+    }
+
+    #[test]
+    fn test_opcode_5f() {
+        let memory = create_test_memory();
+
+        // Set up SRE $1234,X instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x5F, false); // SRE Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234 + X
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1111_0000;
+        cpu.state.x = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be shifted right
+        let mem_result = memory.borrow().read(0x1238);
+        assert_eq!(mem_result, 0b0101_0101, "Memory should be shifted right");
+        // A should be EORed with result
+        assert_eq!(cpu.state.a, 0b1010_0101, "A should contain EOR result");
+        assert_eq!(cycles, 7, "SRE absolute,X should take 7 cycles");
     }
 
     #[test]

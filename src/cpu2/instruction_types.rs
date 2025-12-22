@@ -2016,3 +2016,120 @@ impl InstructionType for Asr {
         }
     }
 }
+
+/// BVC - Branch if Overflow Clear
+///
+/// If the overflow flag is clear, add the relative displacement to the program counter
+/// to cause a branch to a new location.
+///
+/// Operation: if V == 0, PC = PC + offset
+/// Flags: None
+///
+/// Cycles: 2-4
+///   1. Check V flag, if clear add offset to PC (may take extra cycle if page boundary crossed)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Bvc {
+    cycle: u8,
+    branch_taken: bool,
+    page_crossed: bool,
+}
+
+impl Bvc {
+    /// Create a new BVC instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Bvc {
+    fn is_done(&self) -> bool {
+        (!self.branch_taken && self.cycle == 1)
+            || (self.branch_taken && !self.page_crossed && self.cycle == 2)
+            || (self.branch_taken && self.page_crossed && self.cycle == 3)
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(!self.is_done(), "Bvc::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Check overflow flag and decide if branch is taken
+                self.branch_taken = (cpu_state.p & super::types::FLAG_OVERFLOW) == 0;
+
+                if !self.branch_taken {
+                    // Branch not taken - we're done
+                    self.cycle = 1;
+                } else {
+                    // Branch taken - get target address and check for page cross
+                    let target = addressing_mode.get_address();
+                    let current_page = cpu_state.pc & 0xFF00;
+                    let target_page = target & 0xFF00;
+                    self.page_crossed = current_page != target_page;
+
+                    // Update PC to target
+                    cpu_state.pc = target;
+                    self.cycle = 1;
+                }
+            }
+            1 => {
+                // Cycle 2: Additional cycle for branch taken (same page)
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Additional cycle for page boundary crossed
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// CLI - Clear Interrupt Disable
+///
+/// Clears the interrupt disable flag allowing normal interrupt requests to be serviced.
+///
+/// Operation: I = 0
+/// Flags: I
+///
+/// Cycles: 1
+///   1. Clear I flag
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Cli {
+    cycle: u8,
+}
+
+impl Cli {
+    /// Create a new CLI instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Cli {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Cli::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Clear interrupt disable flag
+                cpu_state.p &= !super::types::FLAG_INTERRUPT;
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
