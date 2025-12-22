@@ -2502,3 +2502,99 @@ impl InstructionType for Arr {
         self.cycle = 1;
     }
 }
+
+#[derive(Default)]
+pub struct Bvs {
+    cycle: u8,
+    branch_taken: bool,
+    page_crossed: bool,
+}
+
+impl Bvs {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Bvs {
+    fn is_done(&self) -> bool {
+        (!self.branch_taken && self.cycle == 1)
+            || (self.branch_taken && !self.page_crossed && self.cycle == 2)
+            || (self.branch_taken && self.page_crossed && self.cycle == 3)
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(!self.is_done(), "Bvs::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Check overflow flag and decide if branch is taken
+                self.branch_taken = (cpu_state.p & super::types::FLAG_OVERFLOW) != 0;
+
+                if !self.branch_taken {
+                    // Branch not taken - we're done
+                    self.cycle = 1;
+                } else {
+                    // Branch taken - get target address and check for page cross
+                    let target = addressing_mode.get_address();
+                    let current_page = cpu_state.pc & 0xFF00;
+                    let target_page = target & 0xFF00;
+                    self.page_crossed = current_page != target_page;
+
+                    // Update PC to target
+                    cpu_state.pc = target;
+                    self.cycle = 1;
+                }
+            }
+            1 => {
+                // Cycle 2: Extra cycle for branch taken (same page)
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Extra cycle for page crossing
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Sei {
+    cycle: u8,
+}
+
+impl Sei {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Sei {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Sei::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Set interrupt disable flag
+                cpu_state.p |= super::types::FLAG_INTERRUPT;
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}

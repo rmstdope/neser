@@ -4,23 +4,24 @@ use super::addressing::{
 };
 use super::instruction::Instruction;
 use super::instruction_types::{
-    Aac, Adc, And, Arr, Asl, AslA, Asr, Bit, Bmi, Bpl, Brk, Bvc, Clc, Cli, Dop, Eor, Jmp, Jsr, Kil,
-    Lsr, LsrA, Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, RolA, Ror, RorA, Rra, Rti, Rts, Sec, Slo,
-    Sre, Top,
+    Aac, Adc, And, Arr, Asl, AslA, Asr, Bit, Bmi, Bpl, Brk, Bvc, Bvs, Clc, Cli, Dop, Eor, Jmp, Jsr,
+    Kil, Lsr, LsrA, Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, RolA, Ror, RorA, Rra, Rti, Rts, Sec,
+    Sei, Slo, Sre, Top,
 };
 use super::traits::{
     AAC_IMM, AAC_IMM2, ADC_ABS, ADC_ABSX, ADC_ABSY, ADC_IMM, ADC_INDX, ADC_INDY, ADC_ZP, ADC_ZPX,
     AND_ABS, AND_ABSX, AND_ABSY, AND_IMM, AND_INDX, AND_INDY, AND_ZP, AND_ZPX, ARR_IMM, ASL_A,
-    ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, BIT_ABS, BIT_ZP, BMI, BPL, BRK, BVC, CLC, CLI,
-    DOP_ZP, DOP_ZP2, DOP_ZP3, DOP_ZPX, DOP_ZPX2, DOP_ZPX3, EOR_ABS, EOR_ABSX, EOR_ABSY, EOR_IMM,
-    EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6,
-    KIL7, KIL8, KIL9, KIL10, KIL11, KIL12, LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP, LSR_ZPX, NOP_IMP,
-    NOP_IMP2, NOP_IMP3, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX, ORA_INDY, ORA_ZP, ORA_ZPX,
-    PHA, PHP, PLA, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY, RLA_ZP, RLA_ZPX, ROL_ABS,
-    ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, ROR_ABS, ROR_ABSX, ROR_ACC, ROR_ZP, ROR_ZPX, RRA_ABS,
-    RRA_ABSX, RRA_ABSY, RRA_INDX, RRA_INDY, RRA_ZP, RRA_ZPX, RTI, RTS, SEC, SLO_ABS, SLO_ABSX,
-    SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX, SRE_ABSY, SRE_INDX, SRE_INDY,
-    SRE_ZP, SRE_ZPX, TOP_ABS, TOP_ABSX, TOP_ABSX2, TOP_ABSX3,
+    ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, BIT_ABS, BIT_ZP, BMI, BPL, BRK, BVC, BVS, CLC,
+    CLI, DOP_ZP, DOP_ZP2, DOP_ZP3, DOP_ZPX, DOP_ZPX2, DOP_ZPX3, DOP_ZPX4, EOR_ABS, EOR_ABSX,
+    EOR_ABSY, EOR_IMM, EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3,
+    KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12, LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP,
+    LSR_ZPX, NOP_IMP, NOP_IMP2, NOP_IMP3, NOP_IMP4, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX,
+    ORA_INDY, ORA_ZP, ORA_ZPX, PHA, PHP, PLA, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY,
+    RLA_ZP, RLA_ZPX, ROL_ABS, ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, ROR_ABS, ROR_ABSX, ROR_ACC,
+    ROR_ZP, ROR_ZPX, RRA_ABS, RRA_ABSX, RRA_ABSY, RRA_INDX, RRA_INDY, RRA_ZP, RRA_ZPX, RTI, RTS,
+    SEC, SEI, SLO_ABS, SLO_ABSX, SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX,
+    SRE_ABSY, SRE_INDX, SRE_INDY, SRE_ZP, SRE_ZPX, TOP_ABS, TOP_ABSX, TOP_ABSX2, TOP_ABSX3,
+    TOP_ABSX4,
 };
 use super::types::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_OVERFLOW,
@@ -791,6 +792,109 @@ impl Cpu2 {
             CLI => {
                 // CLI: Clear Interrupt Disable Flag
                 Some(Instruction::new(Box::new(Implied), Box::new(Cli::new())))
+            }
+            BVS => {
+                // BVS: Branch if Overflow Set
+                Some(Instruction::new(
+                    Box::new(Relative::new()),
+                    Box::new(Bvs::new()),
+                ))
+            }
+            ADC_INDY => {
+                // ADC (Indirect),Y: ADC ($nn),Y
+                Some(Instruction::new(
+                    Box::new(IndirectIndexed::new(false)),
+                    Box::new(Adc::new()),
+                ))
+            }
+            KIL8 => {
+                // KIL (illegal opcode)
+                Some(Instruction::new(Box::new(Implied), Box::new(Kil::new())))
+            }
+            RRA_INDY => {
+                // RRA (Indirect),Y: RRA ($nn),Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(IndirectIndexed::new(true)),
+                    Box::new(Rra::new()),
+                ))
+            }
+            DOP_ZPX4 => {
+                // DOP Zero Page,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Dop::new()),
+                ))
+            }
+            ADC_ZPX => {
+                // ADC Zero Page,X: ADC $nn,X
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Adc::new()),
+                ))
+            }
+            ROR_ZPX => {
+                // ROR Zero Page,X: ROR $nn,X
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Ror::new()),
+                ))
+            }
+            RRA_ZPX => {
+                // RRA Zero Page,X: RRA $nn,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Rra::new()),
+                ))
+            }
+            SEI => {
+                // SEI: Set Interrupt Disable Flag
+                Some(Instruction::new(Box::new(Implied), Box::new(Sei::new())))
+            }
+            ADC_ABSY => {
+                // ADC Absolute,Y: ADC $nnnn,Y
+                Some(Instruction::new(
+                    Box::new(AbsoluteY::new(false)),
+                    Box::new(Adc::new()),
+                ))
+            }
+            NOP_IMP4 => {
+                // NOP Implied (illegal opcode)
+                Some(Instruction::new(Box::new(Implied), Box::new(Nop::new())))
+            }
+            RRA_ABSY => {
+                // RRA Absolute,Y: RRA $nnnn,Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteY::new(true)),
+                    Box::new(Rra::new()),
+                ))
+            }
+            TOP_ABSX4 => {
+                // TOP Absolute,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(false)),
+                    Box::new(Top::new()),
+                ))
+            }
+            ADC_ABSX => {
+                // ADC Absolute,X: ADC $nnnn,X
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(false)),
+                    Box::new(Adc::new()),
+                ))
+            }
+            ROR_ABSX => {
+                // ROR Absolute,X: ROR $nnnn,X
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(true)),
+                    Box::new(Ror::new()),
+                ))
+            }
+            RRA_ABSX => {
+                // RRA Absolute,X: RRA $nnnn,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(true)),
+                    Box::new(Rra::new()),
+                ))
             }
             EOR_ABSY => {
                 // EOR Absolute,Y: EOR $nnnn,Y
@@ -4013,6 +4117,70 @@ mod tests {
     }
 
     #[test]
+    fn test_opcode_6c() {
+        let memory = create_test_memory();
+
+        // Set up JMP ($1200) instruction at address $0800
+        memory.borrow_mut().write(0x0800, JMP_IND, false); // JMP Indirect opcode (0x6C)
+        memory.borrow_mut().write(0x0801, 0x00, false); // Low byte of indirect address
+        memory.borrow_mut().write(0x0802, 0x12, false); // High byte of indirect address
+
+        // Set up the target address at the indirect location $1200
+        memory.borrow_mut().write(0x1200, 0x34, false); // Low byte of target
+        memory.borrow_mut().write(0x1201, 0x56, false); // High byte of target
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0800;
+        cpu.state.sp = 0xFD;
+        cpu.state.a = 0xAA;
+        cpu.state.x = 0xBB;
+        cpu.state.y = 0xCC;
+        cpu.state.p = 0xDD;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Verify the CPU state after JMP execution
+        assert_eq!(cpu.state.pc, 0x5634, "PC should jump to target address");
+        assert_eq!(cpu.state.sp, 0xFD, "SP should not change");
+        assert_eq!(cpu.state.a, 0xAA, "A should not change");
+        assert_eq!(cpu.state.x, 0xBB, "X should not change");
+        assert_eq!(cpu.state.y, 0xCC, "Y should not change");
+        assert_eq!(cpu.state.p, 0xDD, "P should not change");
+        assert_eq!(
+            cycles, 5,
+            "JMP Indirect should take 5 cycles total (4 addressing + 1 execution overlapped)"
+        );
+    }
+
+    #[test]
+    fn test_opcode_6c_boundary_bug() {
+        let memory = create_test_memory();
+
+        // Set up JMP ($12FF) instruction at address $0800
+        // This tests the page boundary bug where high byte is read from $1200 instead of $1300
+        memory.borrow_mut().write(0x0800, JMP_IND, false); // JMP Indirect opcode (0x6C)
+        memory.borrow_mut().write(0x0801, 0xFF, false); // Low byte of indirect address
+        memory.borrow_mut().write(0x0802, 0x12, false); // High byte of indirect address
+
+        // Set up target address with page boundary bug
+        memory.borrow_mut().write(0x12FF, 0x34, false); // Low byte at $12FF
+        memory.borrow_mut().write(0x1200, 0x56, false); // High byte wraps to $1200 (bug)
+        memory.borrow_mut().write(0x1300, 0x99, false); // This would be correct but is not used
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0800;
+        cpu.state.sp = 0xFD;
+
+        execute_instruction(&mut cpu);
+
+        // Verify the CPU jumps to $5634 (using $1200 for high byte, not $1300)
+        assert_eq!(
+            cpu.state.pc, 0x5634,
+            "PC should use page boundary bug (high byte from $1200, not $1300)"
+        );
+    }
+
+    #[test]
     fn test_opcode_6d() {
         let memory = create_test_memory();
 
@@ -4089,66 +4257,403 @@ mod tests {
     }
 
     #[test]
-    fn test_opcode_6c() {
+    fn test_opcode_70() {
         let memory = create_test_memory();
 
-        // Set up JMP ($1200) instruction at address $0800
-        memory.borrow_mut().write(0x0800, JMP_IND, false); // JMP Indirect opcode (0x6C)
-        memory.borrow_mut().write(0x0801, 0x00, false); // Low byte of indirect address
-        memory.borrow_mut().write(0x0802, 0x12, false); // High byte of indirect address
-
-        // Set up the target address at the indirect location $1200
-        memory.borrow_mut().write(0x1200, 0x34, false); // Low byte of target
-        memory.borrow_mut().write(0x1201, 0x56, false); // High byte of target
+        // Set up BVS instruction with branch offset
+        memory.borrow_mut().write(0x0400, BVS, false); // BVS opcode
+        memory.borrow_mut().write(0x0401, 0x10, false); // Branch offset +16
 
         let mut cpu = Cpu2::new(Rc::clone(&memory));
-        cpu.state.pc = 0x0800;
-        cpu.state.sp = 0xFD;
-        cpu.state.a = 0xAA;
-        cpu.state.x = 0xBB;
-        cpu.state.y = 0xCC;
-        cpu.state.p = 0xDD;
+        cpu.state.pc = 0x0400;
+        cpu.state.p = FLAG_OVERFLOW; // Set overflow flag
 
         let cycles = execute_instruction(&mut cpu);
 
-        // Verify the CPU state after JMP execution
-        assert_eq!(cpu.state.pc, 0x5634, "PC should jump to target address");
-        assert_eq!(cpu.state.sp, 0xFD, "SP should not change");
-        assert_eq!(cpu.state.a, 0xAA, "A should not change");
-        assert_eq!(cpu.state.x, 0xBB, "X should not change");
-        assert_eq!(cpu.state.y, 0xCC, "Y should not change");
-        assert_eq!(cpu.state.p, 0xDD, "P should not change");
+        // PC should branch: 0x0402 + 0x10 = 0x0412
+        assert_eq!(cpu.state.pc, 0x0412, "PC should branch when V flag is set");
+        assert_eq!(cycles, 3, "BVS should take 3 cycles when branch taken");
+    }
+
+    #[test]
+    fn test_opcode_71() {
+        let memory = create_test_memory();
+
+        // Set up ADC ($20),Y instruction
+        memory.borrow_mut().write(0x0400, ADC_INDY, false); // ADC (Indirect),Y opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up pointer at $20
+        memory.borrow_mut().write(0x0020, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0021, 0x12, false); // High byte
+
+        // Set up value at $1234 + Y
+        memory.borrow_mut().write(0x1238, 0x05, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.y = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0x10 + 0x05 = 0x15
+        assert_eq!(cpu.state.a, 0x15, "A should contain sum");
         assert_eq!(
             cycles, 5,
-            "JMP Indirect should take 5 cycles total (4 addressing + 1 execution overlapped)"
+            "ADC indirect indexed should take 5 cycles (no page cross)"
         );
     }
 
     #[test]
-    fn test_opcode_6c_boundary_bug() {
+    fn test_opcode_72() {
         let memory = create_test_memory();
 
-        // Set up JMP ($12FF) instruction at address $0800
-        // This tests the page boundary bug where high byte is read from $1200 instead of $1300
-        memory.borrow_mut().write(0x0800, JMP_IND, false); // JMP Indirect opcode (0x6C)
-        memory.borrow_mut().write(0x0801, 0xFF, false); // Low byte of indirect address
-        memory.borrow_mut().write(0x0802, 0x12, false); // High byte of indirect address
-
-        // Set up target address with page boundary bug
-        memory.borrow_mut().write(0x12FF, 0x34, false); // Low byte at $12FF
-        memory.borrow_mut().write(0x1200, 0x56, false); // High byte wraps to $1200 (bug)
-        memory.borrow_mut().write(0x1300, 0x99, false); // This would be correct but is not used
+        // Set up KIL instruction
+        memory.borrow_mut().write(0x0400, KIL8, false); // KIL opcode
 
         let mut cpu = Cpu2::new(Rc::clone(&memory));
-        cpu.state.pc = 0x0800;
-        cpu.state.sp = 0xFD;
+        cpu.state.pc = 0x0400;
 
-        execute_instruction(&mut cpu);
+        let cycles = execute_instruction(&mut cpu);
 
-        // Verify the CPU jumps to $5634 (using $1200 for high byte, not $1300)
+        assert!(cpu.is_halted(), "CPU should be halted");
+        assert_eq!(cycles, 1, "KIL should take 1 cycle");
+    }
+
+    #[test]
+    fn test_opcode_73() {
+        let memory = create_test_memory();
+
+        // Set up RRA ($20),Y instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, RRA_INDY, false); // RRA (Indirect),Y opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up pointer at $20
+        memory.borrow_mut().write(0x0020, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0021, 0x12, false); // High byte
+
+        // Set up value at $1234 + Y
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.y = 0x04;
+        cpu.state.p = FLAG_CARRY;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right
+        let mem_result = memory.borrow().read(0x1238);
+        assert_eq!(mem_result, 0b1101_0101, "Memory should be rotated right");
+        // A should be ADCed with result
+        assert_eq!(cpu.state.a, 0xE5, "A should contain ADC result");
+        assert_eq!(cycles, 8, "RRA indirect indexed should take 8 cycles");
+    }
+
+    #[test]
+    fn test_opcode_74() {
+        let memory = create_test_memory();
+
+        // Set up DOP $20,X instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, DOP_ZPX4, false); // DOP Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x04;
+        cpu.state.a = 0x11;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // DOP does nothing
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+        assert_eq!(cycles, 4, "DOP zero page,X should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_75() {
+        let memory = create_test_memory();
+
+        // Set up ADC $20,X instruction
+        memory.borrow_mut().write(0x0400, ADC_ZPX, false); // ADC Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up value at $24 (wraps in zero page)
+        memory.borrow_mut().write(0x0024, 0x05, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.x = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0x10 + 0x05 = 0x15
+        assert_eq!(cpu.state.a, 0x15, "A should contain sum");
+        assert_eq!(cycles, 4, "ADC zero page,X should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_76() {
+        let memory = create_test_memory();
+
+        // Set up ROR $20,X instruction
+        memory.borrow_mut().write(0x0400, ROR_ZPX, false); // ROR Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up value at $24
+        memory.borrow_mut().write(0x0024, 0b0101_0101, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x04;
+        cpu.state.p = FLAG_CARRY;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right
+        let result = memory.borrow().read(0x0024);
+        assert_eq!(result, 0b1010_1010, "Memory should be rotated right");
+        assert_eq!(cpu.state.p & FLAG_CARRY, FLAG_CARRY, "C flag should be set");
+        assert_eq!(cycles, 6, "ROR zero page,X should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_77() {
+        let memory = create_test_memory();
+
+        // Set up RRA $20,X instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, RRA_ZPX, false); // RRA Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up value at $24
+        memory.borrow_mut().write(0x0024, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.x = 0x04;
+        cpu.state.p = FLAG_CARRY;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right
+        let mem_result = memory.borrow().read(0x0024);
+        assert_eq!(mem_result, 0b1101_0101, "Memory should be rotated right");
+        // A should be ADCed with result
+        assert_eq!(cpu.state.a, 0xE5, "A should contain ADC result");
+        assert_eq!(cycles, 6, "RRA zero page,X should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_78() {
+        let memory = create_test_memory();
+
+        // Set up SEI instruction
+        memory.borrow_mut().write(0x0400, SEI, false); // SEI opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
         assert_eq!(
-            cpu.state.pc, 0x5634,
-            "PC should use page boundary bug (high byte from $1200, not $1300)"
+            cpu.state.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "I flag should be set"
+        );
+        assert_eq!(cycles, 2, "SEI should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_79() {
+        let memory = create_test_memory();
+
+        // Set up ADC $1234,Y instruction
+        memory.borrow_mut().write(0x0400, ADC_ABSY, false); // ADC Absolute,Y opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234 + Y
+        memory.borrow_mut().write(0x1238, 0x05, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.y = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0x10 + 0x05 = 0x15
+        assert_eq!(cpu.state.a, 0x15, "A should contain sum");
+        assert_eq!(
+            cycles, 4,
+            "ADC absolute,Y should take 4 cycles (no page cross)"
         );
     }
+
+    #[test]
+    fn test_opcode_7a() {
+        let memory = create_test_memory();
+
+        // Set up NOP instruction
+        memory.borrow_mut().write(0x0400, NOP_IMP4, false); // NOP opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x11;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // NOP does nothing
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+        assert_eq!(cycles, 2, "NOP should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_7b() {
+        let memory = create_test_memory();
+
+        // Set up RRA $1234,Y instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, RRA_ABSY, false); // RRA Absolute,Y opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234 + Y
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.y = 0x04;
+        cpu.state.p = FLAG_CARRY;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right
+        let mem_result = memory.borrow().read(0x1238);
+        assert_eq!(mem_result, 0b1101_0101, "Memory should be rotated right");
+        // A should be ADCed with result
+        assert_eq!(cpu.state.a, 0xE5, "A should contain ADC result");
+        assert_eq!(cycles, 7, "RRA absolute,Y should take 7 cycles");
+    }
+
+    #[test]
+    fn test_opcode_7c() {
+        let memory = create_test_memory();
+
+        // Set up TOP $1234,X instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, TOP_ABSX4, false); // TOP Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x04;
+        cpu.state.a = 0x11;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // TOP does nothing
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+        assert_eq!(
+            cycles, 4,
+            "TOP absolute,X should take 4 cycles (no page cross)"
+        );
+    }
+
+    #[test]
+    fn test_opcode_7d() {
+        let memory = create_test_memory();
+
+        // Set up ADC $1234,X instruction
+        memory.borrow_mut().write(0x0400, ADC_ABSX, false); // ADC Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234 + X
+        memory.borrow_mut().write(0x1238, 0x05, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.x = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0x10 + 0x05 = 0x15
+        assert_eq!(cpu.state.a, 0x15, "A should contain sum");
+        assert_eq!(
+            cycles, 4,
+            "ADC absolute,X should take 4 cycles (no page cross)"
+        );
+    }
+
+    #[test]
+    fn test_opcode_7e() {
+        let memory = create_test_memory();
+
+        // Set up ROR $1234,X instruction
+        memory.borrow_mut().write(0x0400, ROR_ABSX, false); // ROR Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234 + X
+        memory.borrow_mut().write(0x1238, 0b0101_0101, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x04;
+        cpu.state.p = FLAG_CARRY;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right
+        let result = memory.borrow().read(0x1238);
+        assert_eq!(result, 0b1010_1010, "Memory should be rotated right");
+        assert_eq!(cpu.state.p & FLAG_CARRY, FLAG_CARRY, "C flag should be set");
+        assert_eq!(cycles, 7, "ROR absolute,X should take 7 cycles");
+    }
+
+    #[test]
+    fn test_opcode_7f() {
+        let memory = create_test_memory();
+
+        // Set up RRA $1234,X instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, RRA_ABSX, false); // RRA Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234 + X
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x10;
+        cpu.state.x = 0x04;
+        cpu.state.p = FLAG_CARRY;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be rotated right
+        let mem_result = memory.borrow().read(0x1238);
+        assert_eq!(mem_result, 0b1101_0101, "Memory should be rotated right");
+        // A should be ADCed with result
+        assert_eq!(cpu.state.a, 0xE5, "A should contain ADC result");
+        assert_eq!(cycles, 7, "RRA absolute,X should take 7 cycles");
+    }
+
 }
