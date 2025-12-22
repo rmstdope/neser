@@ -39,6 +39,271 @@ fn shift_left(value: u8) -> (u8, bool) {
     (shifted, carry)
 }
 
+/// AAC - AND with Carry (Illegal Opcode)
+///
+/// Also known as ANC. Performs AND between accumulator and immediate value,
+/// then copies bit 7 of the result to the carry flag.
+///
+/// Operation: A = A & M, C = N
+/// Flags: N, Z, C
+///
+/// Cycles: 1
+///   1. AND value with A, set flags, copy N to C
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Aac {
+    cycle: u8,
+}
+
+impl Aac {
+    /// Create a new AAC instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Aac {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Aac::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: AND value with A
+                cpu_state.a &= addressing_mode.get_u8_value();
+
+                // Set N and Z flags based on result
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+
+                // Copy bit 7 (N flag) to carry flag
+                let carry = (cpu_state.a & 0x80) != 0;
+                set_carry_flag(&mut cpu_state.p, carry);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// TOP - Triple NOP (Illegal Opcode)
+///
+/// Also known as NOP (absolute). Reads from memory but does nothing with the value.
+/// It's essentially a NOP that uses absolute addressing.
+///
+/// Operation: Read value (do nothing with it)
+/// Flags: None affected
+///
+/// Cycles: 1
+///   1. Value already read by addressing mode, do nothing
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Top {
+    cycle: u8,
+}
+
+impl Top {
+    /// Create a new TOP instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Top {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        _cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Top::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Do nothing, value is already read by addressing mode
+                // This is a no-op
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// BPL - Branch if Positive
+///
+/// Branch if the negative flag (N) is clear (positive).
+/// The relative addressing mode provides the signed offset.
+///
+/// Operation: Branch if N == 0
+/// Flags: None affected
+///
+/// Cycles:
+///   - 2 if branch not taken (opcode + offset fetch)
+///   - 3 if branch taken, same page (opcode + offset fetch + branch)
+///   - 4 if branch taken, page cross (opcode + offset fetch + branch + fix high byte)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Bpl {
+    cycle: u8,
+    branch_taken: bool,
+    page_crossed: bool,
+}
+
+impl Bpl {
+    /// Create a new BPL instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Bpl {
+    fn is_done(&self) -> bool {
+        (!self.branch_taken && self.cycle == 1)
+            || (self.branch_taken && !self.page_crossed && self.cycle == 2)
+            || (self.branch_taken && self.page_crossed && self.cycle == 3)
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(!self.is_done(), "Bpl::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Check negative flag and decide if branch is taken
+                self.branch_taken = (cpu_state.p & super::types::FLAG_NEGATIVE) == 0;
+
+                if !self.branch_taken {
+                    // Branch not taken - we're done
+                    self.cycle = 1;
+                } else {
+                    // Branch taken - get target address and check for page cross
+                    let target = addressing_mode.get_address();
+                    let current_page = cpu_state.pc & 0xFF00;
+                    let target_page = target & 0xFF00;
+                    self.page_crossed = current_page != target_page;
+
+                    // Update PC to target
+                    cpu_state.pc = target;
+                    self.cycle = 1;
+                }
+            }
+            1 => {
+                // Cycle 2: Extra cycle for branch taken (same page)
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Extra cycle for page crossing
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// CLC - Clear Carry Flag
+///
+/// Clears the carry flag in the status register.
+///
+/// Operation: C = 0
+/// Flags: C
+///
+/// Cycles: 1
+///   1. Clear carry flag
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Clc {
+    cycle: u8,
+}
+
+impl Clc {
+    /// Create a new CLC instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Clc {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Clc::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Clear carry flag
+                cpu_state.p &= !super::types::FLAG_CARRY;
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// NOP - No Operation (Illegal Opcode)
+///
+/// Does nothing for one cycle. This is an implied addressing mode NOP.
+/// The official NOP is 0xEA, but this is one of several illegal NOP variants.
+///
+/// Operation: None
+/// Flags: None affected
+///
+/// Cycles: 1
+///   1. Do nothing
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Nop {
+    cycle: u8,
+}
+
+impl Nop {
+    /// Create a new NOP instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Nop {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        _cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Nop::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Do nothing
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 /// JSR - Jump to Subroutine
 ///
 /// Pushes the address of the next instruction minus 1 onto the stack

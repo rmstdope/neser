@@ -1,16 +1,17 @@
-use super::addressing::{Immediate, Implied, IndexedIndirect, Indirect, ZeroPage};
+use super::addressing::{Absolute, AbsoluteX, AbsoluteY, Immediate, Implied, IndexedIndirect, Indirect, IndirectIndexed, Relative, ZeroPage, ZeroPageX};
 use super::instruction::Instruction;
-use super::instruction_types::{Asl, AslA, Brk, Dop, Jmp, Jsr, Kil, Ora, Php, Slo};
+use super::instruction_types::{Aac, Asl, AslA, Bpl, Brk, Clc, Dop, Jmp, Jsr, Kil, Nop, Ora, Php, Slo, Top};
 use super::traits::{
-    ASL_A, ASL_ZP, BRK, DOP_ZP, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6, KIL7,
-    KIL8, KIL9, KIL10, KIL11, KIL12, ORA_ABS, ORA_IMM, ORA_INDX, ORA_ZP, PHP, SLO_INDX, SLO_ZP,
+    AAC_IMM, ASL_A, ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, BPL, BRK, CLC, DOP_ZP, DOP_ZPX, JMP_ABS,
+    JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12,
+    NOP_IMP, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX, ORA_INDY, ORA_ZP, ORA_ZPX, PHP,
+    SLO_ABS, SLO_ABSX, SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, TOP_ABS, TOP_ABSX,
 };
 use super::types::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_OVERFLOW,
     FLAG_UNUSED, FLAG_ZERO, IRQ_VECTOR, NMI_VECTOR, RESET_VECTOR,
 };
 use crate::cpu2::CpuState;
-use crate::cpu2::addressing::Absolute;
 use crate::mem_controller::MemController;
 use core::panic;
 use std::cell::RefCell;
@@ -178,11 +179,142 @@ impl Cpu2 {
                 // ASL A - Arithmetic Shift Left Accumulator
                 Some(Instruction::new(Box::new(Implied), Box::new(AslA::new())))
             }
+            AAC_IMM => {
+                // AAC #imm - AND with Carry (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Aac::new()),
+                ))
+            }
+            TOP_ABS => {
+                // TOP abs - Triple NOP (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Top::new()),
+                ))
+            }
             ORA_ABS => {
                 // ORA Absolute: ORA abs
                 Some(Instruction::new(
                     Box::new(Absolute::new(true)),
                     Box::new(Ora::new()),
+                ))
+            }
+            ASL_ABS => {
+                // ASL Absolute: ASL abs
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Asl::new()),
+                ))
+            }
+            SLO_ABS => {
+                // SLO Absolute: SLO abs (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Slo::new()),
+                ))
+            }
+            BPL => {
+                // BPL Relative: BPL offset
+                Some(Instruction::new(
+                    Box::new(Relative::new()),
+                    Box::new(Bpl::new()),
+                ))
+            }
+            ORA_INDY => {
+                // ORA (Indirect),Y: ORA ($nn),Y
+                Some(Instruction::new(
+                    Box::new(IndirectIndexed::new(false)),
+                    Box::new(Ora::new()),
+                ))
+            }
+            KIL2 => {
+                // KIL (illegal opcode - halts CPU)
+                Some(Instruction::new(Box::new(Implied), Box::new(Kil::new())))
+            }
+            SLO_INDY => {
+                // SLO (Indirect),Y: SLO ($nn),Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(IndirectIndexed::new(true)),
+                    Box::new(Slo::new()),
+                ))
+            }
+            DOP_ZPX => {
+                // DOP Zero Page,X: DOP $nn,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Dop::new()),
+                ))
+            }
+            ORA_ZPX => {
+                // ORA Zero Page,X: ORA $nn,X
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Ora::new()),
+                ))
+            }
+            ASL_ZPX => {
+                // ASL Zero Page,X: ASL $nn,X
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Asl::new()),
+                ))
+            }
+            SLO_ZPX => {
+                // SLO Zero Page,X: SLO $nn,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Slo::new()),
+                ))
+            }
+            CLC => {
+                // CLC: Clear Carry Flag
+                Some(Instruction::new(Box::new(Implied), Box::new(Clc::new())))
+            }
+            ORA_ABSY => {
+                // ORA Absolute,Y: ORA abs,Y
+                Some(Instruction::new(
+                    Box::new(AbsoluteY::new(false)),
+                    Box::new(Ora::new()),
+                ))
+            }
+            NOP_IMP => {
+                // NOP Implied (illegal opcode)
+                Some(Instruction::new(Box::new(Implied), Box::new(Nop::new())))
+            }
+            SLO_ABSY => {
+                // SLO Absolute,Y: SLO abs,Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteY::new(true)),
+                    Box::new(Slo::new()),
+                ))
+            }
+            TOP_ABSX => {
+                // TOP Absolute,X: TOP abs,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(false)),
+                    Box::new(Top::new()),
+                ))
+            }
+            ORA_ABSX => {
+                // ORA Absolute,X: ORA abs,X
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(false)),
+                    Box::new(Ora::new()),
+                ))
+            }
+            ASL_ABSX => {
+                // ASL Absolute,X: ASL abs,X
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(true)),
+                    Box::new(Asl::new()),
+                ))
+            }
+            SLO_ABSX => {
+                // SLO Absolute,X: SLO abs,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(true)),
+                    Box::new(Slo::new()),
                 ))
             }
             JSR => {
@@ -800,6 +932,68 @@ mod tests {
     }
 
     #[test]
+    fn test_opcode_0b() {
+        let memory = create_test_memory();
+
+        // Set up AAC #$AA instruction at address $0400 (illegal opcode)
+        memory.borrow_mut().write(0x0400, AAC_IMM, false); // AAC Immediate opcode
+        memory.borrow_mut().write(0x0401, 0b1010_1010, false); // Immediate value
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0b1100_0011 & 0b1010_1010 = 0b1000_0010
+        assert_eq!(cpu.state.a, 0b1000_0010, "A should contain result of AND");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=1 (bit 7 of result is set)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & 0x01,
+            0x01,
+            "C flag should be set (bit 7 of result)"
+        );
+
+        // AAC immediate should take 2 cycles
+        assert_eq!(cycles, 2, "AAC immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_0c() {
+        let memory = create_test_memory();
+
+        // Set up TOP $1234 instruction at address $0400 (illegal opcode - triple NOP)
+        memory.borrow_mut().write(0x0400, TOP_ABS, false); // TOP Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte of address
+        memory.borrow_mut().write(0x1234, 0x42, false); // Value at $1234 (will be read but ignored)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.sp = 0xFD;
+        cpu.state.a = 0x11;
+        cpu.state.x = 0x22;
+        cpu.state.y = 0x33;
+        cpu.state.p = 0x44;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // TOP reads from memory but does nothing - all registers should be unchanged
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.x, 0x22, "X should not change");
+        assert_eq!(cpu.state.y, 0x33, "Y should not change");
+        assert_eq!(cpu.state.sp, 0xFD, "SP should not change");
+        assert_eq!(cpu.state.p, 0x44, "P should not change");
+
+        // TOP with absolute should take 4 cycles
+        assert_eq!(cycles, 4, "TOP absolute should take 4 cycles");
+    }
+
+    #[test]
     fn test_opcode_0d() {
         let memory = create_test_memory();
 
@@ -826,6 +1020,565 @@ mod tests {
         // ORA with absolute should take 4 cycles
         // (1 opcode fetch + 3 absolute addressing)
         assert_eq!(cycles, 4, "ORA absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_0e() {
+        let memory = create_test_memory();
+
+        // Set up ASL $1234 instruction at address $0400
+        memory.borrow_mut().write(0x0400, 0x0E, false); // ASL Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte of address
+        memory.borrow_mut().write(0x1234, 0b0101_0101, false); // Value at $1234
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $1234 should be shifted left: 0b0101_0101 << 1 = 0b1010_1010
+        let result = memory.borrow().read(0x1234);
+        assert_eq!(result, 0b1010_1010, "Memory should be shifted left");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+
+        // ASL absolute should take 6 cycles
+        assert_eq!(cycles, 6, "ASL absolute should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_0f() {
+        let memory = create_test_memory();
+
+        // Set up SLO $1234 instruction at address $0400 (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x0F, false); // SLO Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte of address
+        memory.borrow_mut().write(0x1234, 0b0101_0101, false); // Value at $1234
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $1234 should be shifted left: 0b0101_0101 << 1 = 0b1010_1010
+        let mem_result = memory.borrow().read(0x1234);
+        assert_eq!(mem_result, 0b1010_1010, "Memory should be shifted left");
+
+        // A should be ORed with shifted value: 0b1100_0011 | 0b1010_1010 = 0b1110_1011
+        assert_eq!(
+            cpu.state.a, 0b1110_1011,
+            "A should contain result of ORA with shifted value"
+        );
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+
+        // SLO absolute should take 6 cycles
+        assert_eq!(cycles, 6, "SLO absolute should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_10() {
+        let memory = create_test_memory();
+
+        // Set up BPL $10 instruction at address $0400 (branch if positive)
+        memory.borrow_mut().write(0x0400, 0x10, false); // BPL opcode
+        memory.borrow_mut().write(0x0401, 0x10, false); // Relative offset (+16)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = 0x00; // N flag clear (positive)
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // PC should be at $0412 (0x0402 + 0x10)
+        assert_eq!(cpu.state.pc, 0x0412, "PC should branch to 0x0412");
+
+        // BPL taken should take 3 cycles (same page)
+        assert_eq!(cycles, 3, "BPL taken (same page) should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_10_not_taken() {
+        let memory = create_test_memory();
+
+        // Set up BPL $10 instruction at address $0400
+        memory.borrow_mut().write(0x0400, 0x10, false); // BPL opcode
+        memory.borrow_mut().write(0x0401, 0x10, false); // Relative offset
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = 0x80; // N flag set (negative)
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // PC should be at $0402 (not branched)
+        assert_eq!(cpu.state.pc, 0x0402, "PC should not branch");
+
+        // BPL not taken should take 2 cycles
+        assert_eq!(cycles, 2, "BPL not taken should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_11() {
+        let memory = create_test_memory();
+
+        // Set up ORA ($20),Y instruction at address $0400
+        memory.borrow_mut().write(0x0400, 0x11, false); // ORA Indirect,Y opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up pointer at $20-$21 to point to $1230
+        memory.borrow_mut().write(0x0020, 0x30, false); // Low byte
+        memory.borrow_mut().write(0x0021, 0x12, false); // High byte
+
+        // Set up value at $1234 (base $1230 + Y offset $04)
+        memory.borrow_mut().write(0x1234, 0b1010_1010, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.y = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0b1100_0011 | 0b1010_1010 = 0b1110_1011
+        assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+
+        // ORA (Indirect),Y should take 5 cycles (no page cross)
+        assert_eq!(cycles, 5, "ORA (Indirect),Y should take 5 cycles");
+    }
+
+    #[test]
+    fn test_opcode_12() {
+        let memory = create_test_memory();
+
+        // Set up KIL instruction at address $0400 (illegal opcode that halts CPU)
+        memory.borrow_mut().write(0x0400, 0x12, false); // KIL opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // CPU should be halted
+        assert!(cpu.is_halted(), "CPU should be halted");
+
+        // KIL should take 1 cycle
+        assert_eq!(cycles, 1, "KIL should take 1 cycle");
+    }
+
+    #[test]
+    fn test_opcode_13() {
+        let memory = create_test_memory();
+
+        // Set up SLO ($20),Y instruction at address $0400 (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x13, false); // SLO Indirect,Y opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up pointer at $20-$21 to point to $1230
+        memory.borrow_mut().write(0x0020, 0x30, false); // Low byte
+        memory.borrow_mut().write(0x0021, 0x12, false); // High byte
+
+        // Set up value at $1234 (base $1230 + Y offset $04)
+        memory.borrow_mut().write(0x1234, 0b0101_0101, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.y = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $1234 should be shifted left: 0b0101_0101 << 1 = 0b1010_1010
+        let mem_result = memory.borrow().read(0x1234);
+        assert_eq!(mem_result, 0b1010_1010, "Memory should be shifted left");
+
+        // A should be ORed with shifted value: 0b1100_0011 | 0b1010_1010 = 0b1110_1011
+        assert_eq!(
+            cpu.state.a, 0b1110_1011,
+            "A should contain result of ORA with shifted value"
+        );
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+
+        // SLO (Indirect),Y should take 8 cycles
+        assert_eq!(cycles, 8, "SLO (Indirect),Y should take 8 cycles");
+    }
+
+    #[test]
+    fn test_opcode_14() {
+        let memory = create_test_memory();
+
+        // Set up DOP $20,X instruction at address $0400 (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x14, false); // DOP Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+        memory.borrow_mut().write(0x0025, 0x42, false); // Value at $25 (will be read but ignored)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x05;
+        cpu.state.sp = 0xFD;
+        cpu.state.a = 0x11;
+        cpu.state.y = 0x22;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // DOP reads from memory but does nothing - all registers should be unchanged
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.x, 0x05, "X should not change");
+        assert_eq!(cpu.state.y, 0x22, "Y should not change");
+        assert_eq!(cpu.state.sp, 0xFD, "SP should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+
+        // DOP with zero page,X should take 4 cycles
+        assert_eq!(cycles, 4, "DOP zero page,X should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_15() {
+        let memory = create_test_memory();
+
+        // Set up ORA $20,X instruction at address $0400
+        memory.borrow_mut().write(0x0400, 0x15, false); // ORA Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+        memory.borrow_mut().write(0x0025, 0b1010_1010, false); // Value at $25 (base $20 + X offset $05)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.x = 0x05;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0b1100_0011 | 0b1010_1010 = 0b1110_1011
+        assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+
+        // ORA with zero page,X should take 4 cycles
+        assert_eq!(cycles, 4, "ORA zero page,X should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_16() {
+        let memory = create_test_memory();
+
+        // Set up ASL $20,X instruction at address $0400
+        memory.borrow_mut().write(0x0400, 0x16, false); // ASL Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+        memory.borrow_mut().write(0x0025, 0b0101_0101, false); // Value at $25 (base $20 + X offset $05)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x05;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $25 should be shifted left: 0b0101_0101 << 1 = 0b1010_1010
+        let result = memory.borrow().read(0x0025);
+        assert_eq!(result, 0b1010_1010, "Memory should be shifted left");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+
+        // ASL zero page,X should take 6 cycles
+        assert_eq!(cycles, 6, "ASL zero page,X should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_17() {
+        let memory = create_test_memory();
+
+        // Set up SLO $20,X instruction at address $0400 (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x17, false); // SLO Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+        memory.borrow_mut().write(0x0025, 0b0101_0101, false); // Value at $25
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.x = 0x05;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $25 should be shifted left: 0b0101_0101 << 1 = 0b1010_1010
+        let mem_result = memory.borrow().read(0x0025);
+        assert_eq!(mem_result, 0b1010_1010, "Memory should be shifted left");
+
+        // A should be ORed with shifted value: 0b1100_0011 | 0b1010_1010 = 0b1110_1011
+        assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+
+        // SLO zero page,X should take 6 cycles
+        assert_eq!(cycles, 6, "SLO zero page,X should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_18() {
+        let memory = create_test_memory();
+
+        // Set up CLC instruction at address $0400
+        memory.borrow_mut().write(0x0400, 0x18, false); // CLC opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = 0xFF; // All flags set
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Carry flag should be cleared
+        assert_eq!(cpu.state.p & 0x01, 0, "Carry flag should be clear");
+        // Other flags should be unchanged
+        assert_eq!(cpu.state.p & 0xFE, 0xFE, "Other flags should be unchanged");
+
+        // CLC should take 2 cycles
+        assert_eq!(cycles, 2, "CLC should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_19() {
+        let memory = create_test_memory();
+
+        // Set up ORA $1234,Y instruction at address $0400
+        memory.borrow_mut().write(0x0400, 0x19, false); // ORA Absolute,Y opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte of address
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false); // Value at $1238 (base $1234 + Y offset $04)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.y = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0b1100_0011 | 0b1010_1010 = 0b1110_1011
+        assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+
+        // ORA absolute,Y should take 4 cycles (no page cross)
+        assert_eq!(cycles, 4, "ORA absolute,Y should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_1a() {
+        let memory = create_test_memory();
+
+        // Set up NOP instruction at address $0400 (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x1A, false); // NOP implied opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.sp = 0xFD;
+        cpu.state.a = 0x11;
+        cpu.state.x = 0x22;
+        cpu.state.y = 0x33;
+        cpu.state.p = 0x44;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // NOP does nothing - all registers should be unchanged
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.x, 0x22, "X should not change");
+        assert_eq!(cpu.state.y, 0x33, "Y should not change");
+        assert_eq!(cpu.state.sp, 0xFD, "SP should not change");
+        assert_eq!(cpu.state.p, 0x44, "P should not change");
+
+        // NOP implied should take 2 cycles
+        assert_eq!(cycles, 2, "NOP implied should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_1b() {
+        let memory = create_test_memory();
+
+        // Set up SLO $1234,Y instruction at address $0400 (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x1B, false); // SLO Absolute,Y opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte of address
+        memory.borrow_mut().write(0x1238, 0b0101_0101, false); // Value at $1238
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.y = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $1238 should be shifted left: 0b0101_0101 << 1 = 0b1010_1010
+        let mem_result = memory.borrow().read(0x1238);
+        assert_eq!(mem_result, 0b1010_1010, "Memory should be shifted left");
+
+        // A should be ORed with shifted value: 0b1100_0011 | 0b1010_1010 = 0b1110_1011
+        assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+
+        // SLO absolute,Y should take 7 cycles
+        assert_eq!(cycles, 7, "SLO absolute,Y should take 7 cycles");
+    }
+
+    #[test]
+    fn test_opcode_1c() {
+        let memory = create_test_memory();
+
+        // Set up TOP $1234,X instruction at address $0400 (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x1C, false); // TOP Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte of address
+        memory.borrow_mut().write(0x1238, 0x42, false); // Value at $1238 (will be read but ignored)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x04;
+        cpu.state.sp = 0xFD;
+        cpu.state.a = 0x11;
+        cpu.state.y = 0x22;
+        cpu.state.p = 0x33;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // TOP reads from memory but does nothing - all registers should be unchanged
+        assert_eq!(cpu.state.a, 0x11, "A should not change");
+        assert_eq!(cpu.state.x, 0x04, "X should not change");
+        assert_eq!(cpu.state.y, 0x22, "Y should not change");
+        assert_eq!(cpu.state.sp, 0xFD, "SP should not change");
+        assert_eq!(cpu.state.p, 0x33, "P should not change");
+
+        // TOP absolute,X should take 4 cycles (no page cross)
+        assert_eq!(cycles, 4, "TOP absolute,X should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_1d() {
+        let memory = create_test_memory();
+
+        // Set up ORA $1234,X instruction at address $0400
+        memory.borrow_mut().write(0x0400, 0x1D, false); // ORA Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte of address
+        memory.borrow_mut().write(0x1238, 0b1010_1010, false); // Value at $1238
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.x = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be 0b1100_0011 | 0b1010_1010 = 0b1110_1011
+        assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+
+        // ORA absolute,X should take 4 cycles (no page cross)
+        assert_eq!(cycles, 4, "ORA absolute,X should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_1e() {
+        let memory = create_test_memory();
+
+        // Set up ASL $1234,X instruction at address $0400
+        memory.borrow_mut().write(0x0400, 0x1E, false); // ASL Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte of address
+        memory.borrow_mut().write(0x1238, 0b0101_0101, false); // Value at $1238
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $1238 should be shifted left: 0b0101_0101 << 1 = 0b1010_1010
+        let result = memory.borrow().read(0x1238);
+        assert_eq!(result, 0b1010_1010, "Memory should be shifted left");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+
+        // ASL absolute,X should take 7 cycles
+        assert_eq!(cycles, 7, "ASL absolute,X should take 7 cycles");
+    }
+
+    #[test]
+    fn test_opcode_1f() {
+        let memory = create_test_memory();
+
+        // Set up SLO $1234,X instruction at address $0400 (illegal opcode)
+        memory.borrow_mut().write(0x0400, 0x1F, false); // SLO Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte of address
+        memory.borrow_mut().write(0x1238, 0b0101_0101, false); // Value at $1238
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1100_0011;
+        cpu.state.x = 0x04;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $1238 should be shifted left: 0b0101_0101 << 1 = 0b1010_1010
+        let mem_result = memory.borrow().read(0x1238);
+        assert_eq!(mem_result, 0b1010_1010, "Memory should be shifted left");
+
+        // A should be ORed with shifted value: 0b1100_0011 | 0b1010_1010 = 0b1110_1011
+        assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
+
+        // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
+        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+
+        // SLO absolute,X should take 7 cycles
+        assert_eq!(cycles, 7, "SLO absolute,X should take 7 cycles");
     }
 
     #[test]

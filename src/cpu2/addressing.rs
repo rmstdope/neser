@@ -357,25 +357,41 @@ impl AddressingMode for ZeroPageY {
 /// If adding X causes a page boundary crossing, an extra cycle is needed.
 /// Examples: LDA $1234,X, STA $2000,X
 ///
-/// Cycles: 3 (no page cross) or 4 (page cross)
+/// Cycles: 3 (no page cross) or 4 (page cross for read-only) or 4 (always for RMW)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AbsoluteX {
     cycle: u8,
     address: u16,
     page_crossed: bool,
     value: u8,
+    /// If true, always perform dummy read (for RMW operations).
+    /// If false, skip dummy read when no page cross (for read-only operations).
+    always_dummy_read: bool,
 }
 
 impl AbsoluteX {
     /// Create a new AbsoluteX addressing mode instance
-    pub fn new() -> Self {
-        Self::default()
+    ///
+    /// # Arguments
+    /// * `always_dummy_read` - If true, always do dummy read cycle (for RMW ops).
+    ///                         If false, skip dummy read if no page cross (for read ops).
+    pub fn new(always_dummy_read: bool) -> Self {
+        Self {
+            always_dummy_read,
+            ..Self::default()
+        }
     }
 }
 
 impl AddressingMode for AbsoluteX {
     fn is_done(&self) -> bool {
-        (self.cycle == 3 && !self.page_crossed) || self.cycle == 4
+        // For read-only ops: 3 cycles if no page cross, 4 if page cross
+        // For RMW ops (always_dummy_read): always 4 cycles
+        if self.always_dummy_read {
+            self.cycle == 4
+        } else {
+            (self.cycle == 3 && !self.page_crossed) || self.cycle == 4
+        }
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
@@ -402,21 +418,21 @@ impl AddressingMode for AbsoluteX {
                 self.cycle = 2;
             }
             2 => {
-                // Cycle 3: Read value (or dummy read if page crossed)
-                if !self.page_crossed {
+                // Cycle 3: Read value or dummy read
+                if !self.always_dummy_read && !self.page_crossed {
+                    // Read-only op with no page cross - read the actual value
                     self.value = memory.borrow().read(self.address);
                     self.cycle = 3;
                 } else {
-                    // Dummy read for page crossing penalty
+                    // RMW op or page cross - dummy read from wrong page
+                    let dummy_addr = (self.address.wrapping_sub(cpu_state.x as u16) & 0xFF00)
+                        | (self.address & 0x00FF);
+                    let _ = memory.borrow().read(dummy_addr);
                     self.cycle = 3;
                 }
             }
             3 => {
-                // Cycle 4: Read value after page cross penalty
-                debug_assert!(
-                    self.page_crossed,
-                    "Cycle 3 should only happen on page cross"
-                );
+                // Cycle 4: Read actual value (after dummy read or page cross)
                 self.value = memory.borrow().read(self.address);
                 self.cycle = 4;
             }
@@ -451,25 +467,41 @@ impl AddressingMode for AbsoluteX {
 /// If adding Y causes a page boundary crossing, an extra cycle is needed.
 /// Examples: LDA $1234,Y, STA $2000,Y
 ///
-/// Cycles: 3 (no page cross) or 4 (page cross)
+/// Cycles: 3 (no page cross) or 4 (page cross for read-only) or 4 (always for RMW)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AbsoluteY {
     cycle: u8,
     address: u16,
     page_crossed: bool,
     value: u8,
+    /// If true, always perform dummy read (for RMW operations).
+    /// If false, skip dummy read when no page cross (for read-only operations).
+    always_dummy_read: bool,
 }
 
 impl AbsoluteY {
     /// Create a new AbsoluteY addressing mode instance
-    pub fn new() -> Self {
-        Self::default()
+    ///
+    /// # Arguments
+    /// * `always_dummy_read` - If true, always do dummy read cycle (for RMW ops).
+    ///                         If false, skip dummy read if no page cross (for read ops).
+    pub fn new(always_dummy_read: bool) -> Self {
+        Self {
+            always_dummy_read,
+            ..Self::default()
+        }
     }
 }
 
 impl AddressingMode for AbsoluteY {
     fn is_done(&self) -> bool {
-        (self.cycle == 3 && !self.page_crossed) || self.cycle == 4
+        // For read-only ops: 3 cycles if no page cross, 4 if page cross
+        // For RMW ops (always_dummy_read): always 4 cycles
+        if self.always_dummy_read {
+            self.cycle == 4
+        } else {
+            (self.cycle == 3 && !self.page_crossed) || self.cycle == 4
+        }
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
@@ -496,21 +528,21 @@ impl AddressingMode for AbsoluteY {
                 self.cycle = 2;
             }
             2 => {
-                // Cycle 3: Read value (or dummy read if page crossed)
-                if !self.page_crossed {
+                // Cycle 3: Read value or dummy read
+                if !self.always_dummy_read && !self.page_crossed {
+                    // Read-only op with no page cross - read the actual value
                     self.value = memory.borrow().read(self.address);
                     self.cycle = 3;
                 } else {
-                    // Dummy read for page crossing penalty
+                    // RMW op or page cross - dummy read from wrong page
+                    let dummy_addr = (self.address.wrapping_sub(cpu_state.y as u16) & 0xFF00)
+                        | (self.address & 0x00FF);
+                    let _ = memory.borrow().read(dummy_addr);
                     self.cycle = 3;
                 }
             }
             3 => {
-                // Cycle 4: Read value after page cross penalty
-                debug_assert!(
-                    self.page_crossed,
-                    "Cycle 3 should only happen on page cross"
-                );
+                // Cycle 4: Read actual value (after dummy read or page cross)
                 self.value = memory.borrow().read(self.address);
                 self.cycle = 4;
             }
@@ -729,18 +761,34 @@ pub struct IndirectIndexed {
     address: u16,
     page_crossed: bool,
     value: u8,
+    /// If true, always perform dummy read (for RMW operations).
+    /// If false, skip dummy read when no page cross (for read-only operations).
+    always_dummy_read: bool,
 }
 
 impl IndirectIndexed {
     /// Create a new IndirectIndexed addressing mode instance
-    pub fn new() -> Self {
-        Self::default()
+    ///
+    /// # Arguments
+    /// * `always_dummy_read` - If true, always do dummy read cycle (for RMW ops).
+    ///                         If false, skip dummy read if no page cross (for read ops).
+    pub fn new(always_dummy_read: bool) -> Self {
+        Self {
+            always_dummy_read,
+            ..Self::default()
+        }
     }
 }
 
 impl AddressingMode for IndirectIndexed {
     fn is_done(&self) -> bool {
-        (self.cycle == 6 && !self.page_crossed) || self.cycle == 7
+        // For read-only ops: 4 cycles if no page cross, 5 if page cross
+        // For RMW ops (always_dummy_read): always 5 cycles
+        if self.always_dummy_read {
+            self.cycle == 5
+        } else {
+            (self.cycle == 4 && !self.page_crossed) || self.cycle == 5
+        }
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
@@ -770,33 +818,25 @@ impl AddressingMode for IndirectIndexed {
                 self.cycle = 3;
             }
             3 => {
-                // Cycle 4: Add Y register to base address and check for page cross
+                // Cycle 4: Add Y register to base address, read value or dummy read
                 self.address = self.base_address.wrapping_add(cpu_state.y as u16);
                 self.page_crossed = (self.base_address & 0xFF00) != (self.address & 0xFF00);
-                self.cycle = 4;
-            }
-            4 => {
-                // Cycle 5: Dummy read or continue
-                self.cycle = 5;
-            }
-            5 => {
-                // Cycle 6: Read value (or dummy read if page crossed)
-                if !self.page_crossed {
+
+                if !self.always_dummy_read && !self.page_crossed {
+                    // Read-only op with no page cross - read the actual value
                     self.value = memory.borrow().read(self.address);
-                    self.cycle = 6;
+                    self.cycle = 4;
                 } else {
-                    // Dummy read for page crossing penalty
-                    self.cycle = 6;
+                    // RMW op or page cross - dummy read from wrong page
+                    let dummy_addr = (self.base_address & 0xFF00) | (self.address & 0x00FF);
+                    let _ = memory.borrow().read(dummy_addr);
+                    self.cycle = 4;
                 }
             }
-            6 => {
-                // Cycle 7: Read value after page cross penalty
-                debug_assert!(
-                    self.page_crossed,
-                    "Cycle 6 should only happen on page cross"
-                );
+            4 => {
+                // Cycle 5: Read actual value (after dummy read or page cross)
                 self.value = memory.borrow().read(self.address);
-                self.cycle = 7;
+                self.cycle = 5;
             }
             _ => unreachable!(),
         }
@@ -835,7 +875,8 @@ impl AddressingMode for IndirectIndexed {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Relative {
     cycle: u8,
-    address: u16,
+    offset: i8,
+    target_address: u16,
 }
 
 impl Relative {
@@ -847,25 +888,21 @@ impl Relative {
 
 impl AddressingMode for Relative {
     fn is_done(&self) -> bool {
-        self.cycle == 2
+        self.cycle == 1
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
-        debug_assert!(self.cycle < 2, "Relative::tick called after already done");
+        debug_assert!(self.cycle < 1, "Relative::tick called after already done");
 
         match self.cycle {
             0 => {
                 // Cycle 1: Fetch signed offset from PC and compute target address
-                let offset = memory.borrow().read(cpu_state.pc) as i8;
+                self.offset = memory.borrow().read(cpu_state.pc) as i8;
                 cpu_state.pc = cpu_state.pc.wrapping_add(1);
                 // Cast i8 -> i16 for sign extension, then to u16 for wrapping arithmetic
                 // Target address = (PC after increment) + signed offset
-                self.address = cpu_state.pc.wrapping_add(offset as i16 as u16);
+                self.target_address = cpu_state.pc.wrapping_add(self.offset as i16 as u16);
                 self.cycle = 1;
-            }
-            1 => {
-                // Cycle 2: Complete (address already computed)
-                self.cycle = 2;
             }
             _ => unreachable!(),
         }
@@ -873,10 +910,10 @@ impl AddressingMode for Relative {
 
     fn get_address(&self) -> u16 {
         debug_assert!(
-            self.cycle == 2,
+            self.cycle >= 1,
             "Relative::get_address called before addressing complete"
         );
-        self.address
+        self.target_address
     }
 }
 
@@ -1030,7 +1067,7 @@ mod new_tests {
         mode.tick(&mut cpu_state, Rc::clone(&memory));
         assert!(
             mode.is_done(),
-            "ZeroPage mode should be done after two ticks"
+            "ZeroPage mode should be done after one tick"
         );
         assert_eq!(
             mode.get_address(),
@@ -1099,7 +1136,7 @@ mod new_tests {
         mode.tick(&mut cpu_state, Rc::clone(&memory));
         assert!(
             !mode.is_done(),
-            "Absolute mode should not be done after two ticks"
+            "Absolute mode should not be done after one tick"
         );
         assert_eq!(cpu_state.pc, 0x0202, "PC should have advanced by 2");
     }
@@ -1197,7 +1234,10 @@ mod new_tests {
 
         // Second tick - read high byte and complete (no value read)
         mode.tick(&mut cpu_state, Rc::clone(&memory));
-        assert!(mode.is_done(), "Should be done after second tick when not reading value");
+        assert!(
+            mode.is_done(),
+            "Should be done after second tick when not reading value"
+        );
         assert_eq!(
             mode.get_address(),
             0x5678,
@@ -1243,7 +1283,10 @@ mod new_tests {
 
         // Second tick - read high byte (not done yet)
         mode.tick(&mut cpu_state, Rc::clone(&memory));
-        assert!(!mode.is_done(), "Should not be done after second tick when reading value");
+        assert!(
+            !mode.is_done(),
+            "Should not be done after second tick when reading value"
+        );
 
         // Third tick - read value
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1303,7 +1346,7 @@ mod new_tests {
         mode.tick(&mut cpu_state, Rc::clone(&memory));
         assert!(
             !mode.is_done(),
-            "ZeroPageX mode should not be done after two ticks"
+            "ZeroPageX mode should not be done after one tick"
         );
     }
 
@@ -1524,7 +1567,7 @@ mod new_tests {
 
     #[test]
     fn test_absolutex_starts_not_done() {
-        let mode = AbsoluteX::new();
+        let mode = AbsoluteX::new(false);
         assert!(
             !mode.is_done(),
             "AbsoluteX mode should not be done initially"
@@ -1560,7 +1603,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = AbsoluteX::new();
+        let mut mode = AbsoluteX::new(false);
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1614,7 +1657,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = AbsoluteX::new();
+        let mut mode = AbsoluteX::new(false);
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1646,7 +1689,7 @@ mod new_tests {
     #[test]
     #[should_panic(expected = "AbsoluteX::get_address called before addressing complete")]
     fn test_absolutex_get_address_before_done_panics() {
-        let mode = AbsoluteX::new();
+        let mode = AbsoluteX::new(false);
         mode.get_address(); // Should panic in debug builds
     }
 
@@ -1654,7 +1697,7 @@ mod new_tests {
 
     #[test]
     fn test_absolutey_starts_not_done() {
-        let mode = AbsoluteY::new();
+        let mode = AbsoluteY::new(false);
         assert!(
             !mode.is_done(),
             "AbsoluteY mode should not be done initially"
@@ -1690,7 +1733,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = AbsoluteY::new();
+        let mut mode = AbsoluteY::new(false);
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1744,7 +1787,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = AbsoluteY::new();
+        let mut mode = AbsoluteY::new(false);
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1776,7 +1819,7 @@ mod new_tests {
     #[test]
     #[should_panic(expected = "AbsoluteY::get_address called before addressing complete")]
     fn test_absolutey_get_address_before_done_panics() {
-        let mode = AbsoluteY::new();
+        let mode = AbsoluteY::new(false);
         mode.get_address(); // Should panic in debug builds
     }
 
@@ -1825,11 +1868,11 @@ mod new_tests {
 
         // Tick 1 - read pointer low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
-        assert!(!mode.is_done(), "Should not be done after tick 1");
+        assert!(!mode.is_done(), "Should not be done after tick 0");
 
         // Tick 2 - read pointer high byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
-        assert!(!mode.is_done(), "Should not be done after tick 2");
+        assert!(!mode.is_done(), "Should not be done after tick 0");
 
         // Tick 3 - read target low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -2054,12 +2097,12 @@ mod new_tests {
     // IndirectIndexed tests
     #[test]
     fn test_indirect_indexed_starts_not_done() {
-        let mode = IndirectIndexed::new();
+        let mode = IndirectIndexed::new(false);
         assert!(!mode.is_done(), "Should not be done initially");
     }
 
     #[test]
-    fn test_indirect_indexed_completes_after_six_ticks_no_page_cross() {
+    fn test_indirect_indexed_completes_after_four_ticks_no_page_cross() {
         use super::super::types::CpuState;
         use crate::apu::Apu;
         use crate::mem_controller::MemController;
@@ -2088,18 +2131,18 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = IndirectIndexed::new();
+        let mut mode = IndirectIndexed::new(false);
 
-        for i in 1..=6 {
+        for i in 1..=4 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
-            if i < 6 {
+            if i < 4 {
                 assert!(!mode.is_done(), "Should not be done after tick {}", i);
             }
         }
 
         assert!(
             mode.is_done(),
-            "Should be done after six ticks (no page cross)"
+            "Should be done after four ticks (no page cross)"
         );
         assert_eq!(mode.get_address(), 0x1235, "Should return correct address");
         assert_eq!(mode.get_u8_value(), 0xCC, "Value should be 0xCC");
@@ -2110,7 +2153,7 @@ mod new_tests {
     }
 
     #[test]
-    fn test_indirect_indexed_completes_after_seven_ticks_with_page_cross() {
+    fn test_indirect_indexed_completes_after_five_ticks_with_page_cross() {
         use super::super::types::CpuState;
         use crate::apu::Apu;
         use crate::mem_controller::MemController;
@@ -2139,18 +2182,18 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = IndirectIndexed::new();
+        let mut mode = IndirectIndexed::new(false);
 
-        for i in 1..=7 {
+        for i in 1..=5 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
-            if i < 7 {
+            if i < 5 {
                 assert!(!mode.is_done(), "Should not be done after tick {}", i);
             }
         }
 
         assert!(
             mode.is_done(),
-            "Should be done after seven ticks (page cross)"
+            "Should be done after five ticks (page cross)"
         );
         assert_eq!(mode.get_address(), 0x137F, "Should return correct address");
         assert_eq!(mode.get_u8_value(), 0xDD, "Value should be 0xDD");
@@ -2163,7 +2206,7 @@ mod new_tests {
     #[test]
     #[should_panic(expected = "IndirectIndexed::get_address called before addressing complete")]
     fn test_indirect_indexed_get_address_before_done_panics() {
-        let mode = IndirectIndexed::new();
+        let mode = IndirectIndexed::new(false);
         mode.get_address(); // Should panic
     }
 
@@ -2198,13 +2241,13 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = IndirectIndexed::new();
+        let mut mode = IndirectIndexed::new(false);
 
-        for _ in 0..6 {
+        for _ in 0..4 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
         }
 
-        assert!(mode.is_done(), "Should be done after six ticks");
+        assert!(mode.is_done(), "Should be done after four ticks");
         assert_eq!(
             mode.get_address(),
             0x1239,
@@ -2221,7 +2264,7 @@ mod new_tests {
     }
 
     #[test]
-    fn test_relative_completes_after_two_ticks() {
+    fn test_relative_completes_after_one_tick() {
         use super::super::types::CpuState;
         use crate::apu::Apu;
         use crate::mem_controller::MemController;
@@ -2249,10 +2292,7 @@ mod new_tests {
         let mut mode = Relative::new();
 
         mode.tick(&mut cpu_state, Rc::clone(&memory));
-        assert!(!mode.is_done(), "Should not be done after tick 1");
-
-        mode.tick(&mut cpu_state, Rc::clone(&memory));
-        assert!(mode.is_done(), "Should be done after tick 2");
+        assert!(mode.is_done(), "Should be done after one tick");
         // PC was 0x0400, after reading offset it's 0x0401, offset is +10, so target is 0x040B
         assert_eq!(
             mode.get_address(),
@@ -2296,7 +2336,6 @@ mod new_tests {
 
         let mut mode = Relative::new();
         mode.tick(&mut cpu_state, Rc::clone(&memory));
-        mode.tick(&mut cpu_state, Rc::clone(&memory));
 
         assert!(mode.is_done(), "Should be done");
         // PC was 0x0400, after read it's 0x0401, +127 = 0x0480
@@ -2335,7 +2374,6 @@ mod new_tests {
 
         let mut mode = Relative::new();
         mode.tick(&mut cpu_state, Rc::clone(&memory));
-        mode.tick(&mut cpu_state, Rc::clone(&memory));
 
         assert!(mode.is_done(), "Should be done");
         // PC was 0x0400, after read it's 0x0401, -2 = 0x03FF
@@ -2369,7 +2407,6 @@ mod new_tests {
         };
 
         let mut mode = Relative::new();
-        mode.tick(&mut cpu_state, Rc::clone(&memory));
         mode.tick(&mut cpu_state, Rc::clone(&memory));
 
         assert!(mode.is_done(), "Should be done");
