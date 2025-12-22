@@ -4,25 +4,26 @@ use super::addressing::{
 };
 use super::instruction::Instruction;
 use super::instruction_types::{
-    Aac, Adc, And, Arr, Asl, AslA, Asr, Bit, Bmi, Bpl, Brk, Bvc, Bvs, Clc, Cli, Dey, Dop, Eor, Jmp,
-    Jsr, Kil, Lsr, LsrA, Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, RolA, Ror, RorA, Rra, Rti, Rts,
-    Sax, Sec, Sei, Slo, Sre, Sta, Stx, Sty, Top, Txa, Xaa,
+    Aac, Adc, And, Arr, Asl, AslA, Asr, Atx, Bit, Bmi, Bpl, Brk, Bvc, Bvs, Clc, Cli, Dey, Dop, Eor,
+    Jmp, Jsr, Kil, Lax, Lda, Ldx, Ldy, Lsr, LsrA, Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, RolA,
+    Ror, RorA, Rra, Rti, Rts, Sax, Sec, Sei, Slo, Sre, Sta, Stx, Sty, Tax, Tay, Top, Txa, Xaa,
 };
 use super::traits::{
     AAC_IMM, AAC_IMM2, ADC_ABS, ADC_ABSX, ADC_ABSY, ADC_IMM, ADC_INDX, ADC_INDY, ADC_ZP, ADC_ZPX,
     AND_ABS, AND_ABSX, AND_ABSY, AND_IMM, AND_INDX, AND_INDY, AND_ZP, AND_ZPX, ARR_IMM, ASL_A,
-    ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, BIT_ABS, BIT_ZP, BMI, BPL, BRK, BVC, BVS, CLC,
-    CLI, DEY, DOP_IMM, DOP_IMM2, DOP_IMM3, DOP_ZP, DOP_ZP2, DOP_ZP3, DOP_ZPX, DOP_ZPX2, DOP_ZPX3,
-    DOP_ZPX4, EOR_ABS, EOR_ABSX, EOR_ABSY, EOR_IMM, EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, JMP_ABS,
-    JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12,
-    LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP, LSR_ZPX, NOP_IMP, NOP_IMP2, NOP_IMP3, NOP_IMP4, ORA_ABS,
-    ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX, ORA_INDY, ORA_ZP, ORA_ZPX, PHA, PHP, PLA, PLP, RLA_ABS,
-    RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY, RLA_ZP, RLA_ZPX, ROL_ABS, ROL_ABSX, ROL_ACC, ROL_ZP,
-    ROL_ZPX, ROR_ABS, ROR_ABSX, ROR_ACC, ROR_ZP, ROR_ZPX, RRA_ABS, RRA_ABSX, RRA_ABSY, RRA_INDX,
-    RRA_INDY, RRA_ZP, RRA_ZPX, RTI, RTS, SAX_ABS, SAX_INDX, SAX_ZP, SEC, SEI, SLO_ABS, SLO_ABSX,
-    SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX, SRE_ABSY, SRE_INDX, SRE_INDY,
-    SRE_ZP, SRE_ZPX, STA_ABS, STA_INDX, STA_ZP, STX_ABS, STX_ZP, STY_ABS, STY_ZP, TOP_ABS,
-    TOP_ABSX, TOP_ABSX2, TOP_ABSX3, TOP_ABSX4, TXA, XAA_IMM,
+    ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, ATX_IMM, BIT_ABS, BIT_ZP, BMI, BPL, BRK, BVC, BVS,
+    CLC, CLI, DEY, DOP_IMM, DOP_IMM2, DOP_IMM3, DOP_ZP, DOP_ZP2, DOP_ZP3, DOP_ZPX, DOP_ZPX2,
+    DOP_ZPX3, DOP_ZPX4, EOR_ABS, EOR_ABSX, EOR_ABSY, EOR_IMM, EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX,
+    JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10, KIL11,
+    KIL12, LAX_ABS, LAX_INDX, LAX_ZP, LDA_ABS, LDA_IMM, LDA_INDX, LDA_ZP, LDX_ABS, LDX_IMM, LDX_ZP,
+    LDY_ABS, LDY_IMM, LDY_ZP, LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP, LSR_ZPX, NOP_IMP, NOP_IMP2,
+    NOP_IMP3, NOP_IMP4, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX, ORA_INDY, ORA_ZP, ORA_ZPX,
+    PHA, PHP, PLA, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY, RLA_ZP, RLA_ZPX, ROL_ABS,
+    ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, ROR_ABS, ROR_ABSX, ROR_ACC, ROR_ZP, ROR_ZPX, RRA_ABS,
+    RRA_ABSX, RRA_ABSY, RRA_INDX, RRA_INDY, RRA_ZP, RRA_ZPX, RTI, RTS, SAX_ABS, SAX_INDX, SAX_ZP,
+    SEC, SEI, SLO_ABS, SLO_ABSX, SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX,
+    SRE_ABSY, SRE_INDX, SRE_INDY, SRE_ZP, SRE_ZPX, STA_ABS, STA_INDX, STA_ZP, STX_ABS, STX_ZP,
+    STY_ABS, STY_ZP, TAX, TAY, TOP_ABS, TOP_ABSX, TOP_ABSX2, TOP_ABSX3, TOP_ABSX4, TXA, XAA_IMM,
 };
 use super::types::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_OVERFLOW,
@@ -1001,6 +1002,112 @@ impl Cpu2 {
                 Some(Instruction::new(
                     Box::new(Absolute::new(true)),
                     Box::new(Sax::new()),
+                ))
+            }
+            LDY_IMM => {
+                // LDY Immediate: LDY #$nn
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Ldy::new()),
+                ))
+            }
+            LDA_INDX => {
+                // LDA Indexed Indirect: LDA ($nn,X)
+                Some(Instruction::new(
+                    Box::new(IndexedIndirect::new()),
+                    Box::new(Lda::new()),
+                ))
+            }
+            LDX_IMM => {
+                // LDX Immediate: LDX #$nn
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Ldx::new()),
+                ))
+            }
+            LAX_INDX => {
+                // LAX Indexed Indirect: LAX ($nn,X) (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(IndexedIndirect::new()),
+                    Box::new(Lax::new()),
+                ))
+            }
+            LDY_ZP => {
+                // LDY Zero Page: LDY $nn
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Ldy::new()),
+                ))
+            }
+            LDA_ZP => {
+                // LDA Zero Page: LDA $nn
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Lda::new()),
+                ))
+            }
+            LDX_ZP => {
+                // LDX Zero Page: LDX $nn
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Ldx::new()),
+                ))
+            }
+            LAX_ZP => {
+                // LAX Zero Page: LAX $nn (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Lax::new()),
+                ))
+            }
+            TAY => {
+                // TAY: Transfer A to Y
+                Some(Instruction::new(Box::new(Implied), Box::new(Tay::new())))
+            }
+            LDA_IMM => {
+                // LDA Immediate: LDA #$nn
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Lda::new()),
+                ))
+            }
+            TAX => {
+                // TAX: Transfer A to X
+                Some(Instruction::new(Box::new(Implied), Box::new(Tax::new())))
+            }
+            ATX_IMM => {
+                // ATX Immediate: ATX #$nn (illegal, unstable opcode)
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Atx::new()),
+                ))
+            }
+            LDY_ABS => {
+                // LDY Absolute: LDY $nnnn
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Ldy::new()),
+                ))
+            }
+            LDA_ABS => {
+                // LDA Absolute: LDA $nnnn
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Lda::new()),
+                ))
+            }
+            LDX_ABS => {
+                // LDX Absolute: LDX $nnnn
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Ldx::new()),
+                ))
+            }
+            LAX_ABS => {
+                // LAX Absolute: LAX $nnnn (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Lax::new()),
                 ))
             }
             EOR_ABSY => {
@@ -5100,5 +5207,391 @@ mod tests {
         let result = memory.borrow().read(0x1234);
         assert_eq!(result, 0b1010_0000, "A AND X should be stored");
         assert_eq!(cycles, 4, "SAX absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_a0() {
+        let memory = create_test_memory();
+
+        // Set up LDY #$42 instruction
+        memory.borrow_mut().write(0x0400, LDY_IMM, false); // LDY Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x42, false); // Immediate value
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y should be loaded with 0x42
+        assert_eq!(cpu.state.y, 0x42, "Y should be loaded with immediate value");
+        assert_eq!(cycles, 2, "LDY immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_a1() {
+        let memory = create_test_memory();
+
+        // Set up LDA ($20,X) instruction
+        memory.borrow_mut().write(0x0400, LDA_INDX, false); // LDA (Indirect,X) opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+
+        // Set up pointer at $24 (0x20 + 0x04)
+        memory.borrow_mut().write(0x0024, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0025, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x00;
+        cpu.state.x = 0x04;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be loaded with 0x42
+        assert_eq!(cpu.state.a, 0x42, "A should be loaded from target address");
+        assert_eq!(cycles, 6, "LDA (indirect,X) should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_a2() {
+        let memory = create_test_memory();
+
+        // Set up LDX #$42 instruction
+        memory.borrow_mut().write(0x0400, LDX_IMM, false); // LDX Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x42, false); // Immediate value
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // X should be loaded with 0x42
+        assert_eq!(cpu.state.x, 0x42, "X should be loaded with immediate value");
+        assert_eq!(cycles, 2, "LDX immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_a3() {
+        let memory = create_test_memory();
+
+        // Set up LAX ($20,X) instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, LAX_INDX, false); // LAX (Indirect,X) opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+
+        // Set up pointer at $24 (0x20 + 0x04)
+        memory.borrow_mut().write(0x0024, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0025, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x00;
+        cpu.state.x = 0x04;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Both A and X should be loaded with 0x42
+        assert_eq!(cpu.state.a, 0x42, "A should be loaded from target address");
+        assert_eq!(cpu.state.x, 0x42, "X should be loaded from target address");
+        assert_eq!(cycles, 6, "LAX (indirect,X) should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_a4() {
+        let memory = create_test_memory();
+
+        // Set up LDY $20 instruction
+        memory.borrow_mut().write(0x0400, LDY_ZP, false); // LDY Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up value at $20
+        memory.borrow_mut().write(0x0020, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y should be loaded with 0x42
+        assert_eq!(cpu.state.y, 0x42, "Y should be loaded from zero page");
+        assert_eq!(cycles, 3, "LDY zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_a5() {
+        let memory = create_test_memory();
+
+        // Set up LDA $20 instruction
+        memory.borrow_mut().write(0x0400, LDA_ZP, false); // LDA Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up value at $20
+        memory.borrow_mut().write(0x0020, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be loaded with 0x42
+        assert_eq!(cpu.state.a, 0x42, "A should be loaded from zero page");
+        assert_eq!(cycles, 3, "LDA zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_a6() {
+        let memory = create_test_memory();
+
+        // Set up LDX $20 instruction
+        memory.borrow_mut().write(0x0400, LDX_ZP, false); // LDX Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up value at $20
+        memory.borrow_mut().write(0x0020, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // X should be loaded with 0x42
+        assert_eq!(cpu.state.x, 0x42, "X should be loaded from zero page");
+        assert_eq!(cycles, 3, "LDX zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_a7() {
+        let memory = create_test_memory();
+
+        // Set up LAX $20 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, LAX_ZP, false); // LAX Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up value at $20
+        memory.borrow_mut().write(0x0020, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x00;
+        cpu.state.x = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Both A and X should be loaded with 0x42
+        assert_eq!(cpu.state.a, 0x42, "A should be loaded from zero page");
+        assert_eq!(cpu.state.x, 0x42, "X should be loaded from zero page");
+        assert_eq!(cycles, 3, "LAX zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_a8() {
+        let memory = create_test_memory();
+
+        // Set up TAY instruction
+        memory.borrow_mut().write(0x0400, TAY, false); // TAY opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+        cpu.state.y = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y should contain A
+        assert_eq!(cpu.state.y, 0x42, "Y should contain A");
+        assert_eq!(cycles, 2, "TAY should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_a9() {
+        let memory = create_test_memory();
+
+        // Set up LDA #$42 instruction
+        memory.borrow_mut().write(0x0400, LDA_IMM, false); // LDA Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x42, false); // Immediate value
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be loaded with 0x42
+        assert_eq!(cpu.state.a, 0x42, "A should be loaded with immediate value");
+        assert_eq!(cycles, 2, "LDA immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_aa() {
+        let memory = create_test_memory();
+
+        // Set up TAX instruction
+        memory.borrow_mut().write(0x0400, TAX, false); // TAX opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+        cpu.state.x = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // X should contain A
+        assert_eq!(cpu.state.x, 0x42, "X should contain A");
+        assert_eq!(cycles, 2, "TAX should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_ab() {
+        let memory = create_test_memory();
+
+        // Set up ATX #$42 instruction (illegal opcode, also called OAL/ANE)
+        memory.borrow_mut().write(0x0400, ATX_IMM, false); // ATX Immediate opcode
+        memory.borrow_mut().write(0x0401, 0b1111_0000, false); // Immediate value
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b1010_1010;
+        cpu.state.x = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // ATX: A = X = (A OR CONST) AND IMM
+        // CONST is typically 0xEE or 0xFF, we'll use 0xFF for simplicity
+        // Result: (0b1010_1010 OR 0xFF) AND 0b1111_0000 = 0b1111_0000
+        assert_eq!(cpu.state.a, 0b1111_0000, "A should contain result");
+        assert_eq!(cpu.state.x, 0b1111_0000, "X should contain result");
+        assert_eq!(cycles, 2, "ATX immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_ac() {
+        let memory = create_test_memory();
+
+        // Set up LDY $1234 instruction
+        memory.borrow_mut().write(0x0400, LDY_ABS, false); // LDY Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y should be loaded with 0x42
+        assert_eq!(
+            cpu.state.y, 0x42,
+            "Y should be loaded from absolute address"
+        );
+        assert_eq!(cycles, 4, "LDY absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_ad() {
+        let memory = create_test_memory();
+
+        // Set up LDA $1234 instruction
+        memory.borrow_mut().write(0x0400, LDA_ABS, false); // LDA Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be loaded with 0x42
+        assert_eq!(
+            cpu.state.a, 0x42,
+            "A should be loaded from absolute address"
+        );
+        assert_eq!(cycles, 4, "LDA absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_ae() {
+        let memory = create_test_memory();
+
+        // Set up LDX $1234 instruction
+        memory.borrow_mut().write(0x0400, LDX_ABS, false); // LDX Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // X should be loaded with 0x42
+        assert_eq!(
+            cpu.state.x, 0x42,
+            "X should be loaded from absolute address"
+        );
+        assert_eq!(cycles, 4, "LDX absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_af() {
+        let memory = create_test_memory();
+
+        // Set up LAX $1234 instruction (illegal opcode)
+        memory.borrow_mut().write(0x0400, LAX_ABS, false); // LAX Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x00;
+        cpu.state.x = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Both A and X should be loaded with 0x42
+        assert_eq!(
+            cpu.state.a, 0x42,
+            "A should be loaded from absolute address"
+        );
+        assert_eq!(
+            cpu.state.x, 0x42,
+            "X should be loaded from absolute address"
+        );
+        assert_eq!(cycles, 4, "LAX absolute should take 4 cycles");
     }
 }

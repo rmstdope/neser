@@ -2867,3 +2867,290 @@ impl InstructionType for Xaa {
         }
     }
 }
+
+#[derive(Default)]
+pub struct Lda {
+    cycle: u8,
+}
+
+impl Lda {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Lda {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Lda::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Load A from memory
+                cpu_state.a = addressing_mode.get_u8_value();
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Ldx {
+    cycle: u8,
+}
+
+impl Ldx {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Ldx {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Ldx::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Load X from memory
+                cpu_state.x = addressing_mode.get_u8_value();
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.x);
+                set_negative_flag(&mut cpu_state.p, cpu_state.x);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Ldy {
+    cycle: u8,
+}
+
+impl Ldy {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Ldy {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Ldy::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Load Y from memory
+                cpu_state.y = addressing_mode.get_u8_value();
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.y);
+                set_negative_flag(&mut cpu_state.p, cpu_state.y);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Tax {
+    cycle: u8,
+}
+
+impl Tax {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Tax {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Tax::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Transfer A to X
+                cpu_state.x = cpu_state.a;
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.x);
+                set_negative_flag(&mut cpu_state.p, cpu_state.x);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Tay {
+    cycle: u8,
+}
+
+impl Tay {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Tay {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Tay::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Transfer A to Y
+                cpu_state.y = cpu_state.a;
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.y);
+                set_negative_flag(&mut cpu_state.p, cpu_state.y);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Lax {
+    cycle: u8,
+}
+
+impl Lax {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Lax {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Lax::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Load both A and X from memory (illegal opcode)
+                let value = addressing_mode.get_u8_value();
+                cpu_state.a = value;
+                cpu_state.x = value;
+
+                // Set flags based on the loaded value
+                set_zero_flag(&mut cpu_state.p, value);
+                set_negative_flag(&mut cpu_state.p, value);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct Atx {
+    cycle: u8,
+}
+
+impl Atx {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Atx {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Atx::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: ATX (also called OAL/ANE) - illegal, unstable opcode
+                // Operation: A = X = (A OR CONST) AND IMM
+                // Where CONST is typically 0xEE or 0xFF depending on chip/temperature
+                // We'll use 0xFF for simplicity (most common behavior)
+                let value = addressing_mode.get_u8_value();
+                cpu_state.a = (cpu_state.a | 0xFF) & value;
+                cpu_state.x = cpu_state.a;
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.x);
+                set_negative_flag(&mut cpu_state.p, cpu_state.x);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
