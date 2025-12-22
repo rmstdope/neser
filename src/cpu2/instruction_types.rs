@@ -259,6 +259,125 @@ impl InstructionType for Clc {
     }
 }
 
+/// SEC - Set Carry Flag
+///
+/// Sets the carry flag in the status register.
+///
+/// Operation: C = 1
+/// Flags: C
+///
+/// Cycles: 1
+///   1. Set carry flag
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Sec {
+    cycle: u8,
+}
+
+impl Sec {
+    /// Create a new SEC instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Sec {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Sec::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Set carry flag
+                cpu_state.p |= super::types::FLAG_CARRY;
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// BMI - Branch if Minus
+///
+/// Branch if the negative flag (N) is set (minus/negative).
+/// The relative addressing mode provides the signed offset.
+///
+/// Operation: Branch if N == 1
+/// Flags: None affected
+///
+/// Cycles:
+///   - 2 if branch not taken (opcode + offset fetch)
+///   - 3 if branch taken, same page (opcode + offset fetch + branch)
+///   - 4 if branch taken, page cross (opcode + offset fetch + branch + fix high byte)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Bmi {
+    cycle: u8,
+    branch_taken: bool,
+    page_crossed: bool,
+}
+
+impl Bmi {
+    /// Create a new BMI instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Bmi {
+    fn is_done(&self) -> bool {
+        (!self.branch_taken && self.cycle == 1)
+            || (self.branch_taken && !self.page_crossed && self.cycle == 2)
+            || (self.branch_taken && self.page_crossed && self.cycle == 3)
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(!self.is_done(), "Bmi::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Check negative flag and decide if branch is taken
+                self.branch_taken = (cpu_state.p & super::types::FLAG_NEGATIVE) != 0;
+
+                if !self.branch_taken {
+                    // Branch not taken - we're done
+                    self.cycle = 1;
+                } else {
+                    // Branch taken - get target address and check for page cross
+                    let target = addressing_mode.get_address();
+                    let current_page = cpu_state.pc & 0xFF00;
+                    let target_page = target & 0xFF00;
+                    self.page_crossed = current_page != target_page;
+
+                    // Update PC to target
+                    cpu_state.pc = target;
+                    self.cycle = 1;
+                }
+            }
+            1 => {
+                // Cycle 2: Extra cycle for branch taken (same page)
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Extra cycle for page crossing
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 /// NOP - No Operation (Illegal Opcode)
 ///
 /// Does nothing for one cycle. This is an implied addressing mode NOP.
