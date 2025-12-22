@@ -5,8 +5,8 @@
 
 use super::traits::InstructionType;
 use super::types::{
-    CpuState, FLAG_BREAK, FLAG_CARRY, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_UNUSED, FLAG_ZERO,
-    IRQ_VECTOR,
+    CpuState, FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_UNUSED,
+    FLAG_ZERO, IRQ_VECTOR,
 };
 use crate::mem_controller::MemController;
 use std::cell::RefCell;
@@ -349,6 +349,80 @@ impl InstructionType for Bmi {
             0 => {
                 // Cycle 1: Check negative flag and decide if branch is taken
                 self.branch_taken = (cpu_state.p & super::types::FLAG_NEGATIVE) != 0;
+
+                if !self.branch_taken {
+                    // Branch not taken - we're done
+                    self.cycle = 1;
+                } else {
+                    // Branch taken - get target address and check for page cross
+                    let target = addressing_mode.get_address();
+                    let current_page = cpu_state.pc & 0xFF00;
+                    let target_page = target & 0xFF00;
+                    self.page_crossed = current_page != target_page;
+
+                    // Update PC to target
+                    cpu_state.pc = target;
+                    self.cycle = 1;
+                }
+            }
+            1 => {
+                // Cycle 2: Extra cycle for branch taken (same page)
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Extra cycle for page crossing
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// BNE - Branch if Not Equal
+///
+/// Branch if the zero flag (Z) is clear (not equal).
+/// The relative addressing mode provides the signed offset.
+///
+/// Operation: Branch if Z == 0
+/// Flags: None affected
+///
+/// Cycles:
+///   - 2 if branch not taken (opcode + offset fetch)
+///   - 3 if branch taken, same page (opcode + offset fetch + branch)
+///   - 4 if branch taken, page cross (opcode + offset fetch + branch + fix high byte)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Bne {
+    cycle: u8,
+    branch_taken: bool,
+    page_crossed: bool,
+}
+
+impl Bne {
+    /// Create a new BNE instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Bne {
+    fn is_done(&self) -> bool {
+        (!self.branch_taken && self.cycle == 1)
+            || (self.branch_taken && !self.page_crossed && self.cycle == 2)
+            || (self.branch_taken && self.page_crossed && self.cycle == 3)
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(!self.is_done(), "Bne::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Check zero flag and decide if branch is taken
+                self.branch_taken = (cpu_state.p & super::types::FLAG_ZERO) == 0;
 
                 if !self.branch_taken {
                     // Branch not taken - we're done
@@ -2127,6 +2201,51 @@ impl InstructionType for Cli {
             0 => {
                 // Cycle 1: Clear interrupt disable flag
                 cpu_state.p &= !super::types::FLAG_INTERRUPT;
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// CLD - Clear Decimal Flag
+///
+/// Clears the decimal flag in the status register.
+///
+/// Operation: D = 0
+/// Flags: D
+///
+/// Cycles: 1
+///   1. Clear decimal flag
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Cld {
+    cycle: u8,
+}
+
+impl Cld {
+    /// Create a new CLD instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Cld {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Cld::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Clear decimal flag
+                cpu_state.p &= !super::types::FLAG_DECIMAL;
                 self.cycle = 1;
             }
             _ => unreachable!(),
