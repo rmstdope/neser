@@ -181,7 +181,7 @@ impl Cpu2 {
             JMP_ABS => {
                 // JMP Absolute handles its own address fetching internally, like JSR
                 Some(Instruction::new(
-                    Box::new(Absolute::new()),
+                    Box::new(Absolute::new(false)),
                     Box::new(Jmp::new()),
                 ))
             }
@@ -713,8 +713,16 @@ mod tests {
             FLAG_NEGATIVE,
             "N flag should match original"
         );
-        assert_eq!(pushed_value & FLAG_CARRY, FLAG_CARRY, "C flag should match original");
-        assert_eq!(pushed_value & FLAG_INTERRUPT, FLAG_INTERRUPT, "I flag should match original");
+        assert_eq!(
+            pushed_value & FLAG_CARRY,
+            FLAG_CARRY,
+            "C flag should match original"
+        );
+        assert_eq!(
+            pushed_value & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "I flag should match original"
+        );
 
         // Processor status register should be unchanged
         assert_eq!(cpu.state.p, 0b1010_0101, "P should not change");
@@ -747,9 +755,8 @@ mod tests {
         assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
 
         // ORA with immediate should take 3 cycles
-        // (1 opcode fetch + 1 immediate addressing + 1 read/operate)
-        // TODO: According to 6502 docs this should be 2 cycles, need to optimize overlap
-        assert_eq!(cycles, 3, "ORA immediate should take 3 cycles");
+        // (1 opcode fetch + 1 immediate addressing and operate)
+        assert_eq!(cycles, 2, "ORA immediate should take 2 cycles");
     }
 
     #[test]

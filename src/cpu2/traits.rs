@@ -33,6 +33,11 @@ pub trait AddressingMode {
     fn get_address(&self) -> u16 {
         panic!("get_address not implemented for this addressing mode");
     }
+
+    /// Returns the u8 value of the operand for immediate addressing modes
+    fn get_u8_value(&self) -> u8 {
+        panic!("get_immediate_value not implemented for this addressing mode");
+    }
 }
 
 pub trait InstructionType {

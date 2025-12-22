@@ -330,7 +330,7 @@ impl Ora {
 
 impl InstructionType for Ora {
     fn is_done(&self) -> bool {
-        self.cycle == 2
+        self.cycle == 1
     }
 
     fn tick(
@@ -339,24 +339,18 @@ impl InstructionType for Ora {
         memory: Rc<RefCell<MemController>>,
         addressing_mode: &dyn super::traits::AddressingMode,
     ) {
-        debug_assert!(self.cycle < 2, "Ora::tick called after already done");
+        debug_assert!(self.cycle < 1, "Ora::tick called after already done");
 
         match self.cycle {
             0 => {
-                // Cycle 1: Does nothing (overlaps with addressing completion)
-                self.cycle = 1;
-            }
-            1 => {
-                // Cycle 2: Read value from target address, OR with A
-                let address = addressing_mode.get_address();
-                let value = memory.borrow().read(address);
-                cpu_state.a |= value;
+                // Cycle 1: OR value with A
+                cpu_state.a |= addressing_mode.get_u8_value();
 
                 // Set N and Z flags based on result
                 set_negative_flag(&mut cpu_state.p, cpu_state.a);
                 set_zero_flag(&mut cpu_state.p, cpu_state.a);
 
-                self.cycle = 2;
+                self.cycle = 1;
             }
             _ => unreachable!(),
         }
@@ -516,7 +510,7 @@ mod tests {
         let mut jmp = Jmp::new();
 
         // Create addressing mode that will provide the target address
-        let mut absolute_addr = crate::cpu2::addressing::Absolute::new();
+        let mut absolute_addr = crate::cpu2::addressing::Absolute::new(false);
         // Simulate that addressing mode has resolved to 0x1234
         memory.borrow_mut().write(0x0400, 0x34, false); // Low byte
         memory.borrow_mut().write(0x0401, 0x12, false); // High byte
@@ -582,14 +576,13 @@ impl InstructionType for Kil {
 /// Operation: M = M << 1, A = A | M
 /// Flags: N, Z, C
 ///
-/// Cycles: 3 (after addressing completes)
+/// Cycles: 3
 ///   1. Read value from memory
 ///   2. Write original value back (dummy write)
 ///   3. Write modified value, update accumulator and flags
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Slo {
     cycle: u8,
-    address: u16,
     value: u8,
 }
 
@@ -602,7 +595,7 @@ impl Slo {
 
 impl InstructionType for Slo {
     fn is_done(&self) -> bool {
-        self.cycle == 4
+        self.cycle == 3
     }
 
     fn tick(
@@ -611,30 +604,29 @@ impl InstructionType for Slo {
         memory: Rc<RefCell<MemController>>,
         addressing_mode: &dyn super::traits::AddressingMode,
     ) {
-        debug_assert!(self.cycle < 4, "Slo::tick called after already done");
+        debug_assert!(self.cycle < 3, "Slo::tick called after already done");
 
         match self.cycle {
             0 => {
-                // Cycle 1: Does nothing (overlaps with addressing completion)
+                // Cycle 1: Get value from addressing mode
+                self.value = addressing_mode.get_u8_value();
                 self.cycle = 1;
             }
             1 => {
-                // Cycle 2: Read value from memory
-                self.address = addressing_mode.get_address();
-                self.value = memory.borrow().read(self.address);
+                // Cycle 2: Write original value back (dummy write)
+                memory
+                    .borrow_mut()
+                    .write(addressing_mode.get_address(), self.value, false);
                 self.cycle = 2;
             }
             2 => {
-                // Cycle 3: Write original value back (dummy write)
-                memory.borrow_mut().write(self.address, self.value, false);
-                self.cycle = 3;
-            }
-            3 => {
-                // Cycle 4: Shift left, write back, OR with accumulator
+                // Cycle 3: Shift left, write back, OR with accumulator
                 let (shifted, carry) = shift_left(self.value);
 
                 // Write shifted value back to memory
-                memory.borrow_mut().write(self.address, shifted, false);
+                memory
+                    .borrow_mut()
+                    .write(addressing_mode.get_address(), shifted, false);
 
                 // OR with accumulator
                 cpu_state.a |= shifted;
@@ -644,7 +636,7 @@ impl InstructionType for Slo {
                 set_negative_flag(&mut cpu_state.p, cpu_state.a);
                 set_carry_flag(&mut cpu_state.p, carry);
 
-                self.cycle = 4;
+                self.cycle = 3;
             }
             _ => unreachable!(),
         }
@@ -660,9 +652,8 @@ impl InstructionType for Slo {
 /// Operation: Read value (do nothing with it)
 /// Flags: None affected
 ///
-/// Cycles: 2 (after addressing completes)
-///   1. First cycle overlaps with addressing completion (does nothing)
-///   2. Read value from memory (value is discarded)
+/// Cycles: 1
+///   1. Read value from memory (value is discarded)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Dop {
     cycle: u8,
@@ -677,7 +668,7 @@ impl Dop {
 
 impl InstructionType for Dop {
     fn is_done(&self) -> bool {
-        self.cycle == 2
+        self.cycle == 1
     }
 
     fn tick(
@@ -686,19 +677,13 @@ impl InstructionType for Dop {
         memory: Rc<RefCell<MemController>>,
         addressing_mode: &dyn super::traits::AddressingMode,
     ) {
-        debug_assert!(self.cycle < 2, "Dop::tick called after already done");
+        debug_assert!(self.cycle < 1, "Dop::tick called after already done");
 
         match self.cycle {
             0 => {
-                // Cycle 1: Does nothing (overlaps with addressing completion)
-                self.cycle = 1;
-            }
-            1 => {
-                // Cycle 2: Read value from memory and discard it
-                let address = addressing_mode.get_address();
-                let _value = memory.borrow().read(address);
+                // Cycle 1: Do nothing, value is already read from memory
                 // Value is intentionally ignored - this is a no-op
-                self.cycle = 2;
+                self.cycle = 1;
             }
             _ => unreachable!(),
         }
@@ -713,15 +698,13 @@ impl InstructionType for Dop {
 /// Operation: M = M << 1 (or A = A << 1 for accumulator mode)
 /// Flags: N, Z, C
 ///
-/// Cycles: 4 (after addressing completes)
-///   0. First cycle overlaps with addressing completion (does nothing)
+/// Cycles: 3
 ///   1. Read value from memory
 ///   2. Write original value back (dummy write)
 ///   3. Write modified value, set flags
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Asl {
     cycle: u8,
-    address: u16,
     value: u8,
 }
 
@@ -734,7 +717,7 @@ impl Asl {
 
 impl InstructionType for Asl {
     fn is_done(&self) -> bool {
-        self.cycle == 4
+        self.cycle == 3
     }
 
     fn tick(
@@ -743,37 +726,36 @@ impl InstructionType for Asl {
         memory: Rc<RefCell<MemController>>,
         addressing_mode: &dyn super::traits::AddressingMode,
     ) {
-        debug_assert!(self.cycle < 4, "Asl::tick called after already done");
+        debug_assert!(self.cycle < 3, "Asl::tick called after already done");
 
         match self.cycle {
             0 => {
-                // Cycle 1: Does nothing (overlaps with addressing completion)
+                // Cycle 1: Read value from memory
+                self.value = addressing_mode.get_u8_value();
                 self.cycle = 1;
             }
             1 => {
-                // Cycle 2: Read value from memory
-                self.address = addressing_mode.get_address();
-                self.value = memory.borrow().read(self.address);
+                // Cycle 2: Write original value back (dummy write)
+                memory
+                    .borrow_mut()
+                    .write(addressing_mode.get_address(), self.value, false);
                 self.cycle = 2;
             }
             2 => {
-                // Cycle 3: Write original value back (dummy write)
-                memory.borrow_mut().write(self.address, self.value, false);
-                self.cycle = 3;
-            }
-            3 => {
-                // Cycle 4: Shift left and write back
+                // Cycle 3: Shift left and write back
                 let (shifted, carry) = shift_left(self.value);
 
                 // Write shifted value back to memory
-                memory.borrow_mut().write(self.address, shifted, false);
+                memory
+                    .borrow_mut()
+                    .write(addressing_mode.get_address(), shifted, false);
 
                 // Set flags based on result
                 set_zero_flag(&mut cpu_state.p, shifted);
                 set_negative_flag(&mut cpu_state.p, shifted);
                 set_carry_flag(&mut cpu_state.p, carry);
 
-                self.cycle = 4;
+                self.cycle = 3;
             }
             _ => unreachable!(),
         }
