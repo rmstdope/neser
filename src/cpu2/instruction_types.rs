@@ -1570,3 +1570,449 @@ impl InstructionType for AslA {
         }
     }
 }
+
+/// Helper function to perform logical shift right
+/// Returns the shifted value and sets the carry flag based on bit 0
+#[inline]
+fn shift_right(value: u8) -> (u8, bool) {
+    let carry = (value & 0x01) != 0;
+    let shifted = value >> 1;
+    (shifted, carry)
+}
+
+/// RTI - Return from Interrupt
+///
+/// Pulls the processor flags and program counter from the stack.
+/// The status register is pulled with the break command flag and bit 5 ignored.
+///
+/// Operation: P = pull(), PC = pull_word()
+/// Flags: All (restored from stack)
+///
+/// Cycles: 5
+///   1. Read next byte (and throw it away)
+///   2. Increment S
+///   3. Pull P from stack
+///   4. Increment S, Pull PCL from stack
+///   5. Pull PCH from stack
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Rti {
+    cycle: u8,
+    p: u8,
+    pcl: u8,
+}
+
+impl Rti {
+    /// Create a new RTI instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Rti {
+    fn is_done(&self) -> bool {
+        self.cycle == 5
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 5, "Rti::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Read next byte (throw away)
+                memory.borrow().read(cpu_state.pc);
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Increment S
+                cpu_state.sp = cpu_state.sp.wrapping_add(1);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Pull P from stack
+                let stack_addr = 0x0100 | (cpu_state.sp as u16);
+                self.p = memory.borrow().read(stack_addr);
+                cpu_state.sp = cpu_state.sp.wrapping_add(1);
+                self.cycle = 3;
+            }
+            3 => {
+                // Cycle 4: Pull PCL from stack
+                let stack_addr = 0x0100 | (cpu_state.sp as u16);
+                self.pcl = memory.borrow().read(stack_addr);
+                cpu_state.sp = cpu_state.sp.wrapping_add(1);
+                self.cycle = 4;
+            }
+            4 => {
+                // Cycle 5: Pull PCH from stack
+                let stack_addr = 0x0100 | (cpu_state.sp as u16);
+                let pch = memory.borrow().read(stack_addr);
+                cpu_state.pc = ((pch as u16) << 8) | (self.pcl as u16);
+
+                // Restore processor status from stack
+                // Bit 5 (unused) is always set, bit 4 (break) is always clear
+                cpu_state.p = (self.p & !0x10) | 0x20;
+
+                self.cycle = 5;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// EOR - Exclusive OR
+///
+/// Performs a bitwise exclusive OR between the accumulator and a value from memory.
+/// The result is stored in the accumulator.
+///
+/// Operation: A = A ^ M
+/// Flags: N, Z
+///
+/// Cycles: 1
+///   1. EOR value with accumulator and set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Eor {
+    cycle: u8,
+}
+
+impl Eor {
+    /// Create a new EOR instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Eor {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Eor::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Perform EOR and set flags
+                let value = addressing_mode.get_u8_value();
+                cpu_state.a ^= value;
+
+                // Set N and Z flags based on result
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// LSR - Logical Shift Right (Memory)
+///
+/// Shifts all bits of a memory value right one position.
+/// Bit 7 is set to 0 and bit 0 is placed in the carry flag.
+/// This is a Read-Modify-Write instruction.
+///
+/// Operation: M = M >> 1
+/// Flags: N (always 0), Z, C
+///
+/// Cycles: 3
+///   1. Read value from memory
+///   2. Write unmodified value back to memory (dummy write)
+///   3. Shift right and write result
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Lsr {
+    cycle: u8,
+    value: u8,
+}
+
+impl Lsr {
+    /// Create a new LSR instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Lsr {
+    fn is_done(&self) -> bool {
+        self.cycle == 3
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 3, "Lsr::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Read value from memory
+                self.value = addressing_mode.get_u8_value();
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Dummy write (write original value back)
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, self.value, false);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Shift right and write result
+                let (shifted, carry) = shift_right(self.value);
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, shifted, false);
+
+                // Set flags based on result
+                set_zero_flag(&mut cpu_state.p, shifted);
+                set_negative_flag(&mut cpu_state.p, shifted); // Always clears N since bit 7 is 0
+                set_carry_flag(&mut cpu_state.p, carry);
+
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// LSR A - Logical Shift Right (Accumulator)
+///
+/// Shifts all bits of the accumulator right one position.
+/// Bit 7 is set to 0 and bit 0 is placed in the carry flag.
+///
+/// Operation: A = A >> 1
+/// Flags: N (always 0), Z, C
+///
+/// Cycles: 1
+///   1. Shift accumulator right and set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LsrA {
+    cycle: u8,
+}
+
+impl LsrA {
+    /// Create a new LSR A instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for LsrA {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "LsrA::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Shift accumulator right
+                let (shifted, carry) = shift_right(cpu_state.a);
+                cpu_state.a = shifted;
+
+                // Set flags based on result
+                set_zero_flag(&mut cpu_state.p, shifted);
+                set_negative_flag(&mut cpu_state.p, shifted);
+                set_carry_flag(&mut cpu_state.p, carry);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// PHA - Push Accumulator
+///
+/// Pushes a copy of the accumulator onto the stack.
+///
+/// Operation: push(A)
+/// Flags: None
+///
+/// Cycles: 2
+///   1. Read next byte (throw away)
+///   2. Push A to stack
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Pha {
+    cycle: u8,
+}
+
+impl Pha {
+    /// Create a new PHA instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Pha {
+    fn is_done(&self) -> bool {
+        self.cycle == 2
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 2, "Pha::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Read next byte (throw away)
+                memory.borrow().read(cpu_state.pc);
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Push A to stack
+                let stack_addr = 0x0100 | (cpu_state.sp as u16);
+                memory.borrow_mut().write(stack_addr, cpu_state.a, false);
+                cpu_state.sp = cpu_state.sp.wrapping_sub(1);
+                self.cycle = 2;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// SRE - Shift Right then EOR (Illegal Opcode)
+///
+/// Also known as LSE. Shifts the value right one position (LSR),
+/// then performs an exclusive OR with the accumulator.
+/// This is a Read-Modify-Write instruction.
+///
+/// Operation: M = M >> 1, A = A ^ M
+/// Flags: N, Z, C
+///
+/// Cycles: 3
+///   1. Read value from memory
+///   2. Write unmodified value back to memory (dummy write)
+///   3. Shift right, EOR with A, write result
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Sre {
+    cycle: u8,
+    value: u8,
+}
+
+impl Sre {
+    /// Create a new SRE instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Sre {
+    fn is_done(&self) -> bool {
+        self.cycle == 3
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 3, "Sre::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Read value from memory
+                self.value = addressing_mode.get_u8_value();
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Dummy write (write original value back)
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, self.value, false);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Shift right, EOR with A, write result
+                let (shifted, carry) = shift_right(self.value);
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, shifted, false);
+
+                // EOR with accumulator
+                cpu_state.a ^= shifted;
+
+                // Set flags based on A
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+                set_carry_flag(&mut cpu_state.p, carry);
+
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// ASR - AND then Shift Right (Illegal Opcode)
+///
+/// Also known as ALR. Performs an AND between the accumulator and an immediate value,
+/// then shifts the result right one position. The result is stored in the accumulator.
+///
+/// Operation: A = (A & M) >> 1
+/// Flags: N (always 0), Z, C
+///
+/// Cycles: 1
+///   1. AND then shift right and set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Asr {
+    cycle: u8,
+}
+
+impl Asr {
+    /// Create a new ASR instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Asr {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Asr::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: AND then shift right
+                let value = addressing_mode.get_u8_value();
+                let anded = cpu_state.a & value;
+                let (shifted, carry) = shift_right(anded);
+                cpu_state.a = shifted;
+
+                // Set flags based on result
+                set_zero_flag(&mut cpu_state.p, shifted);
+                set_negative_flag(&mut cpu_state.p, shifted);
+                set_carry_flag(&mut cpu_state.p, carry);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
