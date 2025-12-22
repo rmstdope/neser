@@ -3335,3 +3335,358 @@ impl InstructionType for Lar {
         }
     }
 }
+
+// CPY - Compare Y with Memory
+#[derive(Default)]
+pub struct Cpy {
+    cycle: u8,
+}
+
+impl Cpy {
+    pub fn new() -> Self {
+        Cpy { cycle: 0 }
+    }
+}
+
+impl InstructionType for Cpy {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Cpy::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Compare Y with memory
+                let value = addressing_mode.get_u8_value();
+                let result = cpu_state.y.wrapping_sub(value);
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, result);
+                set_negative_flag(&mut cpu_state.p, result);
+                // Carry flag: set if Y >= value (no borrow)
+                if cpu_state.y >= value {
+                    cpu_state.p |= FLAG_CARRY;
+                } else {
+                    cpu_state.p &= !FLAG_CARRY;
+                }
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+// CMP - Compare A with Memory
+#[derive(Default)]
+pub struct Cmp {
+    cycle: u8,
+}
+
+impl Cmp {
+    pub fn new() -> Self {
+        Cmp { cycle: 0 }
+    }
+}
+
+impl InstructionType for Cmp {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Cmp::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Compare A with memory
+                let value = addressing_mode.get_u8_value();
+                let result = cpu_state.a.wrapping_sub(value);
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, result);
+                set_negative_flag(&mut cpu_state.p, result);
+                // Carry flag: set if A >= value (no borrow)
+                if cpu_state.a >= value {
+                    cpu_state.p |= FLAG_CARRY;
+                } else {
+                    cpu_state.p &= !FLAG_CARRY;
+                }
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+// DEC - Decrement Memory
+#[derive(Default)]
+pub struct Dec {
+    cycle: u8,
+    value: u8,
+}
+
+impl Dec {
+    pub fn new() -> Self {
+        Dec {
+            cycle: 0,
+            value: 0,
+        }
+    }
+}
+
+impl InstructionType for Dec {
+    fn is_done(&self) -> bool {
+        self.cycle == 3
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 3, "Dec::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Read value from memory
+                self.value = addressing_mode.get_u8_value();
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Write original value back (dummy write)
+                memory
+                    .borrow_mut()
+                    .write(addressing_mode.get_address(), self.value, false);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Write back decremented value
+                let result = self.value.wrapping_sub(1);
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, result, false);
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, result);
+                set_negative_flag(&mut cpu_state.p, result);
+
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+// INY - Increment Y
+#[derive(Default)]
+pub struct Iny {
+    cycle: u8,
+}
+
+impl Iny {
+    pub fn new() -> Self {
+        Iny { cycle: 0 }
+    }
+}
+
+impl InstructionType for Iny {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Iny::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Increment Y
+                cpu_state.y = cpu_state.y.wrapping_add(1);
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.y);
+                set_negative_flag(&mut cpu_state.p, cpu_state.y);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+// DEX - Decrement X
+#[derive(Default)]
+pub struct Dex {
+    cycle: u8,
+}
+
+impl Dex {
+    pub fn new() -> Self {
+        Dex { cycle: 0 }
+    }
+}
+
+impl InstructionType for Dex {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Dex::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Decrement X
+                cpu_state.x = cpu_state.x.wrapping_sub(1);
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, cpu_state.x);
+                set_negative_flag(&mut cpu_state.p, cpu_state.x);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+// AXS - Illegal: (A AND X) - imm -> X
+#[derive(Default)]
+pub struct Axs {
+    cycle: u8,
+}
+
+impl Axs {
+    pub fn new() -> Self {
+        Axs { cycle: 0 }
+    }
+}
+
+impl InstructionType for Axs {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Axs::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: X = (A AND X) - imm
+                let value = addressing_mode.get_u8_value();
+                let temp = cpu_state.a & cpu_state.x;
+                let result = temp.wrapping_sub(value);
+                cpu_state.x = result;
+
+                // Set flags
+                set_zero_flag(&mut cpu_state.p, result);
+                set_negative_flag(&mut cpu_state.p, result);
+                // Carry flag: set if no borrow (temp >= value)
+                if temp >= value {
+                    cpu_state.p |= FLAG_CARRY;
+                } else {
+                    cpu_state.p &= !FLAG_CARRY;
+                }
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+// DCP - Illegal: DEC then CMP
+#[derive(Default)]
+pub struct Dcp {
+    cycle: u8,
+    value: u8,
+}
+
+impl Dcp {
+    pub fn new() -> Self {
+        Dcp {
+            cycle: 0,
+            value: 0,
+        }
+    }
+}
+
+impl InstructionType for Dcp {
+    fn is_done(&self) -> bool {
+        self.cycle == 3
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 3, "Dcp::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Read value from memory
+                self.value = addressing_mode.get_u8_value();
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Write original value back (dummy write)
+                memory
+                    .borrow_mut()
+                    .write(addressing_mode.get_address(), self.value, false);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Decrement and write back, then compare with A
+                let result = self.value.wrapping_sub(1);
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, result, false);
+
+                // Compare A with decremented value
+                let cmp_result = cpu_state.a.wrapping_sub(result);
+
+                // Set flags based on comparison
+                set_zero_flag(&mut cpu_state.p, cmp_result);
+                set_negative_flag(&mut cpu_state.p, cmp_result);
+                // Carry flag: set if A >= result (no borrow)
+                if cpu_state.a >= result {
+                    cpu_state.p |= FLAG_CARRY;
+                } else {
+                    cpu_state.p &= !FLAG_CARRY;
+                }
+
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}

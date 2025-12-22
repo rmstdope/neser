@@ -4,29 +4,30 @@ use super::addressing::{
 };
 use super::instruction::Instruction;
 use super::instruction_types::{
-    Aac, Adc, And, Arr, Asl, AslA, Asr, Atx, Bcs, Bit, Bmi, Bpl, Brk, Bvc, Bvs, Clc, Cli, Clv, Dey,
-    Dop, Eor, Jmp, Jsr, Kil, Lar, Lax, Lda, Ldx, Ldy, Lsr, LsrA, Nop, Ora, Pha, Php, Pla, Plp, Rla,
-    Rol, RolA, Ror, RorA, Rra, Rti, Rts, Sax, Sec, Sei, Slo, Sre, Sta, Stx, Sty, Tax, Tay, Top,
-    Tsx, Txa, Xaa,
+    Aac, Adc, And, Arr, Asl, AslA, Asr, Atx, Axs, Bcs, Bit, Bmi, Bpl, Brk, Bvc, Bvs, Clc, Cli, Clv,
+    Cmp, Cpy, Dcp, Dec, Dex, Dey, Dop, Eor, Iny, Jmp, Jsr, Kil, Lar, Lax, Lda, Ldx, Ldy, Lsr, LsrA,
+    Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, RolA, Ror, RorA, Rra, Rti, Rts, Sax, Sec, Sei, Slo, Sre,
+    Sta, Stx, Sty, Tax, Tay, Top, Tsx, Txa, Xaa,
 };
 use super::traits::{
     AAC_IMM, AAC_IMM2, ADC_ABS, ADC_ABSX, ADC_ABSY, ADC_IMM, ADC_INDX, ADC_INDY, ADC_ZP, ADC_ZPX,
     AND_ABS, AND_ABSX, AND_ABSY, AND_IMM, AND_INDX, AND_INDY, AND_ZP, AND_ZPX, ARR_IMM, ASL_A,
-    ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, ATX_IMM, BCS, BIT_ABS, BIT_ZP, BMI, BPL, BRK, BVC,
-    BVS, CLC, CLI, CLV, DEY, DOP_IMM, DOP_IMM2, DOP_IMM3, DOP_ZP, DOP_ZP2, DOP_ZP3, DOP_ZPX,
-    DOP_ZPX2, DOP_ZPX3, DOP_ZPX4, EOR_ABS, EOR_ABSX, EOR_ABSY, EOR_IMM, EOR_INDX, EOR_INDY, EOR_ZP,
-    EOR_ZPX, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10,
-    KIL11, KIL12, LAR_ABSY, LAX_ABS, LAX_ABSY, LAX_INDX, LAX_INDY, LAX_ZP, LAX_ZPY, LDA_ABS,
-    LDA_ABSX, LDA_ABSY, LDA_IMM, LDA_INDX, LDA_INDY, LDA_ZP, LDA_ZPX, LDX_ABS, LDX_ABSY, LDX_IMM,
-    LDX_ZP, LDX_ZPY, LDY_ABS, LDY_ABSX, LDY_IMM, LDY_ZP, LDY_ZPX, LSR_ABS, LSR_ABSX, LSR_ACC,
-    LSR_ZP, LSR_ZPX, NOP_IMP, NOP_IMP2, NOP_IMP3, NOP_IMP4, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM,
-    ORA_INDX, ORA_INDY, ORA_ZP, ORA_ZPX, PHA, PHP, PLA, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX,
-    RLA_INDY, RLA_ZP, RLA_ZPX, ROL_ABS, ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, ROR_ABS, ROR_ABSX,
-    ROR_ACC, ROR_ZP, ROR_ZPX, RRA_ABS, RRA_ABSX, RRA_ABSY, RRA_INDX, RRA_INDY, RRA_ZP, RRA_ZPX,
-    RTI, RTS, SAX_ABS, SAX_INDX, SAX_ZP, SEC, SEI, SLO_ABS, SLO_ABSX, SLO_ABSY, SLO_INDX, SLO_INDY,
-    SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX, SRE_ABSY, SRE_INDX, SRE_INDY, SRE_ZP, SRE_ZPX, STA_ABS,
-    STA_INDX, STA_ZP, STX_ABS, STX_ZP, STY_ABS, STY_ZP, TAX, TAY, TOP_ABS, TOP_ABSX, TOP_ABSX2,
-    TOP_ABSX3, TOP_ABSX4, TSX, TXA, XAA_IMM,
+    ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, ATX_IMM, AXS_IMM, BCS, BIT_ABS, BIT_ZP, BMI, BPL,
+    BRK, BVC, BVS, CLC, CLI, CLV, CMP_ABS, CMP_IMM, CMP_INDX, CMP_ZP, CPY_ABS, CPY_IMM, CPY_ZP,
+    DCP_ABS, DCP_INDX, DCP_ZP, DEC_ABS, DEC_ZP, DEX, DEY, DOP_IMM, DOP_IMM2, DOP_IMM3, DOP_IMM4,
+    DOP_ZP, DOP_ZP2, DOP_ZP3, DOP_ZPX, DOP_ZPX2, DOP_ZPX3, DOP_ZPX4, EOR_ABS, EOR_ABSX, EOR_ABSY,
+    EOR_IMM, EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, INY, JMP_ABS, JMP_IND, JSR, KIL, KIL2, KIL3,
+    KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12, LAR_ABSY, LAX_ABS, LAX_ABSY, LAX_INDX,
+    LAX_INDY, LAX_ZP, LAX_ZPY, LDA_ABS, LDA_ABSX, LDA_ABSY, LDA_IMM, LDA_INDX, LDA_INDY, LDA_ZP,
+    LDA_ZPX, LDX_ABS, LDX_ABSY, LDX_IMM, LDX_ZP, LDX_ZPY, LDY_ABS, LDY_ABSX, LDY_IMM, LDY_ZP,
+    LDY_ZPX, LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP, LSR_ZPX, NOP_IMP, NOP_IMP2, NOP_IMP3, NOP_IMP4,
+    ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX, ORA_INDY, ORA_ZP, ORA_ZPX, PHA, PHP, PLA, PLP,
+    RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY, RLA_ZP, RLA_ZPX, ROL_ABS, ROL_ABSX, ROL_ACC,
+    ROL_ZP, ROL_ZPX, ROR_ABS, ROR_ABSX, ROR_ACC, ROR_ZP, ROR_ZPX, RRA_ABS, RRA_ABSX, RRA_ABSY,
+    RRA_INDX, RRA_INDY, RRA_ZP, RRA_ZPX, RTI, RTS, SAX_ABS, SAX_INDX, SAX_ZP, SEC, SEI, SLO_ABS,
+    SLO_ABSX, SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX, SRE_ABSY, SRE_INDX,
+    SRE_INDY, SRE_ZP, SRE_ZPX, STA_ABS, STA_INDX, STA_ZP, STX_ABS, STX_ZP, STY_ABS, STY_ZP, TAX,
+    TAY, TOP_ABS, TOP_ABSX, TOP_ABSX2, TOP_ABSX3, TOP_ABSX4, TSX, TXA, XAA_IMM,
 };
 use super::types::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_OVERFLOW,
@@ -1214,6 +1215,112 @@ impl Cpu2 {
                 Some(Instruction::new(
                     Box::new(AbsoluteY::new(false)),
                     Box::new(Lax::new()),
+                ))
+            }
+            CPY_IMM => {
+                // CPY Immediate: CPY #$nn
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Cpy::new()),
+                ))
+            }
+            CMP_INDX => {
+                // CMP Indexed Indirect: CMP ($nn,X)
+                Some(Instruction::new(
+                    Box::new(IndexedIndirect::new()),
+                    Box::new(Cmp::new()),
+                ))
+            }
+            DOP_IMM4 => {
+                // DOP Immediate (illegal NOP): NOP #$nn
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Dop::new()),
+                ))
+            }
+            DCP_INDX => {
+                // DCP Indexed Indirect: DCP ($nn,X) (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(IndexedIndirect::new()),
+                    Box::new(Dcp::new()),
+                ))
+            }
+            CPY_ZP => {
+                // CPY Zero Page: CPY $nn
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Cpy::new()),
+                ))
+            }
+            CMP_ZP => {
+                // CMP Zero Page: CMP $nn
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Cmp::new()),
+                ))
+            }
+            DEC_ZP => {
+                // DEC Zero Page: DEC $nn
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Dec::new()),
+                ))
+            }
+            DCP_ZP => {
+                // DCP Zero Page: DCP $nn (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(ZeroPage::new()),
+                    Box::new(Dcp::new()),
+                ))
+            }
+            INY => {
+                // INY Implied: INY
+                Some(Instruction::new(Box::new(Implied), Box::new(Iny::new())))
+            }
+            CMP_IMM => {
+                // CMP Immediate: CMP #$nn
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Cmp::new()),
+                ))
+            }
+            DEX => {
+                // DEX Implied: DEX
+                Some(Instruction::new(Box::new(Implied), Box::new(Dex::new())))
+            }
+            AXS_IMM => {
+                // AXS Immediate: AXS #$nn (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(Immediate::new()),
+                    Box::new(Axs::new()),
+                ))
+            }
+            CPY_ABS => {
+                // CPY Absolute: CPY $nnnn
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Cpy::new()),
+                ))
+            }
+            CMP_ABS => {
+                // CMP Absolute: CMP $nnnn
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Cmp::new()),
+                ))
+            }
+            DEC_ABS => {
+                // DEC Absolute: DEC $nnnn
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Dec::new()),
+                ))
+            }
+            DCP_ABS => {
+                // DCP Absolute: DCP $nnnn (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(Absolute::new(true)),
+                    Box::new(Dcp::new()),
                 ))
             }
             EOR_ABSY => {
@@ -6125,5 +6232,403 @@ mod tests {
             cycles, 4,
             "LAX absolute,Y should take 4 cycles (no page cross)"
         );
+    }
+
+    #[test]
+    fn test_opcode_c0() {
+        let memory = create_test_memory();
+
+        // Set up CPY #imm instruction
+        memory.borrow_mut().write(0x0400, CPY_IMM, false); // CPY Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x50, false); // Compare with 0x50
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x50;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y == 0x50: Z=1, C=1, N=0
+        assert_eq!(cpu.state.p & 0b0000_0011, 0b0000_0011, "Z and C should be set");
+        assert_eq!(cycles, 2, "CPY immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_c1() {
+        let memory = create_test_memory();
+
+        // Set up CMP ($40,X) instruction
+        memory.borrow_mut().write(0x0400, CMP_INDX, false); // CMP Indexed Indirect opcode
+        memory.borrow_mut().write(0x0401, 0x40, false); // Zero page address
+
+        // Set up indirect address at $40 + X ($05) = $45
+        memory.borrow_mut().write(0x0045, 0x00, false); // Low byte of address
+        memory.borrow_mut().write(0x0046, 0x30, false); // High byte of address
+
+        // Set up value at $3000
+        memory.borrow_mut().write(0x3000, 0x50, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x50;
+        cpu.state.x = 0x05;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A == 0x50: Z=1, C=1, N=0
+        assert_eq!(cpu.state.p & 0b0000_0011, 0b0000_0011, "Z and C should be set");
+        assert_eq!(cycles, 6, "CMP indexed indirect should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_c2() {
+        let memory = create_test_memory();
+
+        // Set up DOP #imm instruction (illegal NOP)
+        memory.borrow_mut().write(0x0400, DOP_IMM4, false); // DOP Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x42, false); // Dummy operand
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x99;
+        cpu.state.p = 0xFF;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // DOP does nothing
+        assert_eq!(cpu.state.a, 0x99, "A should be unchanged");
+        assert_eq!(cpu.state.p, 0xFF, "P should be unchanged");
+        assert_eq!(cycles, 2, "DOP immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_c3() {
+        let memory = create_test_memory();
+
+        // Set up DCP ($40,X) instruction (illegal: DEC then CMP)
+        memory.borrow_mut().write(0x0400, DCP_INDX, false); // DCP Indexed Indirect opcode
+        memory.borrow_mut().write(0x0401, 0x40, false); // Zero page address
+
+        // Set up indirect address at $40 + X ($05) = $45
+        memory.borrow_mut().write(0x0045, 0x00, false); // Low byte of address
+        memory.borrow_mut().write(0x0046, 0x30, false); // High byte of address
+
+        // Set up value at $3000
+        memory.borrow_mut().write(0x3000, 0x51, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x50;
+        cpu.state.x = 0x05;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $3000 should be decremented: 0x51 -> 0x50
+        // Then compared with A (0x50): Z=1, C=1, N=0
+        assert_eq!(
+            memory.borrow().read(0x3000),
+            0x50,
+            "Memory should be decremented"
+        );
+        assert_eq!(cpu.state.p & 0b0000_0011, 0b0000_0011, "Z and C should be set");
+        assert_eq!(cycles, 8, "DCP indexed indirect should take 8 cycles");
+    }
+
+    #[test]
+    fn test_opcode_c4() {
+        let memory = create_test_memory();
+
+        // Set up CPY $40 instruction
+        memory.borrow_mut().write(0x0400, CPY_ZP, false); // CPY Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x40, false); // Zero page address
+
+        // Set up value at $40
+        memory.borrow_mut().write(0x0040, 0x30, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x50;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y (0x50) > memory (0x30): Z=0, C=1, N=0
+        assert_eq!(cpu.state.p & 0b0000_0001, 0b0000_0001, "C should be set");
+        assert_eq!(cpu.state.p & 0b0000_0010, 0b0000_0000, "Z should be clear");
+        assert_eq!(cycles, 3, "CPY zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_c5() {
+        let memory = create_test_memory();
+
+        // Set up CMP $40 instruction
+        memory.borrow_mut().write(0x0400, CMP_ZP, false); // CMP Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x40, false); // Zero page address
+
+        // Set up value at $40
+        memory.borrow_mut().write(0x0040, 0x30, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x50;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A (0x50) > memory (0x30): Z=0, C=1, N=0
+        assert_eq!(cpu.state.p & 0b0000_0001, 0b0000_0001, "C should be set");
+        assert_eq!(cpu.state.p & 0b0000_0010, 0b0000_0000, "Z should be clear");
+        assert_eq!(cycles, 3, "CMP zero page should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_c6() {
+        let memory = create_test_memory();
+
+        // Set up DEC $40 instruction
+        memory.borrow_mut().write(0x0400, DEC_ZP, false); // DEC Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x40, false); // Zero page address
+
+        // Set up value at $40
+        memory.borrow_mut().write(0x0040, 0x01, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be decremented: 0x01 -> 0x00
+        assert_eq!(
+            memory.borrow().read(0x0040),
+            0x00,
+            "Memory should be decremented"
+        );
+        assert_eq!(cpu.state.p & 0b0000_0010, 0b0000_0010, "Z should be set");
+        assert_eq!(cycles, 5, "DEC zero page should take 5 cycles");
+    }
+
+    #[test]
+    fn test_opcode_c7() {
+        let memory = create_test_memory();
+
+        // Set up DCP $40 instruction (illegal: DEC then CMP)
+        memory.borrow_mut().write(0x0400, DCP_ZP, false); // DCP Zero Page opcode
+        memory.borrow_mut().write(0x0401, 0x40, false); // Zero page address
+
+        // Set up value at $40
+        memory.borrow_mut().write(0x0040, 0x51, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x50;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $40 should be decremented: 0x51 -> 0x50
+        // Then compared with A (0x50): Z=1, C=1, N=0
+        assert_eq!(
+            memory.borrow().read(0x0040),
+            0x50,
+            "Memory should be decremented"
+        );
+        assert_eq!(cpu.state.p & 0b0000_0011, 0b0000_0011, "Z and C should be set");
+        assert_eq!(cycles, 5, "DCP zero page should take 5 cycles");
+    }
+
+    #[test]
+    fn test_opcode_c8() {
+        let memory = create_test_memory();
+
+        // Set up INY instruction
+        memory.borrow_mut().write(0x0400, INY, false); // INY Implied opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0xFE;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y should be incremented: 0xFE -> 0xFF
+        assert_eq!(cpu.state.y, 0xFF, "Y should be incremented");
+        assert_eq!(cpu.state.p & 0b1000_0000, 0b1000_0000, "N should be set");
+        assert_eq!(cycles, 2, "INY should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_c9() {
+        let memory = create_test_memory();
+
+        // Set up CMP #imm instruction
+        memory.borrow_mut().write(0x0400, CMP_IMM, false); // CMP Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x50, false); // Compare with 0x50
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x50;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A == 0x50: Z=1, C=1, N=0
+        assert_eq!(cpu.state.p & 0b0000_0011, 0b0000_0011, "Z and C should be set");
+        assert_eq!(cycles, 2, "CMP immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_ca() {
+        let memory = create_test_memory();
+
+        // Set up DEX instruction
+        memory.borrow_mut().write(0x0400, DEX, false); // DEX Implied opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x01;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // X should be decremented: 0x01 -> 0x00
+        assert_eq!(cpu.state.x, 0x00, "X should be decremented");
+        assert_eq!(cpu.state.p & 0b0000_0010, 0b0000_0010, "Z should be set");
+        assert_eq!(cycles, 2, "DEX should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_cb() {
+        let memory = create_test_memory();
+
+        // Set up AXS #imm instruction (illegal: (A AND X) - imm -> X without borrow)
+        memory.borrow_mut().write(0x0400, AXS_IMM, false); // AXS Immediate opcode
+        memory.borrow_mut().write(0x0401, 0x10, false); // Subtract 0x10
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0xFF;
+        cpu.state.x = 0x50;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // (A AND X) - imm -> X
+        // (0xFF AND 0x50) - 0x10 = 0x50 - 0x10 = 0x40
+        assert_eq!(cpu.state.x, 0x40, "X should be (A AND X) - imm");
+        assert_eq!(cpu.state.p & 0b0000_0001, 0b0000_0001, "C should be set (no borrow)");
+        assert_eq!(cycles, 2, "AXS immediate should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_cc() {
+        let memory = create_test_memory();
+
+        // Set up CPY $1234 instruction
+        memory.borrow_mut().write(0x0400, CPY_ABS, false); // CPY Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x30, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x50;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y (0x50) > memory (0x30): Z=0, C=1, N=0
+        assert_eq!(cpu.state.p & 0b0000_0001, 0b0000_0001, "C should be set");
+        assert_eq!(cpu.state.p & 0b0000_0010, 0b0000_0000, "Z should be clear");
+        assert_eq!(cycles, 4, "CPY absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_cd() {
+        let memory = create_test_memory();
+
+        // Set up CMP $1234 instruction
+        memory.borrow_mut().write(0x0400, CMP_ABS, false); // CMP Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x30, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x50;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A (0x50) > memory (0x30): Z=0, C=1, N=0
+        assert_eq!(cpu.state.p & 0b0000_0001, 0b0000_0001, "C should be set");
+        assert_eq!(cpu.state.p & 0b0000_0010, 0b0000_0000, "Z should be clear");
+        assert_eq!(cycles, 4, "CMP absolute should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_ce() {
+        let memory = create_test_memory();
+
+        // Set up DEC $1234 instruction
+        memory.borrow_mut().write(0x0400, DEC_ABS, false); // DEC Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x01, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory should be decremented: 0x01 -> 0x00
+        assert_eq!(
+            memory.borrow().read(0x1234),
+            0x00,
+            "Memory should be decremented"
+        );
+        assert_eq!(cpu.state.p & 0b0000_0010, 0b0000_0010, "Z should be set");
+        assert_eq!(cycles, 6, "DEC absolute should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_cf() {
+        let memory = create_test_memory();
+
+        // Set up DCP $1234 instruction (illegal: DEC then CMP)
+        memory.borrow_mut().write(0x0400, DCP_ABS, false); // DCP Absolute opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        // Set up value at $1234
+        memory.borrow_mut().write(0x1234, 0x51, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x50;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Memory at $1234 should be decremented: 0x51 -> 0x50
+        // Then compared with A (0x50): Z=1, C=1, N=0
+        assert_eq!(
+            memory.borrow().read(0x1234),
+            0x50,
+            "Memory should be decremented"
+        );
+        assert_eq!(cpu.state.p & 0b0000_0011, 0b0000_0011, "Z and C should be set");
+        assert_eq!(cycles, 6, "DCP absolute should take 6 cycles");
     }
 }
