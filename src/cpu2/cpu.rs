@@ -4,35 +4,37 @@ use super::addressing::{
 };
 use super::instruction::Instruction;
 use super::instruction_types::{
-    Aac, Adc, And, Arr, Asl, AslA, Asr, Atx, Axs, Bcs, Beq, Bit, Bmi, Bne, Bpl, Brk, Bvc, Bvs, Clc,
-    Cld, Cli, Clv, Cmp, Cpx, Cpy, Dcp, Dec, Dex, Dey, Dop, Eor, Inc, Inx, Iny, Isb, Jmp, Jsr, Kil,
-    Lar, Lax, Lda, Ldx, Ldy, Lsr, LsrA, Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, RolA, Ror, RorA,
-    Rra, Rti, Rts, Sax, Sbc, Sec, Sed, Sei, Slo, Sre, Sta, Stx, Sty, Tax, Tay, Top, Tsx, Txa, Xaa,
+    Aac, Adc, And, Arr, Asl, AslA, Asr, Atx, Axa, Axs, Bcc, Bcs, Beq, Bit, Bmi, Bne, Bpl, Brk, Bvc,
+    Bvs, Clc, Cld, Cli, Clv, Cmp, Cpx, Cpy, Dcp, Dec, Dex, Dey, Dop, Eor, Inc, Inx, Iny, Isb, Jmp,
+    Jsr, Kil, Lar, Lax, Lda, Ldx, Ldy, Lsr, LsrA, Nop, Ora, Pha, Php, Pla, Plp, Rla, Rol, RolA,
+    Ror, RorA, Rra, Rti, Rts, Sax, Sbc, Sec, Sed, Sei, Slo, Sre, Sta, Stx, Sty, Sxa, Sya, Tax, Tay,
+    Top, Tsx, Txa, Txs, Tya, Xaa, Xas,
 };
 use super::traits::{
     AAC_IMM, AAC_IMM2, ADC_ABS, ADC_ABSX, ADC_ABSY, ADC_IMM, ADC_INDX, ADC_INDY, ADC_ZP, ADC_ZPX,
     AND_ABS, AND_ABSX, AND_ABSY, AND_IMM, AND_INDX, AND_INDY, AND_ZP, AND_ZPX, ARR_IMM, ASL_A,
-    ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, ATX_IMM, AXS_IMM, BCS, BEQ, BIT_ABS, BIT_ZP, BMI,
-    BNE, BPL, BRK, BVC, BVS, CLC, CLD, CLI, CLV, CMP_ABS, CMP_ABSX, CMP_ABSY, CMP_IMM, CMP_INDX,
-    CMP_INDY, CMP_ZP, CMP_ZPX, CPX_ABS, CPX_IMM, CPX_ZP, CPY_ABS, CPY_IMM, CPY_ZP, DCP_ABS,
-    DCP_ABSX, DCP_ABSY, DCP_INDX, DCP_INDY, DCP_ZP, DCP_ZPX, DEC_ABS, DEC_ABSX, DEC_ZP, DEC_ZPX,
-    DEX, DEY, DOP_IMM, DOP_IMM2, DOP_IMM3, DOP_IMM4, DOP_IMM5, DOP_ZP, DOP_ZP2, DOP_ZP3, DOP_ZPX,
-    DOP_ZPX2, DOP_ZPX3, DOP_ZPX4, DOP_ZPX5, DOP_ZPX6, EOR_ABS, EOR_ABSX, EOR_ABSY, EOR_IMM,
-    EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, INC_ABS, INC_ABSX, INC_ZP, INC_ZPX, INX, INY, ISB_ABS,
-    ISB_ABSX, ISB_ABSY, ISB_INDX, ISB_INDY, ISB_ZP, ISB_ZPX, JMP_ABS, JMP_IND, JSR, KIL, KIL2,
-    KIL3, KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12, LAR_ABSY, LAX_ABS, LAX_ABSY,
-    LAX_INDX, LAX_INDY, LAX_ZP, LAX_ZPY, LDA_ABS, LDA_ABSX, LDA_ABSY, LDA_IMM, LDA_INDX, LDA_INDY,
-    LDA_ZP, LDA_ZPX, LDX_ABS, LDX_ABSY, LDX_IMM, LDX_ZP, LDX_ZPY, LDY_ABS, LDY_ABSX, LDY_IMM,
-    LDY_ZP, LDY_ZPX, LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP, LSR_ZPX, NOP, NOP_IMP, NOP_IMP2, NOP_IMP3,
-    NOP_IMP4, NOP_IMP5, NOP_IMP6, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM, ORA_INDX, ORA_INDY, ORA_ZP,
-    ORA_ZPX, PHA, PHP, PLA, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX, RLA_INDY, RLA_ZP, RLA_ZPX,
-    ROL_ABS, ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, ROR_ABS, ROR_ABSX, ROR_ACC, ROR_ZP, ROR_ZPX,
-    RRA_ABS, RRA_ABSX, RRA_ABSY, RRA_INDX, RRA_INDY, RRA_ZP, RRA_ZPX, RTI, RTS, SAX_ABS, SAX_INDX,
-    SAX_ZP, SBC_ABS, SBC_ABSX, SBC_ABSY, SBC_IMM, SBC_IMM2, SBC_INDX, SBC_INDY, SBC_ZP, SBC_ZPX,
-    SEC, SED, SEI, SLO_ABS, SLO_ABSX, SLO_ABSY, SLO_INDX, SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS,
-    SRE_ABSX, SRE_ABSY, SRE_INDX, SRE_INDY, SRE_ZP, SRE_ZPX, STA_ABS, STA_INDX, STA_ZP, STX_ABS,
-    STX_ZP, STY_ABS, STY_ZP, TAX, TAY, TOP_ABS, TOP_ABSX, TOP_ABSX2, TOP_ABSX3, TOP_ABSX4,
-    TOP_ABSX5, TOP_ABSX6, TSX, TXA, XAA_IMM,
+    ASL_ABS, ASL_ABSX, ASL_ZP, ASL_ZPX, ASR_IMM, ATX_IMM, AXA_ABSY, AXA_INDY, AXS_IMM, BCC, BCS,
+    BEQ, BIT_ABS, BIT_ZP, BMI, BNE, BPL, BRK, BVC, BVS, CLC, CLD, CLI, CLV, CMP_ABS, CMP_ABSX,
+    CMP_ABSY, CMP_IMM, CMP_INDX, CMP_INDY, CMP_ZP, CMP_ZPX, CPX_ABS, CPX_IMM, CPX_ZP, CPY_ABS,
+    CPY_IMM, CPY_ZP, DCP_ABS, DCP_ABSX, DCP_ABSY, DCP_INDX, DCP_INDY, DCP_ZP, DCP_ZPX, DEC_ABS,
+    DEC_ABSX, DEC_ZP, DEC_ZPX, DEX, DEY, DOP_IMM, DOP_IMM2, DOP_IMM3, DOP_IMM4, DOP_IMM5, DOP_ZP,
+    DOP_ZP2, DOP_ZP3, DOP_ZPX, DOP_ZPX2, DOP_ZPX3, DOP_ZPX4, DOP_ZPX5, DOP_ZPX6, EOR_ABS, EOR_ABSX,
+    EOR_ABSY, EOR_IMM, EOR_INDX, EOR_INDY, EOR_ZP, EOR_ZPX, INC_ABS, INC_ABSX, INC_ZP, INC_ZPX,
+    INX, INY, ISB_ABS, ISB_ABSX, ISB_ABSY, ISB_INDX, ISB_INDY, ISB_ZP, ISB_ZPX, JMP_ABS, JMP_IND,
+    JSR, KIL, KIL2, KIL3, KIL4, KIL5, KIL6, KIL7, KIL8, KIL9, KIL10, KIL11, KIL12, LAR_ABSY,
+    LAX_ABS, LAX_ABSY, LAX_INDX, LAX_INDY, LAX_ZP, LAX_ZPY, LDA_ABS, LDA_ABSX, LDA_ABSY, LDA_IMM,
+    LDA_INDX, LDA_INDY, LDA_ZP, LDA_ZPX, LDX_ABS, LDX_ABSY, LDX_IMM, LDX_ZP, LDX_ZPY, LDY_ABS,
+    LDY_ABSX, LDY_IMM, LDY_ZP, LDY_ZPX, LSR_ABS, LSR_ABSX, LSR_ACC, LSR_ZP, LSR_ZPX, NOP, NOP_IMP,
+    NOP_IMP2, NOP_IMP3, NOP_IMP4, NOP_IMP5, NOP_IMP6, ORA_ABS, ORA_ABSX, ORA_ABSY, ORA_IMM,
+    ORA_INDX, ORA_INDY, ORA_ZP, ORA_ZPX, PHA, PHP, PLA, PLP, RLA_ABS, RLA_ABSX, RLA_ABSY, RLA_INDX,
+    RLA_INDY, RLA_ZP, RLA_ZPX, ROL_ABS, ROL_ABSX, ROL_ACC, ROL_ZP, ROL_ZPX, ROR_ABS, ROR_ABSX,
+    ROR_ACC, ROR_ZP, ROR_ZPX, RRA_ABS, RRA_ABSX, RRA_ABSY, RRA_INDX, RRA_INDY, RRA_ZP, RRA_ZPX,
+    RTI, RTS, SAX_ABS, SAX_INDX, SAX_ZP, SAX_ZPY, SBC_ABS, SBC_ABSX, SBC_ABSY, SBC_IMM, SBC_IMM2,
+    SBC_INDX, SBC_INDY, SBC_ZP, SBC_ZPX, SEC, SED, SEI, SLO_ABS, SLO_ABSX, SLO_ABSY, SLO_INDX,
+    SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX, SRE_ABSY, SRE_INDX, SRE_INDY, SRE_ZP, SRE_ZPX,
+    STA_ABS, STA_ABSX, STA_ABSY, STA_INDX, STA_INDY, STA_ZP, STA_ZPX, STX_ABS, STX_ZP, STX_ZPY, STY_ABS,
+    STY_ZP, STY_ZPX, SXA_ABSY, SYA_ABSX, TAX, TAY, TOP_ABS, TOP_ABSX, TOP_ABSX2, TOP_ABSX3,
+    TOP_ABSX4, TOP_ABSX5, TOP_ABSX6, TSX, TXA, TXS, TYA, XAA_IMM, XAS_ABSY,
 };
 use super::types::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_OVERFLOW,
@@ -1684,6 +1686,109 @@ impl Cpu2 {
                 Some(Instruction::new(
                     Box::new(AbsoluteX::new(true)),
                     Box::new(Sre::new()),
+                ))
+            }
+            BCC => {
+                // BCC Relative: BCC $nn (branch if carry clear)
+                Some(Instruction::new(
+                    Box::new(Relative::new()),
+                    Box::new(Bcc::new()),
+                ))
+            }
+            STA_INDY => {
+                // STA (Indirect),Y: STA ($nn),Y
+                Some(Instruction::new(
+                    Box::new(IndirectIndexed::new(true)),
+                    Box::new(Sta::new()),
+                ))
+            }
+            KIL9 => {
+                // KIL Implied: KIL (illegal opcode that halts CPU)
+                Some(Instruction::new(Box::new(Implied), Box::new(Kil::new())))
+            }
+            AXA_INDY => {
+                // AXA (Indirect),Y: AXA ($nn),Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(IndirectIndexed::new(true)),
+                    Box::new(Axa::new()),
+                ))
+            }
+            STY_ZPX => {
+                // STY Zero Page,X: STY $nn,X
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Sty::new()),
+                ))
+            }
+            STA_ZPX => {
+                // STA Zero Page,X: STA $nn,X
+                Some(Instruction::new(
+                    Box::new(ZeroPageX::new()),
+                    Box::new(Sta::new()),
+                ))
+            }
+            STX_ZPY => {
+                // STX Zero Page,Y: STX $nn,Y
+                Some(Instruction::new(
+                    Box::new(ZeroPageY::new()),
+                    Box::new(Stx::new()),
+                ))
+            }
+            SAX_ZPY => {
+                // SAX Zero Page,Y: SAX $nn,Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(ZeroPageY::new()),
+                    Box::new(Sax::new()),
+                ))
+            }
+            TYA => {
+                // TYA Implied: TYA
+                Some(Instruction::new(Box::new(Implied), Box::new(Tya::new())))
+            }
+            STA_ABSY => {
+                // STA Absolute,Y: STA $nnnn,Y
+                Some(Instruction::new(
+                    Box::new(AbsoluteY::new(true)),
+                    Box::new(Sta::new()),
+                ))
+            }
+            TXS => {
+                // TXS Implied: TXS
+                Some(Instruction::new(Box::new(Implied), Box::new(Txs::new())))
+            }
+            XAS_ABSY => {
+                // XAS Absolute,Y: XAS $nnnn,Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteY::new(true)),
+                    Box::new(Xas::new()),
+                ))
+            }
+            SYA_ABSX => {
+                // SYA Absolute,X: SYA $nnnn,X (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(true)),
+                    Box::new(Sya::new()),
+                ))
+            }
+            STA_ABSX => {
+                // STA Absolute,X: STA $nnnn,X
+                Some(Instruction::new(
+                    Box::new(AbsoluteX::new(true)),
+                    Box::new(Sta::new()),
+                ))
+            }
+            SXA_ABSY => {
+                // SXA Absolute,Y: SXA $nnnn,Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteY::new(true)),
+                    Box::new(Sxa::new()),
+                ))
+            }
+            AXA_ABSY => {
+                // AXA Absolute,Y: AXA $nnnn,Y (illegal opcode)
+                Some(Instruction::new(
+                    Box::new(AbsoluteY::new(true)),
+                    Box::new(Axa::new()),
                 ))
             }
             _ => None, // Unimplemented opcode
@@ -8213,5 +8318,364 @@ mod tests {
         );
         assert_eq!(cpu.state.a, 0x20, "A should be 0x20");
         assert_eq!(cycles, 7, "ISB absolute,X should take 7 cycles");
+    }
+
+    #[test]
+    fn test_opcode_90() {
+        let memory = create_test_memory();
+
+        // Set up BCC instruction (Branch if Carry Clear)
+        memory.borrow_mut().write(0x0400, BCC, false); // BCC opcode
+        memory.borrow_mut().write(0x0401, 0x10, false); // Relative offset (+16)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = 0; // C flag clear
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Branch should be taken to 0x0412 (0x0402 + 0x10)
+        assert_eq!(cpu.state.pc, 0x0412, "PC should branch to 0x0412");
+        assert_eq!(cycles, 3, "BCC taken (same page) should take 3 cycles");
+    }
+
+    #[test]
+    fn test_opcode_91() {
+        let memory = create_test_memory();
+
+        // Set up STA ($20),Y instruction
+        memory.borrow_mut().write(0x0400, STA_INDY, false); // STA (Indirect),Y opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up pointer at $20-$21 to point to $1230
+        memory.borrow_mut().write(0x0020, 0x30, false); // Low byte
+        memory.borrow_mut().write(0x0021, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+        cpu.state.y = 0x04;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be stored at $1234 (base $1230 + Y offset $04)
+        assert_eq!(memory.borrow().read(0x1234), 0x42, "A should be stored");
+        assert_eq!(cycles, 6, "STA (Indirect),Y should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_92() {
+        let memory = create_test_memory();
+
+        // Set up KIL instruction (illegal opcode that halts CPU)
+        memory.borrow_mut().write(0x0400, KIL9, false); // KIL opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // CPU should be halted
+        assert!(cpu.is_halted(), "CPU should be halted");
+        assert_eq!(cycles, 1, "KIL should take 1 cycle");
+    }
+
+    #[test]
+    fn test_opcode_93() {
+        let memory = create_test_memory();
+
+        // Set up AXA ($20),Y instruction (illegal: stores A & X & (H+1))
+        memory.borrow_mut().write(0x0400, AXA_INDY, false); // AXA (Indirect),Y opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page address
+
+        // Set up pointer at $20-$21 to point to $1230
+        memory.borrow_mut().write(0x0020, 0x30, false); // Low byte
+        memory.borrow_mut().write(0x0021, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0xFF;
+        cpu.state.x = 0xFF;
+        cpu.state.y = 0x04;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // AXA stores A & X & (high_byte + 1)
+        // Target is $1234, high byte is 0x12, so stores 0xFF & 0xFF & 0x13 = 0x13
+        assert_eq!(
+            memory.borrow().read(0x1234),
+            0x13,
+            "AXA result should be stored"
+        );
+        assert_eq!(cycles, 6, "AXA (Indirect),Y should take 6 cycles");
+    }
+
+    #[test]
+    fn test_opcode_94() {
+        let memory = create_test_memory();
+
+        // Set up STY $20,X instruction
+        memory.borrow_mut().write(0x0400, STY_ZPX, false); // STY Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x42;
+        cpu.state.x = 0x05;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y should be stored at $25 (base $20 + X offset $05)
+        assert_eq!(memory.borrow().read(0x0025), 0x42, "Y should be stored");
+        assert_eq!(cycles, 4, "STY zero page,X should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_95() {
+        let memory = create_test_memory();
+
+        // Set up STA $20,X instruction
+        memory.borrow_mut().write(0x0400, STA_ZPX, false); // STA Zero Page,X opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+        cpu.state.x = 0x05;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be stored at $25 (base $20 + X offset $05)
+        assert_eq!(memory.borrow().read(0x0025), 0x42, "A should be stored");
+        assert_eq!(cycles, 4, "STA zero page,X should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_96() {
+        let memory = create_test_memory();
+
+        // Set up STX $20,Y instruction
+        memory.borrow_mut().write(0x0400, STX_ZPY, false); // STX Zero Page,Y opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x42;
+        cpu.state.y = 0x05;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // X should be stored at $25 (base $20 + Y offset $05)
+        assert_eq!(memory.borrow().read(0x0025), 0x42, "X should be stored");
+        assert_eq!(cycles, 4, "STX zero page,Y should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_97() {
+        let memory = create_test_memory();
+
+        // Set up SAX $20,Y instruction (illegal: stores A & X)
+        memory.borrow_mut().write(0x0400, SAX_ZPY, false); // SAX Zero Page,Y opcode
+        memory.borrow_mut().write(0x0401, 0x20, false); // Zero page base address
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0b11110000;
+        cpu.state.x = 0b10101010;
+        cpu.state.y = 0x05;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A & X = 0b10100000 = 0xA0 should be stored at $25
+        assert_eq!(memory.borrow().read(0x0025), 0xA0, "A & X should be stored");
+        assert_eq!(cycles, 4, "SAX zero page,Y should take 4 cycles");
+    }
+
+    #[test]
+    fn test_opcode_98() {
+        let memory = create_test_memory();
+
+        // Set up TYA instruction (Transfer Y to A)
+        memory.borrow_mut().write(0x0400, TYA, false); // TYA opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0x42;
+        cpu.state.a = 0x00;
+        cpu.state.p = 0;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Y should be transferred to A
+        assert_eq!(cpu.state.a, 0x42, "A should equal Y");
+        assert_eq!(cpu.state.p & FLAG_NEGATIVE, 0, "N flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cycles, 2, "TYA should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_99() {
+        let memory = create_test_memory();
+
+        // Set up STA $1234,Y instruction
+        memory.borrow_mut().write(0x0400, STA_ABSY, false); // STA Absolute,Y opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+        cpu.state.y = 0x05;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be stored at $1239 (base $1234 + Y offset $05)
+        assert_eq!(memory.borrow().read(0x1239), 0x42, "A should be stored");
+        assert_eq!(cycles, 5, "STA absolute,Y should take 5 cycles");
+    }
+
+    #[test]
+    fn test_opcode_9a() {
+        let memory = create_test_memory();
+
+        // Set up TXS instruction (Transfer X to SP)
+        memory.borrow_mut().write(0x0400, TXS, false); // TXS opcode
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x42;
+        cpu.state.sp = 0xFF;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // X should be transferred to SP
+        assert_eq!(cpu.state.sp, 0x42, "SP should equal X");
+        assert_eq!(cycles, 2, "TXS should take 2 cycles");
+    }
+
+    #[test]
+    fn test_opcode_9b() {
+        let memory = create_test_memory();
+
+        // Set up XAS $1234,Y instruction (illegal: SP = A & X, stores SP & (H+1))
+        memory.borrow_mut().write(0x0400, XAS_ABSY, false); // XAS Absolute,Y opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0xFF;
+        cpu.state.x = 0xFF;
+        cpu.state.y = 0x05;
+        cpu.state.sp = 0x00;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // SP should be set to A & X = 0xFF
+        assert_eq!(cpu.state.sp, 0xFF, "SP should be A & X");
+        // Stores SP & (high_byte + 1) = 0xFF & 0x13 = 0x13 at $1239
+        assert_eq!(
+            memory.borrow().read(0x1239),
+            0x13,
+            "XAS result should be stored"
+        );
+        assert_eq!(cycles, 5, "XAS absolute,Y should take 5 cycles");
+    }
+
+    #[test]
+    fn test_opcode_9c() {
+        let memory = create_test_memory();
+
+        // Set up SYA $1234,X instruction (illegal: stores Y & (H+1))
+        memory.borrow_mut().write(0x0400, SYA_ABSX, false); // SYA Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.y = 0xFF;
+        cpu.state.x = 0x05;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Stores Y & (high_byte + 1) = 0xFF & 0x13 = 0x13 at $1239
+        assert_eq!(
+            memory.borrow().read(0x1239),
+            0x13,
+            "SYA result should be stored"
+        );
+        assert_eq!(cycles, 5, "SYA absolute,X should take 5 cycles");
+    }
+
+    #[test]
+    fn test_opcode_9d() {
+        let memory = create_test_memory();
+
+        // Set up STA $1234,X instruction
+        memory.borrow_mut().write(0x0400, STA_ABSX, false); // STA Absolute,X opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+        cpu.state.x = 0x05;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // A should be stored at $1239 (base $1234 + X offset $05)
+        assert_eq!(memory.borrow().read(0x1239), 0x42, "A should be stored");
+        assert_eq!(cycles, 5, "STA absolute,X should take 5 cycles");
+    }
+
+    #[test]
+    fn test_opcode_9e() {
+        let memory = create_test_memory();
+
+        // Set up SXA $1234,Y instruction (illegal: stores X & (H+1))
+        memory.borrow_mut().write(0x0400, SXA_ABSY, false); // SXA Absolute,Y opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0xFF;
+        cpu.state.y = 0x05;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Stores X & (high_byte + 1) = 0xFF & 0x13 = 0x13 at $1239
+        assert_eq!(
+            memory.borrow().read(0x1239),
+            0x13,
+            "SXA result should be stored"
+        );
+        assert_eq!(cycles, 5, "SXA absolute,Y should take 5 cycles");
+    }
+
+    #[test]
+    fn test_opcode_9f() {
+        let memory = create_test_memory();
+
+        // Set up AXA $1234,Y instruction (illegal: stores A & X & (H+1))
+        memory.borrow_mut().write(0x0400, AXA_ABSY, false); // AXA Absolute,Y opcode
+        memory.borrow_mut().write(0x0401, 0x34, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0xFF;
+        cpu.state.x = 0xFF;
+        cpu.state.y = 0x05;
+
+        let cycles = execute_instruction(&mut cpu);
+
+        // Stores A & X & (high_byte + 1) = 0xFF & 0xFF & 0x13 = 0x13 at $1239
+        assert_eq!(
+            memory.borrow().read(0x1239),
+            0x13,
+            "AXA result should be stored"
+        );
+        assert_eq!(cycles, 5, "AXA absolute,Y should take 5 cycles");
     }
 }

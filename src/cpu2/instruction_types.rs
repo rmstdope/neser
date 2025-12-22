@@ -4238,3 +4238,371 @@ impl InstructionType for Sed {
         }
     }
 }
+
+/// BCC - Branch if Carry Clear
+///
+/// Branch if the carry flag (C) is clear.
+/// The relative addressing mode provides the signed offset.
+///
+/// Operation: Branch if C == 0
+/// Flags: None affected
+///
+/// Cycles:
+///   - 2 if branch not taken (opcode + offset fetch)
+///   - 3 if branch taken, same page (opcode + offset fetch + branch)
+///   - 4 if branch taken, page cross (opcode + offset fetch + branch + fix high byte)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Bcc {
+    cycle: u8,
+    branch_taken: bool,
+    page_crossed: bool,
+}
+
+impl Bcc {
+    /// Create a new BCC instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Bcc {
+    fn is_done(&self) -> bool {
+        (!self.branch_taken && self.cycle == 1)
+            || (self.branch_taken && !self.page_crossed && self.cycle == 2)
+            || (self.branch_taken && self.page_crossed && self.cycle == 3)
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(!self.is_done(), "Bcc::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Check carry flag and decide if branch is taken
+                self.branch_taken = (cpu_state.p & super::types::FLAG_CARRY) == 0;
+
+                if !self.branch_taken {
+                    // Branch not taken - we're done
+                    self.cycle = 1;
+                } else {
+                    // Branch taken - get target address and check for page cross
+                    let target = addressing_mode.get_address();
+                    let current_page = cpu_state.pc & 0xFF00;
+                    let target_page = target & 0xFF00;
+                    self.page_crossed = current_page != target_page;
+
+                    // Update PC to target
+                    cpu_state.pc = target;
+                    self.cycle = 1;
+                }
+            }
+            1 => {
+                // Cycle 2: Extra cycle for branch taken (same page)
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Extra cycle for page crossing
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// TYA - Transfer Y to Accumulator
+///
+/// Copies the value from the Y register to the accumulator.
+/// Sets N and Z flags based on the result.
+///
+/// Operation: A = Y
+/// Flags: N, Z
+///
+/// Cycles: 1
+///   1. Transfer Y to A, set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Tya {
+    cycle: u8,
+}
+
+impl Tya {
+    /// Create a new TYA instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Tya {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Tya::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Transfer Y to A
+                cpu_state.a = cpu_state.y;
+
+                // Set N and Z flags
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// TXS - Transfer X to Stack Pointer
+///
+/// Copies the value from the X register to the stack pointer.
+/// Does not affect any flags.
+///
+/// Operation: SP = X
+/// Flags: None affected
+///
+/// Cycles: 1
+///   1. Transfer X to SP
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Txs {
+    cycle: u8,
+}
+
+impl Txs {
+    /// Create a new TXS instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Txs {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Txs::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Transfer X to SP
+                cpu_state.sp = cpu_state.x;
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// AXA - AND X with Accumulator then AND with 7 (Illegal Opcode)
+///
+/// Also known as SHA or AHX. Stores A & X & (high_byte + 1) to memory.
+/// This is an unstable illegal opcode - behavior can vary.
+///
+/// Operation: M = A & X & (H + 1)
+/// Flags: None affected
+///
+/// Cycles: 1
+///   1. Store A & X & (H + 1)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Axa {
+    cycle: u8,
+}
+
+impl Axa {
+    /// Create a new AXA instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Axa {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Axa::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Store A & X & (high_byte + 1)
+                let address = addressing_mode.get_address();
+                let high_byte = (address >> 8) as u8;
+                let value = cpu_state.a & cpu_state.x & high_byte.wrapping_add(1);
+                memory.borrow_mut().write(address, value, false);
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// SXA - Store X AND (high-byte + 1) (Illegal Opcode)
+///
+/// Also known as SHX or XAS. Stores X & (high_byte + 1) to memory.
+/// This is an unstable illegal opcode.
+///
+/// Operation: M = X & (H + 1)
+/// Flags: None affected
+///
+/// Cycles: 1
+///   1. Store X & (H + 1)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Sxa {
+    cycle: u8,
+}
+
+impl Sxa {
+    /// Create a new SXA instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Sxa {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Sxa::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Store X & (high_byte + 1)
+                let address = addressing_mode.get_address();
+                let high_byte = (address >> 8) as u8;
+                let value = cpu_state.x & high_byte.wrapping_add(1);
+                memory.borrow_mut().write(address, value, false);
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// SYA - Store Y AND (high-byte + 1) (Illegal Opcode)
+///
+/// Also known as SHY or SAY. Stores Y & (high_byte + 1) to memory.
+/// This is an unstable illegal opcode.
+///
+/// Operation: M = Y & (H + 1)
+/// Flags: None affected
+///
+/// Cycles: 1
+///   1. Store Y & (H + 1)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Sya {
+    cycle: u8,
+}
+
+impl Sya {
+    /// Create a new SYA instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Sya {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Sya::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Store Y & (high_byte + 1)
+                let address = addressing_mode.get_address();
+                let high_byte = (address >> 8) as u8;
+                let value = cpu_state.y & high_byte.wrapping_add(1);
+                memory.borrow_mut().write(address, value, false);
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// XAS - Transfer A AND X to SP, then store SP AND (high-byte + 1) (Illegal Opcode)
+///
+/// Also known as SHS or TAS. Sets SP = A & X, then stores SP & (high_byte + 1) to memory.
+/// This is an unstable illegal opcode.
+///
+/// Operation: SP = A & X, M = SP & (H + 1)
+/// Flags: None affected
+///
+/// Cycles: 1
+///   1. Set SP and store result
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Xas {
+    cycle: u8,
+}
+
+impl Xas {
+    /// Create a new XAS instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Xas {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Xas::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Set SP = A & X, then store SP & (high_byte + 1)
+                cpu_state.sp = cpu_state.a & cpu_state.x;
+                let address = addressing_mode.get_address();
+                let high_byte = (address >> 8) as u8;
+                let value = cpu_state.sp & high_byte.wrapping_add(1);
+                memory.borrow_mut().write(address, value, false);
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
