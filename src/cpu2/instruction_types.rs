@@ -332,7 +332,7 @@ impl Jsr {
 
 impl InstructionType for Jsr {
     fn is_done(&self) -> bool {
-        self.cycle == 6
+        self.cycle == 5
     }
 
     fn tick(
@@ -375,16 +375,11 @@ impl InstructionType for Jsr {
                 self.cycle = 4;
             }
             4 => {
-                // Cycle 5: Fetch high byte of target address from PC
+                // Cycle 5: Fetch high byte of target address from PC and jump
                 let high = memory.borrow().read(cpu_state.pc);
                 self.target_address |= (high as u16) << 8;
-                cpu_state.pc = cpu_state.pc.wrapping_add(1);
-                self.cycle = 5;
-            }
-            5 => {
-                // Cycle 6: Copy target address to PC
                 cpu_state.pc = self.target_address;
-                self.cycle = 6;
+                self.cycle = 5;
             }
             _ => unreachable!(),
         }
@@ -955,9 +950,386 @@ impl InstructionType for Dop {
     }
 }
 
+/// AND - Logical AND
+///
+/// Performs a bitwise AND between the accumulator and the value at the target address,
+/// storing the result in the accumulator. Sets N and Z flags based on the result.
+///
+/// Operation: A = A & M
+/// Flags: N, Z
+///
+/// Cycles: 1
+///   1. Read value from target address, AND with A, set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct And {
+    cycle: u8,
+}
+
+impl And {
+    /// Create a new AND instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for And {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "And::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: AND value with A
+                cpu_state.a &= addressing_mode.get_u8_value();
+
+                // Set N and Z flags based on result
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// BIT - Bit Test
+///
+/// Tests bits in memory with the accumulator. Sets the Zero flag if A & M is zero.
+/// Copies bit 7 of memory to the N flag and bit 6 to the V flag.
+///
+/// Operation: Z = (A & M) == 0, N = M[7], V = M[6]
+/// Flags: N, V, Z
+///
+/// Cycles: 1
+///   1. Read value from memory, test with A, set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Bit {
+    cycle: u8,
+}
+
+impl Bit {
+    /// Create a new BIT instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Bit {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "Bit::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Test bits
+                let value = addressing_mode.get_u8_value();
+
+                // Set Z flag based on A & M
+                let result = cpu_state.a & value;
+                set_zero_flag(&mut cpu_state.p, result);
+
+                // Copy bit 7 to N flag
+                set_negative_flag(&mut cpu_state.p, value);
+
+                // Copy bit 6 to V flag
+                cpu_state.p = (cpu_state.p & !super::types::FLAG_OVERFLOW)
+                    | (value & super::types::FLAG_OVERFLOW);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// ROL - Rotate Left (Memory)
+///
+/// Rotates all bits left one position. The Carry flag is shifted into bit 0,
+/// and bit 7 is shifted into the Carry flag.
+/// This is a Read-Modify-Write instruction.
+///
+/// Operation: C <- M[7] <- M[6-0] <- C
+/// Flags: N, Z, C
+///
+/// Cycles: 3
+///   1. Read value from memory
+///   2. Write original value back (dummy write)
+///   3. Write modified value, set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Rol {
+    cycle: u8,
+    value: u8,
+}
+
+impl Rol {
+    /// Create a new ROL instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Rol {
+    fn is_done(&self) -> bool {
+        self.cycle == 3
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 3, "Rol::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Read value from memory
+                self.value = addressing_mode.get_u8_value();
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Dummy write (write original value back)
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, self.value, false);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Rotate value and write back
+                let old_carry = cpu_state.p & super::types::FLAG_CARRY;
+                let new_carry = (self.value & 0x80) != 0;
+                let rotated = (self.value << 1) | old_carry;
+
+                // Write modified value
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, rotated, false);
+
+                // Set flags
+                set_negative_flag(&mut cpu_state.p, rotated);
+                set_zero_flag(&mut cpu_state.p, rotated);
+                set_carry_flag(&mut cpu_state.p, new_carry);
+
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// ROL A - Rotate Left (Accumulator)
+///
+/// Rotates all bits of the accumulator left one position.
+/// The Carry flag is shifted into bit 0, and bit 7 is shifted into the Carry flag.
+///
+/// Operation: C <- A[7] <- A[6-0] <- C
+/// Flags: N, Z, C
+///
+/// Cycles: 1
+///   1. Rotate accumulator and set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RolA {
+    cycle: u8,
+}
+
+impl RolA {
+    /// Create a new ROL A instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for RolA {
+    fn is_done(&self) -> bool {
+        self.cycle == 1
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        _memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 1, "RolA::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Rotate accumulator
+                let old_carry = cpu_state.p & super::types::FLAG_CARRY;
+                let new_carry = (cpu_state.a & 0x80) != 0;
+                cpu_state.a = (cpu_state.a << 1) | old_carry;
+
+                // Set flags
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+                set_carry_flag(&mut cpu_state.p, new_carry);
+
+                self.cycle = 1;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// PLP - Pull Processor Status
+///
+/// Pulls the processor status from the stack. Bits 4 and 5 are ignored
+/// (they are always set to 0 and 1 respectively in the actual status register).
+///
+/// Operation: P = Stack
+/// Flags: All (except B and unused which are always 0/1)
+///
+/// Cycles: 3
+///   1. Internal operation (increment SP)
+///   2. Pull status from stack
+///   3. Complete
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Plp {
+    cycle: u8,
+}
+
+impl Plp {
+    /// Create a new PLP instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Plp {
+    fn is_done(&self) -> bool {
+        self.cycle == 3
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        _addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 3, "Plp::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Internal operation (dummy read)
+                let _ = memory.borrow().read(0x0100 | (cpu_state.sp as u16));
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Increment SP
+                cpu_state.sp = cpu_state.sp.wrapping_add(1);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Pull status from stack
+                let addr = 0x0100 | (cpu_state.sp as u16);
+                let status = memory.borrow().read(addr);
+
+                // Set status register, but preserve bits 4 and 5
+                // Bit 5 (unused) is always 1, bit 4 (B flag) is not stored in P
+                cpu_state.p = (status & 0xCF) | 0x20;
+
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// RLA - Rotate Left then AND (Illegal Opcode)
+///
+/// An illegal/undocumented opcode that performs ROL on a memory location,
+/// then ANDs the result with the accumulator.
+/// This is a Read-Modify-Write instruction.
+///
+/// Operation: M = ROL(M), A = A & M
+/// Flags: N, Z, C
+///
+/// Cycles: 3
+///   1. Read value from memory
+///   2. Write original value back (dummy write)
+///   3. Write modified value, AND with A, set flags
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Rla {
+    cycle: u8,
+    value: u8,
+}
+
+impl Rla {
+    /// Create a new RLA instruction
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl InstructionType for Rla {
+    fn is_done(&self) -> bool {
+        self.cycle == 3
+    }
+
+    fn tick(
+        &mut self,
+        cpu_state: &mut CpuState,
+        memory: Rc<RefCell<MemController>>,
+        addressing_mode: &dyn super::traits::AddressingMode,
+    ) {
+        debug_assert!(self.cycle < 3, "Rla::tick called after already done");
+
+        match self.cycle {
+            0 => {
+                // Cycle 1: Read value from memory
+                self.value = addressing_mode.get_u8_value();
+                self.cycle = 1;
+            }
+            1 => {
+                // Cycle 2: Dummy write (write original value back)
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, self.value, false);
+                self.cycle = 2;
+            }
+            2 => {
+                // Cycle 3: Rotate value, write back, AND with A
+                let old_carry = cpu_state.p & super::types::FLAG_CARRY;
+                let new_carry = (self.value & 0x80) != 0;
+                let rotated = (self.value << 1) | old_carry;
+
+                // Write modified value
+                let address = addressing_mode.get_address();
+                memory.borrow_mut().write(address, rotated, false);
+
+                // AND with accumulator
+                cpu_state.a &= rotated;
+
+                // Set flags
+                set_negative_flag(&mut cpu_state.p, cpu_state.a);
+                set_zero_flag(&mut cpu_state.p, cpu_state.a);
+                set_carry_flag(&mut cpu_state.p, new_carry);
+
+                self.cycle = 3;
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 /// ASL - Arithmetic Shift Left (Memory)
 ///
 /// Shifts all bits left one position. Bit 0 is set to 0 and bit 7 is placed in the carry flag.
+
 /// This is a Read-Modify-Write instruction.
 ///
 /// Operation: M = M << 1
