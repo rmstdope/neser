@@ -4504,10 +4504,20 @@ impl InstructionType for Sxa {
                 // Cycle 1: Store X & (high_byte + 1)
                 // Note: high_byte must be from BASE address (before indexing), not final address
                 let address = addressing_mode.get_address();
-                // For absolute,Y indexed (base + Y), remove Y to get base high byte
-                let base_high_byte = ((address.wrapping_sub(cpu_state.y as u16)) >> 8) as u8;
+                let base_addr = address.wrapping_sub(cpu_state.y as u16);
+                let base_high_byte = (base_addr >> 8) as u8;
                 let value = cpu_state.x & base_high_byte.wrapping_add(1);
-                memory.borrow_mut().write(address, value, false);
+                
+                // On page crossing, the high byte of the target address is ANDed with X
+                let page_crossed = (base_addr & 0xFF00) != (address & 0xFF00);
+                let final_addr = if page_crossed {
+                    let modified_high = ((address >> 8) as u8) & cpu_state.x;
+                    ((modified_high as u16) << 8) | (address & 0x00FF)
+                } else {
+                    address
+                };
+                
+                memory.borrow_mut().write(final_addr, value, false);
                 self.cycle = 1;
             }
             _ => unreachable!(),
@@ -4555,10 +4565,20 @@ impl InstructionType for Sya {
                 // Cycle 1: Store Y & (high_byte + 1)
                 // Note: high_byte must be from BASE address (before indexing), not final address
                 let address = addressing_mode.get_address();
-                // For absolute,X indexed (base + X), remove X to get base high byte
-                let base_high_byte = ((address.wrapping_sub(cpu_state.x as u16)) >> 8) as u8;
+                let base_addr = address.wrapping_sub(cpu_state.x as u16);
+                let base_high_byte = (base_addr >> 8) as u8;
                 let value = cpu_state.y & base_high_byte.wrapping_add(1);
-                memory.borrow_mut().write(address, value, false);
+                
+                // On page crossing, the high byte of the target address is ANDed with Y
+                let page_crossed = (base_addr & 0xFF00) != (address & 0xFF00);
+                let final_addr = if page_crossed {
+                    let modified_high = ((address >> 8) as u8) & cpu_state.y;
+                    ((modified_high as u16) << 8) | (address & 0x00FF)
+                } else {
+                    address
+                };
+                
+                memory.borrow_mut().write(final_addr, value, false);
                 self.cycle = 1;
             }
             _ => unreachable!(),
@@ -4607,10 +4627,20 @@ impl InstructionType for Xas {
                 // Note: high_byte must be from BASE address (before indexing), not final address
                 cpu_state.sp = cpu_state.a & cpu_state.x;
                 let address = addressing_mode.get_address();
-                // For absolute,Y indexed (base + Y), remove Y to get base high byte
-                let base_high_byte = ((address.wrapping_sub(cpu_state.y as u16)) >> 8) as u8;
+                let base_addr = address.wrapping_sub(cpu_state.y as u16);
+                let base_high_byte = (base_addr >> 8) as u8;
                 let value = cpu_state.sp & base_high_byte.wrapping_add(1);
-                memory.borrow_mut().write(address, value, false);
+                
+                // On page crossing, the high byte of the target address is ANDed with SP (A & X)
+                let page_crossed = (base_addr & 0xFF00) != (address & 0xFF00);
+                let final_addr = if page_crossed {
+                    let modified_high = ((address >> 8) as u8) & cpu_state.sp;
+                    ((modified_high as u16) << 8) | (address & 0x00FF)
+                } else {
+                    address
+                };
+                
+                memory.borrow_mut().write(final_addr, value, false);
                 self.cycle = 1;
             }
             _ => unreachable!(),
