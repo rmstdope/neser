@@ -2660,16 +2660,19 @@ impl InstructionType for Arr {
         // AND with accumulator
         cpu_state.a &= value;
 
-        // Rotate right
+        // Rotate right using the carry flag
         let old_carry = if cpu_state.p & FLAG_CARRY != 0 { 1 } else { 0 };
-        let new_carry = cpu_state.a & 0x01 != 0;
         cpu_state.a = (cpu_state.a >> 1) | (old_carry << 7);
 
+        // Set flags based on the result
         set_zero_flag(&mut cpu_state.p, cpu_state.a);
         set_negative_flag(&mut cpu_state.p, cpu_state.a);
+        
+        // Carry is set to bit 6 of the result
+        let new_carry = (cpu_state.a >> 6) & 1 != 0;
         set_carry_flag(&mut cpu_state.p, new_carry);
 
-        // Set overflow flag based on bit 6 XOR bit 5
+        // Overflow is bit 6 XOR bit 5 of the result
         let overflow = ((cpu_state.a >> 6) & 1) ^ ((cpu_state.a >> 5) & 1) != 0;
         if overflow {
             cpu_state.p |= super::types::FLAG_OVERFLOW;
