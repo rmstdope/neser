@@ -4451,9 +4451,11 @@ impl InstructionType for Axa {
         match self.cycle {
             0 => {
                 // Cycle 1: Store A & X & (high_byte + 1)
+                // Note: high_byte must be from BASE address (before indexing), not final address
                 let address = addressing_mode.get_address();
-                let high_byte = (address >> 8) as u8;
-                let value = cpu_state.a & cpu_state.x & high_byte.wrapping_add(1);
+                // For indirect indexed (base + Y), remove Y to get base high byte
+                let base_high_byte = ((address.wrapping_sub(cpu_state.y as u16)) >> 8) as u8;
+                let value = cpu_state.a & cpu_state.x & base_high_byte.wrapping_add(1);
                 memory.borrow_mut().write(address, value, false);
                 self.cycle = 1;
             }
@@ -4500,9 +4502,11 @@ impl InstructionType for Sxa {
         match self.cycle {
             0 => {
                 // Cycle 1: Store X & (high_byte + 1)
+                // Note: high_byte must be from BASE address (before indexing), not final address
                 let address = addressing_mode.get_address();
-                let high_byte = (address >> 8) as u8;
-                let value = cpu_state.x & high_byte.wrapping_add(1);
+                // For absolute,Y indexed (base + Y), remove Y to get base high byte
+                let base_high_byte = ((address.wrapping_sub(cpu_state.y as u16)) >> 8) as u8;
+                let value = cpu_state.x & base_high_byte.wrapping_add(1);
                 memory.borrow_mut().write(address, value, false);
                 self.cycle = 1;
             }
@@ -4549,9 +4553,11 @@ impl InstructionType for Sya {
         match self.cycle {
             0 => {
                 // Cycle 1: Store Y & (high_byte + 1)
+                // Note: high_byte must be from BASE address (before indexing), not final address
                 let address = addressing_mode.get_address();
-                let high_byte = (address >> 8) as u8;
-                let value = cpu_state.y & high_byte.wrapping_add(1);
+                // For absolute,X indexed (base + X), remove X to get base high byte
+                let base_high_byte = ((address.wrapping_sub(cpu_state.x as u16)) >> 8) as u8;
+                let value = cpu_state.y & base_high_byte.wrapping_add(1);
                 memory.borrow_mut().write(address, value, false);
                 self.cycle = 1;
             }
@@ -4598,10 +4604,12 @@ impl InstructionType for Xas {
         match self.cycle {
             0 => {
                 // Cycle 1: Set SP = A & X, then store SP & (high_byte + 1)
+                // Note: high_byte must be from BASE address (before indexing), not final address
                 cpu_state.sp = cpu_state.a & cpu_state.x;
                 let address = addressing_mode.get_address();
-                let high_byte = (address >> 8) as u8;
-                let value = cpu_state.sp & high_byte.wrapping_add(1);
+                // For absolute,Y indexed (base + Y), remove Y to get base high byte
+                let base_high_byte = ((address.wrapping_sub(cpu_state.y as u16)) >> 8) as u8;
+                let value = cpu_state.sp & base_high_byte.wrapping_add(1);
                 memory.borrow_mut().write(address, value, false);
                 self.cycle = 1;
             }

@@ -152,7 +152,7 @@ impl MemController {
         // Update open bus with the value being written
         *self.open_bus.borrow_mut() = value;
 
-        println!("Write to {:04X}: {:02X}", addr, value);
+        // println!("Write to {:04X}: {:02X}", addr, value);
         match addr {
             // RAM ($0000-$1FFF) with mirroring
             0x0000..=0x1FFF => {
