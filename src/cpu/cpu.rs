@@ -98,9 +98,25 @@ impl Cpu {
         }
     }
 
+    pub fn is_halted(&self) -> bool {
+        self.halted
+    }
+
     /// Get the total number of cycles executed since last reset
-    pub fn total_cycles(&self) -> u64 {
+    pub fn get_total_cycles(&self) -> u64 {
         self.total_cycles
+    }
+
+    pub fn set_total_cycles(&mut self, cycles: u64) {
+        self.total_cycles = cycles;
+    }
+
+    pub fn add_cycles(&mut self, cycles: u64) {
+        self.total_cycles += cycles;
+    }
+
+    pub fn is_nmi_pending(&self) -> bool {
+        self.nmi_pending
     }
 
     /// Reset the CPU to initial state
@@ -6944,7 +6960,7 @@ mod tests {
     fn test_cycle_counter_starts_at_zero() {
         let memory = create_test_memory();
         let cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        assert_eq!(cpu.total_cycles(), 0);
+        assert_eq!(cpu.get_total_cycles(), 0);
     }
 
     #[test]
@@ -6955,9 +6971,9 @@ mod tests {
         let program = vec![LDA_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
-        assert_eq!(cpu.total_cycles(), 7); // Reset takes 7 cycles
+        assert_eq!(cpu.get_total_cycles(), 7); // Reset takes 7 cycles
         cpu.run_opcode();
-        assert_eq!(cpu.total_cycles(), 9); // 7 + 2 = 9
+        assert_eq!(cpu.get_total_cycles(), 9); // 7 + 2 = 9
     }
 
     #[test]
@@ -6969,11 +6985,11 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(); // Takes 7 cycles
         cpu.run_opcode(); // LDA - 2 cycles
-        assert_eq!(cpu.total_cycles(), 9); // 7 + 2 = 9
+        assert_eq!(cpu.get_total_cycles(), 9); // 7 + 2 = 9
         cpu.run_opcode(); // LDX - 2 cycles
-        assert_eq!(cpu.total_cycles(), 11); // 7 + 2 + 2 = 11
+        assert_eq!(cpu.get_total_cycles(), 11); // 7 + 2 + 2 = 11
         cpu.run_opcode(); // LDY - 2 cycles
-        assert_eq!(cpu.total_cycles(), 13); // 7 + 2 + 2 + 2 = 13
+        assert_eq!(cpu.get_total_cycles(), 13); // 7 + 2 + 2 + 2 = 13
     }
 
     #[test]
@@ -6984,9 +7000,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.run_opcode();
-        assert_eq!(cpu.total_cycles(), 9); // 7 + 2 = 9
+        assert_eq!(cpu.get_total_cycles(), 9); // 7 + 2 = 9
         cpu.reset();
-        assert_eq!(cpu.total_cycles(), 7); // Reset sets to 7 cycles
+        assert_eq!(cpu.get_total_cycles(), 7); // Reset sets to 7 cycles
     }
 
     #[test]
@@ -7000,7 +7016,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x1304, 0x99, false);
         cpu.x = 0x05;
         cpu.run_opcode();
-        assert_eq!(cpu.total_cycles(), 12); // 7 + 5 = 12
+        assert_eq!(cpu.get_total_cycles(), 12); // 7 + 5 = 12
     }
 
     #[test]
@@ -7240,7 +7256,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
 
-        let start_cycles = cpu.total_cycles();
+        let start_cycles = cpu.get_total_cycles();
 
         // Execute LDA #$42 cycle by cycle (2 cycles)
         assert_eq!(
@@ -7248,9 +7264,9 @@ mod tests {
             false,
             "Cycle 1 of LDA should not complete"
         );
-        assert_eq!(cpu.total_cycles(), start_cycles + 1);
+        assert_eq!(cpu.get_total_cycles(), start_cycles + 1);
         assert_eq!(cpu.tick_cycle(), true, "Cycle 2 of LDA should complete");
-        assert_eq!(cpu.total_cycles(), start_cycles + 2);
+        assert_eq!(cpu.get_total_cycles(), start_cycles + 2);
         assert_eq!(cpu.a, 0x42, "A register should be loaded with 0x42");
 
         // Execute BRK cycle by cycle (7 cycles)
@@ -7261,10 +7277,10 @@ mod tests {
                 "Cycle {} of BRK should not complete",
                 i
             );
-            assert_eq!(cpu.total_cycles(), start_cycles + 2 + i);
+            assert_eq!(cpu.get_total_cycles(), start_cycles + 2 + i);
         }
         assert_eq!(cpu.tick_cycle(), true, "Cycle 7 of BRK should complete");
-        assert_eq!(cpu.total_cycles(), start_cycles + 9);
+        assert_eq!(cpu.get_total_cycles(), start_cycles + 9);
     }
 
     #[test]
@@ -7299,7 +7315,7 @@ mod tests {
                     break;
                 }
                 // Check if we've executed enough instructions
-                if cpu2.total_cycles() >= cpu1.total_cycles() {
+                if cpu2.get_total_cycles() >= cpu1.get_total_cycles() {
                     break;
                 }
             }
@@ -7312,8 +7328,8 @@ mod tests {
         assert_eq!(cpu2.sp, cpu1.sp, "Stack pointer should match");
         assert_eq!(cpu2.p, cpu1.p, "Status register should match");
         assert_eq!(
-            cpu2.total_cycles(),
-            cpu1.total_cycles(),
+            cpu2.get_total_cycles(),
+            cpu1.get_total_cycles(),
             "Total cycles should match"
         );
     }
@@ -7341,7 +7357,7 @@ mod tests {
         cpu.reset();
 
         let start_pc = cpu.pc;
-        let start_cycles = cpu.total_cycles();
+        let start_cycles = cpu.get_total_cycles();
 
         // Execute BRK cycle by cycle (7 cycles)
         let mut cycles_executed = 0;
@@ -7356,7 +7372,7 @@ mod tests {
         // BRK should take exactly 7 cycles
         assert_eq!(cycles_executed, 7, "BRK should execute in 7 cycles");
         assert_eq!(
-            cpu.total_cycles(),
+            cpu.get_total_cycles(),
             start_cycles + 7,
             "Total cycles should increase by 7"
         );
@@ -7415,7 +7431,7 @@ mod tests {
         // Set NMI pending BEFORE starting BRK
         cpu.set_nmi_pending(true);
 
-        let start_cycles = cpu.total_cycles();
+        let start_cycles = cpu.get_total_cycles();
 
         // Execute BRK cycle by cycle
         let mut cycles_executed = 0;
@@ -7430,7 +7446,7 @@ mod tests {
         // BRK should still take exactly 7 cycles even when hijacked
         assert_eq!(cycles_executed, 7, "BRK should execute in 7 cycles");
         assert_eq!(
-            cpu.total_cycles(),
+            cpu.get_total_cycles(),
             start_cycles + 7,
             "Total cycles should increase by 7"
         );

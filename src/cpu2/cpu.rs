@@ -32,9 +32,9 @@ use super::traits::{
     RTI, RTS, SAX_ABS, SAX_INDX, SAX_ZP, SAX_ZPY, SBC_ABS, SBC_ABSX, SBC_ABSY, SBC_IMM, SBC_IMM2,
     SBC_INDX, SBC_INDY, SBC_ZP, SBC_ZPX, SEC, SED, SEI, SLO_ABS, SLO_ABSX, SLO_ABSY, SLO_INDX,
     SLO_INDY, SLO_ZP, SLO_ZPX, SRE_ABS, SRE_ABSX, SRE_ABSY, SRE_INDX, SRE_INDY, SRE_ZP, SRE_ZPX,
-    STA_ABS, STA_ABSX, STA_ABSY, STA_INDX, STA_INDY, STA_ZP, STA_ZPX, STX_ABS, STX_ZP, STX_ZPY, STY_ABS,
-    STY_ZP, STY_ZPX, SXA_ABSY, SYA_ABSX, TAX, TAY, TOP_ABS, TOP_ABSX, TOP_ABSX2, TOP_ABSX3,
-    TOP_ABSX4, TOP_ABSX5, TOP_ABSX6, TSX, TXA, TXS, TYA, XAA_IMM, XAS_ABSY,
+    STA_ABS, STA_ABSX, STA_ABSY, STA_INDX, STA_INDY, STA_ZP, STA_ZPX, STX_ABS, STX_ZP, STX_ZPY,
+    STY_ABS, STY_ZP, STY_ZPX, SXA_ABSY, SYA_ABSX, TAX, TAY, TOP_ABS, TOP_ABSX, TOP_ABSX2,
+    TOP_ABSX3, TOP_ABSX4, TOP_ABSX5, TOP_ABSX6, TSX, TXA, TXS, TYA, XAA_IMM, XAS_ABSY,
 };
 use super::types::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_OVERFLOW,
@@ -58,6 +58,9 @@ pub struct Cpu2 {
     total_cycles: u64,
     /// Current instruction being executed
     current_instruction: Option<Instruction>,
+    /// NMI pending flag - set by external hardware (NES loop)
+    /// Checked during BRK execution to determine vector hijacking
+    pub nmi_pending: bool,
 }
 
 impl Cpu2 {
@@ -78,6 +81,7 @@ impl Cpu2 {
             halted: false,
             total_cycles: 0,
             current_instruction: None,
+            nmi_pending: false,
         }
     }
 
@@ -1817,7 +1821,7 @@ impl Cpu2 {
         self.halted = false;
         // self.delayed_i_flag = None;
         self.current_instruction = None;
-        // self.cycle_in_instruction = 0;
+        self.nmi_pending = false;
 
         // Read reset vector and set PC
         self.state.pc = self.read_reset_vector();
@@ -1829,21 +1833,20 @@ impl Cpu2 {
     /// Trigger an NMI (Non-Maskable Interrupt)
     /// Returns the number of cycles consumed (7 cycles)
     pub fn trigger_nmi(&mut self) -> u8 {
-        // TODO Implement NMI logic
-        // // Push PC and P onto stack
-        // self.push_word(self.state.pc);
-        // let mut p_with_break = self.state.p & !FLAG_BREAK; // Clear Break flag
-        // p_with_break |= FLAG_UNUSED; // Set unused flag
-        // self.push_byte(p_with_break);
+        // Push PC and P onto stack
+        self.push_word(self.state.pc);
+        let mut p_with_break = self.state.p & !FLAG_BREAK; // Clear Break flag
+        p_with_break |= FLAG_UNUSED; // Set unused flag
+        self.push_byte(p_with_break);
 
-        // // Set PC to NMI vector
-        // self.state.pc = self.memory.borrow().read_u16(NMI_VECTOR);
+        // Set PC to NMI vector
+        self.state.pc = self.memory.borrow().read_u16(NMI_VECTOR);
 
-        // // Set Interrupt Disable flag
-        // self.state.p |= FLAG_INTERRUPT;
+        // Set Interrupt Disable flag
+        self.state.p |= FLAG_INTERRUPT;
 
-        // // NMI takes 7 CPU cycles
-        // self.total_cycles += 7;
+        // NMI takes 7 CPU cycles
+        self.total_cycles += 7;
         7
     }
 
@@ -1891,13 +1894,12 @@ impl Cpu2 {
     /// Set the NMI pending flag
     /// This should be called by the NES loop when NMI is detected
     pub fn set_nmi_pending(&mut self, pending: bool) {
-        // TODO implement NMI pending logic
+        self.nmi_pending = pending;
     }
 
     /// Check if an NMI is pending
     pub fn is_nmi_pending(&self) -> bool {
-        // TODO implement NMI pending logic
-        false
+        self.nmi_pending
     }
 
     pub fn should_poll_irq(&self) -> bool {
