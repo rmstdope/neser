@@ -24,6 +24,7 @@ fn set_negative_flag(p: &mut u8, value: u8) {
     *p = (*p & !FLAG_NEGATIVE) | (value & FLAG_NEGATIVE);
 }
 
+
 /// Helper function to set or clear the Carry flag
 #[inline]
 fn set_carry_flag(p: &mut u8, carry: bool) {
@@ -963,7 +964,7 @@ mod tests {
         let mut jmp = Jmp::new();
 
         // Create addressing mode that will provide the target address
-        let mut absolute_addr = crate::cpu2::addressing::Absolute::new(false);
+        let mut absolute_addr = crate::cpu2::addressing::Absolute::new(false, false);
         // Simulate that addressing mode has resolved to 0x1234
         memory.borrow_mut().write(0x0400, 0x34, false); // Low byte
         memory.borrow_mut().write(0x0401, 0x12, false); // High byte
