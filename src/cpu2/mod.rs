@@ -11,5 +11,6 @@ pub mod traits;
 pub mod types;
 
 // Re-export commonly used types
+pub use addressing::MemoryAccess;
 pub use cpu::Cpu2;
 pub use types::CpuState;

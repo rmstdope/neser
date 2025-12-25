@@ -24,7 +24,6 @@ fn set_negative_flag(p: &mut u8, value: u8) {
     *p = (*p & !FLAG_NEGATIVE) | (value & FLAG_NEGATIVE);
 }
 
-
 /// Helper function to set or clear the Carry flag
 #[inline]
 fn set_carry_flag(p: &mut u8, carry: bool) {
@@ -964,7 +963,8 @@ mod tests {
         let mut jmp = Jmp::new();
 
         // Create addressing mode that will provide the target address
-        let mut absolute_addr = crate::cpu2::addressing::Absolute::new(false, false);
+        let mut absolute_addr =
+            crate::cpu2::addressing::Absolute::new(crate::cpu2::addressing::MemoryAccess::Jump);
         // Simulate that addressing mode has resolved to 0x1234
         memory.borrow_mut().write(0x0400, 0x34, false); // Low byte
         memory.borrow_mut().write(0x0401, 0x12, false); // High byte
@@ -2668,7 +2668,7 @@ impl InstructionType for Arr {
         // Set flags based on the result
         set_zero_flag(&mut cpu_state.p, cpu_state.a);
         set_negative_flag(&mut cpu_state.p, cpu_state.a);
-        
+
         // Carry is set to bit 6 of the result
         let new_carry = (cpu_state.a >> 6) & 1 != 0;
         set_carry_flag(&mut cpu_state.p, new_carry);
@@ -4508,7 +4508,7 @@ impl InstructionType for Sxa {
                 let base_addr = address.wrapping_sub(cpu_state.y as u16);
                 let base_high_byte = (base_addr >> 8) as u8;
                 let value = cpu_state.x & base_high_byte.wrapping_add(1);
-                
+
                 // On page crossing, the high byte of the target address is ANDed with X
                 let page_crossed = (base_addr & 0xFF00) != (address & 0xFF00);
                 let final_addr = if page_crossed {
@@ -4517,7 +4517,7 @@ impl InstructionType for Sxa {
                 } else {
                     address
                 };
-                
+
                 memory.borrow_mut().write(final_addr, value, false);
                 self.cycle = 1;
             }
@@ -4569,7 +4569,7 @@ impl InstructionType for Sya {
                 let base_addr = address.wrapping_sub(cpu_state.x as u16);
                 let base_high_byte = (base_addr >> 8) as u8;
                 let value = cpu_state.y & base_high_byte.wrapping_add(1);
-                
+
                 // On page crossing, the high byte of the target address is ANDed with Y
                 let page_crossed = (base_addr & 0xFF00) != (address & 0xFF00);
                 let final_addr = if page_crossed {
@@ -4578,7 +4578,7 @@ impl InstructionType for Sya {
                 } else {
                     address
                 };
-                
+
                 memory.borrow_mut().write(final_addr, value, false);
                 self.cycle = 1;
             }
@@ -4631,7 +4631,7 @@ impl InstructionType for Xas {
                 let base_addr = address.wrapping_sub(cpu_state.y as u16);
                 let base_high_byte = (base_addr >> 8) as u8;
                 let value = cpu_state.sp & base_high_byte.wrapping_add(1);
-                
+
                 // On page crossing, the high byte of the target address is ANDed with SP (A & X)
                 let page_crossed = (base_addr & 0xFF00) != (address & 0xFF00);
                 let final_addr = if page_crossed {
@@ -4640,7 +4640,7 @@ impl InstructionType for Xas {
                 } else {
                     address
                 };
-                
+
                 memory.borrow_mut().write(final_addr, value, false);
                 self.cycle = 1;
             }

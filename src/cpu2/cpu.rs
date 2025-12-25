@@ -1,6 +1,6 @@
 use super::addressing::{
     Absolute, AbsoluteX, AbsoluteY, Immediate, Implied, IndexedIndirect, Indirect, IndirectIndexed,
-    Relative, ZeroPage, ZeroPageX, ZeroPageY,
+    MemoryAccess, Relative, ZeroPage, ZeroPageX, ZeroPageY,
 };
 use super::instruction::Instruction;
 use super::instruction_types::{
@@ -154,7 +154,7 @@ impl Cpu2 {
             ORA_INDX => {
                 // ORA Indexed Indirect: ORA (zp,X)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Ora::new()),
                 ))
             }
@@ -165,7 +165,7 @@ impl Cpu2 {
             SLO_INDX => {
                 // SLO Indexed Indirect: SLO (zp,X) - shift left and OR
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Slo::new()),
                 ))
             }
@@ -222,28 +222,28 @@ impl Cpu2 {
             TOP_ABS => {
                 // TOP abs - Triple NOP (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Top::new()),
                 ))
             }
             ORA_ABS => {
                 // ORA Absolute: ORA abs
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Ora::new()),
                 ))
             }
             ASL_ABS => {
                 // ASL Absolute: ASL abs
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Asl::new()),
                 ))
             }
             SLO_ABS => {
                 // SLO Absolute: SLO abs (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Slo::new()),
                 ))
             }
@@ -257,7 +257,7 @@ impl Cpu2 {
             ORA_INDY => {
                 // ORA (Indirect),Y: ORA ($nn),Y
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(false, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::Read)),
                     Box::new(Ora::new()),
                 ))
             }
@@ -268,7 +268,7 @@ impl Cpu2 {
             SLO_INDY => {
                 // SLO (Indirect),Y: SLO ($nn),Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(true, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Slo::new()),
                 ))
             }
@@ -307,7 +307,7 @@ impl Cpu2 {
             ORA_ABSY => {
                 // ORA Absolute,Y: ORA abs,Y
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(false, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Read)),
                     Box::new(Ora::new()),
                 ))
             }
@@ -318,35 +318,35 @@ impl Cpu2 {
             SLO_ABSY => {
                 // SLO Absolute,Y: SLO abs,Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(true, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Slo::new()),
                 ))
             }
             TOP_ABSX => {
                 // TOP Absolute,X: TOP abs,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Top::new()),
                 ))
             }
             ORA_ABSX => {
                 // ORA Absolute,X: ORA abs,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Ora::new()),
                 ))
             }
             ASL_ABSX => {
                 // ASL Absolute,X: ASL abs,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Asl::new()),
                 ))
             }
             SLO_ABSX => {
                 // SLO Absolute,X: SLO abs,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Slo::new()),
                 ))
             }
@@ -357,7 +357,7 @@ impl Cpu2 {
             AND_INDX => {
                 // AND Indexed Indirect: AND (zp,X)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(And::new()),
                 ))
             }
@@ -368,7 +368,7 @@ impl Cpu2 {
             RLA_INDX => {
                 // RLA Indexed Indirect: RLA (zp,X) - rotate left and AND
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Rla::new()),
                 ))
             }
@@ -425,28 +425,28 @@ impl Cpu2 {
             BIT_ABS => {
                 // BIT Absolute: BIT abs
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Bit::new()),
                 ))
             }
             AND_ABS => {
                 // AND Absolute: AND abs
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(And::new()),
                 ))
             }
             ROL_ABS => {
                 // ROL Absolute: ROL abs
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Rol::new()),
                 ))
             }
             RLA_ABS => {
                 // RLA Absolute: RLA abs (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Rla::new()),
                 ))
             }
@@ -460,7 +460,7 @@ impl Cpu2 {
             AND_INDY => {
                 // AND Indirect,Y: AND (zp),Y
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(false, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::Read)),
                     Box::new(And::new()),
                 ))
             }
@@ -471,7 +471,7 @@ impl Cpu2 {
             RLA_INDY => {
                 // RLA Indirect,Y: RLA (zp),Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(true, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Rla::new()),
                 ))
             }
@@ -510,7 +510,7 @@ impl Cpu2 {
             AND_ABSY => {
                 // AND Absolute,Y: AND abs,Y
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(false, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Read)),
                     Box::new(And::new()),
                 ))
             }
@@ -521,35 +521,35 @@ impl Cpu2 {
             RLA_ABSY => {
                 // RLA Absolute,Y: RLA abs,Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(true, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Rla::new()),
                 ))
             }
             TOP_ABSX2 => {
                 // TOP Absolute,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Top::new()),
                 ))
             }
             AND_ABSX => {
                 // AND Absolute,X: AND abs,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(And::new()),
                 ))
             }
             ROL_ABSX => {
                 // ROL Absolute,X: ROL abs,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Rol::new()),
                 ))
             }
             RLA_ABSX => {
                 // RLA Absolute,X: RLA abs,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Rla::new()),
                 ))
             }
@@ -560,7 +560,7 @@ impl Cpu2 {
             EOR_INDX => {
                 // EOR (Indirect,X): EOR ($nn,X)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Eor::new()),
                 ))
             }
@@ -571,7 +571,7 @@ impl Cpu2 {
             SRE_INDX => {
                 // SRE (Indirect,X): SRE ($nn,X) (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Sre::new()),
                 ))
             }
@@ -628,28 +628,28 @@ impl Cpu2 {
             JMP_ABS => {
                 // JMP Absolute handles its own address fetching internally, like JSR
                 Some(Instruction::new(
-                    Box::new(Absolute::new(false, false)),
+                    Box::new(Absolute::new(MemoryAccess::Jump)),
                     Box::new(Jmp::new()),
                 ))
             }
             EOR_ABS => {
                 // EOR Absolute: EOR $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Eor::new()),
                 ))
             }
             LSR_ABS => {
                 // LSR Absolute: LSR $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Lsr::new()),
                 ))
             }
             SRE_ABS => {
                 // SRE Absolute: SRE $nnnn (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Sre::new()),
                 ))
             }
@@ -667,7 +667,7 @@ impl Cpu2 {
             ADC_INDX => {
                 // ADC: Add with Carry (Indexed Indirect)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Adc::new()),
                 ))
             }
@@ -678,7 +678,7 @@ impl Cpu2 {
             RRA_INDX => {
                 // RRA: Rotate Right then Add with Carry (Indexed Indirect, illegal)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Rra::new()),
                 ))
             }
@@ -742,28 +742,28 @@ impl Cpu2 {
             ADC_ABS => {
                 // ADC: Add with Carry (Absolute)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Adc::new()),
                 ))
             }
             ROR_ABS => {
                 // ROR: Rotate Right (Absolute)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Ror::new()),
                 ))
             }
             RRA_ABS => {
                 // RRA: Rotate Right then Add with Carry (Absolute, illegal)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Rra::new()),
                 ))
             }
             EOR_INDY => {
                 // EOR (Indirect),Y: EOR ($nn),Y
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(false, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::Read)),
                     Box::new(Eor::new()),
                 ))
             }
@@ -774,7 +774,7 @@ impl Cpu2 {
             SRE_INDY => {
                 // SRE (Indirect),Y: SRE ($nn),Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(true, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Sre::new()),
                 ))
             }
@@ -820,7 +820,7 @@ impl Cpu2 {
             ADC_INDY => {
                 // ADC (Indirect),Y: ADC ($nn),Y
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(false, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::Read)),
                     Box::new(Adc::new()),
                 ))
             }
@@ -831,7 +831,7 @@ impl Cpu2 {
             RRA_INDY => {
                 // RRA (Indirect),Y: RRA ($nn),Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(true, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Rra::new()),
                 ))
             }
@@ -870,7 +870,7 @@ impl Cpu2 {
             ADC_ABSY => {
                 // ADC Absolute,Y: ADC $nnnn,Y
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(false, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Read)),
                     Box::new(Adc::new()),
                 ))
             }
@@ -881,35 +881,35 @@ impl Cpu2 {
             RRA_ABSY => {
                 // RRA Absolute,Y: RRA $nnnn,Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(true, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Rra::new()),
                 ))
             }
             TOP_ABSX4 => {
                 // TOP Absolute,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Top::new()),
                 ))
             }
             ADC_ABSX => {
                 // ADC Absolute,X: ADC $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Adc::new()),
                 ))
             }
             ROR_ABSX => {
                 // ROR Absolute,X: ROR $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Ror::new()),
                 ))
             }
             RRA_ABSX => {
                 // RRA Absolute,X: RRA $nnnn,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Rra::new()),
                 ))
             }
@@ -923,7 +923,7 @@ impl Cpu2 {
             STA_INDX => {
                 // STA (Indirect,X): STA ($nn,X)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(false)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Write)),
                     Box::new(Sta::new()),
                 ))
             }
@@ -937,7 +937,7 @@ impl Cpu2 {
             SAX_INDX => {
                 // SAX (Indirect,X): SAX ($nn,X) (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(false)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Write)),
                     Box::new(Sax::new()),
                 ))
             }
@@ -994,28 +994,28 @@ impl Cpu2 {
             STY_ABS => {
                 // STY Absolute: STY $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(false, true)),
+                    Box::new(Absolute::new(MemoryAccess::Write)),
                     Box::new(Sty::new()),
                 ))
             }
             STA_ABS => {
                 // STA Absolute: STA $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(false, true)),
+                    Box::new(Absolute::new(MemoryAccess::Write)),
                     Box::new(Sta::new()),
                 ))
             }
             STX_ABS => {
                 // STX Absolute: STX $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(false, true)),
+                    Box::new(Absolute::new(MemoryAccess::Write)),
                     Box::new(Stx::new()),
                 ))
             }
             SAX_ABS => {
                 // SAX Absolute: SAX $nnnn (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(false, true)),
+                    Box::new(Absolute::new(MemoryAccess::Write)),
                     Box::new(Sax::new()),
                 ))
             }
@@ -1029,7 +1029,7 @@ impl Cpu2 {
             LDA_INDX => {
                 // LDA Indexed Indirect: LDA ($nn,X)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Lda::new()),
                 ))
             }
@@ -1043,7 +1043,7 @@ impl Cpu2 {
             LAX_INDX => {
                 // LAX Indexed Indirect: LAX ($nn,X) (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Lax::new()),
                 ))
             }
@@ -1100,28 +1100,28 @@ impl Cpu2 {
             LDY_ABS => {
                 // LDY Absolute: LDY $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Ldy::new()),
                 ))
             }
             LDA_ABS => {
                 // LDA Absolute: LDA $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Lda::new()),
                 ))
             }
             LDX_ABS => {
                 // LDX Absolute: LDX $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Ldx::new()),
                 ))
             }
             LAX_ABS => {
                 // LAX Absolute: LAX $nnnn (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Lax::new()),
                 ))
             }
@@ -1135,7 +1135,7 @@ impl Cpu2 {
             LDA_INDY => {
                 // LDA (Indirect),Y: LDA ($nn),Y
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(false, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::Read)),
                     Box::new(Lda::new()),
                 ))
             }
@@ -1146,7 +1146,7 @@ impl Cpu2 {
             LAX_INDY => {
                 // LAX (Indirect),Y: LAX ($nn),Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(false, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::Read)),
                     Box::new(Lax::new()),
                 ))
             }
@@ -1185,7 +1185,7 @@ impl Cpu2 {
             LDA_ABSY => {
                 // LDA Absolute,Y: LDA $nnnn,Y
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(false, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Read)),
                     Box::new(Lda::new()),
                 ))
             }
@@ -1196,35 +1196,35 @@ impl Cpu2 {
             LAR_ABSY => {
                 // LAR Absolute,Y: LAR $nnnn,Y (illegal opcode, also called LAS)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(false, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Read)),
                     Box::new(Lar::new()),
                 ))
             }
             LDY_ABSX => {
                 // LDY Absolute,X: LDY $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Ldy::new()),
                 ))
             }
             LDA_ABSX => {
                 // LDA Absolute,X: LDA $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Lda::new()),
                 ))
             }
             LDX_ABSY => {
                 // LDX Absolute,Y: LDX $nnnn,Y
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(false, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Read)),
                     Box::new(Ldx::new()),
                 ))
             }
             LAX_ABSY => {
                 // LAX Absolute,Y: LAX $nnnn,Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(false, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Read)),
                     Box::new(Lax::new()),
                 ))
             }
@@ -1238,7 +1238,7 @@ impl Cpu2 {
             CMP_INDX => {
                 // CMP Indexed Indirect: CMP ($nn,X)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Cmp::new()),
                 ))
             }
@@ -1252,7 +1252,7 @@ impl Cpu2 {
             DCP_INDX => {
                 // DCP Indexed Indirect: DCP ($nn,X) (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Dcp::new()),
                 ))
             }
@@ -1309,28 +1309,28 @@ impl Cpu2 {
             CPY_ABS => {
                 // CPY Absolute: CPY $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Cpy::new()),
                 ))
             }
             CMP_ABS => {
                 // CMP Absolute: CMP $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Cmp::new()),
                 ))
             }
             DEC_ABS => {
                 // DEC Absolute: DEC $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Dec::new()),
                 ))
             }
             DCP_ABS => {
                 // DCP Absolute: DCP $nnnn (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Dcp::new()),
                 ))
             }
@@ -1344,7 +1344,7 @@ impl Cpu2 {
             CMP_INDY => {
                 // CMP Indirect,Y: CMP ($nn),Y
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(false, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::Read)),
                     Box::new(Cmp::new()),
                 ))
             }
@@ -1355,7 +1355,7 @@ impl Cpu2 {
             DCP_INDY => {
                 // DCP Indirect,Y: DCP ($nn),Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(true, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Dcp::new()),
                 ))
             }
@@ -1394,7 +1394,7 @@ impl Cpu2 {
             CMP_ABSY => {
                 // CMP Absolute,Y: CMP $nnnn,Y
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(false, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Read)),
                     Box::new(Cmp::new()),
                 ))
             }
@@ -1405,35 +1405,35 @@ impl Cpu2 {
             DCP_ABSY => {
                 // DCP Absolute,Y: DCP $nnnn,Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(true, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Dcp::new()),
                 ))
             }
             TOP_ABSX5 => {
                 // TOP Absolute,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Top::new()),
                 ))
             }
             CMP_ABSX => {
                 // CMP Absolute,X: CMP $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Cmp::new()),
                 ))
             }
             DEC_ABSX => {
                 // DEC Absolute,X: DEC $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Dec::new()),
                 ))
             }
             DCP_ABSX => {
                 // DCP Absolute,X: DCP $nnnn,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Dcp::new()),
                 ))
             }
@@ -1447,7 +1447,7 @@ impl Cpu2 {
             SBC_INDX => {
                 // SBC Indexed Indirect: SBC ($nn,X)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Sbc::new()),
                 ))
             }
@@ -1461,7 +1461,7 @@ impl Cpu2 {
             ISB_INDX => {
                 // ISB Indexed Indirect: ISB ($nn,X) (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndexedIndirect::new(true)),
+                    Box::new(IndexedIndirect::new(MemoryAccess::Read)),
                     Box::new(Isb::new()),
                 ))
             }
@@ -1518,28 +1518,28 @@ impl Cpu2 {
             CPX_ABS => {
                 // CPX Absolute: CPX $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Cpx::new()),
                 ))
             }
             SBC_ABS => {
                 // SBC Absolute: SBC $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Sbc::new()),
                 ))
             }
             INC_ABS => {
                 // INC Absolute: INC $nnnn
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Inc::new()),
                 ))
             }
             ISB_ABS => {
                 // ISB Absolute: ISB $nnnn (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(Absolute::new(true, true)),
+                    Box::new(Absolute::new(MemoryAccess::Read)),
                     Box::new(Isb::new()),
                 ))
             }
@@ -1553,7 +1553,7 @@ impl Cpu2 {
             SBC_INDY => {
                 // SBC Indirect,Y: SBC ($nn),Y
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(false, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::Read)),
                     Box::new(Sbc::new()),
                 ))
             }
@@ -1564,7 +1564,7 @@ impl Cpu2 {
             ISB_INDY => {
                 // ISB Indirect,Y: ISB ($nn),Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(true, false)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Isb::new()),
                 ))
             }
@@ -1603,7 +1603,7 @@ impl Cpu2 {
             SBC_ABSY => {
                 // SBC Absolute,Y: SBC $nnnn,Y
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(false, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Read)),
                     Box::new(Sbc::new()),
                 ))
             }
@@ -1614,42 +1614,42 @@ impl Cpu2 {
             ISB_ABSY => {
                 // ISB Absolute,Y: ISB $nnnn,Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(true, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Isb::new()),
                 ))
             }
             TOP_ABSX6 => {
                 // TOP Absolute,X: TOP $nnnn,X (illegal NOP)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Top::new()),
                 ))
             }
             SBC_ABSX => {
                 // SBC Absolute,X: SBC $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Sbc::new()),
                 ))
             }
             INC_ABSX => {
                 // INC Absolute,X: INC $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Inc::new()),
                 ))
             }
             ISB_ABSX => {
                 // ISB Absolute,X: ISB $nnnn,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Isb::new()),
                 ))
             }
             EOR_ABSY => {
                 // EOR Absolute,Y: EOR $nnnn,Y
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(false, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Read)),
                     Box::new(Eor::new()),
                 ))
             }
@@ -1660,35 +1660,35 @@ impl Cpu2 {
             SRE_ABSY => {
                 // SRE Absolute,Y: SRE $nnnn,Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(true, false)),
+                    Box::new(AbsoluteY::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Sre::new()),
                 ))
             }
             TOP_ABSX3 => {
                 // TOP Absolute,X: TOP $nnnn,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Top::new()),
                 ))
             }
             EOR_ABSX => {
                 // EOR Absolute,X: EOR $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(false, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Read)),
                     Box::new(Eor::new()),
                 ))
             }
             LSR_ABSX => {
                 // LSR Absolute,X: LSR $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Lsr::new()),
                 ))
             }
             SRE_ABSX => {
                 // SRE Absolute,X: SRE $nnnn,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, false)),
+                    Box::new(AbsoluteX::new(MemoryAccess::ReadModifyWrite)),
                     Box::new(Sre::new()),
                 ))
             }
@@ -1702,7 +1702,7 @@ impl Cpu2 {
             STA_INDY => {
                 // STA (Indirect),Y: STA ($nn),Y
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(true, true)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::Write)),
                     Box::new(Sta::new()),
                 ))
             }
@@ -1713,7 +1713,7 @@ impl Cpu2 {
             AXA_INDY => {
                 // AXA (Indirect),Y: AXA ($nn),Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(IndirectIndexed::new(true, true)),
+                    Box::new(IndirectIndexed::new(MemoryAccess::Write)),
                     Box::new(Axa::new()),
                 ))
             }
@@ -1752,7 +1752,7 @@ impl Cpu2 {
             STA_ABSY => {
                 // STA Absolute,Y: STA $nnnn,Y
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(true, true)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Write)),
                     Box::new(Sta::new()),
                 ))
             }
@@ -1763,35 +1763,35 @@ impl Cpu2 {
             XAS_ABSY => {
                 // XAS Absolute,Y: XAS $nnnn,Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(true, true)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Write)),
                     Box::new(Xas::new()),
                 ))
             }
             SYA_ABSX => {
                 // SYA Absolute,X: SYA $nnnn,X (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, true)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Write)),
                     Box::new(Sya::new()),
                 ))
             }
             STA_ABSX => {
                 // STA Absolute,X: STA $nnnn,X
                 Some(Instruction::new(
-                    Box::new(AbsoluteX::new(true, true)),
+                    Box::new(AbsoluteX::new(MemoryAccess::Write)),
                     Box::new(Sta::new()),
                 ))
             }
             SXA_ABSY => {
                 // SXA Absolute,Y: SXA $nnnn,Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(true, true)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Write)),
                     Box::new(Sxa::new()),
                 ))
             }
             AXA_ABSY => {
                 // AXA Absolute,Y: AXA $nnnn,Y (illegal opcode)
                 Some(Instruction::new(
-                    Box::new(AbsoluteY::new(true, true)),
+                    Box::new(AbsoluteY::new(MemoryAccess::Write)),
                     Box::new(Axa::new()),
                 ))
             }

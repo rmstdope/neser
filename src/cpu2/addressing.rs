@@ -10,6 +10,25 @@ use std::cell::RefCell;
 use std::rc::Rc;
 // use super::types::AddressingState;
 
+/// Type of memory operation for addressing modes
+///
+/// This enum clarifies the intent of different memory access patterns
+/// and eliminates the need for multiple boolean flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemoryAccess {
+    /// Read operation - performs final value read
+    /// Used by: LDA, LDX, LDY, ADC, SBC, AND, ORA, EOR, CMP, etc.
+    Read,
+    /// Write operation - performs dummy read but no final value read
+    /// Used by: STA, STX, STY, SAX (write-only instructions)
+    Write,
+    /// Read-Modify-Write operation - performs final value read and always takes maximum cycles
+    /// Used by: INC, DEC, ASL, LSR, ROL, ROR, etc.
+    ReadModifyWrite,
+    /// Jump operation - special case for JMP absolute that doesn't need extra cycle
+    Jump,
+}
+
 /// Implied/Accumulator addressing mode
 ///
 /// Used by instructions that operate on the accumulator or have no operand.
@@ -140,45 +159,40 @@ impl AddressingMode for ZeroPage {
 /// First byte is low byte, second byte is high byte (little-endian).
 /// Examples: LDA $1234, JMP $C000, STA $2000
 ///
-/// Cycles: 3 (fetch low byte, fetch high byte, read value from address)
-#[derive(Debug, Clone, Copy, Default)]
+/// Cycles: 2-3 depending on operation type
+#[derive(Debug, Clone, Copy)]
 pub struct Absolute {
     cycle: u8,
     address: u16,
     value: u8,
-    should_read: bool,
-    needs_extra_cycle: bool,
+    access: MemoryAccess,
 }
 
 impl Absolute {
     /// Create a new Absolute addressing mode instance
-    /// 
+    ///
     /// # Arguments
-    /// * `should_read` - If true, read value from address (for read operations)
-    /// * `needs_extra_cycle` - If true, take 3 ticks (for read/write ops), else 2 ticks (for JMP)
-    pub fn new(should_read: bool, needs_extra_cycle: bool) -> Self {
+    /// * `access` - The type of memory access operation
+    pub fn new(access: MemoryAccess) -> Self {
         Self {
-            should_read,
-            needs_extra_cycle,
-            ..Default::default()
+            cycle: 0,
+            address: 0,
+            value: 0,
+            access,
         }
     }
 }
 
 impl AddressingMode for Absolute {
     fn is_done(&self) -> bool {
-        if self.needs_extra_cycle {
-            self.cycle == 3
-        } else {
-            self.cycle == 2
+        match self.access {
+            MemoryAccess::Jump => self.cycle == 2,
+            _ => self.cycle == 3,
         }
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
-        debug_assert!(
-            !self.is_done(),
-            "Absolute::tick called after already done"
-        );
+        debug_assert!(!self.is_done(), "Absolute::tick called after already done");
 
         match self.cycle {
             0 => {
@@ -193,17 +207,12 @@ impl AddressingMode for Absolute {
                 let high = memory.borrow().read(cpu_state.pc);
                 self.address |= (high as u16) << 8;
                 cpu_state.pc = cpu_state.pc.wrapping_add(1);
-                if self.needs_extra_cycle {
-                    self.cycle = 2;
-                } else {
-                    // For JMP, complete immediately after fetching address
-                    self.cycle = 2;  // This will trigger is_done() = true
-                }
+                self.cycle = 2;
             }
             2 => {
-                // Cycle 3: Read value from address (only for read/RMW instructions)
-                // For write operations, this cycle is skipped but still counted
-                if self.should_read {
+                // Cycle 3: Read value from address (only for read/RMW operations)
+                // Write operations skip this read, Jump doesn't reach here
+                if self.access == MemoryAccess::Read || self.access == MemoryAccess::ReadModifyWrite {
                     self.value = memory.borrow().read(self.address);
                 }
                 self.cycle = 3;
@@ -373,59 +382,45 @@ impl AddressingMode for ZeroPageY {
 /// If adding X causes a page boundary crossing, an extra cycle is needed.
 /// Examples: LDA $1234,X, STA $2000,X
 ///
-/// Cycles: 3 (no page cross) or 4 (page cross for read-only) or 4 (always for write/RMW)
-#[derive(Debug, Clone, Copy, Default)]
+/// Cycles: 3-4 depending on page cross and operation type
+#[derive(Debug, Clone, Copy)]
 pub struct AbsoluteX {
     cycle: u8,
     address: u16,
     page_crossed: bool,
     value: u8,
-    /// If true, always perform dummy read (for write/RMW operations).
-    /// If false, skip dummy read when no page cross (for read-only operations).
-    always_dummy_read: bool,
-    /// If true, this is a write operation - do dummy read but NOT final value read.
-    /// If false, do final value read after dummy read (for RMW operations).
-    is_write: bool,
+    access: MemoryAccess,
 }
 
 impl AbsoluteX {
     /// Create a new AbsoluteX addressing mode instance
     ///
     /// # Arguments
-    /// * `always_dummy_read` - If true, always do dummy read cycle (for write/RMW ops).
-    ///                         If false, skip dummy read if no page cross (for read ops).
-    /// * `is_write` - If true, this is a write operation (dummy read but no final read).
-    ///                If false, this is read or RMW (do final value read).
-    pub fn new(always_dummy_read: bool, is_write: bool) -> Self {
+    /// * `access` - The type of memory access operation
+    pub fn new(access: MemoryAccess) -> Self {
         Self {
-            always_dummy_read,
-            is_write,
-            ..Self::default()
+            cycle: 0,
+            address: 0,
+            page_crossed: false,
+            value: 0,
+            access,
         }
     }
 }
 
 impl AddressingMode for AbsoluteX {
     fn is_done(&self) -> bool {
-        // For read-only ops: 3 cycles if no page cross, 4 if page cross
-        // For write ops (is_write=true): always 4 cycles (dummy read but no final value read)
-        // For RMW ops (always_dummy_read=true, is_write=false): always 4 cycles (with final read)
-        if self.is_write {
-            self.cycle == 4
-        } else if self.always_dummy_read {
-            self.cycle == 4
-        } else {
-            (self.cycle == 3 && !self.page_crossed) || self.cycle == 4
+        match self.access {
+            // Read ops: 3 cycles if no page cross, 4 if page cross
+            MemoryAccess::Read => (self.cycle == 3 && !self.page_crossed) || self.cycle == 4,
+            // Write and RMW ops: always 4 cycles
+            MemoryAccess::Write | MemoryAccess::ReadModifyWrite => self.cycle == 4,
+            MemoryAccess::Jump => unreachable!("JMP doesn't use indexed addressing"),
         }
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
-        debug_assert!(
-            !self.is_done(),
-            "AbsoluteX::tick called after addressing complete (cycle={}, is_write={})",
-            self.cycle,
-            self.is_write
-        );
+        debug_assert!(!self.is_done(), "AbsoluteX::tick called after addressing complete");
 
         match self.cycle {
             0 => {
@@ -449,22 +444,23 @@ impl AddressingMode for AbsoluteX {
             }
             2 => {
                 // Cycle 3: Read value or dummy read
-                if !self.always_dummy_read && !self.page_crossed {
-                    // Read-only op with no page cross - read the actual value
-                    self.value = memory.borrow().read(self.address);
-                    self.cycle = 3;
-                } else {
-                    // RMW op or page cross - dummy read from wrong page
-                    let dummy_addr = (self.address.wrapping_sub(cpu_state.x as u16) & 0xFF00)
-                        | (self.address & 0x00FF);
-                    let _ = memory.borrow().read(dummy_addr);
-                    self.cycle = 3;
+                match self.access {
+                    MemoryAccess::Read if !self.page_crossed => {
+                        // Read op with no page cross - read actual value and complete
+                        self.value = memory.borrow().read(self.address);
+                    }
+                    _ => {
+                        // Write/RMW or page cross - dummy read from wrong page
+                        let dummy_addr = (self.address.wrapping_sub(cpu_state.x as u16) & 0xFF00)
+                            | (self.address & 0x00FF);
+                        let _ = memory.borrow().read(dummy_addr);
+                    }
                 }
+                self.cycle = 3;
             }
             3 => {
-                // Cycle 4: Read actual value (for RMW operations only)
-                // For write operations, skip the read but still count the cycle
-                if !self.is_write {
+                // Cycle 4: Read actual value (for Read and RMW operations only)
+                if self.access != MemoryAccess::Write {
                     self.value = memory.borrow().read(self.address);
                 }
                 self.cycle = 4;
@@ -500,59 +496,45 @@ impl AddressingMode for AbsoluteX {
 /// If adding Y causes a page boundary crossing, an extra cycle is needed.
 /// Examples: LDA $1234,Y, STA $2000,Y
 ///
-/// Cycles: 3 (no page cross) or 4 (page cross for read-only) or 4 (always for write/RMW)
-#[derive(Debug, Clone, Copy, Default)]
+/// Cycles: 3-4 depending on page cross and operation type
+#[derive(Debug, Clone, Copy)]
 pub struct AbsoluteY {
     cycle: u8,
     address: u16,
     page_crossed: bool,
     value: u8,
-    /// If true, always perform dummy read (for write/RMW operations).
-    /// If false, skip dummy read when no page cross (for read-only operations).
-    always_dummy_read: bool,
-    /// If true, this is a write operation - do dummy read but NOT final value read.
-    /// If false, do final value read after dummy read (for RMW operations).
-    is_write: bool,
+    access: MemoryAccess,
 }
 
 impl AbsoluteY {
     /// Create a new AbsoluteY addressing mode instance
     ///
     /// # Arguments
-    /// * `always_dummy_read` - If true, always do dummy read cycle (for write/RMW ops).
-    ///                         If false, skip dummy read if no page cross (for read ops).
-    /// * `is_write` - If true, this is a write operation (dummy read but no final read).
-    ///                If false, this is read or RMW (do final value read).
-    pub fn new(always_dummy_read: bool, is_write: bool) -> Self {
+    /// * `access` - The type of memory access operation
+    pub fn new(access: MemoryAccess) -> Self {
         Self {
-            always_dummy_read,
-            is_write,
-            ..Self::default()
+            cycle: 0,
+            address: 0,
+            page_crossed: false,
+            value: 0,
+            access,
         }
     }
 }
 
 impl AddressingMode for AbsoluteY {
     fn is_done(&self) -> bool {
-        // For read-only ops: 3 cycles if no page cross, 4 if page cross
-        // For write ops (is_write=true): always 4 cycles (dummy read but no final value read)
-        // For RMW ops (always_dummy_read=true, is_write=false): always 4 cycles (with final read)
-        if self.is_write {
-            self.cycle == 4
-        } else if self.always_dummy_read {
-            self.cycle == 4
-        } else {
-            (self.cycle == 3 && !self.page_crossed) || self.cycle == 4
+        match self.access {
+            // Read ops: 3 cycles if no page cross, 4 if page cross
+            MemoryAccess::Read => (self.cycle == 3 && !self.page_crossed) || self.cycle == 4,
+            // Write and RMW ops: always 4 cycles
+            MemoryAccess::Write | MemoryAccess::ReadModifyWrite => self.cycle == 4,
+            MemoryAccess::Jump => unreachable!("JMP doesn't use indexed addressing"),
         }
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
-        debug_assert!(
-            !self.is_done(),
-            "AbsoluteY::tick called after addressing complete (cycle={}, is_write={})",
-            self.cycle,
-            self.is_write
-        );
+        debug_assert!(!self.is_done(), "AbsoluteY::tick called after addressing complete");
 
         match self.cycle {
             0 => {
@@ -576,22 +558,23 @@ impl AddressingMode for AbsoluteY {
             }
             2 => {
                 // Cycle 3: Read value or dummy read
-                if !self.always_dummy_read && !self.page_crossed {
-                    // Read-only op with no page cross - read the actual value
-                    self.value = memory.borrow().read(self.address);
-                    self.cycle = 3;
-                } else {
-                    // RMW op or page cross - dummy read from wrong page
-                    let dummy_addr = (self.address.wrapping_sub(cpu_state.y as u16) & 0xFF00)
-                        | (self.address & 0x00FF);
-                    let _ = memory.borrow().read(dummy_addr);
-                    self.cycle = 3;
+                match self.access {
+                    MemoryAccess::Read if !self.page_crossed => {
+                        // Read op with no page cross - read actual value and complete
+                        self.value = memory.borrow().read(self.address);
+                    }
+                    _ => {
+                        // Write/RMW or page cross - dummy read from wrong page
+                        let dummy_addr = (self.address.wrapping_sub(cpu_state.y as u16) & 0xFF00)
+                            | (self.address & 0x00FF);
+                        let _ = memory.borrow().read(dummy_addr);
+                    }
                 }
+                self.cycle = 3;
             }
             3 => {
-                // Cycle 4: Read actual value (for RMW operations only)
-                // For write operations, skip the read but still count the cycle
-                if !self.is_write {
+                // Cycle 4: Read actual value (for Read and RMW operations only)
+                if self.access != MemoryAccess::Write {
                     self.value = memory.borrow().read(self.address);
                 }
                 self.cycle = 4;
@@ -704,44 +687,40 @@ impl AddressingMode for Indirect {
 /// Then a 16-bit pointer is read from that zero-page location.
 /// Examples: LDA ($20,X)
 ///
-/// Cycles: 5 (addressing completes, then instruction executes on cycle 6)
-///   1. Fetch zero-page base address from PC
-///   2. Dummy read at zero page address, add X register to base
-///   3. Read pointer low byte from (base+X) in zero page
-///   4. Read pointer high byte from (base+X+1) in zero page
-///   5. Read value from final address
-#[derive(Debug, Clone, Copy, Default)]
+/// Cycles: 5 (always)
+#[derive(Debug, Clone, Copy)]
 pub struct IndexedIndirect {
     cycle: u8,
     pointer_addr: u8,
     address: u16,
     value: u8,
-    should_read: bool,
+    access: MemoryAccess,
 }
 
 impl IndexedIndirect {
     /// Create a new IndexedIndirect addressing mode instance
-    pub fn new(should_read: bool) -> Self {
+    ///
+    /// # Arguments
+    /// * `access` - The type of memory access operation
+    pub fn new(access: MemoryAccess) -> Self {
         Self {
-            should_read,
-            ..Default::default()
+            cycle: 0,
+            pointer_addr: 0,
+            address: 0,
+            value: 0,
+            access,
         }
     }
 }
 
 impl AddressingMode for IndexedIndirect {
     fn is_done(&self) -> bool {
-        // Both read and write operations complete at cycle 5
-        // Read/RMW ops do actual read on cycle 4
-        // Write ops skip the read on cycle 4
+        // All operations complete at cycle 5
         self.cycle == 5
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
-        debug_assert!(
-            !self.is_done(),
-            "IndexedIndirect::tick called after already done"
-        );
+        debug_assert!(!self.is_done(), "IndexedIndirect::tick called after already done");
 
         match self.cycle {
             0 => {
@@ -771,9 +750,8 @@ impl AddressingMode for IndexedIndirect {
                 self.cycle = 4;
             }
             4 => {
-                // Cycle 5: Read value from final address (only for read/RMW instructions)
-                // For write operations, this cycle is skipped but still counted
-                if self.should_read {
+                // Cycle 5: Read value from final address (Read and RMW only)
+                if self.access != MemoryAccess::Write {
                     self.value = memory.borrow().read(self.address);
                 }
                 self.cycle = 5;
@@ -806,14 +784,8 @@ impl AddressingMode for IndexedIndirect {
 /// Has a page-cross penalty: adds 1 cycle if Y addition crosses page boundary.
 /// Examples: LDA ($20),Y
 ///
-/// Cycles: 5-6
-///   1. Fetch zero-page pointer address from PC
-///   2. Read pointer low byte from zero page
-///   3. Read pointer high byte from zero page (wraps)
-///   4. Add Y to pointer (may cross page)
-///   5. Read value (or dummy read if page crossed)
-///   6. Read value (only if page crossed)
-#[derive(Debug, Clone, Copy, Default)]
+/// Cycles: 4-5 depending on page cross and operation type
+#[derive(Debug, Clone, Copy)]
 pub struct IndirectIndexed {
     cycle: u8,
     pointer_addr: u8,
@@ -821,50 +793,40 @@ pub struct IndirectIndexed {
     address: u16,
     page_crossed: bool,
     value: u8,
-    /// If true, always perform dummy read (for write/RMW operations).
-    /// If false, skip dummy read when no page cross (for read-only operations).
-    always_dummy_read: bool,
-    /// If true, this is a write operation - do dummy read but NOT final value read.
-    /// If false, do final value read after dummy read (for RMW operations).
-    is_write: bool,
+    access: MemoryAccess,
 }
 
 impl IndirectIndexed {
     /// Create a new IndirectIndexed addressing mode instance
     ///
     /// # Arguments
-    /// * `always_dummy_read` - If true, always do dummy read cycle (for write/RMW ops).
-    ///                         If false, skip dummy read if no page cross (for read ops).
-    /// * `is_write` - If true, this is a write operation (dummy read but no final read).
-    ///                If false, this is read or RMW (do final value read).
-    pub fn new(always_dummy_read: bool, is_write: bool) -> Self {
+    /// * `access` - The type of memory access operation
+    pub fn new(access: MemoryAccess) -> Self {
         Self {
-            always_dummy_read,
-            is_write,
-            ..Self::default()
+            cycle: 0,
+            pointer_addr: 0,
+            base_address: 0,
+            address: 0,
+            page_crossed: false,
+            value: 0,
+            access,
         }
     }
 }
 
 impl AddressingMode for IndirectIndexed {
     fn is_done(&self) -> bool {
-        // For read-only ops: 4 cycles if no page cross, 5 if page cross
-        // For write ops (is_write=true): always 5 cycles (dummy read but no final value read)
-        // For RMW ops (always_dummy_read=true, is_write=false): always 5 cycles (with final read)
-        if self.is_write {
-            self.cycle == 5
-        } else if self.always_dummy_read {
-            self.cycle == 5
-        } else {
-            (self.cycle == 4 && !self.page_crossed) || self.cycle == 5
+        match self.access {
+            // Read ops: 4 cycles if no page cross, 5 if page cross
+            MemoryAccess::Read => (self.cycle == 4 && !self.page_crossed) || self.cycle == 5,
+            // Write and RMW ops: always 5 cycles
+            MemoryAccess::Write | MemoryAccess::ReadModifyWrite => self.cycle == 5,
+            MemoryAccess::Jump => unreachable!("JMP doesn't use indirect indexed addressing"),
         }
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
-        debug_assert!(
-            !self.is_done(),
-            "IndirectIndexed::tick called after already done"
-        );
+        debug_assert!(!self.is_done(), "IndirectIndexed::tick called after already done");
 
         match self.cycle {
             0 => {
@@ -891,21 +853,22 @@ impl AddressingMode for IndirectIndexed {
                 self.address = self.base_address.wrapping_add(cpu_state.y as u16);
                 self.page_crossed = (self.base_address & 0xFF00) != (self.address & 0xFF00);
 
-                if !self.always_dummy_read && !self.page_crossed {
-                    // Read-only op with no page cross - read the actual value and complete
-                    self.value = memory.borrow().read(self.address);
-                    self.cycle = 4;
-                } else {
-                    // RMW/write op or page cross - dummy read from wrong page
-                    let dummy_addr = (self.base_address & 0xFF00) | (self.address & 0x00FF);
-                    let _ = memory.borrow().read(dummy_addr);
-                    self.cycle = 4;
+                match self.access {
+                    MemoryAccess::Read if !self.page_crossed => {
+                        // Read op with no page cross - read actual value and complete
+                        self.value = memory.borrow().read(self.address);
+                    }
+                    _ => {
+                        // Write/RMW or page cross - dummy read from wrong page
+                        let dummy_addr = (self.base_address & 0xFF00) | (self.address & 0x00FF);
+                        let _ = memory.borrow().read(dummy_addr);
+                    }
                 }
+                self.cycle = 4;
             }
             4 => {
-                // Cycle 5: Read actual value (for RMW instructions only)
-                // For write operations, skip the read but still count the cycle
-                if !self.is_write {
+                // Cycle 5: Read actual value (for Read and RMW operations only)
+                if self.access != MemoryAccess::Write {
                     self.value = memory.borrow().read(self.address);
                 }
                 self.cycle = 5;
@@ -1161,7 +1124,7 @@ mod new_tests {
 
     #[test]
     fn test_absolute_starts_not_done() {
-        let mode = Absolute::new(true, true);
+        let mode = Absolute::new(MemoryAccess::Read);
         assert!(
             !mode.is_done(),
             "Absolute mode should not be done initially"
@@ -1195,7 +1158,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = Absolute::new(true, true);
+        let mut mode = Absolute::new(MemoryAccess::Read);
         mode.tick(&mut cpu_state, Rc::clone(&memory));
 
         assert!(
@@ -1242,7 +1205,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = Absolute::new(true, true);
+        let mut mode = Absolute::new(MemoryAccess::Read);
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1267,7 +1230,7 @@ mod new_tests {
     #[test]
     #[should_panic(expected = "Absolute::get_address called before addressing complete")]
     fn test_absolute_get_address_before_done_panics() {
-        let mode = Absolute::new(true, true);
+        let mode = Absolute::new(MemoryAccess::Read);
         mode.get_address(); // Should panic in debug builds
     }
 
@@ -1298,7 +1261,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = Absolute::new(false, false); // Don't read value
+        let mut mode = Absolute::new(MemoryAccess::Jump); // Don't read value
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1347,7 +1310,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = Absolute::new(true, true); // Read value
+        let mut mode = Absolute::new(MemoryAccess::Read); // Read value
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1639,7 +1602,7 @@ mod new_tests {
 
     #[test]
     fn test_absolutex_starts_not_done() {
-        let mode = AbsoluteX::new(false, false);
+        let mode = AbsoluteX::new(MemoryAccess::Read);
         assert!(
             !mode.is_done(),
             "AbsoluteX mode should not be done initially"
@@ -1675,7 +1638,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = AbsoluteX::new(false, false);
+        let mut mode = AbsoluteX::new(MemoryAccess::Read);
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1729,7 +1692,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = AbsoluteX::new(false, false);
+        let mut mode = AbsoluteX::new(MemoryAccess::Read);
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1761,7 +1724,7 @@ mod new_tests {
     #[test]
     #[should_panic(expected = "AbsoluteX::get_address called before addressing complete")]
     fn test_absolutex_get_address_before_done_panics() {
-        let mode = AbsoluteX::new(false, false);
+        let mode = AbsoluteX::new(MemoryAccess::Read);
         mode.get_address(); // Should panic in debug builds
     }
 
@@ -1769,7 +1732,7 @@ mod new_tests {
 
     #[test]
     fn test_absolutey_starts_not_done() {
-        let mode = AbsoluteY::new(false, false);
+        let mode = AbsoluteY::new(MemoryAccess::Read);
         assert!(
             !mode.is_done(),
             "AbsoluteY mode should not be done initially"
@@ -1805,7 +1768,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = AbsoluteY::new(false, false);
+        let mut mode = AbsoluteY::new(MemoryAccess::Read);
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1859,7 +1822,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = AbsoluteY::new(false, false);
+        let mut mode = AbsoluteY::new(MemoryAccess::Read);
 
         // First tick - read low byte
         mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -1891,7 +1854,7 @@ mod new_tests {
     #[test]
     #[should_panic(expected = "AbsoluteY::get_address called before addressing complete")]
     fn test_absolutey_get_address_before_done_panics() {
-        let mode = AbsoluteY::new(false, false);
+        let mode = AbsoluteY::new(MemoryAccess::Read);
         mode.get_address(); // Should panic in debug builds
     }
 
@@ -2019,7 +1982,7 @@ mod new_tests {
     // IndexedIndirect tests
     #[test]
     fn test_indexed_indirect_starts_not_done() {
-        let mode = IndexedIndirect::new(true);
+        let mode = IndexedIndirect::new(MemoryAccess::Read);
         assert!(!mode.is_done(), "Should not be done initially");
     }
 
@@ -2053,7 +2016,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = IndexedIndirect::new(true);
+        let mut mode = IndexedIndirect::new(MemoryAccess::Read);
 
         for i in 1..=5 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -2070,7 +2033,7 @@ mod new_tests {
     #[test]
     #[should_panic(expected = "IndexedIndirect::get_address called before addressing complete")]
     fn test_indexed_indirect_get_address_before_done_panics() {
-        let mode = IndexedIndirect::new(true);
+        let mode = IndexedIndirect::new(MemoryAccess::Read);
         mode.get_address(); // Should panic
     }
 
@@ -2104,7 +2067,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = IndexedIndirect::new(true);
+        let mut mode = IndexedIndirect::new(MemoryAccess::Read);
 
         for _ in 0..5 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -2151,7 +2114,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = IndexedIndirect::new(true);
+        let mut mode = IndexedIndirect::new(MemoryAccess::Read);
 
         for _ in 0..5 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -2169,7 +2132,7 @@ mod new_tests {
     // IndirectIndexed tests
     #[test]
     fn test_indirect_indexed_starts_not_done() {
-        let mode = IndirectIndexed::new(false, false);
+        let mode = IndirectIndexed::new(MemoryAccess::Read);
         assert!(!mode.is_done(), "Should not be done initially");
     }
 
@@ -2203,7 +2166,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = IndirectIndexed::new(false, false);
+        let mut mode = IndirectIndexed::new(MemoryAccess::Read);
 
         for i in 1..=4 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -2254,7 +2217,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = IndirectIndexed::new(false, false);
+        let mut mode = IndirectIndexed::new(MemoryAccess::Read);
 
         for i in 1..=5 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
@@ -2278,7 +2241,7 @@ mod new_tests {
     #[test]
     #[should_panic(expected = "IndirectIndexed::get_address called before addressing complete")]
     fn test_indirect_indexed_get_address_before_done_panics() {
-        let mode = IndirectIndexed::new(false, false);
+        let mode = IndirectIndexed::new(MemoryAccess::Read);
         mode.get_address(); // Should panic
     }
 
@@ -2313,7 +2276,7 @@ mod new_tests {
             p: 0,
         };
 
-        let mut mode = IndirectIndexed::new(false, false);
+        let mut mode = IndirectIndexed::new(MemoryAccess::Read);
 
         for _ in 0..4 {
             mode.tick(&mut cpu_state, Rc::clone(&memory));
