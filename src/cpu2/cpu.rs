@@ -1809,17 +1809,28 @@ impl Cpu2 {
         self.total_cycles
     }
 
-    /// Reset the CPU to initial state
+    /// Reset the CPU
+    /// 
+    /// According to NES hardware behavior:
+    /// - A, X, Y registers are UNCHANGED (preserved from before reset)
+    /// - Status flags C, Z, D, V, N are UNCHANGED (preserved from before reset)
+    /// - I flag is SET (interrupts disabled)
+    /// - SP is decremented by 3 (simulating 3 dummy stack writes)
+    /// - PC is loaded from reset vector at $FFFC-$FFFD
+    /// - Takes 7 CPU cycles
+    /// 
+    /// This matches the behavior documented at:
+    /// https://www.nesdev.org/wiki/CPU_power_up_state
     pub fn reset(&mut self) {
-        // Set I flag (bit 2)
+        // Set I flag (bit 2) - interrupts are disabled after reset
         self.state.p |= FLAG_INTERRUPT;
 
         // Subtract 3 from SP (wrapping if necessary)
+        // This simulates the 3 dummy stack writes that occur during reset
         self.state.sp = self.state.sp.wrapping_sub(3);
 
         // Clear cycle-accurate instruction state
         self.halted = false;
-        // self.delayed_i_flag = None;
         self.current_instruction = None;
         self.nmi_pending = false;
 
@@ -2010,6 +2021,93 @@ mod tests {
 
         // BRK takes 7 cycles
         assert_eq!(cycles, 7, "BRK should take 7 cycles");
+    }
+
+    #[test]
+    fn test_reset_preserves_registers() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        // Create a simple ROM with reset vector pointing to $8000
+        let mut prg_rom = vec![0; 0x8000]; // 32KB
+        prg_rom[0x7FFC] = 0x00; // Low byte of reset vector ($8000)
+        prg_rom[0x7FFD] = 0x80; // High byte of reset vector ($8000)
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Set registers to known values before reset
+        cpu.state.a = 0x42;
+        cpu.state.x = 0x33;
+        cpu.state.y = 0x87;
+        cpu.state.sp = 0xFD;
+        cpu.state.p = FLAG_CARRY | FLAG_ZERO | FLAG_DECIMAL | FLAG_OVERFLOW | FLAG_NEGATIVE;
+        cpu.state.pc = 0x1234;
+
+        // Call reset
+        cpu.reset();
+
+        // According to https://www.nesdev.org/wiki/CPU_power_up_state:
+        // - A, X, Y are unchanged
+        assert_eq!(cpu.state.a, 0x42, "A should be preserved after reset");
+        assert_eq!(cpu.state.x, 0x33, "X should be preserved after reset");
+        assert_eq!(cpu.state.y, 0x87, "Y should be preserved after reset");
+
+        // - Status flags C, Z, D, V, N are unchanged
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "C flag should be preserved"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_ZERO,
+            FLAG_ZERO,
+            "Z flag should be preserved"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "D flag should be preserved"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "V flag should be preserved"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be preserved"
+        );
+
+        // - I flag is set
+        assert_eq!(
+            cpu.state.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "I flag should be set after reset"
+        );
+
+        // - SP is decremented by 3
+        assert_eq!(
+            cpu.state.sp, 0xFA,
+            "SP should be decremented by 3 (0xFD - 3 = 0xFA)"
+        );
+
+        // - PC is loaded from reset vector
+        assert_eq!(
+            cpu.state.pc, 0x8000,
+            "PC should be loaded from reset vector"
+        );
+
+        // - Reset takes 7 cycles
+        assert_eq!(
+            cpu.total_cycles, 7,
+            "Reset should take 7 cycles"
+        );
     }
 
     #[test]

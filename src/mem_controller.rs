@@ -258,8 +258,8 @@ impl MemController {
 
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
-                if addr >= 0x6000 && addr <= 0x6003 {
-                    // For debugging, print writes to $6000-$6003 (test output area)
+                if addr == 0x6000 {
+                    // For debugging, print writes to $6000 (test output area)
                     println!(
                         "Debug: Write to ${:04X} PRG-RAM: {:02X} ({})",
                         addr, value, value as char
