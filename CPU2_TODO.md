@@ -5,10 +5,12 @@ Based on review of [NESdev Wiki CPU documentation](https://www.nesdev.org/wiki/C
 ## Critical Missing Features
 
 ### 1. IRQ (Interrupt Request) Implementation
+
 **Status:** ✅ FIXED  
 **Wiki Reference:** [CPU interrupts](https://www.nesdev.org/wiki/CPU_interrupts)
 
 **Implemented:**
+
 - [x] IRQ trigger sequence (7 cycles)
 - [x] IRQ polling logic respecting I flag
 - [x] Push PC and P to stack (with B flag clear, unused flag set)
@@ -19,6 +21,7 @@ Based on review of [NESdev Wiki CPU documentation](https://www.nesdev.org/wiki/C
 - [x] Comprehensive test coverage (5 tests)
 
 **Tests Added:**
+
 - `test_irq_trigger_basic` - Basic IRQ functionality
 - `test_irq_respects_i_flag` - I flag masking behavior
 - `test_irq_clears_b_flag` - B flag handling in pushed status
@@ -26,10 +29,12 @@ Based on review of [NESdev Wiki CPU documentation](https://www.nesdev.org/wiki/C
 - `test_irq_stack_wrapping` - Stack pointer wrapping
 
 ### 2. Interrupt Polling Behavior
+
 **Status:** ✅ FIXED (Partial - Core polling logic implemented)
 **Wiki Reference:** [CPU interrupts - Detailed interrupt behavior](https://www.nesdev.org/wiki/CPU_interrupts#Detailed_interrupt_behavior)
 
 **Implemented:**
+
 - [x] Interrupt polling infrastructure with `poll_pending_interrupt()` method
 - [x] NMI has priority over IRQ when both pending
 - [x] Interrupt sequences don't poll for interrupts (at least one instruction executes before next interrupt)
@@ -37,28 +42,54 @@ Based on review of [NESdev Wiki CPU documentation](https://www.nesdev.org/wiki/C
 - [x] Automatic clearing of flag when instruction completes
 
 **Tests Added:**
+
 - `test_interrupt_polling_nmi_priority` - Verifies NMI priority over IRQ
 - `test_interrupt_not_polled_during_interrupt_sequence` - Verifies no polling during interrupt handler
 
-**Note:** Edge/level detection is handled externally by NES hardware (PPU/APU). 
+**Note:** Edge/level detection is handled externally by NES hardware (PPU/APU).
 The CPU provides the polling mechanism via `poll_pending_interrupt()` which external code should call after each instruction.
 
 ### 3. Delayed IRQ Response After CLI, SEI, PLP
-**Status:** Not implemented  
+
+**Status:** ✅ FIXED
 **Wiki Reference:** [CPU interrupts - Delayed IRQ response](https://www.nesdev.org/wiki/CPU_interrupts#Delayed_IRQ_response_after_CLI,_SEI,_and_PLP)
 
-**Missing:**
-- [ ] RTI affects I flag immediately (IRQ can trigger right after RTI)
-- [ ] CLI, SEI, PLP delay IRQ by one instruction
+**Implemented:**
+
+- [x] CLI, SEI, PLP delay IRQ by one instruction
   - These instructions poll interrupts at end of first cycle (before changing I flag)
   - One more instruction executes before IRQ handler runs
-- [ ] Need to track "delayed I flag change" state
+- [x] Track "delayed I flag change" state via `delay_interrupt_check` field in Cpu2 and CpuState
+- [x] `should_poll_irq()` respects delay flag
+- [x] Delay mechanism activated when instruction completes, cleared after one instruction
+- [x] RTI affects I flag immediately (IRQ can trigger right after RTI)
+  - RTI correctly does NOT set delay flag (unlike PLP)
+  - IRQ can fire immediately after RTI if I flag is cleared
+
+**Tests Passing:**
+
+- Test #3: "APU should generate IRQ when $4017 = $00" ✅
+- Test #4: "Exactly one instruction after CLI should execute before IRQ" ✅
+
+**Known Issue:**
+
+- Test #5: "CLI SEI should allow only one IRQ just after SEI" ❌
+  - Edge case involving CLI followed immediately by SEI
+  - Requires deeper investigation of hardware timing
+
+**Missing:**
+
+- [ ] RTI affects I flag immediately (IRQ can trigger right after RTI)
+  - RTI should NOT set delay flag (unlike PLP)
+  - IRQ can fire immediately after RTI if I flag is cleared
 
 ### 4. Branch Instructions and Interrupts
+
 **Status:** Not implemented  
 **Wiki Reference:** [CPU interrupts - Branch instructions](https://www.nesdev.org/wiki/CPU_interrupts#Branch_instructions_and_interrupts)
 
 **Missing:**
+
 - [ ] Branch instructions have special interrupt polling:
   - Always polled before second cycle (operand fetch)
   - NOT polled before third cycle on taken branch
@@ -66,24 +97,28 @@ The CPU provides the polling mechanism via `poll_pending_interrupt()` which exte
 - [ ] Need to add interrupt polling points to branch addressing modes
 
 ### 5. Interrupt Hijacking
+
 **Status:** Partially implemented (BRK checks nmi_pending)  
 **Wiki Reference:** [CPU interrupts - Interrupt hijacking](https://www.nesdev.org/wiki/CPU_interrupts#Interrupt_hijacking)
 
 **Current:** BRK checks `nmi_pending` during cycle 4 to determine vector  
 **Missing:**
+
 - [ ] IRQ can hijack BRK (same way NMI can)
 - [ ] NMI can hijack IRQ
 - [ ] Hijacking window is during cycles 1-4 of interrupt sequence
-- [ ] At cycle 5 (***), signal status determines which vector is used
+- [ ] At cycle 5 (\*\*\*), signal status determines which vector is used
 - [ ] IRQ hijacking detection (not just NMI)
 
 ## Power-up and Reset Behavior
 
 ### 6. Power-up State
+
 **Status:** ✅ FIXED  
 **Wiki Reference:** [CPU power up state](https://www.nesdev.org/wiki/CPU_power_up_state)
 
 **Current Implementation:**
+
 ```rust
 a: 0, x: 0, y: 0      // ✓ Correct at power-on
 sp: 0x00              // ✓ Correct (before reset sequence)
@@ -92,6 +127,7 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 ```
 
 **Fixed:**
+
 - [x] After reset, registers are now unchanged (A, X, Y preserved)
 - [x] After reset, status flags C, Z, D, V, N are preserved
 - [x] Power-up vs Reset distinction clarified in documentation
@@ -99,11 +135,13 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 - [x] Added comprehensive test `test_reset_preserves_registers()`
 
 ### 7. Reset Sequence
+
 **Status:** ✅ FIXED  
 **Wiki Reference:** [CPU interrupts - IRQ and NMI tick-by-tick](https://www.nesdev.org/wiki/CPU_interrupts#IRQ_and_NMI_tick-by-tick_execution)
 
 **Previous Implementation:** Just decremented SP by 3  
 **Fixed Implementation:**
+
 - [x] Reset performs 3 dummy stack reads (cycles 3-5)
 - [x] Each read accesses $0100+SP and decrements SP
 - [x] Reads PCL from $FFFC on cycle 6, sets I flag
@@ -112,6 +150,7 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 - [x] Matches hardware behavior: reset is like NMI/IRQ but suppresses writes
 
 **Cycle-by-cycle breakdown:**
+
 1. Fetch opcode (forced to $00, discarded) - not simulated
 2. Read next byte (discarded) - not simulated
 3. Dummy read from stack at $0100+SP, decrement SP
@@ -125,10 +164,12 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 ## Status Flag Behavior
 
 ### 8. B Flag Handling
+
 **Status:** Implemented in BRK, needs verification elsewhere  
 **Wiki Reference:** [Status flags - The B flag](https://www.nesdev.org/wiki/Status_flags#The_B_flag)
 
 **Requirements:**
+
 - [x] B=1 when pushed by BRK and PHP
 - [ ] B=0 when pushed by NMI (implemented in trigger_nmi)
 - [ ] B=0 when pushed by IRQ (not implemented - IRQ stub)
@@ -136,10 +177,12 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 - [ ] RTI/PLP ignore bits 4 and 5 when pulling from stack
 
 ### 9. Unused Flag (Bit 5)
+
 **Status:** Partially implemented  
 **Wiki Reference:** [Status flags](https://www.nesdev.org/wiki/Status_flags)
 
 **Requirements:**
+
 - [x] Always pushed as 1 to stack (implemented in BRK, trigger_nmi)
 - [ ] Verify NMI implementation sets bit 5
 - [ ] Verify IRQ implementation will set bit 5
@@ -148,23 +191,28 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 ## Cycle Accuracy
 
 ### 10. Every Cycle is Read or Write
+
 **Status:** Unknown - needs verification  
 **Wiki Reference:** [CPU Notes](https://www.nesdev.org/wiki/CPU#Notes)
 
 **Requirement:**
+
 > "Every cycle on 6502 is either a read or write cycle."
 
 **Needs verification:**
+
 - [ ] All instruction cycles perform memory access
 - [ ] No "idle" cycles that don't access memory
 - [ ] Check all addressing modes (especially Implied)
 - [ ] Check all instruction types
 
 ### 11. Dummy Reads/Writes
+
 **Status:** Recently implemented for addressing modes  
 **Wiki Reference:** Implied by cycle-accurate behavior requirements
 
 **Recent work:**
+
 - [x] Write operations skip unnecessary reads (fix-dummy-reads branch)
 - [x] RMW operations perform dummy reads correctly
 - [ ] Verify all dummy read/write behavior matches hardware
@@ -174,10 +222,12 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 ## Documentation and Testing
 
 ### 12. Comprehensive Interrupt Tests
+
 **Status:** Basic BRK test exists  
 **Wiki Reference:** [CPU interrupts - Notes](https://www.nesdev.org/wiki/CPU_interrupts#Notes)
 
 **Missing tests:**
+
 - [ ] NMI triggering and execution
 - [ ] IRQ triggering and execution (when implemented)
 - [ ] NMI priority over IRQ
@@ -189,10 +239,12 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 - [ ] Test ROM: cpu_interrupts_v2 (mentioned in wiki)
 
 ### 13. Comprehensive Reset Tests
+
 **Status:** ✅ FIXED  
 **Wiki Reference:** [CPU power up state](https://www.nesdev.org/wiki/CPU_power_up_state)
 
 **Tests Added:**
+
 - [x] `test_power_on_state()` - Validates initial state after power-on
 - [x] `test_reset_after_power_on()` - Tests reset immediately after power-on
 - [x] `test_reset_preserves_registers()` - Verifies A, X, Y and flags preserved
@@ -205,8 +257,10 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 **Note:** Reset performing 3 dummy stack reads (cycle-accurate implementation) is tracked separately in issue #7.
 
 ### 14. Edge Case Tests
+
 **Status:** Limited  
 **Missing:**
+
 - [ ] Multiple interrupts in succession
 - [ ] Interrupt during BRK instruction
 - [ ] RTI immediately followed by interrupt
@@ -216,10 +270,12 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 ## Architecture/Design Issues
 
 ### 15. Interrupt State Management
+
 **Status:** Minimal  
 **Current:** Only `nmi_pending` boolean flag
 
 **Needs:**
+
 - [ ] IRQ pending state tracking
 - [ ] Edge detector state for NMI
 - [ ] Level detector state for IRQ
@@ -228,18 +284,22 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 - [ ] Interrupt priority handling
 
 ### 16. Cycle-Level Interrupt Integration
+
 **Status:** Not integrated  
 **Issue:** Current cycle-accurate system doesn't check for interrupts
 
 **Needs:**
+
 - [ ] Interrupt polling at appropriate cycle boundaries
 - [ ] Integration with instruction completion
 - [ ] Integration with branch instructions
 - [ ] Proper φ1/φ2 cycle modeling
 
 ### 17. Public API for Interrupts
+
 **Status:** Basic methods exist but incomplete  
 **Current API:**
+
 - `trigger_nmi()` - implemented but not cycle-accurate polling
 - `trigger_irq()` - stub only
 - `set_nmi_pending()` - sets flag but doesn't trigger
@@ -247,6 +307,7 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 - `should_poll_irq()` - stub returns false
 
 **Missing:**
+
 - [ ] Proper external IRQ/NMI signal interface
 - [ ] Edge detection for NMI line
 - [ ] Level detection for IRQ line
@@ -255,44 +316,43 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 ## Lower Priority Items
 
 ### 18. Open Bus Behavior
+
 **Status:** Unknown  
 **Wiki Reference:** Mentioned in power-up state testing
 
 **Needs investigation:**
+
 - [ ] Verify open bus behavior during reset dummy reads
 - [ ] Open bus during invalid memory access
 
 ### 19. Timing Precision
+
 **Status:** Good for instruction execution  
 **Wiki Reference:** [CPU Frequencies](https://www.nesdev.org/wiki/CPU#Frequencies)
 
 **Current:** Tracks cycles, timing is correct  
 **Future consideration:**
+
 - [ ] NTSC vs PAL timing differences (if needed for accuracy)
 - [ ] Master clock synchronization options
 
 ## Summary
 
 **High Priority (Blocking):**
+
 1. IRQ implementation (complete stub)
 2. Interrupt polling behavior
 3. Delayed IRQ response after CLI/SEI/PLP
 4. Interrupt hijacking (complete implementation)
 
-**Medium Priority (Important for accuracy):**
-5. Branch instruction interrupt polling
-6. Reset sequence cycle-accurate dummy reads
-7. B flag verification in all interrupt paths
-8. Comprehensive interrupt tests
+**Medium Priority (Important for accuracy):** 5. Branch instruction interrupt polling 6. Reset sequence cycle-accurate dummy reads 7. B flag verification in all interrupt paths 8. Comprehensive interrupt tests
 
-**Low Priority (Polish):**
-9. Power-up vs Reset API clarity
-10. Open bus behavior
-11. Documentation improvements
+**Low Priority (Polish):** 9. Power-up vs Reset API clarity 10. Open bus behavior 11. Documentation improvements
 
 ## Test ROMs to Validate
 
 From NESdev Wiki recommendations:
+
 - [ ] cpu_interrupts_v2 - Tests interrupt behavior
 - [ ] branch_timing_tests - Tests branch and interrupt interaction
 - [ ] cpu_reset - Tests reset behavior
