@@ -89,14 +89,11 @@ impl Status {
 
         if self.vblank_flag {
             status |= 0b1000_0000; // Bit 7: VBlank
-            // println!("PPU Status: VBlank flag set");
         }
         if self.sprite_0_hit {
-            // println!("PPU Status: Sprite 0 Hit flag set");
             status |= 0b0100_0000; // Bit 6: Sprite 0 hit
         }
         if self.sprite_overflow {
-            // println!("PPU Status: Reading status with Sprite Overflow flag set");
             status |= 0b0010_0000; // Bit 5: Sprite overflow
         }
 
@@ -141,7 +138,6 @@ impl Status {
     /// Apply pending sprite 0 hit flag (call at start of cycle)
     pub fn apply_pending_sprite_0_hit(&mut self) {
         if self.pending_sprite_0_hit {
-            // println!("PPU Status: Applying pending Sprite 0 Hit flag");
             self.sprite_0_hit = true;
             self.pending_sprite_0_hit = false;
         }

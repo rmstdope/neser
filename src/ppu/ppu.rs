@@ -294,15 +294,6 @@ impl Ppu {
             let screen_y = scanline as u32;
             let mut bg_pixel_for_hit = 0u8; // Save for sprite 0 hit detection after shift
 
-            // Debug: Log shift register state at very start of rendering
-            // if scanline == 0 && pixel == 1 {
-            //     let (lo, hi) = self.background.debug_shift_registers();
-            //     println!(
-            //         "*** START OF SCANLINE 0 RENDERING: shift_lo={:04X}, shift_hi={:04X}",
-            //         lo, hi
-            //     );
-            // }
-
             if is_rendering_enabled {
                 // Get background pixel (only if background rendering is enabled)
                 // Note: Shift registers were shifted above, after load (if any) but before reading
@@ -479,7 +470,6 @@ impl Ppu {
                                     self.sprites.sprite_0_pixel_at(screen_x as i16);
 
                                 // Sprite 0 hit when both background and sprite have non-transparent pixels
-                                // Use bg_pixel from before shift
                                 if sprite_0_present && bg_pixel_for_hit != 0 {
                                     self.status.set_sprite_0_hit();
                                 }

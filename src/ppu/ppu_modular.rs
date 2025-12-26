@@ -57,6 +57,8 @@ impl PPUModular {
 
     /// Process a single PPU cycle
     fn tick(&mut self) {
+
+
         // Advance timing
         let _skipped = self.timing.tick(self.registers.is_rendering_enabled());
 

@@ -71,6 +71,12 @@ impl Nes {
             apu.clone(),
         )));
         let cpu = cpu2::Cpu2::new(memory.clone());
+        
+        // Initialize PPU 1 cycle ahead for proper sprite 0 hit timing
+        // This creates a one-cycle offset where PPU state changes become
+        // visible to the CPU one cycle later, matching hardware behavior
+        ppu.borrow_mut().run_ppu_cycles(1);
+        
         Self {
             ppu,
             apu,
@@ -103,6 +109,9 @@ impl Nes {
         self.apu.borrow_mut().reset(cpu_cycle);
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
+        
+        // Re-establish 1-cycle PPU offset after reset
+        self.ppu.borrow_mut().run_ppu_cycles(1);
     }
 
     /// Run one CPU "tick", executing one opcode and the corresponding PPU cycles
@@ -599,7 +608,8 @@ mod tests {
         // nestest automated test starts execution at $C000 (not reset vector $C004)
         nes.cpu.get_state().pc = 0xC000;
         // CPU reset takes 7 cycles, manually sync PPU and CPU cycle counters
-        nes.ppu.borrow_mut().run_ppu_cycles(21); // 7 * 3 = 21 PPU cycles for NTSC
+        // PPU already has 1 cycle from initialization, so add 20 more (21 - 1 = 20)
+        nes.ppu.borrow_mut().run_ppu_cycles(20); // 7 * 3 = 21 PPU cycles for NTSC
         nes.cpu.set_total_cycles(7); // Account for reset cycles
 
         for line in golden_log.lines() {
@@ -668,8 +678,9 @@ mod tests {
         nes.cpu.get_state().pc = 0x0000; // Set PC to RAM address
 
         // NOP takes 2 CPU cycles, so PPU should run 6 cycles (3x ratio for NTSC)
+        // Plus 1 cycle for initial PPU offset (sprite 0 hit timing correction)
         nes.run_cpu_tick();
-        assert_eq!(nes.ppu.borrow().total_cycles(), 6);
+        assert_eq!(nes.ppu.borrow().total_cycles(), 7);
     }
 
     #[test]
@@ -680,9 +691,10 @@ mod tests {
         nes.cpu.get_state().pc = 0x0000;
 
         // NOP takes 2 CPU cycles, PAL ratio is 3.2, so 2 * 3.2 = 6.4
+        // Plus 1 cycle for initial PPU offset
         // Should accumulate fractional part
         nes.run_cpu_tick();
-        assert_eq!(nes.ppu.borrow().total_cycles(), 6);
+        assert_eq!(nes.ppu.borrow().total_cycles(), 7);
     }
 
     #[test]
@@ -695,11 +707,11 @@ mod tests {
         nes.cpu.get_state().pc = 0x0000;
 
         // Run 5 NOPs: 5 instructions * 2 cycles = 10 CPU cycles
-        // 10 * 3.2 = 32 PPU cycles
+        // 10 * 3.2 = 32 PPU cycles, plus 1 cycle initial offset
         for _ in 0..5 {
             nes.run_cpu_tick();
         }
-        assert_eq!(nes.ppu.borrow().total_cycles(), 32);
+        assert_eq!(nes.ppu.borrow().total_cycles(), 33);
     }
 
     #[test]
@@ -711,11 +723,11 @@ mod tests {
         }
         nes.cpu.get_state().pc = 0x0000;
 
-        // 3 NOPs = 6 CPU cycles, 18 PPU cycles (6 * 3)
+        // 3 NOPs = 6 CPU cycles, 18 PPU cycles (6 * 3), plus 1 cycle initial offset
         nes.run_cpu_tick();
         nes.run_cpu_tick();
         nes.run_cpu_tick();
-        assert_eq!(nes.ppu.borrow().total_cycles(), 18);
+        assert_eq!(nes.ppu.borrow().total_cycles(), 19);
     }
 
     #[test]
@@ -725,7 +737,7 @@ mod tests {
         nes.cpu.get_state().pc = 0x0000;
 
         nes.run_cpu_tick();
-        assert_eq!(nes.ppu.borrow().total_cycles(), 6);
+        assert_eq!(nes.ppu.borrow().total_cycles(), 7); // 6 + 1 offset
 
         // Reset just the PPU to test the counter is cleared
         nes.ppu.borrow_mut().reset();

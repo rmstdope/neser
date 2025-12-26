@@ -368,7 +368,7 @@ mod tests {
     // blargg_test!(test_cpu, "roms/cpu.nes");
 
     blargg_test!(test_4015_cleared, "roms/blargg/apu_reset/4015_cleared.nes");
-    //blargg_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
+    blargg_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
     blargg_test!(test_4017_written, "roms/blargg/apu_reset/4017_written.nes");
     blargg_test!(
         test_irq_flag_cleared,
