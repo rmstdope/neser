@@ -367,28 +367,21 @@ mod tests {
 
     // blargg_test!(test_cpu, "roms/cpu.nes");
 
-    blargg_test!(test_4015_cleared, "roms/blargg/4015_cleared.nes");
-
-    #[test]
-    #[ignore = "Never worked"]
-    fn test_4017_timing() {
-        let mut runner = BlarggTestRunner::new(
-            "roms/blargg/4017_timing.nes",
-            180,
-            BlarggTestVerification::StatusByte,
-        );
-        let result = runner.run_test();
-        assert_eq!(
-            result,
-            BlarggTestResult::Pass,
-            "4017_timing.nes should pass"
-        );
-    }
-
-    blargg_test!(test_4017_written, "roms/blargg/4017_written.nes");
-    blargg_test!(test_irq_flag_cleared, "roms/blargg/irq_flag_cleared.nes");
-    blargg_test!(test_len_ctrs_enabled, "roms/blargg/len_ctrs_enabled.nes");
-    blargg_test!(test_works_immediately, "roms/blargg/works_immediately.nes");
+    blargg_test!(test_4015_cleared, "roms/blargg/apu_reset/4015_cleared.nes");
+    //blargg_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
+    blargg_test!(test_4017_written, "roms/blargg/apu_reset/4017_written.nes");
+    blargg_test!(
+        test_irq_flag_cleared,
+        "roms/blargg/apu_reset/irq_flag_cleared.nes"
+    );
+    blargg_test!(
+        test_len_ctrs_enabled,
+        "roms/blargg/apu_reset/len_ctrs_enabled.nes"
+    );
+    blargg_test!(
+        test_works_immediately,
+        "roms/blargg/apu_reset/works_immediately.nes"
+    );
     blargg_test!(test_1_len_ctr, "roms/blargg/1-len_ctr.nes");
     blargg_test!(test_2_len_table, "roms/blargg/2-len_table.nes");
     blargg_test!(test_3_irq_flags, "roms/blargg/3-irq_flag.nes");
