@@ -842,6 +842,7 @@ mod tests {
             pc: 0x0400,
             p: 0,
             delay_interrupt_check: false,
+            saved_i_flag: false,
         };
 
         let mut jsr = Jsr::new();
@@ -891,6 +892,7 @@ mod tests {
             pc: 0x0500,
             p: 0,
             delay_interrupt_check: false,
+            saved_i_flag: false,
         };
 
         let mut jsr = Jsr::new();
@@ -928,6 +930,7 @@ mod tests {
             pc: 0x0500,
             p: 0,
             delay_interrupt_check: false,
+            saved_i_flag: false,
         };
 
         let mut jsr = Jsr::new();
@@ -962,6 +965,7 @@ mod tests {
             pc: 0x0400,
             p: 0xDD,
             delay_interrupt_check: false,
+            saved_i_flag: false,
         };
 
         let mut jmp = Jmp::new();
@@ -1436,6 +1440,9 @@ impl InstructionType for Plp {
                 // Cycle 3: Pull status from stack
                 let addr = 0x0100 | (cpu_state.sp as u16);
                 let status = memory.borrow().read(addr);
+
+                // Save the OLD I flag value before changing it
+                cpu_state.saved_i_flag = (cpu_state.p & super::types::FLAG_INTERRUPT) != 0;
 
                 // Set status register, but preserve bits 4 and 5
                 // Bit 5 (unused) is always 1, bit 4 (B flag) is not stored in P
@@ -2208,6 +2215,9 @@ impl InstructionType for Cli {
         match self.cycle {
             0 => {
                 // Cycle 1: Clear interrupt disable flag
+                // Save the OLD I flag value before changing it
+                cpu_state.saved_i_flag = (cpu_state.p & super::types::FLAG_INTERRUPT) != 0;
+                // Clear I flag
                 cpu_state.p &= !super::types::FLAG_INTERRUPT;
                 // Set delay flag to implement 1-instruction IRQ check delay
                 cpu_state.delay_interrupt_check = true;
@@ -2782,6 +2792,9 @@ impl InstructionType for Sei {
         match self.cycle {
             0 => {
                 // Cycle 1: Set interrupt disable flag
+                // Save the OLD I flag value before changing it
+                cpu_state.saved_i_flag = (cpu_state.p & super::types::FLAG_INTERRUPT) != 0;
+                // Set I flag
                 cpu_state.p |= super::types::FLAG_INTERRUPT;
                 // Set delay flag to implement 1-instruction IRQ check delay
                 cpu_state.delay_interrupt_check = true;

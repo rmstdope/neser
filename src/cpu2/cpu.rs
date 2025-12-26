@@ -71,6 +71,10 @@ pub struct Cpu2 {
     /// This implements the hardware behavior where these instructions
     /// allow exactly one instruction to execute before IRQ is checked
     delay_interrupt_check: bool,
+    /// The I flag value to use for interrupt polling during delay period
+    /// When CLI/SEI/PLP execute, they save the OLD I flag value here,
+    /// and interrupt polling uses this value during the delay period
+    saved_i_flag_for_delay: bool,
 }
 
 impl Cpu2 {
@@ -87,6 +91,7 @@ impl Cpu2 {
                 pc: 0,          // Program counter will be loaded from reset vector
                 p: FLAG_UNUSED, // Status at power-on before reset: only unused bit set (bit 5)
                 delay_interrupt_check: false,
+                saved_i_flag: false,
             },
             memory,
             halted: false,
@@ -96,6 +101,7 @@ impl Cpu2 {
             irq_pending: false,
             in_interrupt_sequence: false,
             delay_interrupt_check: false,
+            saved_i_flag_for_delay: false,
         }
     }
 
@@ -153,8 +159,12 @@ impl Cpu2 {
 
                 // Handle interrupt check delay (1-instruction delay after CLI/SEI/PLP)
                 // If a delay was just requested by the current instruction, activate it
+                // and save the CURRENT I flag value (before the instruction changed it)
                 if self.state.delay_interrupt_check {
                     self.delay_interrupt_check = true;
+                    // Save the I flag value BEFORE the instruction modified it
+                    // The instruction should have saved this in the state
+                    self.saved_i_flag_for_delay = self.state.saved_i_flag;
                     self.state.delay_interrupt_check = false;
                 } else if self.delay_interrupt_check {
                     // Delay was active - one instruction has now executed, so clear it
@@ -1990,9 +2000,17 @@ impl Cpu2 {
     /// IRQ is serviced only if:
     /// 1. IRQ is pending (irq_pending flag set)
     /// 2. Interrupt disable flag (I) is clear
-    /// 3. No delay from CLI/SEI/PLP (delay_interrupt_check is false)
+    /// 3. During delay period after CLI/SEI/PLP, use the SAVED I flag value (before instruction changed it)
     pub fn should_poll_irq(&self) -> bool {
-        !self.delay_interrupt_check && self.irq_pending && (self.state.p & FLAG_INTERRUPT) == 0
+        // During delay period, use the saved I flag value (from before CLI/SEI/PLP changed it)
+        // This allows "CLI SEI" to fire one IRQ using the I=0 value from before SEI set I=1
+        let i_flag = if self.delay_interrupt_check {
+            self.saved_i_flag_for_delay
+        } else {
+            (self.state.p & FLAG_INTERRUPT) != 0
+        };
+        
+        self.irq_pending && !i_flag
     }
 
     /// Trigger an IRQ (Interrupt Request)

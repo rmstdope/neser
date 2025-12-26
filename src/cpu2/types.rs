@@ -49,6 +49,9 @@ pub struct CpuState {
     pub p: u8,
     /// Flag to delay interrupt checking by one instruction (CLI/SEI/PLP)
     pub delay_interrupt_check: bool,
+    /// The I flag value before CLI/SEI/PLP modified it
+    /// Used during the delay period to determine interrupt polling
+    pub saved_i_flag: bool,
 }
 
 impl Default for CpuState {
@@ -61,6 +64,7 @@ impl Default for CpuState {
             pc: 0,
             p: 0,
             delay_interrupt_check: false,
+            saved_i_flag: false,
         }
     }
 }
