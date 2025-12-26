@@ -841,6 +841,7 @@ mod tests {
             sp: 0xFD,
             pc: 0x0400,
             p: 0,
+            delay_interrupt_check: false,
         };
 
         let mut jsr = Jsr::new();
@@ -889,6 +890,7 @@ mod tests {
             sp: 0xFF, // Full stack
             pc: 0x0500,
             p: 0,
+            delay_interrupt_check: false,
         };
 
         let mut jsr = Jsr::new();
@@ -925,6 +927,7 @@ mod tests {
             sp: 0x01, // Near bottom of stack
             pc: 0x0500,
             p: 0,
+            delay_interrupt_check: false,
         };
 
         let mut jsr = Jsr::new();
@@ -958,6 +961,7 @@ mod tests {
             sp: 0xFD,
             pc: 0x0400,
             p: 0xDD,
+            delay_interrupt_check: false,
         };
 
         let mut jmp = Jmp::new();
@@ -1436,6 +1440,9 @@ impl InstructionType for Plp {
                 // Set status register, but preserve bits 4 and 5
                 // Bit 5 (unused) is always 1, bit 4 (B flag) is not stored in P
                 cpu_state.p = (status & 0xCF) | 0x20;
+
+                // Set delay flag to implement 1-instruction IRQ check delay
+                cpu_state.delay_interrupt_check = true;
 
                 self.cycle = 3;
             }
@@ -2202,6 +2209,8 @@ impl InstructionType for Cli {
             0 => {
                 // Cycle 1: Clear interrupt disable flag
                 cpu_state.p &= !super::types::FLAG_INTERRUPT;
+                // Set delay flag to implement 1-instruction IRQ check delay
+                cpu_state.delay_interrupt_check = true;
                 self.cycle = 1;
             }
             _ => unreachable!(),
@@ -2774,6 +2783,8 @@ impl InstructionType for Sei {
             0 => {
                 // Cycle 1: Set interrupt disable flag
                 cpu_state.p |= super::types::FLAG_INTERRUPT;
+                // Set delay flag to implement 1-instruction IRQ check delay
+                cpu_state.delay_interrupt_check = true;
                 self.cycle = 1;
             }
             _ => unreachable!(),

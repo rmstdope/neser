@@ -71,12 +71,12 @@ impl Nes {
             apu.clone(),
         )));
         let cpu = cpu2::Cpu2::new(memory.clone());
-        
+
         // Initialize PPU 1 cycle ahead for proper sprite 0 hit timing
         // This creates a one-cycle offset where PPU state changes become
         // visible to the CPU one cycle later, matching hardware behavior
         ppu.borrow_mut().run_ppu_cycles(1);
-        
+
         Self {
             ppu,
             apu,
@@ -109,7 +109,7 @@ impl Nes {
         self.apu.borrow_mut().reset(cpu_cycle);
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
-        
+
         // Re-establish 1-cycle PPU offset after reset
         self.ppu.borrow_mut().run_ppu_cycles(1);
     }
@@ -211,8 +211,12 @@ impl Nes {
 
         // Check for IRQ after executing instruction
         // IRQ is maskable and checked after NMI
-        // Skip IRQ check if there's a 1-instruction delay (CLI/SEI/PLP)
-        if self.cpu.should_poll_irq() && self.apu.borrow().poll_irq() {
+        // First, update the IRQ pending state based on hardware sources (APU)
+        let irq_asserted = self.apu.borrow().poll_irq();
+        self.cpu.set_irq_pending(irq_asserted);
+
+        // Then check if CPU should service the IRQ (not masked and not in delay period)
+        if self.cpu.should_poll_irq() {
             let irq_cycles = self.cpu.trigger_irq();
             if irq_cycles > 0 {
                 // Only tick if IRQ was actually taken (not masked)
@@ -1184,4 +1188,3 @@ mod tests {
         rom
     }
 }
-

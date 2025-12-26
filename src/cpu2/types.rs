@@ -47,6 +47,8 @@ pub struct CpuState {
     /// Bit 1: Z (Zero)
     /// Bit 0: C (Carry)
     pub p: u8,
+    /// Flag to delay interrupt checking by one instruction (CLI/SEI/PLP)
+    pub delay_interrupt_check: bool,
 }
 
 impl Default for CpuState {
@@ -58,6 +60,7 @@ impl Default for CpuState {
             sp: 0,
             pc: 0,
             p: 0,
+            delay_interrupt_check: false,
         }
     }
 }

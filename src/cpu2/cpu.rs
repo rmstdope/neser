@@ -67,6 +67,10 @@ pub struct Cpu2 {
     /// Track if we're currently in an interrupt sequence
     /// Used to prevent interrupt polling during interrupt handler execution
     in_interrupt_sequence: bool,
+    /// Delay IRQ polling by one instruction after CLI/SEI/PLP
+    /// This implements the hardware behavior where these instructions
+    /// allow exactly one instruction to execute before IRQ is checked
+    delay_interrupt_check: bool,
 }
 
 impl Cpu2 {
@@ -82,6 +86,7 @@ impl Cpu2 {
                 // handler first runs.
                 pc: 0,          // Program counter will be loaded from reset vector
                 p: FLAG_UNUSED, // Status at power-on before reset: only unused bit set (bit 5)
+                delay_interrupt_check: false,
             },
             memory,
             halted: false,
@@ -90,6 +95,7 @@ impl Cpu2 {
             nmi_pending: false,
             irq_pending: false,
             in_interrupt_sequence: false,
+            delay_interrupt_check: false,
         }
     }
 
@@ -144,6 +150,16 @@ impl Cpu2 {
                 // This allows interrupt polling to happen after at least one
                 // instruction has executed from the interrupt handler
                 self.in_interrupt_sequence = false;
+
+                // Handle interrupt check delay (1-instruction delay after CLI/SEI/PLP)
+                // If a delay was just requested by the current instruction, activate it
+                if self.state.delay_interrupt_check {
+                    self.delay_interrupt_check = true;
+                    self.state.delay_interrupt_check = false;
+                } else if self.delay_interrupt_check {
+                    // Delay was active - one instruction has now executed, so clear it
+                    self.delay_interrupt_check = false;
+                }
 
                 return true; // Instruction completed
             }
@@ -1974,8 +1990,9 @@ impl Cpu2 {
     /// IRQ is serviced only if:
     /// 1. IRQ is pending (irq_pending flag set)
     /// 2. Interrupt disable flag (I) is clear
+    /// 3. No delay from CLI/SEI/PLP (delay_interrupt_check is false)
     pub fn should_poll_irq(&self) -> bool {
-        self.irq_pending && (self.state.p & FLAG_INTERRUPT) == 0
+        !self.delay_interrupt_check && self.irq_pending && (self.state.p & FLAG_INTERRUPT) == 0
     }
 
     /// Trigger an IRQ (Interrupt Request)
@@ -2022,6 +2039,13 @@ impl Cpu2 {
         // IRQ takes 7 CPU cycles
         self.total_cycles += 7;
         7
+    }
+
+    /// Set the interrupt check delay flag
+    /// This should be called by CLI, SEI, and PLP instructions to implement
+    /// the hardware behavior where exactly one instruction executes before IRQ is checked
+    pub fn set_interrupt_check_delay(&mut self) {
+        self.delay_interrupt_check = true;
     }
 
     /// Poll for pending interrupts and return which one should be serviced (if any)
