@@ -64,6 +64,9 @@ pub struct Cpu2 {
     /// IRQ pending flag - set by external hardware (NES loop)
     /// Checked at end of instructions if I flag is clear
     pub irq_pending: bool,
+    /// Track if we're currently in an interrupt sequence
+    /// Used to prevent interrupt polling during interrupt handler execution
+    in_interrupt_sequence: bool,
 }
 
 impl Cpu2 {
@@ -86,6 +89,7 @@ impl Cpu2 {
             current_instruction: None,
             nmi_pending: false,
             irq_pending: false,
+            in_interrupt_sequence: false,
         }
     }
 
@@ -135,6 +139,12 @@ impl Cpu2 {
             if instruction.is_done() {
                 self.current_instruction = None;
                 self.total_cycles += 1;
+
+                // Clear in_interrupt_sequence flag when an instruction completes
+                // This allows interrupt polling to happen after at least one
+                // instruction has executed from the interrupt handler
+                self.in_interrupt_sequence = false;
+
                 return true; // Instruction completed
             }
         }
@@ -1814,10 +1824,10 @@ impl Cpu2 {
     }
 
     /// Reset the CPU
-    /// 
+    ///
     /// According to NES hardware behavior, reset goes through the same 7-cycle
     /// sequence as NMI/IRQ interrupts, but suppresses writes to the stack.
-    /// 
+    ///
     /// Cycle-by-cycle breakdown:
     /// 1. Fetch opcode (forced to $00, discarded)
     /// 2. Read next instruction byte (discarded, PC increment suppressed)
@@ -1826,7 +1836,7 @@ impl Cpu2 {
     /// 5. Dummy read from stack at $0100+SP, decrement SP
     /// 6. Read PCL from reset vector ($FFFC), set I flag
     /// 7. Read PCH from reset vector ($FFFD)
-    /// 
+    ///
     /// Register behavior:
     /// - A, X, Y registers are UNCHANGED (preserved from before reset)
     /// - Status flags C, Z, D, V, N are UNCHANGED (preserved from before reset)
@@ -1834,7 +1844,7 @@ impl Cpu2 {
     /// - SP is decremented by 3 (via 3 dummy stack reads, not writes)
     /// - PC is loaded from reset vector at $FFFC-$FFFD
     /// - Takes 7 CPU cycles total
-    /// 
+    ///
     /// References:
     /// - https://www.nesdev.org/wiki/CPU_power_up_state
     /// - https://www.nesdev.org/wiki/CPU_interrupts#IRQ_and_NMI_tick-by-tick_execution
@@ -1842,7 +1852,7 @@ impl Cpu2 {
         // Cycles 1-2: Opcode fetch and read (both discarded)
         // These happen automatically before reset is called in hardware
         // We don't simulate them explicitly here since reset() is called directly
-        
+
         // Cycles 3-5: Perform 3 dummy stack reads (writes are suppressed)
         // Each read decrements SP to simulate the stack push sequence
         for _ in 0..3 {
@@ -1864,6 +1874,7 @@ impl Cpu2 {
         self.current_instruction = None;
         self.nmi_pending = false;
         self.irq_pending = false;
+        self.in_interrupt_sequence = false;
 
         // Reset takes 7 cycles
         self.total_cycles = 7;
@@ -1883,6 +1894,13 @@ impl Cpu2 {
 
         // Set Interrupt Disable flag
         self.state.p |= FLAG_INTERRUPT;
+
+        // Clear NMI pending flag (NMI has been serviced)
+        self.nmi_pending = false;
+
+        // Mark that we're now in interrupt sequence
+        // This prevents interrupt polling until at least one instruction executes
+        self.in_interrupt_sequence = true;
 
         // NMI takes 7 CPU cycles
         self.total_cycles += 7;
@@ -1961,12 +1979,12 @@ impl Cpu2 {
     }
 
     /// Trigger an IRQ (Interrupt Request)
-    /// 
+    ///
     /// IRQ follows the same 7-cycle sequence as NMI and BRK, but:
     /// - Can be masked by the I flag (unlike NMI which is non-maskable)
     /// - Uses the IRQ vector at $FFFE-$FFFF (same as BRK)
     /// - Pushes status with B flag clear (distinguishes from BRK)
-    /// 
+    ///
     /// Cycle-by-cycle breakdown:
     /// 1. Fetch opcode (forced to $00, discarded)
     /// 2. Read next instruction byte (discarded)
@@ -1975,7 +1993,7 @@ impl Cpu2 {
     /// 5. Push P to stack (B flag clear, unused flag set), decrement SP
     /// 6. Read PCL from IRQ vector ($FFFE), set I flag
     /// 7. Read PCH from IRQ vector ($FFFF)
-    /// 
+    ///
     /// Returns the number of cycles consumed (7 cycles)
     pub fn trigger_irq(&mut self) -> u8 {
         // Push PC to stack (high byte first, then low byte)
@@ -1997,9 +2015,44 @@ impl Cpu2 {
         // Clear IRQ pending flag (IRQ has been serviced)
         self.irq_pending = false;
 
+        // Mark that we're now in interrupt sequence
+        // This prevents interrupt polling until at least one instruction executes
+        self.in_interrupt_sequence = true;
+
         // IRQ takes 7 CPU cycles
         self.total_cycles += 7;
         7
+    }
+
+    /// Poll for pending interrupts and return which one should be serviced (if any)
+    ///
+    /// According to NESdev Wiki:
+    /// - Interrupt polling happens during the final cycle of most instructions
+    /// - NMI has priority over IRQ when both are pending
+    /// - Interrupt sequences themselves do not poll for interrupts
+    ///   (at least one instruction from interrupt handler executes before next interrupt)
+    ///
+    /// Returns:
+    /// - Some(true) if NMI should be serviced
+    /// - Some(false) if IRQ should be serviced  
+    /// - None if no interrupt should be serviced
+    pub fn poll_pending_interrupt(&self) -> Option<bool> {
+        // Don't poll during interrupt sequences
+        if self.in_interrupt_sequence {
+            return None;
+        }
+
+        // NMI has priority over IRQ
+        if self.nmi_pending {
+            return Some(true); // true = NMI
+        }
+
+        // Check IRQ only if I flag is clear
+        if self.should_poll_irq() {
+            return Some(false); // false = IRQ
+        }
+
+        None
     }
 }
 
@@ -2183,10 +2236,7 @@ mod tests {
         );
 
         // - Reset takes 7 cycles
-        assert_eq!(
-            cpu.total_cycles, 7,
-            "Reset should take 7 cycles"
-        );
+        assert_eq!(cpu.total_cycles, 7, "Reset should take 7 cycles");
     }
 
     #[test]
@@ -2349,11 +2399,7 @@ mod tests {
         // Flags should still be preserved (except I which is always set)
         assert_eq!(cpu.state.p & FLAG_CARRY, FLAG_CARRY, "Carry preserved");
         assert_eq!(cpu.state.p & FLAG_ZERO, FLAG_ZERO, "Zero preserved");
-        assert_eq!(
-            cpu.state.p & FLAG_INTERRUPT,
-            FLAG_INTERRUPT,
-            "I flag set"
-        );
+        assert_eq!(cpu.state.p & FLAG_INTERRUPT, FLAG_INTERRUPT, "I flag set");
     }
 
     #[test]
@@ -2403,7 +2449,10 @@ mod tests {
         assert_eq!(cpu.state.sp, 0xFA, "SP should be 0xFD - 3 = 0xFA");
 
         // PC should be loaded from reset vector
-        assert_eq!(cpu.state.pc, 0x8000, "PC should be loaded from reset vector");
+        assert_eq!(
+            cpu.state.pc, 0x8000,
+            "PC should be loaded from reset vector"
+        );
     }
 
     #[test]
@@ -2631,20 +2680,157 @@ mod tests {
         );
 
         // Verify data was pushed to correct wrapped addresses
-        assert_eq!(
-            memory.borrow().read(0x0101),
-            0xAB,
-            "PCH pushed to 0x0101"
-        );
-        assert_eq!(
-            memory.borrow().read(0x0100),
-            0xCD,
-            "PCL pushed to 0x0100"
-        );
+        assert_eq!(memory.borrow().read(0x0101), 0xAB, "PCH pushed to 0x0101");
+        assert_eq!(memory.borrow().read(0x0100), 0xCD, "PCL pushed to 0x0100");
         assert_eq!(
             memory.borrow().read(0x01FF) & FLAG_UNUSED,
             FLAG_UNUSED,
             "Status pushed to 0x01FF (wrapped)"
+        );
+    }
+
+    #[test]
+    fn test_interrupt_polling_nmi_priority() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        // Set up interrupt vectors
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00; // Reset vector ($8000)
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFA] = 0x00; // NMI vector ($9000)
+        prg_rom[0x7FFB] = 0x90;
+        prg_rom[0x7FFE] = 0x00; // IRQ vector ($A000)
+        prg_rom[0x7FFF] = 0xA0;
+
+        // Place a NOP instruction at $8000
+        prg_rom[0x0000] = 0xEA; // NOP
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x8000;
+        cpu.state.sp = 0xFD;
+        cpu.state.p = 0; // I flag clear, so IRQ can be serviced
+
+        // Set both NMI and IRQ pending before executing instruction
+        cpu.nmi_pending = true;
+        cpu.irq_pending = true;
+
+        // Execute NOP instruction cycle by cycle
+        let mut cycles = 0;
+        loop {
+            let done = cpu.tick_cycle();
+            cycles += 1;
+            if done {
+                break;
+            }
+        }
+
+        assert_eq!(cycles, 2, "NOP should take 2 cycles");
+        assert_eq!(cpu.state.pc, 0x8001, "PC should advance past NOP");
+
+        // After instruction completes, check interrupt polling
+        // NMI should have priority over IRQ
+        let pending_interrupt = cpu.poll_pending_interrupt();
+        assert_eq!(
+            pending_interrupt,
+            Some(true),
+            "NMI (true) should be returned when both NMI and IRQ are pending"
+        );
+
+        // Test IRQ alone
+        cpu.nmi_pending = false;
+        cpu.irq_pending = true;
+        let pending_interrupt = cpu.poll_pending_interrupt();
+        assert_eq!(
+            pending_interrupt,
+            Some(false),
+            "IRQ (false) should be returned when only IRQ is pending"
+        );
+
+        // Test no interrupt
+        cpu.irq_pending = false;
+        let pending_interrupt = cpu.poll_pending_interrupt();
+        assert_eq!(
+            pending_interrupt, None,
+            "None should be returned when no interrupts are pending"
+        );
+    }
+
+    #[test]
+    fn test_interrupt_not_polled_during_interrupt_sequence() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00; // Reset vector
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFA] = 0x00; // NMI vector ($9000)
+        prg_rom[0x7FFB] = 0x90;
+
+        // Place NOP at NMI handler
+        prg_rom[0x1000] = 0xEA; // NOP at $9000
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x1234;
+        cpu.state.sp = 0xFD;
+        cpu.state.p = 0;
+
+        // Set NMI pending
+        cpu.nmi_pending = true;
+
+        // Trigger NMI
+        cpu.trigger_nmi();
+
+        // PC should now point to NMI handler
+        assert_eq!(cpu.state.pc, 0x9000, "PC should be at NMI handler");
+        assert!(!cpu.nmi_pending, "NMI pending should be cleared");
+        assert!(
+            cpu.in_interrupt_sequence,
+            "Should be marked as in interrupt sequence"
+        );
+
+        // Set NMI pending again during the interrupt sequence
+        cpu.nmi_pending = true;
+
+        // poll_pending_interrupt() should return None during interrupt sequence
+        let pending_interrupt = cpu.poll_pending_interrupt();
+        assert_eq!(
+            pending_interrupt, None,
+            "No interrupt should be polled during interrupt sequence"
+        );
+
+        // Now execute one instruction (NOP) from the handler
+        let mut cycles = 0;
+        loop {
+            let done = cpu.tick_cycle();
+            cycles += 1;
+            if done {
+                break;
+            }
+        }
+
+        assert_eq!(cycles, 2, "NOP should take 2 cycles");
+        assert!(
+            !cpu.in_interrupt_sequence,
+            "Should no longer be in interrupt sequence after instruction completes"
+        );
+
+        // Now polling should work again
+        let pending_interrupt = cpu.poll_pending_interrupt();
+        assert_eq!(
+            pending_interrupt,
+            Some(true),
+            "NMI should be polled after one instruction executes from handler"
         );
     }
 

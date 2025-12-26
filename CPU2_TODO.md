@@ -26,15 +26,22 @@ Based on review of [NESdev Wiki CPU documentation](https://www.nesdev.org/wiki/C
 - `test_irq_stack_wrapping` - Stack pointer wrapping
 
 ### 2. Interrupt Polling Behavior
-**Status:** Not implemented  
+**Status:** ✅ FIXED (Partial - Core polling logic implemented)
 **Wiki Reference:** [CPU interrupts - Detailed interrupt behavior](https://www.nesdev.org/wiki/CPU_interrupts#Detailed_interrupt_behavior)
 
-**Missing:**
-- [ ] NMI edge detection (high-to-low transition during φ2)
-- [ ] IRQ level detection (low level during φ2)
-- [ ] Interrupt polling happens during final cycle of most instructions
-- [ ] NMI has priority over IRQ when both pending
-- [ ] Interrupt sequences don't poll for interrupts (at least one instruction executes before next interrupt)
+**Implemented:**
+- [x] Interrupt polling infrastructure with `poll_pending_interrupt()` method
+- [x] NMI has priority over IRQ when both pending
+- [x] Interrupt sequences don't poll for interrupts (at least one instruction executes before next interrupt)
+- [x] `in_interrupt_sequence` flag tracks interrupt handler execution
+- [x] Automatic clearing of flag when instruction completes
+
+**Tests Added:**
+- `test_interrupt_polling_nmi_priority` - Verifies NMI priority over IRQ
+- `test_interrupt_not_polled_during_interrupt_sequence` - Verifies no polling during interrupt handler
+
+**Note:** Edge/level detection is handled externally by NES hardware (PPU/APU). 
+The CPU provides the polling mechanism via `poll_pending_interrupt()` which external code should call after each instruction.
 
 ### 3. Delayed IRQ Response After CLI, SEI, PLP
 **Status:** Not implemented  
