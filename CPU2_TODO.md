@@ -89,15 +89,28 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 - [x] Added comprehensive test `test_reset_preserves_registers()`
 
 ### 7. Reset Sequence
-**Status:** Mostly correct but simplified  
+**Status:** ✅ FIXED  
 **Wiki Reference:** [CPU interrupts - IRQ and NMI tick-by-tick](https://www.nesdev.org/wiki/CPU_interrupts#IRQ_and_NMI_tick-by-tick_execution)
 
-**Current:** Sets I flag, subtracts 3 from SP, loads PC from reset vector, adds 7 cycles  
-**Missing:**
-- [ ] Reset goes through same 7-cycle sequence as interrupts but suppresses writes
-- [ ] Should actually perform 3 dummy reads from stack (not just decrement SP)
-- [ ] Reset is like NMI/IRQ but with writes disabled
-- [ ] This is why I flag is always set on reset
+**Previous Implementation:** Just decremented SP by 3  
+**Fixed Implementation:**
+- [x] Reset performs 3 dummy stack reads (cycles 3-5)
+- [x] Each read accesses $0100+SP and decrements SP
+- [x] Reads PCL from $FFFC on cycle 6, sets I flag
+- [x] Reads PCH from $FFFD on cycle 7
+- [x] Stack memory is read but NOT written (writes suppressed)
+- [x] Matches hardware behavior: reset is like NMI/IRQ but suppresses writes
+
+**Cycle-by-cycle breakdown:**
+1. Fetch opcode (forced to $00, discarded) - not simulated
+2. Read next byte (discarded) - not simulated
+3. Dummy read from stack at $0100+SP, decrement SP
+4. Dummy read from stack at $0100+SP, decrement SP
+5. Dummy read from stack at $0100+SP, decrement SP
+6. Read PCL from $FFFC, set I flag
+7. Read PCH from $FFFD
+
+**Test Added:** `test_reset_performs_dummy_stack_reads()` validates that stack reads occur but memory is not modified.
 
 ## Status Flag Behavior
 

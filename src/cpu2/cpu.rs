@@ -1811,31 +1811,54 @@ impl Cpu2 {
 
     /// Reset the CPU
     /// 
-    /// According to NES hardware behavior:
+    /// According to NES hardware behavior, reset goes through the same 7-cycle
+    /// sequence as NMI/IRQ interrupts, but suppresses writes to the stack.
+    /// 
+    /// Cycle-by-cycle breakdown:
+    /// 1. Fetch opcode (forced to $00, discarded)
+    /// 2. Read next instruction byte (discarded, PC increment suppressed)
+    /// 3. Dummy read from stack at $0100+SP, decrement SP
+    /// 4. Dummy read from stack at $0100+SP, decrement SP
+    /// 5. Dummy read from stack at $0100+SP, decrement SP
+    /// 6. Read PCL from reset vector ($FFFC), set I flag
+    /// 7. Read PCH from reset vector ($FFFD)
+    /// 
+    /// Register behavior:
     /// - A, X, Y registers are UNCHANGED (preserved from before reset)
     /// - Status flags C, Z, D, V, N are UNCHANGED (preserved from before reset)
     /// - I flag is SET (interrupts disabled)
-    /// - SP is decremented by 3 (simulating 3 dummy stack writes)
+    /// - SP is decremented by 3 (via 3 dummy stack reads, not writes)
     /// - PC is loaded from reset vector at $FFFC-$FFFD
-    /// - Takes 7 CPU cycles
+    /// - Takes 7 CPU cycles total
     /// 
-    /// This matches the behavior documented at:
-    /// https://www.nesdev.org/wiki/CPU_power_up_state
+    /// References:
+    /// - https://www.nesdev.org/wiki/CPU_power_up_state
+    /// - https://www.nesdev.org/wiki/CPU_interrupts#IRQ_and_NMI_tick-by-tick_execution
     pub fn reset(&mut self) {
-        // Set I flag (bit 2) - interrupts are disabled after reset
+        // Cycles 1-2: Opcode fetch and read (both discarded)
+        // These happen automatically before reset is called in hardware
+        // We don't simulate them explicitly here since reset() is called directly
+        
+        // Cycles 3-5: Perform 3 dummy stack reads (writes are suppressed)
+        // Each read decrements SP to simulate the stack push sequence
+        for _ in 0..3 {
+            let stack_addr = STACK_BASE | (self.state.sp as u16);
+            let _ = self.memory.borrow().read(stack_addr); // Dummy read
+            self.state.sp = self.state.sp.wrapping_sub(1);
+        }
+
+        // Cycle 6: Read PCL from reset vector and set I flag
+        let pcl = self.memory.borrow().read(RESET_VECTOR);
         self.state.p |= FLAG_INTERRUPT;
 
-        // Subtract 3 from SP (wrapping if necessary)
-        // This simulates the 3 dummy stack writes that occur during reset
-        self.state.sp = self.state.sp.wrapping_sub(3);
+        // Cycle 7: Read PCH from reset vector
+        let pch = self.memory.borrow().read(RESET_VECTOR + 1);
+        self.state.pc = ((pch as u16) << 8) | (pcl as u16);
 
         // Clear cycle-accurate instruction state
         self.halted = false;
         self.current_instruction = None;
         self.nmi_pending = false;
-
-        // Read reset vector and set PC
-        self.state.pc = self.read_reset_vector();
 
         // Reset takes 7 cycles
         self.total_cycles = 7;
@@ -2275,6 +2298,56 @@ mod tests {
             FLAG_INTERRUPT,
             "I flag set"
         );
+    }
+
+    #[test]
+    fn test_reset_performs_dummy_stack_reads() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00; // Reset vector low byte
+        prg_rom[0x7FFD] = 0x80; // Reset vector high byte
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Set up known values in stack memory to verify reads happen
+        cpu.state.sp = 0xFD;
+        memory.borrow_mut().write(0x01FD, 0xAA, false); // Will be read during cycle 3
+        memory.borrow_mut().write(0x01FC, 0xBB, false); // Will be read during cycle 4
+        memory.borrow_mut().write(0x01FB, 0xCC, false); // Will be read during cycle 5
+
+        // These values should NOT be affected by reset (reads only, no writes)
+        cpu.reset();
+
+        // Verify the stack memory was read but NOT modified
+        // (Reset performs dummy reads, not writes)
+        assert_eq!(
+            memory.borrow().read(0x01FD),
+            0xAA,
+            "Stack at 0x01FD should be unchanged (read, not written)"
+        );
+        assert_eq!(
+            memory.borrow().read(0x01FC),
+            0xBB,
+            "Stack at 0x01FC should be unchanged (read, not written)"
+        );
+        assert_eq!(
+            memory.borrow().read(0x01FB),
+            0xCC,
+            "Stack at 0x01FB should be unchanged (read, not written)"
+        );
+
+        // SP should be decremented by 3
+        assert_eq!(cpu.state.sp, 0xFA, "SP should be 0xFD - 3 = 0xFA");
+
+        // PC should be loaded from reset vector
+        assert_eq!(cpu.state.pc, 0x8000, "PC should be loaded from reset vector");
     }
 
     #[test]
