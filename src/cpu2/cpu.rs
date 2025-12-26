@@ -2111,6 +2111,173 @@ mod tests {
     }
 
     #[test]
+    fn test_power_on_state() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        // Create a simple ROM with reset vector
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00;
+        prg_rom[0x7FFD] = 0x80;
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let cpu = Cpu2::new(Rc::clone(&memory));
+
+        // According to https://www.nesdev.org/wiki/CPU_power_up_state
+        // At power-on (before reset sequence):
+        assert_eq!(cpu.state.a, 0, "A should be 0 at power-on");
+        assert_eq!(cpu.state.x, 0, "X should be 0 at power-on");
+        assert_eq!(cpu.state.y, 0, "Y should be 0 at power-on");
+        assert_eq!(cpu.state.sp, 0x00, "SP should be 0x00 at power-on");
+        assert_eq!(cpu.state.pc, 0, "PC should be 0 at power-on");
+        assert_eq!(
+            cpu.state.p, FLAG_UNUSED,
+            "P should only have unused bit set at power-on"
+        );
+        assert_eq!(cpu.total_cycles, 0, "Cycle count should be 0 at power-on");
+        assert!(!cpu.halted, "CPU should not be halted at power-on");
+        assert!(!cpu.nmi_pending, "NMI should not be pending at power-on");
+    }
+
+    #[test]
+    fn test_reset_after_power_on() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        // Create a ROM with reset vector pointing to $C000
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00; // Low byte
+        prg_rom[0x7FFD] = 0xC0; // High byte ($C000)
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Verify initial power-on state
+        assert_eq!(cpu.state.sp, 0x00, "SP should be 0x00 at power-on");
+        assert_eq!(cpu.state.p, FLAG_UNUSED, "Only unused bit should be set");
+
+        // Call reset (simulates what happens after power-on)
+        cpu.reset();
+
+        // After reset following power-on:
+        // - A, X, Y remain 0 (they were 0 at power-on)
+        assert_eq!(cpu.state.a, 0, "A should still be 0");
+        assert_eq!(cpu.state.x, 0, "X should still be 0");
+        assert_eq!(cpu.state.y, 0, "Y should still be 0");
+
+        // - SP should be decremented by 3: 0x00 - 3 = 0xFD (with wrapping)
+        assert_eq!(
+            cpu.state.sp, 0xFD,
+            "SP should wrap to 0xFD (0x00 - 3 with wrapping)"
+        );
+
+        // - I flag should be set (in addition to unused bit)
+        assert_eq!(
+            cpu.state.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "I flag should be set"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_UNUSED,
+            FLAG_UNUSED,
+            "Unused bit should remain set"
+        );
+
+        // - PC should be loaded from reset vector ($C000)
+        assert_eq!(cpu.state.pc, 0xC000, "PC should be $C000 from reset vector");
+
+        // - Reset should take 7 cycles
+        assert_eq!(cpu.total_cycles, 7, "Reset should take 7 cycles");
+    }
+
+    #[test]
+    fn test_reset_with_sp_wrapping() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00;
+        prg_rom[0x7FFD] = 0x80;
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Test SP wrapping: if SP is 0x01, after subtracting 3 it should wrap to 0xFE
+        cpu.state.sp = 0x01;
+        cpu.reset();
+        assert_eq!(cpu.state.sp, 0xFE, "SP should wrap: 0x01 - 3 = 0xFE");
+
+        // Test SP wrapping: if SP is 0x00, it should wrap to 0xFD
+        cpu.state.sp = 0x00;
+        cpu.reset();
+        assert_eq!(cpu.state.sp, 0xFD, "SP should wrap: 0x00 - 3 = 0xFD");
+
+        // Test SP wrapping: if SP is 0x02, it should become 0xFF
+        cpu.state.sp = 0x02;
+        cpu.reset();
+        assert_eq!(cpu.state.sp, 0xFF, "SP should wrap: 0x02 - 3 = 0xFF");
+    }
+
+    #[test]
+    fn test_multiple_resets() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x34;
+        prg_rom[0x7FFD] = 0x12;
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Set some register state
+        cpu.state.a = 0xAA;
+        cpu.state.x = 0xBB;
+        cpu.state.y = 0xCC;
+        cpu.state.sp = 0xFD;
+        cpu.state.p = FLAG_CARRY | FLAG_ZERO;
+
+        // First reset
+        cpu.reset();
+        assert_eq!(cpu.state.a, 0xAA, "A preserved after first reset");
+        assert_eq!(cpu.state.sp, 0xFA, "SP = 0xFD - 3 = 0xFA");
+        assert_eq!(cpu.state.pc, 0x1234, "PC loaded from vector");
+
+        // Second reset - registers should still be preserved
+        cpu.reset();
+        assert_eq!(cpu.state.a, 0xAA, "A still preserved after second reset");
+        assert_eq!(cpu.state.x, 0xBB, "X still preserved after second reset");
+        assert_eq!(cpu.state.y, 0xCC, "Y still preserved after second reset");
+        assert_eq!(cpu.state.sp, 0xF7, "SP = 0xFA - 3 = 0xF7");
+        assert_eq!(cpu.state.pc, 0x1234, "PC loaded from vector again");
+
+        // Flags should still be preserved (except I which is always set)
+        assert_eq!(cpu.state.p & FLAG_CARRY, FLAG_CARRY, "Carry preserved");
+        assert_eq!(cpu.state.p & FLAG_ZERO, FLAG_ZERO, "Zero preserved");
+        assert_eq!(
+            cpu.state.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "I flag set"
+        );
+    }
+
+    #[test]
     fn test_opcode_01() {
         let memory = create_test_memory();
 

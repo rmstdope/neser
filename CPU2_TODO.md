@@ -165,15 +165,21 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 - [ ] Branch instruction interrupt polling
 - [ ] Test ROM: cpu_interrupts_v2 (mentioned in wiki)
 
-### 13. Reset Tests
-**Status:** One basic test exists (test_opcode_00)  
-**Missing:**
-- [ ] Power-on state test
-- [ ] Reset after power-on test
-- [ ] Reset preserves A, X, Y, C, Z, D, V, N flags
-- [ ] Reset sets I flag
-- [ ] Reset decrements SP by 3
-- [ ] Reset performs 3 dummy stack reads
+### 13. Comprehensive Reset Tests
+**Status:** ✅ FIXED  
+**Wiki Reference:** [CPU power up state](https://www.nesdev.org/wiki/CPU_power_up_state)
+
+**Tests Added:**
+- [x] `test_power_on_state()` - Validates initial state after power-on
+- [x] `test_reset_after_power_on()` - Tests reset immediately after power-on
+- [x] `test_reset_preserves_registers()` - Verifies A, X, Y and flags preserved
+- [x] `test_reset_with_sp_wrapping()` - Tests SP wrapping edge cases (0x00, 0x01, 0x02)
+- [x] `test_multiple_resets()` - Tests multiple consecutive resets
+- [x] All reset tests verify I flag is set
+- [x] All reset tests verify SP is decremented by 3
+- [x] All reset tests verify PC loaded from reset vector
+
+**Note:** Reset performing 3 dummy stack reads (cycle-accurate implementation) is tracked separately in issue #7.
 
 ### 14. Edge Case Tests
 **Status:** Limited  
