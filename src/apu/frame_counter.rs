@@ -150,8 +150,10 @@ impl FrameCounter {
                 };
                 self.irq_inhibit = (value & 0x40) != 0;
 
-                // DO NOT reset cycle_counter here - it should continue from where it is
-                // The pre-clocking has already advanced the counter
+                // Reset cycle_counter to match behavior of a direct write to $4017
+                // At reset, the APU acts "as if $4017 were written", which includes
+                // resetting the frame counter position
+                self.cycle_counter = 0;
 
                 // Writing 1 to IRQ inhibit clears the IRQ flag
                 if (value & 0x40) != 0 {
