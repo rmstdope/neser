@@ -61,6 +61,9 @@ pub struct Cpu2 {
     /// NMI pending flag - set by external hardware (NES loop)
     /// Checked during BRK execution to determine vector hijacking
     pub nmi_pending: bool,
+    /// IRQ pending flag - set by external hardware (NES loop)
+    /// Checked at end of instructions if I flag is clear
+    pub irq_pending: bool,
 }
 
 impl Cpu2 {
@@ -82,6 +85,7 @@ impl Cpu2 {
             total_cycles: 0,
             current_instruction: None,
             nmi_pending: false,
+            irq_pending: false,
         }
     }
 
@@ -1859,6 +1863,7 @@ impl Cpu2 {
         self.halted = false;
         self.current_instruction = None;
         self.nmi_pending = false;
+        self.irq_pending = false;
 
         // Reset takes 7 cycles
         self.total_cycles = 7;
@@ -1936,13 +1941,64 @@ impl Cpu2 {
         self.nmi_pending
     }
 
-    pub fn should_poll_irq(&self) -> bool {
-        // TODO implement IRQ polling logic
-        false
+    /// Set the IRQ pending flag
+    /// This should be called by external hardware (NES loop) when IRQ line is asserted
+    pub fn set_irq_pending(&mut self, pending: bool) {
+        self.irq_pending = pending;
     }
 
+    /// Check if an IRQ is pending
+    pub fn is_irq_pending(&self) -> bool {
+        self.irq_pending
+    }
+
+    /// Check if IRQ should be serviced
+    /// IRQ is serviced only if:
+    /// 1. IRQ is pending (irq_pending flag set)
+    /// 2. Interrupt disable flag (I) is clear
+    pub fn should_poll_irq(&self) -> bool {
+        self.irq_pending && (self.state.p & FLAG_INTERRUPT) == 0
+    }
+
+    /// Trigger an IRQ (Interrupt Request)
+    /// 
+    /// IRQ follows the same 7-cycle sequence as NMI and BRK, but:
+    /// - Can be masked by the I flag (unlike NMI which is non-maskable)
+    /// - Uses the IRQ vector at $FFFE-$FFFF (same as BRK)
+    /// - Pushes status with B flag clear (distinguishes from BRK)
+    /// 
+    /// Cycle-by-cycle breakdown:
+    /// 1. Fetch opcode (forced to $00, discarded)
+    /// 2. Read next instruction byte (discarded)
+    /// 3. Push PCH to stack, decrement SP
+    /// 4. Push PCL to stack, decrement SP
+    /// 5. Push P to stack (B flag clear, unused flag set), decrement SP
+    /// 6. Read PCL from IRQ vector ($FFFE), set I flag
+    /// 7. Read PCH from IRQ vector ($FFFF)
+    /// 
+    /// Returns the number of cycles consumed (7 cycles)
     pub fn trigger_irq(&mut self) -> u8 {
-        // TODO Implement IRQ logic
+        // Push PC to stack (high byte first, then low byte)
+        self.push_word(self.state.pc);
+
+        // Push status register to stack with B flag clear, unused flag set
+        let mut p_with_flags = self.state.p & !FLAG_BREAK; // Clear B flag (distinguishes IRQ from BRK)
+        p_with_flags |= FLAG_UNUSED; // Set unused flag (always set when pushed)
+        self.push_byte(p_with_flags);
+
+        // Read PC from IRQ vector at $FFFE-$FFFF
+        let pcl = self.memory.borrow().read(IRQ_VECTOR);
+        let pch = self.memory.borrow().read(IRQ_VECTOR + 1);
+        self.state.pc = ((pch as u16) << 8) | (pcl as u16);
+
+        // Set Interrupt Disable flag to prevent nested IRQs
+        self.state.p |= FLAG_INTERRUPT;
+
+        // Clear IRQ pending flag (IRQ has been serviced)
+        self.irq_pending = false;
+
+        // IRQ takes 7 CPU cycles
+        self.total_cycles += 7;
         7
     }
 }
@@ -2348,6 +2404,248 @@ mod tests {
 
         // PC should be loaded from reset vector
         assert_eq!(cpu.state.pc, 0x8000, "PC should be loaded from reset vector");
+    }
+
+    #[test]
+    fn test_irq_trigger_basic() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        // Set up IRQ vector at $FFFE-$FFFF to point to $9000
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00; // Reset vector low ($8000)
+        prg_rom[0x7FFD] = 0x80; // Reset vector high
+        prg_rom[0x7FFE] = 0x00; // IRQ vector low ($9000)
+        prg_rom[0x7FFF] = 0x90; // IRQ vector high
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Set up CPU state before IRQ
+        cpu.state.pc = 0x1234;
+        cpu.state.sp = 0xFD;
+        cpu.state.p = FLAG_ZERO | FLAG_CARRY; // I flag is clear, so IRQ can be triggered
+        cpu.irq_pending = true;
+
+        let initial_cycles = cpu.total_cycles;
+
+        // Trigger IRQ
+        let cycles = cpu.trigger_irq();
+
+        // Verify IRQ took 7 cycles
+        assert_eq!(cycles, 7, "IRQ should take 7 cycles");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "Total cycles should increase by 7"
+        );
+
+        // Verify PC was loaded from IRQ vector
+        assert_eq!(cpu.state.pc, 0x9000, "PC should be loaded from IRQ vector");
+
+        // Verify I flag was set
+        assert_eq!(
+            cpu.state.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "I flag should be set after IRQ"
+        );
+
+        // Verify IRQ pending flag was cleared
+        assert!(!cpu.irq_pending, "IRQ pending flag should be cleared");
+
+        // Verify stack pointer was decremented by 3
+        assert_eq!(cpu.state.sp, 0xFA, "SP should be decremented by 3");
+
+        // Verify stack contents: PCH, PCL, P (with B flag clear)
+        assert_eq!(
+            memory.borrow().read(0x01FD),
+            0x12,
+            "PCH should be pushed to stack"
+        );
+        assert_eq!(
+            memory.borrow().read(0x01FC),
+            0x34,
+            "PCL should be pushed to stack"
+        );
+
+        // Status should have B flag clear (0) and unused flag set (1)
+        let pushed_p = memory.borrow().read(0x01FB);
+        assert_eq!(
+            pushed_p & FLAG_BREAK,
+            0,
+            "B flag should be clear in pushed status"
+        );
+        assert_eq!(
+            pushed_p & FLAG_UNUSED,
+            FLAG_UNUSED,
+            "Unused flag should be set in pushed status"
+        );
+        assert_eq!(
+            pushed_p & FLAG_ZERO,
+            FLAG_ZERO,
+            "Z flag should be preserved in pushed status"
+        );
+        assert_eq!(
+            pushed_p & FLAG_CARRY,
+            FLAG_CARRY,
+            "C flag should be preserved in pushed status"
+        );
+    }
+
+    #[test]
+    fn test_irq_respects_i_flag() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00;
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFE] = 0x00; // IRQ vector
+        prg_rom[0x7FFF] = 0x90;
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Set I flag - IRQ should NOT be polled
+        cpu.state.p = FLAG_INTERRUPT;
+        cpu.irq_pending = true;
+
+        // should_poll_irq() should return false when I flag is set
+        assert!(
+            !cpu.should_poll_irq(),
+            "IRQ should NOT be polled when I flag is set"
+        );
+
+        // Clear I flag - IRQ should now be polled
+        cpu.state.p = 0;
+        assert!(
+            cpu.should_poll_irq(),
+            "IRQ should be polled when I flag is clear and irq_pending is true"
+        );
+
+        // Clear irq_pending - IRQ should not be polled even with I flag clear
+        cpu.irq_pending = false;
+        assert!(
+            !cpu.should_poll_irq(),
+            "IRQ should NOT be polled when irq_pending is false"
+        );
+    }
+
+    #[test]
+    fn test_irq_clears_b_flag() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00;
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFE] = 0x00;
+        prg_rom[0x7FFF] = 0x90;
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        cpu.state.pc = 0x1000;
+        cpu.state.sp = 0xFD;
+        cpu.state.p = FLAG_BREAK; // Set B flag explicitly
+        cpu.irq_pending = true;
+
+        cpu.trigger_irq();
+
+        // Check pushed status has B flag clear
+        let pushed_p = memory.borrow().read(0x01FB);
+        assert_eq!(
+            pushed_p & FLAG_BREAK,
+            0,
+            "B flag must be clear in pushed status during IRQ"
+        );
+        assert_eq!(
+            pushed_p & FLAG_UNUSED,
+            FLAG_UNUSED,
+            "Unused flag must be set in pushed status"
+        );
+    }
+
+    #[test]
+    fn test_irq_set_and_check() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Initially no IRQ
+        assert!(!cpu.is_irq_pending(), "IRQ should not be pending initially");
+
+        // Set IRQ
+        cpu.set_irq_pending(true);
+        assert!(cpu.is_irq_pending(), "IRQ should be pending after set");
+
+        // Clear IRQ
+        cpu.set_irq_pending(false);
+        assert!(
+            !cpu.is_irq_pending(),
+            "IRQ should not be pending after clear"
+        );
+    }
+
+    #[test]
+    fn test_irq_stack_wrapping() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00;
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFE] = 0x00;
+        prg_rom[0x7FFF] = 0x90;
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Set SP to a low value that will wrap during push operations
+        cpu.state.pc = 0xABCD;
+        cpu.state.sp = 0x01; // Stack will wrap: 0x01 -> 0x00 -> 0xFF
+        cpu.state.p = 0;
+        cpu.irq_pending = true;
+
+        cpu.trigger_irq();
+
+        // Verify stack pointer wrapped correctly
+        assert_eq!(
+            cpu.state.sp, 0xFE,
+            "SP should wrap correctly from 0x01 to 0xFE"
+        );
+
+        // Verify data was pushed to correct wrapped addresses
+        assert_eq!(
+            memory.borrow().read(0x0101),
+            0xAB,
+            "PCH pushed to 0x0101"
+        );
+        assert_eq!(
+            memory.borrow().read(0x0100),
+            0xCD,
+            "PCL pushed to 0x0100"
+        );
+        assert_eq!(
+            memory.borrow().read(0x01FF) & FLAG_UNUSED,
+            FLAG_UNUSED,
+            "Status pushed to 0x01FF (wrapped)"
+        );
     }
 
     #[test]

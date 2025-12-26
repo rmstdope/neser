@@ -5,22 +5,25 @@ Based on review of [NESdev Wiki CPU documentation](https://www.nesdev.org/wiki/C
 ## Critical Missing Features
 
 ### 1. IRQ (Interrupt Request) Implementation
-**Status:** Stub only - `trigger_irq()` returns 7 but does nothing  
+**Status:** ✅ FIXED  
 **Wiki Reference:** [CPU interrupts](https://www.nesdev.org/wiki/CPU_interrupts)
 
-**Missing:**
-- [ ] IRQ edge/level detection logic
-- [ ] IRQ polling during instruction execution
-- [ ] Proper IRQ sequence (7 cycles):
-  - Fetch opcode (forced to $00)
-  - Read next byte (discarded)
-  - Push PCH to stack
-  - Push PCL to stack
-  - Push P to stack (with B flag clear)
-  - Fetch PCL from $FFFE, set I flag
-  - Fetch PCH from $FFFF
-- [ ] IRQ can be masked by I flag (unlike NMI)
-- [ ] `should_poll_irq()` implementation
+**Implemented:**
+- [x] IRQ trigger sequence (7 cycles)
+- [x] IRQ polling logic respecting I flag
+- [x] Push PC and P to stack (with B flag clear, unused flag set)
+- [x] Load PC from IRQ vector ($FFFE-$FFFF)
+- [x] Set I flag to prevent nested IRQs
+- [x] `should_poll_irq()` implementation
+- [x] `set_irq_pending()` and `is_irq_pending()` helper methods
+- [x] Comprehensive test coverage (5 tests)
+
+**Tests Added:**
+- `test_irq_trigger_basic` - Basic IRQ functionality
+- `test_irq_respects_i_flag` - I flag masking behavior
+- `test_irq_clears_b_flag` - B flag handling in pushed status
+- `test_irq_set_and_check` - Helper methods
+- `test_irq_stack_wrapping` - Stack pointer wrapping
 
 ### 2. Interrupt Polling Behavior
 **Status:** Not implemented  

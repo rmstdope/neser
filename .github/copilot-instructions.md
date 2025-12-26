@@ -36,6 +36,7 @@ Always prefer simple design solutions. Avoid over-engineering. If unsure, ask th
 ### Four eye Principle
 
 All code changes must be reviewed by at least one other person (the navigator) before being merged into the main codebase. This practice helps to catch potential issues, improve code quality, and ensure adherence to coding standards and best practices. No automatic merging of code changes without review is allowed.
+Always run the full regression suite before merging any code changes to ensure that new changes do not introduce regressions or break existing functionality. NEVER merge code changes that have not passed all tests.
 
 ### Issues and branches
 
