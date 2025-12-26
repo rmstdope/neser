@@ -212,7 +212,8 @@ impl AddressingMode for Absolute {
             2 => {
                 // Cycle 3: Read value from address (only for read/RMW operations)
                 // Write operations skip this read, Jump doesn't reach here
-                if self.access == MemoryAccess::Read || self.access == MemoryAccess::ReadModifyWrite {
+                if self.access == MemoryAccess::Read || self.access == MemoryAccess::ReadModifyWrite
+                {
                     self.value = memory.borrow().read(self.address);
                 }
                 self.cycle = 3;
@@ -420,7 +421,10 @@ impl AddressingMode for AbsoluteX {
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
-        debug_assert!(!self.is_done(), "AbsoluteX::tick called after addressing complete");
+        debug_assert!(
+            !self.is_done(),
+            "AbsoluteX::tick called after addressing complete"
+        );
 
         match self.cycle {
             0 => {
@@ -534,7 +538,10 @@ impl AddressingMode for AbsoluteY {
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
-        debug_assert!(!self.is_done(), "AbsoluteY::tick called after addressing complete");
+        debug_assert!(
+            !self.is_done(),
+            "AbsoluteY::tick called after addressing complete"
+        );
 
         match self.cycle {
             0 => {
@@ -720,7 +727,10 @@ impl AddressingMode for IndexedIndirect {
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
-        debug_assert!(!self.is_done(), "IndexedIndirect::tick called after already done");
+        debug_assert!(
+            !self.is_done(),
+            "IndexedIndirect::tick called after already done"
+        );
 
         match self.cycle {
             0 => {
@@ -826,7 +836,10 @@ impl AddressingMode for IndirectIndexed {
     }
 
     fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
-        debug_assert!(!self.is_done(), "IndirectIndexed::tick called after already done");
+        debug_assert!(
+            !self.is_done(),
+            "IndirectIndexed::tick called after already done"
+        );
 
         match self.cycle {
             0 => {
@@ -949,41 +962,6 @@ impl AddressingMode for Relative {
             "Relative::get_address called before addressing complete"
         );
         self.target_address
-    }
-}
-
-/// Accumulator addressing mode
-///
-/// Used by instructions that operate directly on the accumulator register.
-/// No memory access or address calculation needed.
-/// Examples: ROL A, ROR A, LSR A, ASL A
-///
-/// Cycles: 0 (no addressing cycles, operation happens during instruction execution)
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Accumulator {}
-
-impl Accumulator {
-    /// Create a new Accumulator addressing mode instance
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-impl AddressingMode for Accumulator {
-    fn is_done(&self) -> bool {
-        // Always done immediately - no addressing needed
-        true
-    }
-
-    fn tick(&mut self, _cpu_state: &mut CpuState, _memory: Rc<RefCell<MemController>>) {
-        // Should never be called since is_done() always returns true
-        panic!("Accumulator::tick should never be called - addressing is always done");
-    }
-
-    fn get_address(&self) -> u16 {
-        // Accumulator mode doesn't have an address - this should not be called
-        // Return 0 as a placeholder, but operations should use the accumulator directly
-        panic!("Accumulator::get_address should not be called - no address in accumulator mode");
     }
 }
 
@@ -2451,47 +2429,5 @@ mod new_tests {
             0x03D1,
             "Should handle maximum negative offset with page cross"
         );
-    }
-
-    // Accumulator tests
-    #[test]
-    fn test_accumulator_is_always_done() {
-        let mode = Accumulator::new();
-        assert!(mode.is_done(), "Should always be done immediately");
-    }
-
-    #[test]
-    #[should_panic(expected = "Accumulator::tick should never be called")]
-    fn test_accumulator_tick_panics() {
-        use super::super::types::CpuState;
-        use crate::apu::Apu;
-        use crate::mem_controller::MemController;
-        use crate::nes::TvSystem;
-        use crate::ppu::Ppu;
-        use std::cell::RefCell;
-        use std::rc::Rc;
-
-        let ppu = Rc::new(RefCell::new(Ppu::new(TvSystem::Ntsc)));
-        let apu = Rc::new(RefCell::new(Apu::new()));
-        let memory = Rc::new(RefCell::new(MemController::new(ppu, apu)));
-
-        let mut cpu_state = CpuState {
-            a: 0,
-            x: 0,
-            y: 0,
-            sp: 0xFD,
-            pc: 0x0400,
-            p: 0,
-        };
-
-        let mut mode = Accumulator::new();
-        mode.tick(&mut cpu_state, Rc::clone(&memory)); // Should panic
-    }
-
-    #[test]
-    #[should_panic(expected = "Accumulator::get_address should not be called")]
-    fn test_accumulator_get_address_panics() {
-        let mode = Accumulator::new();
-        mode.get_address(); // Should panic
     }
 }

@@ -16,6 +16,9 @@ pub const FLAG_UNUSED: u8 = 0b0010_0000;
 pub const FLAG_OVERFLOW: u8 = 0b0100_0000;
 pub const FLAG_NEGATIVE: u8 = 0b1000_0000;
 
+// Memory addresses
+pub const STACK_BASE: u16 = 0x0100;
+
 // Interrupt vectors
 pub const NMI_VECTOR: u16 = 0xFFFA;
 pub const RESET_VECTOR: u16 = 0xFFFC;

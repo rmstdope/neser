@@ -38,7 +38,7 @@ use super::traits::{
 };
 use super::types::{
     FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_OVERFLOW,
-    FLAG_UNUSED, FLAG_ZERO, IRQ_VECTOR, NMI_VECTOR, RESET_VECTOR,
+    FLAG_UNUSED, FLAG_ZERO, IRQ_VECTOR, NMI_VECTOR, RESET_VECTOR, STACK_BASE,
 };
 use crate::cpu2::CpuState;
 use crate::mem_controller::MemController;
@@ -1857,7 +1857,7 @@ impl Cpu2 {
 
     /// Push a byte onto the stack
     fn push_byte(&mut self, value: u8) {
-        let addr = 0x0100 | (self.state.sp as u16);
+        let addr = STACK_BASE | (self.state.sp as u16);
         self.memory.borrow_mut().write(addr, value, false);
         self.state.sp = self.state.sp.wrapping_sub(1);
     }
@@ -2040,8 +2040,12 @@ mod tests {
 
         // A should be 0b1100_1100 | 0b1010_1010 = 0b1110_1110
         assert_eq!(cpu.state.a, 0b1110_1110, "A should contain result of ORA");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
         assert_eq!(cycles, 6, "ORA indexed indirect should take 6 cycles");
     }
 
@@ -2132,9 +2136,13 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of OR");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // SLO with indexed indirect should take 8 cycles
         // (5 for addressing + 3 for read-modify-write operation)
@@ -2200,8 +2208,12 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
 
         // ORA with zero page should take 3 cycles
         // (1 opcode fetch + 1 ZP addressing + 1 read/operate)
@@ -2233,9 +2245,13 @@ mod tests {
         );
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // ASL with zero page should take 5 cycles
         // (1 opcode fetch + 1 ZP addressing + 3 RMW operation)
@@ -2271,9 +2287,13 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of OR");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // SLO with zero page should take 5 cycles
         // (1 opcode fetch + 1 ZP addressing + 3 RMW operation)
@@ -2352,8 +2372,12 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
 
         // ORA with immediate should take 3 cycles
         // (1 opcode fetch + 1 immediate addressing and operate)
@@ -2381,9 +2405,13 @@ mod tests {
         );
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // ASL A should take 2 cycles (1 opcode fetch + 1 operation)
         assert_eq!(cycles, 2, "ASL A should take 2 cycles");
@@ -2408,10 +2436,14 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1000_0010, "A should contain result of AND");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=1 (bit 7 of result is set)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
         assert_eq!(
-            cpu.state.p & 0x01,
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
             0x01,
             "C flag should be set (bit 7 of result)"
         );
@@ -2472,8 +2504,12 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
 
         // ORA with absolute should take 4 cycles
         // (1 opcode fetch + 3 absolute addressing)
@@ -2501,9 +2537,13 @@ mod tests {
         assert_eq!(result, 0b1010_1010, "Memory should be shifted left");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // ASL absolute should take 6 cycles
         assert_eq!(cycles, 6, "ASL absolute should take 6 cycles");
@@ -2537,9 +2577,13 @@ mod tests {
         );
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // SLO absolute should take 6 cycles
         assert_eq!(cycles, 6, "SLO absolute should take 6 cycles");
@@ -2576,7 +2620,7 @@ mod tests {
 
         let mut cpu = Cpu2::new(Rc::clone(&memory));
         cpu.state.pc = 0x0400;
-        cpu.state.p = 0x80; // N flag set (negative)
+        cpu.state.p = FLAG_NEGATIVE; // N flag set (negative)
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -2614,8 +2658,12 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
 
         // ORA (Indirect),Y should take 5 cycles (no page cross)
         assert_eq!(cycles, 5, "ORA (Indirect),Y should take 5 cycles");
@@ -2674,9 +2722,13 @@ mod tests {
         );
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // SLO (Indirect),Y should take 8 cycles
         assert_eq!(cycles, 8, "SLO (Indirect),Y should take 8 cycles");
@@ -2733,8 +2785,12 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
 
         // ORA with zero page,X should take 4 cycles
         assert_eq!(cycles, 4, "ORA zero page,X should take 4 cycles");
@@ -2761,9 +2817,13 @@ mod tests {
         assert_eq!(result, 0b1010_1010, "Memory should be shifted left");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // ASL zero page,X should take 6 cycles
         assert_eq!(cycles, 6, "ASL zero page,X should take 6 cycles");
@@ -2794,9 +2854,13 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // SLO zero page,X should take 6 cycles
         assert_eq!(cycles, 6, "SLO zero page,X should take 6 cycles");
@@ -2816,7 +2880,7 @@ mod tests {
         let cycles = execute_instruction(&mut cpu);
 
         // Carry flag should be cleared
-        assert_eq!(cpu.state.p & 0x01, 0, "Carry flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "Carry flag should be clear");
         // Other flags should be unchanged
         assert_eq!(cpu.state.p & 0xFE, 0xFE, "Other flags should be unchanged");
 
@@ -2846,8 +2910,12 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
 
         // ORA absolute,Y should take 4 cycles (no page cross)
         assert_eq!(cycles, 4, "ORA absolute,Y should take 4 cycles");
@@ -2907,9 +2975,13 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // SLO absolute,Y should take 7 cycles
         assert_eq!(cycles, 7, "SLO absolute,Y should take 7 cycles");
@@ -2968,8 +3040,12 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
 
         // ORA absolute,X should take 4 cycles (no page cross)
         assert_eq!(cycles, 4, "ORA absolute,X should take 4 cycles");
@@ -2997,9 +3073,13 @@ mod tests {
         assert_eq!(result, 0b1010_1010, "Memory should be shifted left");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // ASL absolute,X should take 7 cycles
         assert_eq!(cycles, 7, "ASL absolute,X should take 7 cycles");
@@ -3031,9 +3111,13 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1110_1011, "A should contain result of ORA");
 
         // Flags: N=1 (bit 7 set), Z=0 (non-zero), C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         // SLO absolute,X should take 7 cycles
         assert_eq!(cycles, 7, "SLO absolute,X should take 7 cycles");
@@ -3083,8 +3167,12 @@ mod tests {
 
         // A should be 0b1111_1111 & 0b1010_1010 = 0b1010_1010
         assert_eq!(cpu.state.a, 0b1010_1010, "A should contain result of AND");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
         assert_eq!(cycles, 6, "AND indexed indirect should take 6 cycles");
     }
 
@@ -3123,7 +3211,7 @@ mod tests {
         cpu.state.pc = 0x0400;
         cpu.state.a = 0b1111_1111;
         cpu.state.x = 0x04;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3135,9 +3223,13 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1010_1011, "A should contain AND result");
 
         // Flags: N=1, Z=0, C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         assert_eq!(cycles, 8, "RLA indexed indirect should take 8 cycles");
     }
@@ -3161,9 +3253,17 @@ mod tests {
         let cycles = execute_instruction(&mut cpu);
 
         // Flags: N=1 (bit 7 of memory), V=1 (bit 6 of memory), Z=0 (AND result non-zero)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x40, 0x40, "V flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "V flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
         // A should be unchanged
         assert_eq!(cpu.state.a, 0b1111_1111, "A should not change");
 
@@ -3190,8 +3290,12 @@ mod tests {
 
         // A should be 0b1111_0000 & 0b1010_1010 = 0b1010_0000
         assert_eq!(cpu.state.a, 0b1010_0000, "A should contain result of AND");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
 
         assert_eq!(cycles, 3, "AND zero page should take 3 cycles");
     }
@@ -3209,7 +3313,7 @@ mod tests {
 
         let mut cpu = Cpu2::new(Rc::clone(&memory));
         cpu.state.pc = 0x0400;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3218,9 +3322,13 @@ mod tests {
         assert_eq!(result, 0b1010_1011, "Memory should be rotated left");
 
         // Flags: N=1, Z=0, C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         assert_eq!(cycles, 5, "ROL zero page should take 5 cycles");
     }
@@ -3239,7 +3347,7 @@ mod tests {
         let mut cpu = Cpu2::new(Rc::clone(&memory));
         cpu.state.pc = 0x0400;
         cpu.state.a = 0b1111_1111;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3251,9 +3359,13 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1010_1011, "A should contain AND result");
 
         // Flags: N=1, Z=0, C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         assert_eq!(cycles, 5, "RLA zero page should take 5 cycles");
     }
@@ -3303,8 +3415,12 @@ mod tests {
 
         // A should be 0b1111_0000 & 0b1010_1010 = 0b1010_0000
         assert_eq!(cpu.state.a, 0b1010_0000, "A should contain result of AND");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
 
         assert_eq!(cycles, 2, "AND immediate should take 2 cycles");
     }
@@ -3319,7 +3435,7 @@ mod tests {
         let mut cpu = Cpu2::new(Rc::clone(&memory));
         cpu.state.pc = 0x0400;
         cpu.state.a = 0b0101_0101;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3327,9 +3443,13 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1010_1011, "A should be rotated left");
 
         // Flags: N=1, Z=0, C=0 (bit 7 of original was 0)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         assert_eq!(cycles, 2, "ROL A should take 2 cycles");
     }
@@ -3353,9 +3473,13 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1000_0010, "A should contain result of AND");
 
         // Flags: N=1, Z=0, C=1 (bit 7 of result)
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0x01, "C flag should be set");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, FLAG_CARRY, "C flag should be set");
 
         assert_eq!(cycles, 2, "AAC immediate should take 2 cycles");
     }
@@ -3380,9 +3504,17 @@ mod tests {
         let cycles = execute_instruction(&mut cpu);
 
         // Flags: N=1, V=1, Z=0
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x40, 0x40, "V flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "V flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
         // A should be unchanged
         assert_eq!(cpu.state.a, 0b1111_1111, "A should not change");
 
@@ -3410,8 +3542,12 @@ mod tests {
 
         // A should be 0b1111_0000 & 0b1010_1010 = 0b1010_0000
         assert_eq!(cpu.state.a, 0b1010_0000, "A should contain result of AND");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
 
         assert_eq!(cycles, 4, "AND absolute should take 4 cycles");
     }
@@ -3430,7 +3566,7 @@ mod tests {
 
         let mut cpu = Cpu2::new(Rc::clone(&memory));
         cpu.state.pc = 0x0400;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3439,9 +3575,13 @@ mod tests {
         assert_eq!(result, 0b1010_1011, "Memory should be rotated left");
 
         // Flags: N=1, Z=0, C=0
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         assert_eq!(cycles, 6, "ROL absolute should take 6 cycles");
     }
@@ -3461,7 +3601,7 @@ mod tests {
         let mut cpu = Cpu2::new(Rc::clone(&memory));
         cpu.state.pc = 0x0400;
         cpu.state.a = 0b1111_1111;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3473,9 +3613,13 @@ mod tests {
         assert_eq!(cpu.state.a, 0b1010_1011, "A should contain AND result");
 
         // Flags: N=1, Z=0, C=0
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
 
         assert_eq!(cycles, 6, "RLA absolute should take 6 cycles");
     }
@@ -3490,7 +3634,7 @@ mod tests {
 
         let mut cpu = Cpu2::new(Rc::clone(&memory));
         cpu.state.pc = 0x0400;
-        cpu.state.p = 0x80; // N flag set (negative)
+        cpu.state.p = FLAG_NEGATIVE; // N flag set (negative)
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3524,8 +3668,12 @@ mod tests {
 
         // A should be 0b1111_0000 & 0b1010_1010 = 0b1010_0000
         assert_eq!(cpu.state.a, 0b1010_0000, "A should contain result of AND");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
         assert_eq!(cycles, 5, "AND indirect,Y should take 5 cycles");
     }
 
@@ -3564,7 +3712,7 @@ mod tests {
         cpu.state.pc = 0x0400;
         cpu.state.a = 0b1111_1111;
         cpu.state.y = 0x04;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3573,7 +3721,11 @@ mod tests {
         assert_eq!(mem_result, 0b1010_1011, "Memory should be rotated left");
         // A should be ANDed with result
         assert_eq!(cpu.state.a, 0b1010_1011, "A should contain AND result");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
         assert_eq!(cycles, 8, "RLA indirect,Y should take 8 cycles");
     }
 
@@ -3620,7 +3772,11 @@ mod tests {
 
         // A should be 0b1111_0000 & 0b1010_1010 = 0b1010_0000
         assert_eq!(cpu.state.a, 0b1010_0000, "A should contain result of AND");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
         assert_eq!(cycles, 4, "AND zero page,X should take 4 cycles");
     }
 
@@ -3638,14 +3794,18 @@ mod tests {
         let mut cpu = Cpu2::new(Rc::clone(&memory));
         cpu.state.pc = 0x0400;
         cpu.state.x = 0x05;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
         // Memory should be rotated left
         let result = memory.borrow().read(0x0025);
         assert_eq!(result, 0b1010_1011, "Memory should be rotated left");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
         assert_eq!(cycles, 6, "ROL zero page,X should take 6 cycles");
     }
 
@@ -3664,7 +3824,7 @@ mod tests {
         cpu.state.pc = 0x0400;
         cpu.state.a = 0b1111_1111;
         cpu.state.x = 0x05;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3690,7 +3850,7 @@ mod tests {
         let cycles = execute_instruction(&mut cpu);
 
         // Carry flag should be set
-        assert_eq!(cpu.state.p & 0x01, 0x01, "Carry flag should be set");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0x01, "Carry flag should be set");
         assert_eq!(cycles, 2, "SEC should take 2 cycles");
     }
 
@@ -3716,7 +3876,11 @@ mod tests {
 
         // A should be 0b1111_0000 & 0b1010_1010 = 0b1010_0000
         assert_eq!(cpu.state.a, 0b1010_0000, "A should contain result of AND");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
         assert_eq!(cycles, 4, "AND absolute,Y should take 4 cycles");
     }
 
@@ -3756,7 +3920,7 @@ mod tests {
         cpu.state.pc = 0x0400;
         cpu.state.a = 0b1111_1111;
         cpu.state.y = 0x04;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3813,7 +3977,11 @@ mod tests {
 
         // A should be 0b1111_0000 & 0b1010_1010 = 0b1010_0000
         assert_eq!(cpu.state.a, 0b1010_0000, "A should contain result of AND");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
         assert_eq!(cycles, 4, "AND absolute,X should take 4 cycles");
     }
 
@@ -3832,14 +4000,18 @@ mod tests {
         let mut cpu = Cpu2::new(Rc::clone(&memory));
         cpu.state.pc = 0x0400;
         cpu.state.x = 0x04;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
         // Memory should be rotated left
         let result = memory.borrow().read(0x1238);
         assert_eq!(result, 0b1010_1011, "Memory should be rotated left");
-        assert_eq!(cpu.state.p & 0x80, 0x80, "N flag should be set");
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "N flag should be set"
+        );
         assert_eq!(cycles, 7, "ROL absolute,X should take 7 cycles");
     }
 
@@ -3859,7 +4031,7 @@ mod tests {
         cpu.state.pc = 0x0400;
         cpu.state.a = 0b1111_1111;
         cpu.state.x = 0x04;
-        cpu.state.p = 0x01; // Set carry flag
+        cpu.state.p = FLAG_CARRY; // Set carry flag
 
         let cycles = execute_instruction(&mut cpu);
 
@@ -3924,8 +4096,8 @@ mod tests {
 
         // A should be 0b1111_0000 ^ 0b1010_1010 = 0b0101_1010
         assert_eq!(cpu.state.a, 0b0101_1010, "A should contain result of EOR");
-        assert_eq!(cpu.state.p & 0x80, 0, "N flag should be clear");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_NEGATIVE, 0, "N flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
         assert_eq!(cycles, 6, "EOR indexed indirect should take 6 cycles");
     }
 
@@ -3973,7 +4145,7 @@ mod tests {
         assert_eq!(mem_result, 0b0101_0101, "Memory should be shifted right");
         // A should be EORed with result: 0b1111_0000 ^ 0b0101_0101 = 0b1010_0101
         assert_eq!(cpu.state.a, 0b1010_0101, "A should contain EOR result");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
         assert_eq!(cycles, 8, "SRE indexed indirect should take 8 cycles");
     }
 
@@ -4018,7 +4190,7 @@ mod tests {
 
         // A should be 0b1111_0000 ^ 0b1010_1010 = 0b0101_1010
         assert_eq!(cpu.state.a, 0b0101_1010, "A should contain result of EOR");
-        assert_eq!(cpu.state.p & 0x80, 0, "N flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_NEGATIVE, 0, "N flag should be clear");
         assert_eq!(cycles, 3, "EOR zero page should take 3 cycles");
     }
 
@@ -4042,9 +4214,13 @@ mod tests {
         // Memory should be shifted right: 0b1010_1011 >> 1 = 0b0101_0101
         let result = memory.borrow().read(0x0020);
         assert_eq!(result, 0b0101_0101, "Memory should be shifted right");
-        assert_eq!(cpu.state.p & 0x80, 0, "N flag should be clear");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 1, "C flag should be set (bit 0 was 1)");
+        assert_eq!(cpu.state.p & FLAG_NEGATIVE, 0, "N flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
+            1,
+            "C flag should be set (bit 0 was 1)"
+        );
         assert_eq!(cycles, 5, "LSR zero page should take 5 cycles");
     }
 
@@ -4131,9 +4307,13 @@ mod tests {
 
         // A should be shifted right: 0b1010_1011 >> 1 = 0b0101_0101
         assert_eq!(cpu.state.a, 0b0101_0101, "A should be shifted right");
-        assert_eq!(cpu.state.p & 0x80, 0, "N flag should be clear");
-        assert_eq!(cpu.state.p & 0x02, 0, "Z flag should be clear");
-        assert_eq!(cpu.state.p & 0x01, 1, "C flag should be set (bit 0 was 1)");
+        assert_eq!(cpu.state.p & FLAG_NEGATIVE, 0, "N flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_ZERO, 0, "Z flag should be clear");
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
+            1,
+            "C flag should be set (bit 0 was 1)"
+        );
         assert_eq!(cycles, 2, "LSR accumulator should take 2 cycles");
     }
 
@@ -4154,7 +4334,7 @@ mod tests {
 
         // A should be ANDed then shifted: (0b1111_0011 & 0b1010_1010) >> 1 = 0b1010_0010 >> 1 = 0b0101_0001
         assert_eq!(cpu.state.a, 0b0101_0001, "A should contain AND+LSR result");
-        assert_eq!(cpu.state.p & 0x01, 0, "C flag should be clear");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "C flag should be clear");
         assert_eq!(cycles, 2, "ASR immediate should take 2 cycles");
     }
 
@@ -4235,7 +4415,7 @@ mod tests {
         // Memory should be shifted right
         let result = memory.borrow().read(0x1234);
         assert_eq!(result, 0b0101_0101, "Memory should be shifted right");
-        assert_eq!(cpu.state.p & 0x01, 1, "C flag should be set");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 1, "C flag should be set");
         assert_eq!(cycles, 6, "LSR absolute should take 6 cycles");
     }
 
@@ -4433,7 +4613,11 @@ mod tests {
         // Memory should be shifted right
         let result = memory.borrow().read(0x0025);
         assert_eq!(result, 0b0101_0101, "Memory should be shifted right");
-        assert_eq!(cpu.state.p & 0x01, 1, "C flag should be set (bit 0 was 1)");
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
+            1,
+            "C flag should be set (bit 0 was 1)"
+        );
         assert_eq!(cycles, 6, "LSR zero page,X should take 6 cycles");
     }
 
@@ -4633,7 +4817,7 @@ mod tests {
         // Memory should be shifted right
         let result = memory.borrow().read(0x1238);
         assert_eq!(result, 0b0101_0101, "Memory should be shifted right");
-        assert_eq!(cpu.state.p & 0x01, 1, "C flag should be set");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 1, "C flag should be set");
         assert_eq!(cycles, 7, "LSR absolute,X should take 7 cycles");
     }
 
