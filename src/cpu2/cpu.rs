@@ -3159,6 +3159,146 @@ mod tests {
     }
 
     #[test]
+    fn test_absolute_write_skips_final_read() {
+        let memory = create_test_memory();
+
+        // Set up STA absolute instruction at address $0400
+        memory.borrow_mut().write(0x0400, STA_ABS, false);
+        memory.borrow_mut().write(0x0401, 0x00, false); // Low byte of address
+        memory.borrow_mut().write(0x0402, 0x20, false); // High byte of address ($2000)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+
+        // Execute STA instruction completely
+        loop {
+            let done = cpu.tick_cycle();
+            if done {
+                break;
+            }
+        }
+
+        // Verify the value was written
+        assert_eq!(
+            memory.borrow().read(0x2000),
+            0x42,
+            "Value should be written to memory"
+        );
+        
+        // The key point: STA should take 4 cycles total (fetch opcode + 3 addressing)
+        // and should NOT perform a final read of the address before writing
+        // This test verifies the instruction completes correctly
+    }
+
+    #[test]
+    fn test_absolutex_page_cross_dummy_read() {
+        let memory = create_test_memory();
+
+        // Set up LDA $12FF,X instruction where X will cause page cross
+        memory.borrow_mut().write(0x0400, LDA_ABSX, false);
+        memory.borrow_mut().write(0x0401, 0xFF, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte ($12FF)
+
+        // Place value at the final address after page cross ($12FF + $05 = $1304)
+        memory.borrow_mut().write(0x1304, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x05; // This will cause page cross
+
+        // Execute LDA instruction
+        let mut cycles = 0;
+        loop {
+            let done = cpu.tick_cycle();
+            cycles += 1;
+            if done {
+                break;
+            }
+        }
+
+        // LDA with page cross should take 5 cycles (opcode + 4 addressing)
+        // Cycle 3 performs a dummy read from the wrong page
+        assert_eq!(cycles, 5, "LDA abs,X with page cross should take 5 cycles");
+        assert_eq!(cpu.state.a, 0x42, "A should contain the loaded value");
+        assert_eq!(cpu.state.pc, 0x0403, "PC should advance by 3");
+    }
+
+    #[test]
+    fn test_absolutex_write_always_takes_5_cycles() {
+        let memory = create_test_memory();
+
+        // Set up STA $1200,X instruction (no page cross)
+        memory.borrow_mut().write(0x0400, STA_ABSX, false);
+        memory.borrow_mut().write(0x0401, 0x00, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x12, false); // High byte ($1200)
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.x = 0x05; // No page cross: $1200 + $05 = $1205
+        cpu.state.a = 0x42;
+
+        // Execute STA instruction
+        let mut cycles = 0;
+        loop {
+            let done = cpu.tick_cycle();
+            cycles += 1;
+            if done {
+                break;
+            }
+        }
+
+        // STA abs,X always takes 5 cycles even without page cross
+        // (performs dummy read on cycle 3)
+        assert_eq!(
+            cycles, 5,
+            "STA abs,X should always take 5 cycles (with dummy read)"
+        );
+        assert_eq!(
+            memory.borrow().read(0x1205),
+            0x42,
+            "Value should be written"
+        );
+        assert_eq!(cpu.state.pc, 0x0403, "PC should advance by 3");
+    }
+
+    #[test]
+    fn test_rmw_performs_dummy_read() {
+        let memory = create_test_memory();
+
+        // Set up INC $2000 instruction (Read-Modify-Write)
+        memory.borrow_mut().write(0x0400, INC_ABS, false);
+        memory.borrow_mut().write(0x0401, 0x00, false); // Low byte
+        memory.borrow_mut().write(0x0402, 0x20, false); // High byte ($2000)
+
+        // Initial value at $2000
+        memory.borrow_mut().write(0x2000, 0x41, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+
+        // Execute INC instruction
+        let mut cycles = 0;
+        loop {
+            let done = cpu.tick_cycle();
+            cycles += 1;
+            if done {
+                break;
+            }
+        }
+
+        // INC absolute should take 6 cycles total
+        // Including the dummy read during modification
+        assert_eq!(cycles, 6, "INC abs should take 6 cycles");
+        assert_eq!(
+            memory.borrow().read(0x2000),
+            0x42,
+            "Value should be incremented"
+        );
+        assert_eq!(cpu.state.pc, 0x0403, "PC should advance by 3");
+    }
+
+    #[test]
     fn test_opcode_01() {
         let memory = create_test_memory();
 

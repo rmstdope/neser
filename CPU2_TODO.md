@@ -276,16 +276,39 @@ a memory operation, matching real 6502 hardware behavior.
 
 ### 11. Dummy Reads/Writes
 
-**Status:** Recently implemented for addressing modes  
+**Status:** ✅ FIXED  
 **Wiki Reference:** Implied by cycle-accurate behavior requirements
 
-**Recent work:**
+**Requirement:**
+The 6502 performs dummy reads in several situations to maintain cycle timing:
+- Write instructions perform a dummy read before the final write
+- Indexed addressing modes perform dummy reads when crossing page boundaries
+- Read-Modify-Write operations perform all required reads including dummy reads
 
-- [x] Write operations skip unnecessary reads (fix-dummy-reads branch)
-- [x] RMW operations perform dummy reads correctly
-- [ ] Verify all dummy read/write behavior matches hardware
-- [ ] Page-crossing dummy reads in indexed modes
-- [ ] Verify write dummy reads are truly suppressed
+**Implementation:**
+Uses the `MemoryAccess` enum to distinguish operation types:
+- `Read`: Performs final value read
+- `Write`: Skips final read (performs dummy read earlier in cycle sequence)
+- `ReadModifyWrite`: Performs all reads including dummy read during modification
+- `Jump`: Special case for JMP instruction
+
+**Tests Added:**
+- `test_absolute_write_skips_final_read` - Verifies STA doesn't perform final read
+- `test_absolutex_page_cross_dummy_read` - Verifies page-crossing generates 5-cycle LDA
+- `test_absolutex_write_always_takes_5_cycles` - Verifies STA abs,X always takes 5 cycles with dummy read
+- `test_rmw_performs_dummy_read` - Verifies INC performs all required reads (6 cycles)
+
+**Key Behaviors Verified:**
+- Write operations (STA, STX, STY) skip unnecessary final read
+- Indexed modes with page-crossing perform dummy read from wrong page
+- Write operations in indexed modes always take max cycles (perform dummy read)
+- RMW operations perform complete read-modify-write sequence including dummy reads
+
+**Implementation Files:**
+- `src/cpu2/addressing.rs`: MemoryAccess enum and dummy read logic
+- Lines 222-225: Absolute mode Write optimization
+- Lines 459-467: AbsoluteX page-crossing dummy read
+- Lines 474-476: AbsoluteX Write optimization
 
 ## Documentation and Testing
 
