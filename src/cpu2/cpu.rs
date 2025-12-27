@@ -75,6 +75,12 @@ pub struct Cpu2 {
     /// When CLI/SEI/PLP execute, they save the OLD I flag value here,
     /// and interrupt polling uses this value during the delay period
     saved_i_flag_for_delay: bool,
+    /// NMI line state - tracks the previous state for edge detection
+    /// NMI is edge-triggered: triggers on high-to-low transition
+    nmi_line_prev: bool,
+    /// IRQ line state - current level
+    /// IRQ is level-triggered: active when line is low
+    irq_line: bool,
 }
 
 impl Cpu2 {
@@ -102,6 +108,8 @@ impl Cpu2 {
             in_interrupt_sequence: false,
             delay_interrupt_check: false,
             saved_i_flag_for_delay: false,
+            nmi_line_prev: true,  // Start with line high (not asserted)
+            irq_line: true,       // Start with line high (not asserted)
         }
     }
 
@@ -1980,6 +1988,17 @@ impl Cpu2 {
         self.nmi_pending = pending;
     }
 
+    /// Set the NMI line state (edge-triggered)
+    /// NMI triggers on a high-to-low transition (falling edge)
+    /// This is the proper hardware interface for NMI signal
+    pub fn set_nmi_line(&mut self, line_state: bool) {
+        // Detect falling edge: previous=high, current=low
+        if self.nmi_line_prev && !line_state {
+            self.nmi_pending = true;
+        }
+        self.nmi_line_prev = line_state;
+    }
+
     /// Check if an NMI is pending
     pub fn is_nmi_pending(&self) -> bool {
         self.nmi_pending
@@ -1989,6 +2008,15 @@ impl Cpu2 {
     /// This should be called by external hardware (NES loop) when IRQ line is asserted
     pub fn set_irq_pending(&mut self, pending: bool) {
         self.irq_pending = pending;
+    }
+
+    /// Set the IRQ line state (level-triggered)
+    /// IRQ is active when line is low (false)
+    /// This is the proper hardware interface for IRQ signal
+    pub fn set_irq_line(&mut self, line_state: bool) {
+        self.irq_line = line_state;
+        // IRQ is level-triggered: active when line is low
+        self.irq_pending = !line_state;
     }
 
     /// Check if an IRQ is pending
@@ -3296,6 +3324,122 @@ mod tests {
             "Value should be incremented"
         );
         assert_eq!(cpu.state.pc, 0x0403, "PC should advance by 3");
+    }
+
+    #[test]
+    fn test_nmi_edge_detection_high_to_low() {
+        // NMI should trigger on a high-to-low transition (falling edge)
+        let memory = create_test_memory();
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Initially NMI line is high (not asserted) - no NMI pending
+        cpu.set_nmi_line(true);
+        assert!(!cpu.is_nmi_pending(), "NMI should not be pending when line is high");
+
+        // Line goes low (falling edge) - should detect NMI
+        cpu.set_nmi_line(false);
+        assert!(cpu.is_nmi_pending(), "NMI should be pending after falling edge");
+    }
+
+    #[test]
+    fn test_nmi_edge_detection_stays_low() {
+        // NMI should NOT trigger again while line stays low
+        let memory = create_test_memory();
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Start with line high
+        cpu.set_nmi_line(true);
+        
+        // First falling edge triggers NMI
+        cpu.set_nmi_line(false);
+        assert!(cpu.is_nmi_pending(), "NMI should be pending after falling edge");
+
+        // Clear the pending flag (simulating NMI being serviced)
+        cpu.set_nmi_pending(false);
+
+        // Line stays low - should NOT trigger again
+        cpu.set_nmi_line(false);
+        assert!(!cpu.is_nmi_pending(), "NMI should not trigger while line stays low");
+    }
+
+    #[test]
+    fn test_nmi_edge_detection_multiple_edges() {
+        // Multiple high-to-low transitions should each trigger NMI
+        let memory = create_test_memory();
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Start high
+        cpu.set_nmi_line(true);
+
+        // First falling edge
+        cpu.set_nmi_line(false);
+        assert!(cpu.is_nmi_pending(), "First NMI should be pending");
+        cpu.set_nmi_pending(false); // Service it
+
+        // Line goes high again
+        cpu.set_nmi_line(true);
+        assert!(!cpu.is_nmi_pending(), "NMI should not be pending when line goes high");
+
+        // Second falling edge
+        cpu.set_nmi_line(false);
+        assert!(cpu.is_nmi_pending(), "Second NMI should be pending after second falling edge");
+    }
+
+    #[test]
+    fn test_irq_level_detection_active_low() {
+        // IRQ should be active when line is low (level-triggered)
+        let memory = create_test_memory();
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Clear I flag so IRQ can be serviced
+        cpu.state.p &= !FLAG_INTERRUPT;
+
+        // IRQ line high (not asserted) - no IRQ
+        cpu.set_irq_line(true);
+        assert!(!cpu.should_poll_irq(), "IRQ should not be active when line is high");
+
+        // IRQ line low (asserted) - IRQ should be active
+        cpu.set_irq_line(false);
+        assert!(cpu.should_poll_irq(), "IRQ should be active when line is low");
+
+        // IRQ stays low - should remain active
+        cpu.set_irq_line(false);
+        assert!(cpu.should_poll_irq(), "IRQ should remain active while line stays low");
+    }
+
+    #[test]
+    fn test_irq_level_detection_masked_by_i_flag() {
+        // IRQ should be masked when I flag is set
+        let memory = create_test_memory();
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Set I flag to mask IRQ
+        cpu.state.p |= FLAG_INTERRUPT;
+
+        // IRQ line low but masked by I flag
+        cpu.set_irq_line(false);
+        assert!(!cpu.should_poll_irq(), "IRQ should be masked when I flag is set");
+
+        // Clear I flag - IRQ should now be active
+        cpu.state.p &= !FLAG_INTERRUPT;
+        assert!(cpu.should_poll_irq(), "IRQ should be active when I flag is clear");
+    }
+
+    #[test]
+    fn test_nmi_not_masked_by_i_flag() {
+        // NMI should trigger regardless of I flag (non-maskable)
+        let memory = create_test_memory();
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        // Set I flag
+        cpu.state.p |= FLAG_INTERRUPT;
+
+        // Start with line high
+        cpu.set_nmi_line(true);
+
+        // Falling edge should trigger NMI even with I flag set
+        cpu.set_nmi_line(false);
+        assert!(cpu.is_nmi_pending(), "NMI should trigger regardless of I flag");
     }
 
     #[test]

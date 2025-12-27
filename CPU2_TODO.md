@@ -362,17 +362,38 @@ Uses the `MemoryAccess` enum to distinguish operation types:
 
 ### 15. Interrupt State Management
 
-**Status:** Minimal  
-**Current:** Only `nmi_pending` boolean flag
+**Status:** ✅ PARTIALLY FIXED (Edge/Level Detection Complete)  
+**Wiki Reference:** [CPU interrupts](https://www.nesdev.org/wiki/CPU_interrupts)
 
-**Needs:**
+**Completed:**
 
-- [ ] IRQ pending state tracking
-- [ ] Edge detector state for NMI
-- [ ] Level detector state for IRQ
-- [ ] Delayed I flag state (for CLI/SEI/PLP)
-- [ ] Current interrupt sequence state
-- [ ] Interrupt priority handling
+- [x] Edge detector state for NMI - `nmi_line_prev` field tracks previous line state
+- [x] Level detector state for IRQ - `irq_line` field tracks current line state
+- [x] Delayed I flag state (for CLI/SEI/PLP) - already implemented via `delay_interrupt_check` and `saved_i_flag_for_delay`
+- [x] NMI edge-triggered behavior - triggers on high-to-low transition only
+- [x] IRQ level-triggered behavior - active when line is low
+- [x] IRQ pending state tracking - already implemented
+
+**Implementation:**
+
+- `set_nmi_line(bool)` - Proper hardware interface for NMI signal, detects falling edges
+- `set_irq_line(bool)` - Proper hardware interface for IRQ signal, level-triggered
+- NMI triggers on high-to-low transition and won't retrigger while line stays low
+- IRQ is active whenever line is low (level-triggered), respects I flag masking
+
+**Tests Added:**
+
+- `test_nmi_edge_detection_high_to_low` - Verifies NMI triggers on falling edge
+- `test_nmi_edge_detection_stays_low` - Verifies NMI doesn't retrigger while low
+- `test_nmi_edge_detection_multiple_edges` - Verifies multiple edges work correctly
+- `test_irq_level_detection_active_low` - Verifies IRQ level-triggered behavior
+- `test_irq_level_detection_masked_by_i_flag` - Verifies I flag masking
+- `test_nmi_not_masked_by_i_flag` - Verifies NMI is non-maskable
+
+**Still Needed:**
+
+- [ ] Current interrupt sequence state (for preventing nested interrupts)
+- [ ] Interrupt priority handling (NMI priority over IRQ)
 
 ### 16. Cycle-Level Interrupt Integration
 
