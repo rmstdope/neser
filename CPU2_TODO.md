@@ -85,16 +85,33 @@ The CPU provides the polling mechanism via `poll_pending_interrupt()` which exte
 
 ### 4. Branch Instructions and Interrupts
 
-**Status:** Not implemented  
-**Wiki Reference:** [CPU interrupts - Branch instructions](https://www.nesdev.org/wiki/CPU_interrupts#Branch_instructions_and_interrupts)
+**Status:** ⚠️ DEFERRED - Requires architectural changes  
+**Wiki Reference:** [CPU interrupts - Branch instructions](https://www.nesdev.org/wiki/CPU_interrupts#Branch_instructions_and_interrupts)  
+**Test ROM:** `roms/blargg/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes` (commented out)
 
-**Missing:**
+**Requirements:**
 
 - [ ] Branch instructions have special interrupt polling:
   - Always polled before second cycle (operand fetch)
   - NOT polled before third cycle on taken branch
   - For page-crossing branches, polled before PCH fixup cycle
-- [ ] Need to add interrupt polling points to branch addressing modes
+
+**Investigation Summary:**
+Two approaches were attempted:
+
+1. **Skip mechanism**: Skip IRQ polling after taken non-page-crossing branches
+   - Test still timed out
+2. **Delay mechanism**: Use existing `delay_interrupt_check` to delay IRQ by one instruction
+   - Broke other interrupt tests (CLI latency)
+
+**Root Cause:**
+Current architecture polls interrupts AFTER instruction completion in the NES loop.
+Proper implementation requires cycle-level interrupt polling WITHIN instruction execution
+("before second cycle", "before third cycle"). This would need significant architectural
+changes to support mid-instruction polling points.
+
+**Recommendation:** Defer until other CPU2 features are complete, then revisit with
+proper mid-instruction polling architecture.
 
 ### 5. Interrupt Hijacking
 
