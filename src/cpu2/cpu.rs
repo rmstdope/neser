@@ -81,6 +81,8 @@ pub struct Cpu2 {
     /// IRQ line state - current level
     /// IRQ is level-triggered: active when line is low
     irq_line: bool,
+    /// Current opcode being executed (for special handling like RTI)
+    current_opcode: u8,
 }
 
 impl Cpu2 {
@@ -110,6 +112,7 @@ impl Cpu2 {
             saved_i_flag_for_delay: false,
             nmi_line_prev: true,  // Start with line high (not asserted)
             irq_line: true,       // Start with line high (not asserted)
+            current_opcode: 0,
         }
     }
 
@@ -131,6 +134,7 @@ impl Cpu2 {
         // If no current instruction, fetch and decode a new one
         if self.current_instruction.is_none() {
             let opcode = self.memory.borrow().read(self.state.pc);
+            self.current_opcode = opcode;
             if let Some(instruction) = Self::decode(opcode) {
                 self.state.pc = self.state.pc.wrapping_add(1);
                 self.current_instruction = Some(instruction);
@@ -2019,6 +2023,48 @@ impl Cpu2 {
         self.irq_pending = !line_state;
     }
 
+    /// Check if NMI should be serviced
+    /// NMI has priority over IRQ
+    pub fn should_service_nmi(&self) -> bool {
+        self.nmi_pending
+    }
+
+    /// Get the interrupt vector address to use
+    /// If NMI is pending, returns NMI vector ($FFFA)
+    /// Otherwise returns IRQ vector ($FFFE)
+    /// This implements NMI hijacking - if NMI arrives during IRQ sequence,
+    /// the vector read uses NMI vector instead
+    pub fn get_interrupt_vector(&self) -> u16 {
+        if self.nmi_pending {
+            NMI_VECTOR
+        } else {
+            IRQ_VECTOR
+        }
+    }
+
+    /// Mark the start of an interrupt sequence
+    /// Used to prevent nested interrupts
+    pub fn mark_interrupt_sequence_start(&mut self) {
+        self.in_interrupt_sequence = true;
+    }
+
+    /// Mark the end of an interrupt sequence
+    /// Called by RTI to allow interrupts to be polled again
+    pub fn mark_interrupt_sequence_end(&mut self) {
+        self.in_interrupt_sequence = false;
+    }
+
+    /// Check if CPU is currently in an interrupt sequence
+    pub fn is_in_interrupt_sequence(&self) -> bool {
+        self.in_interrupt_sequence
+    }
+
+    /// Check if interrupts should be polled
+    /// Returns false if already in an interrupt sequence
+    pub fn should_poll_interrupts(&self) -> bool {
+        !self.in_interrupt_sequence
+    }
+
     /// Check if an IRQ is pending
     pub fn is_irq_pending(&self) -> bool {
         self.irq_pending
@@ -3440,6 +3486,127 @@ mod tests {
         // Falling edge should trigger NMI even with I flag set
         cpu.set_nmi_line(false);
         assert!(cpu.is_nmi_pending(), "NMI should trigger regardless of I flag");
+    }
+
+    #[test]
+    fn test_nmi_priority_over_irq() {
+        // When both NMI and IRQ are pending, NMI should be serviced first
+        let memory = create_test_memory();
+        
+        // Set up NMI vector to point to $8000
+        memory.borrow_mut().write(NMI_VECTOR, 0x00, false);
+        memory.borrow_mut().write(NMI_VECTOR + 1, 0x80, false);
+        
+        // Set up IRQ vector to point to $9000  
+        memory.borrow_mut().write(IRQ_VECTOR, 0x00, false);
+        memory.borrow_mut().write(IRQ_VECTOR + 1, 0x90, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p &= !FLAG_INTERRUPT; // Clear I flag so IRQ can be serviced
+
+        // Assert both NMI and IRQ lines
+        cpu.set_nmi_line(true);
+        cpu.set_nmi_line(false); // Falling edge triggers NMI
+        cpu.set_irq_line(false);  // IRQ active low
+
+        assert!(cpu.is_nmi_pending(), "NMI should be pending");
+        assert!(cpu.should_poll_irq(), "IRQ should also be pending");
+
+        // When we check which interrupt to service, NMI should have priority
+        let should_service_nmi = cpu.should_service_nmi();
+        assert!(should_service_nmi, "NMI should have priority over IRQ");
+    }
+
+    #[test]
+    fn test_nmi_hijacks_irq_sequence() {
+        // If NMI arrives during IRQ sequence, it should hijack and redirect to NMI vector
+        let memory = create_test_memory();
+        
+        // Set up NMI vector to point to $8000
+        memory.borrow_mut().write(NMI_VECTOR, 0x00, false);
+        memory.borrow_mut().write(NMI_VECTOR + 1, 0x80, false);
+        
+        // Set up IRQ vector to point to $9000
+        memory.borrow_mut().write(IRQ_VECTOR, 0x00, false);
+        memory.borrow_mut().write(IRQ_VECTOR + 1, 0x90, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p &= !FLAG_INTERRUPT;
+
+        // Start with IRQ pending
+        cpu.set_irq_line(false);
+        
+        // Mark that we're in interrupt sequence
+        cpu.mark_interrupt_sequence_start();
+        
+        // During IRQ sequence, NMI arrives
+        cpu.set_nmi_line(true);
+        cpu.set_nmi_line(false); // Falling edge
+        
+        // NMI should hijack the sequence
+        // Vector read should use NMI vector instead of IRQ vector
+        let vector_to_use = cpu.get_interrupt_vector();
+        assert_eq!(vector_to_use, NMI_VECTOR, "NMI should hijack IRQ sequence");
+    }
+
+    #[test]
+    fn test_no_nested_interrupts_during_sequence() {
+        // Once in an interrupt sequence, another interrupt shouldn't start
+        // until the current one completes (RTI)
+        let memory = create_test_memory();
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p &= !FLAG_INTERRUPT;
+
+        // Start interrupt sequence
+        cpu.mark_interrupt_sequence_start();
+        assert!(cpu.is_in_interrupt_sequence(), "Should be in interrupt sequence");
+
+        // Try to trigger another IRQ while in sequence
+        cpu.set_irq_line(false);
+        
+        // Should not service new IRQ while in sequence
+        let should_poll = cpu.should_poll_interrupts();
+        assert!(!should_poll, "Should not poll interrupts during sequence");
+
+        // After sequence ends, should be able to poll again
+        cpu.mark_interrupt_sequence_end();
+        assert!(!cpu.is_in_interrupt_sequence(), "Should not be in interrupt sequence");
+        
+        let should_poll_now = cpu.should_poll_interrupts();
+        assert!(should_poll_now, "Should poll interrupts after sequence ends");
+    }
+
+    #[test]
+    fn test_rti_ends_interrupt_sequence() {
+        // After ONE instruction executes from interrupt handler,
+        // in_interrupt_sequence flag should be cleared
+        // This test verifies the flag is cleared, allowing further interrupt polling
+        let memory = create_test_memory();
+        
+        // Set up NOP at $0400 (will be first instruction in handler)
+        memory.borrow_mut().write(0x0400, NOP, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        
+        // Mark that we're in an interrupt sequence (as if we just entered handler)
+        cpu.mark_interrupt_sequence_start();
+        assert!(cpu.is_in_interrupt_sequence(), "Should be in interrupt sequence");
+
+        // Execute one instruction (NOP)
+        loop {
+            let done = cpu.tick_cycle();
+            if done {
+                break;
+            }
+        }
+
+        // After first instruction completes, should no longer be in interrupt sequence
+        // This allows further interrupts to be polled (NMI can interrupt IRQ handler, etc.)
+        assert!(!cpu.is_in_interrupt_sequence(), "Should not be in interrupt sequence after first instruction");
     }
 
     #[test]

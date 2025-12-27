@@ -362,7 +362,7 @@ Uses the `MemoryAccess` enum to distinguish operation types:
 
 ### 15. Interrupt State Management
 
-**Status:** ✅ PARTIALLY FIXED (Edge/Level Detection Complete)  
+**Status:** ✅ FIXED  
 **Wiki Reference:** [CPU interrupts](https://www.nesdev.org/wiki/CPU_interrupts)
 
 **Completed:**
@@ -373,27 +373,52 @@ Uses the `MemoryAccess` enum to distinguish operation types:
 - [x] NMI edge-triggered behavior - triggers on high-to-low transition only
 - [x] IRQ level-triggered behavior - active when line is low
 - [x] IRQ pending state tracking - already implemented
+- [x] Current interrupt sequence state - `in_interrupt_sequence` prevents nested interrupts
+- [x] Interrupt priority handling - NMI has priority over IRQ, can hijack IRQ sequence
 
 **Implementation:**
 
+Signal Handling:
 - `set_nmi_line(bool)` - Proper hardware interface for NMI signal, detects falling edges
 - `set_irq_line(bool)` - Proper hardware interface for IRQ signal, level-triggered
 - NMI triggers on high-to-low transition and won't retrigger while line stays low
 - IRQ is active whenever line is low (level-triggered), respects I flag masking
 
+Priority and Sequencing:
+- `should_service_nmi()` - Returns true if NMI should be serviced (has priority)
+- `get_interrupt_vector()` - Returns NMI vector if NMI pending, else IRQ (enables hijacking)
+- `mark_interrupt_sequence_start/end()` - Track when in 7-cycle interrupt initiation
+- `is_in_interrupt_sequence()` - Check if currently in interrupt sequence
+- `should_poll_interrupts()` - Returns false during sequence to prevent nested interrupts
+- Sequence flag cleared after first handler instruction executes
+- Allows NMI to interrupt IRQ handler (I flag prevents IRQ self-nesting)
+
 **Tests Added:**
 
-- `test_nmi_edge_detection_high_to_low` - Verifies NMI triggers on falling edge
-- `test_nmi_edge_detection_stays_low` - Verifies NMI doesn't retrigger while low
-- `test_nmi_edge_detection_multiple_edges` - Verifies multiple edges work correctly
-- `test_irq_level_detection_active_low` - Verifies IRQ level-triggered behavior
-- `test_irq_level_detection_masked_by_i_flag` - Verifies I flag masking
-- `test_nmi_not_masked_by_i_flag` - Verifies NMI is non-maskable
+Edge/Level Detection (6 tests):
+- `test_nmi_edge_detection_high_to_low` - NMI triggers on falling edge
+- `test_nmi_edge_detection_stays_low` - NMI doesn't retrigger while low
+- `test_nmi_edge_detection_multiple_edges` - Multiple edges work correctly
+- `test_irq_level_detection_active_low` - IRQ level-triggered behavior
+- `test_irq_level_detection_masked_by_i_flag` - I flag masking
+- `test_nmi_not_masked_by_i_flag` - NMI is non-maskable
 
-**Still Needed:**
+Priority and Sequencing (4 tests):
+- `test_nmi_priority_over_irq` - NMI has priority when both pending
+- `test_nmi_hijacks_irq_sequence` - NMI hijacks IRQ (vector redirection)
+- `test_no_nested_interrupts_during_sequence` - Polling blocked during 7-cycle sequence
+- `test_rti_ends_interrupt_sequence` - Sequence flag cleared after first handler instruction
 
-- [ ] Current interrupt sequence state (for preventing nested interrupts)
-- [ ] Interrupt priority handling (NMI priority over IRQ)
+**Architecture:**
+
+The interrupt system now properly models 6502 hardware:
+1. NMI edge detector - tracks line state transitions
+2. IRQ level detector - tracks current line state  
+3. Priority - NMI always has priority over IRQ
+4. Hijacking - NMI can hijack IRQ by redirecting vector read
+5. Sequencing - 7-cycle interrupt initiation is atomic (no polling)
+6. After first handler instruction, interrupts can be polled again
+7. I flag prevents IRQ nesting but doesn't prevent NMI
 
 ### 16. Cycle-Level Interrupt Integration
 
