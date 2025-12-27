@@ -6,7 +6,7 @@
 use super::traits::InstructionType;
 use super::types::{
     CpuState, FLAG_BREAK, FLAG_CARRY, FLAG_DECIMAL, FLAG_INTERRUPT, FLAG_NEGATIVE, FLAG_UNUSED,
-    FLAG_ZERO, IRQ_VECTOR,
+    FLAG_ZERO, IRQ_VECTOR, NMI_VECTOR,
 };
 use crate::mem_controller::MemController;
 use std::cell::RefCell;
@@ -624,7 +624,14 @@ impl InstructionType for Jmp {
 /// BRK - Break / Software Interrupt
 ///
 /// Pushes the return address (PC+2) and status register onto the stack,
-/// sets the I flag, and loads PC from the IRQ vector at $FFFE-$FFFF.
+/// sets the I flag, and loads PC from an interrupt vector.
+///
+/// BRK can be "hijacked" by NMI or IRQ during execution:
+/// - If NMI is pending: Uses NMI vector ($FFFA) but keeps B flag SET
+/// - If IRQ is pending (and I flag clear): Uses IRQ vector ($FFFE) and clears B flag
+/// - Otherwise: Normal BRK uses IRQ vector ($FFFE) with B flag SET
+///
+/// Priority: NMI > IRQ. Vector determination occurs at cycle 6 (marked *** in 6502 docs).
 ///
 /// Total cycles: 7 (opcode fetch + 5 execution cycles + completion cycle)
 ///   1. Opcode fetch (handled by CPU)
@@ -632,12 +639,13 @@ impl InstructionType for Jmp {
 ///   3. Push PCH (high byte of PC+2) to stack
 ///   4. Push PCL (low byte of PC+2) to stack
 ///   5. Push status register with B flag set to stack
-///   6. Load PCL from IRQ vector ($FFFE), set I flag
-///   7. Load PCH from IRQ vector ($FFFF) (completion handled by CPU)
+///   6. Check for hijacking, load PCL from chosen vector, set I flag
+///   7. Load PCH from chosen vector (completion handled by CPU)
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Brk {
     cycle: u8,
     return_address: u16,
+    vector: u16, // Store which interrupt vector to use (determined at cycle 4)
 }
 
 impl Brk {
@@ -693,15 +701,36 @@ impl InstructionType for Brk {
                 self.cycle = 4;
             }
             4 => {
-                // Cycle 6: Load PCL from IRQ vector and set I flag
-                let pcl = memory.borrow().read(IRQ_VECTOR);
+                // Cycle 6: Determine interrupt vector and load PCL
+                // Check for interrupt hijacking (NMI has priority over IRQ)
+                self.vector = if cpu_state.nmi_pending {
+                    // NMI hijacks BRK: use NMI vector, keep B flag SET (in pushed status)
+                    cpu_state.nmi_pending = false;
+                    NMI_VECTOR
+                } else if cpu_state.irq_pending && (cpu_state.p & FLAG_INTERRUPT) == 0 {
+                    // IRQ hijacks BRK: use IRQ vector, clear B flag (in pushed status)
+                    cpu_state.irq_pending = false;
+                    
+                    // Modify the status byte already pushed to stack to clear B flag
+                    let status_stack_addr = 0x0100 | (cpu_state.sp.wrapping_add(1) as u16);
+                    let pushed_status = memory.borrow().read(status_stack_addr);
+                    memory.borrow_mut().write(status_stack_addr, pushed_status & !FLAG_BREAK, false);
+                    
+                    IRQ_VECTOR
+                } else {
+                    // Normal BRK: use IRQ vector, B flag remains SET (in pushed status)
+                    IRQ_VECTOR
+                };
+                
+                // Load low byte from chosen vector and set I flag
+                let pcl = memory.borrow().read(self.vector);
                 cpu_state.pc = pcl as u16;
                 cpu_state.p |= FLAG_INTERRUPT;
                 self.cycle = 5;
             }
             5 => {
-                // Cycle 7: Load PCH from IRQ vector
-                let pch = memory.borrow().read(IRQ_VECTOR + 1);
+                // Cycle 7: Load PCH from vector (using the vector determined in cycle 4)
+                let pch = memory.borrow().read(self.vector + 1);
                 cpu_state.pc |= (pch as u16) << 8;
                 self.cycle = 6;
             }

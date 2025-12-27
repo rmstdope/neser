@@ -3800,7 +3800,6 @@ mod tests {
     // similar to Issue #4. Mark as #[ignore] for now.
 
     #[test]
-    #[ignore]
     fn test_nmi_hijacks_brk() {
         // Test that NMI arriving during BRK uses NMI vector
         // but still sets B flag (BRK initiated the sequence)
@@ -3864,7 +3863,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_irq_hijacks_brk() {
         // Test that IRQ pending during BRK uses IRQ vector
         // and clears B flag (IRQ hijacked it)
