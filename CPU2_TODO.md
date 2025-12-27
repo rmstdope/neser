@@ -320,7 +320,7 @@ Uses the `MemoryAccess` enum to distinguish operation types:
 
 ### 12. Comprehensive Interrupt Tests
 
-**Status:** ✅ MOSTLY COMPLETE  
+**Status:** ✅ COMPLETE  
 **Wiki Reference:** [CPU interrupts - Notes](https://www.nesdev.org/wiki/CPU_interrupts#Notes)
 
 **Completed Tests:**
@@ -329,22 +329,27 @@ Uses the `MemoryAccess` enum to distinguish operation types:
 - [x] IRQ triggering and execution - `test_irq_trigger_full_sequence` (cycle-accurate, validates stack, vectors, flags)
 - [x] NMI priority over IRQ - `test_nmi_priority_over_irq` (from Issue #15)
 - [x] Interrupt hijacking (NMI hijacks IRQ) - `test_nmi_hijacks_irq_sequence` (from Issue #15)
+- [x] Interrupt hijacking (NMI hijacks BRK) - `test_nmi_hijacks_brk` ✅ **NEW**
+- [x] Interrupt hijacking (IRQ hijacks BRK) - `test_irq_hijacks_brk` ✅ **NEW**
 - [x] Interrupt sequencing - `test_no_nested_interrupts_during_sequence`, `test_rti_ends_interrupt_sequence` (from Issue #15)
 - [x] Edge/level detection - 6 tests from Issue #15 verify NMI edge-triggered and IRQ level-triggered behavior
 
 **Deferred (Architectural Changes Required):**
 
-- [ ] Interrupt hijacking (NMI hijacks BRK) - Test exists but ignored; requires BRK to check NMI during sequence
-- [ ] Interrupt hijacking (IRQ hijacks BRK) - Test exists but ignored; requires BRK to check IRQ during sequence
 - [ ] CLI/SEI/PLP delayed IRQ behavior - Partially tested in Issue #3
 - [ ] Branch instruction interrupt polling - Tracked in Issue #4
 - [ ] Test ROM: cpu_interrupts_v2 - External validation
 
 **Notes:**
 
-BRK hijacking tests are marked `#[ignore]` because BRK currently hard-codes the IRQ vector and doesn't check for
-NMI/IRQ during its 7-cycle sequence. This would require similar architectural changes to Issue #4 (Branch Instructions)
-where interrupt polling needs to happen at specific cycle boundaries within an instruction's execution.
+BRK hijacking is now fully implemented:
+- During BRK's 7-cycle sequence, vector determination occurs at cycle 6
+- If NMI is pending: Uses NMI vector ($FFFA) but keeps B flag SET
+- If IRQ is pending (and I flag clear): Uses IRQ vector ($FFFE) and clears B flag
+- Otherwise: Normal BRK uses IRQ vector ($FFFE) with B flag SET
+- Priority: NMI > IRQ
+
+The implementation required moving nmi_pending/irq_pending to CpuState to enable instruction-level access.
 
 ### 13. Comprehensive Reset Tests
 
