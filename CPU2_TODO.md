@@ -262,12 +262,13 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 **Tests Added:**
 
 - `test_nop_performs_dummy_read` - Verifies NOP performs memory read during execution
-- `test_clc_performs_dummy_read` - Verifies CLC performs memory read during execution  
+- `test_clc_performs_dummy_read` - Verifies CLC performs memory read during execution
 - `test_tax_performs_dummy_read` - Verifies TAX performs memory read during execution
 
 **Details:**
 
 Implied mode instructions (like NOP, CLC, SEC, TAX, etc.) are 2-cycle instructions:
+
 - Cycle 1: Fetch opcode (handled before our execution)
 - Cycle 2: Execute operation + perform dummy read of next byte at PC
 
@@ -281,30 +282,35 @@ a memory operation, matching real 6502 hardware behavior.
 
 **Requirement:**
 The 6502 performs dummy reads in several situations to maintain cycle timing:
+
 - Write instructions perform a dummy read before the final write
 - Indexed addressing modes perform dummy reads when crossing page boundaries
 - Read-Modify-Write operations perform all required reads including dummy reads
 
 **Implementation:**
 Uses the `MemoryAccess` enum to distinguish operation types:
+
 - `Read`: Performs final value read
 - `Write`: Skips final read (performs dummy read earlier in cycle sequence)
 - `ReadModifyWrite`: Performs all reads including dummy read during modification
 - `Jump`: Special case for JMP instruction
 
 **Tests Added:**
+
 - `test_absolute_write_skips_final_read` - Verifies STA doesn't perform final read
 - `test_absolutex_page_cross_dummy_read` - Verifies page-crossing generates 5-cycle LDA
 - `test_absolutex_write_always_takes_5_cycles` - Verifies STA abs,X always takes 5 cycles with dummy read
 - `test_rmw_performs_dummy_read` - Verifies INC performs all required reads (6 cycles)
 
 **Key Behaviors Verified:**
+
 - Write operations (STA, STX, STY) skip unnecessary final read
 - Indexed modes with page-crossing perform dummy read from wrong page
 - Write operations in indexed modes always take max cycles (perform dummy read)
 - RMW operations perform complete read-modify-write sequence including dummy reads
 
 **Implementation Files:**
+
 - `src/cpu2/addressing.rs`: MemoryAccess enum and dummy read logic
 - Lines 222-225: Absolute mode Write optimization
 - Lines 459-467: AbsoluteX page-crossing dummy read
@@ -390,12 +396,14 @@ where interrupt polling needs to happen at specific cycle boundaries within an i
 **Implementation:**
 
 Signal Handling:
+
 - `set_nmi_line(bool)` - Proper hardware interface for NMI signal, detects falling edges
 - `set_irq_line(bool)` - Proper hardware interface for IRQ signal, level-triggered
 - NMI triggers on high-to-low transition and won't retrigger while line stays low
 - IRQ is active whenever line is low (level-triggered), respects I flag masking
 
 Priority and Sequencing:
+
 - `should_service_nmi()` - Returns true if NMI should be serviced (has priority)
 - `get_interrupt_vector()` - Returns NMI vector if NMI pending, else IRQ (enables hijacking)
 - `mark_interrupt_sequence_start/end()` - Track when in 7-cycle interrupt initiation
@@ -407,6 +415,7 @@ Priority and Sequencing:
 **Tests Added:**
 
 Edge/Level Detection (6 tests):
+
 - `test_nmi_edge_detection_high_to_low` - NMI triggers on falling edge
 - `test_nmi_edge_detection_stays_low` - NMI doesn't retrigger while low
 - `test_nmi_edge_detection_multiple_edges` - Multiple edges work correctly
@@ -415,6 +424,7 @@ Edge/Level Detection (6 tests):
 - `test_nmi_not_masked_by_i_flag` - NMI is non-maskable
 
 Priority and Sequencing (4 tests):
+
 - `test_nmi_priority_over_irq` - NMI has priority when both pending
 - `test_nmi_hijacks_irq_sequence` - NMI hijacks IRQ (vector redirection)
 - `test_no_nested_interrupts_during_sequence` - Polling blocked during 7-cycle sequence
@@ -423,8 +433,9 @@ Priority and Sequencing (4 tests):
 **Architecture:**
 
 The interrupt system now properly models 6502 hardware:
+
 1. NMI edge detector - tracks line state transitions
-2. IRQ level detector - tracks current line state  
+2. IRQ level detector - tracks current line state
 3. Priority - NMI always has priority over IRQ
 4. Hijacking - NMI can hijack IRQ by redirecting vector read
 5. Sequencing - 7-cycle interrupt initiation is atomic (no polling)

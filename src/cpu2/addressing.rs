@@ -1014,6 +1014,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Immediate::new();
@@ -1076,6 +1078,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = ZeroPage::new();
@@ -1147,6 +1151,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Absolute::new(MemoryAccess::Read);
@@ -1196,6 +1202,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Absolute::new(MemoryAccess::Read);
@@ -1254,6 +1262,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Absolute::new(MemoryAccess::Jump); // Don't read value
@@ -1305,6 +1315,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Absolute::new(MemoryAccess::Read); // Read value
@@ -1365,6 +1377,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = ZeroPageX::new();
@@ -1412,6 +1426,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = ZeroPageX::new();
@@ -1464,6 +1480,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = ZeroPageX::new();
@@ -1528,6 +1546,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = ZeroPageY::new();
@@ -1580,6 +1600,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = ZeroPageY::new();
@@ -1645,6 +1667,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = AbsoluteX::new(MemoryAccess::Read);
@@ -1701,6 +1725,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = AbsoluteX::new(MemoryAccess::Read);
@@ -1779,6 +1805,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = AbsoluteY::new(MemoryAccess::Read);
@@ -1835,6 +1863,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = AbsoluteY::new(MemoryAccess::Read);
@@ -1914,6 +1944,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Indirect::new();
@@ -1973,6 +2005,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Indirect::new();
@@ -2035,6 +2069,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = IndexedIndirect::new(MemoryAccess::Read);
@@ -2088,6 +2124,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = IndexedIndirect::new(MemoryAccess::Read);
@@ -2137,6 +2175,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = IndexedIndirect::new(MemoryAccess::Read);
@@ -2191,6 +2231,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = IndirectIndexed::new(MemoryAccess::Read);
@@ -2244,6 +2286,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = IndirectIndexed::new(MemoryAccess::Read);
@@ -2305,6 +2349,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = IndirectIndexed::new(MemoryAccess::Read);
@@ -2355,6 +2401,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Relative::new();
@@ -2402,6 +2450,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Relative::new();
@@ -2442,6 +2492,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Relative::new();
@@ -2478,6 +2530,8 @@ mod new_tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut mode = Relative::new();

@@ -843,6 +843,8 @@ mod tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut jsr = Jsr::new();
@@ -893,6 +895,8 @@ mod tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut jsr = Jsr::new();
@@ -931,6 +935,8 @@ mod tests {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut jsr = Jsr::new();
@@ -966,6 +972,8 @@ mod tests {
             p: 0xDD,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         };
 
         let mut jmp = Jmp::new();

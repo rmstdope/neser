@@ -52,6 +52,12 @@ pub struct CpuState {
     /// The I flag value before CLI/SEI/PLP modified it
     /// Used during the delay period to determine interrupt polling
     pub saved_i_flag: bool,
+    /// NMI pending flag - set by external hardware (NES loop)
+    /// Checked during BRK execution to determine vector hijacking
+    pub nmi_pending: bool,
+    /// IRQ pending flag - set by external hardware (NES loop)
+    /// Checked at end of instructions if I flag is clear
+    pub irq_pending: bool,
 }
 
 impl Default for CpuState {
@@ -65,6 +71,8 @@ impl Default for CpuState {
             p: 0,
             delay_interrupt_check: false,
             saved_i_flag: false,
+            nmi_pending: false,
+            irq_pending: false,
         }
     }
 }

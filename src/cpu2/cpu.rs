@@ -58,12 +58,6 @@ pub struct Cpu2 {
     total_cycles: u64,
     /// Current instruction being executed
     current_instruction: Option<Instruction>,
-    /// NMI pending flag - set by external hardware (NES loop)
-    /// Checked during BRK execution to determine vector hijacking
-    pub nmi_pending: bool,
-    /// IRQ pending flag - set by external hardware (NES loop)
-    /// Checked at end of instructions if I flag is clear
-    pub irq_pending: bool,
     /// Track if we're currently in an interrupt sequence
     /// Used to prevent interrupt polling during interrupt handler execution
     in_interrupt_sequence: bool,
@@ -100,18 +94,18 @@ impl Cpu2 {
                 p: FLAG_UNUSED, // Status at power-on before reset: only unused bit set (bit 5)
                 delay_interrupt_check: false,
                 saved_i_flag: false,
+                nmi_pending: false,
+                irq_pending: false,
             },
             memory,
             halted: false,
             total_cycles: 0,
             current_instruction: None,
-            nmi_pending: false,
-            irq_pending: false,
             in_interrupt_sequence: false,
             delay_interrupt_check: false,
             saved_i_flag_for_delay: false,
-            nmi_line_prev: true,  // Start with line high (not asserted)
-            irq_line: true,       // Start with line high (not asserted)
+            nmi_line_prev: true, // Start with line high (not asserted)
+            irq_line: true,      // Start with line high (not asserted)
             current_opcode: 0,
         }
     }
@@ -1910,8 +1904,8 @@ impl Cpu2 {
         // Clear cycle-accurate instruction state
         self.halted = false;
         self.current_instruction = None;
-        self.nmi_pending = false;
-        self.irq_pending = false;
+        self.state.nmi_pending = false;
+        self.state.irq_pending = false;
         self.in_interrupt_sequence = false;
 
         // Reset takes 7 cycles
@@ -1934,7 +1928,7 @@ impl Cpu2 {
         self.state.p |= FLAG_INTERRUPT;
 
         // Clear NMI pending flag (NMI has been serviced)
-        self.nmi_pending = false;
+        self.state.nmi_pending = false;
 
         // Mark that we're now in interrupt sequence
         // This prevents interrupt polling until at least one instruction executes
@@ -1989,7 +1983,7 @@ impl Cpu2 {
     /// Set the NMI pending flag
     /// This should be called by the NES loop when NMI is detected
     pub fn set_nmi_pending(&mut self, pending: bool) {
-        self.nmi_pending = pending;
+        self.state.nmi_pending = pending;
     }
 
     /// Set the NMI line state (edge-triggered)
@@ -1998,20 +1992,20 @@ impl Cpu2 {
     pub fn set_nmi_line(&mut self, line_state: bool) {
         // Detect falling edge: previous=high, current=low
         if self.nmi_line_prev && !line_state {
-            self.nmi_pending = true;
+            self.state.nmi_pending = true;
         }
         self.nmi_line_prev = line_state;
     }
 
     /// Check if an NMI is pending
     pub fn is_nmi_pending(&self) -> bool {
-        self.nmi_pending
+        self.state.nmi_pending
     }
 
     /// Set the IRQ pending flag
     /// This should be called by external hardware (NES loop) when IRQ line is asserted
     pub fn set_irq_pending(&mut self, pending: bool) {
-        self.irq_pending = pending;
+        self.state.irq_pending = pending;
     }
 
     /// Set the IRQ line state (level-triggered)
@@ -2020,13 +2014,13 @@ impl Cpu2 {
     pub fn set_irq_line(&mut self, line_state: bool) {
         self.irq_line = line_state;
         // IRQ is level-triggered: active when line is low
-        self.irq_pending = !line_state;
+        self.state.irq_pending = !line_state;
     }
 
     /// Check if NMI should be serviced
     /// NMI has priority over IRQ
     pub fn should_service_nmi(&self) -> bool {
-        self.nmi_pending
+        self.state.nmi_pending
     }
 
     /// Get the interrupt vector address to use
@@ -2035,7 +2029,7 @@ impl Cpu2 {
     /// This implements NMI hijacking - if NMI arrives during IRQ sequence,
     /// the vector read uses NMI vector instead
     pub fn get_interrupt_vector(&self) -> u16 {
-        if self.nmi_pending {
+        if self.state.nmi_pending {
             NMI_VECTOR
         } else {
             IRQ_VECTOR
@@ -2067,7 +2061,7 @@ impl Cpu2 {
 
     /// Check if an IRQ is pending
     pub fn is_irq_pending(&self) -> bool {
-        self.irq_pending
+        self.state.irq_pending
     }
 
     /// Check if IRQ should be serviced
@@ -2084,7 +2078,7 @@ impl Cpu2 {
             (self.state.p & FLAG_INTERRUPT) != 0
         };
 
-        self.irq_pending && !i_flag
+        self.state.irq_pending && !i_flag
     }
 
     /// Trigger an IRQ (Interrupt Request)
@@ -2122,7 +2116,7 @@ impl Cpu2 {
         self.state.p |= FLAG_INTERRUPT;
 
         // Clear IRQ pending flag (IRQ has been serviced)
-        self.irq_pending = false;
+        self.state.irq_pending = false;
 
         // Mark that we're now in interrupt sequence
         // This prevents interrupt polling until at least one instruction executes
@@ -2159,7 +2153,7 @@ impl Cpu2 {
         }
 
         // NMI has priority over IRQ
-        if self.nmi_pending {
+        if self.state.nmi_pending {
             return Some(true); // true = NMI
         }
 
@@ -2385,7 +2379,7 @@ mod tests {
         );
         assert_eq!(cpu.total_cycles, 0, "Cycle count should be 0 at power-on");
         assert!(!cpu.halted, "CPU should not be halted at power-on");
-        assert!(!cpu.nmi_pending, "NMI should not be pending at power-on");
+        assert!(!cpu.state.nmi_pending, "NMI should not be pending at power-on");
     }
 
     #[test]
@@ -2594,7 +2588,7 @@ mod tests {
         cpu.state.pc = 0x1234;
         cpu.state.sp = 0xFD;
         cpu.state.p = FLAG_ZERO | FLAG_CARRY; // I flag is clear, so IRQ can be triggered
-        cpu.irq_pending = true;
+        cpu.state.irq_pending = true;
 
         let initial_cycles = cpu.total_cycles;
 
@@ -2620,7 +2614,7 @@ mod tests {
         );
 
         // Verify IRQ pending flag was cleared
-        assert!(!cpu.irq_pending, "IRQ pending flag should be cleared");
+        assert!(!cpu.state.irq_pending, "IRQ pending flag should be cleared");
 
         // Verify stack pointer was decremented by 3
         assert_eq!(cpu.state.sp, 0xFA, "SP should be decremented by 3");
@@ -2681,7 +2675,7 @@ mod tests {
 
         // Set I flag - IRQ should NOT be polled
         cpu.state.p = FLAG_INTERRUPT;
-        cpu.irq_pending = true;
+        cpu.state.irq_pending = true;
 
         // should_poll_irq() should return false when I flag is set
         assert!(
@@ -2697,7 +2691,7 @@ mod tests {
         );
 
         // Clear irq_pending - IRQ should not be polled even with I flag clear
-        cpu.irq_pending = false;
+        cpu.state.irq_pending = false;
         assert!(
             !cpu.should_poll_irq(),
             "IRQ should NOT be polled when irq_pending is false"
@@ -2725,7 +2719,7 @@ mod tests {
         cpu.state.pc = 0x1000;
         cpu.state.sp = 0xFD;
         cpu.state.p = FLAG_BREAK; // Set B flag explicitly
-        cpu.irq_pending = true;
+        cpu.state.irq_pending = true;
 
         cpu.trigger_irq();
 
@@ -2785,7 +2779,7 @@ mod tests {
         cpu.state.pc = 0xABCD;
         cpu.state.sp = 0x01; // Stack will wrap: 0x01 -> 0x00 -> 0xFF
         cpu.state.p = 0;
-        cpu.irq_pending = true;
+        cpu.state.irq_pending = true;
 
         cpu.trigger_irq();
 
@@ -2833,8 +2827,8 @@ mod tests {
         cpu.state.p = 0; // I flag clear, so IRQ can be serviced
 
         // Set both NMI and IRQ pending before executing instruction
-        cpu.nmi_pending = true;
-        cpu.irq_pending = true;
+        cpu.state.nmi_pending = true;
+        cpu.state.irq_pending = true;
 
         // Execute NOP instruction cycle by cycle
         let mut cycles = 0;
@@ -2859,8 +2853,8 @@ mod tests {
         );
 
         // Test IRQ alone
-        cpu.nmi_pending = false;
-        cpu.irq_pending = true;
+        cpu.state.nmi_pending = false;
+        cpu.state.irq_pending = true;
         let pending_interrupt = cpu.poll_pending_interrupt();
         assert_eq!(
             pending_interrupt,
@@ -2869,7 +2863,7 @@ mod tests {
         );
 
         // Test no interrupt
-        cpu.irq_pending = false;
+        cpu.state.irq_pending = false;
         let pending_interrupt = cpu.poll_pending_interrupt();
         assert_eq!(
             pending_interrupt, None,
@@ -2902,21 +2896,21 @@ mod tests {
         cpu.state.p = 0;
 
         // Set NMI pending
-        cpu.nmi_pending = true;
+        cpu.state.nmi_pending = true;
 
         // Trigger NMI
         cpu.trigger_nmi();
 
         // PC should now point to NMI handler
         assert_eq!(cpu.state.pc, 0x9000, "PC should be at NMI handler");
-        assert!(!cpu.nmi_pending, "NMI pending should be cleared");
+        assert!(!cpu.state.nmi_pending, "NMI pending should be cleared");
         assert!(
             cpu.in_interrupt_sequence,
             "Should be marked as in interrupt sequence"
         );
 
         // Set NMI pending again during the interrupt sequence
-        cpu.nmi_pending = true;
+        cpu.state.nmi_pending = true;
 
         // poll_pending_interrupt() should return None during interrupt sequence
         let pending_interrupt = cpu.poll_pending_interrupt();
@@ -2969,7 +2963,7 @@ mod tests {
         cpu.state.pc = 0x1000;
         cpu.state.sp = 0xFD;
         cpu.state.p = FLAG_BREAK | FLAG_ZERO | FLAG_CARRY; // Set B flag and some other flags
-        cpu.nmi_pending = true;
+        cpu.state.nmi_pending = true;
 
         cpu.trigger_nmi();
 
@@ -3259,7 +3253,7 @@ mod tests {
             0x42,
             "Value should be written to memory"
         );
-        
+
         // The key point: STA should take 4 cycles total (fetch opcode + 3 addressing)
         // and should NOT perform a final read of the address before writing
         // This test verifies the instruction completes correctly
@@ -3380,11 +3374,17 @@ mod tests {
 
         // Initially NMI line is high (not asserted) - no NMI pending
         cpu.set_nmi_line(true);
-        assert!(!cpu.is_nmi_pending(), "NMI should not be pending when line is high");
+        assert!(
+            !cpu.is_nmi_pending(),
+            "NMI should not be pending when line is high"
+        );
 
         // Line goes low (falling edge) - should detect NMI
         cpu.set_nmi_line(false);
-        assert!(cpu.is_nmi_pending(), "NMI should be pending after falling edge");
+        assert!(
+            cpu.is_nmi_pending(),
+            "NMI should be pending after falling edge"
+        );
     }
 
     #[test]
@@ -3395,17 +3395,23 @@ mod tests {
 
         // Start with line high
         cpu.set_nmi_line(true);
-        
+
         // First falling edge triggers NMI
         cpu.set_nmi_line(false);
-        assert!(cpu.is_nmi_pending(), "NMI should be pending after falling edge");
+        assert!(
+            cpu.is_nmi_pending(),
+            "NMI should be pending after falling edge"
+        );
 
         // Clear the pending flag (simulating NMI being serviced)
         cpu.set_nmi_pending(false);
 
         // Line stays low - should NOT trigger again
         cpu.set_nmi_line(false);
-        assert!(!cpu.is_nmi_pending(), "NMI should not trigger while line stays low");
+        assert!(
+            !cpu.is_nmi_pending(),
+            "NMI should not trigger while line stays low"
+        );
     }
 
     #[test]
@@ -3424,11 +3430,17 @@ mod tests {
 
         // Line goes high again
         cpu.set_nmi_line(true);
-        assert!(!cpu.is_nmi_pending(), "NMI should not be pending when line goes high");
+        assert!(
+            !cpu.is_nmi_pending(),
+            "NMI should not be pending when line goes high"
+        );
 
         // Second falling edge
         cpu.set_nmi_line(false);
-        assert!(cpu.is_nmi_pending(), "Second NMI should be pending after second falling edge");
+        assert!(
+            cpu.is_nmi_pending(),
+            "Second NMI should be pending after second falling edge"
+        );
     }
 
     #[test]
@@ -3442,15 +3454,24 @@ mod tests {
 
         // IRQ line high (not asserted) - no IRQ
         cpu.set_irq_line(true);
-        assert!(!cpu.should_poll_irq(), "IRQ should not be active when line is high");
+        assert!(
+            !cpu.should_poll_irq(),
+            "IRQ should not be active when line is high"
+        );
 
         // IRQ line low (asserted) - IRQ should be active
         cpu.set_irq_line(false);
-        assert!(cpu.should_poll_irq(), "IRQ should be active when line is low");
+        assert!(
+            cpu.should_poll_irq(),
+            "IRQ should be active when line is low"
+        );
 
         // IRQ stays low - should remain active
         cpu.set_irq_line(false);
-        assert!(cpu.should_poll_irq(), "IRQ should remain active while line stays low");
+        assert!(
+            cpu.should_poll_irq(),
+            "IRQ should remain active while line stays low"
+        );
     }
 
     #[test]
@@ -3464,11 +3485,17 @@ mod tests {
 
         // IRQ line low but masked by I flag
         cpu.set_irq_line(false);
-        assert!(!cpu.should_poll_irq(), "IRQ should be masked when I flag is set");
+        assert!(
+            !cpu.should_poll_irq(),
+            "IRQ should be masked when I flag is set"
+        );
 
         // Clear I flag - IRQ should now be active
         cpu.state.p &= !FLAG_INTERRUPT;
-        assert!(cpu.should_poll_irq(), "IRQ should be active when I flag is clear");
+        assert!(
+            cpu.should_poll_irq(),
+            "IRQ should be active when I flag is clear"
+        );
     }
 
     #[test]
@@ -3485,19 +3512,22 @@ mod tests {
 
         // Falling edge should trigger NMI even with I flag set
         cpu.set_nmi_line(false);
-        assert!(cpu.is_nmi_pending(), "NMI should trigger regardless of I flag");
+        assert!(
+            cpu.is_nmi_pending(),
+            "NMI should trigger regardless of I flag"
+        );
     }
 
     #[test]
     fn test_nmi_priority_over_irq() {
         // When both NMI and IRQ are pending, NMI should be serviced first
         let memory = create_test_memory();
-        
+
         // Set up NMI vector to point to $8000
         memory.borrow_mut().write(NMI_VECTOR, 0x00, false);
         memory.borrow_mut().write(NMI_VECTOR + 1, 0x80, false);
-        
-        // Set up IRQ vector to point to $9000  
+
+        // Set up IRQ vector to point to $9000
         memory.borrow_mut().write(IRQ_VECTOR, 0x00, false);
         memory.borrow_mut().write(IRQ_VECTOR + 1, 0x90, false);
 
@@ -3508,7 +3538,7 @@ mod tests {
         // Assert both NMI and IRQ lines
         cpu.set_nmi_line(true);
         cpu.set_nmi_line(false); // Falling edge triggers NMI
-        cpu.set_irq_line(false);  // IRQ active low
+        cpu.set_irq_line(false); // IRQ active low
 
         assert!(cpu.is_nmi_pending(), "NMI should be pending");
         assert!(cpu.should_poll_irq(), "IRQ should also be pending");
@@ -3522,11 +3552,11 @@ mod tests {
     fn test_nmi_hijacks_irq_sequence() {
         // If NMI arrives during IRQ sequence, it should hijack and redirect to NMI vector
         let memory = create_test_memory();
-        
+
         // Set up NMI vector to point to $8000
         memory.borrow_mut().write(NMI_VECTOR, 0x00, false);
         memory.borrow_mut().write(NMI_VECTOR + 1, 0x80, false);
-        
+
         // Set up IRQ vector to point to $9000
         memory.borrow_mut().write(IRQ_VECTOR, 0x00, false);
         memory.borrow_mut().write(IRQ_VECTOR + 1, 0x90, false);
@@ -3537,14 +3567,14 @@ mod tests {
 
         // Start with IRQ pending
         cpu.set_irq_line(false);
-        
+
         // Mark that we're in interrupt sequence
         cpu.mark_interrupt_sequence_start();
-        
+
         // During IRQ sequence, NMI arrives
         cpu.set_nmi_line(true);
         cpu.set_nmi_line(false); // Falling edge
-        
+
         // NMI should hijack the sequence
         // Vector read should use NMI vector instead of IRQ vector
         let vector_to_use = cpu.get_interrupt_vector();
@@ -3562,21 +3592,30 @@ mod tests {
 
         // Start interrupt sequence
         cpu.mark_interrupt_sequence_start();
-        assert!(cpu.is_in_interrupt_sequence(), "Should be in interrupt sequence");
+        assert!(
+            cpu.is_in_interrupt_sequence(),
+            "Should be in interrupt sequence"
+        );
 
         // Try to trigger another IRQ while in sequence
         cpu.set_irq_line(false);
-        
+
         // Should not service new IRQ while in sequence
         let should_poll = cpu.should_poll_interrupts();
         assert!(!should_poll, "Should not poll interrupts during sequence");
 
         // After sequence ends, should be able to poll again
         cpu.mark_interrupt_sequence_end();
-        assert!(!cpu.is_in_interrupt_sequence(), "Should not be in interrupt sequence");
-        
+        assert!(
+            !cpu.is_in_interrupt_sequence(),
+            "Should not be in interrupt sequence"
+        );
+
         let should_poll_now = cpu.should_poll_interrupts();
-        assert!(should_poll_now, "Should poll interrupts after sequence ends");
+        assert!(
+            should_poll_now,
+            "Should poll interrupts after sequence ends"
+        );
     }
 
     #[test]
@@ -3585,16 +3624,19 @@ mod tests {
         // in_interrupt_sequence flag should be cleared
         // This test verifies the flag is cleared, allowing further interrupt polling
         let memory = create_test_memory();
-        
+
         // Set up NOP at $0400 (will be first instruction in handler)
         memory.borrow_mut().write(0x0400, NOP, false);
 
         let mut cpu = Cpu2::new(Rc::clone(&memory));
         cpu.state.pc = 0x0400;
-        
+
         // Mark that we're in an interrupt sequence (as if we just entered handler)
         cpu.mark_interrupt_sequence_start();
-        assert!(cpu.is_in_interrupt_sequence(), "Should be in interrupt sequence");
+        assert!(
+            cpu.is_in_interrupt_sequence(),
+            "Should be in interrupt sequence"
+        );
 
         // Execute one instruction (NOP)
         loop {
@@ -3606,7 +3648,10 @@ mod tests {
 
         // After first instruction completes, should no longer be in interrupt sequence
         // This allows further interrupts to be polled (NMI can interrupt IRQ handler, etc.)
-        assert!(!cpu.is_in_interrupt_sequence(), "Should not be in interrupt sequence after first instruction");
+        assert!(
+            !cpu.is_in_interrupt_sequence(),
+            "Should not be in interrupt sequence after first instruction"
+        );
     }
 
     #[test]
@@ -3615,7 +3660,7 @@ mod tests {
         use crate::cartridge::Cartridge;
 
         let memory = create_test_memory();
-        
+
         // Set up vectors in cartridge ROM
         let mut prg_rom = vec![0; 0x8000];
         prg_rom[0x7FFA] = 0x00; // NMI vector low ($8000)
@@ -3657,16 +3702,24 @@ mod tests {
 
         // Verify return address and status were pushed to stack
         assert_eq!(cpu.state.sp, 0xFA, "SP should be decremented by 3");
-        
+
         // Check stack contents
         let pch = memory.borrow().read(0x01FD);
         let pcl = memory.borrow().read(0x01FC);
         let status = memory.borrow().read(0x01FB);
-        
+
         assert_eq!(pch, 0x12, "High byte of PC should be on stack");
         assert_eq!(pcl, 0x34, "Low byte of PC should be on stack");
-        assert_eq!(status & FLAG_BREAK, 0, "B flag should be clear in pushed status");
-        assert_eq!(status & FLAG_UNUSED, FLAG_UNUSED, "Unused flag should be set in pushed status");
+        assert_eq!(
+            status & FLAG_BREAK,
+            0,
+            "B flag should be clear in pushed status"
+        );
+        assert_eq!(
+            status & FLAG_UNUSED,
+            FLAG_UNUSED,
+            "Unused flag should be set in pushed status"
+        );
 
         // Verify A register unchanged
         assert_eq!(cpu.state.a, 0x42, "A register should be unchanged");
@@ -3678,7 +3731,7 @@ mod tests {
         use crate::cartridge::Cartridge;
 
         let memory = create_test_memory();
-        
+
         // Set up vectors in cartridge ROM
         let mut prg_rom = vec![0; 0x8000];
         prg_rom[0x7FFC] = 0x00; // Reset vector
@@ -3719,16 +3772,24 @@ mod tests {
 
         // Verify return address and status were pushed to stack
         assert_eq!(cpu.state.sp, 0xFA, "SP should be decremented by 3");
-        
+
         // Check stack contents
         let pch = memory.borrow().read(0x01FD);
         let pcl = memory.borrow().read(0x01FC);
         let status = memory.borrow().read(0x01FB);
-        
+
         assert_eq!(pch, 0x12, "High byte of PC should be on stack");
         assert_eq!(pcl, 0x34, "Low byte of PC should be on stack");
-        assert_eq!(status & FLAG_BREAK, 0, "B flag should be clear in pushed status");
-        assert_eq!(status & FLAG_UNUSED, FLAG_UNUSED, "Unused flag should be set in pushed status");
+        assert_eq!(
+            status & FLAG_BREAK,
+            0,
+            "B flag should be clear in pushed status"
+        );
+        assert_eq!(
+            status & FLAG_UNUSED,
+            FLAG_UNUSED,
+            "Unused flag should be set in pushed status"
+        );
 
         // Verify A register unchanged
         assert_eq!(cpu.state.a, 0x42, "A register should be unchanged");
@@ -3746,7 +3807,7 @@ mod tests {
         use crate::cartridge::Cartridge;
 
         let memory = create_test_memory();
-        
+
         // Set up vectors in cartridge ROM
         let mut prg_rom = vec![0; 0x8000];
         prg_rom[0x7FFA] = 0x00; // NMI vector low ($8000)
@@ -3755,7 +3816,7 @@ mod tests {
         prg_rom[0x7FFD] = 0x80;
         prg_rom[0x7FFE] = 0x00; // IRQ vector low ($9000)
         prg_rom[0x7FFF] = 0x90; // IRQ vector high
-        
+
         // BRK instruction at $8000 (start of PRG ROM)
         prg_rom[0x0000] = BRK;
         prg_rom[0x0001] = 0x00; // Padding byte
@@ -3792,8 +3853,12 @@ mod tests {
 
         // But B flag should be SET in pushed status (BRK initiated)
         let status = memory.borrow().read(0x01FB);
-        assert_eq!(status & FLAG_BREAK, FLAG_BREAK, "B flag should be set (BRK initiated)");
-        
+        assert_eq!(
+            status & FLAG_BREAK,
+            FLAG_BREAK,
+            "B flag should be set (BRK initiated)"
+        );
+
         // NMI should be cleared (serviced)
         assert!(!cpu.is_nmi_pending(), "NMI should be cleared");
     }
@@ -3806,14 +3871,14 @@ mod tests {
         use crate::cartridge::Cartridge;
 
         let memory = create_test_memory();
-        
+
         // Set up vectors in cartridge ROM
         let mut prg_rom = vec![0; 0x8000];
         prg_rom[0x7FFC] = 0x00; // Reset vector
         prg_rom[0x7FFD] = 0x80;
         prg_rom[0x7FFE] = 0x00; // IRQ vector low ($9000)
         prg_rom[0x7FFF] = 0x90; // IRQ vector high
-        
+
         // BRK instruction at $8000 (start of PRG ROM)
         prg_rom[0x0000] = BRK;
         prg_rom[0x0001] = 0x00; // Padding byte
@@ -3849,7 +3914,11 @@ mod tests {
 
         // B flag should be CLEAR in pushed status (IRQ hijacked)
         let status = memory.borrow().read(0x01FB);
-        assert_eq!(status & FLAG_BREAK, 0, "B flag should be clear (IRQ hijacked)");
+        assert_eq!(
+            status & FLAG_BREAK,
+            0,
+            "B flag should be clear (IRQ hijacked)"
+        );
     }
 
     #[test]
