@@ -182,28 +182,58 @@ p: FLAG_UNUSED        // ✓ Correct (only bit 5 set)
 
 ### 8. B Flag Handling
 
-**Status:** Implemented in BRK, needs verification elsewhere  
+**Status:** ✅ FIXED  
 **Wiki Reference:** [Status flags - The B flag](https://www.nesdev.org/wiki/Status_flags#The_B_flag)
 
 **Requirements:**
 
 - [x] B=1 when pushed by BRK and PHP
-- [ ] B=0 when pushed by NMI (implemented in trigger_nmi)
-- [ ] B=0 when pushed by IRQ (not implemented - IRQ stub)
-- [ ] B flag doesn't physically exist, only appears when pushed to stack
-- [ ] RTI/PLP ignore bits 4 and 5 when pulling from stack
+- [x] B=0 when pushed by NMI (verified with test)
+- [x] B=0 when pushed by IRQ (verified with test)
+- [x] B flag doesn't physically exist, only appears when pushed to stack
+- [x] RTI/PLP ignore bits 4 and 5 when pulling from stack (verified with tests)
+
+**Tests Added:**
+
+- `test_nmi_clears_b_flag` - Verifies NMI pushes status with B=0 and unused=1
+- `test_irq_clears_b_flag` - Verifies IRQ pushes status with B=0 and unused=1 (already existed)
+- `test_rti_ignores_break_and_unused_bits` - Verifies RTI sets B=0 and unused=1 regardless of stack value
+- `test_plp_ignores_break_and_unused_bits` - Verifies PLP sets B=0 and unused=1 regardless of stack value
+
+**Implementation Details:**
+
+- `trigger_nmi()` clears B flag: `p_with_break = self.state.p & !FLAG_BREAK`
+- `trigger_irq()` clears B flag: `p_with_flags = self.state.p & !FLAG_BREAK`
+- `Rti::tick()` ignores bits 4-5: `cpu_state.p = (self.p & !0x10) | 0x20`
+- `Plp::tick()` ignores bits 4-5: `cpu_state.p = (status & 0xCF) | 0x20`
 
 ### 9. Unused Flag (Bit 5)
 
-**Status:** Partially implemented  
+**Status:** ✅ FIXED  
 **Wiki Reference:** [Status flags](https://www.nesdev.org/wiki/Status_flags)
 
 **Requirements:**
 
-- [x] Always pushed as 1 to stack (implemented in BRK, trigger_nmi)
-- [ ] Verify NMI implementation sets bit 5
-- [ ] Verify IRQ implementation will set bit 5
-- [ ] RTI/PLP ignore bit 5 when pulling
+- [x] Always pushed as 1 to stack (implemented in BRK, trigger_nmi, trigger_irq)
+- [x] Verify NMI implementation sets bit 5 (verified by test_nmi_clears_b_flag)
+- [x] Verify IRQ implementation sets bit 5 (verified by test_irq_clears_b_flag)
+- [x] RTI/PLP ignore bit 5 when pulling (verified by test_rti_ignores_break_and_unused_bits and test_plp_ignores_break_and_unused_bits)
+
+**Tests Verifying Unused Flag:**
+
+- `test_nmi_clears_b_flag` - Verifies NMI pushes status with unused=1
+- `test_irq_clears_b_flag` - Verifies IRQ pushes status with unused=1
+- `test_rti_ignores_break_and_unused_bits` - Verifies RTI always sets unused=1 regardless of stack value
+- `test_plp_ignores_break_and_unused_bits` - Verifies PLP always sets unused=1 regardless of stack value
+
+**Implementation Details:**
+
+- `trigger_nmi()` sets unused flag: `p_with_break |= FLAG_UNUSED`
+- `trigger_irq()` sets unused flag: `p_with_flags |= FLAG_UNUSED`
+- `Rti::tick()` masks and sets bit 5: `cpu_state.p = (self.p & !0x10) | 0x20`
+- `Plp::tick()` masks and sets bit 5: `cpu_state.p = (status & 0xCF) | 0x20`
+
+**Note:** All unused flag behavior was comprehensively verified by the B flag tests added in issue #8.
 
 ## Cycle Accuracy
 

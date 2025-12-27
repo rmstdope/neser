@@ -2877,6 +2877,202 @@ mod tests {
     }
 
     #[test]
+    fn test_nmi_clears_b_flag() {
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFA] = 0x00; // NMI vector ($9000)
+        prg_rom[0x7FFB] = 0x90;
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+
+        cpu.state.pc = 0x1000;
+        cpu.state.sp = 0xFD;
+        cpu.state.p = FLAG_BREAK | FLAG_ZERO | FLAG_CARRY; // Set B flag and some other flags
+        cpu.nmi_pending = true;
+
+        cpu.trigger_nmi();
+
+        // Check pushed status has B flag clear but other flags preserved
+        let pushed_p = memory.borrow().read(0x01FB);
+        assert_eq!(
+            pushed_p & FLAG_BREAK,
+            0,
+            "B flag must be clear in pushed status during NMI"
+        );
+        assert_eq!(
+            pushed_p & FLAG_UNUSED,
+            FLAG_UNUSED,
+            "Unused flag must be set in pushed status"
+        );
+        assert_eq!(
+            pushed_p & FLAG_ZERO,
+            FLAG_ZERO,
+            "Zero flag should be preserved in pushed status"
+        );
+        assert_eq!(
+            pushed_p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be preserved in pushed status"
+        );
+    }
+
+    #[test]
+    fn test_rti_ignores_break_and_unused_bits() {
+        let memory = create_test_memory();
+
+        // Set up RTI instruction at address $0400
+        memory.borrow_mut().write(0x0400, RTI, false);
+
+        // Set up stack with status byte that has both B and unused bits set
+        let status_on_stack = 0xFF; // All flags set including B=1 and unused=1
+        memory.borrow_mut().write(0x01FD, status_on_stack, false); // Status
+        memory.borrow_mut().write(0x01FE, 0x34, false); // PCL
+        memory.borrow_mut().write(0x01FF, 0x12, false); // PCH
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.sp = 0xFC; // Points below the three stack bytes
+        cpu.state.p = 0x00; // Start with all flags clear
+
+        // Execute RTI instruction
+        let mut cycles = 0;
+        loop {
+            let done = cpu.tick_cycle();
+            cycles += 1;
+            if done {
+                break;
+            }
+        }
+
+        assert_eq!(cycles, 6, "RTI should take 6 cycles");
+        assert_eq!(cpu.state.pc, 0x1234, "PC should be restored from stack");
+
+        // Check that status was restored but with B=0 and unused=1
+        // All other bits from stack (0xFF) should be preserved
+        assert_eq!(
+            cpu.state.p & FLAG_BREAK,
+            0,
+            "B flag (bit 4) must be clear after RTI, even if set on stack"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_UNUSED,
+            FLAG_UNUSED,
+            "Unused flag (bit 5) must be set after RTI"
+        );
+        // Check that other flags were restored correctly
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be restored"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "Overflow flag should be restored"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "Interrupt flag should be restored"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "Decimal flag should be restored"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_ZERO,
+            FLAG_ZERO,
+            "Zero flag should be restored"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be restored"
+        );
+    }
+
+    #[test]
+    fn test_plp_ignores_break_and_unused_bits() {
+        let memory = create_test_memory();
+
+        // Set up PLP instruction at address $0400
+        memory.borrow_mut().write(0x0400, PLP, false);
+
+        // Set up stack with status byte that has both B and unused bits set
+        let status_on_stack = 0xFF; // All flags set including B=1 and unused=1
+        memory.borrow_mut().write(0x01FD, status_on_stack, false); // Status
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.sp = 0xFC; // Points below the stack byte
+        cpu.state.p = 0x00; // Start with all flags clear
+
+        // Execute PLP instruction
+        let mut cycles = 0;
+        loop {
+            let done = cpu.tick_cycle();
+            cycles += 1;
+            if done {
+                break;
+            }
+        }
+
+        assert_eq!(cycles, 4, "PLP should take 4 cycles");
+
+        // Check that status was restored but with B=0 and unused=1
+        // All other bits from stack (0xFF) should be preserved
+        assert_eq!(
+            cpu.state.p & FLAG_BREAK,
+            0,
+            "B flag (bit 4) must be clear after PLP, even if set on stack"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_UNUSED,
+            FLAG_UNUSED,
+            "Unused flag (bit 5) must be set after PLP"
+        );
+        // Check that other flags were restored correctly
+        assert_eq!(
+            cpu.state.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be restored"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "Overflow flag should be restored"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "Interrupt flag should be restored"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "Decimal flag should be restored"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_ZERO,
+            FLAG_ZERO,
+            "Zero flag should be restored"
+        );
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be restored"
+        );
+    }
+
+    #[test]
     fn test_opcode_01() {
         let memory = create_test_memory();
 
