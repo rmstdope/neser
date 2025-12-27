@@ -3610,6 +3610,249 @@ mod tests {
     }
 
     #[test]
+    fn test_nmi_trigger_full_sequence() {
+        // Test complete NMI trigger with cycle-accurate behavior
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+        
+        // Set up vectors in cartridge ROM
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFA] = 0x00; // NMI vector low ($8000)
+        prg_rom[0x7FFB] = 0x80; // NMI vector high
+        prg_rom[0x7FFC] = 0x00; // Reset vector
+        prg_rom[0x7FFD] = 0x80;
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x1234;
+        cpu.state.sp = 0xFD;
+        cpu.state.p = 0x24; // Some flags set
+        cpu.state.a = 0x42;
+
+        // Trigger NMI
+        cpu.set_nmi_line(true);
+        cpu.set_nmi_line(false); // Falling edge
+        assert!(cpu.is_nmi_pending(), "NMI should be pending");
+
+        let cycles = cpu.trigger_nmi();
+
+        // Verify NMI took 7 cycles
+        assert_eq!(cycles, 7, "NMI should take 7 cycles");
+
+        // Verify PC now points to NMI handler
+        assert_eq!(cpu.state.pc, 0x8000, "PC should be at NMI handler");
+
+        // Verify I flag is set
+        assert!(
+            (cpu.state.p & FLAG_INTERRUPT) != 0,
+            "I flag should be set after NMI"
+        );
+
+        // Verify NMI pending is cleared
+        assert!(!cpu.is_nmi_pending(), "NMI pending should be cleared");
+
+        // Verify return address and status were pushed to stack
+        assert_eq!(cpu.state.sp, 0xFA, "SP should be decremented by 3");
+        
+        // Check stack contents
+        let pch = memory.borrow().read(0x01FD);
+        let pcl = memory.borrow().read(0x01FC);
+        let status = memory.borrow().read(0x01FB);
+        
+        assert_eq!(pch, 0x12, "High byte of PC should be on stack");
+        assert_eq!(pcl, 0x34, "Low byte of PC should be on stack");
+        assert_eq!(status & FLAG_BREAK, 0, "B flag should be clear in pushed status");
+        assert_eq!(status & FLAG_UNUSED, FLAG_UNUSED, "Unused flag should be set in pushed status");
+
+        // Verify A register unchanged
+        assert_eq!(cpu.state.a, 0x42, "A register should be unchanged");
+    }
+
+    #[test]
+    fn test_irq_trigger_full_sequence() {
+        // Test complete IRQ trigger with cycle-accurate behavior
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+        
+        // Set up vectors in cartridge ROM
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00; // Reset vector
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFE] = 0x00; // IRQ vector low ($9000)
+        prg_rom[0x7FFF] = 0x90; // IRQ vector high
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x1234;
+        cpu.state.sp = 0xFD;
+        cpu.state.p = 0x20; // I flag CLEAR (bit 2 = 0), unused flag set (bit 5 = 1)
+        cpu.state.a = 0x42;
+
+        // Trigger IRQ
+        cpu.set_irq_line(false); // Active low
+        assert!(cpu.should_poll_irq(), "IRQ should be active");
+
+        let cycles = cpu.trigger_irq();
+
+        // Verify IRQ took 7 cycles
+        assert_eq!(cycles, 7, "IRQ should take 7 cycles");
+
+        // Verify PC now points to IRQ handler
+        assert_eq!(cpu.state.pc, 0x9000, "PC should be at IRQ handler");
+
+        // Verify I flag is set
+        assert!(
+            (cpu.state.p & FLAG_INTERRUPT) != 0,
+            "I flag should be set after IRQ"
+        );
+
+        // Verify IRQ pending is cleared
+        assert!(!cpu.is_irq_pending(), "IRQ pending should be cleared");
+
+        // Verify return address and status were pushed to stack
+        assert_eq!(cpu.state.sp, 0xFA, "SP should be decremented by 3");
+        
+        // Check stack contents
+        let pch = memory.borrow().read(0x01FD);
+        let pcl = memory.borrow().read(0x01FC);
+        let status = memory.borrow().read(0x01FB);
+        
+        assert_eq!(pch, 0x12, "High byte of PC should be on stack");
+        assert_eq!(pcl, 0x34, "Low byte of PC should be on stack");
+        assert_eq!(status & FLAG_BREAK, 0, "B flag should be clear in pushed status");
+        assert_eq!(status & FLAG_UNUSED, FLAG_UNUSED, "Unused flag should be set in pushed status");
+
+        // Verify A register unchanged
+        assert_eq!(cpu.state.a, 0x42, "A register should be unchanged");
+    }
+
+    // TODO: These hijacking tests currently fail because BRK doesn't check for
+    // NMI/IRQ during the sequence. This would require architectural changes
+    // similar to Issue #4. Mark as #[ignore] for now.
+
+    #[test]
+    #[ignore]
+    fn test_nmi_hijacks_brk() {
+        // Test that NMI arriving during BRK uses NMI vector
+        // but still sets B flag (BRK initiated the sequence)
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+        
+        // Set up vectors in cartridge ROM
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFA] = 0x00; // NMI vector low ($8000)
+        prg_rom[0x7FFB] = 0x80; // NMI vector high
+        prg_rom[0x7FFC] = 0x00; // Reset vector
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFE] = 0x00; // IRQ vector low ($9000)
+        prg_rom[0x7FFF] = 0x90; // IRQ vector high
+        
+        // BRK instruction at $8000 (start of PRG ROM)
+        prg_rom[0x0000] = BRK;
+        prg_rom[0x0001] = 0x00; // Padding byte
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x8000; // Start at beginning of PRG ROM
+        cpu.state.sp = 0xFD;
+        cpu.state.p = 0x24;
+
+        // Trigger NMI before executing BRK
+        cpu.set_nmi_line(true);
+        cpu.set_nmi_line(false); // Falling edge
+        assert!(cpu.is_nmi_pending(), "NMI should be pending");
+
+        // Execute BRK instruction completely
+        let mut cycles = 0;
+        loop {
+            let done = cpu.tick_cycle();
+            cycles += 1;
+            if done {
+                break;
+            }
+        }
+
+        // BRK should take 7 cycles
+        assert_eq!(cycles, 7, "BRK should take 7 cycles");
+
+        // PC should point to NMI handler (hijacked)
+        assert_eq!(cpu.state.pc, 0x8000, "Should jump to NMI vector");
+
+        // But B flag should be SET in pushed status (BRK initiated)
+        let status = memory.borrow().read(0x01FB);
+        assert_eq!(status & FLAG_BREAK, FLAG_BREAK, "B flag should be set (BRK initiated)");
+        
+        // NMI should be cleared (serviced)
+        assert!(!cpu.is_nmi_pending(), "NMI should be cleared");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_irq_hijacks_brk() {
+        // Test that IRQ pending during BRK uses IRQ vector
+        // and clears B flag (IRQ hijacked it)
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+        
+        // Set up vectors in cartridge ROM
+        let mut prg_rom = vec![0; 0x8000];
+        prg_rom[0x7FFC] = 0x00; // Reset vector
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFE] = 0x00; // IRQ vector low ($9000)
+        prg_rom[0x7FFF] = 0x90; // IRQ vector high
+        
+        // BRK instruction at $8000 (start of PRG ROM)
+        prg_rom[0x0000] = BRK;
+        prg_rom[0x0001] = 0x00; // Padding byte
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x8000; // Start at beginning of PRG ROM
+        cpu.state.sp = 0xFD;
+        cpu.state.p = 0x20; // I flag CLEAR (bit 2 = 0)
+
+        // Set IRQ pending before executing BRK
+        cpu.set_irq_line(false); // Active low
+        assert!(cpu.should_poll_irq(), "IRQ should be active");
+
+        // Execute BRK instruction completely
+        let mut cycles = 0;
+        loop {
+            let done = cpu.tick_cycle();
+            cycles += 1;
+            if done {
+                break;
+            }
+        }
+
+        // BRK should take 7 cycles
+        assert_eq!(cycles, 7, "BRK should take 7 cycles");
+
+        // PC should still point to IRQ handler (same vector as BRK)
+        assert_eq!(cpu.state.pc, 0x9000, "Should jump to IRQ vector");
+
+        // B flag should be CLEAR in pushed status (IRQ hijacked)
+        let status = memory.borrow().read(0x01FB);
+        assert_eq!(status & FLAG_BREAK, 0, "B flag should be clear (IRQ hijacked)");
+    }
+
+    #[test]
     fn test_opcode_01() {
         let memory = create_test_memory();
 

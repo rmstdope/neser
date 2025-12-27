@@ -314,20 +314,31 @@ Uses the `MemoryAccess` enum to distinguish operation types:
 
 ### 12. Comprehensive Interrupt Tests
 
-**Status:** Basic BRK test exists  
+**Status:** ✅ MOSTLY COMPLETE  
 **Wiki Reference:** [CPU interrupts - Notes](https://www.nesdev.org/wiki/CPU_interrupts#Notes)
 
-**Missing tests:**
+**Completed Tests:**
 
-- [ ] NMI triggering and execution
-- [ ] IRQ triggering and execution (when implemented)
-- [ ] NMI priority over IRQ
-- [ ] Interrupt hijacking (NMI hijacks BRK)
-- [ ] Interrupt hijacking (NMI hijacks IRQ)
-- [ ] Interrupt hijacking (IRQ hijacks BRK)
-- [ ] CLI/SEI/PLP delayed IRQ behavior
-- [ ] Branch instruction interrupt polling
-- [ ] Test ROM: cpu_interrupts_v2 (mentioned in wiki)
+- [x] NMI triggering and execution - `test_nmi_trigger_full_sequence` (cycle-accurate, validates stack, vectors, flags)
+- [x] IRQ triggering and execution - `test_irq_trigger_full_sequence` (cycle-accurate, validates stack, vectors, flags)
+- [x] NMI priority over IRQ - `test_nmi_priority_over_irq` (from Issue #15)
+- [x] Interrupt hijacking (NMI hijacks IRQ) - `test_nmi_hijacks_irq_sequence` (from Issue #15)
+- [x] Interrupt sequencing - `test_no_nested_interrupts_during_sequence`, `test_rti_ends_interrupt_sequence` (from Issue #15)
+- [x] Edge/level detection - 6 tests from Issue #15 verify NMI edge-triggered and IRQ level-triggered behavior
+
+**Deferred (Architectural Changes Required):**
+
+- [ ] Interrupt hijacking (NMI hijacks BRK) - Test exists but ignored; requires BRK to check NMI during sequence
+- [ ] Interrupt hijacking (IRQ hijacks BRK) - Test exists but ignored; requires BRK to check IRQ during sequence
+- [ ] CLI/SEI/PLP delayed IRQ behavior - Partially tested in Issue #3
+- [ ] Branch instruction interrupt polling - Tracked in Issue #4
+- [ ] Test ROM: cpu_interrupts_v2 - External validation
+
+**Notes:**
+
+BRK hijacking tests are marked `#[ignore]` because BRK currently hard-codes the IRQ vector and doesn't check for
+NMI/IRQ during its 7-cycle sequence. This would require similar architectural changes to Issue #4 (Branch Instructions)
+where interrupt polling needs to happen at specific cycle boundaries within an instruction's execution.
 
 ### 13. Comprehensive Reset Tests
 
