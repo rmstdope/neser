@@ -34,7 +34,11 @@ pub enum MemoryAccess {
 /// Used by instructions that operate on the accumulator or have no operand.
 /// Examples: NOP, CLC, INX, TAX, ASL A
 ///
-/// Cycles: 0 (no address resolution needed)
+/// Cycles: 0 (no address resolution needed, but instruction still performs dummy read)
+///
+/// Note: While Implied mode doesn't resolve an address, 6502 hardware requires that
+/// every cycle performs either a read or write operation. Implied mode instructions
+/// perform a dummy read of the next byte at PC during their execution cycle.
 #[derive(Debug, Clone, Copy)]
 pub struct Implied;
 
@@ -43,8 +47,11 @@ impl AddressingMode for Implied {
         true
     }
 
-    fn tick(&mut self, _cpu_state: &mut CpuState, _memory: Rc<RefCell<MemController>>) {
-        // No action needed for implied mode
+    fn tick(&mut self, cpu_state: &mut CpuState, memory: Rc<RefCell<MemController>>) {
+        // Perform dummy read of next byte at PC
+        // This satisfies the 6502 requirement that every cycle is either a read or write
+        // The value is discarded; this is just to generate a bus cycle
+        let _ = memory.borrow().read(cpu_state.pc);
     }
 }
 

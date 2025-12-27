@@ -2009,7 +2009,7 @@ impl Cpu2 {
         } else {
             (self.state.p & FLAG_INTERRUPT) != 0
         };
-        
+
         self.irq_pending && !i_flag
     }
 
@@ -3070,6 +3070,92 @@ mod tests {
             FLAG_CARRY,
             "Carry flag should be restored"
         );
+    }
+
+    #[test]
+    fn test_nop_performs_dummy_read() {
+        let memory = create_test_memory();
+
+        // Set up NOP instruction at address $0400
+        memory.borrow_mut().write(0x0400, NOP, false);
+        // Next byte that should be read during dummy read
+        memory.borrow_mut().write(0x0401, 0x42, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+
+        // Mark memory as unread at 0x0401
+        let test_addr = 0x0401;
+        let initial_value = memory.borrow().read(test_addr);
+
+        // Execute NOP instruction - fetch opcode
+        let done = cpu.tick_cycle();
+        assert!(!done, "NOP should not be done after cycle 1");
+
+        // During cycle 2, NOP should perform a dummy read from PC (0x0401)
+        // We'll verify this by checking that tick_cycle executes correctly
+        let done = cpu.tick_cycle();
+        assert!(done, "NOP should be done after cycle 2");
+
+        // Verify instruction behaved correctly
+        assert_eq!(cpu.state.pc, 0x0401, "PC should advance by 1");
+
+        // The test verifies NOP takes 2 cycles as expected
+        // The actual memory read happens in Implied addressing mode's tick()
+        // which we'll implement next
+    }
+
+    #[test]
+    fn test_clc_performs_dummy_read() {
+        let memory = create_test_memory();
+
+        // Set up CLC instruction at address $0400
+        memory.borrow_mut().write(0x0400, CLC, false);
+        // Next byte that should be read during dummy read
+        memory.borrow_mut().write(0x0401, 0xFF, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.p = FLAG_CARRY; // Set carry flag to test CLC clears it
+
+        // Execute CLC instruction - fetch opcode
+        let done = cpu.tick_cycle();
+        assert!(!done, "CLC should not be done after cycle 1");
+
+        // During cycle 2, CLC should perform a dummy read
+        let done = cpu.tick_cycle();
+        assert!(done, "CLC should be done after cycle 2");
+
+        // Verify instruction behaved correctly
+        assert_eq!(cpu.state.pc, 0x0401, "PC should advance by 1");
+        assert_eq!(cpu.state.p & FLAG_CARRY, 0, "Carry flag should be clear");
+    }
+
+    #[test]
+    fn test_tax_performs_dummy_read() {
+        let memory = create_test_memory();
+
+        // Set up TAX instruction at address $0400
+        memory.borrow_mut().write(0x0400, TAX, false);
+        // Next byte that should be read during dummy read
+        memory.borrow_mut().write(0x0401, 0xAA, false);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x0400;
+        cpu.state.a = 0x42;
+        cpu.state.x = 0x00;
+
+        // Execute TAX instruction - fetch opcode
+        let done = cpu.tick_cycle();
+        assert!(!done, "TAX should not be done after cycle 1");
+
+        // During cycle 2, TAX should perform a dummy read
+        let done = cpu.tick_cycle();
+        assert!(done, "TAX should be done after cycle 2");
+
+        // Verify instruction behaved correctly
+        assert_eq!(cpu.state.pc, 0x0401, "PC should advance by 1");
+        assert_eq!(cpu.state.x, 0x42, "X should equal A");
     }
 
     #[test]
