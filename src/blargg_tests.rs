@@ -236,6 +236,15 @@ mod tests {
         test_cpu_cli_latency,
         "roms/blargg/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"
     );
+    // test_cpu_nmi_and_brk: Tests NMI/BRK interaction
+    // Current status: Produces mostly correct output but fails with status 0x01
+    // Output shows successful NMI hijacking BRK (multiple "36  00  00" lines)
+    // indicating B flag is correctly visible when NMI hijacks BRK.
+    // Unit tests confirm both scenarios work correctly:
+    // - test_nmi_hijacks_brk_b_flag_visible_to_handler
+    // - test_nmi_interrupts_irq_handler
+    // Failure likely due to PPU-CPU timing synchronization as noted in test readme:
+    // "Occasionally fails on NES due to PPU-CPU synchronization"
     blargg_test!(
         test_cpu_nmi_and_brk,
         "roms/blargg/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes"

@@ -4044,13 +4044,13 @@ mod tests {
 
         // Set up vectors in cartridge ROM
         let mut prg_rom = vec![0; 0x8000];
-        
+
         // IRQ handler at $8000: SEC, then loop forever
         prg_rom[0x0000] = 0x38; // SEC
         prg_rom[0x0001] = 0x4C; // JMP $8001 (infinite loop)
         prg_rom[0x0002] = 0x01;
         prg_rom[0x0003] = 0x80;
-        
+
         // NMI handler at $8010: Store flags at $0200 and halt
         prg_rom[0x0010] = 0x08; // PHP - push P register
         prg_rom[0x0011] = 0x68; // PLA - pull into A
@@ -4058,7 +4058,7 @@ mod tests {
         prg_rom[0x0013] = 0x00;
         prg_rom[0x0014] = 0x02;
         prg_rom[0x0015] = 0x00; // BRK to stop
-        
+
         prg_rom[0x7FFA] = 0x10; // NMI vector low ($8010)
         prg_rom[0x7FFB] = 0x80; // NMI vector high
         prg_rom[0x7FFC] = 0x00; // Reset vector
@@ -4082,7 +4082,11 @@ mod tests {
         // Trigger IRQ manually for this test
         let _irq_cycles = cpu.trigger_irq();
         assert_eq!(cpu.state.pc, 0x8000, "Should jump to IRQ handler");
-        assert_eq!(cpu.state.p & FLAG_INTERRUPT, FLAG_INTERRUPT, "I flag should be set");
+        assert_eq!(
+            cpu.state.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "I flag should be set"
+        );
 
         // Execute SEC instruction (first instruction of IRQ handler)
         for _ in 0..10 {
@@ -4091,23 +4095,30 @@ mod tests {
                 break;
             }
         }
-        
+
         // After SEC, C flag should be set
-        assert_eq!(cpu.state.p & FLAG_CARRY, FLAG_CARRY, "C flag should be set by SEC");
-        assert!(!cpu.is_in_interrupt_sequence(), "Should not be in interrupt sequence after first instruction");
-        
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "C flag should be set by SEC"
+        );
+        assert!(
+            !cpu.is_in_interrupt_sequence(),
+            "Should not be in interrupt sequence after first instruction"
+        );
+
         // Now trigger NMI while IRQ handler is running
         cpu.set_nmi_line(true);
         cpu.set_nmi_line(false);
         assert!(cpu.is_nmi_pending(), "NMI should be pending");
-        
+
         // Trigger NMI
         let _nmi_cycles = cpu.trigger_nmi();
         assert_eq!(cpu.state.pc, 0x8010, "Should jump to NMI handler");
-        
+
         // The status byte pushed by NMI should have C=1 (from SEC) and I=1 (from IRQ)
         let nmi_pushed_status = memory.borrow().read(0x01F8); // SP after IRQ (0xFA) + NMI pushes 3 more
-        
+
         // Expected: C=1, I=1, Z=1, unused=1 = 0x27
         assert_eq!(
             nmi_pushed_status & (FLAG_CARRY | FLAG_INTERRUPT),
