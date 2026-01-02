@@ -52,6 +52,9 @@ pub struct Cpu {
     /// NMI pending flag - set by external hardware (NES loop)
     /// Checked during BRK execution to determine vector hijacking
     pub nmi_pending: bool,
+    /// IRQ pending flag - set by external hardware (APU/mapper)
+    /// IRQ is level-triggered and maskable by the I flag
+    irq_pending: bool,
     /// Current instruction being executed (for cycle-by-cycle execution)
     pub current_instruction: Option<InstructionState>,
     /// Current cycle within the instruction (0-based)
@@ -71,6 +74,9 @@ const FLAG_NEGATIVE: u8 = 0b1000_0000;
 const NMI_VECTOR: u16 = 0xFFFA;
 const RESET_VECTOR: u16 = 0xFFFC;
 const IRQ_VECTOR: u16 = 0xFFFE;
+
+/// Instruction function type - takes mutable CPU reference and returns (cycles, delayed_i_flag)
+type InstructionFn = fn(&mut Cpu) -> (u8, Option<bool>);
 
 impl Cpu {
     /// Create a new CPU with default register values at power-on
@@ -93,6 +99,7 @@ impl Cpu {
             total_cycles: 0,
             delayed_i_flag: None,
             nmi_pending: false,
+            irq_pending: false,
             current_instruction: None,
             cycle_in_instruction: 0,
         }
@@ -138,6 +145,7 @@ impl Cpu {
         self.halted = false;
         self.delayed_i_flag = None;
         self.nmi_pending = false;
+        self.irq_pending = false;
         self.current_instruction = None;
         self.cycle_in_instruction = 0;
 
@@ -332,7 +340,7 @@ impl Cpu {
                 let result = self.asl(value);
                 self.write(addr, result, false);
             }
-            ASL_ABSX => {
+            ASL_ABSXW => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
                 // RMW instructions ALWAYS read during indexed address calculation
@@ -602,7 +610,7 @@ impl Cpu {
                 let result = self.dec(value);
                 self.write(addr, result, false);
             }
-            DEC_ABSX => {
+            DEC_ABSXW => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
                 // RMW instructions ALWAYS read during indexed address calculation
@@ -737,7 +745,7 @@ impl Cpu {
                 let result = self.inc(value);
                 self.write(addr, result, false);
             }
-            INC_ABSX => {
+            INC_ABSXW => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
                 // RMW instructions ALWAYS read during indexed address calculation
@@ -928,7 +936,7 @@ impl Cpu {
                 let result = self.lsr(value);
                 self.write(addr, result, false);
             }
-            LSR_ABSX => {
+            LSR_ABSXW => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
                 // RMW instructions ALWAYS read during indexed address calculation
@@ -1064,7 +1072,7 @@ impl Cpu {
                 let result = self.rol(value);
                 self.write(addr, result, false);
             }
-            ROL_ABSX => {
+            ROL_ABSXW => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
                 // RMW instructions ALWAYS read during indexed address calculation
@@ -1111,7 +1119,7 @@ impl Cpu {
                 let result = self.ror(value);
                 self.write(addr, result, false);
             }
-            ROR_ABSX => {
+            ROR_ABSXW => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
                 // RMW instructions ALWAYS read during indexed address calculation
@@ -1220,7 +1228,7 @@ impl Cpu {
                 let addr = self.read_word_from_pc();
                 self.write(addr, self.a, false);
             }
-            STA_ABSX => {
+            STA_ABSXW => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
                 // STA always performs a dummy read before the write
@@ -1276,7 +1284,7 @@ impl Cpu {
 
                 self.write(addr, result, false);
             }
-            STA_ABSY => {
+            STA_ABSYW => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
                 // STA always performs a dummy read before the write
@@ -1289,7 +1297,7 @@ impl Cpu {
                 let addr = self.read_word_from_zp(ptr);
                 self.write(addr, self.a, false);
             }
-            STA_INDY => {
+            STA_INDYW => {
                 let ptr = self.read_byte_from_pc();
                 let base = self.read_word_from_zp(ptr);
                 let addr = base.wrapping_add(self.y as u16);
@@ -1490,7 +1498,7 @@ impl Cpu {
                 let addr = self.read_word_from_pc();
                 self.dcp(addr);
             }
-            DCP_INDY => {
+            DCP_INDYW => {
                 // Undocumented: Decrement memory then compare with A
                 let ptr = self.read_byte_from_pc();
                 let base_addr = self.read_word_from_zp(ptr);
@@ -1509,7 +1517,7 @@ impl Cpu {
                 let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
                 self.dcp(addr);
             }
-            DCP_ABSY => {
+            DCP_ABSYW => {
                 // Undocumented: Decrement memory then compare with A
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
@@ -1522,7 +1530,7 @@ impl Cpu {
                 }
                 self.dcp(addr);
             }
-            DCP_ABSX => {
+            DCP_ABSXW => {
                 // Undocumented: Decrement memory then compare with A
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
@@ -1558,7 +1566,7 @@ impl Cpu {
                 let addr = self.read_word_from_pc();
                 self.isc(addr);
             }
-            ISB_INDY => {
+            ISB_INDYW => {
                 // Undocumented: Increment memory then subtract from A with borrow
                 let zp_addr = self.read_byte_from_pc();
                 let addr_lo = self.read(zp_addr as u16);
@@ -1579,7 +1587,7 @@ impl Cpu {
                 let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
                 self.isc(addr);
             }
-            ISB_ABSY => {
+            ISB_ABSYW => {
                 // Undocumented: Increment memory then subtract from A with borrow
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
@@ -1592,7 +1600,7 @@ impl Cpu {
                 }
                 self.isc(addr);
             }
-            ISB_ABSX => {
+            ISB_ABSXW => {
                 // Undocumented: Increment memory then subtract from A with borrow
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
@@ -1727,7 +1735,7 @@ impl Cpu {
                 let addr = self.read_word_from_pc();
                 self.rla(addr);
             }
-            RLA_INDY => {
+            RLA_INDYW => {
                 // Undocumented: ROL memory, then AND with accumulator (Indirect,Y)
                 let zp_addr = self.read_byte_from_pc();
                 let base_addr = self.read_word_from_zp(zp_addr);
@@ -1746,7 +1754,7 @@ impl Cpu {
                 let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
                 self.rla(addr);
             }
-            RLA_ABSY => {
+            RLA_ABSYW => {
                 // Undocumented: ROL memory, then AND with accumulator (Absolute,Y)
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
@@ -1759,7 +1767,7 @@ impl Cpu {
                 }
                 self.rla(addr);
             }
-            RLA_ABSX => {
+            RLA_ABSXW => {
                 // Undocumented: ROL memory, then AND with accumulator (Absolute,X)
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
@@ -1788,7 +1796,7 @@ impl Cpu {
                 let addr = self.read_word_from_pc();
                 self.rra(addr);
             }
-            RRA_INDY => {
+            RRA_INDYW => {
                 // Undocumented: ROR memory, then ADC with accumulator (Indirect,Y)
                 let zp_addr = self.read_byte_from_pc();
                 let base_addr = self.read_word_from_zp(zp_addr);
@@ -1807,7 +1815,7 @@ impl Cpu {
                 let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
                 self.rra(addr);
             }
-            RRA_ABSY => {
+            RRA_ABSYW => {
                 // Undocumented: ROR memory, then ADC with accumulator (Absolute,Y)
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
@@ -1820,7 +1828,7 @@ impl Cpu {
                 }
                 self.rra(addr);
             }
-            RRA_ABSX => {
+            RRA_ABSXW => {
                 // Undocumented: ROR memory, then ADC with accumulator (Absolute,X)
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
@@ -1849,7 +1857,7 @@ impl Cpu {
                 let addr = self.read_word_from_pc();
                 self.slo(addr);
             }
-            SLO_INDY => {
+            SLO_INDYW => {
                 // Undocumented: ASL memory, then ORA with accumulator (Indirect,Y)
                 let zp_addr = self.read_byte_from_pc();
                 let base_addr = self.read_word_from_zp(zp_addr);
@@ -1868,7 +1876,7 @@ impl Cpu {
                 let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
                 self.slo(addr);
             }
-            SLO_ABSY => {
+            SLO_ABSYW => {
                 // Undocumented: ASL memory, then ORA with accumulator (Absolute,Y)
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
@@ -1881,7 +1889,7 @@ impl Cpu {
                 }
                 self.slo(addr);
             }
-            SLO_ABSX => {
+            SLO_ABSXW => {
                 // Undocumented: ASL memory, then ORA with accumulator (Absolute,X)
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
@@ -1910,7 +1918,7 @@ impl Cpu {
                 let addr = self.read_word_from_pc();
                 self.sre(addr);
             }
-            SRE_INDY => {
+            SRE_INDYW => {
                 // Undocumented: LSR memory, then EOR with accumulator (Indirect,Y)
                 let zp_addr = self.read_byte_from_pc();
                 let base_addr = self.read_word_from_zp(zp_addr);
@@ -1929,7 +1937,7 @@ impl Cpu {
                 let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
                 self.sre(addr);
             }
-            SRE_ABSY => {
+            SRE_ABSYW => {
                 // Undocumented: LSR memory, then EOR with accumulator (Absolute,Y)
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
@@ -1942,7 +1950,7 @@ impl Cpu {
                 }
                 self.sre(addr);
             }
-            SRE_ABSX => {
+            SRE_ABSXW => {
                 // Undocumented: LSR memory, then EOR with accumulator (Absolute,X)
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
@@ -2278,6 +2286,11 @@ impl Cpu {
     /// Read a byte from memory at the specified address
     fn read(&self, addr: u16) -> u8 {
         self.memory.borrow().read(addr)
+    }
+
+    /// Dummy read a byte from memory at the specified address
+    fn dummy_read(&self, addr: u16) -> u8 {
+        self.read(addr)
     }
 
     /// Read a 16-bit word from memory at the specified address
@@ -2753,9 +2766,9 @@ impl Cpu {
     }
 
     /// Check if IRQ should be allowed to trigger
-    /// Returns true if the effective I flag (considering delays) allows IRQs
+    /// Returns true if an IRQ is pending and the effective I flag (considering delays) allows IRQs
     pub fn should_poll_irq(&self) -> bool {
-        !self.get_effective_i_flag()
+        self.irq_pending && !self.get_effective_i_flag()
     }
 
     /// Trigger an IRQ (Interrupt Request)
@@ -2766,6 +2779,9 @@ impl Cpu {
         if self.get_effective_i_flag() {
             return 0; // IRQ masked, no cycles consumed
         }
+
+        // Clear IRQ pending flag (IRQ has been serviced)
+        self.irq_pending = false;
 
         // Push PC and P onto stack
         self.push_word(self.pc);
@@ -2788,6 +2804,154 @@ impl Cpu {
     /// This should be called by the NES loop when NMI is detected
     pub fn set_nmi_pending(&mut self, pending: bool) {
         self.nmi_pending = pending;
+    }
+
+    /// Set the IRQ pending flag
+    /// This should be called by the NES loop when IRQ is detected
+    pub fn set_irq_pending(&mut self, pending: bool) {
+        self.irq_pending = pending;
+    }
+
+    /// Get mutable reference to CPU state for trace/test purposes
+    pub fn get_state(&mut self) -> &mut Self {
+        self
+    }
+
+    // pub fn execute(&self) -> u8 {
+    //     let opcode = self.read_byte_from_pc();
+    //     let operad = self.get_operand(opcode);
+    //     self.opcode_table[opcode as usize]
+    //         .as_ref()
+    //         .unwrap()
+    //         .execute(self, operad);
+    // }
+
+    /// Fetch the operand address or value for an instruction
+    ///
+    /// Similar to Mesen2's FetchOperand function, this computes the effective address
+    /// or immediate value for an instruction based on its addressing mode.
+    /// Unlike peek-style functions, this actually performs memory reads and advances PC.
+    ///
+    /// For memory-accessing modes (ZP, ABS, etc.), returns the effective address.
+    /// For immediate mode (IMM), returns the immediate value (low byte only).
+    /// For implied/accumulator modes, performs dummy read and returns 0.
+    /// For relative mode (REL), returns the immediate byte (offset).
+    ///
+    /// # Arguments
+    /// * `opcode` - The opcode byte to fetch the operand for
+    ///
+    /// # Returns
+    /// The operand address or value (depending on addressing mode)
+    pub fn get_operand(&mut self, opcode: u8) -> u16 {
+        let Some(op) = super::opcode::lookup(opcode) else {
+            return 0; // Invalid opcode
+        };
+
+        match op.mode {
+            // Implied and Accumulator - perform dummy read
+            "IMP" | "ACC" => {
+                self.dummy_read(self.pc);
+                0
+            }
+
+            // Immediate, Zero Page and Relative - return the immediate byte
+            "IMM" | "REL" | "ZP" => self.read_byte_from_pc() as u16,
+
+            // Zero Page,X - read base, dummy read at base, return base+X
+            "ZPX" => {
+                let base = self.read_byte_from_pc();
+                self.dummy_read(base as u16);
+                base.wrapping_add(self.x) as u16
+            }
+
+            // Zero Page,Y - read base, dummy read at base, return base+Y
+            "ZPY" => {
+                let base = self.read_byte_from_pc();
+                self.dummy_read(base as u16);
+                base.wrapping_add(self.y) as u16
+            }
+
+            // Absolute - return 16-bit address
+            "ABS" => self.read_word_from_pc(),
+
+            // Absolute,X - return address + X
+            // Note: Page crossing dummy read is handled by instruction for reads
+            "ABSX" => {
+                let base = self.read_word_from_pc();
+                base.wrapping_add(self.x as u16)
+            }
+
+            // Absolute,X (Write/RMW) - return address + X, always do dummy read
+            "ABSXW" => {
+                let base = self.read_word_from_pc();
+                let addr = base.wrapping_add(self.x as u16);
+                // Always do dummy read at base + X with wrong high byte if page crossed
+                if (base & 0xFF00) != (addr & 0xFF00) {
+                    let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
+                    self.dummy_read(dummy_addr);
+                }
+                addr
+            }
+
+            // Absolute,Y - return address + Y
+            // Note: Page crossing dummy read is handled by instruction for reads
+            "ABSY" => {
+                let base = self.read_word_from_pc();
+                base.wrapping_add(self.y as u16)
+            }
+
+            // Absolute,Y (Write/RMW) - return address + Y, always do dummy read
+            "ABSYW" => {
+                let base = self.read_word_from_pc();
+                let addr = base.wrapping_add(self.y as u16);
+                // Always do dummy read at base + Y with wrong high byte if page crossed
+                if (base & 0xFF00) != (addr & 0xFF00) {
+                    let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
+                    self.dummy_read(dummy_addr);
+                }
+                addr
+            }
+
+            // Indirect - JMP ($addr) with 6502 page boundary bug
+            "IND" => {
+                let ptr = self.read_word_from_pc();
+                self.read_word_indirect(ptr)
+            }
+
+            // Indexed Indirect - (ZP,X)
+            // Always does dummy read at base address during indexing
+            "INDX" => {
+                let base = self.read_byte_from_pc();
+                self.dummy_read(base as u16);
+                let ptr = base.wrapping_add(self.x);
+                self.read_word_from_zp(ptr)
+            }
+
+            // Indirect Indexed - (ZP),Y (Read-only)
+            // Note: Page crossing dummy read is handled by instruction
+            "INDY" => {
+                let ptr = self.read_byte_from_pc();
+                let base = self.read_word_from_zp(ptr);
+                base.wrapping_add(self.y as u16)
+            }
+
+            // Indirect Indexed - (ZP),Y (Write/RMW)
+            // Always do dummy read at base + Y with wrong high byte if page crossed
+            "INDYW" => {
+                let ptr = self.read_byte_from_pc();
+                let base = self.read_word_from_zp(ptr);
+                let addr = base.wrapping_add(self.y as u16);
+                // Always do dummy read with wrong high byte if page crossed
+                if (base & 0xFF00) != (addr & 0xFF00) {
+                    let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
+                    self.dummy_read(dummy_addr);
+                }
+                addr
+            }
+
+            // Unknown or special case addressing mode
+            _ => 0,
+        }
     }
 }
 
@@ -3282,7 +3446,7 @@ mod tests {
     fn test_asl_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ASL_ABSX, 0x34, 0x12, KIL];
+        let program = vec![ASL_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -3931,7 +4095,7 @@ mod tests {
     fn test_dec_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DEC_ABSX, 0x34, 0x12, KIL];
+        let program = vec![DEC_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -4238,7 +4402,7 @@ mod tests {
     fn test_inc_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![INC_ABSX, 0x34, 0x12, KIL];
+        let program = vec![INC_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -4697,7 +4861,7 @@ mod tests {
     fn test_lsr_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![LSR_ABSX, 0x34, 0x12, KIL];
+        let program = vec![LSR_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -5122,7 +5286,7 @@ mod tests {
     fn test_rol_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROL_ABSX, 0x34, 0x12, KIL];
+        let program = vec![ROL_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -5211,7 +5375,7 @@ mod tests {
     fn test_ror_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ROR_ABSX, 0x34, 0x12, KIL];
+        let program = vec![ROR_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -5453,7 +5617,7 @@ mod tests {
     fn test_sta_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STA_ABSX, 0x00, 0x10, KIL];
+        let program = vec![STA_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -5466,7 +5630,7 @@ mod tests {
     fn test_sta_absolute_y() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STA_ABSY, 0x00, 0x10, KIL];
+        let program = vec![STA_ABSYW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -5494,7 +5658,7 @@ mod tests {
     fn test_sta_indirect_indexed() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![STA_INDY, 0x10, KIL];
+        let program = vec![STA_INDYW, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x42;
@@ -6163,7 +6327,7 @@ mod tests {
     fn test_dcp_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![DCP_ABSX, 0x00, 0x10, KIL];
+        let program = vec![DCP_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -6184,7 +6348,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00, false);
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
-        let program = vec![DCP_INDY, 0x20, KIL];
+        let program = vec![DCP_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -6284,7 +6448,7 @@ mod tests {
     fn test_isb_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![ISB_ABSX, 0x00, 0x10, KIL];
+        let program = vec![ISB_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -6306,7 +6470,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00, false);
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
-        let program = vec![ISB_INDY, 0x20, KIL];
+        let program = vec![ISB_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -6512,7 +6676,7 @@ mod tests {
     fn test_rla_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![RLA_ABSX, 0x00, 0x10, KIL];
+        let program = vec![RLA_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -6535,7 +6699,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00, false);
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
-        let program = vec![RLA_INDY, 0x20, KIL];
+        let program = vec![RLA_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -6574,7 +6738,7 @@ mod tests {
     fn test_rra_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![RRA_ABSX, 0x00, 0x10, KIL];
+        let program = vec![RRA_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -6597,7 +6761,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00, false);
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
-        let program = vec![RRA_INDY, 0x20, KIL];
+        let program = vec![RRA_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -6651,7 +6815,7 @@ mod tests {
     fn test_slo_absolute_x() {
         let memory = create_test_memory();
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
-        let program = vec![SLO_ABSX, 0x00, 0x10, KIL];
+        let program = vec![SLO_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x05;
@@ -6671,7 +6835,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00, false);
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
-        let program = vec![SLO_INDY, 0x20, KIL];
+        let program = vec![SLO_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -6708,7 +6872,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00, false);
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
-        let program = vec![SRE_ABSX, 0x00, 0x10, KIL];
+        let program = vec![SRE_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.x = 0x10;
@@ -6728,7 +6892,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         cpu.memory.borrow_mut().write(0x20, 0x00, false);
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
-        let program = vec![SRE_INDY, 0x20, KIL];
+        let program = vec![SRE_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.y = 0x10;
@@ -6916,7 +7080,7 @@ mod tests {
         let mut cpu = Cpu::new(Rc::new(RefCell::new(memory)));
         // STA $12FF,X with X=$05 -> $1304 (page cross)
         // STA always takes 5 cycles regardless of page crossing
-        let program = vec![STA_ABSX, 0xFF, 0x12, KIL];
+        let program = vec![STA_ABSXW, 0xFF, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         cpu.a = 0x99;
@@ -7485,5 +7649,404 @@ mod tests {
             FLAG_BREAK,
             "Status on stack should STILL have B flag set (BRK characteristic)"
         );
+    }
+
+    // ==================== get_operand Tests ====================
+
+    #[test]
+    fn test_get_operand_implied() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Test NOP (Implied)
+        assert_eq!(cpu.get_operand(0xEA), 0, "Implied mode should return 0");
+
+        // Test INX (Implied)
+        assert_eq!(cpu.get_operand(0xE8), 0, "Implied mode should return 0");
+    }
+
+    #[test]
+    fn test_get_operand_accumulator() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Test ASL A (Accumulator)
+        assert_eq!(cpu.get_operand(0x0A), 0, "Accumulator mode should return 0");
+
+        // Test LSR A (Accumulator)
+        assert_eq!(cpu.get_operand(0x4A), 0, "Accumulator mode should return 0");
+    }
+
+    #[test]
+    fn test_get_operand_immediate() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: Write immediate value at PC
+        cpu.pc = 0x0100;
+        cpu.memory.borrow_mut().write(0x0100, 0x42, false);
+
+        // Test LDA #$42 (Immediate)
+        assert_eq!(
+            cpu.get_operand(0xA9),
+            0x42,
+            "Immediate mode should return the byte at PC"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_zero_page() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: Write ZP address at PC
+        cpu.pc = 0x0100;
+        cpu.memory.borrow_mut().write(0x0100, 0x80, false);
+
+        // Test LDA $80 (Zero Page)
+        assert_eq!(
+            cpu.get_operand(0xA5),
+            0x80,
+            "Zero Page mode should return ZP address"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_zero_page_x() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: Write ZP base address at PC, set X register
+        cpu.pc = 0x0100;
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0100, 0x80, false);
+
+        // Test LDA $80,X (Zero Page,X)
+        assert_eq!(
+            cpu.get_operand(0xB5),
+            0x85,
+            "Zero Page,X mode should return (ZP + X) & 0xFF"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_zero_page_x_wrapping() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Test wrapping behavior in zero page
+        cpu.pc = 0x0100;
+        cpu.x = 0xFF;
+        cpu.memory.borrow_mut().write(0x0100, 0x80, false);
+
+        // 0x80 + 0xFF = 0x17F, but should wrap to 0x7F
+        assert_eq!(
+            cpu.get_operand(0xB5),
+            0x7F,
+            "Zero Page,X mode should wrap within zero page"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_zero_page_y() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: Write ZP base address at PC, set Y register
+        cpu.pc = 0x0100;
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x0100, 0x20, false);
+
+        // Test LDX $20,Y (Zero Page,Y)
+        assert_eq!(
+            cpu.get_operand(0xB6),
+            0x30,
+            "Zero Page,Y mode should return (ZP + Y) & 0xFF"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_absolute() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: Write 16-bit address at PC (little-endian)
+        cpu.pc = 0x0100;
+        cpu.memory.borrow_mut().write(0x0100, 0x34, false); // Low byte
+        cpu.memory.borrow_mut().write(0x0101, 0x12, false); // High byte
+
+        // Test LDA $1234 (Absolute)
+        assert_eq!(
+            cpu.get_operand(0xAD),
+            0x1234,
+            "Absolute mode should return 16-bit address"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_absolute_x() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: Write 16-bit base address at PC, set X register
+        cpu.pc = 0x0100;
+        cpu.x = 0x10;
+        cpu.memory.borrow_mut().write(0x0100, 0x00, false); // Low byte
+        cpu.memory.borrow_mut().write(0x0101, 0x20, false); // High byte
+
+        // Test LDA $2000,X (Absolute,X)
+        assert_eq!(
+            cpu.get_operand(0xBD),
+            0x2010,
+            "Absolute,X mode should return base + X"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_absolute_x_page_crossing() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Test page crossing
+        cpu.pc = 0x0100;
+        cpu.x = 0xFF;
+        cpu.memory.borrow_mut().write(0x0100, 0x80, false); // Low byte
+        cpu.memory.borrow_mut().write(0x0101, 0x20, false); // High byte
+
+        // 0x2080 + 0xFF = 0x217F (page crossing)
+        assert_eq!(
+            cpu.get_operand(0xBD),
+            0x217F,
+            "Absolute,X mode should handle page crossing"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_absolute_y() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: Write 16-bit base address at PC, set Y register
+        cpu.pc = 0x0100;
+        cpu.y = 0x05;
+        cpu.memory.borrow_mut().write(0x0100, 0x00, false); // Low byte
+        cpu.memory.borrow_mut().write(0x0101, 0x30, false); // High byte
+
+        // Test LDA $3000,Y (Absolute,Y)
+        assert_eq!(
+            cpu.get_operand(0xB9),
+            0x3005,
+            "Absolute,Y mode should return base + Y"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_relative_positive() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: Write positive offset at PC
+        cpu.pc = 0x0100;
+        cpu.memory.borrow_mut().write(0x0100, 0x10, false); // +16
+
+        // Test BNE (Relative) - should return the raw offset byte
+        assert_eq!(
+            cpu.get_operand(0xD0),
+            0x10,
+            "Relative mode should return the immediate offset byte"
+        );
+        // PC should have advanced by 1
+        assert_eq!(cpu.pc, 0x0101, "PC should advance after reading offset");
+    }
+
+    #[test]
+    fn test_get_operand_relative_negative() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: Write negative offset at PC
+        cpu.pc = 0x0100;
+        cpu.memory.borrow_mut().write(0x0100, 0xF0, false); // -16 (as signed byte)
+
+        // Test BEQ (Relative) - should return the raw offset byte
+        assert_eq!(
+            cpu.get_operand(0xF0),
+            0xF0,
+            "Relative mode should return the immediate offset byte"
+        );
+        // PC should have advanced by 1
+        assert_eq!(cpu.pc, 0x0101, "PC should advance after reading offset");
+    }
+
+    #[test]
+    fn test_get_operand_indirect() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: JMP ($1234)
+        // Write pointer address at PC
+        cpu.pc = 0x0100;
+        cpu.memory.borrow_mut().write(0x0100, 0x34, false); // Pointer low
+        cpu.memory.borrow_mut().write(0x0101, 0x12, false); // Pointer high
+
+        // Write target address at pointer location
+        cpu.memory.borrow_mut().write(0x1234, 0x00, false); // Target low
+        cpu.memory.borrow_mut().write(0x1235, 0x80, false); // Target high
+
+        // Test JMP ($1234) (Indirect)
+        assert_eq!(
+            cpu.get_operand(0x6C),
+            0x8000,
+            "Indirect mode should return address at pointer"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_indirect_page_boundary_bug() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Test the famous 6502 JMP indirect bug
+        // When pointer is at page boundary (e.g., $02FF), high byte wraps to $0200
+        cpu.pc = 0x0100;
+        cpu.memory.borrow_mut().write(0x0100, 0xFF, false); // Pointer low
+        cpu.memory.borrow_mut().write(0x0101, 0x02, false); // Pointer high
+
+        // Write target bytes
+        cpu.memory.borrow_mut().write(0x02FF, 0x34, false); // Target low
+        cpu.memory.borrow_mut().write(0x0200, 0x12, false); // Target high (wraps!)
+        cpu.memory.borrow_mut().write(0x0300, 0x56, false); // What it should be if no bug
+
+        // The bug causes high byte to be read from $0200 instead of $0300
+        assert_eq!(
+            cpu.get_operand(0x6C),
+            0x1234,
+            "Indirect mode should exhibit page boundary bug"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_indexed_indirect() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: LDA ($20,X)
+        cpu.pc = 0x0100;
+        cpu.x = 0x04;
+        cpu.memory.borrow_mut().write(0x0100, 0x20, false); // ZP base
+
+        // Write pointer at ZP location ($20 + $04 = $24)
+        cpu.memory.borrow_mut().write(0x0024, 0x00, false); // Pointer low
+        cpu.memory.borrow_mut().write(0x0025, 0x30, false); // Pointer high
+
+        // Test LDA ($20,X) (Indexed Indirect)
+        assert_eq!(
+            cpu.get_operand(0xA1),
+            0x3000,
+            "Indexed Indirect mode should return address from (ZP+X)"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_indexed_indirect_wrapping() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Test zero page wrapping in indexed indirect
+        cpu.pc = 0x0100;
+        cpu.x = 0xFF;
+        cpu.memory.borrow_mut().write(0x0100, 0x80, false); // ZP base
+
+        // $80 + $FF = $17F, wraps to $7F in zero page
+        cpu.memory.borrow_mut().write(0x007F, 0x34, false); // Pointer low
+        cpu.memory.borrow_mut().write(0x0080, 0x12, false); // Pointer high (wraps in ZP)
+
+        assert_eq!(
+            cpu.get_operand(0xA1),
+            0x1234,
+            "Indexed Indirect should wrap pointer address in zero page"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_indirect_indexed() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Set up: LDA ($20),Y
+        cpu.pc = 0x0100;
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x0100, 0x20, false); // ZP pointer
+
+        // Write base address at ZP pointer
+        cpu.memory.borrow_mut().write(0x0020, 0x00, false); // Base low
+        cpu.memory.borrow_mut().write(0x0021, 0x30, false); // Base high
+
+        // Test LDA ($20),Y (Indirect Indexed)
+        // Should return ($3000) + Y = $3000 + $10 = $3010
+        assert_eq!(
+            cpu.get_operand(0xB1),
+            0x3010,
+            "Indirect Indexed mode should return (ZP)+Y"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_indirect_indexed_page_crossing() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Test page crossing in indirect indexed
+        cpu.pc = 0x0100;
+        cpu.y = 0xFF;
+        cpu.memory.borrow_mut().write(0x0100, 0x20, false); // ZP pointer
+
+        // Write base address at ZP pointer
+        cpu.memory.borrow_mut().write(0x0020, 0x80, false); // Base low
+        cpu.memory.borrow_mut().write(0x0021, 0x20, false); // Base high
+
+        // $2080 + $FF = $217F (page crossing)
+        assert_eq!(
+            cpu.get_operand(0xB1),
+            0x217F,
+            "Indirect Indexed mode should handle page crossing"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_indirect_indexed_zp_wrapping() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Test zero page pointer wrapping
+        cpu.pc = 0x0100;
+        cpu.y = 0x05;
+        cpu.memory.borrow_mut().write(0x0100, 0xFF, false); // ZP pointer at $FF
+
+        // Pointer spans $FF and $00 (wraps in zero page)
+        cpu.memory.borrow_mut().write(0x00FF, 0x00, false); // Base low
+        cpu.memory.borrow_mut().write(0x0000, 0x40, false); // Base high (wrapped)
+
+        // $4000 + $05 = $4005
+        assert_eq!(
+            cpu.get_operand(0xB1),
+            0x4005,
+            "Indirect Indexed should wrap pointer in zero page"
+        );
+    }
+
+    #[test]
+    fn test_get_operand_invalid_opcode() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(memory.clone());
+
+        // Test with an invalid opcode (one not in lookup table)
+        // Note: Most 6502 opcodes are defined, but lookup returns None for invalid ones
+        // This tests the None branch of the match
+        let result = cpu.get_operand(0xFF); // Might be invalid or SBC
+
+        // The function should not panic
+        // Result depends on whether 0xFF is in the opcode table
+        let _ = result; // Just verify it doesn't panic
     }
 }

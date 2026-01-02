@@ -516,6 +516,50 @@ impl Nes {
                 let target = pc.wrapping_add(2).wrapping_add(offset as u16);
                 format!("{} ${:04X}", instruction.mnemonic, target)
             }
+            "ABSXW" => {
+                // Same as ABSX but for write/RMW instructions
+                let addr = u16::from_le_bytes([byte1, byte2]);
+                if nestest {
+                    let effective_addr = addr.wrapping_add(self.cpu.get_state().x as u16);
+                    let value = memory.read(effective_addr);
+                    format!(
+                        "{} ${:04X},X @ {:04X} = {:02X}",
+                        instruction.mnemonic, addr, effective_addr, value
+                    )
+                } else {
+                    format!("{} ${:04X},X", instruction.mnemonic, addr)
+                }
+            }
+            "ABSYW" => {
+                // Same as ABSY but for write/RMW instructions
+                let addr = u16::from_le_bytes([byte1, byte2]);
+                if nestest {
+                    let effective_addr = addr.wrapping_add(self.cpu.get_state().y as u16);
+                    let value = memory.read(effective_addr);
+                    format!(
+                        "{} ${:04X},Y @ {:04X} = {:02X}",
+                        instruction.mnemonic, addr, effective_addr, value
+                    )
+                } else {
+                    format!("{} ${:04X},Y", instruction.mnemonic, addr)
+                }
+            }
+            "INDYW" => {
+                // Same as INDY but for write/RMW instructions
+                if nestest {
+                    let addr_lo = memory.read(byte1 as u16);
+                    let addr_hi = memory.read(byte1.wrapping_add(1) as u16);
+                    let base_addr = u16::from_le_bytes([addr_lo, addr_hi]);
+                    let effective_addr = base_addr.wrapping_add(self.cpu.get_state().y as u16);
+                    let value = memory.read(effective_addr);
+                    format!(
+                        "{} (${:02X}),Y = {:04X} @ {:04X} = {:02X}",
+                        instruction.mnemonic, byte1, base_addr, effective_addr, value
+                    )
+                } else {
+                    format!("{} (${:02X}),Y", instruction.mnemonic, byte1)
+                }
+            }
             _ => panic!("Unknown addressing mode"),
         };
 
