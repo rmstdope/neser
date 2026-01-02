@@ -2936,9 +2936,34 @@ impl Cpu {
                     }
                 }
             }
-            "PHP" => {}
-            "AAC" => {}
-            "BPL" => {}
+            "PHP" => {
+                // Push processor status with BREAK and UNUSED flags set
+                let flags = self.p | FLAG_BREAK | FLAG_UNUSED;
+                self.push_byte(flags);
+            }
+            "*AAC" => {
+                // Undocumented: AND with accumulator, then copy bit 7 to carry
+                let value = self.get_operand_value(&op, operand);
+                self.a &= value;
+                self.update_zero_and_negative_flags(self.a);
+                // Copy bit 7 to carry flag (same pattern as ASL)
+                let carry = if self.a & 0x80 != 0 { FLAG_CARRY } else { 0 };
+                self.p = (self.p & !FLAG_CARRY) | carry;
+            }
+            "BPL" => {
+                // Branch if negative flag is clear
+                let offset = operand as i8;
+                if self.p & FLAG_NEGATIVE == 0 {
+                    let old_pc = self.pc;
+                    self.pc = self.pc.wrapping_add(offset as u16);
+                    // Branch taken - do a dummy read
+                    self.dummy_read(self.pc);
+                    // Check for page crossing - do another dummy read
+                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                        self.dummy_read(self.pc);
+                    }
+                }
+            }
             "CLC" => {}
             "JSR" => {}
             "AND" => {}
@@ -9140,4 +9165,224 @@ mod tests {
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
         assert_eq!(cpu.total_cycles, initial_cycles + 7, "ASL absolute,X should take 7 cycles");
     }
+
+    // Tests for PHP instruction
+
+    #[test]
+    fn test_execute_php() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load PHP
+        let program = vec![PHP];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        // Set some flags
+        cpu.p = 0b10110101; // N=1, V=0, B=1(ignored), D=1, I=0, Z=1, C=1
+        cpu.sp = 0xFF; // Start at top of stack
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // PHP should push P with bits 4 and 5 set (BREAK and UNUSED flags)
+        let pushed_value = cpu.memory.borrow().read(0x01FF);
+        assert_eq!(
+            pushed_value,
+            0b10110101 | FLAG_BREAK | FLAG_UNUSED,
+            "PHP should push P with BREAK and UNUSED flags set"
+        );
+        assert_eq!(cpu.sp, 0xFE, "Stack pointer should be decremented by 1");
+        assert_eq!(cpu.total_cycles, initial_cycles + 3, "PHP should take 3 cycles");
+    }
+
+    #[test]
+    fn test_execute_php_preserves_flags() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load PHP
+        let program = vec![PHP];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p = 0b11001010;
+        let initial_p = cpu.p;
+
+        cpu.execute();
+
+        assert_eq!(cpu.p, initial_p, "PHP should not modify the P register");
+    }
+
+    // Tests for AAC (undocumented instruction)
+
+    #[test]
+    fn test_execute_aac_immediate_0x0b() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AAC #$F0
+        let program = vec![AAC_IMM, 0xF0];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0b11110000;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // AAC does AND then copies bit 7 to carry
+        assert_eq!(cpu.a, 0b11110000, "A should be ANDed with 0xF0");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set (bit 7 is 1)");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE, "Negative flag should be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "AAC should take 2 cycles");
+    }
+
+    #[test]
+    fn test_execute_aac_immediate_0x2b() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AAC #$7F (alternate opcode)
+        let program = vec![AAC_IMM2, 0x7F];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0b11110000;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // AAC does AND then copies bit 7 to carry
+        assert_eq!(cpu.a, 0b01110000, "A should be ANDed with 0x7F");
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should not be set (bit 7 is 0)");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set (bit 7 is 0)");
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "AAC should take 2 cycles");
+    }
+
+    #[test]
+    fn test_execute_aac_zero_result() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AAC #$00
+        let program = vec![AAC_IMM, 0x00];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0xFF;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x00, "A should be 0");
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should not be set");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+    }
+
+    // Tests for BPL instruction
+
+    #[test]
+    fn test_execute_bpl_branch_taken_positive() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load BPL +5
+        let program = vec![BPL, 0x05];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
+        let initial_pc = cpu.pc;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // Branch taken: PC should be initial + 2 (instruction length) + 5 (offset)
+        assert_eq!(cpu.pc, initial_pc + 2 + 5, "PC should branch forward by 5");
+        assert_eq!(cpu.total_cycles, initial_cycles + 3, "BPL with branch taken (no page cross) should take 3 cycles");
+    }
+
+    #[test]
+    fn test_execute_bpl_branch_not_taken_negative() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load BPL +5
+        let program = vec![BPL, 0x05];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p |= FLAG_NEGATIVE; // Set negative flag
+        let initial_pc = cpu.pc;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // Branch not taken: PC should just advance past the instruction
+        assert_eq!(cpu.pc, initial_pc + 2, "PC should advance by 2 (instruction length)");
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "BPL with branch not taken should take 2 cycles");
+    }
+
+    #[test]
+    fn test_execute_bpl_branch_backward() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load BPL -10 (0xF6 in two's complement)
+        let program = vec![BPL, 0xF6];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
+        let initial_pc = cpu.pc;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // Branch taken backward: PC + 2 - 10 = PC - 8
+        // This crosses a page boundary (0x8000 -> 0x7FF8), so should take 4 cycles
+        assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_sub(10), "PC should branch backward by 10");
+        assert_eq!(cpu.total_cycles, initial_cycles + 4, "BPL with branch taken crossing page should take 4 cycles");
+    }
+
+    #[test]
+    fn test_execute_bpl_branch_page_crossing() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Create program with BPL near end of page to cause page crossing
+        // We want the branch TARGET to cross a page, not just the instruction location
+        // Place instruction so that PC after instruction + offset crosses page
+        // If we put BPL at 0x80FE, after reading it PC will be 0x8100
+        // Then branching with offset 0x10 gives us 0x8110 (no page cross)
+        // So we need offset to make PC go from 0x80xx to 0x81xx (or higher)
+        // Let's use offset 0x70 (112 bytes forward) from position 0x8090
+        // PC after instruction: 0x8092, target: 0x8092 + 0x70 = 0x8102 (page cross from 0x80 to 0x81)
+        
+        let mut program = vec![0xEA; 0x90]; // 144 NOPs to position us at 0x8090
+        program.push(BPL); // At offset 0x90
+        program.push(0x70); // +112 bytes
+
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        // Execute NOPs to get to the BPL instruction
+        for _ in 0..0x90 {
+            cpu.execute();
+        }
+
+        cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
+        let initial_pc = cpu.pc;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // Branch crosses page: PC goes from 0x8092 to 0x8102
+        assert_eq!(cpu.pc, initial_pc + 2 + 0x70, "PC should branch forward crossing page");
+        assert_eq!(cpu.total_cycles, initial_cycles + 4, "BPL with branch taken and page cross should take 4 cycles");
+    }
 }
+
