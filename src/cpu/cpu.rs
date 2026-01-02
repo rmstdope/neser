@@ -2994,14 +2994,31 @@ impl Cpu {
             "*RLA" => {
                 self.rla(operand);
             }
-            "BIT" => {}
+            "BIT" => {
+                let value = self.read(operand);
+                self.bit(value);
+            }
             "ROL" => {
                 match op.mode {
-                    "ACC" => {} // ROL Accumulator
-                    _ => {}     // ROL Memory
+                    "ACC" => {
+                        self.a = self.rol(self.a);
+                    }
+                    _ => {
+                        let value = self.read(operand);
+                        self.write(operand, value, true); // dummy write
+                        let result = self.rol(value);
+                        self.write(operand, result, false); // real write
+                    }
                 }
             }
-            "PLP" => {}
+            "PLP" => {
+                // Dummy read from current SP (cycle 2)
+                self.dummy_read(0x0100 | (self.sp as u16));
+                // Pop status from stack
+                let status = self.pop_byte();
+                // Restore flags, but always set UNUSED and clear BREAK
+                self.p = (status & !FLAG_BREAK) | FLAG_UNUSED;
+            }
             "BMI" => {}
             "SEC" => {}
             "RTI" => {}
@@ -10165,5 +10182,235 @@ mod tests {
             "Low byte pushed at correct location"
         );
         assert_eq!(cpu.pc, 0x5678, "PC set to target");
+    }
+
+    // BIT tests
+    #[test]
+    fn test_execute_bit_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![BIT_ZP, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.memory.borrow_mut().write(0x0042, 0b11000000, false); // Bit 7 and 6 set
+        cpu.a = 0b00001111; // Only lower bits set
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // Result of A & M = 0b00001111 & 0b11000000 = 0, so Zero flag set
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        // Bit 7 of M copied to Negative flag
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE, "Negative flag should be set");
+        // Bit 6 of M copied to Overflow flag
+        assert_eq!(cpu.p & FLAG_OVERFLOW, FLAG_OVERFLOW, "Overflow flag should be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 3, "BIT ZP takes 3 cycles");
+    }
+
+    #[test]
+    fn test_execute_bit_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![BIT_ABS, 0x34, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.memory.borrow_mut().write(0x1234, 0b01110000, false); // Bit 6, 5 and 4 set
+        cpu.a = 0b00110000; // Bit 5 and 4 set
+        
+        cpu.execute();
+        
+        // Result of A & M = 0b00110000, not zero
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        // Bit 7 of M (0) copied to Negative flag
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        // Bit 6 of M (1) copied to Overflow flag
+        assert_eq!(cpu.p & FLAG_OVERFLOW, FLAG_OVERFLOW, "Overflow flag should be set");
+    }
+
+    // ROL tests
+    #[test]
+    fn test_execute_rol_accumulator() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![ROL_ACC];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.a = 0b10000001;
+        cpu.p |= FLAG_CARRY; // Carry in = 1
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0b10000001 << 1 | 1 = 0b00000011
+        assert_eq!(cpu.a, 0b00000011, "A should be rotated left with carry in");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be set from bit 7");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "ROL ACC takes 2 cycles");
+    }
+
+    #[test]
+    fn test_execute_rol_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![ROL_ZP, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.memory.borrow_mut().write(0x0042, 0b01000000, false);
+        cpu.p &= !FLAG_CARRY; // Carry in = 0
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0b01000000 << 1 | 0 = 0b10000000
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0b10000000,
+            "Memory should be rotated left"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE, "Negative flag should be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 5, "ROL ZP takes 5 cycles");
+    }
+
+    #[test]
+    fn test_execute_rol_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![ROL_ZPX, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.x = 0x02;
+        cpu.memory.borrow_mut().write(0x0042, 0b11111111, false);
+        cpu.p |= FLAG_CARRY;
+        
+        cpu.execute();
+        
+        // 0b11111111 << 1 | 1 = 0b11111111 (with carry out)
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0b11111111,
+            "Memory at ZP+X should be rotated"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be set");
+    }
+
+    #[test]
+    fn test_execute_rol_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![ROL_ABS, 0x34, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.memory.borrow_mut().write(0x1234, 0b00000001, false);
+        cpu.p &= !FLAG_CARRY;
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        assert_eq!(
+            cpu.memory.borrow().read(0x1234),
+            0b00000010,
+            "Memory should be rotated left"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry should not be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 6, "ROL ABS takes 6 cycles");
+    }
+
+    #[test]
+    fn test_execute_rol_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![ROL_ABSXW, 0x00, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.x = 0x34;
+        cpu.memory.borrow_mut().write(0x1234, 0b10000000, false);
+        cpu.p &= !FLAG_CARRY;
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0b10000000 << 1 | 0 = 0b00000000
+        assert_eq!(
+            cpu.memory.borrow().read(0x1234),
+            0b00000000,
+            "Memory at ABS+X should be rotated"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be set from bit 7");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 7, "ROL ABSXW takes 7 cycles");
+    }
+
+    // PLP tests
+    #[test]
+    fn test_execute_plp() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![PLP];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        // Push a status value onto stack
+        cpu.sp = 0xFF;
+        cpu.memory.borrow_mut().write(0x01FE, 0b11001010, false); // Some flags
+        cpu.sp = 0xFD; // Simulate already pushed
+        
+        cpu.p = 0b00000000; // Clear all flags
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // PLP should restore flags, ignoring BREAK and UNUSED bits
+        // Expected: 0b11001010 with BREAK cleared and UNUSED set
+        // The 6502 always has bit 5 (UNUSED) set, and ignores bit 4 (BREAK) on PLP
+        assert_eq!(cpu.sp, 0xFE, "SP should increment");
+        // Check that flags were restored (BREAK is cleared, UNUSED is set)
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be restored"
+        );
+        assert_eq!(cpu.p & FLAG_OVERFLOW, FLAG_OVERFLOW, "Overflow flag should be restored");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be restored");
+        assert_eq!(cpu.p & FLAG_INTERRUPT, 0, "Interrupt flag should be restored");
+        assert_eq!(cpu.p & FLAG_BREAK, 0, "BREAK flag should be ignored/cleared");
+        assert_eq!(cpu.p & FLAG_UNUSED, FLAG_UNUSED, "UNUSED flag should be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 4, "PLP takes 4 cycles");
+    }
+
+    #[test]
+    fn test_execute_plp_preserves_break_behavior() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![PLP];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        // Push status with BREAK flag set
+        cpu.memory.borrow_mut().write(0x01FF, 0b00010000, false); // Only BREAK set
+        cpu.sp = 0xFE;
+        
+        cpu.execute();
+        
+        // BREAK flag should be ignored on PLP
+        assert_eq!(cpu.p & FLAG_BREAK, 0, "BREAK flag should be cleared");
+        assert_eq!(cpu.p & FLAG_UNUSED, FLAG_UNUSED, "UNUSED should always be set");
     }
 }
