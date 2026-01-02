@@ -3088,9 +3088,39 @@ impl Cpu {
                 // Jump to address (operand is already the target address)
                 self.pc = operand;
             }
-            "BVC" => {}
-            "CLI" => {}
-            "RTS" => {}
+            "BVC" => {
+                // Branch on overflow clear
+                let offset = operand as i8;
+                if (self.p & FLAG_OVERFLOW) == 0 {
+                    let old_pc = self.pc;
+                    self.pc = self.pc.wrapping_add(offset as u16);
+                    // Branch taken - do a dummy read
+                    self.dummy_read(self.pc);
+                    // Check for page crossing - do another dummy read
+                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                        self.dummy_read(self.pc);
+                    }
+                }
+            }
+            "CLI" => {
+                // Clear interrupt flag
+                self.p &= !FLAG_INTERRUPT;
+            }
+            "RTS" => {
+                // Return from subroutine - 6 cycles:
+                // Cycle 1: Fetch opcode (already done)
+                // Cycle 2: Dummy read from current S
+                self.dummy_read(0x0100 | (self.sp as u16));
+
+                // Cycle 3-4: Pull return address from stack
+                let addr = self.pop_word();
+
+                // Cycle 5: Increment PC (PC = popped_value + 1)
+                self.pc = addr.wrapping_add(1);
+
+                // Cycle 6: Dummy read at incremented PC
+                self.dummy_read(self.pc);
+            }
             "ADC" => {}
             "RRA" => {}
             "ROR" => {
@@ -11421,5 +11451,243 @@ mod tests {
 
         // Due to 6502 bug, high byte read from 0x1200 instead of 0x1300
         assert_eq!(cpu.pc, 0x5634, "PC should use page boundary bug behavior");
+    }
+
+    // BVC Tests
+    #[test]
+    fn test_execute_bvc_not_taken_overflow_set() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BVC, 0x10]; // BVC +16
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        let start_pc = cpu.pc;
+        cpu.p = FLAG_OVERFLOW; // Set overflow flag
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.pc, start_pc + 2, "Branch not taken, PC += 2");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "Branch not taken takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bvc_taken_same_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BVC, 0x10]; // BVC +16
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        let start_pc = cpu.pc;
+        cpu.p = 0; // Clear overflow flag
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.pc,
+            start_pc.wrapping_add(2).wrapping_add(0x10),
+            "Branch taken, PC += 2 + offset"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "Branch taken same page takes 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bvc_taken_cross_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        // Position BVC so that the branch target crosses a page boundary
+        // Place BVC at 0x8090, after execution PC will be at 0x8092
+        // Branch offset 0x70 (+112) will make PC = 0x8102 (crosses from 0x80 to 0x81)
+        let mut program = vec![0xEA; 0x90]; // 144 NOPs
+        program.push(BVC); // At offset 0x90
+        program.push(0x70); // +112 bytes
+
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        // Execute NOPs to get to the BVC instruction
+        for _ in 0..0x90 {
+            cpu.execute();
+        }
+
+        cpu.p = 0; // Clear overflow flag
+
+        let start_pc = cpu.pc;
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        let target_pc = start_pc.wrapping_add(2).wrapping_add(0x70);
+        assert_eq!(cpu.pc, target_pc, "Branch to new page");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "Branch taken cross page takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bvc_backward_branch() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BVC, 0xFE]; // BVC -2
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        let start_pc = cpu.pc;
+        cpu.p = 0; // Clear overflow flag
+
+        cpu.execute();
+
+        let offset = -2_i16; // Negative offset
+        let target_pc = start_pc.wrapping_add(2).wrapping_add_signed(offset);
+        assert_eq!(cpu.pc, target_pc, "Branch backward");
+    }
+
+    // CLI Tests
+    #[test]
+    fn test_execute_cli_clears_interrupt_flag() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CLI];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p = FLAG_INTERRUPT; // Set interrupt flag
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.p & FLAG_INTERRUPT,
+            0,
+            "Interrupt flag should be cleared"
+        );
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "CLI takes 2 cycles");
+    }
+
+    #[test]
+    fn test_execute_cli_doesnt_affect_other_flags() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CLI];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p = FLAG_CARRY | FLAG_ZERO | FLAG_NEGATIVE | FLAG_INTERRUPT;
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be preserved"
+        );
+        assert_eq!(
+            cpu.p & FLAG_ZERO,
+            FLAG_ZERO,
+            "Zero flag should be preserved"
+        );
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be preserved"
+        );
+        assert_eq!(
+            cpu.p & FLAG_INTERRUPT,
+            0,
+            "Interrupt flag should be cleared"
+        );
+    }
+
+    // RTS Tests
+    #[test]
+    fn test_execute_rts_basic() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![RTS];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        // Simulate JSR having pushed return address - 1
+        let return_address = 0x1234_u16;
+        cpu.push_word(return_address - 1);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.pc, return_address,
+            "PC should be set to return address (popped value + 1)"
+        );
+        assert_eq!(cpu.total_cycles, initial_cycles + 6, "RTS takes 6 cycles");
+    }
+
+    #[test]
+    fn test_execute_rts_stack_pointer() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![RTS];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        let initial_sp = cpu.sp;
+        cpu.push_word(0x5678);
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.sp, initial_sp,
+            "Stack pointer should be restored after RTS"
+        );
+    }
+
+    #[test]
+    fn test_execute_rts_doesnt_affect_flags() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![RTS];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p = FLAG_CARRY | FLAG_ZERO | FLAG_NEGATIVE;
+        cpu.push_word(0x1234);
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be preserved"
+        );
+        assert_eq!(
+            cpu.p & FLAG_ZERO,
+            FLAG_ZERO,
+            "Zero flag should be preserved"
+        );
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be preserved"
+        );
     }
 }
