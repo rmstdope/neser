@@ -3019,9 +3019,41 @@ impl Cpu {
                 // Restore flags, but always set UNUSED and clear BREAK
                 self.p = (status & !FLAG_BREAK) | FLAG_UNUSED;
             }
-            "BMI" => {}
-            "SEC" => {}
-            "RTI" => {}
+            "BMI" => {
+                // Branch if negative flag is set
+                let offset = operand as i8;
+                if self.p & FLAG_NEGATIVE != 0 {
+                    let old_pc = self.pc;
+                    self.pc = self.pc.wrapping_add(offset as u16);
+                    // Branch taken - do a dummy read
+                    self.dummy_read(self.pc);
+                    // Check for page crossing - do another dummy read
+                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                        self.dummy_read(self.pc);
+                    }
+                }
+            }
+            "SEC" => {
+                self.p |= FLAG_CARRY;
+            }
+            "RTI" => {
+                // RTI (Return from Interrupt) - 6 cycles
+                // Cycle 1: Fetch opcode (already done)
+                // Cycle 2: Dummy read from current PC
+                self.dummy_read(self.pc);
+                
+                // Cycle 3: Increment SP (dummy read happens in pop_byte)
+                // Cycle 4: Pull status from stack
+                let status = self.pop_byte();
+                // Restore flags, ignoring BREAK, always setting UNUSED
+                self.p = (status & !FLAG_BREAK) | FLAG_UNUSED;
+                
+                // RTI clears the delayed I flag immediately (special case)
+                self.delayed_i_flag = None;
+                
+                // Cycle 5-6: Pull PC from stack (low byte, then high byte)
+                self.pc = self.pop_word();
+            }
             "EOR" => {}
             "SRE" => {}
             "LSR" => {
@@ -10412,5 +10444,241 @@ mod tests {
         // BREAK flag should be ignored on PLP
         assert_eq!(cpu.p & FLAG_BREAK, 0, "BREAK flag should be cleared");
         assert_eq!(cpu.p & FLAG_UNUSED, FLAG_UNUSED, "UNUSED should always be set");
+    }
+
+    // BMI tests (Branch if Minus/Negative)
+    #[test]
+    fn test_execute_bmi_branch_taken() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![BMI, 0x10]; // Branch forward +16
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.p |= FLAG_NEGATIVE; // Set negative flag
+        
+        let initial_cycles = cpu.total_cycles;
+        let initial_pc = cpu.pc;
+        cpu.execute();
+        
+        // Branch should be taken: PC = 0x8002 + 0x10 = 0x8012
+        assert_eq!(cpu.pc, initial_pc + 2 + 0x10, "PC should branch forward");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "BMI taken without page cross takes 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bmi_branch_not_taken() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![BMI, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
+        
+        let initial_cycles = cpu.total_cycles;
+        let initial_pc = cpu.pc;
+        cpu.execute();
+        
+        // Branch not taken, PC advances past instruction
+        assert_eq!(cpu.pc, initial_pc + 2, "PC should not branch");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "BMI not taken takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bmi_branch_backward() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![BMI, 0xFE]; // Branch backward -2
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.p |= FLAG_NEGATIVE;
+        
+        let initial_pc = cpu.pc;
+        cpu.execute();
+        
+        // Backward branch: PC = 0x8002 + (-2) = 0x8000
+        assert_eq!(
+            cpu.pc,
+            initial_pc.wrapping_add(2u16.wrapping_add(0xFEu8 as i8 as u16)),
+            "PC should branch backward"
+        );
+    }
+
+    #[test]
+    fn test_execute_bmi_page_crossing() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        // Position BMI so branch crosses page boundary
+        let program = vec![
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, // NOPs to position
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA, 0xEA,
+            BMI, 0x7F, // At 0x8080, branch to cause page cross
+        ];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        // Execute NOPs to position PC
+        for _ in 0..128 {
+            cpu.execute();
+        }
+        
+        cpu.p |= FLAG_NEGATIVE;
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "BMI with page crossing takes 4 cycles"
+        );
+    }
+
+    // SEC tests (Set Carry Flag)
+    #[test]
+    fn test_execute_sec() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![SEC];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.p &= !FLAG_CARRY; // Clear carry
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "SEC takes 2 cycles");
+    }
+
+    #[test]
+    fn test_execute_sec_already_set() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![SEC];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.p |= FLAG_CARRY; // Already set
+        
+        cpu.execute();
+        
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should remain set");
+    }
+
+    // RTI tests (Return from Interrupt)
+    #[test]
+    fn test_execute_rti() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![RTI];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        // Set up stack as if returning from interrupt
+        cpu.sp = 0xFC;
+        cpu.memory.borrow_mut().write(0x01FD, 0b11001010, false); // Status byte
+        cpu.memory.borrow_mut().write(0x01FE, 0x34, false); // PCL
+        cpu.memory.borrow_mut().write(0x01FF, 0x12, false); // PCH
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // Check PC restored
+        assert_eq!(cpu.pc, 0x1234, "PC should be restored from stack");
+        // Check SP restored
+        assert_eq!(cpu.sp, 0xFF, "SP should be incremented by 3");
+        // Check flags restored
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be restored"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be restored");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "RTI takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rti_clears_delayed_i_flag() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![RTI];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        // Set up delayed I flag (simulating CLI or SEI executed)
+        cpu.delayed_i_flag = Some(true);
+        
+        // Set up stack
+        cpu.sp = 0xFC;
+        cpu.memory.borrow_mut().write(0x01FD, 0b00000000, false); // Status with I cleared
+        cpu.memory.borrow_mut().write(0x01FE, 0x00, false);
+        cpu.memory.borrow_mut().write(0x01FF, 0x80, false);
+        
+        cpu.execute();
+        
+        // RTI should clear the delayed I flag immediately
+        assert_eq!(
+            cpu.delayed_i_flag, None,
+            "RTI should clear delayed I flag"
+        );
+    }
+
+    #[test]
+    fn test_execute_rti_restores_break_and_unused() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![RTI];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        // Set up stack with BREAK set (should be ignored like PLP)
+        cpu.sp = 0xFC;
+        cpu.memory.borrow_mut().write(0x01FD, 0b00110000, false); // BREAK and UNUSED set
+        cpu.memory.borrow_mut().write(0x01FE, 0x00, false);
+        cpu.memory.borrow_mut().write(0x01FF, 0x80, false);
+        
+        cpu.execute();
+        
+        // BREAK should be ignored, UNUSED should be set
+        assert_eq!(cpu.p & FLAG_BREAK, 0, "BREAK flag should be ignored");
+        assert_eq!(cpu.p & FLAG_UNUSED, FLAG_UNUSED, "UNUSED should be set");
     }
 }
