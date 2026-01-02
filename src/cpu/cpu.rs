@@ -2964,10 +2964,17 @@ impl Cpu {
                     }
                 }
             }
-            "CLC" => {}
+            "CLC" => {
+                self.p &= !FLAG_CARRY;
+            }
             "JSR" => {}
-            "AND" => {}
-            "RLA" => {}
+            "AND" => {
+                let value = self.get_operand_value(&op, operand);
+                self.and(value);
+            }
+            "*RLA" => {
+                self.rla(operand);
+            }
             "BIT" => {}
             "ROL" => {
                 match op.mode {
@@ -3110,7 +3117,7 @@ impl Cpu {
                 let addr = base.wrapping_add(self.x as u16);
                 // Always do dummy read at base + X with wrong high byte if page crossed
                 let page_crossed = (base & 0xFF00) != (addr & 0xFF00);
-                let dummy_addr = if page_crossed { addr - 0x100} else { addr };
+                let dummy_addr = if page_crossed { addr - 0x100 } else { addr };
                 self.dummy_read(dummy_addr);
                 addr
             }
@@ -3134,7 +3141,7 @@ impl Cpu {
                 let addr = base.wrapping_add(self.y as u16);
                 // Always do dummy read at base + Y with wrong high byte if page crossed
                 let page_crossed = (base & 0xFF00) != (addr & 0xFF00);
-                let dummy_addr = if page_crossed { addr - 0x100} else { addr };
+                let dummy_addr = if page_crossed { addr - 0x100 } else { addr };
                 self.dummy_read(dummy_addr);
                 addr
             }
@@ -3168,11 +3175,13 @@ impl Cpu {
                 let ptr = self.read_byte_from_pc();
                 let base = self.read_word_from_zp(ptr);
                 let addr = base.wrapping_add(self.y as u16);
-                // Always do dummy read with wrong high byte if page crossed
-                if (base & 0xFF00) != (addr & 0xFF00) {
-                    let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
-                    self.dummy_read(dummy_addr);
-                }
+                // Always do dummy read - with wrong high byte if page crossed
+                let dummy_addr = if (base & 0xFF00) != (addr & 0xFF00) {
+                    (base & 0xFF00) | (addr & 0x00FF)
+                } else {
+                    addr
+                };
+                self.dummy_read(dummy_addr);
                 addr
             }
 
@@ -9029,11 +9038,26 @@ mod tests {
 
         cpu.execute();
 
-        assert_eq!(cpu.a, 0b10101010, "A should be shifted left: 0b01010101 << 1 = 0b10101010");
-        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should not be set (bit 7 was 0)");
+        assert_eq!(
+            cpu.a, 0b10101010,
+            "A should be shifted left: 0b01010101 << 1 = 0b10101010"
+        );
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            0,
+            "Carry flag should not be set (bit 7 was 0)"
+        );
         assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
-        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE, "Negative flag should be set (bit 7 is 1)");
-        assert_eq!(cpu.total_cycles, initial_cycles + 2, "ASL accumulator should take 2 cycles");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set (bit 7 is 1)"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "ASL accumulator should take 2 cycles"
+        );
     }
 
     #[test]
@@ -9047,11 +9071,18 @@ mod tests {
         cpu.reset();
 
         cpu.a = 0b10000001; // bit 7 is set
-        
+
         cpu.execute();
 
-        assert_eq!(cpu.a, 0b00000010, "A should be shifted left with bit 7 moved to carry");
-        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set (bit 7 was 1)");
+        assert_eq!(
+            cpu.a, 0b00000010,
+            "A should be shifted left with bit 7 moved to carry"
+        );
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be set (bit 7 was 1)"
+        );
         assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
     }
@@ -9067,7 +9098,7 @@ mod tests {
         cpu.reset();
 
         cpu.a = 0b00000000;
-        
+
         cpu.execute();
 
         assert_eq!(cpu.a, 0, "A should be 0");
@@ -9091,11 +9122,23 @@ mod tests {
 
         cpu.execute();
 
-        assert_eq!(cpu.memory.borrow().read(0x0042), 0b10101010, "Memory should be shifted left");
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0b10101010,
+            "Memory should be shifted left"
+        );
         assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should not be set");
         assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
-        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE, "Negative flag should be set");
-        assert_eq!(cpu.total_cycles, initial_cycles + 5, "ASL zero page should take 5 cycles");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "ASL zero page should take 5 cycles"
+        );
     }
 
     #[test]
@@ -9114,11 +9157,27 @@ mod tests {
 
         cpu.execute();
 
-        assert_eq!(cpu.memory.borrow().read(0x0045), 0b10000000, "Memory at $45 should be shifted left");
-        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set (bit 7 was 1)");
+        assert_eq!(
+            cpu.memory.borrow().read(0x0045),
+            0b10000000,
+            "Memory at $45 should be shifted left"
+        );
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be set (bit 7 was 1)"
+        );
         assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
-        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE, "Negative flag should be set");
-        assert_eq!(cpu.total_cycles, initial_cycles + 6, "ASL zero page,X should take 6 cycles");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "ASL zero page,X should take 6 cycles"
+        );
     }
 
     #[test]
@@ -9136,11 +9195,19 @@ mod tests {
 
         cpu.execute();
 
-        assert_eq!(cpu.memory.borrow().read(0x1234), 0b01000000, "Memory at $1234 should be shifted left");
+        assert_eq!(
+            cpu.memory.borrow().read(0x1234),
+            0b01000000,
+            "Memory at $1234 should be shifted left"
+        );
         assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should not be set");
         assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
-        assert_eq!(cpu.total_cycles, initial_cycles + 6, "ASL absolute should take 6 cycles");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "ASL absolute should take 6 cycles"
+        );
     }
 
     #[test]
@@ -9159,11 +9226,23 @@ mod tests {
 
         cpu.execute();
 
-        assert_eq!(cpu.memory.borrow().read(0x1234), 0b00000000, "Memory at $1234 should be shifted left to 0");
-        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set (bit 7 was 1)");
+        assert_eq!(
+            cpu.memory.borrow().read(0x1234),
+            0b00000000,
+            "Memory at $1234 should be shifted left to 0"
+        );
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be set (bit 7 was 1)"
+        );
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
-        assert_eq!(cpu.total_cycles, initial_cycles + 7, "ASL absolute,X should take 7 cycles");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "ASL absolute,X should take 7 cycles"
+        );
     }
 
     // Tests for PHP instruction
@@ -9193,7 +9272,11 @@ mod tests {
             "PHP should push P with BREAK and UNUSED flags set"
         );
         assert_eq!(cpu.sp, 0xFE, "Stack pointer should be decremented by 1");
-        assert_eq!(cpu.total_cycles, initial_cycles + 3, "PHP should take 3 cycles");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "PHP should take 3 cycles"
+        );
     }
 
     #[test]
@@ -9233,10 +9316,22 @@ mod tests {
 
         // AAC does AND then copies bit 7 to carry
         assert_eq!(cpu.a, 0b11110000, "A should be ANDed with 0xF0");
-        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set (bit 7 is 1)");
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be set (bit 7 is 1)"
+        );
         assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
-        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE, "Negative flag should be set");
-        assert_eq!(cpu.total_cycles, initial_cycles + 2, "AAC should take 2 cycles");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "AAC should take 2 cycles"
+        );
     }
 
     #[test]
@@ -9256,10 +9351,22 @@ mod tests {
 
         // AAC does AND then copies bit 7 to carry
         assert_eq!(cpu.a, 0b01110000, "A should be ANDed with 0x7F");
-        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should not be set (bit 7 is 0)");
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            0,
+            "Carry flag should not be set (bit 7 is 0)"
+        );
         assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
-        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set (bit 7 is 0)");
-        assert_eq!(cpu.total_cycles, initial_cycles + 2, "AAC should take 2 cycles");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            0,
+            "Negative flag should not be set (bit 7 is 0)"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "AAC should take 2 cycles"
+        );
     }
 
     #[test]
@@ -9302,7 +9409,11 @@ mod tests {
 
         // Branch taken: PC should be initial + 2 (instruction length) + 5 (offset)
         assert_eq!(cpu.pc, initial_pc + 2 + 5, "PC should branch forward by 5");
-        assert_eq!(cpu.total_cycles, initial_cycles + 3, "BPL with branch taken (no page cross) should take 3 cycles");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "BPL with branch taken (no page cross) should take 3 cycles"
+        );
     }
 
     #[test]
@@ -9322,8 +9433,16 @@ mod tests {
         cpu.execute();
 
         // Branch not taken: PC should just advance past the instruction
-        assert_eq!(cpu.pc, initial_pc + 2, "PC should advance by 2 (instruction length)");
-        assert_eq!(cpu.total_cycles, initial_cycles + 2, "BPL with branch not taken should take 2 cycles");
+        assert_eq!(
+            cpu.pc,
+            initial_pc + 2,
+            "PC should advance by 2 (instruction length)"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "BPL with branch not taken should take 2 cycles"
+        );
     }
 
     #[test]
@@ -9344,8 +9463,16 @@ mod tests {
 
         // Branch taken backward: PC + 2 - 10 = PC - 8
         // This crosses a page boundary (0x8000 -> 0x7FF8), so should take 4 cycles
-        assert_eq!(cpu.pc, initial_pc.wrapping_add(2).wrapping_sub(10), "PC should branch backward by 10");
-        assert_eq!(cpu.total_cycles, initial_cycles + 4, "BPL with branch taken crossing page should take 4 cycles");
+        assert_eq!(
+            cpu.pc,
+            initial_pc.wrapping_add(2).wrapping_sub(10),
+            "PC should branch backward by 10"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "BPL with branch taken crossing page should take 4 cycles"
+        );
     }
 
     #[test]
@@ -9361,14 +9488,14 @@ mod tests {
         // So we need offset to make PC go from 0x80xx to 0x81xx (or higher)
         // Let's use offset 0x70 (112 bytes forward) from position 0x8090
         // PC after instruction: 0x8092, target: 0x8092 + 0x70 = 0x8102 (page cross from 0x80 to 0x81)
-        
+
         let mut program = vec![0xEA; 0x90]; // 144 NOPs to position us at 0x8090
         program.push(BPL); // At offset 0x90
         program.push(0x70); // +112 bytes
 
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
-        
+
         // Execute NOPs to get to the BPL instruction
         for _ in 0..0x90 {
             cpu.execute();
@@ -9381,8 +9508,574 @@ mod tests {
         cpu.execute();
 
         // Branch crosses page: PC goes from 0x8092 to 0x8102
-        assert_eq!(cpu.pc, initial_pc + 2 + 0x70, "PC should branch forward crossing page");
-        assert_eq!(cpu.total_cycles, initial_cycles + 4, "BPL with branch taken and page cross should take 4 cycles");
+        assert_eq!(
+            cpu.pc,
+            initial_pc + 2 + 0x70,
+            "PC should branch forward crossing page"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "BPL with branch taken and page cross should take 4 cycles"
+        );
+    }
+
+    // Tests for CLC instruction
+
+    #[test]
+    fn test_execute_clc() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load CLC
+        let program = vec![CLC];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p = 0xFF; // Set all flags including carry
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should be cleared");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Other flags should remain unchanged"
+        );
+        assert_eq!(
+            cpu.p & FLAG_ZERO,
+            FLAG_ZERO,
+            "Other flags should remain unchanged"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "CLC should take 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_clc_already_clear() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        let program = vec![CLC];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p &= !FLAG_CARRY; // Clear carry flag
+
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should remain cleared");
+    }
+
+    // Tests for AND instruction
+
+    #[test]
+    fn test_execute_and_immediate() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AND #$0F
+        let program = vec![AND_IMM, 0x0F];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0xFF;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x0F, "A should be ANDed with 0x0F");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "AND immediate should take 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_and_zero_result() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AND #$00
+        let program = vec![AND_IMM, 0x00];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0xFF;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x00, "A should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+    }
+
+    #[test]
+    fn test_execute_and_negative_result() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AND #$80
+        let program = vec![AND_IMM, 0x80];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0xFF;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x80, "A should be 0x80");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_and_zero_page() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AND $42
+        let program = vec![AND_ZP, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0042, 0xF0, false);
+        cpu.a = 0x55;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x50, "A should be ANDed with memory value");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "AND zero page should take 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_and_zero_page_x() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AND $40,X
+        let program = vec![AND_ZPX, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0045, 0x0F, false);
+        cpu.a = 0xFF;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x0F, "A should be ANDed with memory at $45");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "AND zero page,X should take 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_and_absolute() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AND $1234
+        let program = vec![AND_ABS, 0x34, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x1234, 0xAA, false);
+        cpu.a = 0x55;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x00, "A should be 0 (0x55 & 0xAA)");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "AND absolute should take 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_and_absolute_x() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AND $1230,X
+        let program = vec![AND_ABSX, 0x30, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x04;
+        cpu.memory.borrow_mut().write(0x1234, 0xCC, false);
+        cpu.a = 0xFF;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0xCC, "A should be ANDed with memory at $1234");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "AND absolute,X should take 4 cycles (no page cross)"
+        );
+    }
+
+    #[test]
+    fn test_execute_and_absolute_y() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AND $1230,Y
+        let program = vec![AND_ABSY, 0x30, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x04;
+        cpu.memory.borrow_mut().write(0x1234, 0x3C, false);
+        cpu.a = 0xFF;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x3C, "A should be ANDed with memory at $1234");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "AND absolute,Y should take 4 cycles (no page cross)"
+        );
+    }
+
+    #[test]
+    fn test_execute_and_indexed_indirect() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AND ($40,X)
+        let program = vec![AND_INDX, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        // Set up pointer at $45 pointing to $1234
+        cpu.memory.borrow_mut().write(0x0045, 0x34, false);
+        cpu.memory.borrow_mut().write(0x0046, 0x12, false);
+        cpu.memory.borrow_mut().write(0x1234, 0x77, false);
+        cpu.a = 0xFF;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x77, "A should be ANDed with memory at ($45)");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "AND indexed indirect should take 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_and_indirect_indexed() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load AND ($40),Y
+        let program = vec![AND_INDY, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x05;
+        // Set up pointer at $40 pointing to $1230
+        cpu.memory.borrow_mut().write(0x0040, 0x30, false);
+        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
+        cpu.memory.borrow_mut().write(0x1235, 0x88, false);
+        cpu.a = 0xFF;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x88, "A should be ANDed with memory at ($40),Y");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "AND indirect indexed should take 5 cycles (no page cross)"
+        );
+    }
+
+    // Tests for RLA (undocumented instruction)
+
+    #[test]
+    fn test_execute_rla_zero_page() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load RLA $42
+        let program = vec![RLA_ZP, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0042, 0b01010101, false);
+        cpu.a = 0xFF;
+        cpu.p &= !FLAG_CARRY; // Clear carry
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // RLA: ROL memory then AND with A
+        // 0b01010101 ROL with carry=0 -> 0b10101010
+        // 0xFF AND 0b10101010 -> 0b10101010
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0b10101010,
+            "Memory should be rotated left"
+        );
+        assert_eq!(cpu.a, 0b10101010, "A should be ANDed with rotated value");
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            0,
+            "Carry should not be set (bit 7 was 0)"
+        );
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "RLA zero page should take 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rla_zero_page_with_carry() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load RLA $42
+        let program = vec![RLA_ZP, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0042, 0b10000001, false);
+        cpu.a = 0xFF;
+        cpu.p |= FLAG_CARRY; // Set carry
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // RLA: ROL memory then AND with A
+        // 0b10000001 ROL with carry=1 -> 0b00000011 (carry out = 1)
+        // 0xFF AND 0b00000011 -> 0b00000011
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0b00000011,
+            "Memory should be rotated left with carry in"
+        );
+        assert_eq!(cpu.a, 0b00000011, "A should be ANDed with rotated value");
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry should be set (bit 7 was 1)"
+        );
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+    }
+
+    #[test]
+    fn test_execute_rla_zero_page_x() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load RLA $40,X
+        let program = vec![RLA_ZPX, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0045, 0b00110011, false);
+        cpu.a = 0b11110000;
+        cpu.p &= !FLAG_CARRY;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // 0b00110011 ROL with carry=0 -> 0b01100110
+        // 0b11110000 AND 0b01100110 -> 0b01100000
+        assert_eq!(cpu.a, 0b01100000, "A should be ANDed with rotated value");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "RLA zero page,X should take 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rla_absolute() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load RLA $1234
+        let program = vec![RLA_ABS, 0x34, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x1234, 0b01000000, false);
+        cpu.a = 0b11111111;
+        cpu.p &= !FLAG_CARRY;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // 0b01000000 ROL -> 0b10000000
+        // 0xFF AND 0x80 -> 0x80
+        assert_eq!(cpu.a, 0b10000000, "A should be ANDed with rotated value");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "RLA absolute should take 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rla_absolute_x() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load RLA $1230,X
+        let program = vec![RLA_ABSXW, 0x30, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x04;
+        cpu.memory.borrow_mut().write(0x1234, 0b00000001, false);
+        cpu.a = 0b11111111;
+        cpu.p &= !FLAG_CARRY;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // 0b00000001 ROL -> 0b00000010
+        // 0xFF AND 0x02 -> 0x02
+        assert_eq!(cpu.a, 0b00000010, "A should be ANDed with rotated value");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "RLA absolute,X should take 7 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rla_absolute_y() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load RLA $1230,Y
+        let program = vec![RLA_ABSYW, 0x30, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x04;
+        cpu.memory.borrow_mut().write(0x1234, 0b11000000, false);
+        cpu.a = 0b11111111;
+        cpu.p &= !FLAG_CARRY;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // 0b11000000 ROL -> 0b10000000 (carry out = 1)
+        // 0xFF AND 0x80 -> 0x80
+        assert_eq!(cpu.a, 0b10000000, "A should be ANDed with rotated value");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "RLA absolute,Y should take 7 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rla_indexed_indirect() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load RLA ($40,X)
+        let program = vec![RLA_INDX, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        // Set up pointer at $45 pointing to $1234
+        cpu.memory.borrow_mut().write(0x0045, 0x34, false);
+        cpu.memory.borrow_mut().write(0x0046, 0x12, false);
+        cpu.memory.borrow_mut().write(0x1234, 0b00001111, false);
+        cpu.a = 0b11110000;
+        cpu.p &= !FLAG_CARRY;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // 0b00001111 ROL -> 0b00011110
+        // 0b11110000 AND 0b00011110 -> 0b00010000
+        assert_eq!(cpu.a, 0b00010000, "A should be ANDed with rotated value");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 8,
+            "RLA indexed indirect should take 8 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rla_indirect_indexed() {
+        let memory = Rc::new(RefCell::new(create_test_memory()));
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone());
+
+        // Load RLA ($40),Y
+        let program = vec![RLA_INDYW, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x05;
+        // Set up pointer at $40 pointing to $1230
+        cpu.memory.borrow_mut().write(0x0040, 0x30, false);
+        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
+        cpu.memory.borrow_mut().write(0x1235, 0b10101010, false);
+        cpu.a = 0b11111111;
+        cpu.p &= !FLAG_CARRY;
+        let initial_cycles = cpu.total_cycles;
+
+        cpu.execute();
+
+        // 0b10101010 ROL -> 0b01010100 (carry out = 1)
+        // 0xFF AND 0b01010100 -> 0b01010100
+        assert_eq!(cpu.a, 0b01010100, "A should be ANDed with rotated value");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 8,
+            "RLA indirect indexed should take 8 cycles"
+        );
     }
 }
-
