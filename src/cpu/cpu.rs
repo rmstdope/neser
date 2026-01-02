@@ -3054,12 +3054,24 @@ impl Cpu {
                 // Cycle 5-6: Pull PC from stack (low byte, then high byte)
                 self.pc = self.pop_word();
             }
-            "EOR" => {}
-            "SRE" => {}
+            "EOR" => {
+                let value = self.get_operand_value(&op, operand);
+                self.eor(value);
+            }
+            "*SRE" => {
+                self.sre(operand);
+            }
             "LSR" => {
                 match op.mode {
-                    "ACC" => {} // LSR Accumulator
-                    _ => {}     // LSR Memory
+                    "ACC" => {
+                        self.a = self.lsr(self.a);
+                    }
+                    _ => {
+                        let value = self.read(operand);
+                        self.write(operand, value, true); // dummy write
+                        let result = self.lsr(value);
+                        self.write(operand, result, false); // real write
+                    }
                 }
             }
             "PHA" => {}
@@ -10680,5 +10692,441 @@ mod tests {
         // BREAK should be ignored, UNUSED should be set
         assert_eq!(cpu.p & FLAG_BREAK, 0, "BREAK flag should be ignored");
         assert_eq!(cpu.p & FLAG_UNUSED, FLAG_UNUSED, "UNUSED should be set");
+    }
+
+    // EOR tests (Exclusive OR)
+    #[test]
+    fn test_execute_eor_immediate() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![EOR_IMM, 0b11110000];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.a = 0b10101010;
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0b10101010 XOR 0b11110000 = 0b01011010
+        assert_eq!(cpu.a, 0b01011010, "A should be XORed");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "EOR IMM takes 2 cycles");
+    }
+
+    #[test]
+    fn test_execute_eor_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![EOR_ZP, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.memory.borrow_mut().write(0x0042, 0xFF, false);
+        cpu.a = 0xFF;
+        
+        cpu.execute();
+        
+        // 0xFF XOR 0xFF = 0x00
+        assert_eq!(cpu.a, 0x00, "A should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+    }
+
+    #[test]
+    fn test_execute_eor_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![EOR_ZPX, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.x = 0x02;
+        cpu.memory.borrow_mut().write(0x0042, 0b10000000, false);
+        cpu.a = 0b00000000;
+        
+        cpu.execute();
+        
+        assert_eq!(cpu.a, 0b10000000, "A should have bit 7 set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE, "Negative flag should be set");
+    }
+
+    #[test]
+    fn test_execute_eor_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![EOR_ABS, 0x34, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.memory.borrow_mut().write(0x1234, 0x0F, false);
+        cpu.a = 0xF0;
+        
+        cpu.execute();
+        
+        // 0xF0 XOR 0x0F = 0xFF
+        assert_eq!(cpu.a, 0xFF, "A should be 0xFF");
+    }
+
+    #[test]
+    fn test_execute_eor_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![EOR_ABSX, 0x00, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.x = 0x34;
+        cpu.memory.borrow_mut().write(0x1234, 0xAA, false);
+        cpu.a = 0x55;
+        
+        cpu.execute();
+        
+        // 0x55 XOR 0xAA = 0xFF
+        assert_eq!(cpu.a, 0xFF, "A should be 0xFF");
+    }
+
+    #[test]
+    fn test_execute_eor_absolute_y() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![EOR_ABSY, 0x00, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.y = 0x34;
+        cpu.memory.borrow_mut().write(0x1234, 0b00110011, false);
+        cpu.a = 0b11001100;
+        
+        cpu.execute();
+        
+        // 0b11001100 XOR 0b00110011 = 0b11111111
+        assert_eq!(cpu.a, 0xFF, "A should be 0xFF");
+    }
+
+    #[test]
+    fn test_execute_eor_indexed_indirect() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![EOR_INDX, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.x = 0x02;
+        cpu.memory.borrow_mut().write(0x0042, 0x34, false); // Low byte
+        cpu.memory.borrow_mut().write(0x0043, 0x12, false); // High byte
+        cpu.memory.borrow_mut().write(0x1234, 0x01, false);
+        cpu.a = 0x00;
+        
+        cpu.execute();
+        
+        assert_eq!(cpu.a, 0x01, "A should be 0x01");
+    }
+
+    #[test]
+    fn test_execute_eor_indirect_indexed() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![EOR_INDY, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.y = 0x03;
+        cpu.memory.borrow_mut().write(0x0040, 0x31, false); // Low byte
+        cpu.memory.borrow_mut().write(0x0041, 0x12, false); // High byte
+        cpu.memory.borrow_mut().write(0x1234, 0xFF, false);
+        cpu.a = 0xAA;
+        
+        cpu.execute();
+        
+        // 0xAA XOR 0xFF = 0x55
+        assert_eq!(cpu.a, 0x55, "A should be 0x55");
+    }
+
+    // LSR tests (Logical Shift Right)
+    #[test]
+    fn test_execute_lsr_accumulator() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![LSR_ACC];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.a = 0b10000001;
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0b10000001 >> 1 = 0b01000000
+        assert_eq!(cpu.a, 0b01000000, "A should be shifted right");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be set from bit 0");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "LSR ACC takes 2 cycles");
+    }
+
+    #[test]
+    fn test_execute_lsr_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![LSR_ZP, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.memory.borrow_mut().write(0x0042, 0b00000010, false);
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0b00000010 >> 1 = 0b00000001
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0b00000001,
+            "Memory should be shifted right"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry should not be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 5, "LSR ZP takes 5 cycles");
+    }
+
+    #[test]
+    fn test_execute_lsr_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![LSR_ZPX, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.x = 0x02;
+        cpu.memory.borrow_mut().write(0x0042, 0b00000001, false);
+        
+        cpu.execute();
+        
+        // 0b00000001 >> 1 = 0b00000000
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0b00000000,
+            "Memory should be 0"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be set");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+    }
+
+    #[test]
+    fn test_execute_lsr_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![LSR_ABS, 0x34, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.memory.borrow_mut().write(0x1234, 0xFF, false);
+        
+        cpu.execute();
+        
+        // 0xFF >> 1 = 0x7F
+        assert_eq!(
+            cpu.memory.borrow().read(0x1234),
+            0x7F,
+            "Memory should be 0x7F"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be set");
+    }
+
+    #[test]
+    fn test_execute_lsr_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![LSR_ABSXW, 0x00, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.x = 0x34;
+        cpu.memory.borrow_mut().write(0x1234, 0b10101010, false);
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0b10101010 >> 1 = 0b01010101
+        assert_eq!(
+            cpu.memory.borrow().read(0x1234),
+            0b01010101,
+            "Memory should be shifted"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry should not be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 7, "LSR ABSXW takes 7 cycles");
+    }
+
+    // SRE tests (Shift Right then EOR - undocumented)
+    #[test]
+    fn test_execute_sre_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![SRE_ZP, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.memory.borrow_mut().write(0x0042, 0b00001111, false);
+        cpu.a = 0b11110000;
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0b00001111 >> 1 = 0b00000111
+        // 0b11110000 XOR 0b00000111 = 0b11110111
+        assert_eq!(cpu.a, 0b11110111, "A should be XORed with shifted value");
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0b00000111,
+            "Memory should be shifted"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be set from bit 0");
+        assert_eq!(cpu.total_cycles, initial_cycles + 5, "SRE ZP takes 5 cycles");
+    }
+
+    #[test]
+    fn test_execute_sre_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![SRE_ZPX, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.x = 0x02;
+        cpu.memory.borrow_mut().write(0x0042, 0b11111110, false);
+        cpu.a = 0xFF;
+        
+        cpu.execute();
+        
+        // 0b11111110 >> 1 = 0b01111111
+        // 0xFF XOR 0b01111111 = 0b10000000
+        assert_eq!(cpu.a, 0b10000000, "A should be XORed with shifted value");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE, "Negative flag should be set");
+    }
+
+    #[test]
+    fn test_execute_sre_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![SRE_ABS, 0x34, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.memory.borrow_mut().write(0x1234, 0b10101010, false);
+        cpu.a = 0b01010101;
+        
+        cpu.execute();
+        
+        // 0b10101010 >> 1 = 0b01010101
+        // 0b01010101 XOR 0b01010101 = 0b00000000
+        assert_eq!(cpu.a, 0b00000000, "A should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+    }
+
+    #[test]
+    fn test_execute_sre_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![SRE_ABSXW, 0x00, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.x = 0x34;
+        cpu.memory.borrow_mut().write(0x1234, 0xFF, false);
+        cpu.a = 0x00;
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0xFF >> 1 = 0x7F
+        // 0x00 XOR 0x7F = 0x7F
+        assert_eq!(cpu.a, 0x7F, "A should be 0x7F");
+        assert_eq!(cpu.total_cycles, initial_cycles + 7, "SRE ABSXW takes 7 cycles");
+    }
+
+    #[test]
+    fn test_execute_sre_absolute_y() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![SRE_ABSYW, 0x00, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.y = 0x34;
+        cpu.memory.borrow_mut().write(0x1234, 0b00000010, false);
+        cpu.a = 0xFF;
+        
+        cpu.execute();
+        
+        // 0b00000010 >> 1 = 0b00000001
+        // 0xFF XOR 0b00000001 = 0b11111110
+        assert_eq!(cpu.a, 0b11111110, "A should be XORed with shifted value");
+    }
+
+    #[test]
+    fn test_execute_sre_indexed_indirect() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![SRE_INDX, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.x = 0x02;
+        cpu.memory.borrow_mut().write(0x0042, 0x34, false);
+        cpu.memory.borrow_mut().write(0x0043, 0x12, false);
+        cpu.memory.borrow_mut().write(0x1234, 0b11000000, false);
+        cpu.a = 0b01100000;
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0b11000000 >> 1 = 0b01100000
+        // 0b01100000 XOR 0b01100000 = 0b00000000
+        assert_eq!(cpu.a, 0b00000000, "A should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 8, "SRE INDX takes 8 cycles");
+    }
+
+    #[test]
+    fn test_execute_sre_indirect_indexed() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+        
+        let program = vec![SRE_INDYW, 0x40];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+        
+        cpu.y = 0x03;
+        cpu.memory.borrow_mut().write(0x0040, 0x31, false);
+        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
+        cpu.memory.borrow_mut().write(0x1234, 0b10101010, false);
+        cpu.a = 0xFF;
+        
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+        
+        // 0b10101010 >> 1 = 0b01010101
+        // 0xFF XOR 0b01010101 = 0b10101010
+        assert_eq!(cpu.a, 0b10101010, "A should be XORed with shifted value");
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry should not be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 8, "SRE INDYW takes 8 cycles");
     }
 }
