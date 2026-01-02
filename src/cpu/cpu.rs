@@ -2967,7 +2967,26 @@ impl Cpu {
             "CLC" => {
                 self.p &= !FLAG_CARRY;
             }
-            "JSR" => {}
+            "JSR" => {
+                // JSR takes 6 cycles:
+                // 1. Fetch opcode
+                // 2. Fetch low byte of address
+                // 3. Internal operation (dummy read from stack)
+                // 4. Push PCH to stack
+                // 5. Push PCL to stack
+                // 6. Fetch high byte of address
+
+                // Dummy read from stack pointer for cycle 3
+                self.dummy_read(0x0100 | (self.sp as u16));
+
+                // Push return address (PC - 1) to stack
+                // PC is already pointing to the next instruction, so PC - 1 is the last byte of JSR
+                let return_addr = self.pc.wrapping_sub(1);
+                self.push_word(return_addr);
+
+                // Set PC to target address
+                self.pc = operand;
+            }
             "AND" => {
                 let value = self.get_operand_value(&op, operand);
                 self.and(value);
@@ -10077,5 +10096,74 @@ mod tests {
             initial_cycles + 8,
             "RLA indirect indexed should take 8 cycles"
         );
+    }
+
+    #[test]
+    fn test_execute_jsr_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        // JSR $1234 (opcode 0x20)
+        let program = vec![JSR, 0x34, 0x12]; // JSR $1234
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.sp = 0xFF; // Full stack
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // JSR pushes return address (PC - 1) to stack
+        // PC after reading all operands = 0x8003
+        // Return address = 0x8003 - 1 = 0x8002
+        assert_eq!(cpu.pc, 0x1234, "PC should be set to target address");
+        assert_eq!(cpu.sp, 0xFD, "SP should have decremented by 2");
+
+        // Check stack contents (return address high byte first, then low byte)
+        assert_eq!(
+            cpu.memory.borrow().read(0x01FF),
+            0x80,
+            "High byte of return address on stack"
+        );
+        assert_eq!(
+            cpu.memory.borrow().read(0x01FE),
+            0x02,
+            "Low byte of return address on stack"
+        );
+
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "JSR should take 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_jsr_stack_wrapping() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        // JSR $5678
+        let program = vec![JSR, 0x78, 0x56]; // JSR $5678
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.sp = 0x01; // Stack pointer near bottom
+
+        cpu.execute();
+
+        // Check stack wrapping
+        assert_eq!(cpu.sp, 0xFF, "SP should wrap around");
+        assert_eq!(
+            cpu.memory.borrow().read(0x0101),
+            0x80,
+            "High byte pushed at correct location"
+        );
+        assert_eq!(
+            cpu.memory.borrow().read(0x0100),
+            0x02,
+            "Low byte pushed at correct location"
+        );
+        assert_eq!(cpu.pc, 0x5678, "PC set to target");
     }
 }
