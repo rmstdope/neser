@@ -3121,15 +3121,43 @@ impl Cpu {
                 // Cycle 6: Dummy read at incremented PC
                 self.dummy_read(self.pc);
             }
-            "ADC" => {}
-            "RRA" => {}
+            "ADC" => {
+                let value = self.get_operand_value(&op, operand);
+                self.adc(value);
+            }
+            "*RRA" => {
+                // RRA: ROR memory, then ADC result to accumulator (undocumented)
+                let value = self.read(operand);
+                self.write(operand, value, true); // dummy write
+                let rotated = self.ror(value);
+                self.write(operand, rotated, false); // real write
+                // Now do ADC with the rotated value
+                self.adc(rotated);
+            }
             "ROR" => {
                 match op.mode {
-                    "ACC" => {} // ROR Accumulator
-                    _ => {}     // ROR Memory
+                    "ACC" => {
+                        self.a = self.ror(self.a);
+                    }
+                    _ => {
+                        let value = self.read(operand);
+                        self.write(operand, value, true); // dummy write
+                        let result = self.ror(value);
+                        self.write(operand, result, false); // real write
+                    }
                 }
             }
-            "PLA" => {}
+            "PLA" => {
+                // Pull accumulator from stack - 4 cycles:
+                // Cycle 1: Fetch opcode (already done)
+                // Cycle 2: Dummy read at current PC
+                self.dummy_read(self.pc);
+
+                // Cycle 3: Increment SP (dummy read happens in pop_byte)
+                // Cycle 4: Pull value from stack
+                self.a = self.pop_byte();
+                self.update_zero_and_negative_flags(self.a);
+            }
             "ARR" => {}
             "BVS" => {}
             "SEI" => {}
@@ -11689,5 +11717,850 @@ mod tests {
             FLAG_NEGATIVE,
             "Negative flag should be preserved"
         );
+    }
+
+    // ADC Tests
+    #[test]
+    fn test_execute_adc_immediate_no_carry() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_IMM, 0x10]; // ADC #$10
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x05;
+        cpu.p = 0; // Clear all flags including carry
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x15, "A should be 0x05 + 0x10");
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should be clear");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should be clear");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should be clear");
+        assert_eq!(cpu.p & FLAG_OVERFLOW, 0, "Overflow flag should be clear");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "ADC IMM takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_adc_with_carry_in() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_IMM, 0x10]; // ADC #$10
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x05;
+        cpu.p = FLAG_CARRY; // Set carry in
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x16, "A should be 0x05 + 0x10 + 1");
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should be clear");
+    }
+
+    #[test]
+    fn test_execute_adc_with_carry_out() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_IMM, 0xFF]; // ADC #$FF
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x02;
+        cpu.p = 0;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x01, "A should wrap to 0x01");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+    }
+
+    #[test]
+    fn test_execute_adc_zero_result() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_IMM, 0xFF]; // ADC #$FF
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x01;
+        cpu.p = 0;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x00, "A should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+    }
+
+    #[test]
+    fn test_execute_adc_negative_result() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_IMM, 0x80]; // ADC #$80
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x00;
+        cpu.p = 0;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x80, "A should be 0x80");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_adc_overflow_positive() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_IMM, 0x7F]; // ADC #$7F (127)
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x01; // 1
+        cpu.p = 0;
+
+        cpu.execute();
+
+        // 1 + 127 = 128 = 0x80 (appears negative, overflow)
+        assert_eq!(cpu.a, 0x80, "A should be 0x80");
+        assert_eq!(
+            cpu.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "Overflow flag should be set"
+        );
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_adc_overflow_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_IMM, 0x80]; // ADC #$80 (-128 in signed)
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x80; // -128 in signed
+        cpu.p = 0;
+
+        cpu.execute();
+
+        // -128 + -128 = -256, but wraps to 0 with overflow
+        assert_eq!(cpu.a, 0x00, "A should wrap to 0");
+        assert_eq!(
+            cpu.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "Overflow flag should be set"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+    }
+
+    #[test]
+    fn test_execute_adc_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_ZP, 0x42]; // ADC $42
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0042, 0x33, false);
+        cpu.a = 0x10;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x43, "A should be 0x10 + 0x33");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "ADC ZP takes 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_adc_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_ZPX, 0x40]; // ADC $40,X
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0045, 0x25, false);
+        cpu.a = 0x10;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x35, "A should be 0x10 + 0x25");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "ADC ZPX takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_adc_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_ABS, 0x00, 0x12]; // ADC $1200
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x1200, 0x44, false);
+        cpu.a = 0x11;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x55, "A should be 0x11 + 0x44");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "ADC ABS takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_adc_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_ABSX, 0x00, 0x12]; // ADC $1200,X
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x08;
+        cpu.memory.borrow_mut().write(0x1208, 0x22, false);
+        cpu.a = 0x10;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x32, "A should be 0x10 + 0x22");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "ADC ABSX (no page cross) takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_adc_absolute_y() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_ABSY, 0x00, 0x12]; // ADC $1200,Y
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x03;
+        cpu.memory.borrow_mut().write(0x1203, 0x15, false);
+        cpu.a = 0x20;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x35, "A should be 0x20 + 0x15");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "ADC ABSY (no page cross) takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_adc_indexed_indirect() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_INDX, 0x40]; // ADC ($40,X)
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        // Zero page address 0x45 contains pointer to 0x1234
+        cpu.memory.borrow_mut().write(0x0045, 0x34, false);
+        cpu.memory.borrow_mut().write(0x0046, 0x12, false);
+        cpu.memory.borrow_mut().write(0x1234, 0x50, false);
+        cpu.a = 0x10;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x60, "A should be 0x10 + 0x50");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "ADC INDX takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_adc_indirect_indexed() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ADC_INDY, 0x40]; // ADC ($40),Y
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x08;
+        // Zero page address 0x40 contains base address 0x1200
+        cpu.memory.borrow_mut().write(0x0040, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
+        cpu.memory.borrow_mut().write(0x1208, 0x33, false);
+        cpu.a = 0x11;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x44, "A should be 0x11 + 0x33");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "ADC INDY (no page cross) takes 5 cycles"
+        );
+    }
+
+    // ROR Tests
+    #[test]
+    fn test_execute_ror_accumulator_no_carry() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ROR_ACC]; // ROR A
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0b10110110;
+        cpu.p = 0; // Clear carry
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0b01011011, "A should be rotated right");
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should be clear");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should be clear");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "ROR ACC takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_ror_accumulator_with_carry() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ROR_ACC]; // ROR A
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0b00110110;
+        cpu.p = FLAG_CARRY; // Set carry
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0b10011011, "A should be rotated right with carry");
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should be clear");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_ror_accumulator_sets_carry() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ROR_ACC]; // ROR A
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0b00110111; // Bit 0 is set
+        cpu.p = 0;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0b00011011, "A should be rotated right");
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be set from bit 0"
+        );
+    }
+
+    #[test]
+    fn test_execute_ror_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ROR_ZP, 0x42]; // ROR $42
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0042, 0b11001100, false);
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0b01100110,
+            "Memory should be rotated right"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should be clear");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "ROR ZP takes 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_ror_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ROR_ZPX, 0x40]; // ROR $40,X
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0045, 0b10101010, false);
+        cpu.p = FLAG_CARRY;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0045),
+            0b11010101,
+            "Memory should be rotated right with carry in"
+        );
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should be clear");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "ROR ZPX takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_ror_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ROR_ABS, 0x00, 0x12]; // ROR $1200
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x1200, 0b00110011, false);
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x1200),
+            0b00011001,
+            "Memory should be rotated right"
+        );
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be set from bit 0"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "ROR ABS takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_ror_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ROR_ABSXW, 0x00, 0x12]; // ROR $1200,X
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x08;
+        cpu.memory.borrow_mut().write(0x1208, 0b11110000, false);
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x1208),
+            0b01111000,
+            "Memory should be rotated right"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "ROR ABSXW takes 7 cycles"
+        );
+    }
+
+    // RRA Tests (undocumented - ROR then ADC)
+    #[test]
+    fn test_execute_rra_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![RRA_ZP, 0x42]; // RRA $42
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0042, 0b10000000, false);
+        cpu.a = 0x10;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // Memory: 0b10000000 rotated right = 0b01000000 (0x40)
+        // A = 0x10 + 0x40 = 0x50
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0x40,
+            "Memory should be rotated right"
+        );
+        assert_eq!(cpu.a, 0x50, "A should be updated with ADC");
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should be clear");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "RRA ZP takes 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rra_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![RRA_ZPX, 0x40]; // RRA $40,X
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0045, 0b00000011, false); // Bit 0 is set
+        cpu.a = 0x05;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // Memory: 0b00000011 rotated right = 0b00000001, carry set
+        // A = 0x05 + 0x01 + 1(carry from rotation) = 0x07
+        assert_eq!(
+            cpu.memory.borrow().read(0x0045),
+            0x01,
+            "Memory should be rotated right"
+        );
+        assert_eq!(cpu.a, 0x07, "A should be updated with ADC including carry");
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            0,
+            "Carry flag should be clear after ADC"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "RRA ZPX takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rra_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![RRA_ABS, 0x00, 0x12]; // RRA $1200
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x1200, 0x02, false);
+        cpu.a = 0xFF;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // Memory: 0x02 rotated right = 0x01
+        // A = 0xFF + 0x01 = 0x00 (with carry)
+        assert_eq!(
+            cpu.memory.borrow().read(0x1200),
+            0x01,
+            "Memory should be rotated right"
+        );
+        assert_eq!(cpu.a, 0x00, "A should wrap with carry");
+        assert_eq!(
+            cpu.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "Carry flag should be set from ADC"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "RRA ABS takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rra_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![RRA_ABSXW, 0x00, 0x12]; // RRA $1200,X
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x10;
+        cpu.memory.borrow_mut().write(0x1210, 0x20, false);
+        cpu.a = 0x05;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // Memory: 0x20 rotated right = 0x10
+        // A = 0x05 + 0x10 = 0x15
+        assert_eq!(
+            cpu.memory.borrow().read(0x1210),
+            0x10,
+            "Memory should be rotated right"
+        );
+        assert_eq!(cpu.a, 0x15, "A should be updated with ADC");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "RRA ABSXW takes 7 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rra_absolute_y() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![RRA_ABSYW, 0x00, 0x12]; // RRA $1200,Y
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x08;
+        cpu.memory.borrow_mut().write(0x1208, 0x04, false);
+        cpu.a = 0x01;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // Memory: 0x04 rotated right = 0x02
+        // A = 0x01 + 0x02 = 0x03
+        assert_eq!(
+            cpu.memory.borrow().read(0x1208),
+            0x02,
+            "Memory should be rotated right"
+        );
+        assert_eq!(cpu.a, 0x03, "A should be updated with ADC");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "RRA ABSYW takes 7 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rra_indexed_indirect() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![RRA_INDX, 0x40]; // RRA ($40,X)
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0045, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0046, 0x12, false);
+        cpu.memory.borrow_mut().write(0x1200, 0x08, false);
+        cpu.a = 0x01;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // Memory: 0x08 rotated right = 0x04
+        // A = 0x01 + 0x04 = 0x05
+        assert_eq!(
+            cpu.memory.borrow().read(0x1200),
+            0x04,
+            "Memory should be rotated right"
+        );
+        assert_eq!(cpu.a, 0x05, "A should be updated with ADC");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 8,
+            "RRA INDX takes 8 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_rra_indirect_indexed() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![RRA_INDYW, 0x40]; // RRA ($40),Y
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x08;
+        cpu.memory.borrow_mut().write(0x0040, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
+        cpu.memory.borrow_mut().write(0x1208, 0x10, false);
+        cpu.a = 0x0F;
+        cpu.p = 0;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // Memory: 0x10 rotated right = 0x08
+        // A = 0x0F + 0x08 = 0x17
+        assert_eq!(
+            cpu.memory.borrow().read(0x1208),
+            0x08,
+            "Memory should be rotated right"
+        );
+        assert_eq!(cpu.a, 0x17, "A should be updated with ADC");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 8,
+            "RRA INDYW takes 8 cycles"
+        );
+    }
+
+    // PLA Tests
+    #[test]
+    fn test_execute_pla_basic() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![PLA]; // PLA
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.push_byte(0x42);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x42, "A should be pulled from stack");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should be clear");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should be clear");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "PLA takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_pla_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![PLA]; // PLA
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.push_byte(0x00);
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x00, "A should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should be clear");
+    }
+
+    #[test]
+    fn test_execute_pla_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![PLA]; // PLA
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.push_byte(0x80);
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x80, "A should be 0x80");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should be clear");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_pla_stack_pointer() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![PLA]; // PLA
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        let initial_sp = cpu.sp;
+        cpu.push_byte(0x55);
+
+        cpu.execute();
+
+        assert_eq!(cpu.sp, initial_sp, "Stack pointer should be restored");
     }
 }
