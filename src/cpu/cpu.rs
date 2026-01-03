@@ -2585,6 +2585,20 @@ impl Cpu {
         self.update_zero_and_negative_flags(self.x);
     }
 
+    /// ISB - undocumented operation
+    /// Also known as ISC. Increments memory then performs SBC
+    fn isb(&mut self, addr: u16) {
+        let value = self.read(addr);
+        // Dummy write (cycle accurate)
+        self.write(addr, value, true);
+        // Increment the value
+        let result = value.wrapping_add(1);
+        // Write back
+        self.write(addr, result, false);
+        // Perform SBC with the incremented value
+        self.sbc(result);
+    }
+
     /// Exclusive OR - EOR operation
     fn eor(&mut self, value: u8) {
         self.a ^= value;
@@ -3395,10 +3409,34 @@ impl Cpu {
                 let value = self.get_operand_value(&op, operand) as u8;
                 self.cpx(value);
             }
-            "SBC" => {}
-            "ISB" => {}
-            "INX" => {}
-            "BEQ" => {}
+            "SBC" | "*SBC" => {
+                // Subtract with Carry
+                let value = self.get_operand_value(&op, operand) as u8;
+                self.sbc(value);
+            }
+            "*ISB" => {
+                // *ISB (undocumented): Increment memory then SBC
+                // TODO This should use get_operand_value instead
+                self.isb(operand);
+            }
+            "INX" => {
+                // Increment X Register
+                self.inx();
+            }
+            "BEQ" => {
+                // Branch if Equal (zero flag set)
+                let offset = operand as i8;
+                if self.p & FLAG_ZERO != 0 {
+                    let old_pc = self.pc;
+                    self.pc = self.pc.wrapping_add(offset as u16);
+                    // Branch taken - do a dummy read
+                    self.dummy_read(self.pc);
+                    // Check for page crossing - do another dummy read
+                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                        self.dummy_read(self.pc);
+                    }
+                }
+            }
             "SED" => {}
             "INC" => {}
             "DEC" => {}
@@ -16372,5 +16410,781 @@ mod tests {
         assert_eq!(cpu.x, 0x00, "X should be 0x00");
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+    }
+
+    // INX tests
+    #[test]
+    fn test_execute_inx_normal() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INX];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x42;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.x, 0x43, "X should be incremented to 0x43");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "INX takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_inx_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INX];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0xFF;
+
+        cpu.execute();
+
+        assert_eq!(cpu.x, 0x00, "X should wrap to 0x00");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+    }
+
+    #[test]
+    fn test_execute_inx_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INX];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x7F;
+
+        cpu.execute();
+
+        assert_eq!(cpu.x, 0x80, "X should be 0x80");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    // BEQ tests
+    #[test]
+    fn test_execute_beq_taken_no_page_cross() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BEQ, 0x05]; // Branch forward 5 bytes
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p |= FLAG_ZERO; // Set zero flag
+
+        let pc_before = cpu.pc;
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // PC advances 2 bytes (instruction), then branches forward 5 bytes
+        assert_eq!(
+            cpu.pc,
+            pc_before + 2 + 0x05,
+            "PC should advance past instruction then branch forward 5 bytes"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "BEQ taken no page cross takes 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_beq_taken_page_cross() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        // Position BEQ so branch crosses page boundary
+        let mut program = vec![0xEA; 128]; // 128 NOPs to position at 0x8080
+        program.push(BEQ); // At offset 0x80
+        program.push(0x7F); // Branch forward 127 bytes
+        
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        // Execute NOPs to position PC at BEQ instruction
+        for _ in 0..128 {
+            cpu.execute();
+        }
+
+        cpu.p |= FLAG_ZERO; // Set zero flag
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // Branch taken with page cross: 4 cycles
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "BEQ taken with page cross takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_beq_not_taken() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BEQ, 0x05];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p &= !FLAG_ZERO; // Clear zero flag
+
+        let pc_before = cpu.pc;
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // PC advances 2 bytes past the instruction (branch not taken)
+        assert_eq!(cpu.pc, pc_before + 2, "PC should advance past instruction");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "BEQ not taken takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_beq_backward() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BEQ, 0xFE]; // Branch backward -2 bytes (signed)
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p |= FLAG_ZERO; // Set zero flag
+
+        let pc_before = cpu.pc;
+        cpu.execute();
+
+        // PC advances 2 bytes past instruction, then adds signed offset (-2)
+        assert_eq!(
+            cpu.pc,
+            pc_before.wrapping_add(2).wrapping_add((-2i8) as u16),
+            "PC should branch backward 2 bytes"
+        );
+    }
+
+    // SBC tests
+    #[test]
+    fn test_execute_sbc_immediate_no_borrow() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_IMM, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.p |= FLAG_CARRY; // Set carry (no borrow)
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // 0x50 - 0x10 - 0 = 0x40
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(cpu.p & FLAG_OVERFLOW, 0, "Overflow flag should not be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "SBC IMM takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_immediate_with_borrow() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_IMM, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.p &= !FLAG_CARRY; // Clear carry (borrow)
+
+        cpu.execute();
+
+        // 0x50 - 0x10 - 1 = 0x3F
+        assert_eq!(cpu.a, 0x3F, "A should be 0x3F");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+    }
+
+    #[test]
+    fn test_execute_sbc_immediate_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_IMM, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x42;
+        cpu.p |= FLAG_CARRY; // Set carry (no borrow)
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x00, "A should be 0x00");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+    }
+
+    #[test]
+    fn test_execute_sbc_immediate_underflow() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_IMM, 0x50];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x30;
+        cpu.p |= FLAG_CARRY; // Set carry (no borrow)
+
+        cpu.execute();
+
+        // 0x30 - 0x50 = 0xE0 (wraps)
+        assert_eq!(cpu.a, 0xE0, "A should wrap to 0xE0");
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should be clear");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_immediate_overflow_positive() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_IMM, 0x80];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.p |= FLAG_CARRY; // Set carry (no borrow)
+
+        cpu.execute();
+
+        // 0x50 - 0x80 = 0xD0 (overflow: positive - negative = negative)
+        assert_eq!(cpu.a, 0xD0, "A should be 0xD0");
+        assert_eq!(
+            cpu.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "Overflow flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_immediate_overflow_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_IMM, 0x01];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x80;
+        cpu.p |= FLAG_CARRY; // Set carry (no borrow)
+
+        cpu.execute();
+
+        // 0x80 - 0x01 = 0x7F (overflow: negative - positive = positive)
+        assert_eq!(cpu.a, 0x7F, "A should be 0x7F");
+        assert_eq!(
+            cpu.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "Overflow flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0010, 0x10, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "SBC ZP takes 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_ZPX, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.x = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0015, 0x10, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "SBC ZPX takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_ABS, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x2000, 0x10, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "SBC ABS takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_absolute_x_no_page_cross() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_ABSX, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.x = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x2005, 0x10, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "SBC ABSX no page cross takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_absolute_x_page_cross() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_ABSX, 0xFF, 0x01];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.x = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0204, 0x10, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "SBC ABSX with page cross takes 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_absolute_y_no_page_cross() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_ABSY, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.y = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x2005, 0x10, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "SBC ABSY no page cross takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_absolute_y_page_cross() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_ABSY, 0xFF, 0x01];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.y = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0204, 0x10, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "SBC ABSY with page cross takes 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_indexed_indirect() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_INDX, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.x = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0015, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0016, 0x20, false);
+        cpu.memory.borrow_mut().write(0x2000, 0x10, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "SBC INDX takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_indirect_indexed_no_page_cross() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_INDY, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.y = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0011, 0x20, false);
+        cpu.memory.borrow_mut().write(0x2005, 0x10, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "SBC INDY no page cross takes 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_sbc_indirect_indexed_page_cross() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SBC_INDY, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.y = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0010, 0xFF, false);
+        cpu.memory.borrow_mut().write(0x0011, 0x01, false);
+        cpu.memory.borrow_mut().write(0x0204, 0x10, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "SBC INDY with page cross takes 6 cycles"
+        );
+    }
+
+    // ISB tests (undocumented: INC then SBC)
+    #[test]
+    fn test_execute_isb_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ISB_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0010, 0x0F, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // Memory increments from 0x0F to 0x10, then 0x50 - 0x10 = 0x40
+        assert_eq!(
+            cpu.memory.borrow().read(0x0010),
+            0x10,
+            "Memory should be incremented to 0x10"
+        );
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "ISB ZP takes 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_isb_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ISB_ZPX, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.x = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0015, 0x0F, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0015),
+            0x10,
+            "Memory should be incremented to 0x10"
+        );
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "ISB ZPX takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_isb_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ISB_ABS, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x2000, 0x0F, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x2000),
+            0x10,
+            "Memory should be incremented to 0x10"
+        );
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "ISB ABS takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_isb_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ISB_ABSXW, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.x = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x2005, 0x0F, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x2005),
+            0x10,
+            "Memory should be incremented to 0x10"
+        );
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "ISB ABSXW takes 7 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_isb_absolute_y() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ISB_ABSYW, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.y = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x2005, 0x0F, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x2005),
+            0x10,
+            "Memory should be incremented to 0x10"
+        );
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "ISB ABSYW takes 7 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_isb_indexed_indirect() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ISB_INDX, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.x = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0015, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0016, 0x20, false);
+        cpu.memory.borrow_mut().write(0x2000, 0x0F, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x2000),
+            0x10,
+            "Memory should be incremented to 0x10"
+        );
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 8,
+            "ISB INDX takes 8 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_isb_indirect_indexed() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ISB_INDYW, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.y = 0x05;
+        cpu.p |= FLAG_CARRY;
+        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0011, 0x20, false);
+        cpu.memory.borrow_mut().write(0x2005, 0x0F, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x2005),
+            0x10,
+            "Memory should be incremented to 0x10"
+        );
+        assert_eq!(cpu.a, 0x40, "A should be 0x40");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 8,
+            "ISB INDYW takes 8 cycles"
+        );
     }
 }
