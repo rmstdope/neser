@@ -454,7 +454,7 @@ pub static OPCODE_TABLE: &[OpCode; 256] = &[
     OpCode::new(TYA, "TYA", "IMP", 2),
     OpCode::new(STA_ABSYW, "STA", "ABSYW", 5),
     OpCode::new(TXS, "TXS", "IMP", 2),
-    OpCode::new(XAS_ABSY, "*XAS", "ABSY", 5),
+    OpCode::new(XAS_ABSY, "*XAS", "ABSYW", 5),
     OpCode::new(SYA_ABSX, "*SYA", "ABSX", 5),
     OpCode::new(STA_ABSXW, "STA", "ABSXW", 5),
     OpCode::new(SXA_ABSY, "*SXA", "ABSY", 5),

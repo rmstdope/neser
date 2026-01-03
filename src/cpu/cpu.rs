@@ -3193,12 +3193,45 @@ impl Cpu {
             "STY" => {
                 self.write(operand, self.y, false);
             }
-            "STX" => {}
-            "DEY" => {}
-            "TXA" => {}
-            "ANE" => {}
-            "BCC" => {}
-            "SHAZ" => {}
+            "STX" => {
+                // Store X Register
+                self.write(operand, self.x, false);
+            }
+            "DEY" => {
+                // Decrement Y Register - already implemented as helper method
+                self.dey();
+            }
+            "TXA" => {
+                // Transfer X to Accumulator - already implemented as helper method
+                self.txa();
+            }
+            "ANE" | "*XAA" => {
+                // *XAA (undocumented) - Transfer X to A, then AND with immediate
+                self.a = self.x;
+                let value = self.get_operand_value(&op, operand);
+                self.a &= value;
+                self.update_zero_and_negative_flags(self.a);
+            }
+            "BCC" => {
+                // Branch on Carry Clear
+                let offset = operand as i8;
+                if self.p & FLAG_CARRY == 0 {
+                    let old_pc = self.pc;
+                    self.pc = self.pc.wrapping_add(offset as u16);
+                    // Branch taken - do a dummy read
+                    self.dummy_read(self.pc);
+                    // Check for page crossing - do another dummy read
+                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                        self.dummy_read(self.pc);
+                    }
+                }
+            }
+            "SHAZ" | "*XAS" => {
+                // *XAS (undocumented) - Store A AND X AND (high byte of address + 1)
+                let high_byte = (operand >> 8) as u8;
+                let value = self.a & self.x & high_byte.wrapping_add(1);
+                self.write(operand, value, false);
+            }
             "TYA" => {}
             "TXS" => {}
             "TAS" => {}
@@ -13205,6 +13238,466 @@ mod tests {
             cpu.total_cycles,
             initial_cycles + 4,
             "STY ABS takes 4 cycles"
+        );
+    }
+
+    // STX Tests
+    #[test]
+    fn test_execute_stx_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![STX_ZP, 0x42]; // STX $42
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x99;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0042),
+            0x99,
+            "Memory should contain X"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "STX ZP takes 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_stx_zero_page_y() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![STX_ZPY, 0x40]; // STX $40,Y
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0xAA;
+        cpu.y = 0x05;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0045),
+            0xAA,
+            "Memory should contain X"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "STX ZPY takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_stx_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![STX_ABS, 0x00, 0x12]; // STX $1200
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0xBB;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x1200),
+            0xBB,
+            "Memory should contain X"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "STX ABS takes 4 cycles"
+        );
+    }
+
+    // DEY Tests
+    #[test]
+    fn test_execute_dey_basic() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DEY]; // DEY
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x05;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.y, 0x04, "Y should be decremented");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should be clear");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should be clear");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "DEY takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_dey_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DEY]; // DEY
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x01;
+
+        cpu.execute();
+
+        assert_eq!(cpu.y, 0x00, "Y should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should be clear");
+    }
+
+    #[test]
+    fn test_execute_dey_wrap() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DEY]; // DEY
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x00;
+
+        cpu.execute();
+
+        assert_eq!(cpu.y, 0xFF, "Y should wrap to 0xFF");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should be clear");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    // TXA Tests
+    #[test]
+    fn test_execute_txa_basic() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![TXA]; // TXA
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x42;
+        cpu.a = 0x00;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x42, "A should be set to X");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should be clear");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should be clear");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "TXA takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_txa_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![TXA]; // TXA
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x00;
+        cpu.a = 0xFF;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x00, "A should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+    }
+
+    #[test]
+    fn test_execute_txa_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![TXA]; // TXA
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x80;
+        cpu.a = 0x00;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x80, "A should be 0x80");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    // XAA/ANE Tests (undocumented - TXA then AND with immediate)
+    #[test]
+    fn test_execute_xaa_basic() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![XAA_IMM, 0b11110000]; // XAA #$F0
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0b11001100;
+        cpu.a = 0xFF; // Should be overwritten
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // XAA: A = X AND immediate
+        assert_eq!(cpu.a, 0b11000000, "A should be X AND immediate");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should be clear");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "XAA takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_xaa_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![XAA_IMM, 0x00]; // XAA #$00
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0xFF;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x00, "A should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+    }
+
+    #[test]
+    fn test_execute_xaa_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![XAA_IMM, 0xFF]; // XAA #$FF
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x80;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x80, "A should be 0x80");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    // BCC Tests
+    #[test]
+    fn test_execute_bcc_not_taken_carry_set() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BCC, 0x10]; // BCC +16
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        let start_pc = cpu.pc;
+        cpu.p = FLAG_CARRY; // Set carry flag
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.pc, start_pc + 2, "Branch not taken, PC += 2");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "Branch not taken takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bcc_taken_same_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BCC, 0x10]; // BCC +16
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        let start_pc = cpu.pc;
+        cpu.p = 0; // Clear carry flag
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.pc,
+            start_pc.wrapping_add(2).wrapping_add(0x10),
+            "Branch taken, PC += 2 + offset"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "Branch taken same page takes 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bcc_taken_cross_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        // Position BCC so that the branch target crosses a page boundary
+        let mut program = vec![0xEA; 0x90]; // 144 NOPs
+        program.push(BCC);
+        program.push(0x70); // +112 bytes
+
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        // Execute NOPs to get to the BCC instruction
+        for _ in 0..0x90 {
+            cpu.execute();
+        }
+
+        cpu.p = 0; // Clear carry flag
+
+        let start_pc = cpu.pc;
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        let target_pc = start_pc.wrapping_add(2).wrapping_add(0x70);
+        assert_eq!(cpu.pc, target_pc, "Branch to new page");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "Branch taken cross page takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bcc_backward_branch() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BCC, 0xFE]; // BCC -2
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        let start_pc = cpu.pc;
+        cpu.p = 0; // Clear carry flag
+
+        cpu.execute();
+
+        let offset = -2_i16;
+        let target_pc = start_pc.wrapping_add(2).wrapping_add_signed(offset);
+        assert_eq!(cpu.pc, target_pc, "Branch backward");
+    }
+
+    // XAS/SHAZ Tests (undocumented - Store A AND X AND (high byte of address + 1))
+    #[test]
+    fn test_execute_xas_basic() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![XAS_ABSY, 0x00, 0x12]; // XAS $1200,Y
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0xFF;
+        cpu.x = 0xFF;
+        cpu.y = 0x00;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // XAS stores (A & X & (high_byte + 1))
+        // High byte of address = 0x12, so (0x12 + 1) = 0x13
+        // Result: 0xFF & 0xFF & 0x13 = 0x13
+        assert_eq!(
+            cpu.memory.borrow().read(0x1200),
+            0x13,
+            "Memory should contain A & X & (H+1)"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "XAS takes 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_xas_with_offset() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![XAS_ABSY, 0xF0, 0x11]; // XAS $11F0,Y
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0xFF;
+        cpu.x = 0xFF;
+        cpu.y = 0x08;
+
+        cpu.execute();
+
+        // XAS stores (A & X & (high_byte + 1))
+        // Effective address = 0x11F0 + 0x08 = 0x11F8
+        // High byte = 0x11, so (0x11 + 1) = 0x12
+        // Result: 0xFF & 0xFF & 0x12 = 0x12
+        assert_eq!(
+            cpu.memory.borrow().read(0x11F8),
+            0x12,
+            "Memory should contain A & X & (H+1)"
+        );
+    }
+
+    #[test]
+    fn test_execute_xas_masking() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![XAS_ABSY, 0x00, 0x02]; // XAS $0200,Y (write to RAM at $0200)
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0b11110000;
+        cpu.x = 0b11001100;
+        cpu.y = 0x00;
+
+        cpu.execute();
+
+        // High byte = 0x02, so (0x02 + 1) = 0x03
+        // Result: 0b11110000 & 0b11001100 & 0x03 = 0b11000000 & 0x03 = 0x00
+        assert_eq!(
+            cpu.memory.borrow().read(0x0200),
+            0x00,
+            "Memory should contain masked value"
         );
     }
 }
