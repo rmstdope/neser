@@ -2564,6 +2564,16 @@ impl Cpu {
         self.cmp(result);
     }
 
+    /// Load Accumulator and X - LAR undocumented operation
+    /// Also known as LAS. ANDs memory with stack pointer, stores result in A, X, and SP
+    fn lar(&mut self, value: u8) {
+        let result = self.sp & value;
+        self.a = result;
+        self.x = result;
+        self.sp = result;
+        self.update_zero_and_negative_flags(result);
+    }
+
     /// Exclusive OR - EOR operation
     fn eor(&mut self, value: u8) {
         self.a ^= value;
@@ -3325,11 +3335,7 @@ impl Cpu {
             "*LAR" => {
                 // Undocumented: AND memory with stack pointer, store in A, X, and SP
                 let value = self.get_operand_value(&op, operand) as u8;
-                let result = self.sp & value;
-                self.a = result;
-                self.x = result;
-                self.sp = result;
-                self.update_zero_and_negative_flags(result);
+                self.lar(value);
             }
             "CPY" => {
                 let value = self.get_operand_value(&op, operand) as u8;
