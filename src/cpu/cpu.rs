@@ -3322,11 +3322,30 @@ impl Cpu {
                 self.x = self.sp;
                 self.update_zero_and_negative_flags(self.x);
             }
-            "LAS" => {}
-            "CPY" => {}
-            "CPA" => {}
-            "DCP" => {}
-            "INY" => {}
+            "*LAR" => {
+                // Undocumented: AND memory with stack pointer, store in A, X, and SP
+                let value = self.get_operand_value(&op, operand) as u8;
+                let result = self.sp & value;
+                self.a = result;
+                self.x = result;
+                self.sp = result;
+                self.update_zero_and_negative_flags(result);
+            }
+            "CPY" => {
+                let value = self.get_operand_value(&op, operand) as u8;
+                self.cpy(value);
+            }
+            "CMP" => {
+                let value = self.get_operand_value(&op, operand) as u8;
+                self.cmp(value);
+            }
+            "*DCP" => {
+                // Undocumented: Decrement memory then compare with A
+                self.dcp(operand);
+            }
+            "INY" => {
+                self.iny();
+            }
             "DEX" => {}
             "AXS" => {}
             "BNE" => {}
@@ -15007,16 +15026,8 @@ mod tests {
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
-        assert_eq!(
-            cpu.p & FLAG_OVERFLOW,
-            0,
-            "Overflow flag should be cleared"
-        );
-        assert_eq!(
-            cpu.total_cycles,
-            initial_cycles + 2,
-            "CLV takes 2 cycles"
-        );
+        assert_eq!(cpu.p & FLAG_OVERFLOW, 0, "Overflow flag should be cleared");
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "CLV takes 2 cycles");
     }
 
     #[test]
@@ -15058,11 +15069,7 @@ mod tests {
         assert_eq!(cpu.x, 0x42, "X should equal SP");
         assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
-        assert_eq!(
-            cpu.total_cycles,
-            initial_cycles + 2,
-            "TSX takes 2 cycles"
-        );
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "TSX takes 2 cycles");
     }
 
     #[test]
@@ -15148,7 +15155,7 @@ mod tests {
         let mut program = vec![0xEA; 128]; // 128 NOPs to position at 0x8080
         program.push(BCS); // At offset 0x80
         program.push(0x7F); // Branch forward 127 bytes
-        
+
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
 
@@ -15279,6 +15286,653 @@ mod tests {
 
         assert_eq!(cpu.a, 0x80, "A should be 0x80");
         assert_eq!(cpu.x, 0x80, "X should be 0x80");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    // INY tests
+    #[test]
+    fn test_execute_iny_normal() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INY];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x42;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.y, 0x43, "Y should be incremented to 0x43");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "INY takes 2 cycles");
+    }
+
+    #[test]
+    fn test_execute_iny_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INY];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0xFF;
+
+        cpu.execute();
+
+        assert_eq!(cpu.y, 0x00, "Y should wrap to 0x00");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+    }
+
+    #[test]
+    fn test_execute_iny_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INY];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x7F;
+
+        cpu.execute();
+
+        assert_eq!(cpu.y, 0x80, "Y should be 0x80");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    // CPY tests
+    #[test]
+    fn test_execute_cpy_immediate_equal() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CPY_IMM, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x42;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "CPY IMM takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_cpy_immediate_greater() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CPY_IMM, 0x30];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x42;
+
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+    }
+
+    #[test]
+    fn test_execute_cpy_immediate_less() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CPY_IMM, 0x50];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x42;
+
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry flag should not be set");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_cpy_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CPY_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x42;
+        cpu.memory.borrow_mut().write(0x0010, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "CPY ZP takes 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_cpy_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CPY_ABS, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x42;
+        cpu.memory.borrow_mut().write(0x2000, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "CPY ABS takes 4 cycles"
+        );
+    }
+
+    // CMP tests
+    #[test]
+    fn test_execute_cmp_immediate() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CMP_IMM, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x42;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "CMP IMM takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_cmp_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CMP_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.memory.borrow_mut().write(0x0010, 0x40, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "CMP ZP takes 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_cmp_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CMP_ZPX, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0015, 0x40, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "CMP ZPX takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_cmp_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CMP_ABS, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.memory.borrow_mut().write(0x2000, 0x40, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "CMP ABS takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_cmp_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CMP_ABSX, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.x = 0x10;
+        cpu.memory.borrow_mut().write(0x2010, 0x40, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "CMP ABSX no page cross takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_cmp_absolute_y() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CMP_ABSY, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x2010, 0x40, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "CMP ABSY no page cross takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_cmp_indexed_indirect() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CMP_INDX, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0015, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0016, 0x30, false);
+        cpu.memory.borrow_mut().write(0x3000, 0x40, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "CMP INDX takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_cmp_indirect_indexed() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CMP_INDY, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x50;
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0011, 0x30, false);
+        cpu.memory.borrow_mut().write(0x3010, 0x40, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "CMP INDY no page cross takes 5 cycles"
+        );
+    }
+
+    // DCP tests (undocumented - decrement memory then compare with A)
+    #[test]
+    fn test_execute_dcp_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DCP_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x42;
+        cpu.memory.borrow_mut().write(0x0010, 0x43, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0010),
+            0x42,
+            "Memory should be decremented to 0x42"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "DCP ZP takes 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_dcp_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DCP_ZPX, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x42;
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0015, 0x43, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0015),
+            0x42,
+            "Memory should be decremented to 0x42"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "DCP ZPX takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_dcp_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DCP_ABS, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x42;
+        cpu.memory.borrow_mut().write(0x2000, 0x43, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x2000),
+            0x42,
+            "Memory should be decremented to 0x42"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "DCP ABS takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_dcp_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DCP_ABSXW, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x42;
+        cpu.x = 0x10;
+        cpu.memory.borrow_mut().write(0x2010, 0x43, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x2010),
+            0x42,
+            "Memory should be decremented to 0x42"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "DCP ABSXW takes 7 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_dcp_absolute_y() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DCP_ABSYW, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x42;
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x2010, 0x43, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x2010),
+            0x42,
+            "Memory should be decremented to 0x42"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "DCP ABSYW takes 7 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_dcp_indexed_indirect() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DCP_INDX, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x42;
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0015, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0016, 0x30, false);
+        cpu.memory.borrow_mut().write(0x3000, 0x43, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x3000),
+            0x42,
+            "Memory should be decremented to 0x42"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 8,
+            "DCP INDX takes 8 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_dcp_indirect_indexed() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DCP_INDYW, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0x42;
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
+        cpu.memory.borrow_mut().write(0x0011, 0x30, false);
+        cpu.memory.borrow_mut().write(0x3010, 0x43, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x3010),
+            0x42,
+            "Memory should be decremented to 0x42"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 8,
+            "DCP INDYW takes 8 cycles"
+        );
+    }
+
+    // LAR tests (undocumented - AND memory with SP, transfer to A, X, and SP)
+    #[test]
+    fn test_execute_lar_absolute_y() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![LAR_ABSY, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.sp = 0xFF;
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x2010, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        let expected = 0xFF & 0x42;
+        assert_eq!(cpu.a, expected, "A should be SP & memory");
+        assert_eq!(cpu.x, expected, "X should be SP & memory");
+        assert_eq!(cpu.sp, expected, "SP should be SP & memory");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "LAR ABSY no page cross takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_lar_absolute_y_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![LAR_ABSY, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.sp = 0xFF;
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x2010, 0x00, false);
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x00, "A should be 0");
+        assert_eq!(cpu.x, 0x00, "X should be 0");
+        assert_eq!(cpu.sp, 0x00, "SP should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+    }
+
+    #[test]
+    fn test_execute_lar_absolute_y_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![LAR_ABSY, 0x00, 0x20];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.sp = 0xFF;
+        cpu.y = 0x10;
+        cpu.memory.borrow_mut().write(0x2010, 0x80, false);
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x80, "A should be 0x80");
+        assert_eq!(cpu.x, 0x80, "X should be 0x80");
+        assert_eq!(cpu.sp, 0x80, "SP should be 0x80");
         assert_eq!(
             cpu.p & FLAG_NEGATIVE,
             FLAG_NEGATIVE,
