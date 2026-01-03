@@ -3291,10 +3291,37 @@ impl Cpu {
                 // Transfer Accumulator to X - already implemented as helper method
                 self.tax();
             }
-            "ATX" => {}
-            "BCS" => {}
-            "CLV" => {}
-            "TSX" => {}
+            "*ATX" => {
+                // *ATX (undocumented): Load A and X with immediate value
+                // Also known as *LAX immediate or *OAL
+                let value = self.get_operand_value(&op, operand);
+                self.a = value;
+                self.x = value;
+                self.update_zero_and_negative_flags(self.a);
+            }
+            "BCS" => {
+                // Branch on Carry Set
+                let offset = operand as i8;
+                if self.p & FLAG_CARRY != 0 {
+                    let old_pc = self.pc;
+                    self.pc = self.pc.wrapping_add(offset as u16);
+                    // Branch taken - do a dummy read
+                    self.dummy_read(self.pc);
+                    // Check for page crossing - do another dummy read
+                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                        self.dummy_read(self.pc);
+                    }
+                }
+            }
+            "CLV" => {
+                // Clear Overflow flag
+                self.p &= !FLAG_OVERFLOW;
+            }
+            "TSX" => {
+                // Transfer Stack pointer to X
+                self.x = self.sp;
+                self.update_zero_and_negative_flags(self.x);
+            }
             "LAS" => {}
             "CPY" => {}
             "CPA" => {}
@@ -14953,6 +14980,300 @@ mod tests {
         cpu.reset();
 
         cpu.memory.borrow_mut().write(0x0010, 0x80, false);
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x80, "A should be 0x80");
+        assert_eq!(cpu.x, 0x80, "X should be 0x80");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    // CLV tests
+    #[test]
+    fn test_execute_clv() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CLV];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p |= FLAG_OVERFLOW; // Set overflow flag
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.p & FLAG_OVERFLOW,
+            0,
+            "Overflow flag should be cleared"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "CLV takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_clv_already_clear() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![CLV];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.p & FLAG_OVERFLOW,
+            0,
+            "Overflow flag should remain clear"
+        );
+    }
+
+    // TSX tests
+    #[test]
+    fn test_execute_tsx_positive() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![TSX];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.sp = 0x42;
+        cpu.x = 0x00;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.x, 0x42, "X should equal SP");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "TSX takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_tsx_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![TSX];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.sp = 0x00;
+        cpu.x = 0xFF;
+
+        cpu.execute();
+
+        assert_eq!(cpu.x, 0x00, "X should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+    }
+
+    #[test]
+    fn test_execute_tsx_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![TSX];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.sp = 0x80;
+        cpu.x = 0x00;
+
+        cpu.execute();
+
+        assert_eq!(cpu.x, 0x80, "X should be 0x80");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    // BCS tests
+    #[test]
+    fn test_execute_bcs_taken_no_page_cross() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BCS, 0x05]; // Branch forward 5 bytes
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p |= FLAG_CARRY; // Set carry flag
+
+        let pc_before = cpu.pc;
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // PC advances 2 bytes (instruction), then branches forward 5 bytes
+        assert_eq!(
+            cpu.pc,
+            pc_before + 2 + 0x05,
+            "PC should advance past instruction then branch forward 5 bytes"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 3,
+            "BCS taken no page cross takes 3 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bcs_taken_page_cross() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        // Position BCS so branch crosses page boundary
+        // Place 128 NOPs, then BCS at 0x8080
+        // After reading BCS + offset, PC = 0x8082
+        // Branch forward by 0x7F: 0x8082 + 0x7F = 0x8101 (page cross from 0x80 to 0x81)
+        let mut program = vec![0xEA; 128]; // 128 NOPs to position at 0x8080
+        program.push(BCS); // At offset 0x80
+        program.push(0x7F); // Branch forward 127 bytes
+        
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        // Execute NOPs to position PC at BCS instruction
+        for _ in 0..128 {
+            cpu.execute();
+        }
+
+        cpu.p |= FLAG_CARRY; // Set carry flag
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // Branch taken with page cross: 4 cycles
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 4,
+            "BCS taken with page cross takes 4 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bcs_not_taken() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BCS, 0x05];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p &= !FLAG_CARRY; // Clear carry flag
+
+        let pc_before = cpu.pc;
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        // PC advances 2 bytes past the instruction (branch not taken)
+        assert_eq!(cpu.pc, pc_before + 2, "PC should advance past instruction");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "BCS not taken takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_bcs_backward() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![BCS, 0xFE]; // Branch backward -2 bytes (signed)
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p |= FLAG_CARRY; // Set carry flag
+
+        let pc_before = cpu.pc;
+        cpu.execute();
+
+        // PC advances 2 bytes past instruction, then adds signed offset (-2)
+        // Result: pc_before + 2 + (-2) = pc_before
+        assert_eq!(
+            cpu.pc,
+            pc_before.wrapping_add(2).wrapping_add((-2i8) as u16),
+            "PC should branch backward 2 bytes"
+        );
+    }
+
+    // ATX tests (*ATX undocumented instruction)
+    #[test]
+    fn test_execute_atx_positive() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ATX_IMM, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0xFF; // Set A to known value
+        cpu.x = 0x00;
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x42, "A should be 0x42");
+        assert_eq!(cpu.x, 0x42, "X should be 0x42");
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 2,
+            "ATX IMM takes 2 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_atx_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ATX_IMM, 0x00];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0xFF;
+        cpu.x = 0xFF;
+
+        cpu.execute();
+
+        assert_eq!(cpu.a, 0x00, "A should be 0");
+        assert_eq!(cpu.x, 0x00, "X should be 0");
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+    }
+
+    #[test]
+    fn test_execute_atx_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![ATX_IMM, 0x80];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.a = 0xFF;
+        cpu.x = 0x00;
 
         cpu.execute();
 
