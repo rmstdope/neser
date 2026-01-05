@@ -1,6 +1,8 @@
+use super::master_clock::MasterClock;
 use super::opcode::*;
 use crate::mem_controller::MemController;
 use crate::nes::TvSystem;
+use crate::ppu::Ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -41,6 +43,8 @@ pub struct Cpu {
     pub p: u8,
     /// Memory
     pub memory: Rc<RefCell<MemController>>,
+    /// PPU
+    ppu: Rc<RefCell<Ppu>>,
     /// Halted state (set by KIL instruction)
     pub halted: bool,
     /// Total cycles executed since last reset
@@ -60,18 +64,8 @@ pub struct Cpu {
     pub current_instruction: Option<InstructionState>,
     /// Current cycle within the instruction (0-based)
     pub cycle_in_instruction: u8,
-    /// Master clock
-    master_clock: u64,
-    /// Divider for the CPU clock
-    cpu_divider: u64,
-    /// Divider for the PPU clock
-    ppu_divider: u64,
-    /// Master ticks before CPU tick
-    master_ticks_before_cpu: u64,
-    /// Master ticks after CPU tick
-    master_ticks_after_cpu: u64,
-    /// True if ongoing operation is write, false otherwise
-    is_write: bool,
+    /// Master clock (timing model)
+    master_clock: MasterClock,
 }
 
 // Status register flags
@@ -90,7 +84,11 @@ const IRQ_VECTOR: u16 = 0xFFFE;
 
 impl Cpu {
     /// Create a new CPU with default register values at power-on
-    pub fn new(tv_system: TvSystem, memory: Rc<RefCell<MemController>>) -> Self {
+    pub fn new(
+        tv_system: TvSystem,
+        memory: Rc<RefCell<MemController>>,
+        ppu: Rc<RefCell<Ppu>>,
+    ) -> Self {
         Self {
             a: 0,
             x: 0,
@@ -105,6 +103,7 @@ impl Cpu {
             // Note: B flag (bit 4) is not actually stored in P register,
             // it only appears when P is pushed to stack during BRK/PHP
             memory,
+            ppu,
             halted: false,
             total_cycles: 0,
             delayed_i_flag: None,
@@ -112,12 +111,7 @@ impl Cpu {
             irq_pending: false,
             current_instruction: None,
             cycle_in_instruction: 0,
-            master_clock: 0,
-            cpu_divider: if tv_system == TvSystem::Ntsc { 12 } else { 16 },
-            ppu_divider: if tv_system == TvSystem::Ntsc { 4 } else { 5 },
-            master_ticks_before_cpu: if tv_system == TvSystem::Ntsc { 6 } else { 8 },
-            master_ticks_after_cpu: if tv_system == TvSystem::Ntsc { 6 } else { 8 },
-            is_write: false,
+            master_clock: MasterClock::new(tv_system),
         }
     }
 
@@ -2299,31 +2293,23 @@ impl Cpu {
         (addr1 & 0xFF00) != (addr2 & 0xFF00)
     }
 
-    fn before_cpu_cycle(&mut self) {
-        self.master_clock += if self.is_write {
-            self.master_ticks_before_cpu + 1
-        } else {
-            self.master_ticks_before_cpu - 1
-        };
+    fn before_cpu_cycle(&mut self, is_write: bool) {
+        self.master_clock.before_cpu_cycle(is_write);
         self.total_cycles += 1;
         // TODO tick the PPU
         // TODO tick the APU
     }
 
-    fn after_cpu_cycle(&mut self) {
-        self.master_clock += if self.is_write {
-            self.master_ticks_after_cpu + 1
-        } else {
-            self.master_ticks_after_cpu - 1
-        };
+    fn after_cpu_cycle(&mut self, is_write: bool) {
+        self.master_clock.after_cpu_cycle(is_write);
     }
 
     /// Read a byte from memory at the specified address
     fn read(&mut self, addr: u16) -> u8 {
         // TODO Process any pending DMA
-        self.before_cpu_cycle();
+        self.before_cpu_cycle(false);
         let value = self.memory.borrow().read(addr);
-        self.after_cpu_cycle();
+        self.after_cpu_cycle(false);
         value
     }
 
@@ -2339,11 +2325,9 @@ impl Cpu {
 
     /// Write a byte to memory at the specified address
     fn write(&mut self, addr: u16, value: u8, dummy: bool) {
-        self.is_write = true;
-        self.before_cpu_cycle();
+        self.before_cpu_cycle(true);
         self.memory.borrow_mut().write(addr, value, dummy);
-        self.after_cpu_cycle();
-        self.is_write = false;
+        self.after_cpu_cycle(true);
     }
 
     /// Dummy write a byte to memory at the specified address
@@ -7793,6 +7777,38 @@ mod tests {
         let memory = create_test_memory();
         let cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
         assert_eq!(cpu.get_total_cycles(), 0);
+    }
+
+    #[test]
+    fn test_master_clock_ntsc_read_cycle_ticks_master_clock() {
+        let mut clock = crate::cpu::MasterClock::new(TvSystem::Ntsc);
+
+        assert_eq!(clock.master_cycles(), 0);
+
+        // Updated timing model:
+        // before_cpu_cycle: read uses (before - 1)
+        // after_cpu_cycle:  read uses (after + 1)
+        // For NTSC: (6-1) + (6+1) = 12
+        clock.before_cpu_cycle(false);
+        clock.after_cpu_cycle(false);
+
+        assert_eq!(clock.master_cycles(), 12);
+    }
+
+    #[test]
+    fn test_master_clock_ntsc_write_cycle_ticks_master_clock() {
+        let mut clock = crate::cpu::MasterClock::new(TvSystem::Ntsc);
+
+        assert_eq!(clock.master_cycles(), 0);
+
+        // Updated timing model:
+        // before_cpu_cycle: write uses (before + 1)
+        // after_cpu_cycle:  write uses (after - 1)
+        // For NTSC: (6+1) + (6-1) = 12
+        clock.before_cpu_cycle(true);
+        clock.after_cpu_cycle(true);
+
+        assert_eq!(clock.master_cycles(), 12);
     }
 
     #[test]
