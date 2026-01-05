@@ -2346,6 +2346,11 @@ impl Cpu {
         self.is_write = false;
     }
 
+    /// Dummy write a byte to memory at the specified address
+    fn dummy_write(&mut self, addr: u16, value: u8) {
+        self.write(addr, value, true);
+    }
+
     /// Read a byte from memory at PC and increment PC
     fn read_byte_from_pc(&mut self) -> u8 {
         let value = self.read(self.pc);
@@ -2556,8 +2561,7 @@ impl Cpu {
     /// Decrement and Compare - DCP undocumented operation
     fn dcp(&mut self, addr: u16) {
         let value = self.read(addr);
-        // Dummy write
-        self.write(addr, value, true);
+        self.dummy_write(addr, value);
         // Real operation and write
         let result = self.dec(value);
         self.write(addr, result, false);
@@ -2589,8 +2593,7 @@ impl Cpu {
     /// Also known as ISC. Increments memory then performs SBC
     fn isb(&mut self, addr: u16) {
         let value = self.read(addr);
-        // Dummy write (cycle accurate)
-        self.write(addr, value, true);
+        self.dummy_write(addr, value);
         // Increment the value
         let result = value.wrapping_add(1);
         // Write back
@@ -2616,7 +2619,7 @@ impl Cpu {
     fn isc(&mut self, addr: u16) {
         let value = self.read(addr);
         // Dummy write
-        self.write(addr, value, true);
+        self.dummy_write(addr, value);
         // Real operation and write
         let incremented = self.inc(value);
         self.write(addr, incremented, false);
@@ -2627,7 +2630,7 @@ impl Cpu {
     fn rla(&mut self, addr: u16) {
         let value = self.read(addr);
         // Dummy write
-        self.write(addr, value, true);
+        self.dummy_write(addr, value);
         // Real operation and write
         let rotated = self.rol(value);
         self.write(addr, rotated, false);
@@ -2639,7 +2642,7 @@ impl Cpu {
     fn rra(&mut self, addr: u16) {
         let value = self.read(addr);
         // Dummy write
-        self.write(addr, value, true);
+        self.dummy_write(addr, value);
         // Real operation and write
         let rotated = self.ror(value);
         self.write(addr, rotated, false);
@@ -2650,7 +2653,7 @@ impl Cpu {
     fn slo(&mut self, addr: u16) {
         let value = self.read(addr);
         // Dummy write
-        self.write(addr, value, true);
+        self.dummy_write(addr, value);
         // Real operation and write
         let shifted = self.asl(value);
         self.write(addr, shifted, false);
@@ -2661,7 +2664,7 @@ impl Cpu {
     fn sre(&mut self, addr: u16) {
         let value = self.read(addr);
         // Dummy write
-        self.write(addr, value, true);
+        self.dummy_write(addr, value);
         // Real operation and write
         let shifted = self.lsr(value);
         self.write(addr, shifted, false);
@@ -2965,7 +2968,7 @@ impl Cpu {
                     }
                     _ => {
                         let value = self.read(operand);
-                        self.write(operand, value, true); // dummy write
+                        self.dummy_write(operand, value);
                         let result = self.asl(value);
                         self.write(operand, result, false); // real write
                     }
@@ -3040,7 +3043,7 @@ impl Cpu {
                     }
                     _ => {
                         let value = self.read(operand);
-                        self.write(operand, value, true); // dummy write
+                        self.dummy_write(operand, value);
                         let result = self.rol(value);
                         self.write(operand, result, false); // real write
                     }
@@ -3103,7 +3106,7 @@ impl Cpu {
                     }
                     _ => {
                         let value = self.read(operand);
-                        self.write(operand, value, true); // dummy write
+                        self.dummy_write(operand, value);
                         let result = self.lsr(value);
                         self.write(operand, result, false); // real write
                     }
@@ -3163,7 +3166,7 @@ impl Cpu {
             "*RRA" => {
                 // RRA: ROR memory, then ADC result to accumulator (undocumented)
                 let value = self.read(operand);
-                self.write(operand, value, true); // dummy write
+                self.dummy_write(operand, value);
                 let rotated = self.ror(value);
                 self.write(operand, rotated, false); // real write
                 // Now do ADC with the rotated value
@@ -3176,7 +3179,7 @@ impl Cpu {
                     }
                     _ => {
                         let value = self.read(operand);
-                        self.write(operand, value, true); // dummy write
+                        self.dummy_write(operand, value);
                         let result = self.ror(value);
                         self.write(operand, result, false); // real write
                     }
@@ -3437,9 +3440,28 @@ impl Cpu {
                     }
                 }
             }
-            "SED" => {}
-            "INC" => {}
-            "DEC" => {}
+            "SED" => {
+                // Set Decimal flag
+                self.p |= FLAG_DECIMAL;
+            }
+            "INC" => {
+                // Increment memory
+                let value = self.read(operand);
+                //   (cycle accurate)
+                self.dummy_write(operand, value);
+                // Increment and write back
+                let result = self.inc(value);
+                self.write(operand, result, false);
+            }
+            "DEC" => {
+                // Decrement memory
+                let value = self.read(operand);
+                //   (cycle accurate)
+                self.dummy_write(operand, value);
+                // Decrement and write back
+                let result = self.dec(value);
+                self.write(operand, result, false);
+            }
             _ => {}
         }
     }
@@ -16430,11 +16452,7 @@ mod tests {
         assert_eq!(cpu.x, 0x43, "X should be incremented to 0x43");
         assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
-        assert_eq!(
-            cpu.total_cycles,
-            initial_cycles + 2,
-            "INX takes 2 cycles"
-        );
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "INX takes 2 cycles");
     }
 
     #[test]
@@ -16515,7 +16533,7 @@ mod tests {
         let mut program = vec![0xEA; 128]; // 128 NOPs to position at 0x8080
         program.push(BEQ); // At offset 0x80
         program.push(0x7F); // Branch forward 127 bytes
-        
+
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
 
@@ -17185,6 +17203,363 @@ mod tests {
             cpu.total_cycles,
             initial_cycles + 8,
             "ISB INDYW takes 8 cycles"
+        );
+    }
+
+    // SED tests
+    #[test]
+    fn test_execute_sed() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SED];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p &= !FLAG_DECIMAL; // Clear decimal flag
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "Decimal flag should be set"
+        );
+        assert_eq!(cpu.total_cycles, initial_cycles + 2, "SED takes 2 cycles");
+    }
+
+    #[test]
+    fn test_execute_sed_already_set() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![SED];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.p |= FLAG_DECIMAL; // Set decimal flag
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.p & FLAG_DECIMAL,
+            FLAG_DECIMAL,
+            "Decimal flag should remain set"
+        );
+    }
+
+    // INC tests
+    #[test]
+    fn test_execute_inc_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INC_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0010, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0010),
+            0x43,
+            "Memory should be incremented to 0x43"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "INC ZP takes 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_inc_zero_page_wrap() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INC_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0010, 0xFF, false);
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0010),
+            0x00,
+            "Memory should wrap to 0x00"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+    }
+
+    #[test]
+    fn test_execute_inc_zero_page_negative() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INC_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0010, 0x7F, false);
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0010),
+            0x80,
+            "Memory should be 0x80"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_inc_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INC_ZPX, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0015, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0015),
+            0x43,
+            "Memory should be incremented to 0x43"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "INC ZPX takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_inc_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INC_ABS, 0x00, 0x02];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0200, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0200),
+            0x43,
+            "Memory should be incremented to 0x43"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "INC ABS takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_inc_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![INC_ABSXW, 0x00, 0x02];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0205, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0205),
+            0x43,
+            "Memory should be incremented to 0x43"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "INC ABSXW takes 7 cycles"
+        );
+    }
+
+    // DEC tests
+    #[test]
+    fn test_execute_dec_zero_page() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DEC_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0010, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0010),
+            0x41,
+            "Memory should be decremented to 0x41"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 5,
+            "DEC ZP takes 5 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_dec_zero_page_zero() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DEC_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0010, 0x01, false);
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0010),
+            0x00,
+            "Memory should be 0x00"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be set");
+        assert_eq!(cpu.p & FLAG_NEGATIVE, 0, "Negative flag should not be set");
+    }
+
+    #[test]
+    fn test_execute_dec_zero_page_wrap() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DEC_ZP, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
+
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0010),
+            0xFF,
+            "Memory should wrap to 0xFF"
+        );
+        assert_eq!(cpu.p & FLAG_ZERO, 0, "Zero flag should not be set");
+        assert_eq!(
+            cpu.p & FLAG_NEGATIVE,
+            FLAG_NEGATIVE,
+            "Negative flag should be set"
+        );
+    }
+
+    #[test]
+    fn test_execute_dec_zero_page_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DEC_ZPX, 0x10];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0015, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0015),
+            0x41,
+            "Memory should be decremented to 0x41"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "DEC ZPX takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_dec_absolute() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DEC_ABS, 0x00, 0x02];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.memory.borrow_mut().write(0x0200, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0200),
+            0x41,
+            "Memory should be decremented to 0x41"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 6,
+            "DEC ABS takes 6 cycles"
+        );
+    }
+
+    #[test]
+    fn test_execute_dec_absolute_x() {
+        let memory = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::new(RefCell::new(memory)));
+
+        let program = vec![DEC_ABSXW, 0x00, 0x02];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x05;
+        cpu.memory.borrow_mut().write(0x0205, 0x42, false);
+
+        let initial_cycles = cpu.total_cycles;
+        cpu.execute();
+
+        assert_eq!(
+            cpu.memory.borrow().read(0x0205),
+            0x41,
+            "Memory should be decremented to 0x41"
+        );
+        assert_eq!(
+            cpu.total_cycles,
+            initial_cycles + 7,
+            "DEC ABSXW takes 7 cycles"
         );
     }
 }
