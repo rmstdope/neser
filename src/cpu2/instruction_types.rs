@@ -710,18 +710,22 @@ impl InstructionType for Brk {
                 } else if cpu_state.irq_pending && (cpu_state.p & FLAG_INTERRUPT) == 0 {
                     // IRQ hijacks BRK: use IRQ vector, clear B flag (in pushed status)
                     cpu_state.irq_pending = false;
-                    
+
                     // Modify the status byte already pushed to stack to clear B flag
                     let status_stack_addr = 0x0100 | (cpu_state.sp.wrapping_add(1) as u16);
                     let pushed_status = memory.borrow().read(status_stack_addr);
-                    memory.borrow_mut().write(status_stack_addr, pushed_status & !FLAG_BREAK, false);
-                    
+                    memory.borrow_mut().write(
+                        status_stack_addr,
+                        pushed_status & !FLAG_BREAK,
+                        false,
+                    );
+
                     IRQ_VECTOR
                 } else {
                     // Normal BRK: use IRQ vector, B flag remains SET (in pushed status)
                     IRQ_VECTOR
                 };
-                
+
                 // Load low byte from chosen vector and set I flag
                 let pcl = memory.borrow().read(self.vector);
                 cpu_state.pc = pcl as u16;

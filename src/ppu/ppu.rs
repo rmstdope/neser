@@ -4,11 +4,6 @@ use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timi
 use std::cell::RefCell;
 use std::rc::Rc;
 
-#[cfg(test)]
-use std::fs::OpenOptions;
-#[cfg(test)]
-use std::io::Write;
-
 /// Refactored PPU using modular components
 pub struct Ppu {
     /// Timing and cycle management

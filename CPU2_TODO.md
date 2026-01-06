@@ -71,12 +71,6 @@ The CPU provides the polling mechanism via `poll_pending_interrupt()` which exte
 - Test #3: "APU should generate IRQ when $4017 = $00" ✅
 - Test #4: "Exactly one instruction after CLI should execute before IRQ" ✅
 
-**Known Issue:**
-
-- Test #5: "CLI SEI should allow only one IRQ just after SEI" ❌
-  - Edge case involving CLI followed immediately by SEI
-  - Requires deeper investigation of hardware timing
-
 **Missing:**
 
 - [ ] RTI affects I flag immediately (IRQ can trigger right after RTI)

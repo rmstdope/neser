@@ -2379,7 +2379,10 @@ mod tests {
         );
         assert_eq!(cpu.total_cycles, 0, "Cycle count should be 0 at power-on");
         assert!(!cpu.halted, "CPU should not be halted at power-on");
-        assert!(!cpu.state.nmi_pending, "NMI should not be pending at power-on");
+        assert!(
+            !cpu.state.nmi_pending,
+            "NMI should not be pending at power-on"
+        );
     }
 
     #[test]
@@ -3916,6 +3919,212 @@ mod tests {
             status & FLAG_BREAK,
             0,
             "B flag should be clear (IRQ hijacked)"
+        );
+    }
+
+    #[test]
+    fn test_nmi_hijacks_brk_b_flag_visible_to_handler() {
+        // This test verifies the specific behavior tested by Blargg's 2-nmi_and_brk test:
+        // When NMI hijacks BRK, the B flag is SET in the pushed status byte,
+        // and the NMI handler can see this by pulling the status from the stack.
+        // Expected output from Blargg test: "36  00  00 NMI interrupting BRK, with B bit set on stack"
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        // Set up vectors in cartridge ROM
+        let mut prg_rom = vec![0; 0x8000];
+
+        // NMI handler at $8000: Just pulls P from stack and stores it at $0200
+        prg_rom[0x0000] = 0x68; // PLA - pull A register from stack (gets the P value)
+        prg_rom[0x0001] = 0x8D; // STA $0200
+        prg_rom[0x0002] = 0x00;
+        prg_rom[0x0003] = 0x02;
+        prg_rom[0x0004] = 0x00; // BRK to stop
+        prg_rom[0x0005] = 0x00;
+
+        // BRK instruction at $8010
+        prg_rom[0x0010] = BRK;
+        prg_rom[0x0011] = 0x00; // Padding byte
+
+        prg_rom[0x7FFA] = 0x00; // NMI vector low ($8000)
+        prg_rom[0x7FFB] = 0x80; // NMI vector high
+        prg_rom[0x7FFC] = 0x00; // Reset vector
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFE] = 0x00; // IRQ vector (not used in this test)
+        prg_rom[0x7FFF] = 0x90;
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x8010; // Start at BRK instruction
+        cpu.state.sp = 0xFD;
+        cpu.state.p = 0x24; // Flags: Z=1, I=0, unused=1
+
+        // Trigger NMI before executing BRK
+        cpu.set_nmi_line(true);
+        cpu.set_nmi_line(false); // Falling edge
+        assert!(cpu.is_nmi_pending(), "NMI should be pending");
+
+        // Execute BRK instruction completely (7 cycles)
+        let mut cycles = 0;
+        loop {
+            let done = cpu.tick_cycle();
+            cycles += 1;
+            if done {
+                break;
+            }
+            if cycles > 10 {
+                std::panic!("BRK took too long");
+            }
+        }
+        assert_eq!(cycles, 7, "BRK should take 7 cycles");
+
+        // PC should point to NMI handler (hijacked)
+        assert_eq!(cpu.state.pc, 0x8000, "Should jump to NMI vector");
+
+        // The status byte on the stack should have B flag SET (because BRK pushed it)
+        // Stack pointer is now at 0xFA (after pushing PC high, PC low, P)
+        let status_on_stack = memory.borrow().read(0x01FB); // SP was 0xFD, after 3 pushes it's at 0xFA, status at 0xFB
+
+        // Status should be 0x34: original P (0x24) | B flag (0x10) = 0x34
+        // The original P was 0x24, BRK adds B flag and unused flag, then sets I flag during vector fetch
+        // Actually, BRK pushes P with B set BEFORE setting I flag, so:
+        // Original P: 0x24 = 0b00100100 (bit 5=1, bit 2=1)
+        // BRK pushes: 0x24 | 0x10 | 0x20 = 0x34 = 0b00110100 (with B flag 0x10 added)
+        // But we expect I flag to also be set when pushed? Let me check...
+        // Actually, the I flag is set AFTER the push, so the pushed value should be:
+        // 0x24 | FLAG_BREAK | FLAG_UNUSED = 0x24 | 0x10 | 0x20 = 0x34
+        assert_eq!(
+            status_on_stack & FLAG_BREAK,
+            FLAG_BREAK,
+            "B flag must be set in pushed status (value was 0x{:02X})",
+            status_on_stack
+        );
+
+        // Now execute the NMI handler which pulls the status and stores it
+        // Execute PLA instruction (4 cycles)
+        for _ in 0..10 {
+            let done = cpu.tick_cycle();
+            if done {
+                break;
+            }
+        }
+
+        // Execute STA $0200 instruction (4 cycles)
+        for _ in 0..10 {
+            let done = cpu.tick_cycle();
+            if done {
+                break;
+            }
+        }
+
+        // The PLA instruction in the NMI handler should have pulled the status with B flag set
+        let pulled_status = memory.borrow().read(0x0200);
+        assert_eq!(
+            pulled_status & FLAG_BREAK,
+            FLAG_BREAK,
+            "NMI handler should see B flag set when pulling from stack (value was 0x{:02X})",
+            pulled_status
+        );
+
+        // This is the key behavior: when NMI hijacks BRK, the B flag IS visible to the NMI handler
+        // because BRK already pushed the status with B flag set before the hijacking occurred
+    }
+
+    #[test]
+    fn test_nmi_interrupts_irq_handler() {
+        // Test that NMI can interrupt an IRQ handler
+        // This tests the scenario: "NMI after SEC at beginning of IRQ handler"
+        use crate::cartridge::Cartridge;
+
+        let memory = create_test_memory();
+
+        // Set up vectors in cartridge ROM
+        let mut prg_rom = vec![0; 0x8000];
+
+        // IRQ handler at $8000: SEC, then loop forever
+        prg_rom[0x0000] = 0x38; // SEC
+        prg_rom[0x0001] = 0x4C; // JMP $8001 (infinite loop)
+        prg_rom[0x0002] = 0x01;
+        prg_rom[0x0003] = 0x80;
+
+        // NMI handler at $8010: Store flags at $0200 and halt
+        prg_rom[0x0010] = 0x08; // PHP - push P register
+        prg_rom[0x0011] = 0x68; // PLA - pull into A
+        prg_rom[0x0012] = 0x8D; // STA $0200
+        prg_rom[0x0013] = 0x00;
+        prg_rom[0x0014] = 0x02;
+        prg_rom[0x0015] = 0x00; // BRK to stop
+
+        prg_rom[0x7FFA] = 0x10; // NMI vector low ($8010)
+        prg_rom[0x7FFB] = 0x80; // NMI vector high
+        prg_rom[0x7FFC] = 0x00; // Reset vector
+        prg_rom[0x7FFD] = 0x80;
+        prg_rom[0x7FFE] = 0x00; // IRQ vector low ($8000)
+        prg_rom[0x7FFF] = 0x80;
+
+        let cartridge =
+            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        memory.borrow_mut().map_cartridge(cartridge);
+
+        let mut cpu = Cpu2::new(Rc::clone(&memory));
+        cpu.state.pc = 0x8100; // Start somewhere else
+        cpu.state.sp = 0xFD;
+        cpu.state.p = 0x20; // Z=1, I=0 (bit 2 clear)
+
+        // Trigger IRQ to start IRQ handler
+        cpu.set_irq_line(false); // Active low
+        assert!(cpu.should_poll_irq(), "IRQ should be pending");
+
+        // Trigger IRQ manually for this test
+        let _irq_cycles = cpu.trigger_irq();
+        assert_eq!(cpu.state.pc, 0x8000, "Should jump to IRQ handler");
+        assert_eq!(
+            cpu.state.p & FLAG_INTERRUPT,
+            FLAG_INTERRUPT,
+            "I flag should be set"
+        );
+
+        // Execute SEC instruction (first instruction of IRQ handler)
+        for _ in 0..10 {
+            let done = cpu.tick_cycle();
+            if done {
+                break;
+            }
+        }
+
+        // After SEC, C flag should be set
+        assert_eq!(
+            cpu.state.p & FLAG_CARRY,
+            FLAG_CARRY,
+            "C flag should be set by SEC"
+        );
+        assert!(
+            !cpu.is_in_interrupt_sequence(),
+            "Should not be in interrupt sequence after first instruction"
+        );
+
+        // Now trigger NMI while IRQ handler is running
+        cpu.set_nmi_line(true);
+        cpu.set_nmi_line(false);
+        assert!(cpu.is_nmi_pending(), "NMI should be pending");
+
+        // Trigger NMI
+        let _nmi_cycles = cpu.trigger_nmi();
+        assert_eq!(cpu.state.pc, 0x8010, "Should jump to NMI handler");
+
+        // The status byte pushed by NMI should have C=1 (from SEC) and I=1 (from IRQ)
+        let nmi_pushed_status = memory.borrow().read(0x01F8); // SP after IRQ (0xFA) + NMI pushes 3 more
+
+        // Expected: C=1, I=1, Z=1, unused=1 = 0x27
+        assert_eq!(
+            nmi_pushed_status & (FLAG_CARRY | FLAG_INTERRUPT),
+            FLAG_CARRY | FLAG_INTERRUPT,
+            "NMI should push status with C and I flags set (got 0x{:02X})",
+            nmi_pushed_status
         );
     }
 
