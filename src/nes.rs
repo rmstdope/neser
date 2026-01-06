@@ -583,8 +583,7 @@ mod tests {
         // Ensure the PPU reaches exactly 21 cycles (7 * 3) before the first traced instruction.
         let ppu_cycles_needed = 21u64.saturating_sub(nes.ppu.borrow().total_cycles());
         nes.ppu.borrow_mut().run_ppu_cycles(ppu_cycles_needed);
-        nes.cpu.set_total_cycles(7); // Account for reset cycles
-
+        
         for line in golden_log.lines() {
             let expected = line.to_string();
             let actual = nes.trace(true);
