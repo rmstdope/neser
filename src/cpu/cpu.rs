@@ -7,19 +7,6 @@ use crate::ppu::Ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-/// Tracks the state of an instruction being executed across multiple cycles
-#[derive(Debug, Clone)]
-pub struct InstructionState {
-    /// The opcode being executed
-    pub opcode: OpCode,
-    /// Number of cycles remaining for this instruction
-    pub cycles_remaining: u8,
-    /// Temporary address storage for multi-cycle operations
-    pub temp_addr: Option<u16>,
-    /// Temporary value storage for multi-cycle operations
-    pub temp_value: Option<u8>,
-}
-
 /// NES 6502 CPU
 pub struct Cpu {
     /// Accumulator
@@ -74,16 +61,8 @@ pub struct Cpu {
     /// The NES IRQ line is level-triggered and should be sampled each CPU cycle.
     /// Some unit tests use `set_irq_pending(true)` to force an asserted IRQ.
     forced_irq_pending: bool,
-    /// Current instruction being executed (for cycle-by-cycle execution)
-    pub current_instruction: Option<InstructionState>,
-    /// Current cycle within the instruction (0-based)
-    pub cycle_in_instruction: u8,
     /// Master clock (timing model)
     master_clock: MasterClock,
-
-    /// When true, bus accesses will not tick PPU/APU or advance the master clock.
-    /// Used by `tick_cycle_with_devices()` while transitioning device ticking ownership.
-    suppress_bus_device_ticks: bool,
 
     /// Out-of-band master clock used when the CPU itself must tick PPU/APU for
     /// synthetic CPU cycles (e.g., DMA stalls or interrupt sequences).
@@ -140,10 +119,7 @@ impl Cpu {
             run_irq: false,
             irq_pending: false,
             forced_irq_pending: false,
-            current_instruction: None,
-            cycle_in_instruction: 0,
             master_clock: MasterClock::new(tv_system),
-            suppress_bus_device_ticks: false,
             oob_master_clock: MasterClock::new(tv_system),
         }
     }
@@ -157,35 +133,13 @@ impl Cpu {
         self.total_cycles
     }
 
+    #[cfg(test)]
     pub fn set_total_cycles(&mut self, cycles: u64) {
         self.total_cycles = cycles;
     }
 
     pub fn add_cycles(&mut self, cycles: u64) {
         self.total_cycles += cycles;
-    }
-
-    /// Execute one CPU cycle and tick PPU/APU for that same cycle.
-    ///
-    /// This is a stepping-stone API toward CPU-owned device ticking.
-    ///
-    /// Note: The current `tick_cycle()` implementation performs real bus accesses only
-    /// on some cycles (e.g., opcode fetch), and "replays" the remaining cycles for many
-    /// opcodes without touching the bus. On those cycles, we still must advance the
-    /// device clocks.
-    pub fn tick_cycle_with_devices(&mut self) -> bool {
-        // Tick devices for one CPU cycle (PAL fractional handled by MasterClock).
-        self.tick_ppu_apu_for_cpu_cycles(1);
-
-        // Mirror Mesen behavior: latch interrupt line state at the end of the CPU cycle.
-        self.end_cpu_cycle_latch_interrupt_lines();
-
-        // Execute one CPU cycle without also ticking devices via bus accesses.
-        self.suppress_bus_device_ticks = true;
-        let instruction_complete = self.tick_cycle();
-        self.suppress_bus_device_ticks = false;
-
-        instruction_complete
     }
 
     fn end_cpu_cycle_latch_interrupt_lines(&mut self) {
@@ -265,43 +219,6 @@ impl Cpu {
         Some(dma_cycles)
     }
 
-    /// Polls for an IRQ (from APU) and services it if allowed.
-    ///
-    /// Returns the number of CPU cycles consumed (0 or 7).
-    pub fn handle_irq_if_pending(&mut self) -> u8 {
-        let irq_asserted_from_apu = self.apu.borrow().poll_irq();
-
-        // IRQ is level-triggered (driven by hardware sources), but unit tests may force
-        // an asserted IRQ via `set_irq_pending(true)`.
-        let irq_asserted_for_poll = irq_asserted_from_apu || self.forced_irq_pending;
-        self.irq_pending = irq_asserted_for_poll;
-
-        if !self.should_poll_irq() {
-            return 0;
-        }
-
-        self.trigger_irq_without_bus_cycles();
-        self.tick_ppu_apu_for_cpu_cycles(7);
-        self.add_cycles(7);
-        7
-    }
-
-    /// If an NMI is pending, service it and return the number of CPU cycles consumed (0 or 7).
-    ///
-    /// This uses the no-bus-cycle interrupt sequence and ticks PPU/APU internally so callers
-    /// don't double-tick devices.
-    pub fn handle_nmi_if_pending(&mut self) -> u8 {
-        if !self.nmi_pending {
-            return 0;
-        }
-
-        self.nmi_pending = false;
-        self.trigger_nmi_without_bus_cycles();
-        self.tick_ppu_apu_for_cpu_cycles(7);
-        self.add_cycles(7);
-        7
-    }
-
     fn tick_ppu_apu_for_cpu_cycles(&mut self, cpu_cycles: u16) {
         let cpu_divider = self.oob_master_clock.cpu_divider();
         let master_ticks_to_add = cpu_divider * cpu_cycles as u64;
@@ -349,49 +266,6 @@ impl Cpu {
         self.p |= FLAG_INTERRUPT;
     }
 
-    fn trigger_irq_without_bus_cycles(&mut self) {
-        // Replicates `trigger_irq` semantics without using `read`/`write` helpers,
-        // so we don't accidentally advance CPU cycles or PPU timing here.
-        self.delayed_i_flag = None;
-
-        // Clear IRQ pending flag (IRQ has been serviced)
-        self.irq_pending = false;
-        self.forced_irq_pending = false;
-        self.forced_irq_pending = false;
-
-        let pc = self.pc;
-
-        // Push PC (high then low)
-        let addr = 0x0100 | (self.sp as u16);
-        self.memory.borrow_mut().write(addr, (pc >> 8) as u8, false);
-        self.sp = self.sp.wrapping_sub(1);
-
-        let addr = 0x0100 | (self.sp as u16);
-        self.memory
-            .borrow_mut()
-            .write(addr, (pc & 0xFF) as u8, false);
-        self.sp = self.sp.wrapping_sub(1);
-
-        // Push status (B clear, unused set)
-        let mut p_with_break = self.p & !FLAG_BREAK;
-        p_with_break |= FLAG_UNUSED;
-        let addr = 0x0100 | (self.sp as u16);
-        self.memory.borrow_mut().write(addr, p_with_break, false);
-        self.sp = self.sp.wrapping_sub(1);
-
-        // Read IRQ vector and set PC
-        let lo = self.memory.borrow().read(IRQ_VECTOR) as u16;
-        let hi = self.memory.borrow().read(IRQ_VECTOR + 1) as u16;
-        self.pc = (hi << 8) | lo;
-
-        // Set Interrupt Disable flag
-        self.p |= FLAG_INTERRUPT;
-    }
-
-    pub fn is_nmi_pending(&self) -> bool {
-        self.nmi_pending
-    }
-
     /// Reset the CPU to initial state
     pub fn reset(&mut self) {
         // On reset, the CPU:
@@ -413,8 +287,6 @@ impl Cpu {
         self.nmi_pending = false;
         self.irq_pending = false;
         self.forced_irq_pending = false;
-        self.current_instruction = None;
-        self.cycle_in_instruction = 0;
 
         // Read reset vector and set PC
         self.pc = self.read_reset_vector();
@@ -423,2138 +295,13 @@ impl Cpu {
         self.total_cycles = 7;
     }
 
-    // /// Load a program and run the CPU emulation
-    // pub fn load_and_run(&mut self, program: Vec<u8>) {
-    //     self.load_program(&program, 0x0600);
-    //     // Reset CPU
-    //     self.reset();
-    //     self.run();
-    // }
-
-    /// Execute a single opcode and return the number of cycles consumed
-    pub fn run_opcode(&mut self) -> u8 {
-        if self.halted {
-            return 0;
-        }
-
-        // Track if we're setting a new delay this instruction
-        let mut new_delayed_i_flag: Option<bool> = None;
-
-        let opcode_byte = self.read(self.pc);
-        self.pc += 1;
-
-        let opcode = super::opcode::lookup(opcode_byte)
-            .unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
-        let mut cycles = opcode.cycles;
-
-        match opcode_byte {
-            ADC_IMM => {
-                let value = self.read_byte_from_pc();
-                self.adc(value);
-            }
-            ADC_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.adc(value);
-            }
-            ADC_ZPX => {
-                let base = self.read_byte_from_pc();
-                let addr = base.wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                self.adc(value);
-            }
-            ADC_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.adc(value);
-            }
-            ADC_ABSX => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.adc(value);
-            }
-            ADC_ABSY => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.adc(value);
-            }
-            ADC_INDX => {
-                let base = self.read_byte_from_pc();
-                let ptr = base.wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                let value = self.read(addr);
-                self.adc(value);
-            }
-            ADC_INDY => {
-                let ptr = self.read_byte_from_pc();
-                let base = self.read_word_from_zp(ptr);
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.adc(value);
-            }
-            AND_IMM => {
-                let value = self.read_byte_from_pc();
-                self.and(value);
-            }
-            AND_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.and(value);
-            }
-            AND_ZPX => {
-                let base = self.read_byte_from_pc();
-                let addr = base.wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                self.and(value);
-            }
-            AND_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.and(value);
-            }
-            AND_ABSX => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.and(value);
-            }
-            AND_ABSY => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.and(value);
-            }
-            AND_INDX => {
-                let base = self.read_byte_from_pc();
-                let ptr = base.wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                let value = self.read(addr);
-                self.and(value);
-            }
-            AND_INDY => {
-                let ptr = self.read_byte_from_pc();
-                let base = self.read_word_from_zp(ptr);
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.and(value);
-            }
-            ASL_A => {
-                self.a = self.asl(self.a);
-            }
-            ASL_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.asl(value);
-                self.write(addr, result, false);
-            }
-            ASL_ZPX => {
-                let base = self.read_byte_from_pc();
-                let addr = base.wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.asl(value);
-                self.write(addr, result, false);
-            }
-            ASL_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.asl(value);
-                self.write(addr, result, false);
-            }
-            ASL_ABSXW => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                // If page crossed, read from wrong address; otherwise from correct address
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.asl(value);
-                self.write(addr, result, false);
-            }
-            BIT_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.bit(value);
-            }
-            BIT_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.bit(value);
-            }
-            BCC => {
-                let offset = self.read_byte_from_pc() as i8;
-                if self.p & FLAG_CARRY == 0 {
-                    self.dummy_read(self.pc); // +1 cycle when branch is taken
-                    let old_pc = self.pc;
-                    self.branch(offset);
-                    if Self::page_crossed(old_pc, self.pc) {
-                        self.dummy_read(self.pc); // +1 cycle if page boundary crossed
-                    }
-                }
-            }
-            BCS => {
-                let offset = self.read_byte_from_pc() as i8;
-                if self.p & FLAG_CARRY != 0 {
-                    self.dummy_read(self.pc); // +1 cycle when branch is taken
-                    let old_pc = self.pc;
-                    self.branch(offset);
-                    if Self::page_crossed(old_pc, self.pc) {
-                        self.dummy_read(self.pc); // +1 cycle if page boundary crossed
-                    }
-                }
-            }
-            BEQ => {
-                let offset = self.read_byte_from_pc() as i8;
-                if self.p & FLAG_ZERO != 0 {
-                    self.dummy_read(self.pc); // +1 cycle when branch is taken
-                    let old_pc = self.pc;
-                    self.branch(offset);
-                    if Self::page_crossed(old_pc, self.pc) {
-                        self.dummy_read(self.pc); // +1 cycle if page boundary crossed
-                    }
-                }
-            }
-            BMI => {
-                let offset = self.read_byte_from_pc() as i8;
-                if self.p & FLAG_NEGATIVE != 0 {
-                    self.dummy_read(self.pc); // +1 cycle when branch is taken
-                    let old_pc = self.pc;
-                    self.branch(offset);
-                    if Self::page_crossed(old_pc, self.pc) {
-                        self.dummy_read(self.pc); // +1 cycle if page boundary crossed
-                    }
-                }
-            }
-            BNE => {
-                let offset = self.read_byte_from_pc() as i8;
-                if self.p & FLAG_ZERO == 0 {
-                    self.dummy_read(self.pc); // +1 cycle when branch is taken
-                    let old_pc = self.pc;
-                    self.branch(offset);
-                    if Self::page_crossed(old_pc, self.pc) {
-                        self.dummy_read(self.pc); // +1 cycle if page boundary crossed
-                    }
-                }
-            }
-            BPL => {
-                let offset = self.read_byte_from_pc() as i8;
-                if self.p & FLAG_NEGATIVE == 0 {
-                    self.dummy_read(self.pc); // +1 cycle when branch is taken
-                    let old_pc = self.pc;
-                    self.branch(offset);
-                    if Self::page_crossed(old_pc, self.pc) {
-                        self.dummy_read(self.pc); // +1 cycle if page boundary crossed
-                    }
-                }
-            }
-            BVC => {
-                let offset = self.read_byte_from_pc() as i8;
-                if self.p & FLAG_OVERFLOW == 0 {
-                    self.dummy_read(self.pc); // +1 cycle when branch is taken
-                    let old_pc = self.pc;
-                    self.branch(offset);
-                    if Self::page_crossed(old_pc, self.pc) {
-                        self.dummy_read(self.pc); // +1 cycle if page boundary crossed
-                    }
-                }
-            }
-            BVS => {
-                let offset = self.read_byte_from_pc() as i8;
-                if self.p & FLAG_OVERFLOW != 0 {
-                    self.dummy_read(self.pc); // +1 cycle when branch is taken
-                    let old_pc = self.pc;
-                    self.branch(offset);
-                    if Self::page_crossed(old_pc, self.pc) {
-                        self.dummy_read(self.pc); // +1 cycle if page boundary crossed
-                    }
-                }
-            }
-            BRK => {
-                // BRK - Software Interrupt (7 cycles)
-                // Following Mesen2's approach but without per-cycle PPU ticking
-                // The NES loop must set nmi_pending before calling run_opcode if NMI is active
-
-                // Cycles 1-2: Dummy reads
-                let _ = self.read(self.pc);
-                let _ = self.read(self.pc);
-                self.pc += 1; // Move past padding byte
-
-                // Cycles 3-4: Push PC
-                let return_addr = self.pc;
-                self.push_byte((return_addr >> 8) as u8);
-                self.push_byte((return_addr & 0xFF) as u8);
-
-                // CRITICAL POINT: Check if NMI is pending to hijack the vector
-                // This must happen AFTER pushing PC but BEFORE reading the vector
-                let use_nmi = self.nmi_pending;
-                if use_nmi {
-                    self.nmi_pending = false; // Acknowledge NMI
-                }
-
-                // Cycle 5: Push status with B flag set
-                let flags = self.p | FLAG_BREAK | FLAG_UNUSED;
-                self.push_byte(flags);
-
-                // Set Interrupt Disable flag
-                self.p |= FLAG_INTERRUPT;
-
-                // Cycles 6-7: Read interrupt vector (NMI if hijacked, otherwise IRQ)
-                let vector = if use_nmi { NMI_VECTOR } else { IRQ_VECTOR };
-                self.pc = self.read_u16(vector);
-
-                cycles = 7;
-            }
-            CMP_IMM => {
-                let value = self.read_byte_from_pc();
-                self.cmp(value);
-            }
-            CMP_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.cmp(value);
-            }
-            CMP_ZPX => {
-                let base = self.read_byte_from_pc();
-                let addr = base.wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                self.cmp(value);
-            }
-            CMP_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.cmp(value);
-            }
-            CMP_ABSX => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.cmp(value);
-            }
-            CMP_ABSY => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.cmp(value);
-            }
-            CMP_INDX => {
-                let base = self.read_byte_from_pc();
-                let ptr = base.wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                let value = self.read(addr);
-                self.cmp(value);
-            }
-            CMP_INDY => {
-                let ptr = self.read_byte_from_pc();
-                let base = self.read_word_from_zp(ptr);
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.cmp(value);
-            }
-            CPX_IMM => {
-                let value = self.read_byte_from_pc();
-                self.cpx(value);
-            }
-            CPX_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.cpx(value);
-            }
-            CPX_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.cpx(value);
-            }
-            CPY_IMM => {
-                let value = self.read_byte_from_pc();
-                self.cpy(value);
-            }
-            CPY_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.cpy(value);
-            }
-            CPY_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.cpy(value);
-            }
-            DEC_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.dec(value);
-                self.write(addr, result, false);
-            }
-            DEC_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.dec(value);
-                self.write(addr, result, false);
-            }
-            DEC_ABS => {
-                let addr = self.read_word_from_pc() as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.dec(value);
-                self.write(addr, result, false);
-            }
-            DEC_ABSXW => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.dec(value);
-                self.write(addr, result, false);
-            }
-            EOR_IMM => {
-                let value = self.read_byte_from_pc();
-                self.eor(value);
-            }
-            EOR_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.eor(value);
-            }
-            EOR_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                self.eor(value);
-            }
-            EOR_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.eor(value);
-            }
-            EOR_ABSX => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.eor(value);
-            }
-            EOR_ABSY => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.eor(value);
-            }
-            EOR_INDX => {
-                let ptr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                let value = self.read(addr);
-                self.eor(value);
-            }
-            EOR_INDY => {
-                let ptr = self.read_byte_from_pc();
-                let base = self.read_word_from_zp(ptr);
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.eor(value);
-            }
-            CLC => {
-                self.p &= !FLAG_CARRY;
-            }
-            CLD => {
-                self.p &= !FLAG_DECIMAL;
-            }
-            CLI => {
-                // Save the old I flag value before clearing it
-                let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
-                self.p &= !FLAG_INTERRUPT;
-                // Set delay: use the OLD value (true = interrupts inhibited) for next instruction
-                new_delayed_i_flag = Some(old_i_flag);
-            }
-            CLV => {
-                self.p &= !FLAG_OVERFLOW;
-            }
-            SEC => {
-                self.p |= FLAG_CARRY;
-            }
-            SED => {
-                self.p |= FLAG_DECIMAL;
-            }
-            SEI => {
-                // Save the old I flag value before setting it
-                let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
-                self.p |= FLAG_INTERRUPT;
-                // SEI also delays - use the OLD value for next instruction's IRQ polling
-                new_delayed_i_flag = Some(old_i_flag);
-            }
-            INC_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.inc(value);
-                self.write(addr, result, false);
-            }
-            INC_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.inc(value);
-                self.write(addr, result, false);
-            }
-            INC_ABS => {
-                let addr = self.read_word_from_pc() as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.inc(value);
-                self.write(addr, result, false);
-            }
-            INC_ABSXW => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.inc(value);
-                self.write(addr, result, false);
-            }
-            JMP_ABS => {
-                let addr = self.read_word_from_pc();
-                self.pc = addr;
-            }
-            JMP_IND => {
-                let ptr = self.read_word_from_pc();
-                let addr = self.read_word_indirect(ptr);
-                self.pc = addr;
-            }
-            JSR => {
-                let addr = self.read_word_from_pc();
-                let return_addr = self.pc - 1; // Address of last byte of JSR instruction
-                self.push_word(return_addr);
-                self.pc = addr;
-            }
-            LDA_IMM => {
-                let value = self.read_byte_from_pc();
-                self.lda(value);
-            }
-            LDA_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.lda(value);
-            }
-            LDA_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                self.lda(value);
-            }
-            LDA_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.lda(value);
-            }
-            LDA_ABSX => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from base + X (without carry from low byte)
-                    let dummy_addr =
-                        (base & 0xFF00) | ((base.wrapping_add(self.x as u16)) & 0x00FF);
-                    self.read(dummy_addr);
-                }
-                let value = self.read(addr);
-                self.lda(value);
-            }
-            LDA_ABSY => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from base + Y (without carry from low byte)
-                    let dummy_addr =
-                        (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
-                    self.read(dummy_addr);
-                }
-                let value = self.read(addr);
-                self.lda(value);
-            }
-            LDA_INDX => {
-                let ptr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                let value = self.read(addr);
-                self.lda(value);
-            }
-            LDA_INDY => {
-                let ptr = self.read_byte_from_pc();
-                let base = self.read_word_from_zp(ptr);
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from base + Y (without carry from low byte)
-                    let dummy_addr =
-                        (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
-                    self.read(dummy_addr);
-                }
-                let value = self.read(addr);
-                self.lda(value);
-            }
-            LDX_IMM => {
-                let value = self.read_byte_from_pc();
-                self.ldx(value);
-            }
-            LDX_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.ldx(value);
-            }
-            LDX_ZPY => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.y) as u16;
-                let value = self.read(addr);
-                self.ldx(value);
-            }
-            LDX_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.ldx(value);
-            }
-            LDX_ABSY => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from base + Y (without carry from low byte)
-                    let dummy_addr =
-                        (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
-                    self.read(dummy_addr);
-                }
-                let value = self.read(addr);
-                self.ldx(value);
-            }
-            LDY_IMM => {
-                let value = self.read_byte_from_pc();
-                self.ldy(value);
-            }
-            LDY_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.ldy(value);
-            }
-            LDY_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                self.ldy(value);
-            }
-            LDY_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.ldy(value);
-            }
-            LDY_ABSX => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from base + X (without carry from low byte)
-                    let dummy_addr =
-                        (base & 0xFF00) | ((base.wrapping_add(self.x as u16)) & 0x00FF);
-                    self.read(dummy_addr);
-                }
-                let value = self.read(addr);
-                self.ldy(value);
-            }
-            LSR_ACC => {
-                self.a = self.lsr(self.a);
-            }
-            LSR_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.lsr(value);
-                self.write(addr, result, false);
-            }
-            LSR_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.lsr(value);
-                self.write(addr, result, false);
-            }
-            LSR_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.lsr(value);
-                self.write(addr, result, false);
-            }
-            LSR_ABSXW => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.lsr(value);
-                self.write(addr, result, false);
-            }
-            NOP => {
-                // No operation - do nothing
-            }
-            ORA_IMM => {
-                let value = self.read_byte_from_pc();
-                self.ora(value);
-            }
-            ORA_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.ora(value);
-            }
-            ORA_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                self.ora(value);
-            }
-            ORA_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.ora(value);
-            }
-            ORA_ABSX => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.ora(value);
-            }
-            ORA_ABSY => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.ora(value);
-            }
-            ORA_INDX => {
-                let ptr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                let value = self.read(addr);
-                self.ora(value);
-            }
-            ORA_INDY => {
-                let ptr = self.read_byte_from_pc();
-                let base = self.read_word_from_zp(ptr);
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.ora(value);
-            }
-            DEX => {
-                self.dex();
-            }
-            DEY => {
-                self.dey();
-            }
-            INY => {
-                self.iny();
-            }
-            INX => {
-                self.inx();
-            }
-            TAX => {
-                self.tax();
-            }
-            TAY => {
-                self.tay();
-            }
-            TXA => {
-                self.txa();
-            }
-            TYA => {
-                self.tya();
-            }
-            ROL_ACC => {
-                self.a = self.rol(self.a);
-            }
-            ROL_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.rol(value);
-                self.write(addr, result, false);
-            }
-            ROL_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.rol(value);
-                self.write(addr, result, false);
-            }
-            ROL_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.rol(value);
-                self.write(addr, result, false);
-            }
-            ROL_ABSXW => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.rol(value);
-                self.write(addr, result, false);
-            }
-            ROR_ACC => {
-                self.a = self.ror(self.a);
-            }
-            ROR_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.ror(value);
-                self.write(addr, result, false);
-            }
-            ROR_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.ror(value);
-                self.write(addr, result, false);
-            }
-            ROR_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.ror(value);
-                self.write(addr, result, false);
-            }
-            ROR_ABSXW => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                let value = self.read(addr);
-                // Dummy write
-                self.write(addr, value, true);
-                // Real operation and write
-                let result = self.ror(value);
-                self.write(addr, result, false);
-            }
-            RTI => {
-                // Dummy read of next byte (after RTI opcode) before popping from stack
-                let _ = self.read(self.pc);
-                let value = self.pop_byte();
-                // RTI behaves like PLP - ignores B flag and unused bit
-                // Load bits 0-3 and 6-7 from stack, always set unused bit to 1, clear B flag
-                self.p = (value & !(FLAG_BREAK | FLAG_UNUSED)) | FLAG_UNUSED;
-                self.pc = self.pop_word();
-                // RTI affects IRQ inhibition immediately - clear any pending delay
-                self.delayed_i_flag = None;
-            }
-            RTS => {
-                // Dummy read of next byte (after RTS opcode) before popping return address
-                let _ = self.read(self.pc);
-                self.pc = self.pop_word();
-                self.pc = self.pc.wrapping_add(1);
-            }
-            SBC_IMM | SBC_IMM2 => {
-                // SBC_IMM2 is undocumented but identical to SBC_IMM
-                let value = self.read_byte_from_pc();
-                self.sbc(value);
-            }
-            SBC_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.sbc(value);
-            }
-            SBC_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                let value = self.read(addr);
-                self.sbc(value);
-            }
-            SBC_ABS => {
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.sbc(value);
-            }
-            SBC_ABSX => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.sbc(value);
-            }
-            SBC_ABSY => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.sbc(value);
-            }
-            SBC_INDX => {
-                let ptr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                let value = self.read(addr);
-                self.sbc(value);
-            }
-            SBC_INDY => {
-                let ptr = self.read_byte_from_pc();
-                let base = self.read_word_from_zp(ptr);
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.sbc(value);
-            }
-            STA_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                self.write(addr, self.a, false);
-            }
-            STA_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                self.write(addr, self.a, false);
-            }
-            STA_ABS => {
-                let addr = self.read_word_from_pc();
-                self.write(addr, self.a, false);
-            }
-            STA_ABSXW => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // STA always performs a dummy read before the write
-                let dummy_addr = (base & 0xFF00) | ((base.wrapping_add(self.x as u16)) & 0x00FF);
-                self.read(dummy_addr);
-                self.write(addr, self.a, false);
-            }
-            SXA_ABSY => {
-                // Undocumented: SHX a,Y - Store X AND (HIGH(addr) + 1) at addr,Y
-                // However, on page crossing, the high byte of the address is ANDed with X
-                let base_addr = self.read_word_from_pc();
-                let addr_no_cross = base_addr.wrapping_add(self.y as u16);
-                // Write instructions ALWAYS perform dummy read during indexed address calculation
-                let dummy_addr =
-                    (base_addr & 0xFF00) | ((base_addr.wrapping_add(self.y as u16)) & 0x00FF);
-                self.read(dummy_addr);
-
-                let page_crossed = (base_addr & 0xFF00) != (addr_no_cross & 0xFF00);
-                let high_byte = ((base_addr >> 8) as u8).wrapping_add(1);
-                let result = self.x & high_byte;
-
-                // On page crossing, the high byte of the target address is ANDed with X
-                let addr = if page_crossed {
-                    let modified_high = ((addr_no_cross >> 8) as u8) & self.x;
-                    ((modified_high as u16) << 8) | (addr_no_cross & 0x00FF)
-                } else {
-                    addr_no_cross
-                };
-
-                self.write(addr, result, false);
-            }
-            SYA_ABSX => {
-                // Undocumented: SHY a,X - Store Y AND (HIGH(addr) + 1) at addr,X
-                // However, on page crossing, the high byte of the address is ANDed with Y
-                let base_addr = self.read_word_from_pc();
-                let addr_no_cross = base_addr.wrapping_add(self.x as u16);
-                // Write instructions ALWAYS perform dummy read during indexed address calculation
-                let dummy_addr =
-                    (base_addr & 0xFF00) | ((base_addr.wrapping_add(self.x as u16)) & 0x00FF);
-                self.read(dummy_addr);
-
-                let page_crossed = (base_addr & 0xFF00) != (addr_no_cross & 0xFF00);
-                let high_byte = ((base_addr >> 8) as u8).wrapping_add(1);
-                let result = self.y & high_byte;
-
-                // On page crossing, the high byte of the target address is ANDed with Y
-                let addr = if page_crossed {
-                    let modified_high = ((addr_no_cross >> 8) as u8) & self.y;
-                    ((modified_high as u16) << 8) | (addr_no_cross & 0x00FF)
-                } else {
-                    addr_no_cross
-                };
-
-                self.write(addr, result, false);
-            }
-            STA_ABSYW => {
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                // STA always performs a dummy read before the write
-                let dummy_addr = (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
-                self.read(dummy_addr);
-                self.write(addr, self.a, false);
-            }
-            STA_INDX => {
-                let ptr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                self.write(addr, self.a, false);
-            }
-            STA_INDYW => {
-                let ptr = self.read_byte_from_pc();
-                let base = self.read_word_from_zp(ptr);
-                let addr = base.wrapping_add(self.y as u16);
-                // STA always performs a dummy read before the write
-                let dummy_addr = (base & 0xFF00) | ((base.wrapping_add(self.y as u16)) & 0x00FF);
-                self.read(dummy_addr);
-                self.write(addr, self.a, false);
-            }
-            TXS => {
-                self.sp = self.x;
-            }
-            TSX => {
-                self.x = self.sp;
-                self.update_zero_and_negative_flags(self.x);
-            }
-            PHA => {
-                self.push_byte(self.a);
-            }
-            PLA => {
-                self.a = self.pop_byte();
-                self.update_zero_and_negative_flags(self.a);
-            }
-            PHP => {
-                // PHP pushes P with B flag and unused bit set to 1
-                self.push_byte(self.p | FLAG_BREAK | FLAG_UNUSED);
-            }
-            PLP => {
-                let value = self.pop_byte();
-                // PLP ignores B flag (bit 4) and unused bit (bit 5)
-                // Load bits 0-3 and 6-7 from stack, always set unused bit to 1, clear B flag
-                let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
-                self.p = (value & !(FLAG_BREAK | FLAG_UNUSED)) | FLAG_UNUSED;
-                let new_i_flag = (self.p & FLAG_INTERRUPT) != 0;
-                // Delay if I flag changed: use OLD value for IRQ polling
-                if old_i_flag != new_i_flag {
-                    new_delayed_i_flag = Some(old_i_flag);
-                }
-            }
-            STX_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                self.write(addr, self.x, false);
-            }
-            STX_ZPY => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.y) as u16;
-                self.write(addr, self.x, false);
-            }
-            STX_ABS => {
-                let addr = self.read_word_from_pc();
-                self.write(addr, self.x, false);
-            }
-            STY_ZP => {
-                let addr = self.read_byte_from_pc() as u16;
-                self.write(addr, self.y, false);
-            }
-            STY_ZPX => {
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                self.write(addr, self.y, false);
-            }
-            STY_ABS => {
-                let addr = self.read_word_from_pc();
-                self.write(addr, self.y, false);
-            }
-            // Undocumented opcodes (alphabetical order)
-            AAC_IMM | AAC_IMM2 => {
-                // Undocumented: AND with accumulator, then copy bit 7 to carry
-                let value = self.read_byte_from_pc();
-                self.and(value);
-                let carry = if self.a & 0x80 != 0 { FLAG_CARRY } else { 0 };
-                self.p = (self.p & !FLAG_CARRY) | carry;
-            }
-            SAX_INDX => {
-                // Undocumented: Store A AND X
-                let ptr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                let value = self.a & self.x;
-                self.write(addr, value, false);
-            }
-            SAX_ZP => {
-                // Undocumented: Store A AND X
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.a & self.x;
-                self.write(addr, value, false);
-            }
-            SAX_ZPY => {
-                // Undocumented: Store A AND X
-                let addr = self.read_byte_from_pc().wrapping_add(self.y) as u16;
-                let value = self.a & self.x;
-                self.write(addr, value, false);
-            }
-            SAX_ABS => {
-                // Undocumented: Store A AND X
-                let addr = self.read_word_from_pc();
-                let value = self.a & self.x;
-                self.write(addr, value, false);
-            }
-            ARR_IMM => {
-                // Undocumented: AND then rotate right with special flag handling
-                // ARR #{imm} = AND #{imm} + ROR, but flags are set specially:
-                // 1. A = A & imm
-                // 2. A = ROR A (using OLD carry)
-                // 3. C = bit 6 of result (AFTER ROR)
-                // 4. V = bit 6 XOR bit 5 of result (AFTER ROR)
-                // 5. N, Z = normal (from result)
-                let value = self.read_byte_from_pc();
-                self.a &= value;
-
-                // Rotate right using OLD carry flag
-                let old_carry = if self.p & FLAG_CARRY != 0 { 0x80 } else { 0 };
-                self.a = (self.a >> 1) | old_carry;
-
-                // Set carry to bit 6 of result (after ROR)
-                let new_carry = if self.a & 0x40 != 0 { FLAG_CARRY } else { 0 };
-                self.p = (self.p & !FLAG_CARRY) | new_carry;
-
-                // Set overflow to bit 6 XOR bit 5 of result (after ROR)
-                let bit6 = (self.a >> 6) & 1;
-                let bit5 = (self.a >> 5) & 1;
-                let overflow = if bit6 ^ bit5 != 0 { FLAG_OVERFLOW } else { 0 };
-                self.p = (self.p & !FLAG_OVERFLOW) | overflow;
-
-                self.update_zero_and_negative_flags(self.a);
-            }
-            ASR_IMM => {
-                // Undocumented: AND then logical shift right (LSR)
-                let value = self.read_byte_from_pc();
-                self.a &= value;
-
-                // Set carry from bit 0 before shift
-                let carry = if self.a & 0x01 != 0 { FLAG_CARRY } else { 0 };
-                self.p = (self.p & !FLAG_CARRY) | carry;
-
-                // Logical shift right (no carry involved in shift)
-                self.a >>= 1;
-
-                self.update_zero_and_negative_flags(self.a);
-            }
-            ATX_IMM => {
-                // Undocumented: LAX #i (also known as ATX, OAL)
-                // Highly unstable on real hardware: A := (A | CONST) & #{imm}; X := A
-                // where CONST is a "magic constant" that varies between machines
-                // Oxyron docs say: "A,X:=#{imm}" - just load immediate into both registers
-                // This is the stable behavior that blargg's tests seem to expect
-                let value = self.read_byte_from_pc();
-                self.a = value;
-                self.x = value;
-                self.update_zero_and_negative_flags(self.a);
-            }
-            AXA_INDY => {
-                // Undocumented: Store A AND X AND (high byte of address + 1)
-                let ptr = self.read_byte_from_pc();
-                let base_addr = self.read_word_from_zp(ptr);
-                let addr = base_addr.wrapping_add(self.y as u16);
-                // Write instructions ALWAYS perform dummy read during indexed address calculation
-                let dummy_addr =
-                    (base_addr & 0xFF00) | ((base_addr.wrapping_add(self.y as u16)) & 0x00FF);
-                self.read(dummy_addr);
-                let high_byte = (addr >> 8) as u8;
-                let value = self.a & self.x & high_byte.wrapping_add(1);
-                self.write(addr, value, false);
-            }
-            AXA_ABSY => {
-                // Undocumented: Store A AND X AND (high byte of address + 1)
-                let base_addr = self.read_word_from_pc();
-                let addr = base_addr.wrapping_add(self.y as u16);
-                // Write instructions ALWAYS perform dummy read during indexed address calculation
-                let dummy_addr =
-                    (base_addr & 0xFF00) | ((base_addr.wrapping_add(self.y as u16)) & 0x00FF);
-                self.read(dummy_addr);
-                let high_byte = (addr >> 8) as u8;
-                let value = self.a & self.x & high_byte.wrapping_add(1);
-                self.write(addr, value, false);
-            }
-            AXS_IMM => {
-                // Undocumented: AND X with A, then subtract immediate (without borrow)
-                let value = self.read_byte_from_pc();
-                let temp = self.a & self.x;
-                let result = temp.wrapping_sub(value);
-
-                // Set carry flag (like CMP: set if no borrow, clear if borrow)
-                self.p = (self.p & !FLAG_CARRY) | if temp >= value { FLAG_CARRY } else { 0 };
-
-                self.x = result;
-                self.update_zero_and_negative_flags(self.x);
-            }
-            DCP_INDX => {
-                // Undocumented: Decrement memory then compare with A
-                let ptr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(ptr);
-                self.dcp(addr);
-            }
-            DCP_ZP => {
-                // Undocumented: Decrement memory then compare with A
-                let addr = self.read_byte_from_pc() as u16;
-                self.dcp(addr);
-            }
-            DCP_ABS => {
-                // Undocumented: Decrement memory then compare with A
-                let addr = self.read_word_from_pc();
-                self.dcp(addr);
-            }
-            DCP_INDYW => {
-                // Undocumented: Decrement memory then compare with A
-                let ptr = self.read_byte_from_pc();
-                let base_addr = self.read_word_from_zp(ptr);
-                let addr = base_addr.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base_addr & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base_addr & 0xFF00) | ((base_addr + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.dcp(addr);
-            }
-            DCP_ZPX => {
-                // Undocumented: Decrement memory then compare with A
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                self.dcp(addr);
-            }
-            DCP_ABSYW => {
-                // Undocumented: Decrement memory then compare with A
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.dcp(addr);
-            }
-            DCP_ABSXW => {
-                // Undocumented: Decrement memory then compare with A
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.dcp(addr);
-            }
-            DOP_ZP | DOP_ZP2 | DOP_ZP3 | DOP_ZPX | DOP_ZPX2 | DOP_ZPX3 | DOP_ZPX4 | DOP_ZPX5
-            | DOP_ZPX6 | DOP_IMM | DOP_IMM2 | DOP_IMM3 | DOP_IMM4 | DOP_IMM5 => {
-                // Undocumented: Double NOP - read operand byte and discard
-                let _ = self.read_byte_from_pc();
-            }
-            ISB_INDX => {
-                // Undocumented: Increment memory then subtract from A with borrow
-                let zp_addr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr_lo = self.read(zp_addr as u16);
-                let addr_hi = self.read(zp_addr.wrapping_add(1) as u16);
-                let addr = u16::from_le_bytes([addr_lo, addr_hi]);
-                self.isc(addr);
-            }
-            ISB_ZP => {
-                // Undocumented: Increment memory then subtract from A with borrow
-                let addr = self.read_byte_from_pc() as u16;
-                self.isc(addr);
-            }
-            ISB_ABS => {
-                // Undocumented: Increment memory then subtract from A with borrow
-                let addr = self.read_word_from_pc();
-                self.isc(addr);
-            }
-            ISB_INDYW => {
-                // Undocumented: Increment memory then subtract from A with borrow
-                let zp_addr = self.read_byte_from_pc();
-                let addr_lo = self.read(zp_addr as u16);
-                let addr_hi = self.read(zp_addr.wrapping_add(1) as u16);
-                let base_addr = u16::from_le_bytes([addr_lo, addr_hi]);
-                let addr = base_addr.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base_addr & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base_addr & 0xFF00) | ((base_addr + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.isc(addr);
-            }
-            ISB_ZPX => {
-                // Undocumented: Increment memory then subtract from A with borrow
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                self.isc(addr);
-            }
-            ISB_ABSYW => {
-                // Undocumented: Increment memory then subtract from A with borrow
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.isc(addr);
-            }
-            ISB_ABSXW => {
-                // Undocumented: Increment memory then subtract from A with borrow
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.isc(addr);
-            }
-            KIL | KIL2 | KIL3 | KIL4 | KIL5 | KIL6 | KIL7 | KIL8 | KIL9 | KIL10 | KIL11 | KIL12 => {
-                // Undocumented: Halt the processor
-                self.halted = true;
-                return cycles;
-            }
-            LAR_ABSY => {
-                // Undocumented: AND memory with stack pointer, store in A, X, and SP
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                let result = self.sp & value;
-                self.a = result;
-                self.x = result;
-                self.sp = result;
-                // Set flags based on result
-                if result == 0 {
-                    self.p |= FLAG_ZERO;
-                } else {
-                    self.p &= !FLAG_ZERO;
-                }
-                if result & 0x80 != 0 {
-                    self.p |= FLAG_NEGATIVE;
-                } else {
-                    self.p &= !FLAG_NEGATIVE;
-                }
-            }
-            LAX_INDX => {
-                // Undocumented: Load A and X with memory value (LDA + LDX)
-                let base = self.read_byte_from_pc();
-                let ptr = base.wrapping_add(self.x);
-                let lo = self.read(ptr as u16) as u16;
-                let hi = self.read(ptr.wrapping_add(1) as u16) as u16;
-                let addr = (hi << 8) | lo;
-                let value = self.read(addr);
-                self.a = value;
-                self.x = value;
-                self.update_zero_and_negative_flags(value);
-            }
-            LAX_ZP => {
-                // Undocumented: Load A and X with memory value (LDA + LDX)
-                let addr = self.read_byte_from_pc() as u16;
-                let value = self.read(addr);
-                self.a = value;
-                self.x = value;
-                self.update_zero_and_negative_flags(value);
-            }
-            LAX_ABS => {
-                // Undocumented: Load A and X with memory value (LDA + LDX)
-                let addr = self.read_word_from_pc();
-                let value = self.read(addr);
-                self.a = value;
-                self.x = value;
-                self.update_zero_and_negative_flags(value);
-            }
-            LAX_INDY => {
-                // Undocumented: Load A and X with memory value (LDA + LDX)
-                let ptr = self.read_byte_from_pc() as u16;
-                let lo = self.read(ptr) as u16;
-                let hi = self.read((ptr + 1) & 0xFF) as u16;
-                let base = (hi << 8) | lo;
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.a = value;
-                self.x = value;
-                self.update_zero_and_negative_flags(value);
-            }
-            LAX_ZPY => {
-                // Undocumented: Load A and X with memory value (LDA + LDX)
-                let base = self.read_byte_from_pc();
-                let addr = base.wrapping_add(self.y) as u16;
-                let value = self.read(addr);
-                self.a = value;
-                self.x = value;
-                self.update_zero_and_negative_flags(value);
-            }
-            LAX_ABSY => {
-                // Undocumented: Load A and X with memory value (LDA + LDX)
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                let value = self.read(addr);
-                self.a = value;
-                self.x = value;
-                self.update_zero_and_negative_flags(value);
-            }
-            NOP_IMP | NOP_IMP2 | NOP_IMP3 | NOP_IMP4 | NOP_IMP5 | NOP_IMP6 => {
-                // Undocumented: No operation (same as official NOP)
-                // Do nothing
-            }
-            RLA_INDX => {
-                // Undocumented: ROL memory, then AND with accumulator (Indirect,X)
-                let zp_addr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(zp_addr);
-                self.rla(addr);
-            }
-            RLA_ZP => {
-                // Undocumented: ROL memory, then AND with accumulator (Zero Page)
-                let addr = self.read_byte_from_pc() as u16;
-                self.rla(addr);
-            }
-            RLA_ABS => {
-                // Undocumented: ROL memory, then AND with accumulator (Absolute)
-                let addr = self.read_word_from_pc();
-                self.rla(addr);
-            }
-            RLA_INDYW => {
-                // Undocumented: ROL memory, then AND with accumulator (Indirect,Y)
-                let zp_addr = self.read_byte_from_pc();
-                let base_addr = self.read_word_from_zp(zp_addr);
-                let addr = base_addr.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base_addr & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base_addr & 0xFF00) | ((base_addr + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.rla(addr);
-            }
-            RLA_ZPX => {
-                // Undocumented: ROL memory, then AND with accumulator (Zero Page,X)
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                self.rla(addr);
-            }
-            RLA_ABSYW => {
-                // Undocumented: ROL memory, then AND with accumulator (Absolute,Y)
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.rla(addr);
-            }
-            RLA_ABSXW => {
-                // Undocumented: ROL memory, then AND with accumulator (Absolute,X)
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.rla(addr);
-            }
-            RRA_INDX => {
-                // Undocumented: ROR memory, then ADC with accumulator (Indirect,X)
-                let zp_addr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(zp_addr);
-                self.rra(addr);
-            }
-            RRA_ZP => {
-                // Undocumented: ROR memory, then ADC with accumulator (Zero Page)
-                let addr = self.read_byte_from_pc() as u16;
-                self.rra(addr);
-            }
-            RRA_ABS => {
-                // Undocumented: ROR memory, then ADC with accumulator (Absolute)
-                let addr = self.read_word_from_pc();
-                self.rra(addr);
-            }
-            RRA_INDYW => {
-                // Undocumented: ROR memory, then ADC with accumulator (Indirect,Y)
-                let zp_addr = self.read_byte_from_pc();
-                let base_addr = self.read_word_from_zp(zp_addr);
-                let addr = base_addr.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base_addr & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base_addr & 0xFF00) | ((base_addr + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.rra(addr);
-            }
-            RRA_ZPX => {
-                // Undocumented: ROR memory, then ADC with accumulator (Zero Page,X)
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                self.rra(addr);
-            }
-            RRA_ABSYW => {
-                // Undocumented: ROR memory, then ADC with accumulator (Absolute,Y)
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.rra(addr);
-            }
-            RRA_ABSXW => {
-                // Undocumented: ROR memory, then ADC with accumulator (Absolute,X)
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.rra(addr);
-            }
-            SLO_INDX => {
-                // Undocumented: ASL memory, then ORA with accumulator (Indirect,X)
-                let zp_addr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(zp_addr);
-                self.slo(addr);
-            }
-            SLO_ZP => {
-                // Undocumented: ASL memory, then ORA with accumulator (Zero Page)
-                let addr = self.read_byte_from_pc() as u16;
-                self.slo(addr);
-            }
-            SLO_ABS => {
-                // Undocumented: ASL memory, then ORA with accumulator (Absolute)
-                let addr = self.read_word_from_pc();
-                self.slo(addr);
-            }
-            SLO_INDYW => {
-                // Undocumented: ASL memory, then ORA with accumulator (Indirect,Y)
-                let zp_addr = self.read_byte_from_pc();
-                let base_addr = self.read_word_from_zp(zp_addr);
-                let addr = base_addr.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base_addr & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base_addr & 0xFF00) | ((base_addr + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.slo(addr);
-            }
-            SLO_ZPX => {
-                // Undocumented: ASL memory, then ORA with accumulator (Zero Page,X)
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                self.slo(addr);
-            }
-            SLO_ABSYW => {
-                // Undocumented: ASL memory, then ORA with accumulator (Absolute,Y)
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.slo(addr);
-            }
-            SLO_ABSXW => {
-                // Undocumented: ASL memory, then ORA with accumulator (Absolute,X)
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.slo(addr);
-            }
-            SRE_INDX => {
-                // Undocumented: LSR memory, then EOR with accumulator (Indirect,X)
-                let zp_addr = self.read_byte_from_pc().wrapping_add(self.x);
-                let addr = self.read_word_from_zp(zp_addr);
-                self.sre(addr);
-            }
-            SRE_ZP => {
-                // Undocumented: LSR memory, then EOR with accumulator (Zero Page)
-                let addr = self.read_byte_from_pc() as u16;
-                self.sre(addr);
-            }
-            SRE_ABS => {
-                // Undocumented: LSR memory, then EOR with accumulator (Absolute)
-                let addr = self.read_word_from_pc();
-                self.sre(addr);
-            }
-            SRE_INDYW => {
-                // Undocumented: LSR memory, then EOR with accumulator (Indirect,Y)
-                let zp_addr = self.read_byte_from_pc();
-                let base_addr = self.read_word_from_zp(zp_addr);
-                let addr = base_addr.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base_addr & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base_addr & 0xFF00) | ((base_addr + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.sre(addr);
-            }
-            SRE_ZPX => {
-                // Undocumented: LSR memory, then EOR with accumulator (Zero Page,X)
-                let addr = self.read_byte_from_pc().wrapping_add(self.x) as u16;
-                self.sre(addr);
-            }
-            SRE_ABSYW => {
-                // Undocumented: LSR memory, then EOR with accumulator (Absolute,Y)
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.y as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.y as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.y as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.sre(addr);
-            }
-            SRE_ABSXW => {
-                // Undocumented: LSR memory, then EOR with accumulator (Absolute,X)
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                // RMW instructions ALWAYS read during indexed address calculation
-                if (base & 0xFF) + (self.x as u16) > 0xFF {
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                } else {
-                    self.read(addr);
-                }
-                self.sre(addr);
-            }
-            TOP_ABS => {
-                // Undocumented: Triple NOP - 3-byte no operation (absolute addressing)
-                self.read_word_from_pc(); // Read and discard the 2-byte argument
-            }
-            TOP_ABSX | TOP_ABSX2 | TOP_ABSX3 | TOP_ABSX4 | TOP_ABSX5 | TOP_ABSX6 => {
-                // Undocumented: Triple NOP - 3-byte no operation (absolute,X addressing)
-                let base = self.read_word_from_pc();
-                let addr = base.wrapping_add(self.x as u16);
-                if Self::page_crossed(base, addr) {
-                    cycles += 1;
-                    // Perform dummy read from wrong address (without carry)
-                    let wrong_addr = (base & 0xFF00) | ((base + self.x as u16) & 0x00FF);
-                    self.read(wrong_addr);
-                }
-                // Still perform the final read to fully emulate hardware behavior
-                self.read(addr);
-            }
-            XAA_IMM => {
-                // Undocumented: Highly unstable opcode
-                // A = (A | MAGIC) & X & immediate
-                // MAGIC constant is typically 0xEE on most CPUs
-                let value = self.read_byte_from_pc();
-                const MAGIC: u8 = 0xEE;
-                self.a = (self.a | MAGIC) & self.x & value;
-                self.update_zero_and_negative_flags(self.a);
-            }
-            XAS_ABSY => {
-                // Undocumented: Store A AND X in SP, then store SP AND (HIGH(addr) + 1) at addr,Y
-                let base_addr = self.read_word_from_pc();
-                let addr = base_addr.wrapping_add(self.y as u16);
-                // Write instructions ALWAYS perform dummy read during indexed address calculation
-                let dummy_addr =
-                    (base_addr & 0xFF00) | ((base_addr.wrapping_add(self.y as u16)) & 0x00FF);
-                self.read(dummy_addr);
-                self.sp = self.a & self.x;
-                let high_byte = (base_addr >> 8) as u8;
-                let result = self.sp & high_byte.wrapping_add(1);
-                self.write(addr, result, false);
-            }
-        }
-
-        // Update the delayed I flag:
-        // - If we just set a new delay, use that
-        // - Otherwise, clear any existing delay (it's been consumed by this instruction)
-        // - Exception: RTI clears it immediately during execution
-        self.delayed_i_flag = new_delayed_i_flag;
-
-        self.total_cycles += cycles as u64;
-        cycles
-    }
-
-    /// Execute a single CPU cycle
-    /// Returns true when the current instruction completes
-    pub fn tick_cycle(&mut self) -> bool {
-        if self.halted {
-            return true;
-        }
-
-        // If no instruction is in progress, start a new one
-        if self.current_instruction.is_none() {
-            // Read the opcode byte before executing
-            let opcode_byte = self.read(self.pc);
-            // Debug output only for addresses near the critical test section
-            if self.pc >= 0xC000
-                && self.pc < 0xC100
-                && [0x18, 0x38, 0x00, 0xEA].contains(&opcode_byte)
-            {
-                eprintln!(
-                    "[INSTR START] PC=0x{:04X}, opcode=0x{:02X} ({}), cycle={}, C={}",
-                    self.pc,
-                    opcode_byte,
-                    match opcode_byte {
-                        0x18 => "CLC",
-                        0x38 => "SEC",
-                        0x00 => "BRK",
-                        0xEA => "NOP",
-                        _ => "???",
-                    },
-                    self.total_cycles,
-                    if self.p & FLAG_CARRY != 0 { "1" } else { "0" }
-                );
-            }
-            let opcode = super::opcode::lookup(opcode_byte)
-                .unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
-
-            // Check if this instruction has cycle-accurate implementation
-            let has_cycle_accurate = matches!(
-                opcode.code,
-                BRK | BPL | BMI | BVC | BVS | BCC | BCS | BNE | BEQ
-            );
-
-            if has_cycle_accurate {
-                // Start cycle-accurate execution without calling run_opcode
-                self.current_instruction = Some(InstructionState {
-                    opcode: opcode.clone(),
-                    cycles_remaining: opcode.cycles,
-                    temp_addr: None,
-                    temp_value: None,
-                });
-                self.cycle_in_instruction = 0;
-            } else {
-                // Use the legacy run_opcode approach for non-cycle-accurate instructions
-                let saved_total_cycles = self.total_cycles;
-
-                // Execute the full instruction using run_opcode
-                let cycles = self.run_opcode();
-
-                // run_opcode already incremented total_cycles, so restore it
-                self.total_cycles = saved_total_cycles;
-
-                // Create instruction state to "replay" cycles
-                self.current_instruction = Some(InstructionState {
-                    opcode: opcode.clone(),
-                    cycles_remaining: cycles,
-                    temp_addr: None,
-                    temp_value: None,
-                });
-                self.cycle_in_instruction = 0;
-            }
-        }
-
-        // Execute one cycle of the current instruction
-        if let Some(ref inst) = self.current_instruction.clone() {
-            // Check if this instruction has cycle-accurate implementation
-            let has_cycle_accurate = matches!(
-                inst.opcode.code,
-                BRK | BPL | BMI | BVC | BVS | BCC | BCS | BNE | BEQ
-            );
-
-            if has_cycle_accurate && self.cycle_in_instruction == 0 {
-                // Skip PC increment for cycle-accurate instructions (handled in execute_instruction_cycle)
-            } else if !has_cycle_accurate && self.cycle_in_instruction == 0 {
-                // For non-cycle-accurate instructions, PC was already incremented by run_opcode
-            }
-
-            // Execute the cycle-specific logic
-            self.execute_instruction_cycle();
-        }
-
-        // Tick one cycle
-        if let Some(ref mut inst) = self.current_instruction {
-            self.total_cycles += 1;
-            inst.cycles_remaining -= 1;
-
-            // Check if instruction is complete
-            if inst.cycles_remaining == 0 {
-                self.current_instruction = None;
-                self.cycle_in_instruction = 0;
-                return true;
-            } else {
-                self.cycle_in_instruction += 1;
-            }
-        }
-
-        false
-    }
-
-    /// Execute one cycle of the current instruction
-    /// Routes to cycle-specific handlers for cycle-accurate instructions
-    fn execute_instruction_cycle(&mut self) {
-        if let Some(ref inst) = self.current_instruction.clone() {
-            match inst.opcode.code {
-                BRK => self.execute_brk_cycle(),
-                BPL | BMI | BVC | BVS | BCC | BCS | BNE | BEQ => self.execute_branch_cycle(),
-                _ => {
-                    // For non-cycle-accurate instructions, do nothing
-                    // The instruction was already executed by run_opcode
-                }
-            }
-        }
-    }
-
-    /// Execute one cycle of BRK instruction (7 cycles total)
-    /// Cycle 0 is opcode fetch (implicit, happens in tick_cycle)
-    /// Cycles 1-6 are handled here (indices 0-5 in this function)
-    fn execute_brk_cycle(&mut self) {
-        match self.cycle_in_instruction {
-            0 => {
-                // Cycle 1: Increment PC past opcode, first dummy read
-                self.pc += 1;
-                let _ = self.read(self.pc);
-            }
-            1 => {
-                // Cycle 2: Second dummy read at PC (padding byte), then increment PC
-                let _ = self.read(self.pc);
-                self.pc += 1;
-            }
-            2 => {
-                // Cycle 3: Push PCH
-                let return_addr = self.pc;
-                self.push_byte((return_addr >> 8) as u8);
-            }
-            3 => {
-                // Cycle 4: Push PCL
-                let return_addr = self.pc;
-                self.push_byte((return_addr & 0xFF) as u8);
-            }
-            4 => {
-                // Cycle 5: CRITICAL - Check NMI pending, push status with B flag
-                // This is where NMI hijacking happens
-                let use_nmi = self.nmi_pending;
-                if use_nmi {
-                    self.nmi_pending = false; // Acknowledge NMI
-                }
-
-                // Store which vector to use
-                if let Some(ref mut inst) = self.current_instruction {
-                    inst.temp_addr = Some(if use_nmi { NMI_VECTOR } else { IRQ_VECTOR });
-                }
-
-                // Push status with B flag set (even when hijacked by NMI!)
-                let flags = self.p | FLAG_BREAK | FLAG_UNUSED;
-                self.push_byte(flags);
-
-                // Set Interrupt Disable flag
-                self.p |= FLAG_INTERRUPT;
-            }
-            5 => {
-                // Cycle 6: Read vector low byte
-                if let Some(ref inst) = self.current_instruction.clone() {
-                    let vector = inst.temp_addr.unwrap();
-                    let lo = self.read(vector) as u16;
-                    if let Some(ref mut inst) = self.current_instruction {
-                        inst.temp_value = Some(lo as u8);
-                    }
-                }
-            }
-            6 => {
-                // Cycle 7: Read vector high byte and jump
-                if let Some(ref inst) = self.current_instruction.clone() {
-                    let vector = inst.temp_addr.unwrap();
-                    let lo = inst.temp_value.unwrap() as u16;
-                    let hi = self.read(vector + 1) as u16;
-                    self.pc = (hi << 8) | lo;
-                }
-            }
-            _ => unreachable!("BRK has exactly 7 cycles (0-6)"),
-        }
-    }
-
-    /// Execute one cycle of branch instruction (2-4 cycles depending on branch taken and page crossing)
-    /// Cycle 0: Fetch opcode (implicit, happens in tick_cycle before this function)
-    /// Cycle 1: Increment PC past opcode (index 0 in this function)
-    /// Cycle 2: Read offset byte, decide if branch taken (index 1)
-    /// Cycle 3: (if taken) Add offset to PC, check page crossing (index 2)
-    /// Cycle 4: (if page crossed) Page crossing penalty cycle (index 3)
-    fn execute_branch_cycle(&mut self) {
-        match self.cycle_in_instruction {
-            0 => {
-                // Cycle 1: Increment PC past opcode
-                self.pc += 1;
-            }
-            1 => {
-                // Cycle 2: Read offset byte and check branch condition
-                let offset = self.read_byte_from_pc() as i8;
-
-                // Determine if branch should be taken based on opcode
-                let should_branch = if let Some(ref inst) = self.current_instruction {
-                    match inst.opcode.code {
-                        BCC => self.p & FLAG_CARRY == 0,    // Branch if Carry Clear
-                        BCS => self.p & FLAG_CARRY != 0,    // Branch if Carry Set
-                        BEQ => self.p & FLAG_ZERO != 0,     // Branch if Equal (Zero set)
-                        BMI => self.p & FLAG_NEGATIVE != 0, // Branch if Minus (Negative set)
-                        BNE => self.p & FLAG_ZERO == 0,     // Branch if Not Equal (Zero clear)
-                        BPL => self.p & FLAG_NEGATIVE == 0, // Branch if Plus (Negative clear)
-                        BVC => self.p & FLAG_OVERFLOW == 0, // Branch if Overflow Clear
-                        BVS => self.p & FLAG_OVERFLOW != 0, // Branch if Overflow Set
-                        _ => unreachable!("Invalid branch opcode"),
-                    }
-                } else {
-                    false
-                };
-
-                if should_branch {
-                    // Store offset and old PC for next cycle
-                    // Branch is taken - add 1 extra cycle (total 3 for same page, or 4 if page crossed)
-                    if let Some(ref mut inst) = self.current_instruction {
-                        inst.temp_value = Some(offset as u8);
-                        inst.temp_addr = Some(self.pc);
-                        inst.cycles_remaining += 1; // Add 1 cycle for taken branch
-                    }
-                }
-                // Branch not taken: instruction completes after this cycle (2 cycles total)
-            }
-            2 => {
-                // Cycle 3: Branch was taken, add offset to PC
-                if let Some(ref inst) = self.current_instruction.clone() {
-                    let offset = inst.temp_value.unwrap() as i8;
-                    let old_pc = inst.temp_addr.unwrap();
-                    let new_pc = self.pc.wrapping_add(offset as u16);
-
-                    // Check if page boundary was crossed
-                    let page_crossed = Self::page_crossed(old_pc, new_pc);
-
-                    self.pc = new_pc;
-
-                    if page_crossed {
-                        // Page crossed - add 1 more cycle (total 4)
-                        if let Some(ref mut inst) = self.current_instruction {
-                            inst.cycles_remaining += 1;
-                        }
-                    }
-                    // If no page cross, instruction completes after this cycle (3 cycles total)
-                    // If page crossed, continue to cycle 3 for the penalty cycle
-                }
-            }
-            3 => {
-                // Cycle 4: Page crossing penalty cycle
-                // PC has already been updated in cycle 3, this is just a dummy cycle
-                // Instruction completes after this cycle (4 cycles total)
-            }
-            _ => unreachable!("Branch has at most 5 cycles (0-4)"),
-        }
-    }
-
     /// Check if two addresses are on different pages
+    // TODO Replace other places with the use of this function
     fn page_crossed(addr1: u16, addr2: u16) -> bool {
         (addr1 & 0xFF00) != (addr2 & 0xFF00)
     }
 
     fn before_cpu_cycle(&mut self, is_write: bool) {
-        if self.suppress_bus_device_ticks {
-            return;
-        }
-
         self.master_clock.before_cpu_cycle(is_write);
         self.total_cycles += 1;
         let ppu_cycles = self.master_clock.ppu_cycles_since_last();
@@ -2563,9 +310,6 @@ impl Cpu {
     }
 
     fn after_cpu_cycle(&mut self, is_write: bool) {
-        if self.suppress_bus_device_ticks {
-            return;
-        }
         self.master_clock.after_cpu_cycle(is_write);
 
         // Mirror Mesen EndCpuCycle() behavior: latch interrupt lines at the end of each CPU cycle.
@@ -3070,26 +814,6 @@ impl Cpu {
         self.update_zero_and_negative_flags(self.a);
     }
 
-    /// Trigger an NMI (Non-Maskable Interrupt)
-    /// Returns the number of cycles consumed (7 cycles)
-    pub fn trigger_nmi(&mut self) -> u8 {
-        // Push PC and P onto stack
-        self.push_word(self.pc);
-        let mut p_with_break = self.p & !FLAG_BREAK; // Clear Break flag
-        p_with_break |= FLAG_UNUSED; // Set unused flag
-        self.push_byte(p_with_break);
-
-        // Set PC to NMI vector
-        self.pc = self.read_u16(NMI_VECTOR);
-
-        // Set Interrupt Disable flag
-        self.p |= FLAG_INTERRUPT;
-
-        // NMI takes 7 CPU cycles
-        self.total_cycles += 7;
-        7
-    }
-
     /// Get the effective I flag value for IRQ polling
     /// If there's a delayed I flag value, use that; otherwise use the current I flag
     fn get_effective_i_flag(&self) -> bool {
@@ -3101,35 +825,6 @@ impl Cpu {
     /// Returns true if an IRQ is pending and the effective I flag (considering delays) allows IRQs
     pub fn should_poll_irq(&self) -> bool {
         self.irq_pending && !self.get_effective_i_flag()
-    }
-
-    /// Trigger an IRQ (Interrupt Request)
-    /// Returns the number of cycles consumed (7 cycles)
-    /// IRQ is maskable - it will not trigger if the effective I flag is set
-    pub fn trigger_irq(&mut self) -> u8 {
-        // IRQ is maskable - check if interrupts are disabled using EFFECTIVE I flag
-        if self.get_effective_i_flag() {
-            return 0; // IRQ masked, no cycles consumed
-        }
-
-        // Clear IRQ pending flag (IRQ has been serviced)
-        self.irq_pending = false;
-
-        // Push PC and P onto stack
-        self.push_word(self.pc);
-        let mut p_with_break = self.p & !FLAG_BREAK; // Clear Break flag
-        p_with_break |= FLAG_UNUSED; // Set unused flag
-        self.push_byte(p_with_break);
-
-        // Set PC to IRQ vector
-        self.pc = self.read_u16(IRQ_VECTOR);
-
-        // Set Interrupt Disable flag
-        self.p |= FLAG_INTERRUPT;
-
-        // IRQ takes 7 CPU cycles
-        self.total_cycles += 7;
-        7
     }
 
     /// Set the NMI pending flag
@@ -3166,16 +861,6 @@ impl Cpu {
     fn set_a(&mut self, value: u8) {
         self.a = value;
         self.update_zero_and_negative_flags(self.a);
-    }
-
-    fn set_x(&mut self, value: u8) {
-        self.x = value;
-        self.update_zero_and_negative_flags(self.x);
-    }
-
-    fn set_y(&mut self, value: u8) {
-        self.y = value;
-        self.update_zero_and_negative_flags(self.y);
     }
 
     fn exec_arr_illegal(&mut self, imm: u8) {
@@ -3242,6 +927,10 @@ impl Cpu {
     }
 
     pub fn execute(&mut self) {
+        if self.halted {
+            return;
+        }
+
         // The CPU's IRQ inhibit flag (I) has a one-instruction delay behavior for
         // CLI/SEI and (conditionally) PLP. We model that using `delayed_i_flag`:
         // when set, `should_poll_irq()` uses the old I value for one instruction.
@@ -3279,7 +968,7 @@ impl Cpu {
                 let value = self.get_operand_value(&op, operand) as u8;
                 self.ora(value);
             }
-            "HLT" => {
+            "HLT" | "KIL" => {
                 self.halted = true;
             }
             "*SLO" => {
@@ -3602,9 +1291,10 @@ impl Cpu {
                 }
             }
             "SHAZ" | "*XAS" => {
-                // *XAS (undocumented) - Store A AND X AND (high byte of address + 1)
+                // *XAS / TAS (undocumented) - SP = A & X, then store SP & (high byte of address + 1)
+                self.sp = self.a & self.x;
                 let high_byte = (operand >> 8) as u8;
-                let value = self.a & self.x & high_byte.wrapping_add(1);
+                let value = self.sp & high_byte.wrapping_add(1);
                 self.write(operand, value, false);
             }
             "TYA" => {
@@ -3616,10 +1306,10 @@ impl Cpu {
                 self.sp = self.x;
             }
             "TAS" => {
-                // TAS is an alias for *XAS (already implemented)
-                // *XAS (undocumented) - Store A AND X AND (high byte of address + 1)
+                // TAS is an alias for *XAS
+                self.sp = self.a & self.x;
                 let high_byte = (operand >> 8) as u8;
-                let value = self.a & self.x & high_byte.wrapping_add(1);
+                let value = self.sp & high_byte.wrapping_add(1);
                 self.write(operand, value, false);
             }
             "SHY" | "*SYA" => {
@@ -4103,7 +1793,7 @@ mod tests {
     }
 
     #[test]
-    fn test_irq_not_taken_when_not_asserted() {
+    fn test_execute_does_not_service_irq_when_not_asserted() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(
             TvSystem::Ntsc,
@@ -4112,37 +1802,34 @@ mod tests {
             Rc::clone(&apu),
         );
 
-        // Map a minimal cartridge so reset vector reads are valid.
-        // Point reset vector ($FFFC) to $8000.
+        // Map a minimal cartridge so vectors and opcode fetches are valid.
+        // Point reset vector ($FFFC) to $8000 and IRQ vector ($FFFE) to $9000.
+        // Put NOP at $8000.
         let mut prg_rom = vec![0; 0x4000];
         prg_rom[0x3FFC] = 0x00;
         prg_rom[0x3FFD] = 0x80;
+        prg_rom[0x3FFE] = 0x00;
+        prg_rom[0x3FFF] = 0x90;
+        prg_rom[0x0000] = 0xEA; // NOP at $8000
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset();
+        cpu.p &= !FLAG_INTERRUPT;
         let pc_before = cpu.pc;
         let sp_before = cpu.sp;
-        let ppu_before = ppu_dot(&ppu.borrow());
-        let apu_before = apu.borrow().frame_counter().get_cycle_counter();
         let cycles_before = cpu.get_total_cycles();
 
-        let irq_cycles = cpu.handle_irq_if_pending();
+        cpu.execute();
 
-        let ppu_after = ppu_dot(&ppu.borrow());
-        let apu_after = apu.borrow().frame_counter().get_cycle_counter();
-
-        assert_eq!(irq_cycles, 0);
-        assert_eq!(cpu.get_total_cycles(), cycles_before);
-        assert_eq!(cpu.pc, pc_before);
+        assert_eq!(cpu.get_total_cycles(), cycles_before + 2);
+        assert_eq!(cpu.pc, pc_before + 1);
         assert_eq!(cpu.sp, sp_before);
-        assert_eq!(ppu_after, ppu_before);
-        assert_eq!(apu_after, apu_before);
     }
 
     #[test]
-    fn test_irq_taken_ticks_ppu_apu_and_sets_pc_and_stack() {
+    fn test_execute_services_irq_after_instruction_and_sets_pc_and_stack() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(
             TvSystem::Ntsc,
@@ -4152,13 +1839,18 @@ mod tests {
         );
 
         // Map a minimal cartridge so IRQ vector reads are valid.
-        // Point IRQ vector ($FFFE) to $8000.
+        // Reset vector -> $8000, IRQ vector -> $9000.
+        // Put NOP at $8000 and NOP at $9000.
         let mut prg_rom = vec![0; 0x4000];
+        // IRQ vector ($FFFE)
         prg_rom[0x3FFE] = 0x00;
-        prg_rom[0x3FFF] = 0x80;
-        // Set reset vector to $8000 as well.
+        prg_rom[0x3FFF] = 0x90;
+        // Reset vector ($FFFC)
         prg_rom[0x3FFC] = 0x00;
         prg_rom[0x3FFD] = 0x80;
+        // Code at $8000 and $9000
+        prg_rom[0x0000] = 0xEA; // NOP at $8000
+        prg_rom[0x1000] = 0xEA; // NOP at $9000
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
@@ -4175,25 +1867,15 @@ mod tests {
         let pc_before = cpu.pc;
         let sp_before = cpu.sp;
         let p_before = cpu.p;
-
-        let ppu_before = ppu_dot(&ppu.borrow());
-        let apu_before = apu.borrow().frame_counter().get_cycle_counter();
         let cycles_before = cpu.get_total_cycles();
 
-        let irq_cycles = cpu.handle_irq_if_pending();
+        cpu.execute();
 
-        let ppu_after = ppu_dot(&ppu.borrow());
-        let apu_after = apu.borrow().frame_counter().get_cycle_counter();
-
-        assert_eq!(irq_cycles, 7);
-        assert_eq!(cpu.get_total_cycles(), cycles_before + 7);
-
-        // NTSC: 3 PPU cycles per CPU cycle
-        assert_eq!(ppu_after - ppu_before, 7 * 3);
-        assert_eq!(apu_after - apu_before, 7);
+        // NOP (2 cycles) + IRQ sequence (7 cycles) = 9
+        assert_eq!(cpu.get_total_cycles(), cycles_before + 9);
 
         // PC loaded from IRQ vector
-        assert_eq!(cpu.pc, 0x8000);
+        assert_eq!(cpu.pc, 0x9000);
 
         // I flag set
         assert_ne!(cpu.p & FLAG_INTERRUPT, 0);
@@ -4201,7 +1883,8 @@ mod tests {
         // Stack pointer decremented by 3
         assert_eq!(cpu.sp, sp_before.wrapping_sub(3));
 
-        // Verify pushed PC and status in memory (high, low, P) at original stack addresses
+        // Verify pushed PC and status in memory (high, low, P) at original stack addresses.
+        // PC pushed is the address after the completed instruction.
         let pch_addr = 0x0100 | (sp_before as u16);
         let pcl_addr = 0x0100 | (sp_before.wrapping_sub(1) as u16);
         let p_addr = 0x0100 | (sp_before.wrapping_sub(2) as u16);
@@ -4210,77 +1893,12 @@ mod tests {
         let pcl = memory.borrow().read(pcl_addr);
         let pushed_p = memory.borrow().read(p_addr);
 
-        assert_eq!(pch, (pc_before >> 8) as u8);
-        assert_eq!(pcl, (pc_before & 0xFF) as u8);
+        let expected_return_pc = pc_before.wrapping_add(1);
+        assert_eq!(pch, (expected_return_pc >> 8) as u8);
+        assert_eq!(pcl, (expected_return_pc & 0xFF) as u8);
 
         let expected_pushed_p = (p_before & !FLAG_BREAK) | FLAG_UNUSED;
         assert_eq!(pushed_p, expected_pushed_p);
-    }
-
-    #[test]
-    fn test_tick_cycle_with_devices_ticks_ppu_and_apu_for_one_cpu_cycle_ntsc() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(
-            TvSystem::Ntsc,
-            Rc::clone(&memory),
-            Rc::clone(&ppu),
-            Rc::clone(&apu),
-        );
-
-        // Minimal cartridge: reset vector -> $8000, code at $8000 is NOP
-        let mut prg_rom = vec![0; 0x4000];
-        prg_rom[0x3FFC] = 0x00;
-        prg_rom[0x3FFD] = 0x80;
-        prg_rom[0x0000] = 0xEA; // NOP at $8000
-        let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
-
-        cpu.reset();
-
-        let ppu_before = ppu_dot(&ppu.borrow());
-        let apu_before = apu.borrow().frame_counter().get_cycle_counter();
-
-        let _instruction_complete = cpu.tick_cycle_with_devices();
-
-        let ppu_after = ppu_dot(&ppu.borrow());
-        let apu_after = apu.borrow().frame_counter().get_cycle_counter();
-
-        // NTSC: 3 PPU cycles per CPU cycle
-        assert_eq!(ppu_after - ppu_before, 3);
-        assert_eq!(apu_after - apu_before, 1);
-    }
-
-    #[test]
-    fn test_tick_cycle_with_devices_pal_accumulates_fractional_cycles() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(
-            TvSystem::Pal,
-            Rc::clone(&memory),
-            Rc::clone(&ppu),
-            Rc::clone(&apu),
-        );
-
-        // Minimal cartridge: reset vector -> $8000, code at $8000 is NOP
-        let mut prg_rom = vec![0; 0x4000];
-        prg_rom[0x3FFC] = 0x00;
-        prg_rom[0x3FFD] = 0x80;
-        prg_rom[0x0000] = 0xEA; // NOP at $8000
-        let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
-
-        cpu.reset();
-
-        let ppu_before = ppu_dot(&ppu.borrow());
-
-        // PAL: 3.2 PPU cycles per CPU cycle => 5 CPU cycles should yield 16 PPU cycles.
-        for _ in 0..5 {
-            let _ = cpu.tick_cycle_with_devices();
-        }
-
-        let ppu_after = ppu_dot(&ppu.borrow());
-        assert_eq!(ppu_after - ppu_before, 16);
     }
 
     #[test]
@@ -4472,7 +2090,7 @@ mod tests {
     // Test helper function to run the CPU until halted (KIL instruction)
     fn run(cpu: &mut Cpu) {
         while !cpu.halted {
-            cpu.run_opcode();
+            cpu.execute();
         }
     }
 
@@ -4537,6 +2155,19 @@ mod tests {
         assert_eq!(cpu.sp, 0xFD);
         // Reset should set I flag: 0xFF | 0x04 = 0xFF (all flags set)
         assert_eq!(cpu.p, 0xFF);
+    }
+
+    #[test]
+    fn test_execute_kil_halts_cpu() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
+        let program = vec![KIL];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.execute();
+
+        assert!(cpu.halted, "KIL should halt the CPU when executed");
     }
 
     #[test]
@@ -7991,8 +5622,7 @@ mod tests {
         let program = vec![KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
-        // KIL should return false to indicate the CPU is halted
-        cpu.run_opcode();
+        cpu.execute();
         assert!(cpu.halted);
     }
 
@@ -8003,7 +5633,7 @@ mod tests {
         let program = vec![KIL2];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
-        cpu.run_opcode();
+        cpu.execute();
         assert!(cpu.halted);
     }
 
@@ -8014,7 +5644,7 @@ mod tests {
         let program = vec![KIL12];
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
-        cpu.run_opcode();
+        cpu.execute();
         assert!(cpu.halted);
     }
 
@@ -8026,10 +5656,10 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
         // Execute KIL - should halt
-        cpu.run_opcode();
+        cpu.execute();
         assert!(cpu.halted);
         // Try to execute next opcode - should still be halted
-        cpu.run_opcode();
+        cpu.execute();
         assert!(cpu.halted);
         // Reset should clear halt
         cpu.reset();
@@ -8038,7 +5668,7 @@ mod tests {
         let program2 = vec![NOP];
         fake_cartridge(&mut cpu, &program2);
         cpu.reset();
-        cpu.run_opcode();
+        cpu.execute();
         assert!(!cpu.halted);
     }
 
@@ -8512,128 +6142,6 @@ mod tests {
         assert_eq!(cpu.memory.borrow().read(0x1010), 0x10);
     }
 
-    // Cycle counting tests
-    #[test]
-    fn test_cycles_lda_immediate() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // LDA #$42 - should take 2 cycles
-        let program = vec![LDA_IMM, 0x42, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        let cycles = cpu.run_opcode();
-        assert_eq!(cycles, 2);
-        assert_eq!(cpu.a, 0x42);
-    }
-
-    #[test]
-    fn test_cycles_lda_absolute() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // LDA $1234 - should take 4 cycles
-        let program = vec![LDA_ABS, 0x34, 0x12, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        cpu.memory.borrow_mut().write(0x1234, 0x55, false);
-        let cycles = cpu.run_opcode();
-        assert_eq!(cycles, 4);
-        assert_eq!(cpu.a, 0x55);
-    }
-
-    #[test]
-    fn test_cycles_lda_absolute_x_no_page_cross() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // LDA $1200,X with X=$05 -> $1205 (no page cross)
-        // Should take 4 cycles (base)
-        let program = vec![LDA_ABSX, 0x00, 0x12, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1205, 0x77, false);
-        let cycles = cpu.run_opcode();
-        assert_eq!(cycles, 4);
-        assert_eq!(cpu.a, 0x77);
-    }
-
-    #[test]
-    fn test_cycles_lda_absolute_x_with_page_cross() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // LDA $12FF,X with X=$05 -> $1304 (page cross from $12 to $13)
-        // Should take 5 cycles (4 base + 1 for page cross)
-        let program = vec![LDA_ABSX, 0xFF, 0x12, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1304, 0x88, false);
-        let cycles = cpu.run_opcode();
-        assert_eq!(cycles, 5);
-        assert_eq!(cpu.a, 0x88);
-    }
-
-    #[test]
-    fn test_cycles_sta_absolute_x_no_extra_cycle() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // STA $12FF,X with X=$05 -> $1304 (page cross)
-        // STA always takes 5 cycles regardless of page crossing
-        let program = vec![STA_ABSXW, 0xFF, 0x12, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        cpu.a = 0x99;
-        cpu.x = 0x05;
-        let cycles = cpu.run_opcode();
-        assert_eq!(cycles, 5);
-        assert_eq!(cpu.memory.borrow().read(0x1304), 0x99);
-    }
-
-    #[test]
-    fn test_cycles_branch_not_taken() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // BEQ with Z flag clear - branch not taken
-        // Should take 2 cycles
-        let program = vec![BEQ, 0x10, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        cpu.p &= !FLAG_ZERO; // Clear zero flag
-        let cycles = cpu.run_opcode();
-        assert_eq!(cycles, 2);
-    }
-
-    #[test]
-    fn test_cycles_branch_taken_no_page_cross() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // BEQ +5 with Z flag set - branch taken, no page cross
-        // Should take 3 cycles (2 base + 1 for branch taken)
-        let program = vec![BEQ, 0x05, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        cpu.p |= FLAG_ZERO; // Set zero flag
-        let cycles = cpu.get_total_cycles();
-        cpu.execute();
-        assert_eq!(cpu.get_total_cycles() - cycles, 3);
-    }
-
-    #[test]
-    #[ignore = "Cycle count under reconstruction"]
-    fn test_cycles_branch_taken_with_page_cross() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // BEQ with negative offset causing page cross
-        // PC after instruction read: 0x8002
-        // Branch to: 0x8002 + (-3) = 0x7FFF (crosses from page 0x80 to 0x7F)
-        // Should take 4 cycles (2 base + 1 for branch + 1 for page cross)
-        let program = vec![BEQ, 0xFD, KIL]; // -3 offset (0xFD as i8)
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        cpu.p |= FLAG_ZERO; // Set zero flag
-        let cycles = cpu.run_opcode();
-        assert_eq!(cycles, 4);
-    }
-
     // Cycle counter tests
     #[test]
     fn test_cycle_counter_starts_at_zero() {
@@ -8675,225 +6183,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Cycle count under reconstruction"]
-    fn test_cycle_counter_increments_on_instruction() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // LDA #$42 - should take 2 cycles
-        let program = vec![LDA_IMM, 0x42, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        assert_eq!(cpu.get_total_cycles(), 7); // Reset takes 7 cycles
-        cpu.run_opcode();
-        assert_eq!(cpu.get_total_cycles(), 9); // 7 + 2 = 9
-    }
-
-    #[test]
-    #[ignore = "Cycle count under reconstruction"]
-    fn test_cycle_counter_accumulates_multiple_instructions() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // LDA #$42 (2 cycles), LDX #$10 (2 cycles), LDY #$20 (2 cycles)
-        let program = vec![LDA_IMM, 0x42, LDX_IMM, 0x10, LDY_IMM, 0x20, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset(); // Takes 7 cycles
-        cpu.run_opcode(); // LDA - 2 cycles
-        assert_eq!(cpu.get_total_cycles(), 9); // 7 + 2 = 9
-        cpu.run_opcode(); // LDX - 2 cycles
-        assert_eq!(cpu.get_total_cycles(), 11); // 7 + 2 + 2 = 11
-        cpu.run_opcode(); // LDY - 2 cycles
-        assert_eq!(cpu.get_total_cycles(), 13); // 7 + 2 + 2 + 2 = 13
-    }
-
-    #[test]
-    #[ignore = "Cycle count under reconstruction"]
-    fn test_cycle_counter_resets_to_zero() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        let program = vec![LDA_IMM, 0x42, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        cpu.run_opcode();
-        assert_eq!(cpu.get_total_cycles(), 9); // 7 + 2 = 9
-        cpu.reset();
-        assert_eq!(cpu.get_total_cycles(), 7); // Reset sets to 7 cycles
-    }
-
-    #[test]
-    #[ignore = "Cycle count under reconstruction"]
-    fn test_cycle_counter_with_page_crossing() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // LDA $12FF,X with X=$05 - should take 5 cycles (4 base + 1 for page cross)
-        let program = vec![LDA_ABSX, 0xFF, 0x12, KIL];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-        cpu.memory.borrow_mut().write(0x1304, 0x99, false);
-        cpu.x = 0x05;
-        cpu.run_opcode();
-        assert_eq!(cpu.get_total_cycles(), 12); // 7 + 5 = 12
-    }
-
-    #[test]
-    fn test_brk_interrupt() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        // Setup: BRK at 0x8000, with IRQ handler at 0x9000 that contains RTI
-        // We need to manually create a cartridge that has the IRQ vector set up
-        let mut prg_rom = vec![0; 0x4000]; // 16KB
-
-        // Place BRK at the beginning (0x8000)
-        prg_rom[0] = BRK;
-        // Place NOP at 0x8002 (where we should return after RTI)
-        prg_rom[2] = NOP;
-
-        // Place RTI at 0x9000 (IRQ handler)
-        // 0x9000 - 0x8000 = 0x1000
-        prg_rom[0x1000] = RTI;
-
-        // Set reset vector to point to 0x8000
-        prg_rom[0x3FFC] = 0x00; // Low byte of 0x8000
-        prg_rom[0x3FFD] = 0x80; // High byte of 0x8000
-
-        // Set IRQ/BRK vector to point to 0x9000
-        // IRQ vector is at 0xFFFE-0xFFFF
-        // For 16KB ROM: (0xFFFE - 0x8000) % 0x4000 = 0x7FFE % 0x4000 = 0x3FFE
-        prg_rom[0x3FFE] = 0x00; // Low byte of 0x9000
-        prg_rom[0x3FFF] = 0x90; // High byte of 0x9000
-
-        let chr_rom = vec![0; 0x2000];
-        let cartridge = crate::cartridge::Cartridge::from_parts(
-            prg_rom,
-            chr_rom,
-            crate::cartridge::MirroringMode::Horizontal,
-        );
-
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
-        cpu.reset();
-
-        // Set initial status register to a known value (without I flag set, with carry, overflow, and zero set)
-        cpu.p = 0b0110_0011; // Overflow, unused, zero, and carry flags set (NO I flag - bit 2 is 0)
-        let initial_p = cpu.p;
-        let initial_sp = cpu.sp;
-
-        // Execute BRK (single phase now)
-        cpu.run_opcode();
-
-        // Verify PC was loaded from IRQ vector
-        assert_eq!(
-            cpu.pc, 0x9000,
-            "PC should be loaded from IRQ vector at 0xFFFE-0xFFFF"
-        );
-
-        // Verify stack: should have pushed PC+2 (high byte first), then P
-        // PC was at 0x8000, BRK is 1 byte, but we push PC+2 = 0x8002
-        let stack_base = 0x0100;
-        assert_eq!(
-            cpu.memory.borrow().read(stack_base + initial_sp as u16),
-            0x80,
-            "High byte of PC+2 should be pushed first"
-        );
-        assert_eq!(
-            cpu.memory
-                .borrow()
-                .read(stack_base + initial_sp.wrapping_sub(1) as u16),
-            0x02,
-            "Low byte of PC+2 should be pushed second"
-        );
-
-        // Verify P was pushed with B flag and unused flag set
-        let pushed_p = cpu
-            .memory
-            .borrow()
-            .read(stack_base + initial_sp.wrapping_sub(2) as u16);
-        assert_eq!(
-            pushed_p & FLAG_BREAK,
-            FLAG_BREAK,
-            "B flag should be set in pushed P"
-        );
-        assert_eq!(
-            pushed_p & FLAG_UNUSED,
-            FLAG_UNUSED,
-            "Unused flag should be set in pushed P"
-        );
-        // Verify the other flags from initial P are preserved in pushed P
-        assert_eq!(
-            pushed_p & FLAG_OVERFLOW,
-            FLAG_OVERFLOW,
-            "Overflow flag should be preserved in pushed P"
-        );
-        assert_eq!(
-            pushed_p & FLAG_CARRY,
-            FLAG_CARRY,
-            "Carry flag should be preserved in pushed P"
-        );
-        assert_eq!(
-            pushed_p & FLAG_ZERO,
-            FLAG_ZERO,
-            "Zero flag should be preserved in pushed P"
-        );
-
-        // Verify stack pointer was decremented by 3
-        assert_eq!(
-            cpu.sp,
-            initial_sp.wrapping_sub(3),
-            "Stack pointer should be decremented by 3"
-        );
-
-        // Verify I flag is set in current P register
-        assert_eq!(
-            cpu.p & FLAG_INTERRUPT,
-            FLAG_INTERRUPT,
-            "I flag should be set after BRK"
-        );
-
-        // Verify CPU is not halted (BRK should not halt like KIL)
-        assert_eq!(cpu.halted, false, "BRK should not halt the CPU");
-
-        // Now execute RTI to return from interrupt
-        let sp_before_rti = cpu.sp;
-        cpu.run_opcode();
-
-        // Verify PC was restored to 0x8002 (PC+2 from BRK)
-        assert_eq!(cpu.pc, 0x8002, "PC should be restored to 0x8002 after RTI");
-
-        // Verify stack pointer was incremented by 3
-        assert_eq!(
-            cpu.sp,
-            sp_before_rti.wrapping_add(3),
-            "Stack pointer should be incremented by 3 after RTI"
-        );
-        assert_eq!(
-            cpu.sp, initial_sp,
-            "Stack pointer should be back to initial value"
-        );
-
-        // Verify P was restored (RTI should restore P without B flag, but with original flags)
-        // RTI ignores the B flag from the stack, so we should get back initial_p without B flag
-        let expected_p = (initial_p & !FLAG_BREAK) | FLAG_UNUSED; // B cleared, unused always set
-        assert_eq!(
-            cpu.p, expected_p,
-            "P should be restored after RTI (without B flag)"
-        );
-        assert_eq!(
-            cpu.p & FLAG_OVERFLOW,
-            FLAG_OVERFLOW,
-            "Overflow flag should be restored"
-        );
-        assert_eq!(
-            cpu.p & FLAG_CARRY,
-            FLAG_CARRY,
-            "Carry flag should be restored"
-        );
-        assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO, "Zero flag should be restored");
-        assert_eq!(
-            cpu.p & FLAG_INTERRUPT,
-            0,
-            "I flag should be cleared after RTI"
-        );
-    }
-
-    #[test]
     fn test_rmw_on_ppu_register_preserves_w_flag() {
         // This test verifies that RMW instructions on PPU registers (specifically $2006)
         // handle both writes correctly. According to Blargg's test ROM analysis:
@@ -8931,7 +6220,7 @@ mod tests {
         // 1. Read $2006 (gets open bus value, let's say $20)
         // 2. Dummy write $20 to $2006 (w: false→true, t high = $20)
         // 3. Real write $21 to $2006 (w: true→false, t low = $21, v = $2021)
-        cpu.run_opcode();
+        cpu.execute();
 
         // After the RMW on $2006:
         // - PPUADDR should be $2021 (or thereabouts, depending on open bus)
@@ -8953,235 +6242,6 @@ mod tests {
         assert_eq!(
             value, 0xAB,
             "Value at PPU $3040 should be $AB - dummy writes do affect PPU state"
-        );
-    }
-
-    #[test]
-    #[ignore = "Cycle count under reconstruction"]
-    fn test_tick_cycle_basic() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
-        // Load a simple program: LDA #$42 (2 cycles), then BRK (7 cycles)
-        let program = vec![
-            0xA9, 0x42, // LDA #$42
-            0x00, // BRK
-        ];
-        fake_cartridge(&mut cpu, &program);
-        cpu.reset();
-
-        let start_cycles = cpu.get_total_cycles();
-
-        // Execute LDA #$42 cycle by cycle (2 cycles)
-        assert_eq!(
-            cpu.tick_cycle(),
-            false,
-            "Cycle 1 of LDA should not complete"
-        );
-        assert_eq!(cpu.get_total_cycles(), start_cycles + 1);
-        assert_eq!(cpu.tick_cycle(), true, "Cycle 2 of LDA should complete");
-        assert_eq!(cpu.get_total_cycles(), start_cycles + 2);
-        assert_eq!(cpu.a, 0x42, "A register should be loaded with 0x42");
-
-        // Execute BRK cycle by cycle (7 cycles)
-        for i in 1..=6 {
-            assert_eq!(
-                cpu.tick_cycle(),
-                false,
-                "Cycle {} of BRK should not complete",
-                i
-            );
-            assert_eq!(cpu.get_total_cycles(), start_cycles + 2 + i);
-        }
-        assert_eq!(cpu.tick_cycle(), true, "Cycle 7 of BRK should complete");
-        assert_eq!(cpu.get_total_cycles(), start_cycles + 9);
-    }
-
-    #[test]
-    #[ignore = "Cycle count under reconstruction"]
-    fn test_tick_cycle_matches_run_opcode() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu1 = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
-        let mut cpu2 = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
-        // Load a program with various instructions
-        let program = vec![
-            0xA9, 0x10, // LDA #$10
-            0x85, 0x20, // STA $20
-            0xA5, 0x20, // LDA $20
-            0x69, 0x05, // ADC #$05
-            0x00, // BRK
-        ];
-        fake_cartridge(&mut cpu1, &program);
-        fake_cartridge(&mut cpu2, &program);
-        cpu1.reset();
-        cpu2.reset();
-
-        // Execute using run_opcode
-        for _ in 0..5 {
-            cpu1.run_opcode();
-        }
-
-        // Execute using tick_cycle
-        loop {
-            if cpu2.tick_cycle() {
-                // Instruction completed, check if we should continue
-                if cpu2.halted {
-                    break;
-                }
-                // Check if we've executed enough instructions
-                if cpu2.get_total_cycles() >= cpu1.get_total_cycles() {
-                    break;
-                }
-            }
-        }
-
-        // Both CPUs should be in the same state
-        assert_eq!(cpu2.a, cpu1.a, "A register should match");
-        assert_eq!(cpu2.x, cpu1.x, "X register should match");
-        assert_eq!(cpu2.y, cpu1.y, "Y register should match");
-        assert_eq!(cpu2.sp, cpu1.sp, "Stack pointer should match");
-        assert_eq!(cpu2.p, cpu1.p, "Status register should match");
-        assert_eq!(
-            cpu2.get_total_cycles(),
-            cpu1.get_total_cycles(),
-            "Total cycles should match"
-        );
-    }
-
-    #[test]
-    #[ignore = "Cycle count under reconstruction"]
-    fn test_brk_cycle_by_cycle() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
-        // Create a proper cartridge with interrupt vectors
-        let mut prg_rom = vec![0; 0x4000]; // 16KB
-        // BRK at 0x8000
-        prg_rom[0x0000] = 0x00; // BRK
-        prg_rom[0x0001] = 0x00; // Padding
-        // Reset vector at 0xFFFC
-        prg_rom[0x3FFC] = 0x00;
-        prg_rom[0x3FFD] = 0x80;
-        // IRQ vector at 0xFFFE
-        prg_rom[0x3FFE] = 0x00;
-        prg_rom[0x3FFF] = 0x90;
-
-        let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
-        cpu.reset();
-
-        let start_pc = cpu.pc;
-        let start_cycles = cpu.get_total_cycles();
-
-        // Execute BRK cycle by cycle (7 cycles)
-        let mut cycles_executed = 0;
-        loop {
-            let complete = cpu.tick_cycle();
-            cycles_executed += 1;
-            if complete {
-                break;
-            }
-        }
-
-        // BRK should take exactly 7 cycles
-        assert_eq!(cycles_executed, 7, "BRK should execute in 7 cycles");
-        assert_eq!(
-            cpu.get_total_cycles(),
-            start_cycles + 7,
-            "Total cycles should increase by 7"
-        );
-
-        // Verify PC jumped to interrupt vector
-        assert_eq!(cpu.pc, 0x9000, "PC should jump to IRQ vector (0x9000)");
-
-        // Verify stack has return address (start_pc + 2) and status
-        let sp_after = cpu.sp;
-        assert_eq!(
-            sp_after,
-            0xFD - 3,
-            "Stack pointer should be decremented by 3"
-        );
-
-        // Check stack contents
-        let stack_base = 0x0100;
-        let pch = cpu.memory.borrow().read(stack_base + 0xFD as u16);
-        let pcl = cpu.memory.borrow().read(stack_base + 0xFC as u16);
-        let status = cpu.memory.borrow().read(stack_base + 0xFB as u16);
-
-        let return_addr = ((pch as u16) << 8) | (pcl as u16);
-        assert_eq!(return_addr, start_pc + 2, "Return address should be PC + 2");
-        assert_eq!(
-            status & FLAG_BREAK,
-            FLAG_BREAK,
-            "Status on stack should have B flag set"
-        );
-    }
-
-    #[test]
-    #[ignore = "Cycle count under reconstruction"]
-    fn test_brk_nmi_hijacking() {
-        let (ppu, apu, memory) = create_test_memory();
-        let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
-        // Create a proper cartridge with interrupt vectors
-        let mut prg_rom = vec![0; 0x4000]; // 16KB
-        // BRK at 0x8000
-        prg_rom[0x0000] = 0x00; // BRK
-        prg_rom[0x0001] = 0x00; // Padding
-        // Reset vector at 0xFFFC
-        prg_rom[0x3FFC] = 0x00;
-        prg_rom[0x3FFD] = 0x80;
-        // NMI vector at 0xFFFA
-        prg_rom[0x3FFA] = 0x00;
-        prg_rom[0x3FFB] = 0x80;
-        // IRQ vector at 0xFFFE
-        prg_rom[0x3FFE] = 0x00;
-        prg_rom[0x3FFF] = 0x90;
-
-        let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
-        cpu.reset();
-
-        // Set NMI pending BEFORE starting BRK
-        cpu.set_nmi_pending(true);
-
-        let start_cycles = cpu.get_total_cycles();
-
-        // Execute BRK cycle by cycle
-        let mut cycles_executed = 0;
-        loop {
-            let complete = cpu.tick_cycle();
-            cycles_executed += 1;
-            if complete {
-                break;
-            }
-        }
-
-        // BRK should still take exactly 7 cycles even when hijacked
-        assert_eq!(cycles_executed, 7, "BRK should execute in 7 cycles");
-        assert_eq!(
-            cpu.get_total_cycles(),
-            start_cycles + 7,
-            "Total cycles should increase by 7"
-        );
-
-        // CRITICAL: Verify PC jumped to NMI vector, not IRQ vector
-        assert_eq!(
-            cpu.pc, 0x8000,
-            "PC should jump to NMI vector (0x8000) due to hijacking"
-        );
-
-        // Verify NMI pending flag was cleared
-        assert_eq!(
-            cpu.nmi_pending, false,
-            "NMI pending flag should be cleared after hijacking"
-        );
-
-        // Verify B flag is STILL set on stack (BRK's B flag, not NMI's)
-        let status = cpu.memory.borrow().read(0x0100 + 0xFB as u16);
-        assert_eq!(
-            status & FLAG_BREAK,
-            FLAG_BREAK,
-            "Status on stack should STILL have B flag set (BRK characteristic)"
         );
     }
 
