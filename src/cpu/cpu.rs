@@ -296,7 +296,6 @@ impl Cpu {
     }
 
     /// Check if two addresses are on different pages
-    // TODO Replace other places with the use of this function
     fn page_crossed(addr1: u16, addr2: u16) -> bool {
         (addr1 & 0xFF00) != (addr2 & 0xFF00)
     }
@@ -501,11 +500,6 @@ impl Cpu {
         }
     }
 
-    /// Branch - Apply relative offset to PC
-    fn branch(&mut self, offset: i8) {
-        self.pc = self.pc.wrapping_add(offset as u16);
-    }
-
     /// Compare operation - sets flags based on register - value
     fn compare(&mut self, register_value: u8, value: u8) {
         let result = register_value.wrapping_sub(value);
@@ -611,16 +605,16 @@ impl Cpu {
         result
     }
 
-    /// ISC - Undocumented opcode: Increment memory then subtract from A with borrow
-    fn isc(&mut self, addr: u16) {
-        let value = self.read(addr);
-        // Dummy write
-        self.dummy_write(addr, value);
-        // Real operation and write
-        let incremented = self.inc(value);
-        self.write(addr, incremented, false);
-        self.sbc(incremented);
-    }
+    // /// ISC - Undocumented opcode: Increment memory then subtract from A with borrow
+    // fn isc(&mut self, addr: u16) {
+    //     let value = self.read(addr);
+    //     // Dummy write
+    //     self.dummy_write(addr, value);
+    //     // Real operation and write
+    //     let incremented = self.inc(value);
+    //     self.write(addr, incremented, false);
+    //     self.sbc(incremented);
+    // }
 
     /// RLA - Undocumented opcode: Rotate left memory then AND with accumulator
     fn rla(&mut self, addr: u16) {
@@ -1190,13 +1184,7 @@ impl Cpu {
                 self.adc(value);
             }
             "*RRA" => {
-                // RRA: ROR memory, then ADC result to accumulator (undocumented)
-                let value = self.read(operand);
-                self.dummy_write(operand, value);
-                let rotated = self.ror(value);
-                self.write(operand, rotated, false); // real write
-                // Now do ADC with the rotated value
-                self.adc(rotated);
+                self.rra(operand);
             }
             "ROR" => {
                 match op.mode {
