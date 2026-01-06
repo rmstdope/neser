@@ -897,7 +897,7 @@ impl Cpu {
         let base_high_byte = (base_addr >> 8) as u8;
         let value = self.y & base_high_byte.wrapping_add(1);
 
-        let page_crossed = (base_addr & 0xFF00) != (addr & 0xFF00);
+        let page_crossed = Self::page_crossed(base_addr, addr);
         let final_addr = if page_crossed {
             let modified_high = ((addr >> 8) as u8) & self.y;
             ((modified_high as u16) << 8) | (addr & 0x00FF)
@@ -915,7 +915,7 @@ impl Cpu {
         let base_high_byte = (base_addr >> 8) as u8;
         let value = self.x & base_high_byte.wrapping_add(1);
 
-        let page_crossed = (base_addr & 0xFF00) != (addr & 0xFF00);
+        let page_crossed = Self::page_crossed(base_addr, addr);
         let final_addr = if page_crossed {
             let modified_high = ((addr >> 8) as u8) & self.x;
             ((modified_high as u16) << 8) | (addr & 0x00FF)
@@ -1014,7 +1014,7 @@ impl Cpu {
                     // Branch taken - do a dummy read
                     self.dummy_read(self.pc);
                     // Check for page crossing - do another dummy read
-                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                    if Self::page_crossed(old_pc, self.pc) {
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1090,7 +1090,7 @@ impl Cpu {
                     // Branch taken - do a dummy read
                     self.dummy_read(self.pc);
                     // Check for page crossing - do another dummy read
-                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                    if Self::page_crossed(old_pc, self.pc) {
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1159,7 +1159,7 @@ impl Cpu {
                     // Branch taken - do a dummy read
                     self.dummy_read(self.pc);
                     // Check for page crossing - do another dummy read
-                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                    if Self::page_crossed(old_pc, self.pc) {
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1235,7 +1235,7 @@ impl Cpu {
                     // Branch taken - do a dummy read
                     self.dummy_read(self.pc);
                     // Check for page crossing - do another dummy read
-                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                    if Self::page_crossed(old_pc, self.pc) {
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1285,7 +1285,7 @@ impl Cpu {
                     // Branch taken - do a dummy read
                     self.dummy_read(self.pc);
                     // Check for page crossing - do another dummy read
-                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                    if Self::page_crossed(old_pc, self.pc) {
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1367,7 +1367,7 @@ impl Cpu {
                     // Branch taken - do a dummy read
                     self.dummy_read(self.pc);
                     // Check for page crossing - do another dummy read
-                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                    if Self::page_crossed(old_pc, self.pc) {
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1419,7 +1419,7 @@ impl Cpu {
                     // Branch taken - do a dummy read
                     self.dummy_read(self.pc);
                     // Check for page crossing - do another dummy read
-                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                    if Self::page_crossed(old_pc, self.pc) {
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1456,7 +1456,7 @@ impl Cpu {
                     // Branch taken - do a dummy read
                     self.dummy_read(self.pc);
                     // Check for page crossing - do another dummy read
-                    if (old_pc & 0xFF00) != (self.pc & 0xFF00) {
+                    if Self::page_crossed(old_pc, self.pc) {
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1552,7 +1552,7 @@ impl Cpu {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
                 // Always do dummy read at base + X with wrong high byte if page crossed
-                if (base & 0xFF00) != (addr & 0xFF00) {
+                if Self::page_crossed(base, addr) {
                     let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
                     self.dummy_read(dummy_addr);
                 }
@@ -1576,7 +1576,7 @@ impl Cpu {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
                 // Always do dummy read at base + T with wrong high byte if page crossed
-                if (base & 0xFF00) != (addr & 0xFF00) {
+                if Self::page_crossed(base, addr) {
                     let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
                     self.dummy_read(dummy_addr);
                 }
@@ -1588,7 +1588,7 @@ impl Cpu {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.y as u16);
                 // Always do dummy read at base + Y with wrong high byte if page crossed
-                let page_crossed = (base & 0xFF00) != (addr & 0xFF00);
+                let page_crossed = Self::page_crossed(base, addr);
                 let dummy_addr = if page_crossed { addr - 0x100 } else { addr };
                 self.dummy_read(dummy_addr);
                 addr
@@ -1616,7 +1616,7 @@ impl Cpu {
                 let base = self.read_word_from_zp(ptr);
                 let addr = base.wrapping_add(self.y as u16);
                 // Always do dummy read at base + Y with wrong high byte if page crossed
-                if (base & 0xFF00) != (addr & 0xFF00) {
+                if Self::page_crossed(base, addr) {
                     let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
                     self.dummy_read(dummy_addr);
                 }
@@ -1630,7 +1630,7 @@ impl Cpu {
                 let base = self.read_word_from_zp(ptr);
                 let addr = base.wrapping_add(self.y as u16);
                 // Always do dummy read - with wrong high byte if page crossed
-                let dummy_addr = if (base & 0xFF00) != (addr & 0xFF00) {
+                let dummy_addr = if Self::page_crossed(base, addr) {
                     (base & 0xFF00) | (addr & 0x00FF)
                 } else {
                     addr
