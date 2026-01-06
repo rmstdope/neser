@@ -61,9 +61,19 @@ pub struct Cpu {
     /// NMI pending flag - set by external hardware (NES loop)
     /// Checked during BRK execution to determine vector hijacking
     pub nmi_pending: bool,
+
+    // --- Mesen-style interrupt timing (latched at end of CPU cycles) ---
+    prev_need_nmi: bool,
+    prev_run_irq: bool,
+    run_irq: bool,
     /// IRQ pending flag - set by external hardware (APU/mapper)
     /// IRQ is level-triggered and maskable by the I flag
     irq_pending: bool,
+    /// Test-only / externally-forced IRQ assertion.
+    ///
+    /// The NES IRQ line is level-triggered and should be sampled each CPU cycle.
+    /// Some unit tests use `set_irq_pending(true)` to force an asserted IRQ.
+    forced_irq_pending: bool,
     /// Current instruction being executed (for cycle-by-cycle execution)
     pub current_instruction: Option<InstructionState>,
     /// Current cycle within the instruction (0-based)
@@ -125,7 +135,11 @@ impl Cpu {
             total_cycles: 0,
             delayed_i_flag: None,
             nmi_pending: false,
+            prev_need_nmi: false,
+            prev_run_irq: false,
+            run_irq: false,
             irq_pending: false,
+            forced_irq_pending: false,
             current_instruction: None,
             cycle_in_instruction: 0,
             master_clock: MasterClock::new(tv_system),
@@ -163,10 +177,8 @@ impl Cpu {
         // Tick devices for one CPU cycle (PAL fractional handled by MasterClock).
         self.tick_ppu_apu_for_cpu_cycles(1);
 
-        // Mirror NES behavior: after ticking PPU, capture NMI edge for the CPU.
-        if self.ppu.borrow_mut().poll_nmi() {
-            self.nmi_pending = true;
-        }
+        // Mirror Mesen behavior: latch interrupt line state at the end of the CPU cycle.
+        self.end_cpu_cycle_latch_interrupt_lines();
 
         // Execute one CPU cycle without also ticking devices via bus accesses.
         self.suppress_bus_device_ticks = true;
@@ -174,6 +186,56 @@ impl Cpu {
         self.suppress_bus_device_ticks = false;
 
         instruction_complete
+    }
+
+    fn end_cpu_cycle_latch_interrupt_lines(&mut self) {
+        // Equivalent of Mesen's EndCpuCycle(): capture previous-cycle state, then update
+        // edge/level detections based on the current end-of-cycle line status.
+
+        self.prev_need_nmi = self.nmi_pending;
+        if self.ppu.borrow_mut().poll_nmi() {
+            self.nmi_pending = true;
+        }
+
+        self.prev_run_irq = self.run_irq;
+
+        // Level-triggered IRQ line: sample the hardware line each CPU cycle.
+        // Unit tests may force an asserted IRQ via `forced_irq_pending`.
+        let irq_asserted_from_apu = self.apu.borrow().poll_irq();
+        self.irq_pending = irq_asserted_from_apu || self.forced_irq_pending;
+
+        // The value that will be used for the *next* instruction's interrupt check.
+        self.run_irq = self.should_poll_irq();
+    }
+
+    fn service_irq_or_nmi_sequence(&mut self) {
+        // Mesen-style shared interrupt sequence used after an instruction completes.
+        // Two dummy reads with suppressed PC increment, then push PC, push PS, set I, vector.
+
+        // PAL DMA nuances omitted for now.
+        let pc = self.pc;
+        self.dummy_read(pc);
+        self.dummy_read(pc);
+
+        self.push_word(self.pc);
+
+        // For IRQ/NMI, the pushed status has B cleared and bit 5 set.
+        let flags = (self.p & !FLAG_BREAK) | FLAG_UNUSED;
+        self.push_byte(flags);
+        self.p |= FLAG_INTERRUPT;
+        // Interrupt entry sets I immediately; any pending CLI/SEI/PLP "delay" state
+        // must not leak into the handler.
+        self.delayed_i_flag = None;
+
+        if self.prev_need_nmi {
+            self.nmi_pending = false;
+            self.pc = self.read_u16(NMI_VECTOR);
+        } else {
+            // IRQ has been serviced; clear any forced IRQ. Hardware IRQ remains asserted
+            // only if the APU line is still high and will be re-sampled next cycle.
+            self.forced_irq_pending = false;
+            self.pc = self.read_u16(IRQ_VECTOR);
+        }
     }
 
     /// If an OAM DMA is pending (triggered by a write to $4014), execute it and
@@ -210,18 +272,31 @@ impl Cpu {
         let irq_asserted_from_apu = self.apu.borrow().poll_irq();
 
         // IRQ is level-triggered (driven by hardware sources), but unit tests may force
-        // a pending IRQ directly via `set_irq_pending(true)`. Treat that as asserted
-        // for this poll, but don't latch it if IRQ isn't taken.
-        let irq_asserted_for_poll = irq_asserted_from_apu || self.irq_pending;
-        self.set_irq_pending(irq_asserted_for_poll);
+        // an asserted IRQ via `set_irq_pending(true)`.
+        let irq_asserted_for_poll = irq_asserted_from_apu || self.forced_irq_pending;
+        self.irq_pending = irq_asserted_for_poll;
 
         if !self.should_poll_irq() {
-            // Keep CPU pending state aligned with the actual hardware IRQ line.
-            self.set_irq_pending(irq_asserted_from_apu);
             return 0;
         }
 
         self.trigger_irq_without_bus_cycles();
+        self.tick_ppu_apu_for_cpu_cycles(7);
+        self.add_cycles(7);
+        7
+    }
+
+    /// If an NMI is pending, service it and return the number of CPU cycles consumed (0 or 7).
+    ///
+    /// This uses the no-bus-cycle interrupt sequence and ticks PPU/APU internally so callers
+    /// don't double-tick devices.
+    pub fn handle_nmi_if_pending(&mut self) -> u8 {
+        if !self.nmi_pending {
+            return 0;
+        }
+
+        self.nmi_pending = false;
+        self.trigger_nmi_without_bus_cycles();
         self.tick_ppu_apu_for_cpu_cycles(7);
         self.add_cycles(7);
         7
@@ -244,6 +319,7 @@ impl Cpu {
     fn trigger_nmi_without_bus_cycles(&mut self) {
         // Replicates `trigger_nmi` semantics without using `read`/`write` helpers,
         // so we don't accidentally advance CPU cycles or PPU timing here.
+        self.delayed_i_flag = None;
         let pc = self.pc;
 
         // Push PC (high then low)
@@ -276,9 +352,12 @@ impl Cpu {
     fn trigger_irq_without_bus_cycles(&mut self) {
         // Replicates `trigger_irq` semantics without using `read`/`write` helpers,
         // so we don't accidentally advance CPU cycles or PPU timing here.
+        self.delayed_i_flag = None;
 
         // Clear IRQ pending flag (IRQ has been serviced)
         self.irq_pending = false;
+        self.forced_irq_pending = false;
+        self.forced_irq_pending = false;
 
         let pc = self.pc;
 
@@ -333,6 +412,7 @@ impl Cpu {
         self.delayed_i_flag = None;
         self.nmi_pending = false;
         self.irq_pending = false;
+        self.forced_irq_pending = false;
         self.current_instruction = None;
         self.cycle_in_instruction = 0;
 
@@ -2487,6 +2567,9 @@ impl Cpu {
             return;
         }
         self.master_clock.after_cpu_cycle(is_write);
+
+        // Mirror Mesen EndCpuCycle() behavior: latch interrupt lines at the end of each CPU cycle.
+        self.end_cpu_cycle_latch_interrupt_lines();
     }
 
     /// Read a byte from memory at the specified address
@@ -3058,6 +3141,9 @@ impl Cpu {
     /// Set the IRQ pending flag
     /// This should be called by the NES loop when IRQ is detected
     pub fn set_irq_pending(&mut self, pending: bool) {
+        self.forced_irq_pending = pending;
+        // Preserve prior unit-test behavior where `set_irq_pending(true)` makes
+        // `should_poll_irq()` immediately reflect an asserted IRQ.
         self.irq_pending = pending;
     }
 
@@ -3092,7 +3178,76 @@ impl Cpu {
         self.update_zero_and_negative_flags(self.y);
     }
 
+    fn exec_arr_illegal(&mut self, imm: u8) {
+        // ARR (undocumented): AND with immediate, then ROR, with special flag handling.
+        // Flags on 2A03:
+        // - C = bit 6 of result
+        // - V = bit 6 XOR bit 5 of result
+        self.a &= imm;
+
+        let old_carry = if self.p & FLAG_CARRY != 0 { 1 } else { 0 };
+        self.a = (self.a >> 1) | (old_carry << 7);
+
+        self.update_zero_and_negative_flags(self.a);
+
+        if (self.a & 0x40) != 0 {
+            self.p |= FLAG_CARRY;
+        } else {
+            self.p &= !FLAG_CARRY;
+        }
+
+        let bit6 = (self.a >> 6) & 1;
+        let bit5 = (self.a >> 5) & 1;
+        if (bit6 ^ bit5) != 0 {
+            self.p |= FLAG_OVERFLOW;
+        } else {
+            self.p &= !FLAG_OVERFLOW;
+        }
+    }
+
+    fn exec_sya_illegal(&mut self, addr: u16) {
+        // *SYA/SHY (undocumented): Store Y AND (high byte of BASE address + 1).
+        // Quirk: on page crossing, the high byte of the target address is ANDed with Y.
+        let base_addr = addr.wrapping_sub(self.x as u16);
+        let base_high_byte = (base_addr >> 8) as u8;
+        let value = self.y & base_high_byte.wrapping_add(1);
+
+        let page_crossed = (base_addr & 0xFF00) != (addr & 0xFF00);
+        let final_addr = if page_crossed {
+            let modified_high = ((addr >> 8) as u8) & self.y;
+            ((modified_high as u16) << 8) | (addr & 0x00FF)
+        } else {
+            addr
+        };
+
+        self.write(final_addr, value, false);
+    }
+
+    fn exec_sxa_illegal(&mut self, addr: u16) {
+        // *SXA/SHX (undocumented): Store X AND (high byte of BASE address + 1).
+        // Quirk: on page crossing, the high byte of the target address is ANDed with X.
+        let base_addr = addr.wrapping_sub(self.y as u16);
+        let base_high_byte = (base_addr >> 8) as u8;
+        let value = self.x & base_high_byte.wrapping_add(1);
+
+        let page_crossed = (base_addr & 0xFF00) != (addr & 0xFF00);
+        let final_addr = if page_crossed {
+            let modified_high = ((addr >> 8) as u8) & self.x;
+            ((modified_high as u16) << 8) | (addr & 0x00FF)
+        } else {
+            addr
+        };
+
+        self.write(final_addr, value, false);
+    }
+
     pub fn execute(&mut self) {
+        // The CPU's IRQ inhibit flag (I) has a one-instruction delay behavior for
+        // CLI/SEI and (conditionally) PLP. We model that using `delayed_i_flag`:
+        // when set, `should_poll_irq()` uses the old I value for one instruction.
+        let had_delayed_i_flag = self.delayed_i_flag.is_some();
+        let mut new_delayed_i_flag: Option<bool> = None;
+
         let opcode = self.read_byte_from_pc();
         let Some(op) = super::opcode::lookup(opcode) else {
             panic!("Invalid opcode: 0x{:02X}", opcode);
@@ -3100,21 +3255,25 @@ impl Cpu {
         let operand = self.get_operand(*op);
         match op.mnemonic.as_ref() {
             "BRK" => {
-                // Push PC on stack
-                self.push_word(self.pc);
-                // Push flags on stack
+                // Mesen behavior: BRK pushes (PC + 1), which corresponds to BRK+2 overall.
+                // At this point, PC points to the padding byte, so add 1.
+                self.push_word(self.pc.wrapping_add(1));
+
                 let flags = self.p | FLAG_BREAK | FLAG_UNUSED;
-                self.push_byte(flags);
-                // Set Interrupt Disable flag
-                self.p |= FLAG_INTERRUPT;
-                // Jump to either NMI or IRQ vector
-                let vector = if self.nmi_pending {
-                    NMI_VECTOR
+
+                if self.nmi_pending {
+                    self.nmi_pending = false;
+                    self.push_byte(flags);
+                    self.p |= FLAG_INTERRUPT;
+                    self.pc = self.read_u16(NMI_VECTOR);
                 } else {
-                    IRQ_VECTOR
-                };
-                self.pc = self.read_u16(vector);
-                self.nmi_pending = false;
+                    self.push_byte(flags);
+                    self.p |= FLAG_INTERRUPT;
+                    self.pc = self.read_u16(IRQ_VECTOR);
+                }
+
+                // Ensure we don't start an NMI immediately after BRK.
+                self.prev_need_nmi = false;
             }
             "ORA" => {
                 let value = self.get_operand_value(&op, operand) as u8;
@@ -3224,7 +3383,14 @@ impl Cpu {
                 // Pop status from stack
                 let status = self.pop_byte();
                 // Restore flags, but always set UNUSED and clear BREAK
+                let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
                 self.p = (status & !FLAG_BREAK) | FLAG_UNUSED;
+                let new_i_flag = (self.p & FLAG_INTERRUPT) != 0;
+
+                // If PLP changes I, IRQ polling uses the OLD value for the next instruction.
+                if old_i_flag != new_i_flag {
+                    new_delayed_i_flag = Some(old_i_flag);
+                }
             }
             "BMI" => {
                 // Branch if negative flag is set
@@ -3310,8 +3476,10 @@ impl Cpu {
                 }
             }
             "CLI" => {
-                // Clear interrupt flag
+                // Save old I before clearing. IRQ polling uses the OLD value for the next instruction.
+                let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
                 self.p &= !FLAG_INTERRUPT;
+                new_delayed_i_flag = Some(old_i_flag);
             }
             "RTS" => {
                 // Return from subroutine - 6 cycles:
@@ -3366,10 +3534,8 @@ impl Cpu {
                 self.update_zero_and_negative_flags(self.a);
             }
             "*ARR" => {
-                // ARR: AND with immediate value, then ROR (undocumented)
                 let value = self.get_operand_value(&op, operand);
-                self.a &= value;
-                self.a = self.ror(self.a);
+                self.exec_arr_illegal(value);
             }
             "BVS" => {
                 // Branch on overflow set
@@ -3386,8 +3552,10 @@ impl Cpu {
                 }
             }
             "SEI" => {
-                // Set interrupt flag
+                // Save old I before setting. IRQ polling uses the OLD value for the next instruction.
+                let old_i_flag = (self.p & FLAG_INTERRUPT) != 0;
                 self.p |= FLAG_INTERRUPT;
+                new_delayed_i_flag = Some(old_i_flag);
             }
             "STA" => {
                 self.write(operand, self.a, false);
@@ -3455,16 +3623,10 @@ impl Cpu {
                 self.write(operand, value, false);
             }
             "SHY" | "*SYA" => {
-                // *SYA (undocumented) - Store Y AND (high byte of address + 1)
-                let high_byte = (operand >> 8) as u8;
-                let value = self.y & high_byte.wrapping_add(1);
-                self.write(operand, value, false);
+                self.exec_sya_illegal(operand);
             }
             "SHX" | "*SXA" => {
-                // *SXA (undocumented) - Store X AND (high byte of address + 1)
-                let high_byte = (operand >> 8) as u8;
-                let value = self.x & high_byte.wrapping_add(1);
-                self.write(operand, value, false);
+                self.exec_sxa_illegal(operand);
             }
             "SHAA" | "*AXA" => {
                 // *AXA (undocumented) - Store A AND X AND (high byte of address + 1)
@@ -3521,7 +3683,7 @@ impl Cpu {
                 }
             }
             "CLV" => {
-                // Clear Overflow flag
+                // Clear overflow flag
                 self.p &= !FLAG_OVERFLOW;
             }
             "TSX" => {
@@ -3633,6 +3795,25 @@ impl Cpu {
             }
             _ => {}
         }
+
+        // Clear the previous delayed-I state after exactly one instruction.
+        // If this instruction introduced a new delay, keep that for the next instruction.
+        if had_delayed_i_flag {
+            self.delayed_i_flag = None;
+        }
+        if new_delayed_i_flag.is_some() {
+            self.delayed_i_flag = new_delayed_i_flag;
+        }
+
+        // Mesen-style: IRQ/NMI are taken after the instruction completes.
+        //
+        // For CLI/PLP/SEI timing, IRQ enable/disable has a one-instruction delay.
+        // We clear `delayed_i_flag` above before checking here, so the IRQ decision
+        // reflects the correct instruction-boundary behavior (e.g., CLI allows the IRQ
+        // immediately after exactly one following instruction).
+        if self.prev_need_nmi || self.prev_run_irq || self.should_poll_irq() {
+            self.service_irq_or_nmi_sequence();
+        }
     }
 
     /// Fetch the operand address or value for an instruction
@@ -3692,9 +3873,9 @@ impl Cpu {
             "ABSXW" => {
                 let base = self.read_word_from_pc();
                 let addr = base.wrapping_add(self.x as u16);
-                // Always do dummy read at base + X with wrong high byte if page crossed
-                let page_crossed = (base & 0xFF00) != (addr & 0xFF00);
-                let dummy_addr = if page_crossed { addr - 0x100 } else { addr };
+                // Always do dummy read at base+X with wrong high byte (no carry into high byte)
+                // for write/RMW indexed addressing.
+                let dummy_addr = (base & 0xFF00) | (addr & 0x00FF);
                 self.dummy_read(dummy_addr);
                 addr
             }
@@ -3781,6 +3962,49 @@ mod tests {
     use crate::cpu::opcode;
     use std::cell::RefCell;
     use std::rc::Rc;
+
+    #[test]
+    fn test_execute_captures_pending_ppu_nmi_edge() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        // Minimal cartridge: reset vector -> $8000, NMI vector -> $9000.
+        // Put NOP at both $8000 and $9000.
+        let mut prg_rom = vec![0; 0x4000];
+        // NMI vector ($FFFA)
+        prg_rom[0x3FFA] = 0x00;
+        prg_rom[0x3FFB] = 0x90;
+        // Reset vector ($FFFC)
+        prg_rom[0x3FFC] = 0x00;
+        prg_rom[0x3FFD] = 0x80;
+        // Code at $8000 and $9000
+        prg_rom[0x0000] = 0xEA; // NOP at $8000
+        prg_rom[0x1000] = 0xEA; // NOP at $9000
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+
+        cpu.reset();
+
+        // Arrange: make PPU enter VBlank with NMI enabled, so poll_nmi() becomes true.
+        ppu.borrow_mut().write_control(0x80);
+        ppu.borrow_mut().run_ppu_cycles(241 * 341 + 1);
+
+        // Act: execute an instruction. During CPU cycles, the CPU should poll the PPU for NMI.
+        cpu.execute();
+
+        // Assert: NMI was latched and then serviced (PC jumps to NMI vector), and the PPU NMI flag was consumed.
+        assert_eq!(cpu.pc, 0x9000, "CPU should service NMI after execute()");
+        assert!(
+            !ppu.borrow_mut().poll_nmi(),
+            "PPU NMI flag should be cleared once CPU polls it"
+        );
+    }
 
     #[test]
     fn test_cpu_new_stores_provided_ppu_and_apu_instances() {
@@ -4057,6 +4281,45 @@ mod tests {
 
         let ppu_after = ppu_dot(&ppu.borrow());
         assert_eq!(ppu_after - ppu_before, 16);
+    }
+
+    #[test]
+    fn test_execute_ticks_full_instruction_cycles_for_nop_ntsc() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        // Minimal cartridge: reset vector -> $8000, code at $8000 is NOP
+        let mut prg_rom = vec![0; 0x4000];
+        prg_rom[0x3FFC] = 0x00;
+        prg_rom[0x3FFD] = 0x80;
+        prg_rom[0x0000] = 0xEA; // NOP at $8000
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+
+        cpu.reset();
+
+        let cpu_cycles_before = cpu.get_total_cycles();
+        let ppu_before = ppu_dot(&ppu.borrow());
+        let apu_before = apu.borrow().frame_counter().get_cycle_counter();
+
+        cpu.execute();
+
+        let cpu_cycles_after = cpu.get_total_cycles();
+        let ppu_after = ppu_dot(&ppu.borrow());
+        let apu_after = apu.borrow().frame_counter().get_cycle_counter();
+
+        // NOP is 2 CPU cycles.
+        assert_eq!(cpu_cycles_after - cpu_cycles_before, 2);
+
+        // NTSC: 3 PPU cycles per CPU cycle.
+        assert_eq!(ppu_after - ppu_before, 6);
+        assert_eq!(apu_after - apu_before, 2);
     }
 
     #[test]
@@ -12385,6 +12648,96 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_execute_cli_delays_irq_for_one_instruction() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        // Minimal cartridge:
+        // - reset vector -> $8000
+        // - IRQ vector -> $9000
+        // Program at $8000: CLI, NOP
+        let mut prg_rom = vec![0; 0x4000];
+        prg_rom[0x3FFC] = 0x00;
+        prg_rom[0x3FFD] = 0x80;
+        prg_rom[0x3FFE] = 0x00;
+        prg_rom[0x3FFF] = 0x90;
+        prg_rom[0x0000] = CLI;
+        prg_rom[0x0001] = NOP;
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+
+        cpu.reset();
+
+        // Start with interrupts disabled.
+        cpu.p |= FLAG_INTERRUPT;
+        cpu.set_irq_pending(true);
+
+        // After CLI, the I flag is cleared, but IRQ must still be inhibited for exactly
+        // one following instruction.
+        cpu.execute();
+        assert_eq!(cpu.p & FLAG_INTERRUPT, 0, "CLI should clear I");
+        assert_ne!(cpu.pc, 0x9000, "IRQ must not be taken immediately after CLI");
+
+        // Execute one more instruction: IRQ should now be taken.
+        cpu.execute();
+        assert_eq!(cpu.pc, 0x9000, "IRQ should be taken after one instruction");
+    }
+
+    #[test]
+    fn test_execute_cli_irq_taken_after_one_following_instruction() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        // Minimal cartridge:
+        // - reset vector -> $8000
+        // - IRQ vector -> $9000
+        // Program at $8000: CLI, NOP, NOP
+        let mut prg_rom = vec![0; 0x4000];
+        prg_rom[0x3FFC] = 0x00;
+        prg_rom[0x3FFD] = 0x80;
+        prg_rom[0x3FFE] = 0x00;
+        prg_rom[0x3FFF] = 0x90;
+        prg_rom[0x0000] = CLI;
+        prg_rom[0x0001] = NOP;
+        prg_rom[0x0002] = NOP;
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+
+        cpu.reset();
+
+        // Start with interrupts disabled, and an asserted IRQ line.
+        cpu.p |= FLAG_INTERRUPT;
+        cpu.set_irq_pending(true);
+
+        // Execute CLI: clears I, but IRQ must not be taken immediately.
+        cpu.execute();
+        assert_eq!(cpu.p & FLAG_INTERRUPT, 0, "CLI should clear I");
+        assert_ne!(
+            cpu.pc, 0x9000,
+            "IRQ must not be taken immediately after CLI"
+        );
+
+        // Execute one instruction: IRQ should now be taken.
+        cpu.execute();
+        assert_eq!(
+            cpu.pc, 0x9000,
+            "IRQ should be taken after one following instruction"
+        );
+    }
+
     // RTS Tests
     #[test]
     fn test_execute_rts_basic() {
@@ -13283,8 +13636,12 @@ mod tests {
 
         // A = 0b11110000 AND 0b11001100 = 0b11000000
         // Then rotate right: 0b11000000 >> 1 = 0b01100000
+        // ARR flags (2A03):
+        // - C = bit 6 of result
+        // - V = bit 6 XOR bit 5 of result
         assert_eq!(cpu.a, 0b01100000, "A should be ANDed then rotated");
-        assert_eq!(cpu.p & FLAG_CARRY, 0, "Carry should be clear");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be bit 6");
+        assert_eq!(cpu.p & FLAG_OVERFLOW, 0, "Overflow should be bit6^bit5");
         assert_eq!(cpu.total_cycles, initial_cycles + 2, "ARR takes 2 cycles");
     }
 
@@ -13307,34 +13664,30 @@ mod tests {
             cpu.a, 0b11100000,
             "A should be ANDed then rotated with carry"
         );
-        assert_eq!(
-            cpu.p & FLAG_CARRY,
-            0,
-            "Carry should be clear after rotation"
-        );
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be bit 6");
+        assert_eq!(cpu.p & FLAG_OVERFLOW, 0, "Overflow should be bit6^bit5");
     }
 
     #[test]
-    fn test_execute_arr_sets_carry() {
+    fn test_execute_arr_sets_carry_and_overflow_from_bits_6_and_5() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ARR_IMM, 0xFF]; // ARR #$FF
         fake_cartridge(&mut cpu, &program);
         cpu.reset();
 
-        cpu.a = 0b00000011; // Bit 0 set after AND
-        cpu.p = 0;
+        cpu.a = 0b10000000;
+        cpu.p = 0; // old carry = 0
 
         cpu.execute();
 
-        // A = 0b00000011 AND 0xFF = 0b00000011
-        // Then rotate right: bit 0 goes to carry, result = 0b00000001
-        assert_eq!(cpu.a, 0b00000001, "A should be rotated");
-        assert_eq!(
-            cpu.p & FLAG_CARRY,
-            FLAG_CARRY,
-            "Carry should be set from bit 0"
-        );
+        // A = 0b10000000
+        // ROR with carry=0 => 0b01000000
+        // C = bit 6 => 1
+        // V = bit6 ^ bit5 => 1 ^ 0 = 1
+        assert_eq!(cpu.a, 0b01000000, "A should be rotated");
+        assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be bit 6");
+        assert_eq!(cpu.p & FLAG_OVERFLOW, FLAG_OVERFLOW, "Overflow should be bit6^bit5");
     }
 
     // BVS Tests
@@ -14430,6 +14783,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_execute_sya_page_crossing_uses_base_high_plus1_and_modifies_high_byte() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
+        // Base $12FF, X=1 => effective $1300 (page crossed)
+        let program = vec![SYA_ABSX, 0xFF, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.x = 0x01;
+        cpu.y = 0x0F;
+
+        cpu.execute();
+
+        // Value uses base high byte (0x12) + 1 => 0x13
+        // Value = Y & 0x13 = 0x0F & 0x13 = 0x03
+        // On page crossing, the high byte of the *target address* is ANDed with Y:
+        // high(0x1300) & 0x0F = 0x13 & 0x0F = 0x03 => final addr 0x0300
+        assert_eq!(
+            cpu.memory.borrow().read(0x0300),
+            0x03,
+            "SYA should use base high byte and apply page-crossing high-byte quirk"
+        );
+    }
+
     // SHX/*SXA Tests (undocumented - Store X AND (high byte of address + 1))
     #[test]
     fn test_execute_sxa_basic() {
@@ -14475,6 +14853,31 @@ mod tests {
             cpu.memory.borrow().read(0x0300),
             0x00,
             "Memory should contain masked value"
+        );
+    }
+
+    #[test]
+    fn test_execute_sxa_page_crossing_uses_base_high_plus1_and_modifies_high_byte() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
+        // Base $12FF, Y=1 => effective $1300 (page crossed)
+        let program = vec![SXA_ABSY, 0xFF, 0x12];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset();
+
+        cpu.y = 0x01;
+        cpu.x = 0x0F;
+
+        cpu.execute();
+
+        // Value uses base high byte (0x12) + 1 => 0x13
+        // Value = X & 0x13 = 0x0F & 0x13 = 0x03
+        // On page crossing, the high byte of the *target address* is ANDed with X:
+        // high(0x1300) & 0x0F = 0x13 & 0x0F = 0x03 => final addr 0x0300
+        assert_eq!(
+            cpu.memory.borrow().read(0x0300),
+            0x03,
+            "SXA should use base high byte and apply page-crossing high-byte quirk"
         );
     }
 

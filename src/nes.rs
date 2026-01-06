@@ -137,44 +137,20 @@ impl Nes {
             return dma_cycles.min(255) as u8;
         }
 
-        // Execute CPU instruction cycle-by-cycle
-        let mut cpu_cycles = 0;
-        loop {
-            // Execute one CPU cycle, with the CPU owning PPU/APU ticking for that cycle.
-            // (PAL fractional timing is handled by the CPU-side clocking.)
-            let instruction_complete = self.cpu.tick_cycle_with_devices();
-            cpu_cycles += 1;
+        let cycles_before = self.cpu.get_total_cycles();
 
-            // Break after instruction completes
-            if instruction_complete {
-                break;
-            }
-        }
-        // println!("");
+        // Execute exactly one CPU instruction.
+        self.cpu.execute();
 
-        // Only trigger interrupts after instruction completes
-        // Check if NMI needs to be triggered
-        // (BRK may have consumed it via vector hijacking)
-        if self.cpu.is_nmi_pending() {
-            self.cpu.set_nmi_pending(false);
-            let nmi_cycles = self.cpu.trigger_nmi();
-            // Tick PPU and APU for the NMI handling cycles
-            self.tick_ppu(nmi_cycles);
-            self.tick_apu(nmi_cycles);
-            cpu_cycles += nmi_cycles;
-        }
-
-        // Check for IRQ after executing instruction
-        // IRQ is maskable and checked after NMI
-        // CPU handles polling APU, servicing, and ticking PPU/APU for IRQ cycles.
-        let irq_cycles = self.cpu.handle_irq_if_pending();
-        cpu_cycles += irq_cycles;
+        // IRQ/NMI are handled by the CPU itself (Mesen-style) at the end of `execute()`.
 
         if self.ppu.borrow_mut().poll_frame_complete() {
             self.ready_to_render = true;
         }
 
-        cpu_cycles
+        let cycles_after = self.cpu.get_total_cycles();
+        let cycles_consumed = cycles_after - cycles_before;
+        cycles_consumed.min(255) as u8
     }
 
     /// Run the PPU for the appropriate number of cycles based on CPU cycles
@@ -1035,6 +1011,31 @@ mod tests {
         assert_eq!(
             apu_cycles_elapsed, cpu_cycles as u32,
             "APU should be clocked once per CPU cycle"
+        );
+    }
+
+    #[test]
+    fn test_apu_clocked_for_nmi_cycles_once_per_cpu_cycle() {
+        // NMI handling consumes 7 CPU cycles. Regardless of how the CPU services the NMI,
+        // the APU should still be clocked exactly once per CPU cycle overall.
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        nes.insert_cartridge(cartridge);
+        nes.reset();
+
+        // Force an NMI pending edge before executing the next instruction.
+        nes.cpu.set_nmi_pending(true);
+
+        let initial_cycle = nes.apu.borrow().frame_counter().get_cycle_counter();
+        let cpu_cycles = nes.run_cpu_tick();
+        let final_cycle = nes.apu.borrow().frame_counter().get_cycle_counter();
+        let apu_cycles_elapsed = final_cycle - initial_cycle;
+
+        assert_eq!(
+            apu_cycles_elapsed, cpu_cycles as u32,
+            "APU should be clocked once per CPU cycle even when NMI is serviced"
         );
     }
 
