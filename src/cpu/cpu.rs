@@ -605,17 +605,6 @@ impl Cpu {
         result
     }
 
-    // /// ISC - Undocumented opcode: Increment memory then subtract from A with borrow
-    // fn isc(&mut self, addr: u16) {
-    //     let value = self.read(addr);
-    //     // Dummy write
-    //     self.dummy_write(addr, value);
-    //     // Real operation and write
-    //     let incremented = self.inc(value);
-    //     self.write(addr, incremented, false);
-    //     self.sbc(incremented);
-    // }
-
     /// RLA - Undocumented opcode: Rotate left memory then AND with accumulator
     fn rla(&mut self, addr: u16) {
         let value = self.read(addr);
@@ -821,15 +810,10 @@ impl Cpu {
         self.irq_pending && !self.get_effective_i_flag()
     }
 
-    /// Set the NMI pending flag
-    /// This should be called by the NES loop when NMI is detected
-    pub fn set_nmi_pending(&mut self, pending: bool) {
-        self.nmi_pending = pending;
-    }
-
     /// Set the IRQ pending flag
     /// This should be called by the NES loop when IRQ is detected
-    pub fn set_irq_pending(&mut self, pending: bool) {
+    #[cfg(test)]
+    fn set_irq_pending(&mut self, pending: bool) {
         self.forced_irq_pending = pending;
         // Preserve prior unit-test behavior where `set_irq_pending(true)` makes
         // `should_poll_irq()` immediately reflect an asserted IRQ.
@@ -8139,7 +8123,6 @@ mod tests {
         cpu.memory.borrow_mut().write(0x0042, 0b10000001, false);
         cpu.a = 0xFF;
         cpu.p |= FLAG_CARRY; // Set carry
-        let initial_cycles = cpu.total_cycles;
 
         cpu.execute();
 
