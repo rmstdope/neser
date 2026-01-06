@@ -560,7 +560,6 @@ mod tests {
     use std::fs;
 
     #[test]
-    #[ignore = "PPU-CPU sync is being rewritten"]
     fn test_nestest() {
         // Load the golden log from file
         let golden_log = fs::read_to_string("roms/nestest.log")
@@ -577,8 +576,13 @@ mod tests {
         // nestest automated test starts execution at $C000 (not reset vector $C004)
         nes.cpu.get_state().pc = 0xC000;
         // CPU reset takes 7 cycles, manually sync PPU and CPU cycle counters
-        // PPU already has 1 cycle from initialization, so add 20 more (21 - 1 = 20)
-        nes.ppu.borrow_mut().run_ppu_cycles(20); // 7 * 3 = 21 PPU cycles for NTSC
+        // PPU is already a bit ahead here:
+        // - Nes::new runs the PPU for 1 cycle (sprite-0 hit timing offset)
+        // - Cpu::reset reads the reset vector via bus reads, which advances the PPU further
+        //   due to the CPU master-clock phase model.
+        // Ensure the PPU reaches exactly 21 cycles (7 * 3) before the first traced instruction.
+        let ppu_cycles_needed = 21u64.saturating_sub(nes.ppu.borrow().total_cycles());
+        nes.ppu.borrow_mut().run_ppu_cycles(ppu_cycles_needed);
         nes.cpu.set_total_cycles(7); // Account for reset cycles
 
         for line in golden_log.lines() {

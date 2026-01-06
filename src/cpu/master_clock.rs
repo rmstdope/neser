@@ -2,7 +2,6 @@ use crate::nes::TvSystem;
 
 /// Tracks the master clock used to derive CPU/PPU timing.
 ///
-/// NOTE: This is currently used by the legacy CPU implementation to model
 /// per-CPU-cycle master clock advancement around each bus access.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MasterClock {

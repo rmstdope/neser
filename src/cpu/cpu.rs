@@ -12683,7 +12683,10 @@ mod tests {
         // one following instruction.
         cpu.execute();
         assert_eq!(cpu.p & FLAG_INTERRUPT, 0, "CLI should clear I");
-        assert_ne!(cpu.pc, 0x9000, "IRQ must not be taken immediately after CLI");
+        assert_ne!(
+            cpu.pc, 0x9000,
+            "IRQ must not be taken immediately after CLI"
+        );
 
         // Execute one more instruction: IRQ should now be taken.
         cpu.execute();
@@ -13687,7 +13690,11 @@ mod tests {
         // V = bit6 ^ bit5 => 1 ^ 0 = 1
         assert_eq!(cpu.a, 0b01000000, "A should be rotated");
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY, "Carry should be bit 6");
-        assert_eq!(cpu.p & FLAG_OVERFLOW, FLAG_OVERFLOW, "Overflow should be bit6^bit5");
+        assert_eq!(
+            cpu.p & FLAG_OVERFLOW,
+            FLAG_OVERFLOW,
+            "Overflow should be bit6^bit5"
+        );
     }
 
     // BVS Tests
