@@ -149,7 +149,7 @@ impl MemController {
     #[cfg(test)]
     pub fn write_for_testing(&mut self, addr: u16, value: u8) {
         let old_open_bus = *self.open_bus.borrow_mut();
-        let value = self.write(addr, value, false);
+        self.write(addr, value, false);
         *self.open_bus.borrow_mut() = old_open_bus;
     }
 

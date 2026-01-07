@@ -2,7 +2,6 @@ mod apu;
 mod audio;
 mod cartridge;
 mod cpu;
-mod cpu2;
 mod eventloop;
 mod input;
 mod mem_controller;
@@ -80,7 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/cpu_interrupts.nes")?;
 
     // Load game cartridge
-    // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
+    let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
     // let rom_data = std::fs::read("roms/games/zelda.nes")?;
@@ -89,7 +88,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
     // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
     // let rom_data = std::fs::read("roms/blargg/4015_cleared.nes")?;
-    let rom_data = std::fs::read("roms/blargg/apu_reset/4017_timing.nes")?;
+    // let rom_data = std::fs::read("roms/blargg/apu_reset/4017_timing.nes")?;
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset(false);
