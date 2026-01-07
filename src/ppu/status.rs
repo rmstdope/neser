@@ -44,11 +44,10 @@ impl Status {
         self.frame_complete = true;
     }
 
-    /// Exit VBlank period (clear VBL flag and NMI, but NOT sprite flags)
+    /// Exit VBlank period (clear VBL flag, but NOT sprite flags)
     pub fn exit_vblank(&mut self) {
         // println!("PPU Status: Exiting VBlank");
         self.vblank_flag = false;
-        self.nmi_enabled = false;
         // Note: Sprite 0 hit and sprite overflow are cleared separately at scanline 261, pixel 0
     }
 

@@ -14,6 +14,11 @@ pub struct Ppu {
     // If PPUSTATUS is read right at the time VBlank would be set, the NES can
     // suppress the VBlank flag for the entire frame (blargg ppu_vbl_nmi 02).
     vblank_suppressed_for_frame: bool,
+
+    // Internal VBlank latch used specifically for immediate-NMI enable behavior.
+    // This is intentionally distinct from the readable $2002 VBlank flag to model
+    // subtle boundary timing near VBlank end (blargg ppu_vbl_nmi 07).
+    vblank_for_nmi: bool,
     /// Register management (PPUCTRL, PPUMASK, Loopy registers)
     /// Public to allow MemController to access I/O bus latch
     pub registers: Registers,
@@ -37,12 +42,21 @@ pub struct Ppu {
 }
 
 impl Ppu {
+    fn set_vblank_for_nmi(&mut self) {
+        self.vblank_for_nmi = true;
+    }
+
+    fn clear_vblank_for_nmi(&mut self) {
+        self.vblank_for_nmi = false;
+    }
+
     /// Create a new modular PPU instance
     pub fn new(tv_system: TvSystem) -> Self {
         Self {
             timing: Timing::new(tv_system),
             status: Status::new(),
             vblank_suppressed_for_frame: false,
+            vblank_for_nmi: false,
             registers: Registers::new(),
             memory: Memory::new(),
             background: Background::new(),
@@ -58,6 +72,7 @@ impl Ppu {
         self.timing.reset();
         self.status.reset();
         self.vblank_suppressed_for_frame = false;
+        self.vblank_for_nmi = false;
         self.registers.reset();
         self.memory.reset();
         self.background.reset();
@@ -89,6 +104,7 @@ impl Ppu {
             // Hardware quirk/timing: VBlank flag is set at dot 1, but the NMI edge is observed
             // slightly later. We latch the NMI edge at dot 2 (see below).
             self.status.enter_vblank();
+            self.set_vblank_for_nmi();
         }
 
         // Latch the VBlank-start NMI edge one dot after the VBlank flag is set.
@@ -117,6 +133,10 @@ impl Ppu {
         // For sprite_hit timing test: clear_time = 6819 cycles after VBL = scanline 261, pixel 0
         if scanline == prerender_scanline && pixel == 0 {
             self.status.clear_sprite_flags();
+
+            // For immediate-NMI enable behavior, treat VBlank as ending slightly earlier
+            // than the readable $2002 flag clear timing.
+            self.clear_vblank_for_nmi();
 
             // New frame is about to start; clear any VBlank suppression state.
             self.vblank_suppressed_for_frame = false;
@@ -504,7 +524,7 @@ impl Ppu {
 
         // If NMI is enabled during VBlank (0→1 transition while VBlank flag is set),
         // the PPU should immediately assert an NMI edge.
-        if !nmi_was_enabled && nmi_is_enabled && self.status.is_in_vblank() {
+        if !nmi_was_enabled && nmi_is_enabled && self.vblank_for_nmi {
             self.status.trigger_nmi();
         }
     }
@@ -533,6 +553,11 @@ impl Ppu {
         }
 
         let status = self.status.read_status();
+        if (status & 0x80) != 0 {
+            // Reading $2002 clears the visible VBlank flag, and it should also prevent
+            // any further immediate-NMI enable edge from being generated this VBlank.
+            self.clear_vblank_for_nmi();
+        }
         self.registers.clear_w(); // Reading status clears write toggle
         // Update I/O bus: status bits go to bits 5-7, bits 0-4 remain from previous value
         let io_bus = self.registers.io_bus();
