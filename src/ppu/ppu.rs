@@ -522,6 +522,16 @@ impl Ppu {
 
         let nmi_is_enabled = self.registers.should_generate_nmi();
 
+        // NMI-off timing quirk: disabling NMI right around VBlank start can suppress
+        // the VBlank NMI edge (blargg ppu_vbl_nmi 08).
+        let is_disabling_nmi_at_vblank_nmi_latch_dot = nmi_was_enabled
+            && !nmi_is_enabled
+            && self.timing.scanline() == 241
+            && self.timing.pixel() == 2;
+        if is_disabling_nmi_at_vblank_nmi_latch_dot {
+            self.status.clear_nmi();
+        }
+
         // If NMI is enabled during VBlank (0→1 transition while VBlank flag is set),
         // the PPU should immediately assert an NMI edge.
         if !nmi_was_enabled && nmi_is_enabled && self.vblank_for_nmi {
