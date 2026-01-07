@@ -9,6 +9,8 @@ pub struct FrameCounter {
     reset_phase: bool, // Phase when counter was reset (for jitter calculation)
     pending_write: Option<u8>, // Pending write to $4017 register
     write_delay: u8,   // Cycles remaining before pending write takes effect
+    pending_write_on_odd_cpu_cycle: bool,
+    pending_immediate_clock: (bool, bool), // Extra quarter/half clocks from delayed $4017 side-effects
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,6 +36,8 @@ impl FrameCounter {
             reset_phase: false, // Reset on even cycle
             pending_write: None,
             write_delay: 0,
+            pending_write_on_odd_cpu_cycle: false,
+            pending_immediate_clock: (false, false),
         }
     }
 
@@ -136,37 +140,72 @@ impl FrameCounter {
     pub fn queue_delayed_write(&mut self, value: u8, delay: u8) {
         self.pending_write = Some(value);
         self.write_delay = delay;
+        self.pending_write_on_odd_cpu_cycle = false;
+    }
+
+    /// Queue a delayed write to $4017 register, preserving whether the write occurred on an odd
+    /// CPU cycle so we can apply frame-counter jitter when the write takes effect.
+    pub fn queue_delayed_write_with_jitter(
+        &mut self,
+        value: u8,
+        delay: u8,
+        write_on_odd_cpu_cycle: bool,
+    ) {
+        self.pending_write = Some(value);
+        self.write_delay = delay;
+        self.pending_write_on_odd_cpu_cycle = write_on_odd_cpu_cycle;
     }
 
     /// Process pending delayed write (called at start of each clock cycle)
     fn process_delayed_write(&mut self) {
-        if let Some(value) = self.pending_write {
-            if self.write_delay == 0 {
-                // Apply the delayed write
-                self.mode = if (value & 0x80) != 0 {
-                    Mode::FiveStep
-                } else {
-                    Mode::FourStep
-                };
-                self.irq_inhibit = (value & 0x40) != 0;
+        if self.pending_write.is_none() {
+            return;
+        }
 
-                // Reset cycle_counter to match behavior of a direct write to $4017
-                // At reset, the APU acts "as if $4017 were written", which includes
-                // resetting the frame counter position
-                self.cycle_counter = 0;
-
-                // Writing 1 to IRQ inhibit clears the IRQ flag
-                if (value & 0x40) != 0 {
-                    self.irq_flag = false;
-                }
-
-                // Clear the pending write
-                self.pending_write = None;
-            } else {
-                // Decrement delay counter
-                self.write_delay -= 1;
+        // NESDev: Effects of a $4017 write occur 3 or 4 CPU cycles later.
+        // Interpret write_delay as "cycles remaining until the write takes effect".
+        // So we count down each CPU clock and apply on the clock that reaches 0.
+        if self.write_delay > 0 {
+            self.write_delay -= 1;
+            if self.write_delay > 0 {
+                return;
             }
         }
+
+        let value = self.pending_write.expect("checked above");
+
+        let new_mode = if (value & 0x80) != 0 {
+            Mode::FiveStep
+        } else {
+            Mode::FourStep
+        };
+
+        // Apply the delayed write
+        self.mode = new_mode;
+        self.irq_inhibit = (value & 0x40) != 0;
+
+        // Reset cycle_counter to match behavior of a direct write to $4017
+        self.cycle_counter = if self.pending_write_on_odd_cpu_cycle {
+            // Odd write: start at -1 (will become 0 on increment) to delay by 1 cycle.
+            u32::MAX
+        } else {
+            0
+        };
+        self.reset_phase = self.pending_write_on_odd_cpu_cycle;
+
+        // Writing 1 to IRQ inhibit clears the IRQ flag
+        if (value & 0x40) != 0 {
+            self.irq_flag = false;
+        }
+
+        // If mode is set (5-step), generate immediate quarter+half clocks at effect time.
+        if new_mode == Mode::FiveStep {
+            self.pending_immediate_clock = (true, true);
+        }
+
+        // Clear the pending write
+        self.pending_write = None;
+        self.pending_write_on_odd_cpu_cycle = false;
     }
 
     /// Clock the frame counter by one CPU cycle
@@ -184,7 +223,13 @@ impl FrameCounter {
             Mode::FiveStep => self.clock_five_step(),
         };
 
-        (quarter_frame, half_frame)
+        let (immediate_quarter, immediate_half) = self.pending_immediate_clock;
+        self.pending_immediate_clock = (false, false);
+
+        (
+            quarter_frame || immediate_quarter,
+            half_frame || immediate_half,
+        )
     }
 
     /// Clock the 4-step sequencer
@@ -193,8 +238,8 @@ impl FrameCounter {
         const STEP_2_CYCLES: u32 = 14913;
         const STEP_3_CYCLES: u32 = 22371;
         const STEP_4_CYCLES: u32 = 29829;
-        const IRQ_FIRST_CYCLE: u32 = 29831; // IRQ first sets 2 cycles after step 4
-        const IRQ_LAST_CYCLE: u32 = 29833; // IRQ sets for 3 cycles total
+        const IRQ_CYCLE: u32 = 29828; // Frame IRQ begins asserting (APU 14914 GET)
+        const FRAME_CYCLES: u32 = 29830;
 
         let quarter_frame = matches!(
             self.cycle_counter,
@@ -202,18 +247,14 @@ impl FrameCounter {
         );
         let half_frame = matches!(self.cycle_counter, STEP_2_CYCLES | STEP_4_CYCLES);
 
-        // Set IRQ flag on cycles 29831-29833 if not inhibited
-        // The flag is automatically set each cycle, even if cleared by reading $4015
-        if self.cycle_counter >= IRQ_FIRST_CYCLE
-            && self.cycle_counter <= IRQ_LAST_CYCLE
-            && !self.irq_inhibit
-        {
+        // Assert frame IRQ near the end of the 4-step sequence if not inhibited.
+        // The flag stays set until cleared by reading $4015.
+        if self.cycle_counter == IRQ_CYCLE && !self.irq_inhibit {
             self.irq_flag = true;
         }
 
-        // Wrap around after the last IRQ cycle (after cycle 29833)
-        // This makes the frame 29834 cycles long (0-29833 inclusive)
-        if self.cycle_counter > IRQ_LAST_CYCLE {
+        // 4-step sequence length is 29830 CPU cycles.
+        if self.cycle_counter >= FRAME_CYCLES {
             self.cycle_counter = 0;
         }
 
@@ -427,8 +468,8 @@ mod tests {
         let mut fc = FrameCounter::new();
         fc.write_register(0b0000_0000); // 4-step mode
 
-        // Clock through full sequence (29834 cycles: 0-29833 inclusive, wraps after 29833)
-        for _ in 0..29834 {
+        // Clock through full sequence (29830 cycles)
+        for _ in 0..29830 {
             fc.clock();
         }
 
@@ -441,6 +482,27 @@ mod tests {
     }
 
     #[test]
+    fn test_four_step_wraparound_at_29830_and_irq_sticks_until_cleared() {
+        let mut fc = FrameCounter::new();
+        fc.write_register(0b0000_0000); // 4-step mode, IRQ enabled
+
+        // On NTSC hardware, the 4-step sequencer frame is 29830 CPU cycles long.
+        // The frame IRQ flag is set at the end of the sequence and remains set until cleared.
+        for _ in 0..29830 {
+            fc.clock();
+        }
+
+        assert_eq!(fc.get_cycle_counter(), 0, "Should wrap at 29830 cycles");
+        assert!(fc.get_irq_flag(), "Frame IRQ flag should be set by wrap");
+
+        fc.clear_irq_flag();
+        assert!(
+            !fc.get_irq_flag(),
+            "IRQ flag should clear via explicit clear"
+        );
+    }
+
+    #[test]
     fn test_four_step_complete_sequence() {
         let mut fc = FrameCounter::new();
         fc.write_register(0b0000_0000); // 4-step mode
@@ -448,8 +510,8 @@ mod tests {
         let mut quarter_count = 0;
         let mut half_count = 0;
 
-        // Run through one complete sequence (29834 cycles: 0-29833 inclusive)
-        for _ in 0..29834 {
+        // Run through one complete sequence (29830 cycles)
+        for _ in 0..29830 {
             let (quarter, half) = fc.clock();
             if quarter {
                 quarter_count += 1;
@@ -461,7 +523,7 @@ mod tests {
 
         assert_eq!(quarter_count, 4); // 4 quarter frame clocks
         assert_eq!(half_count, 2); // 2 half frame clocks
-        assert_eq!(fc.get_cycle_counter(), 0); // Wrapped around after 29833
+        assert_eq!(fc.get_cycle_counter(), 0); // Wrapped around after end-of-frame
     }
 
     #[test]
@@ -487,12 +549,12 @@ mod tests {
         let mut fc = FrameCounter::new();
         fc.write_register(0b0000_0000); // 4-step mode
 
-        // Run two complete sequences (29834 cycles each)
+        // Run two complete sequences (29830 cycles each)
         for sequence in 0..2 {
             let mut quarter_count = 0;
             let mut half_count = 0;
 
-            for _ in 0..29834 {
+            for _ in 0..29830 {
                 let (quarter, half) = fc.clock();
                 if quarter {
                     quarter_count += 1;
@@ -682,8 +744,8 @@ mod tests {
         let mut fc = FrameCounter::new();
         fc.write_register(0b0000_0000); // 4-step mode, IRQ not inhibited
 
-        // Clock to first IRQ cycle (29831)
-        for _ in 0..29831 {
+        // Clock to IRQ assertion cycle (29828)
+        for _ in 0..29828 {
             fc.clock();
         }
 
@@ -697,7 +759,7 @@ mod tests {
         fc.write_register(0b0100_0000); // 4-step mode, IRQ inhibited
 
         // Clock to IRQ cycle
-        for _ in 0..29831 {
+        for _ in 0..29828 {
             fc.clock();
         }
 
@@ -725,7 +787,7 @@ mod tests {
         fc.write_register(0b0000_0000); // 4-step mode
 
         // Set IRQ flag
-        for _ in 0..29831 {
+        for _ in 0..29828 {
             fc.clock();
         }
         assert!(fc.get_irq_flag());
@@ -741,7 +803,7 @@ mod tests {
         fc.write_register(0b0000_0000); // 4-step mode, IRQ not inhibited
 
         // Set IRQ flag
-        for _ in 0..29831 {
+        for _ in 0..29828 {
             fc.clock();
         }
         assert!(fc.get_irq_flag());
@@ -771,7 +833,7 @@ mod tests {
         fc.write_register(0b0000_0000); // 4-step mode
 
         // Set IRQ flag
-        for _ in 0..29831 {
+        for _ in 0..29828 {
             fc.clock();
         }
         assert!(fc.get_irq_flag());
@@ -791,7 +853,7 @@ mod tests {
         fc.write_register(0b0000_0000); // 4-step mode
 
         // First sequence - clock to IRQ cycle
-        for _ in 0..29831 {
+        for _ in 0..29828 {
             fc.clock();
         }
         assert!(fc.get_irq_flag());
@@ -800,9 +862,10 @@ mod tests {
         fc.clear_irq_flag();
         assert!(!fc.get_irq_flag());
 
-        // Second sequence - clock through wraparound and to IRQ cycle again
-        // From 29831 to 29833 (3 more), then wrap, then 0 to 29830 (29831 more) = 29834 total
-        for _ in 0..29834 {
+        // Second sequence - clock through end-of-frame (29830) and back to IRQ cycle (29828)
+        // Remaining to frame end: 29830 - 29828 = 2
+        // Then another 29828 cycles to reach IRQ again
+        for _ in 0..(2 + 29828) {
             fc.clock();
         }
         assert!(fc.get_irq_flag());

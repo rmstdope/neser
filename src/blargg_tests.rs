@@ -85,7 +85,8 @@ mod tests {
             // Create NES and insert cartridge
             let mut nes = Nes::new(TvSystem::Ntsc);
             nes.insert_cartridge(cartridge);
-            nes.reset();
+            // Initial reset is treated as power-on.
+            nes.reset(false);
 
             // println!("Running Blargg-based test ROM: {} ... ", self.rom_path);
 
@@ -137,7 +138,9 @@ mod tests {
                             self.wait_reset -= 1;
                         } else {
                             // println!("Test indicates reset, restarting NES...");
-                            nes.reset();
+                            // Test requests a reset-button style reset.
+                            nes.reset(true);
+                            nes.memory.borrow_mut().write_for_testing(0x6000, 0x80);
                             self.wait_reset = 1;
                         }
                     } else if status == 0x80 {
@@ -238,28 +241,28 @@ mod tests {
     );
     #[ignore = "Not working"]
     #[test]
-    fn test_cpu_nmi_and_brk() { }
+    fn test_cpu_nmi_and_brk() {}
     // blargg_test!(
     //     test_cpu_nmi_and_brk,
     //     "roms/blargg/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes"
     // );
     #[ignore = "Not working"]
     #[test]
-    fn test_cpu_nmi_and_irq() { }
+    fn test_cpu_nmi_and_irq() {}
     // blargg_test!(
     //     test_cpu_nmi_and_irq,
     //     "roms/blargg/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes"
     // );
     #[ignore = "Not working"]
     #[test]
-    fn test_cpu_irq_and_dma() { }
+    fn test_cpu_irq_and_dma() {}
     // blargg_test!(
     //     test_cpu_irq_and_dma,
     //     "roms/blargg/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes"
     // );
     #[ignore = "Not working"]
     #[test]
-    fn test_cpu_branch_delays_irq() { }
+    fn test_cpu_branch_delays_irq() {}
     // blargg_test!(
     //     test_cpu_branch_delays_irq,
     //     "roms/blargg/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes"
@@ -394,10 +397,10 @@ mod tests {
     );
 
     blargg_test!(test_4015_cleared, "roms/blargg/apu_reset/4015_cleared.nes");
-    #[ignore = "Not working"]
-    #[test]
-    fn test_4017_timing() { }
-    // blargg_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
+    // #[ignore = "Not working"]
+    // #[test]
+    // fn test_4017_timing() { }
+    blargg_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
     blargg_test!(test_4017_written, "roms/blargg/apu_reset/4017_written.nes");
     blargg_test!(
         test_irq_flag_cleared,

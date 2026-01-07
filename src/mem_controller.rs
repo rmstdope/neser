@@ -146,6 +146,13 @@ impl MemController {
         value
     }
 
+    #[cfg(test)]
+    pub fn write_for_testing(&mut self, addr: u16, value: u8) {
+        let old_open_bus = *self.open_bus.borrow_mut();
+        let value = self.write(addr, value, false);
+        *self.open_bus.borrow_mut() = old_open_bus;
+    }
+
     /// Write a byte to memory
     /// Returns true if an OAM DMA was triggered (at $4014)
     pub fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool {
@@ -896,8 +903,23 @@ mod tests {
         // Write to frame counter register - 5-step mode (bit 7 set)
         memory.write(0x4017, 0b10000000, false);
 
-        // Verify write reached the APU
-        let apu = memory.apu.borrow();
-        assert_eq!(apu.frame_counter().get_mode(), true);
+        // The effects of a $4017 write occur after a 3-4 CPU cycle delay.
+        // So the mode won't necessarily change immediately.
+        assert_eq!(
+            memory.apu.borrow().frame_counter().get_mode(),
+            false,
+            "$4017 write should not take effect immediately"
+        );
+
+        // Tick long enough for the delayed write to take effect (max 4 cycles).
+        for _ in 0..4 {
+            memory.apu.borrow_mut().clock();
+        }
+
+        assert_eq!(
+            memory.apu.borrow().frame_counter().get_mode(),
+            true,
+            "$4017 write should switch to 5-step mode after the delayed-write window"
+        );
     }
 }

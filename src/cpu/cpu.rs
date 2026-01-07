@@ -266,17 +266,26 @@ impl Cpu {
         self.p |= FLAG_INTERRUPT;
     }
 
-    /// Reset the CPU to initial state
-    pub fn reset(&mut self) {
-        // On reset, the CPU:
-        // - Sets the I (Interrupt Disable) flag
-        // - Subtracts 3 from SP (simulating the interrupt sequence without writing to stack)
-        // - Reads the reset vector and sets PC
-        // - Does NOT modify A, X, Y, or other flags
-        // - Takes 7 cycles (but we don't track power-on vs reset cycles here)
+    /// Reset the CPU.
+    ///
+    /// - `soft_reset`: true for a reset-button style reset, false for power-on.
+    ///
+    /// Mesen-style intent:
+    /// - On soft reset: preserve A/X/Y, decrement SP by 3, set I.
+    /// - On hard reset: restore power-on register defaults, then run the reset sequence.
+    /// - Takes 7 CPU cycles (5 internal + 2 vector reads)
+    pub fn reset(&mut self, soft_reset: bool) {
+        if !soft_reset {
+            self.a = 0;
+            self.x = 0;
+            self.y = 0;
+            self.sp = 0x00;
+            self.p = FLAG_UNUSED;
+        }
 
-        // Set I flag (bit 2)
-        self.p |= FLAG_INTERRUPT;
+        // Set I flag (bit 2) and ensure unused bit is set.
+        // Note: blargg cpu_reset/registers expects reset to not change other flags (e.g. D).
+        self.p |= FLAG_INTERRUPT | FLAG_UNUSED;
 
         // Subtract 3 from SP (wrapping if necessary)
         self.sp = self.sp.wrapping_sub(3);
@@ -287,12 +296,28 @@ impl Cpu {
         self.nmi_pending = false;
         self.irq_pending = false;
         self.forced_irq_pending = false;
+        self.prev_need_nmi = false;
+        self.prev_run_irq = false;
+        self.run_irq = false;
 
-        // Read reset vector and set PC
+        // Reset cycle counters and master clock alignment.
+        self.total_cycles = 0;
+        self.master_clock.reset();
+        self.oob_master_clock.reset();
+
+        // Reset takes 7 CPU cycles total: 5 internal cycles + 2 reset-vector reads.
+        for _ in 0..5 {
+            self.internal_cycle();
+        }
+
+        // Read reset vector and set PC (2 CPU cycles via bus reads)
         self.pc = self.read_reset_vector();
+    }
 
-        // Reset takes 7 cycles
-        self.total_cycles = 7;
+    fn internal_cycle(&mut self) {
+        // Advance the CPU/PPU/APU by one CPU cycle without performing a bus read/write.
+        self.before_cpu_cycle(false);
+        self.after_cpu_cycle(false);
     }
 
     /// Check if two addresses are on different pages
@@ -321,6 +346,23 @@ impl Cpu {
         // TODO Process any pending DMA
         self.before_cpu_cycle(false);
         let value = self.memory.borrow().read(addr);
+
+        #[cfg(test)]
+        {
+            if addr == 0x4015 && std::env::var("NESER_TRACE_4015").is_ok() {
+                let apu = self.apu.borrow();
+                eprintln!(
+                    "[trace $4015] cpu_cycle={} apu_fc_cycle={} apu_fc_irq_inhibit={} apu_fc_irq_flag={} pulse1_len_en={} pulse1_len={} value=0x{:02X}",
+                    self.total_cycles,
+                    apu.debug_frame_counter_cycle(),
+                    apu.debug_frame_counter_irq_inhibit(),
+                    apu.debug_frame_counter_irq_flag(),
+                    apu.debug_pulse1_length_enabled(),
+                    apu.debug_pulse1_length_counter(),
+                    value
+                );
+            }
+        }
         self.after_cpu_cycle(false);
         value
     }
@@ -339,6 +381,26 @@ impl Cpu {
     fn write(&mut self, addr: u16, value: u8, dummy: bool) {
         self.before_cpu_cycle(true);
         self.memory.borrow_mut().write(addr, value, dummy);
+
+        #[cfg(test)]
+        {
+            if (addr == 0x4015 || addr == 0x4003 || addr == 0x4017)
+                && std::env::var("NESER_TRACE_4015").is_ok()
+            {
+                let apu = self.apu.borrow();
+                eprintln!(
+                    "[trace write] cpu_cycle={} addr=0x{:04X} value=0x{:02X} apu_fc_cycle={} apu_fc_irq_inhibit={} apu_fc_irq_flag={} pulse1_len_en={} pulse1_len={}",
+                    self.total_cycles,
+                    addr,
+                    value,
+                    apu.debug_frame_counter_cycle(),
+                    apu.debug_frame_counter_irq_inhibit(),
+                    apu.debug_frame_counter_irq_flag(),
+                    apu.debug_pulse1_length_enabled(),
+                    apu.debug_pulse1_length_counter(),
+                );
+            }
+        }
         self.after_cpu_cycle(true);
     }
 
@@ -1634,6 +1696,133 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
+    fn map_minimal_cartridge_for_reset_vector(cpu: &mut Cpu) {
+        // Minimal cartridge: reset vector -> $8000.
+        let mut prg_rom = vec![0; 0x4000];
+        prg_rom[0x3FFC] = 0x00;
+        prg_rom[0x3FFD] = 0x80;
+        prg_rom[0x0000] = 0xEA; // NOP at $8000
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+    }
+
+    #[test]
+    fn test_reset_ticks_apu_for_7_cpu_cycles() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        map_minimal_cartridge_for_reset_vector(&mut cpu);
+
+        let apu_before = apu.borrow().frame_counter().get_cycle_counter();
+        cpu.reset(true);
+        let apu_after = apu.borrow().frame_counter().get_cycle_counter();
+
+        // Reset takes 7 CPU cycles; the APU frame counter is clocked every CPU cycle.
+        assert_eq!(
+            apu_after - apu_before,
+            7,
+            "CPU reset should tick the APU for 7 cycles"
+        );
+    }
+
+    #[test]
+    fn test_soft_reset_preserves_registers_but_sets_i_and_adjusts_sp() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        map_minimal_cartridge_for_reset_vector(&mut cpu);
+
+        // Arrange: put CPU in a non-power-on state.
+        cpu.a = 0x12;
+        cpu.x = 0x34;
+        cpu.y = 0x56;
+        cpu.sp = 0x80;
+        cpu.p = 0x00; // I flag cleared
+
+        // Act: soft reset (reset button behavior, Mesen-style).
+        cpu.reset(true);
+
+        // Assert: A/X/Y preserved, SP adjusted by 3, and I flag set.
+        assert_eq!(cpu.a, 0x12);
+        assert_eq!(cpu.x, 0x34);
+        assert_eq!(cpu.y, 0x56);
+        assert_eq!(cpu.sp, 0x7D);
+        assert_ne!(cpu.p & FLAG_INTERRUPT, 0);
+    }
+
+    #[test]
+    fn test_hard_reset_restores_power_on_register_defaults() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        map_minimal_cartridge_for_reset_vector(&mut cpu);
+
+        // Arrange: dirty state.
+        cpu.a = 0xFF;
+        cpu.x = 0xEE;
+        cpu.y = 0xDD;
+        cpu.sp = 0x10;
+        cpu.p = 0x00;
+
+        // Act: hard reset (power-cycle behavior, Mesen-style).
+        cpu.reset(false);
+
+        // Assert: power-on defaults restored (as per Cpu::new()) and reset sequence applied.
+        // Cpu::new() initializes A/X/Y = 0, SP = 0x00, P = 0x20; the reset sequence subtracts
+        // 3 from SP and sets I.
+        assert_eq!(cpu.a, 0x00);
+        assert_eq!(cpu.x, 0x00);
+        assert_eq!(cpu.y, 0x00);
+        assert_eq!(cpu.sp, 0xFD);
+        assert_eq!(cpu.p & FLAG_UNUSED, FLAG_UNUSED);
+        assert_ne!(cpu.p & FLAG_INTERRUPT, 0);
+    }
+
+    #[test]
+    fn test_soft_reset_sets_i_without_changing_other_flags() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        // Match blargg cpu_reset/registers.s (test #3):
+        // Before reset: A/X/Y set, S=$12, P pulled from stack=$FB (i.e., D=1, I=0).
+        map_minimal_cartridge_for_reset_vector(&mut cpu);
+        cpu.a = 0x34;
+        cpu.x = 0x56;
+        cpu.y = 0x78;
+        cpu.sp = 0x12;
+        cpu.p = 0xFB;
+
+        cpu.reset(true);
+
+        // Reset-button behavior: set I, decrement S by 3, and otherwise preserve registers/flags.
+        assert_eq!(cpu.a, 0x34);
+        assert_eq!(cpu.x, 0x56);
+        assert_eq!(cpu.y, 0x78);
+        assert_eq!(cpu.sp, 0x0F);
+        assert_eq!(cpu.p, 0xFF);
+    }
+
     #[test]
     fn test_execute_captures_pending_ppu_nmi_edge() {
         let (ppu, apu, memory) = create_test_memory();
@@ -1660,7 +1849,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
 
-        cpu.reset();
+        cpu.reset(true);
 
         // Arrange: make PPU enter VBlank with NMI enabled, so poll_nmi() becomes true.
         ppu.borrow_mut().write_control(0x80);
@@ -1796,7 +1985,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
 
-        cpu.reset();
+        cpu.reset(true);
         cpu.p &= !FLAG_INTERRUPT;
         let pc_before = cpu.pc;
         let sp_before = cpu.sp;
@@ -1836,7 +2025,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
 
-        cpu.reset();
+        cpu.reset(true);
 
         // Ensure interrupts are enabled
         cpu.p &= !FLAG_INTERRUPT;
@@ -1901,7 +2090,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
 
-        cpu.reset();
+        cpu.reset(true);
 
         let cpu_cycles_before = cpu.get_total_cycles();
         let ppu_before = ppu_dot(&ppu.borrow());
@@ -2126,7 +2315,7 @@ mod tests {
         cpu.sp = 0x00;
         cpu.p = 0xFF;
 
-        cpu.reset();
+        cpu.reset(true);
 
         // Reset should NOT modify A, X, Y
         assert_eq!(cpu.a, 0xFF);
@@ -2144,7 +2333,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.execute();
 
@@ -2157,7 +2346,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x10;
         run(&mut cpu);
         assert_eq!(cpu.a, 0x30);
@@ -2173,7 +2362,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x10;
         cpu.p |= FLAG_CARRY; // Set carry flag
         run(&mut cpu);
@@ -2187,7 +2376,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0x01, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xFF;
         run(&mut cpu);
         assert_eq!(cpu.a, 0x00); // Wraps around
@@ -2201,7 +2390,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0x50, KIL]; // Add another positive
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x50; // Positive number
         run(&mut cpu);
         assert_eq!(cpu.a, 0xA0); // Result is negative in two's complement
@@ -2215,7 +2404,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0x80, KIL]; // Add -128
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x80; // -128 in two's complement
         run(&mut cpu);
         assert_eq!(cpu.a, 0x00);
@@ -2230,7 +2419,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x10;
         cpu.memory.borrow_mut().write(0x42, 0x33, false);
         run(&mut cpu);
@@ -2243,7 +2432,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_ABS, 0x34, 0x12, KIL]; // Little-endian
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x20;
         cpu.memory.borrow_mut().write(0x1234, 0x55, false);
         run(&mut cpu);
@@ -2256,7 +2445,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x10;
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x1239, 0x44, false); // 0x1234 + 0x05
@@ -2270,7 +2459,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x15;
         cpu.x = 0x03;
         cpu.memory.borrow_mut().write(0x45, 0x22, false); // 0x42 + 0x03
@@ -2284,7 +2473,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x08;
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x1010, 0x17, false); // 0x1000 + 0x10
@@ -2298,7 +2487,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_INDX, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x05;
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x24, 0x74, false); // Pointer at 0x20 + 0x04: low byte
@@ -2314,7 +2503,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x0A;
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x86, 0x28, false); // Pointer at 0x86: low byte
@@ -2330,7 +2519,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AND_IMM, 0b1010_1010, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1111_0000;
         run(&mut cpu);
         assert_eq!(cpu.a, 0b1010_0000);
@@ -2344,7 +2533,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AND_IMM, 0b0000_1111, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1111_0000;
         run(&mut cpu);
         assert_eq!(cpu.a, 0);
@@ -2358,7 +2547,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AND_IMM, 0b0111_1111, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1111_1111;
         cpu.p = FLAG_NEGATIVE; // Set negative flag initially
         run(&mut cpu);
@@ -2373,7 +2562,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AND_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1100_1100;
         cpu.memory.borrow_mut().write(0x42, 0b1010_1010, false);
         run(&mut cpu);
@@ -2386,7 +2575,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AND_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1111_0000;
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0b0011_1111, false); // 0x42 + 0x05
@@ -2400,7 +2589,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AND_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1010_1010;
         cpu.memory.borrow_mut().write(0x1234, 0b1100_1100, false);
         run(&mut cpu);
@@ -2413,7 +2602,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AND_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1111_1111;
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0b0101_0101, false); // 0x1234 + 0x10
@@ -2427,7 +2616,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AND_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1100_0011;
         cpu.y = 0x20;
         cpu.memory.borrow_mut().write(0x1020, 0b0011_1100, false); // 0x1000 + 0x20
@@ -2441,7 +2630,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AND_INDX, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1111_0000;
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x24, 0x74, false); // Pointer at 0x20 + 0x04: low byte
@@ -2457,7 +2646,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AND_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1010_1010;
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x86, 0x28, false); // Pointer at 0x86: low byte
@@ -2473,7 +2662,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASL_A, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b0100_0010;
         run(&mut cpu);
         assert_eq!(cpu.a, 0b1000_0100);
@@ -2488,7 +2677,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASL_A, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1000_0001;
         run(&mut cpu);
         assert_eq!(cpu.a, 0b0000_0010);
@@ -2503,7 +2692,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASL_A, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1000_0000;
         run(&mut cpu);
         assert_eq!(cpu.a, 0);
@@ -2518,7 +2707,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASL_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0b0011_0011, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x42), 0b0110_0110);
@@ -2531,7 +2720,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASL_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0b1010_0101, false); // 0x42 + 0x05
         run(&mut cpu);
@@ -2545,7 +2734,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASL_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0b0100_0001, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x1234), 0b1000_0010);
@@ -2558,7 +2747,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASL_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0b0000_0001, false); // 0x1234 + 0x10
         run(&mut cpu);
@@ -2573,7 +2762,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BIT_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1111_0000;
         cpu.memory.borrow_mut().write(0x42, 0b1100_0011, false);
         run(&mut cpu);
@@ -2591,7 +2780,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BIT_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b0000_1111;
         cpu.memory.borrow_mut().write(0x42, 0b1111_0000, false);
         run(&mut cpu);
@@ -2609,7 +2798,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BIT_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1111_1111;
         cpu.memory.borrow_mut().write(0x42, 0b0011_1111, false);
         run(&mut cpu);
@@ -2627,7 +2816,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BIT_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1010_1010;
         cpu.memory.borrow_mut().write(0x1234, 0b0101_1010, false);
         run(&mut cpu);
@@ -2645,7 +2834,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BCC, 0x02, 0x00, 0x00, KIL]; // Branch forward 2 bytes to skip padding
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p &= !FLAG_CARRY; // Ensure carry is clear
         run(&mut cpu);
         // PC should be at 0x8000 + 2 (after reading BCC and offset) + 2 (offset) + 1 (BRK) = 0x8005
@@ -2658,7 +2847,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BCC, 0x05, KIL]; // Should not branch
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p |= FLAG_CARRY; // Set carry flag
         run(&mut cpu);
         // PC should be at 0x8000 + 2 (instruction) + 1 (BRK) = 0x8003
@@ -2672,7 +2861,7 @@ mod tests {
         // BRK at start, then BCC at offset 3 that branches back -5 bytes to the BRK
         let program = vec![KIL, 0x00, 0x00, BCC, 0xFB];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p &= !FLAG_CARRY; // Ensure carry is clear
         cpu.pc = 0x8003; // Start at offset 3 (the BCC instruction)
         run(&mut cpu);
@@ -2686,7 +2875,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BCS, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p |= FLAG_CARRY; // Set carry flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8004);
@@ -2698,7 +2887,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BCS, 0x03, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p &= !FLAG_CARRY; // Clear carry flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8003);
@@ -2710,7 +2899,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BEQ, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p |= FLAG_ZERO; // Set zero flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8004);
@@ -2722,7 +2911,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BEQ, 0x02, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p &= !FLAG_ZERO; // Clear zero flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8003);
@@ -2734,7 +2923,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BMI, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8004);
@@ -2746,7 +2935,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BMI, 0x04, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8003);
@@ -2758,7 +2947,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BNE, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p &= !FLAG_ZERO; // Clear zero flag (not equal)
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8004);
@@ -2770,7 +2959,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BNE, 0x06, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p |= FLAG_ZERO; // Set zero flag (equal)
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8003);
@@ -2782,7 +2971,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BPL, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag (positive)
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8004);
@@ -2794,7 +2983,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BPL, 0x07, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8003);
@@ -2806,7 +2995,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BVC, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8004);
@@ -2818,7 +3007,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BVC, 0x05, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8003);
@@ -2830,7 +3019,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BVS, 0x01, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8004);
@@ -2842,7 +3031,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BVS, 0x08, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x8003);
@@ -2854,7 +3043,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // A == value
@@ -2868,7 +3057,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_IMM, 0x30, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x50;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0); // A != value
@@ -2882,7 +3071,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_IMM, 0x50, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x30;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0); // A != value
@@ -2896,7 +3085,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x80;
         cpu.memory.borrow_mut().write(0x42, 0x80, false);
         run(&mut cpu);
@@ -2910,7 +3099,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x10;
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0x05, false); // 0x42 + 0x05
@@ -2924,7 +3113,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x20;
         cpu.memory.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
@@ -2937,7 +3126,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xFF;
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0xFF, false);
@@ -2951,7 +3140,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x55;
         cpu.y = 0x20;
         cpu.memory.borrow_mut().write(0x1020, 0x44, false);
@@ -2965,7 +3154,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_INDX, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x33;
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x24, 0x74, false);
@@ -2981,7 +3170,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x77;
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x86, 0x28, false);
@@ -2998,7 +3187,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPX_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -3012,7 +3201,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPX_IMM, 0x30, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x50;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3026,7 +3215,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPX_IMM, 0x50, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x30;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3040,7 +3229,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPX_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x80;
         cpu.memory.borrow_mut().write(0x42, 0x80, false);
         run(&mut cpu);
@@ -3054,7 +3243,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPX_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x20;
         cpu.memory.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
@@ -3068,7 +3257,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPY_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -3082,7 +3271,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPY_IMM, 0x30, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x50;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3096,7 +3285,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPY_IMM, 0x50, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x30;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3110,7 +3299,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPY_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x80;
         cpu.memory.borrow_mut().write(0x42, 0x80, false);
         run(&mut cpu);
@@ -3124,7 +3313,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPY_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x20;
         cpu.memory.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
@@ -3138,7 +3327,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x50, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x42), 0x4F);
@@ -3152,7 +3341,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x01, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x42), 0x00);
@@ -3166,7 +3355,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x00, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x42), 0xFF);
@@ -3180,7 +3369,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0x80, false);
         run(&mut cpu);
@@ -3194,7 +3383,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x1234), 0x2F);
@@ -3207,7 +3396,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0x90, false);
         run(&mut cpu);
@@ -3221,7 +3410,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_IMM, 0b1111_0000, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1010_1010;
         run(&mut cpu);
         assert_eq!(cpu.a, 0b0101_1010);
@@ -3235,7 +3424,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_IMM, 0b1010_1010, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1010_1010;
         run(&mut cpu);
         assert_eq!(cpu.a, 0x00);
@@ -3248,7 +3437,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_IMM, 0b1111_0000, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b0101_0101;
         run(&mut cpu);
         assert_eq!(cpu.a, 0b1010_0101);
@@ -3261,7 +3450,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xFF;
         cpu.memory.borrow_mut().write(0x42, 0x0F, false);
         run(&mut cpu);
@@ -3274,7 +3463,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xFF;
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0x55, false);
@@ -3288,7 +3477,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x12;
         cpu.memory.borrow_mut().write(0x1234, 0x34, false);
         run(&mut cpu);
@@ -3301,7 +3490,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xAA;
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0x55, false);
@@ -3315,7 +3504,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_ABSY, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xF0;
         cpu.y = 0x20;
         cpu.memory.borrow_mut().write(0x1254, 0x0F, false);
@@ -3329,7 +3518,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_INDX, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1100_0011;
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x24, 0x74, false);
@@ -3345,7 +3534,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b1010_0101;
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x86, 0x28, false);
@@ -3361,7 +3550,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CLC, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p = FLAG_CARRY;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
@@ -3373,7 +3562,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CLD, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p = FLAG_DECIMAL;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_DECIMAL, 0);
@@ -3385,7 +3574,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CLI, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p = FLAG_INTERRUPT;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_INTERRUPT, 0);
@@ -3397,7 +3586,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CLV, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p = FLAG_OVERFLOW;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_OVERFLOW, 0);
@@ -3409,7 +3598,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SEC, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p = 0;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
@@ -3421,7 +3610,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SED, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p = 0;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_DECIMAL, FLAG_DECIMAL);
@@ -3433,7 +3622,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SEI, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p = 0;
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_INTERRUPT, FLAG_INTERRUPT);
@@ -3445,7 +3634,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x50, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x42), 0x51);
@@ -3459,7 +3648,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0xFF, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x42), 0x00);
@@ -3473,7 +3662,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x7F, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x42), 0x80);
@@ -3487,7 +3676,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0x20, false);
         run(&mut cpu);
@@ -3501,7 +3690,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x1234), 0x31);
@@ -3514,7 +3703,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0x8F, false);
         run(&mut cpu);
@@ -3527,7 +3716,7 @@ mod tests {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         fake_cartridge(&mut cpu, &vec![]);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x0600, JMP_ABS, false);
         cpu.memory.borrow_mut().write(0x0601, 0x34, false);
         cpu.memory.borrow_mut().write(0x0602, 0x12, false);
@@ -3542,7 +3731,7 @@ mod tests {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         fake_cartridge(&mut cpu, &vec![]);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x0600, JMP_IND, false);
         cpu.memory.borrow_mut().write(0x0601, 0x20, false);
         cpu.memory.borrow_mut().write(0x0602, 0x10, false);
@@ -3562,7 +3751,7 @@ mod tests {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         fake_cartridge(&mut cpu, &vec![]);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x0600, JMP_IND, false);
         cpu.memory.borrow_mut().write(0x0601, 0xFF, false);
         cpu.memory.borrow_mut().write(0x0602, 0x10, false);
@@ -3579,7 +3768,7 @@ mod tests {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         fake_cartridge(&mut cpu, &vec![]);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x0600, JSR, false);
         cpu.memory.borrow_mut().write(0x0601, 0x34, false);
         cpu.memory.borrow_mut().write(0x0602, 0x12, false);
@@ -3600,7 +3789,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3613,7 +3802,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_IMM, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -3625,7 +3814,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_IMM, 0x80, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -3637,7 +3826,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x55, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x55);
@@ -3649,7 +3838,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0xAA, false);
         run(&mut cpu);
@@ -3662,7 +3851,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0x77, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x77);
@@ -3674,7 +3863,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0x88, false);
         run(&mut cpu);
@@ -3687,7 +3876,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ABSY, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x20;
         cpu.memory.borrow_mut().write(0x1254, 0x99, false);
         run(&mut cpu);
@@ -3700,7 +3889,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_INDX, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x24, 0x74, false);
         cpu.memory.borrow_mut().write(0x25, 0x10, false);
@@ -3715,7 +3904,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x86, 0x28, false);
         cpu.memory.borrow_mut().write(0x87, 0x10, false);
@@ -3730,7 +3919,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         run(&mut cpu);
         assert_eq!(cpu.x, 0x42);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3743,7 +3932,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_IMM, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         run(&mut cpu);
         assert_eq!(cpu.x, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -3755,7 +3944,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_IMM, 0x80, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         run(&mut cpu);
         assert_eq!(cpu.x, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -3767,7 +3956,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x55, false);
         run(&mut cpu);
         assert_eq!(cpu.x, 0x55);
@@ -3779,7 +3968,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_ZPY, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0xAA, false);
         run(&mut cpu);
@@ -3792,7 +3981,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0x77, false);
         run(&mut cpu);
         assert_eq!(cpu.x, 0x77);
@@ -3804,7 +3993,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_ABSY, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x20;
         cpu.memory.borrow_mut().write(0x1254, 0x99, false);
         run(&mut cpu);
@@ -3817,7 +4006,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         run(&mut cpu);
         assert_eq!(cpu.y, 0x42);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3830,7 +4019,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_IMM, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         run(&mut cpu);
         assert_eq!(cpu.y, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -3842,7 +4031,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_IMM, 0x80, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         run(&mut cpu);
         assert_eq!(cpu.y, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -3854,7 +4043,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x55, false);
         run(&mut cpu);
         assert_eq!(cpu.y, 0x55);
@@ -3866,7 +4055,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0xAA, false);
         run(&mut cpu);
@@ -3879,7 +4068,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0x77, false);
         run(&mut cpu);
         assert_eq!(cpu.y, 0x77);
@@ -3891,7 +4080,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0x88, false);
         run(&mut cpu);
@@ -3904,7 +4093,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b10110101;
         run(&mut cpu);
         assert_eq!(cpu.a, 0b01011010);
@@ -3919,7 +4108,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b00000001;
         run(&mut cpu);
         assert_eq!(cpu.a, 0);
@@ -3933,7 +4122,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0b11001100, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x42), 0b01100110);
@@ -3946,7 +4135,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0b10101011, false);
         run(&mut cpu);
@@ -3960,7 +4149,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0b01010100, false);
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x1234), 0b00101010);
@@ -3973,7 +4162,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0b00000011, false);
         run(&mut cpu);
@@ -3987,7 +4176,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![NOP, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         cpu.x = 0x33;
         cpu.y = 0x24;
@@ -4006,7 +4195,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ORA_IMM, 0b01010101, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b10101010;
         run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
@@ -4020,7 +4209,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ORA_IMM, 0x00, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x00;
         run(&mut cpu);
         assert_eq!(cpu.a, 0x00);
@@ -4033,7 +4222,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ORA_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11110000;
         cpu.memory.borrow_mut().write(0x42, 0b00001111, false);
         run(&mut cpu);
@@ -4046,7 +4235,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ORA_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b10000000;
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0b01000000, false);
@@ -4060,7 +4249,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ORA_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b00110011;
         cpu.memory.borrow_mut().write(0x1234, 0b11001100, false);
         run(&mut cpu);
@@ -4073,7 +4262,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ORA_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b00001111;
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0b11110000, false);
@@ -4087,7 +4276,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ORA_ABSY, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b01010101;
         cpu.y = 0x20;
         cpu.memory.borrow_mut().write(0x1254, 0b10101010, false);
@@ -4101,7 +4290,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ORA_INDX, 0x82, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b00110011;
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x86, 0x34, false);
@@ -4117,7 +4306,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ORA_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b10101010;
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x86, 0x28, false);
@@ -4133,7 +4322,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ORA_IMM, 0x80, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x00;
         run(&mut cpu);
         assert_eq!(cpu.a, 0x80);
@@ -4147,7 +4336,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEX, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.x, 0x41);
@@ -4161,7 +4350,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEX, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x01;
         run(&mut cpu);
         assert_eq!(cpu.x, 0x00);
@@ -4174,7 +4363,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEX, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x00;
         run(&mut cpu);
         assert_eq!(cpu.x, 0xFF);
@@ -4187,7 +4376,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEY, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.y, 0x41);
@@ -4201,7 +4390,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INX, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.x, 0x43);
@@ -4215,7 +4404,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INX, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0xFF;
         run(&mut cpu);
         assert_eq!(cpu.x, 0x00);
@@ -4228,7 +4417,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INY, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.y, 0x43);
@@ -4242,7 +4431,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TAX, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.x, 0x42);
@@ -4256,7 +4445,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TAX, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x00;
         run(&mut cpu);
         assert_eq!(cpu.x, 0x00);
@@ -4269,7 +4458,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TAX, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x80;
         run(&mut cpu);
         assert_eq!(cpu.x, 0x80);
@@ -4282,7 +4471,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TAY, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.y, 0x42);
@@ -4296,7 +4485,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TXA, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
@@ -4310,7 +4499,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TYA, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
@@ -4324,7 +4513,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b10110101;
         cpu.p = 0; // Clear carry
         run(&mut cpu);
@@ -4340,7 +4529,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b01010101;
         cpu.p = FLAG_CARRY; // Set carry
         run(&mut cpu);
@@ -4355,7 +4544,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0b11001100, false);
         cpu.p = 0;
         run(&mut cpu);
@@ -4369,7 +4558,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0b10101011, false);
         cpu.p = FLAG_CARRY;
@@ -4384,7 +4573,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0b01010100, false);
         cpu.p = 0;
         run(&mut cpu);
@@ -4398,7 +4587,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0b00000011, false);
         cpu.p = 0;
@@ -4413,7 +4602,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b10110101;
         cpu.p = 0; // Clear carry
         run(&mut cpu);
@@ -4429,7 +4618,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ACC, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b01010101;
         cpu.p = FLAG_CARRY; // Set carry
         run(&mut cpu);
@@ -4444,7 +4633,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0b11001100, false);
         cpu.p = 0;
         run(&mut cpu);
@@ -4458,7 +4647,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0b10101011, false);
         cpu.p = FLAG_CARRY;
@@ -4473,7 +4662,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0b01010100, false);
         cpu.p = 0;
         run(&mut cpu);
@@ -4487,7 +4676,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ABSXW, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0b00000011, false);
         cpu.p = 0;
@@ -4502,7 +4691,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RTI, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         // Set up stack with saved processor status and return address
         cpu.sp = 0xFC;
         cpu.memory.borrow_mut().write(0x01FD, 0b11010011, false); // Saved status flags
@@ -4523,7 +4712,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RTS, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         // Set up stack with saved return address (PC-1)
         cpu.sp = 0xFD;
         cpu.memory.borrow_mut().write(0x01FE, 0x33, false); // PC-1 low byte (0x1233)
@@ -4540,7 +4729,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_IMM, 0x30, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
         run(&mut cpu);
@@ -4556,7 +4745,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_IMM, 0x30, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x50;
         cpu.p &= !FLAG_CARRY; // Clear carry (borrow)
         run(&mut cpu);
@@ -4570,7 +4759,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x80;
         cpu.p |= FLAG_CARRY;
         cpu.memory.borrow_mut().write(0x42, 0x40, false);
@@ -4584,7 +4773,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ZPX, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x50;
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
@@ -4599,7 +4788,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x60;
         cpu.p |= FLAG_CARRY;
         cpu.memory.borrow_mut().write(0x1234, 0x20, false);
@@ -4613,7 +4802,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ABSX, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x70;
         cpu.x = 0x10;
         cpu.p |= FLAG_CARRY;
@@ -4628,7 +4817,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ABSY, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x90;
         cpu.y = 0x20;
         cpu.p |= FLAG_CARRY;
@@ -4643,7 +4832,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_INDX, 0x82, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xA0;
         cpu.x = 0x04;
         cpu.p |= FLAG_CARRY;
@@ -4660,7 +4849,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_INDY, 0x86, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xB0;
         cpu.y = 0x10;
         cpu.p |= FLAG_CARRY;
@@ -4677,7 +4866,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_IMM, 0xB0, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
         run(&mut cpu);
@@ -4692,7 +4881,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x10), 0x42);
@@ -4704,7 +4893,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_ZPX, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         cpu.x = 0x05;
         run(&mut cpu);
@@ -4717,7 +4906,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_ABS, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x1000), 0x42);
@@ -4729,7 +4918,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         cpu.x = 0x05;
         run(&mut cpu);
@@ -4742,7 +4931,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_ABSYW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         cpu.y = 0x05;
         run(&mut cpu);
@@ -4755,7 +4944,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_INDX, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x15, 0x00, false);
@@ -4770,7 +4959,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_INDYW, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x10, 0x00, false);
@@ -4785,7 +4974,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TXS, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0xFF;
         run(&mut cpu);
         assert_eq!(cpu.sp, 0xFF);
@@ -4797,7 +4986,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TSX, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.sp = 0xAB;
         run(&mut cpu);
         assert_eq!(cpu.x, 0xAB);
@@ -4811,7 +5000,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TSX, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.sp = 0x00;
         run(&mut cpu);
         assert_eq!(cpu.x, 0x00);
@@ -4825,7 +5014,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PHA, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         cpu.sp = 0xFD;
         run(&mut cpu);
@@ -4839,7 +5028,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLA, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.sp = 0xFC;
         cpu.memory.borrow_mut().write(0x01FD, 0x42, false);
         run(&mut cpu);
@@ -4855,7 +5044,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLA, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.sp = 0xFC;
         cpu.memory.borrow_mut().write(0x01FD, 0x00, false);
         run(&mut cpu);
@@ -4869,7 +5058,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLA, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.sp = 0xFC;
         cpu.memory.borrow_mut().write(0x01FD, 0x80, false);
         run(&mut cpu);
@@ -4883,7 +5072,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PHP, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.p = 0xFF;
         cpu.sp = 0xFD;
         run(&mut cpu);
@@ -4898,7 +5087,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PHP, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         // Set status to 0xC0 (only N and V flags set, B and unused are 0)
         cpu.p = 0xC0;
         cpu.sp = 0xFD;
@@ -4914,7 +5103,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLP, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.sp = 0xFC;
         cpu.memory.borrow_mut().write(0x01FD, 0xC3, false);
         run(&mut cpu);
@@ -4930,7 +5119,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLP, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.sp = 0xFC;
         // Stack has 0xFF (all bits set including B and unused)
         cpu.memory.borrow_mut().write(0x01FD, 0xFF, false);
@@ -4950,7 +5139,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STX_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x10), 0x42);
@@ -4962,7 +5151,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STX_ZPY, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x42;
         cpu.y = 0x05;
         run(&mut cpu);
@@ -4975,7 +5164,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STX_ABS, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x1000), 0x42);
@@ -4987,7 +5176,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STY_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x10), 0x42);
@@ -4999,7 +5188,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STY_ZPX, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x42;
         cpu.x = 0x05;
         run(&mut cpu);
@@ -5012,7 +5201,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STY_ABS, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x42;
         run(&mut cpu);
         assert_eq!(cpu.memory.borrow().read(0x1000), 0x42);
@@ -5052,7 +5241,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
         // Verify program was loaded at 0x8000
@@ -5067,7 +5256,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AAC_IMM, 0b11000000, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11111111;
         cpu.p = 0x00;
         run(&mut cpu);
@@ -5082,7 +5271,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AAC_IMM, 0b01000000, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11111111;
         cpu.p = FLAG_CARRY;
         run(&mut cpu);
@@ -5097,7 +5286,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SAX_ZP, 0x50, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11110000;
         cpu.x = 0b10101010;
         run(&mut cpu);
@@ -5110,7 +5299,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SAX_ZPY, 0x50, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11110000;
         cpu.x = 0b10101010;
         cpu.y = 0x05;
@@ -5124,7 +5313,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SAX_ABS, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11110000;
         cpu.x = 0b10101010;
         run(&mut cpu);
@@ -5137,7 +5326,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SAX_INDX, 0x40, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11111111;
         cpu.x = 0b10101010;
         // The pointer is at 0x40 + X (wrapping in zero page)
@@ -5155,7 +5344,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ARR_IMM, 0b11110000, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11111111;
         cpu.p = 0x00; // No carry
         run(&mut cpu);
@@ -5172,7 +5361,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ARR_IMM, 0b11110000, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11111111;
         cpu.p = FLAG_CARRY; // Carry set
         run(&mut cpu);
@@ -5188,7 +5377,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ARR_IMM, 0b01100001, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11111111;
         cpu.p = 0x00;
         run(&mut cpu);
@@ -5208,7 +5397,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASR_IMM, 0b11110000, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11111111;
         cpu.p = FLAG_CARRY; // Carry should be ignored for LSR
         run(&mut cpu);
@@ -5226,7 +5415,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASR_IMM, 0b11110001, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11111111;
         cpu.p = 0x00;
         run(&mut cpu);
@@ -5243,7 +5432,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASR_IMM, 0b00000001, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b00000001;
         cpu.p = 0x00;
         run(&mut cpu);
@@ -5260,7 +5449,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ATX_IMM, 0b11110000, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11111111;
         cpu.x = 0x00;
         run(&mut cpu);
@@ -5277,7 +5466,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ATX_IMM, 0b00001111, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11110000;
         cpu.x = 0xFF;
         run(&mut cpu);
@@ -5294,7 +5483,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ATX_IMM, 0b10101010, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b11001100;
         cpu.x = 0x33;
         run(&mut cpu);
@@ -5313,7 +5502,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x21, 0x10, false); // High byte = 0x10, so address is 0x1000
         let program = vec![AXA_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xFF;
         cpu.x = 0x7F;
         cpu.y = 0x05; // Add 5 to base address, final address = 0x1005
@@ -5331,7 +5520,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AXA_ABSY, 0x00, 0x10, KIL]; // Base address 0x1000
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xFF;
         cpu.x = 0x3F;
         cpu.y = 0x10; // Final address = 0x1010
@@ -5349,7 +5538,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AXA_ABSY, 0xFF, 0x10, KIL]; // Base address 0x10FF
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xFF;
         cpu.x = 0xFF;
         cpu.y = 0x01; // Final address = 0x1100
@@ -5367,7 +5556,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AXS_IMM, 0x05, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x0F;
         cpu.x = 0xFF;
         run(&mut cpu);
@@ -5385,7 +5574,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AXS_IMM, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x0F;
         cpu.x = 0x0F;
         run(&mut cpu);
@@ -5403,7 +5592,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AXS_IMM, 0x08, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x0F;
         cpu.x = 0xF8;
         run(&mut cpu);
@@ -5421,7 +5610,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DCP_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x10, false);
         cpu.a = 0x0F;
         run(&mut cpu);
@@ -5439,7 +5628,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DCP_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x1005, 0x20, false);
         cpu.a = 0x30;
@@ -5460,7 +5649,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
         let program = vec![DCP_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x1010, 0x05, false);
         cpu.a = 0x03;
@@ -5479,7 +5668,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DOP_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0xFF, false);
         cpu.a = 0x10;
         cpu.x = 0x20;
@@ -5500,7 +5689,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DOP_ZPX, 0x40, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x45, 0xAA, false);
         cpu.a = 0x10;
@@ -5521,7 +5710,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DOP_IMM, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x10;
         cpu.x = 0x20;
         cpu.y = 0x30;
@@ -5540,7 +5729,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ISB_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x10, false);
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
@@ -5560,7 +5749,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ISB_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x1005, 0xFF, false);
         cpu.a = 0x00;
@@ -5582,7 +5771,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
         let program = vec![ISB_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x1010, 0x05, false);
         cpu.a = 0x10;
@@ -5602,7 +5791,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.execute();
         assert!(cpu.halted);
     }
@@ -5613,7 +5802,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![KIL2];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.execute();
         assert!(cpu.halted);
     }
@@ -5624,7 +5813,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![KIL12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.execute();
         assert!(cpu.halted);
     }
@@ -5635,7 +5824,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![KIL, NOP, NOP];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         // Execute KIL - should halt
         cpu.execute();
         assert!(cpu.halted);
@@ -5643,12 +5832,12 @@ mod tests {
         cpu.execute();
         assert!(cpu.halted);
         // Reset should clear halt
-        cpu.reset();
+        cpu.reset(true);
         assert!(!cpu.halted);
         // Load a simple NOP program and verify we can execute it
         let program2 = vec![NOP];
         fake_cartridge(&mut cpu, &program2);
-        cpu.reset();
+        cpu.reset(true);
         cpu.execute();
         assert!(!cpu.halted);
     }
@@ -5659,7 +5848,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAR_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x05;
         cpu.sp = 0xFD;
         cpu.memory.borrow_mut().write(0x1005, 0xAB, false);
@@ -5679,7 +5868,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x55, false);
         run(&mut cpu);
         // LAX: Load both A and X with memory value
@@ -5695,7 +5884,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_ABSY, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x1010, 0x80, false);
         run(&mut cpu);
@@ -5714,7 +5903,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
         let program = vec![LAX_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x1005, 0x00, false);
         run(&mut cpu);
@@ -5731,7 +5920,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![NOP_IMP, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         let a_before = cpu.a;
         let x_before = cpu.x;
         let y_before = cpu.y;
@@ -5750,7 +5939,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![NOP_IMP5, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         cpu.x = 0x55;
         let a_before = cpu.a;
@@ -5767,7 +5956,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RLA_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0b0110_1010, false); // 0x6A
         cpu.a = 0b1111_0000; // 0xF0
         cpu.p &= !FLAG_CARRY; // Clear carry
@@ -5787,7 +5976,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RLA_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x1005, 0b1000_0001, false); // 0x81
         cpu.a = 0xFF;
@@ -5810,7 +5999,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
         let program = vec![RLA_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x1010, 0x01, false);
         cpu.a = 0x01;
@@ -5830,7 +6019,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RRA_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x10, 0b1010_1010, false); // 0xAA
         cpu.a = 0x10;
         cpu.p &= !FLAG_CARRY; // Clear carry
@@ -5849,7 +6038,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RRA_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x1005, 0b0000_0001, false); // 0x01
         cpu.a = 0xFF;
@@ -5872,7 +6061,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
         let program = vec![RRA_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x1010, 0b0000_0010, false); // 0x02
         cpu.a = 0x00;
@@ -5891,7 +6080,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_IMM2, 0x01, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x05;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
         run(&mut cpu);
@@ -5909,7 +6098,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SLO_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.memory.borrow_mut().write(0x10, 0b0101_0101, false); // 0x55
         cpu.a = 0b0000_1111; // 0x0F
         run(&mut cpu);
@@ -5926,7 +6115,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SLO_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x1005, 0b1000_0001, false); // 0x81
         cpu.a = 0b0000_0010; // 0x02
@@ -5946,7 +6135,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
         let program = vec![SLO_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x1010, 0b0000_0001, false); // 0x01
         cpu.a = 0b0000_0000; // 0x00
@@ -5965,7 +6154,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x42, 0b0000_0110, false); // 0x06
         let program = vec![SRE_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0b0000_0001; // 0x01
         run(&mut cpu);
         // SRE: LSR memory (0x06 >> 1 = 0x03), then EOR with A (0x01 ^ 0x03 = 0x02)
@@ -5983,7 +6172,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
         let program = vec![SRE_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1010, 0b0000_0101, false); // 0x05
         cpu.a = 0b0000_0011; // 0x03
@@ -6003,7 +6192,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x21, 0x10, false);
         let program = vec![SRE_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0x10;
         cpu.memory.borrow_mut().write(0x1010, 0b0000_1000, false); // 0x08
         cpu.a = 0b0000_0100; // 0x04
@@ -6026,7 +6215,7 @@ mod tests {
         // If X = 0xFF, result = 0xFF AND 0x11 = 0x11
         let program = vec![SXA_ABSY, 0x00, 0x10, KIL]; // SXA $1000,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0xFF;
         cpu.y = 0x10;
         run(&mut cpu);
@@ -6044,7 +6233,7 @@ mod tests {
         // If Y = 0xFF, result = 0xFF AND 0x11 = 0x11
         let program = vec![SYA_ABSX, 0x00, 0x10, KIL]; // SYA $1000,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.y = 0xFF;
         cpu.x = 0x10;
         run(&mut cpu);
@@ -6058,7 +6247,7 @@ mod tests {
         // Test TOP with Absolute addressing - should do nothing
         let program = vec![TOP_ABS, 0x00, 0x30, KIL]; // TOP $3000
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0x42;
         run(&mut cpu);
         // TOP should not affect any registers or memory
@@ -6072,7 +6261,7 @@ mod tests {
         // Test TOP with Absolute,X addressing - should do nothing
         let program = vec![TOP_ABSX, 0x00, 0x30, KIL]; // TOP $3000,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.x = 0x10;
         cpu.a = 0x42;
         run(&mut cpu);
@@ -6091,7 +6280,7 @@ mod tests {
         // Result: (0xFF | 0xEE) & 0xF0 & 0x0F = 0xFF & 0xF0 & 0x0F = 0x00
         let program = vec![XAA_IMM, 0x0F, KIL];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xFF;
         cpu.x = 0xF0;
         run(&mut cpu);
@@ -6112,7 +6301,7 @@ mod tests {
         // HIGH(0x1000) = 0x10, so result = 0xF0 & 0x11 = 0x10
         let program = vec![XAS_ABSY, 0x00, 0x10, KIL]; // XAS $1000,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
         cpu.a = 0xFF;
         cpu.x = 0xF0;
         cpu.y = 0x10;
@@ -6190,7 +6379,7 @@ mod tests {
         // We'll use INC $2006 to match the test ROM
         let program = vec![0xEE, 0x06, 0x20, 0x02]; // INC $2006, KIL
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Re-setup PPUADDR after reset
         cpu.memory.borrow_mut().write(0x2006, 0x20, false);
@@ -6652,7 +6841,7 @@ mod tests {
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.sp = 0xFF;
         cpu.p = 0x00;
@@ -6681,7 +6870,7 @@ mod tests {
         // Load ORA #$0F
         let program = vec![ORA_IMM, 0x0F];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xF0;
         let initial_cycles = cpu.total_cycles;
@@ -6709,7 +6898,7 @@ mod tests {
         // Load ORA $42
         let program = vec![ORA_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0x0F, false); // Value at zero page $42
         cpu.a = 0xF0;
@@ -6726,7 +6915,7 @@ mod tests {
         // Load ORA $40,X
         let program = vec![ORA_ZPX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0x0F, false); // Value at zero page $42 (base + X)
         cpu.a = 0xF0;
@@ -6744,7 +6933,7 @@ mod tests {
         // Load ORA $1234
         let program = vec![ORA_ABS, 0x34, 0x12]; // Low byte, High byte
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1234, 0x0F, false); // Value at $1234
         cpu.a = 0xF0;
@@ -6761,7 +6950,7 @@ mod tests {
         // Load ORA $1234,X
         let program = vec![ORA_ABSX, 0x34, 0x12]; // Low byte, High byte
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1236, 0x0F, false); // Value at $1236 (base + X)
         cpu.a = 0xF0;
@@ -6779,7 +6968,7 @@ mod tests {
         // Load ORA $1234,Y
         let program = vec![ORA_ABSY, 0x34, 0x12]; // Low byte, High byte
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1237, 0x0F, false); // Value at $1237 (base + Y)
         cpu.a = 0xF0;
@@ -6797,7 +6986,7 @@ mod tests {
         // Load ORA ($40,X)
         let program = vec![ORA_INDX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set up indirect address at zero page $42 (base + X)
         cpu.memory.borrow_mut().write(0x0042, 0x34, false); // Low byte of target address
@@ -6818,7 +7007,7 @@ mod tests {
         // Load ORA ($40),Y
         let program = vec![ORA_INDY, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set up indirect address at zero page $40
         cpu.memory.borrow_mut().write(0x0040, 0x34, false); // Low byte of base address
@@ -6839,7 +7028,7 @@ mod tests {
         // Load ORA #$00
         let program = vec![ORA_IMM, 0x00];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x00;
 
@@ -6859,7 +7048,7 @@ mod tests {
         // Load SLO ($40,X)
         let program = vec![SLO_INDX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set up indirect address at zero page $42 (base + X)
         cpu.memory.borrow_mut().write(0x0042, 0x34, false); // Low byte of target address
@@ -6894,7 +7083,7 @@ mod tests {
         // Load SLO $42
         let program = vec![SLO_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b01000000, false); // Value at ZP (64)
         cpu.a = 0b00001111; // 15
@@ -6924,7 +7113,7 @@ mod tests {
         // Load SLO $1234
         let program = vec![SLO_ABS, 0x34, 0x12]; // Low byte, High byte
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1234, 0b10000001, false); // Value (129)
         cpu.a = 0b00001111; // 15
@@ -6954,7 +7143,7 @@ mod tests {
         // Load SLO ($40),Y
         let program = vec![SLO_INDYW, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set up indirect address at zero page $40
         cpu.memory.borrow_mut().write(0x0040, 0x34, false); // Low byte of base address
@@ -6983,7 +7172,7 @@ mod tests {
         // Load SLO $40,X
         let program = vec![SLO_ZPX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b00010000, false); // Value at ZP $42 (16)
         cpu.a = 0b00000001; // 1
@@ -7008,7 +7197,7 @@ mod tests {
         // Load SLO $1234,Y
         let program = vec![SLO_ABSYW, 0x34, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1237, 0b00000010, false); // Value at $1237 (2)
         cpu.a = 0b01010101; // 85
@@ -7033,7 +7222,7 @@ mod tests {
         // Load SLO $1234,X
         let program = vec![SLO_ABSXW, 0x34, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1236, 0b00001000, false); // Value at $1236 (8)
         cpu.a = 0b00000000; // 0
@@ -7064,7 +7253,7 @@ mod tests {
         // Load SLO $42
         let program = vec![SLO_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b00000000, false); // Zero value
         cpu.a = 0b00000000; // 0
@@ -7092,7 +7281,7 @@ mod tests {
         // Load NOP (official)
         let program = vec![NOP];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set up initial state
         cpu.a = 0x42;
@@ -7125,7 +7314,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         let program = vec![NOP_IMP];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x55;
         cpu.x = 0xAA;
@@ -7156,7 +7345,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         let program = vec![NOP_IMP2];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x11;
         cpu.x = 0x22;
@@ -7187,7 +7376,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         let program = vec![NOP_IMP3];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xCC;
         cpu.x = 0xDD;
@@ -7218,7 +7407,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         let program = vec![NOP_IMP4];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x01;
         cpu.x = 0x02;
@@ -7249,7 +7438,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         let program = vec![NOP_IMP5];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x7F;
         cpu.x = 0x80;
@@ -7280,7 +7469,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         let program = vec![NOP_IMP6];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFE;
         cpu.x = 0xFD;
@@ -7314,7 +7503,7 @@ mod tests {
         // Load ASL A
         let program = vec![ASL_A];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b01010101; // 85 decimal
         let initial_cycles = cpu.total_cycles;
@@ -7350,7 +7539,7 @@ mod tests {
         // Load ASL A
         let program = vec![ASL_A];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b10000001; // bit 7 is set
 
@@ -7376,7 +7565,7 @@ mod tests {
         // Load ASL A
         let program = vec![ASL_A];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b00000000;
 
@@ -7395,7 +7584,7 @@ mod tests {
         // Load ASL $42
         let program = vec![ASL_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b01010101, false);
         let initial_cycles = cpu.total_cycles;
@@ -7428,7 +7617,7 @@ mod tests {
         // Load ASL $40,X
         let program = vec![ASL_ZPX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0045, 0b11000000, false);
@@ -7466,7 +7655,7 @@ mod tests {
         // Load ASL $1234
         let program = vec![ASL_ABS, 0x34, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1234, 0b00100000, false);
         let initial_cycles = cpu.total_cycles;
@@ -7495,7 +7684,7 @@ mod tests {
         // Load ASL $1230,X
         let program = vec![ASL_ABSXW, 0x30, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x1234, 0b10000000, false);
@@ -7531,7 +7720,7 @@ mod tests {
         // Load PHP
         let program = vec![PHP];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set some flags
         cpu.p = 0b10110101; // N=1, V=0, B=1(ignored), D=1, I=0, Z=1, C=1
@@ -7562,7 +7751,7 @@ mod tests {
         // Load PHP
         let program = vec![PHP];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p = 0b11001010;
         let initial_p = cpu.p;
@@ -7581,7 +7770,7 @@ mod tests {
         // Load AAC #$F0
         let program = vec![AAC_IMM, 0xF0];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b11110000;
         let initial_cycles = cpu.total_cycles;
@@ -7615,7 +7804,7 @@ mod tests {
         // Load AAC #$7F (alternate opcode)
         let program = vec![AAC_IMM2, 0x7F];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b11110000;
         let initial_cycles = cpu.total_cycles;
@@ -7649,7 +7838,7 @@ mod tests {
         // Load AAC #$00
         let program = vec![AAC_IMM, 0x00];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
 
@@ -7670,7 +7859,7 @@ mod tests {
         // Load BPL +5
         let program = vec![BPL, 0x05];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
         let initial_pc = cpu.pc;
@@ -7694,7 +7883,7 @@ mod tests {
         // Load BPL +5
         let program = vec![BPL, 0x05];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
         let initial_pc = cpu.pc;
@@ -7722,7 +7911,7 @@ mod tests {
         // Load BPL -10 (0xF6 in two's complement)
         let program = vec![BPL, 0xF6];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
         let initial_pc = cpu.pc;
@@ -7762,7 +7951,7 @@ mod tests {
         program.push(0x70); // +112 bytes
 
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Execute NOPs to get to the BPL instruction
         for _ in 0..0x90 {
@@ -7797,7 +7986,7 @@ mod tests {
         // Load CLC
         let program = vec![CLC];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p = 0xFF; // Set all flags including carry
         let initial_cycles = cpu.total_cycles;
@@ -7828,7 +8017,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         let program = vec![CLC];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_CARRY; // Clear carry flag
 
@@ -7846,7 +8035,7 @@ mod tests {
         // Load AND #$0F
         let program = vec![AND_IMM, 0x0F];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         let initial_cycles = cpu.total_cycles;
@@ -7870,7 +8059,7 @@ mod tests {
         // Load AND #$00
         let program = vec![AND_IMM, 0x00];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
 
@@ -7888,7 +8077,7 @@ mod tests {
         // Load AND #$80
         let program = vec![AND_IMM, 0x80];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
 
@@ -7910,7 +8099,7 @@ mod tests {
         // Load AND $42
         let program = vec![AND_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0xF0, false);
         cpu.a = 0x55;
@@ -7933,7 +8122,7 @@ mod tests {
         // Load AND $40,X
         let program = vec![AND_ZPX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0045, 0x0F, false);
@@ -7957,7 +8146,7 @@ mod tests {
         // Load AND $1234
         let program = vec![AND_ABS, 0x34, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1234, 0xAA, false);
         cpu.a = 0x55;
@@ -7981,7 +8170,7 @@ mod tests {
         // Load AND $1230,X
         let program = vec![AND_ABSX, 0x30, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x1234, 0xCC, false);
@@ -8005,7 +8194,7 @@ mod tests {
         // Load AND $1230,Y
         let program = vec![AND_ABSY, 0x30, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x04;
         cpu.memory.borrow_mut().write(0x1234, 0x3C, false);
@@ -8029,7 +8218,7 @@ mod tests {
         // Load AND ($40,X)
         let program = vec![AND_INDX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         // Set up pointer at $45 pointing to $1234
@@ -8056,7 +8245,7 @@ mod tests {
         // Load AND ($40),Y
         let program = vec![AND_INDY, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
         // Set up pointer at $40 pointing to $1230
@@ -8085,7 +8274,7 @@ mod tests {
         // Load RLA $42
         let program = vec![RLA_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b01010101, false);
         cpu.a = 0xFF;
@@ -8127,7 +8316,7 @@ mod tests {
         // Load RLA $42
         let program = vec![RLA_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b10000001, false);
         cpu.a = 0xFF;
@@ -8159,7 +8348,7 @@ mod tests {
         // Load RLA $40,X
         let program = vec![RLA_ZPX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0045, 0b00110011, false);
@@ -8186,7 +8375,7 @@ mod tests {
         // Load RLA $1234
         let program = vec![RLA_ABS, 0x34, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1234, 0b01000000, false);
         cpu.a = 0b11111111;
@@ -8217,7 +8406,7 @@ mod tests {
         // Load RLA $1230,X
         let program = vec![RLA_ABSXW, 0x30, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x1234, 0b00000001, false);
@@ -8244,7 +8433,7 @@ mod tests {
         // Load RLA $1230,Y
         let program = vec![RLA_ABSYW, 0x30, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x04;
         cpu.memory.borrow_mut().write(0x1234, 0b11000000, false);
@@ -8272,7 +8461,7 @@ mod tests {
         // Load RLA ($40,X)
         let program = vec![RLA_INDX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         // Set up pointer at $45 pointing to $1234
@@ -8302,7 +8491,7 @@ mod tests {
         // Load RLA ($40),Y
         let program = vec![RLA_INDYW, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
         // Set up pointer at $40 pointing to $1230
@@ -8333,7 +8522,7 @@ mod tests {
         // JSR $1234 (opcode 0x20)
         let program = vec![JSR, 0x34, 0x12]; // JSR $1234
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.sp = 0xFF; // Full stack
 
@@ -8372,7 +8561,7 @@ mod tests {
         // JSR $5678
         let program = vec![JSR, 0x78, 0x56]; // JSR $5678
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.sp = 0x01; // Stack pointer near bottom
 
@@ -8400,7 +8589,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BIT_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b11000000, false); // Bit 7 and 6 set
         cpu.a = 0b00001111; // Only lower bits set
@@ -8435,7 +8624,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BIT_ABS, 0x34, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1234, 0b01110000, false); // Bit 6, 5 and 4 set
         cpu.a = 0b00110000; // Bit 5 and 4 set
@@ -8461,7 +8650,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ACC];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b10000001;
         cpu.p |= FLAG_CARRY; // Carry in = 1
@@ -8491,7 +8680,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b01000000, false);
         cpu.p &= !FLAG_CARRY; // Carry in = 0
@@ -8524,7 +8713,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ZPX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x02;
         cpu.memory.borrow_mut().write(0x0042, 0b11111111, false);
@@ -8547,7 +8736,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ABS, 0x34, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1234, 0b00000001, false);
         cpu.p &= !FLAG_CARRY;
@@ -8574,7 +8763,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROL_ABSXW, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x34;
         cpu.memory.borrow_mut().write(0x1234, 0b10000000, false);
@@ -8609,7 +8798,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLP];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Push a status value onto stack
         cpu.sp = 0xFF;
@@ -8661,7 +8850,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLP];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Push status with BREAK flag set
         cpu.memory.borrow_mut().write(0x01FF, 0b00010000, false); // Only BREAK set
@@ -8685,7 +8874,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BMI, 0x10]; // Branch forward +16
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
 
@@ -8708,7 +8897,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BMI, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
 
@@ -8731,7 +8920,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BMI, 0xFE]; // Branch backward -2
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_NEGATIVE;
 
@@ -8765,7 +8954,7 @@ mod tests {
             0x7F, // At 0x8080, branch to cause page cross
         ];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Execute NOPs to position PC
         for _ in 0..128 {
@@ -8790,7 +8979,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SEC];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_CARRY; // Clear carry
 
@@ -8807,7 +8996,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SEC];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_CARRY; // Already set
 
@@ -8827,7 +9016,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RTI];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set up stack as if returning from interrupt
         cpu.sp = 0xFC;
@@ -8858,7 +9047,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RTI];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set up delayed I flag (simulating CLI or SEI executed)
         cpu.delayed_i_flag = Some(true);
@@ -8881,7 +9070,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RTI];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set up stack with BREAK set (should be ignored like PLP)
         cpu.sp = 0xFC;
@@ -8903,7 +9092,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_IMM, 0b11110000];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b10101010;
 
@@ -8927,7 +9116,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0xFF, false);
         cpu.a = 0xFF;
@@ -8945,7 +9134,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_ZPX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x02;
         cpu.memory.borrow_mut().write(0x0042, 0b10000000, false);
@@ -8967,7 +9156,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_ABS, 0x34, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1234, 0x0F, false);
         cpu.a = 0xF0;
@@ -8984,7 +9173,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_ABSX, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x34;
         cpu.memory.borrow_mut().write(0x1234, 0xAA, false);
@@ -9002,7 +9191,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_ABSY, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x34;
         cpu.memory.borrow_mut().write(0x1234, 0b00110011, false);
@@ -9020,7 +9209,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_INDX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x02;
         cpu.memory.borrow_mut().write(0x0042, 0x34, false); // Low byte
@@ -9039,7 +9228,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![EOR_INDY, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x03;
         cpu.memory.borrow_mut().write(0x0040, 0x31, false); // Low byte
@@ -9060,7 +9249,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ACC];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b10000001;
 
@@ -9089,7 +9278,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b00000010, false);
 
@@ -9116,7 +9305,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ZPX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x02;
         cpu.memory.borrow_mut().write(0x0042, 0b00000001, false);
@@ -9139,7 +9328,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ABS, 0x34, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1234, 0xFF, false);
 
@@ -9160,7 +9349,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LSR_ABSXW, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x34;
         cpu.memory.borrow_mut().write(0x1234, 0b10101010, false);
@@ -9189,7 +9378,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SRE_ZP, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b00001111, false);
         cpu.a = 0b11110000;
@@ -9223,7 +9412,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SRE_ZPX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x02;
         cpu.memory.borrow_mut().write(0x0042, 0b11111110, false);
@@ -9247,7 +9436,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SRE_ABS, 0x34, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1234, 0b10101010, false);
         cpu.a = 0b01010101;
@@ -9266,7 +9455,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SRE_ABSXW, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x34;
         cpu.memory.borrow_mut().write(0x1234, 0xFF, false);
@@ -9291,7 +9480,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SRE_ABSYW, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x34;
         cpu.memory.borrow_mut().write(0x1234, 0b00000010, false);
@@ -9310,7 +9499,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SRE_INDX, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x02;
         cpu.memory.borrow_mut().write(0x0042, 0x34, false);
@@ -9338,7 +9527,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SRE_INDYW, 0x40];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x03;
         cpu.memory.borrow_mut().write(0x0040, 0x31, false);
@@ -9367,7 +9556,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PHA];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.sp = 0xFF; // Full stack
@@ -9390,7 +9579,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PHA];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xAB;
         cpu.sp = 0x00; // At bottom of stack
@@ -9412,7 +9601,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASR_IMM, 0b11110000];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b11111111;
 
@@ -9434,7 +9623,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASR_IMM, 0b00001111];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b10101111;
 
@@ -9456,7 +9645,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ASR_IMM, 0x00];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
 
@@ -9476,7 +9665,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![JMP_ABS, 0x34, 0x12]; // JMP $1234
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -9495,7 +9684,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![JMP_IND, 0x00, 0x12]; // JMP ($1200)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set up indirect address
         cpu.memory.borrow_mut().write(0x1200, 0x34, false); // Low byte
@@ -9518,7 +9707,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![JMP_IND, 0xFF, 0x12]; // JMP ($12FF)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Set up addresses at page boundary
         cpu.memory.borrow_mut().write(0x12FF, 0x34, false); // Low byte
@@ -9538,7 +9727,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BVC, 0x10]; // BVC +16
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let start_pc = cpu.pc;
         cpu.p = FLAG_OVERFLOW; // Set overflow flag
@@ -9560,7 +9749,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BVC, 0x10]; // BVC +16
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let start_pc = cpu.pc;
         cpu.p = 0; // Clear overflow flag
@@ -9592,7 +9781,7 @@ mod tests {
         program.push(0x70); // +112 bytes
 
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Execute NOPs to get to the BVC instruction
         for _ in 0..0x90 {
@@ -9620,7 +9809,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BVC, 0xFE]; // BVC -2
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let start_pc = cpu.pc;
         cpu.p = 0; // Clear overflow flag
@@ -9639,7 +9828,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CLI];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p = FLAG_INTERRUPT; // Set interrupt flag
 
@@ -9660,7 +9849,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CLI];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p = FLAG_CARRY | FLAG_ZERO | FLAG_NEGATIVE | FLAG_INTERRUPT;
 
@@ -9713,7 +9902,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
 
-        cpu.reset();
+        cpu.reset(true);
 
         // Start with interrupts disabled.
         cpu.p |= FLAG_INTERRUPT;
@@ -9759,7 +9948,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
         cpu.memory.borrow_mut().map_cartridge(cartridge);
 
-        cpu.reset();
+        cpu.reset(true);
 
         // Start with interrupts disabled, and an asserted IRQ line.
         cpu.p |= FLAG_INTERRUPT;
@@ -9788,7 +9977,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RTS];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Simulate JSR having pushed return address - 1
         let return_address = 0x1234_u16;
@@ -9810,7 +9999,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RTS];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let initial_sp = cpu.sp;
         cpu.push_word(0x5678);
@@ -9829,7 +10018,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RTS];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p = FLAG_CARRY | FLAG_ZERO | FLAG_NEGATIVE;
         cpu.push_word(0x1234);
@@ -9860,7 +10049,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0x10]; // ADC #$10
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x05;
         cpu.p = 0; // Clear all flags including carry
@@ -9886,7 +10075,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0x10]; // ADC #$10
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x05;
         cpu.p = FLAG_CARRY; // Set carry in
@@ -9903,7 +10092,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0xFF]; // ADC #$FF
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x02;
         cpu.p = 0;
@@ -9920,7 +10109,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0xFF]; // ADC #$FF
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x01;
         cpu.p = 0;
@@ -9938,7 +10127,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0x80]; // ADC #$80
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x00;
         cpu.p = 0;
@@ -9959,7 +10148,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0x7F]; // ADC #$7F (127)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x01; // 1
         cpu.p = 0;
@@ -9986,7 +10175,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_IMM, 0x80]; // ADC #$80 (-128 in signed)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x80; // -128 in signed
         cpu.p = 0;
@@ -10009,7 +10198,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_ZP, 0x42]; // ADC $42
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0x33, false);
         cpu.a = 0x10;
@@ -10032,7 +10221,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_ZPX, 0x40]; // ADC $40,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0045, 0x25, false);
@@ -10056,7 +10245,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_ABS, 0x00, 0x12]; // ADC $1200
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1200, 0x44, false);
         cpu.a = 0x11;
@@ -10079,7 +10268,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_ABSX, 0x00, 0x12]; // ADC $1200,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x08;
         cpu.memory.borrow_mut().write(0x1208, 0x22, false);
@@ -10103,7 +10292,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_ABSY, 0x00, 0x12]; // ADC $1200,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x03;
         cpu.memory.borrow_mut().write(0x1203, 0x15, false);
@@ -10127,7 +10316,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_INDX, 0x40]; // ADC ($40,X)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         // Zero page address 0x45 contains pointer to 0x1234
@@ -10154,7 +10343,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ADC_INDY, 0x40]; // ADC ($40),Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x08;
         // Zero page address 0x40 contains base address 0x1200
@@ -10182,7 +10371,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ACC]; // ROR A
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b10110110;
         cpu.p = 0; // Clear carry
@@ -10206,7 +10395,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ACC]; // ROR A
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b00110110;
         cpu.p = FLAG_CARRY; // Set carry
@@ -10228,7 +10417,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ACC]; // ROR A
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b00110111; // Bit 0 is set
         cpu.p = 0;
@@ -10249,7 +10438,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ZP, 0x42]; // ROR $42
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b11001100, false);
         cpu.p = 0;
@@ -10276,7 +10465,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ZPX, 0x40]; // ROR $40,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0045, 0b10101010, false);
@@ -10304,7 +10493,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ABS, 0x00, 0x12]; // ROR $1200
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1200, 0b00110011, false);
         cpu.p = 0;
@@ -10335,7 +10524,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ROR_ABSXW, 0x00, 0x12]; // ROR $1200,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x08;
         cpu.memory.borrow_mut().write(0x1208, 0b11110000, false);
@@ -10363,7 +10552,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RRA_ZP, 0x42]; // RRA $42
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0b10000000, false);
         cpu.a = 0x10;
@@ -10394,7 +10583,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RRA_ZPX, 0x40]; // RRA $40,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0045, 0b00000011, false); // Bit 0 is set
@@ -10430,7 +10619,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RRA_ABS, 0x00, 0x12]; // RRA $1200
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1200, 0x02, false);
         cpu.a = 0xFF;
@@ -10466,7 +10655,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RRA_ABSXW, 0x00, 0x12]; // RRA $1200,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1210, 0x20, false);
@@ -10497,7 +10686,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RRA_ABSYW, 0x00, 0x12]; // RRA $1200,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x08;
         cpu.memory.borrow_mut().write(0x1208, 0x04, false);
@@ -10528,7 +10717,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RRA_INDX, 0x40]; // RRA ($40,X)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0045, 0x00, false);
@@ -10561,7 +10750,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![RRA_INDYW, 0x40]; // RRA ($40),Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x08;
         cpu.memory.borrow_mut().write(0x0040, 0x00, false);
@@ -10595,7 +10784,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLA]; // PLA
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.push_byte(0x42);
 
@@ -10614,7 +10803,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLA]; // PLA
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.push_byte(0x00);
 
@@ -10631,7 +10820,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLA]; // PLA
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.push_byte(0x80);
 
@@ -10652,7 +10841,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![PLA]; // PLA
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let initial_sp = cpu.sp;
         cpu.push_byte(0x55);
@@ -10669,7 +10858,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ARR_IMM, 0b11001100]; // ARR #$CC
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b11110000;
         cpu.p = 0; // Clear carry
@@ -10694,7 +10883,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ARR_IMM, 0b11001100]; // ARR #$CC
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b11110000;
         cpu.p = FLAG_CARRY; // Set carry
@@ -10717,7 +10906,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ARR_IMM, 0xFF]; // ARR #$FF
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b10000000;
         cpu.p = 0; // old carry = 0
@@ -10744,7 +10933,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BVS, 0x10]; // BVS +16
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let start_pc = cpu.pc;
         cpu.p = 0; // Clear overflow flag
@@ -10766,7 +10955,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BVS, 0x10]; // BVS +16
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let start_pc = cpu.pc;
         cpu.p = FLAG_OVERFLOW; // Set overflow flag
@@ -10796,7 +10985,7 @@ mod tests {
         program.push(0x70); // +112 bytes
 
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Execute NOPs to get to the BVS instruction
         for _ in 0..0x90 {
@@ -10824,7 +11013,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BVS, 0xFE]; // BVS -2
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let start_pc = cpu.pc;
         cpu.p = FLAG_OVERFLOW; // Set overflow flag
@@ -10843,7 +11032,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SEI];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p = 0; // Clear interrupt flag
 
@@ -10864,7 +11053,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SEI];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p = FLAG_CARRY | FLAG_ZERO | FLAG_NEGATIVE;
 
@@ -10899,7 +11088,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_ZP, 0x42]; // STA $42
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x55;
 
@@ -10924,7 +11113,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_ZPX, 0x40]; // STA $40,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xAA;
         cpu.x = 0x05;
@@ -10950,7 +11139,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_ABS, 0x00, 0x12]; // STA $1200
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x77;
 
@@ -10975,7 +11164,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_ABSXW, 0x00, 0x12]; // STA $1200,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x88;
         cpu.x = 0x10;
@@ -11001,7 +11190,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_ABSYW, 0x00, 0x12]; // STA $1200,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x99;
         cpu.y = 0x08;
@@ -11027,7 +11216,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_INDX, 0x40]; // STA ($40,X)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xCC;
         cpu.x = 0x05;
@@ -11055,7 +11244,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STA_INDYW, 0x40]; // STA ($40),Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xDD;
         cpu.y = 0x08;
@@ -11084,7 +11273,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SAX_ZP, 0x42]; // SAX $42
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b11110000;
         cpu.x = 0b11001100;
@@ -11110,7 +11299,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SAX_ZPY, 0x40]; // SAX $40,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         cpu.x = 0x55;
@@ -11137,7 +11326,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SAX_ABS, 0x00, 0x12]; // SAX $1200
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b10101010;
         cpu.x = 0b01010101;
@@ -11163,7 +11352,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SAX_INDX, 0x40]; // SAX ($40,X)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         cpu.x = 0x05;
@@ -11192,7 +11381,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STY_ZP, 0x42]; // STY $42
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x66;
 
@@ -11217,7 +11406,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STY_ZPX, 0x40]; // STY $40,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x77;
         cpu.x = 0x05;
@@ -11243,7 +11432,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STY_ABS, 0x00, 0x12]; // STY $1200
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x88;
 
@@ -11269,7 +11458,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STX_ZP, 0x42]; // STX $42
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x99;
 
@@ -11294,7 +11483,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STX_ZPY, 0x40]; // STX $40,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0xAA;
         cpu.y = 0x05;
@@ -11320,7 +11509,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![STX_ABS, 0x00, 0x12]; // STX $1200
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0xBB;
 
@@ -11346,7 +11535,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEY]; // DEY
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
 
@@ -11365,7 +11554,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEY]; // DEY
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x01;
 
@@ -11382,7 +11571,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEY]; // DEY
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x00;
 
@@ -11404,7 +11593,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TXA]; // TXA
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x42;
         cpu.a = 0x00;
@@ -11424,7 +11613,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TXA]; // TXA
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x00;
         cpu.a = 0xFF;
@@ -11441,7 +11630,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TXA]; // TXA
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x80;
         cpu.a = 0x00;
@@ -11463,7 +11652,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![XAA_IMM, 0b11110000]; // XAA #$F0
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0b11001100;
         cpu.a = 0xFF; // Should be overwritten
@@ -11483,7 +11672,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![XAA_IMM, 0x00]; // XAA #$00
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0xFF;
 
@@ -11499,7 +11688,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![XAA_IMM, 0xFF]; // XAA #$FF
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x80;
 
@@ -11520,7 +11709,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BCC, 0x10]; // BCC +16
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let start_pc = cpu.pc;
         cpu.p = FLAG_CARRY; // Set carry flag
@@ -11542,7 +11731,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BCC, 0x10]; // BCC +16
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let start_pc = cpu.pc;
         cpu.p = 0; // Clear carry flag
@@ -11572,7 +11761,7 @@ mod tests {
         program.push(0x70); // +112 bytes
 
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Execute NOPs to get to the BCC instruction
         for _ in 0..0x90 {
@@ -11600,7 +11789,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BCC, 0xFE]; // BCC -2
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let start_pc = cpu.pc;
         cpu.p = 0; // Clear carry flag
@@ -11619,7 +11808,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![XAS_ABSY, 0x00, 0x12]; // XAS $1200,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         cpu.x = 0xFF;
@@ -11645,7 +11834,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![XAS_ABSY, 0xF0, 0x11]; // XAS $11F0,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         cpu.x = 0xFF;
@@ -11670,7 +11859,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![XAS_ABSY, 0x00, 0x02]; // XAS $0200,Y (write to RAM at $0200)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0b11110000;
         cpu.x = 0b11001100;
@@ -11694,7 +11883,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TYA]; // TYA
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x42;
         cpu.a = 0xFF; // Should be overwritten
@@ -11714,7 +11903,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TYA]; // TYA
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x00;
 
@@ -11730,7 +11919,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TYA]; // TYA
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x80;
 
@@ -11751,7 +11940,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TXS]; // TXS
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x42;
         cpu.sp = 0xFF; // Should be overwritten
@@ -11770,7 +11959,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TXS]; // TXS
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x00;
         cpu.p = 0xFF; // Set all flags
@@ -11789,7 +11978,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SYA_ABSX, 0x00, 0x12]; // SYA $1200,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0xFF;
         cpu.x = 0x00;
@@ -11814,7 +12003,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SYA_ABSX, 0x00, 0x03]; // SYA $0300,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0b11110000;
         cpu.x = 0x00;
@@ -11837,7 +12026,7 @@ mod tests {
         // Base $12FF, X=1 => effective $1300 (page crossed)
         let program = vec![SYA_ABSX, 0xFF, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x01;
         cpu.y = 0x0F;
@@ -11862,7 +12051,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SXA_ABSY, 0x00, 0x12]; // SXA $1200,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0xFF;
         cpu.y = 0x00;
@@ -11887,7 +12076,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SXA_ABSY, 0x00, 0x03]; // SXA $0300,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0b11110000;
         cpu.y = 0x00;
@@ -11910,7 +12099,7 @@ mod tests {
         // Base $12FF, Y=1 => effective $1300 (page crossed)
         let program = vec![SXA_ABSY, 0xFF, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x01;
         cpu.x = 0x0F;
@@ -11936,7 +12125,7 @@ mod tests {
         // Set up zero page pointer at 0x40 -> 0x1200
         let program = vec![AXA_INDY, 0x40]; // AXA ($40),Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0040, 0x00, false);
         cpu.memory.borrow_mut().write(0x0041, 0x12, false);
@@ -11963,7 +12152,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AXA_ABSY, 0x00, 0x12]; // AXA $1200,Y
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         cpu.x = 0xFF;
@@ -11988,7 +12177,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_IMM, 0x42]; // LDY #$42
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -12009,7 +12198,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_ZP, 0x42]; // LDY $42
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0042, 0x99, false);
 
@@ -12030,7 +12219,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_ZPX, 0x40]; // LDY $40,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0045, 0xAA, false);
@@ -12052,7 +12241,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_ABS, 0x00, 0x12]; // LDY $1200
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1200, 0xBB, false);
 
@@ -12073,7 +12262,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_ABSX, 0x00, 0x12]; // LDY $1200,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x1205, 0xCC, false);
@@ -12095,7 +12284,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_ABSX, 0xFF, 0x11]; // LDY $11FF,X
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x02; // Crosses page boundary
         cpu.memory.borrow_mut().write(0x1201, 0xDD, false);
@@ -12117,7 +12306,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_IMM, 0x00]; // LDY #$00
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.execute();
 
@@ -12131,7 +12320,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDY_IMM, 0x80]; // LDY #$80
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.execute();
 
@@ -12150,7 +12339,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TAY]; // TAY
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.y = 0x00;
@@ -12170,7 +12359,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TAY]; // TAY
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x00;
         cpu.y = 0xFF;
@@ -12188,7 +12377,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TAY]; // TAY
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x80;
         cpu.y = 0x00;
@@ -12211,7 +12400,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TAX]; // TAX
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.x = 0x00;
@@ -12231,7 +12420,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TAX]; // TAX
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x00;
         cpu.x = 0xFF;
@@ -12249,7 +12438,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TAX]; // TAX
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x80;
         cpu.x = 0x00;
@@ -12272,7 +12461,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_IMM, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -12293,7 +12482,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0x55, false);
 
@@ -12314,7 +12503,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ZPX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0015, 0x66, false);
@@ -12336,7 +12525,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ABS, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1200, 0x77, false);
 
@@ -12357,7 +12546,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ABSX, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x1205, 0x88, false);
@@ -12379,7 +12568,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ABSX, 0xFF, 0x11];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x1204, 0x99, false);
@@ -12401,7 +12590,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ABSY, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x1205, 0xAA, false);
@@ -12423,7 +12612,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_ABSY, 0xFF, 0x11];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x1204, 0xBB, false);
@@ -12445,7 +12634,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_INDX, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x0024, 0x00, false); // Low byte
@@ -12469,7 +12658,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_INDY, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x04;
         cpu.memory.borrow_mut().write(0x0020, 0x00, false); // Low byte
@@ -12493,7 +12682,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_INDY, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0xFF;
         cpu.memory.borrow_mut().write(0x0020, 0x10, false); // Low byte
@@ -12517,7 +12706,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_IMM, 0x00];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.execute();
 
@@ -12531,7 +12720,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDA_IMM, 0x80];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.execute();
 
@@ -12550,7 +12739,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_IMM, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -12571,7 +12760,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0x55, false);
 
@@ -12592,7 +12781,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_ZPY, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x0015, 0x66, false);
@@ -12614,7 +12803,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_ABS, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1200, 0x77, false);
 
@@ -12635,7 +12824,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_ABSY, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x1205, 0x88, false);
@@ -12657,7 +12846,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_ABSY, 0xFF, 0x11];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x1204, 0x99, false);
@@ -12679,7 +12868,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_IMM, 0x00];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.execute();
 
@@ -12693,7 +12882,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LDX_IMM, 0x80];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.execute();
 
@@ -12712,7 +12901,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0x42, false);
 
@@ -12734,7 +12923,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_ZPY, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x0015, 0x55, false);
@@ -12757,7 +12946,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_ABS, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x1200, 0x66, false);
 
@@ -12779,7 +12968,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_ABSY, 0x00, 0x12];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x1205, 0x77, false);
@@ -12802,7 +12991,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_ABSY, 0xFF, 0x11];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x05;
         cpu.memory.borrow_mut().write(0x1204, 0x88, false);
@@ -12825,7 +13014,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_INDX, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x04;
         cpu.memory.borrow_mut().write(0x0024, 0x00, false); // Low byte
@@ -12850,7 +13039,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_INDY, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x04;
         cpu.memory.borrow_mut().write(0x0020, 0x00, false); // Low byte
@@ -12875,7 +13064,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0x00, false);
 
@@ -12892,7 +13081,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAX_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0x80, false);
 
@@ -12914,7 +13103,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CLV];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
 
@@ -12931,7 +13120,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CLV];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
 
@@ -12951,7 +13140,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TSX];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.sp = 0x42;
         cpu.x = 0x00;
@@ -12971,7 +13160,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TSX];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.sp = 0x00;
         cpu.x = 0xFF;
@@ -12989,7 +13178,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![TSX];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.sp = 0x80;
         cpu.x = 0x00;
@@ -13012,7 +13201,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BCS, 0x05]; // Branch forward 5 bytes
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_CARRY; // Set carry flag
 
@@ -13046,7 +13235,7 @@ mod tests {
         program.push(0x7F); // Branch forward 127 bytes
 
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Execute NOPs to position PC at BCS instruction
         for _ in 0..128 {
@@ -13072,7 +13261,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BCS, 0x05];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_CARRY; // Clear carry flag
 
@@ -13095,7 +13284,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BCS, 0xFE]; // Branch backward -2 bytes (signed)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_CARRY; // Set carry flag
 
@@ -13118,7 +13307,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ATX_IMM, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF; // Set A to known value
         cpu.x = 0x00;
@@ -13143,7 +13332,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ATX_IMM, 0x00];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         cpu.x = 0xFF;
@@ -13161,7 +13350,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ATX_IMM, 0x80];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         cpu.x = 0x00;
@@ -13184,7 +13373,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INY];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x42;
 
@@ -13203,7 +13392,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INY];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0xFF;
 
@@ -13220,7 +13409,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INY];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x7F;
 
@@ -13242,7 +13431,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPY_IMM, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x42;
 
@@ -13265,7 +13454,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPY_IMM, 0x30];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x42;
 
@@ -13282,7 +13471,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPY_IMM, 0x50];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x42;
 
@@ -13303,7 +13492,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPY_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x42;
         cpu.memory.borrow_mut().write(0x0010, 0x42, false);
@@ -13325,7 +13514,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPY_ABS, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.y = 0x42;
         cpu.memory.borrow_mut().write(0x2000, 0x42, false);
@@ -13348,7 +13537,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_IMM, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
 
@@ -13370,7 +13559,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.memory.borrow_mut().write(0x0010, 0x40, false);
@@ -13392,7 +13581,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_ZPX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.x = 0x05;
@@ -13415,7 +13604,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_ABS, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.memory.borrow_mut().write(0x2000, 0x40, false);
@@ -13437,7 +13626,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_ABSX, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.x = 0x10;
@@ -13460,7 +13649,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_ABSY, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.y = 0x10;
@@ -13483,7 +13672,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_INDX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.x = 0x05;
@@ -13508,7 +13697,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CMP_INDY, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.y = 0x10;
@@ -13534,7 +13723,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DCP_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.memory.borrow_mut().write(0x0010, 0x43, false);
@@ -13562,7 +13751,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DCP_ZPX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.x = 0x05;
@@ -13590,7 +13779,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DCP_ABS, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.memory.borrow_mut().write(0x2000, 0x43, false);
@@ -13617,7 +13806,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DCP_ABSXW, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.x = 0x10;
@@ -13645,7 +13834,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DCP_ABSYW, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.y = 0x10;
@@ -13673,7 +13862,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DCP_INDX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.x = 0x05;
@@ -13703,7 +13892,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DCP_INDYW, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.y = 0x10;
@@ -13734,7 +13923,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAR_ABSY, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.sp = 0xFF;
         cpu.y = 0x10;
@@ -13760,7 +13949,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAR_ABSY, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.sp = 0xFF;
         cpu.y = 0x10;
@@ -13780,7 +13969,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![LAR_ABSY, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.sp = 0xFF;
         cpu.y = 0x10;
@@ -13805,7 +13994,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEX];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x42;
 
@@ -13824,7 +14013,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEX];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x01;
 
@@ -13841,7 +14030,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEX];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x00;
 
@@ -13863,7 +14052,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPX_IMM, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x42;
 
@@ -13886,7 +14075,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPX_IMM, 0x30];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x42;
 
@@ -13903,7 +14092,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPX_IMM, 0x50];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x42;
 
@@ -13924,7 +14113,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPX_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x42;
         cpu.memory.borrow_mut().write(0x0010, 0x42, false);
@@ -13946,7 +14135,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CPX_ABS, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x42;
         cpu.memory.borrow_mut().write(0x2000, 0x42, false);
@@ -13969,7 +14158,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CLD];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_DECIMAL;
 
@@ -13986,7 +14175,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![CLD];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_DECIMAL;
 
@@ -14006,7 +14195,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BNE, 0x05]; // Branch forward 5 bytes
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_ZERO; // Clear zero flag
 
@@ -14037,7 +14226,7 @@ mod tests {
         program.push(0x7F); // Branch forward 127 bytes
 
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Execute NOPs to position PC at BNE instruction
         for _ in 0..128 {
@@ -14063,7 +14252,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BNE, 0x05];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_ZERO; // Set zero flag
 
@@ -14086,7 +14275,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BNE, 0xFE]; // Branch backward -2 bytes (signed)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_ZERO; // Clear zero flag
 
@@ -14109,7 +14298,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AXS_IMM, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         cpu.x = 0x50;
@@ -14135,7 +14324,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AXS_IMM, 0x50];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         cpu.x = 0x30;
@@ -14158,7 +14347,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![AXS_IMM, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0xFF;
         cpu.x = 0x42;
@@ -14178,7 +14367,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INX];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x42;
 
@@ -14197,7 +14386,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INX];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0xFF;
 
@@ -14214,7 +14403,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INX];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x7F;
 
@@ -14236,7 +14425,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BEQ, 0x05]; // Branch forward 5 bytes
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_ZERO; // Set zero flag
 
@@ -14267,7 +14456,7 @@ mod tests {
         program.push(0x7F); // Branch forward 127 bytes
 
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         // Execute NOPs to position PC at BEQ instruction
         for _ in 0..128 {
@@ -14293,7 +14482,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BEQ, 0x05];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_ZERO; // Clear zero flag
 
@@ -14316,7 +14505,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![BEQ, 0xFE]; // Branch backward -2 bytes (signed)
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_ZERO; // Set zero flag
 
@@ -14338,7 +14527,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_IMM, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
@@ -14365,7 +14554,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_IMM, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.p &= !FLAG_CARRY; // Clear carry (borrow)
@@ -14383,7 +14572,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_IMM, 0x42];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x42;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
@@ -14401,7 +14590,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_IMM, 0x50];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x30;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
@@ -14424,7 +14613,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_IMM, 0x80];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
@@ -14446,7 +14635,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_IMM, 0x01];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x80;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
@@ -14468,7 +14657,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
@@ -14491,7 +14680,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ZPX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.x = 0x05;
@@ -14515,7 +14704,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ABS, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
@@ -14538,7 +14727,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ABSX, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.x = 0x05;
@@ -14562,7 +14751,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ABSX, 0xFF, 0x01];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.x = 0x05;
@@ -14586,7 +14775,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ABSY, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.y = 0x05;
@@ -14610,7 +14799,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_ABSY, 0xFF, 0x01];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.y = 0x05;
@@ -14634,7 +14823,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_INDX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.x = 0x05;
@@ -14660,7 +14849,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_INDY, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.y = 0x05;
@@ -14686,7 +14875,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SBC_INDY, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.y = 0x05;
@@ -14713,7 +14902,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ISB_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
@@ -14742,7 +14931,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ISB_ZPX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.x = 0x05;
@@ -14771,7 +14960,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ISB_ABS, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
@@ -14799,7 +14988,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ISB_ABSXW, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.x = 0x05;
@@ -14828,7 +15017,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ISB_ABSYW, 0x00, 0x20];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.y = 0x05;
@@ -14857,7 +15046,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ISB_INDX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.x = 0x05;
@@ -14888,7 +15077,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![ISB_INDYW, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.a = 0x50;
         cpu.y = 0x05;
@@ -14920,7 +15109,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SED];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p &= !FLAG_DECIMAL; // Clear decimal flag
 
@@ -14941,7 +15130,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![SED];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.p |= FLAG_DECIMAL; // Set decimal flag
 
@@ -14961,7 +15150,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0x42, false);
 
@@ -14988,7 +15177,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0xFF, false);
 
@@ -15009,7 +15198,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0x7F, false);
 
@@ -15034,7 +15223,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ZPX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0015, 0x42, false);
@@ -15060,7 +15249,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ABS, 0x00, 0x02];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0200, 0x42, false);
 
@@ -15085,7 +15274,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![INC_ABSXW, 0x00, 0x02];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0205, 0x42, false);
@@ -15112,7 +15301,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0x42, false);
 
@@ -15139,7 +15328,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0x01, false);
 
@@ -15160,7 +15349,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ZP, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0010, 0x00, false);
 
@@ -15185,7 +15374,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ZPX, 0x10];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0015, 0x42, false);
@@ -15211,7 +15400,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ABS, 0x00, 0x02];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.memory.borrow_mut().write(0x0200, 0x42, false);
 
@@ -15236,7 +15425,7 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         let program = vec![DEC_ABSXW, 0x00, 0x02];
         fake_cartridge(&mut cpu, &program);
-        cpu.reset();
+        cpu.reset(true);
 
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x0205, 0x42, false);

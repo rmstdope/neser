@@ -56,6 +56,11 @@ impl MasterClock {
         ppu_cycles
     }
 
+    pub fn reset(&mut self) {
+        self.master_clock = 0;
+        self.ppu_clock = 0;
+    }
+
     #[allow(dead_code)]
     pub fn cpu_divider(&self) -> u64 {
         self.cpu_divider
@@ -129,5 +134,28 @@ mod tests {
 
         clock.set_master_cycles(10);
         assert_eq!(clock.ppu_cycles_since_last(), 1);
+    }
+
+    #[test]
+    fn test_reset_restores_initial_state_but_preserves_dividers() {
+        let mut clock = MasterClock::new(TvSystem::Ntsc);
+
+        // Advance internal clocks to a non-zero, misaligned state.
+        clock.set_master_cycles(37);
+        let _ = clock.ppu_cycles_since_last();
+        clock.before_cpu_cycle(false);
+        clock.after_cpu_cycle(true);
+
+        assert_ne!(clock.master_cycles(), 0);
+        let cpu_divider_before = clock.cpu_divider();
+        let ppu_divider_before = clock.ppu_divider();
+
+        // New API: should restore the initial state for this TV system.
+        clock.reset();
+
+        assert_eq!(clock.master_cycles(), 0);
+        assert_eq!(clock.ppu_cycles_since_last(), 0);
+        assert_eq!(clock.cpu_divider(), cpu_divider_before);
+        assert_eq!(clock.ppu_divider(), ppu_divider_before);
     }
 }

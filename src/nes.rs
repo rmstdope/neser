@@ -98,19 +98,22 @@ impl Nes {
         self.memory.borrow_mut().map_cartridge(cartridge);
     }
 
-    /// Reset the NES system (CPU and PPU)
-    pub fn reset(&mut self) {
+    /// Reset the NES system.
+    ///
+    /// - `soft_reset`: true for a reset-button style reset, false for power-on
+    pub fn reset(&mut self, soft_reset: bool) {
         // Get CPU cycle count before reset for coordinated APU timing
         let cpu_cycle = self.cpu.get_total_cycles();
 
-        self.cpu.reset();
+        // Reset PPU/APU first: CPU reset advances the master clock and ticks both.
         self.ppu.borrow_mut().reset();
-        self.apu.borrow_mut().reset(cpu_cycle);
+        self.apu.borrow_mut().reset(cpu_cycle, soft_reset);
+        self.cpu.reset(soft_reset);
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
 
         // Re-establish 1-cycle PPU offset after reset
-        self.ppu.borrow_mut().run_ppu_cycles(1);
+        //self.ppu.borrow_mut().run_ppu_cycles(1);
     }
 
     /// Run one CPU "tick", executing one opcode and the corresponding PPU cycles
@@ -457,6 +460,17 @@ impl Nes {
         let total_cycles = self.cpu.get_total_cycles();
         let state = self.cpu.get_state();
         let ppu = self.ppu.borrow();
+        let mut scanline = ppu.scanline();
+        let mut pixel = ppu.pixel();
+        // Compensate for the +1 PPU tick
+        if nestest {
+            if pixel == 0 {
+                scanline -= 1;
+                pixel = 340;
+            } else {
+                pixel -= 1;
+            }
+        }
         format!(
             "{:04X}  {}{}{:<width$} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3},{:3} CYC:{}",
             pc,
@@ -468,8 +482,8 @@ impl Nes {
             state.y,
             state.p,
             state.sp,
-            ppu.scanline(),
-            ppu.pixel(),
+            scanline,
+            pixel,
             total_cycles,
             width = width
         )
@@ -536,7 +550,7 @@ mod tests {
         // Create NES and insert cartridge
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.insert_cartridge(cartridge);
-        nes.cpu.reset();
+        nes.cpu.reset(false);
         // nestest automated test starts execution at $C000 (not reset vector $C004)
         nes.cpu.get_state().pc = 0xC000;
         // CPU reset takes 7 cycles, manually sync PPU and CPU cycle counters
@@ -737,12 +751,64 @@ mod tests {
     }
 
     #[test]
+    fn test_nes_reset_resets_apu_before_cpu_reset_ticks() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let rom_data = create_minimal_rom();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        nes.insert_cartridge(cartridge);
+
+        // Ensure cpu_cycle passed into APU reset is non-zero (so we don't take the power-on
+        // early-return path inside APU reset).
+        // Use odd to get the 3-cycle write delay.
+        nes.cpu.set_total_cycles(1);
+
+        nes.reset(true);
+
+        // APU reset queues a delayed $4017 write (3 cycles on odd CPU cycle), and the write
+        // takes effect during the delay, resetting the frame counter. With our current
+        // implementation, this leaves the frame counter at cycle 1 when the APU reset returns.
+        // CPU reset then advances the master clock by 7 CPU cycles, which should tick the APU
+        // 7 more times IF the APU was reset before CPU reset.
+        let expected_cycle_counter = 1 + 7;
+        assert_eq!(
+            nes.apu.borrow().frame_counter().get_cycle_counter(),
+            expected_cycle_counter,
+            "APU should have advanced during CPU reset cycles"
+        );
+    }
+
+    #[test]
+    fn test_nes_reset_soft_reset_rewrites_last_4017_value() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let rom_data = create_minimal_rom();
+        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        nes.insert_cartridge(cartridge);
+
+        // Set a non-default $4017 value.
+        nes.apu.borrow_mut().write_frame_counter(0x80);
+
+        // Soft reset should rewrite last $4017 value, keeping 5-step mode.
+        nes.reset(true);
+        assert!(
+            nes.apu.borrow().frame_counter().get_mode(),
+            "Soft reset should keep the last-written $4017 mode"
+        );
+
+        // Power-on reset should behave as if $4017=$00.
+        nes.reset(false);
+        assert!(
+            !nes.apu.borrow().frame_counter().get_mode(),
+            "Power-on reset should behave as if $4017 was written with $00"
+        );
+    }
+
+    #[test]
     fn test_oam_dma_takes_513_cycles_on_even_cpu_cycle() {
         let mut nes = Nes::new(TvSystem::Ntsc);
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
         nes.insert_cartridge(cartridge);
-        nes.cpu.reset();
+        nes.cpu.reset(false);
 
         // Set CPU to an even cycle (8)
         nes.cpu.set_total_cycles(8);
@@ -771,7 +837,7 @@ mod tests {
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
         nes.insert_cartridge(cartridge);
-        nes.cpu.reset();
+        nes.cpu.reset(false);
 
         // Set CPU to an odd cycle (7)
         nes.cpu.set_total_cycles(7);
@@ -800,7 +866,7 @@ mod tests {
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
         nes.insert_cartridge(cartridge);
-        nes.cpu.reset();
+        nes.cpu.reset(false);
 
         // Set up test data in RAM at page $02 ($0200-$02FF)
         for i in 0..256u16 {
@@ -839,7 +905,7 @@ mod tests {
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
         nes.insert_cartridge(cartridge);
-        nes.cpu.reset();
+        nes.cpu.reset(false);
 
         // Set up distinct data in different pages
         // Page $03: $0300-$03FF
@@ -877,7 +943,7 @@ mod tests {
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
         nes.insert_cartridge(cartridge);
-        nes.cpu.reset();
+        nes.cpu.reset(false);
 
         // Set CPU to an even cycle (8)
         nes.cpu.set_total_cycles(8);
@@ -958,7 +1024,7 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         // Reset to start execution
-        nes.reset();
+        nes.reset(false);
 
         // Get initial frame counter cycle count
         let initial_cycle = nes.apu.borrow().frame_counter().get_cycle_counter();
@@ -985,7 +1051,7 @@ mod tests {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
         nes.insert_cartridge(cartridge);
-        nes.reset();
+        nes.reset(false);
 
         // Force an NMI pending edge before executing the next instruction.
         nes.cpu.set_nmi_pending(true);
@@ -1009,7 +1075,7 @@ mod tests {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
         nes.insert_cartridge(cartridge);
-        nes.reset();
+        nes.reset(false);
 
         // Get initial APU cycle count
         let initial_cycle = nes.apu.borrow().frame_counter().get_cycle_counter();
@@ -1053,7 +1119,7 @@ mod tests {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
         nes.insert_cartridge(cartridge);
-        nes.reset();
+        nes.reset(false);
 
         // Clock the APU until a sample is ready
         // At 44100 Hz sample rate and 1789773 Hz CPU clock:
@@ -1077,7 +1143,7 @@ mod tests {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
         nes.insert_cartridge(cartridge);
-        nes.reset();
+        nes.reset(false);
 
         // Clock until a sample is ready
         for _ in 0..50 {
@@ -1104,7 +1170,7 @@ mod tests {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
         nes.insert_cartridge(cartridge);
-        nes.reset();
+        nes.reset(false);
 
         // Clock until a sample is ready
         for _ in 0..50 {

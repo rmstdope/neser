@@ -152,9 +152,11 @@ impl Apu {
         apu
     }
 
-    /// Reset the APU to its initial power-on state
-    /// cpu_cycle: The total CPU cycles executed before this reset (for coordinated timing)
-    pub fn reset(&mut self, cpu_cycle: u64) {
+    /// Reset the APU.
+    ///
+    /// - `cpu_cycle`: The total CPU cycles executed before this reset (for coordinated timing)
+    /// - `soft_reset`: true for a reset-button style reset, false for power-on
+    pub fn reset(&mut self, cpu_cycle: u64, soft_reset: bool) {
         self.frame_counter = FrameCounter::new();
         self.pulse1 = Pulse::new(true);
         self.pulse2 = Pulse::new(false);
@@ -165,6 +167,23 @@ impl Apu {
         self.sample_accumulator = 0.0;
         self.pending_sample = None;
         self.apu_cycle = 0;
+
+        // Power-on: behave as if `$4017 = $00`.
+        if !soft_reset {
+            self.last_4017_write = 0x00;
+            self.frame_counter.write_register(0x00);
+            // Blargg describes power-on as if `$4017=$00`, then a 9-12 CPU-cycle delay, then
+            // code begins executing from the reset vector.
+            //
+            // Our `Cpu::reset(false)` consumes 7 CPU cycles (5 internal + 2 reset-vector reads)
+            // before the first instruction executes, and these cycles tick the APU.
+            // Empirically for blargg's `4017_written`, we also need to account for opcode-fetch
+            // alignment, so we only advance 1 cycle here.
+            for _ in 0..1 {
+                self.frame_counter.clock();
+            }
+            return;
+        }
 
         // Coordinated reset timing (similar to Mesen2):
         // "APU acts as if $4017 were written with $00 from 9 to 12 clocks before first instruction"
@@ -183,20 +202,54 @@ impl Apu {
         // This matches Mesen2's behavior
         let write_delay = if (cpu_cycle % 2) == 0 { 4 } else { 3 };
 
-        // Queue the delayed write
+        // Queue the delayed write (rewrite last value written to $4017)
         self.frame_counter
             .queue_delayed_write(self.last_4017_write, write_delay);
 
-        // Clock the frame counter for the delay period plus additional cycles
-        // Total should be 9-12 cycles to match documented behavior
-        // With delay of 3-4, we clock 9 times total: delay cycles + additional cycles
-        for _ in 0..9 {
+        // Clock the frame counter so that we end up 1 cycle after the *effective* $4017 write
+        // at the end of `Apu::reset()`.
+        //
+        // Since `Nes::reset(true)` resets the APU before calling `Cpu::reset(true)`, the CPU reset
+        // will tick the APU for 7 additional CPU cycles. That means we want:
+        //   (apu_reset_position) + 7 == 8
+        // so the CPU begins executing 8 cycles after the effective $4017 rewrite.
+        //
+        // Our delayed-write implementation applies the write during `clock()` (before increment),
+        // and then increments within that same `clock()` call. So on the clock where the delayed
+        // write takes effect, the counter ends at 1.
+        let total_clocks = u32::from(write_delay);
+        for _ in 0..total_clocks {
             self.frame_counter.clock();
         }
 
         // Note: sample rate is preserved across resets
         // Note: last_4017_write is preserved (not reset to $00)
         // Note: triangle channel is preserved (unaffected by reset)
+    }
+
+    #[cfg(test)]
+    pub fn debug_frame_counter_cycle(&self) -> u32 {
+        self.frame_counter.get_cycle_counter()
+    }
+
+    #[cfg(test)]
+    pub fn debug_frame_counter_irq_inhibit(&self) -> bool {
+        self.frame_counter.is_irq_inhibited()
+    }
+
+    #[cfg(test)]
+    pub fn debug_frame_counter_irq_flag(&self) -> bool {
+        self.frame_counter.get_irq_flag()
+    }
+
+    #[cfg(test)]
+    pub fn debug_pulse1_length_enabled(&self) -> bool {
+        self.pulse1.is_length_counter_enabled()
+    }
+
+    #[cfg(test)]
+    pub fn debug_pulse1_length_counter(&self) -> u8 {
+        self.pulse1.get_length_counter()
     }
 
     /// Get reference to pulse channel 1
@@ -238,27 +291,21 @@ impl Apu {
     /// to properly track the last written value for reset behavior
     pub fn write_frame_counter(&mut self, value: u8) {
         self.last_4017_write = value;
-        // Pass the current APU cycle to determine CPU cycle phase for jitter
-        let (quarter_frame, half_frame) = self
-            .frame_counter
-            .write_register_with_immediate_clock(value, self.apu_cycle);
 
-        // If switching to 5-step mode, immediately clock quarter and half frame
-        if quarter_frame {
-            self.pulse1.clock_envelope();
-            self.pulse2.clock_envelope();
-            self.triangle.clock_linear_counter_with_reload();
-            self.noise.clock_envelope();
-        }
+        // NESDev: $4017 write side-effects occur after 3 CPU cycles if written "during" an APU
+        // cycle, or 4 CPU cycles if written "between" APU cycles.
+        // In our timing model, timers clock on even apu_cycle values, so we treat:
+        // - even apu_cycle: during APU cycle => 3-cycle delay
+        // - odd apu_cycle: between APU cycles => 4-cycle delay
+        let write_delay = if (self.apu_cycle % 2) == 0 { 3 } else { 4 };
 
-        if half_frame {
-            self.pulse1.clock_length_counter();
-            self.pulse1.clock_sweep();
-            self.pulse2.clock_length_counter();
-            self.pulse2.clock_sweep();
-            self.triangle.clock_length_counter();
-            self.noise.clock_length_counter();
-        }
+        // Jitter: writing $4017 on an odd CPU cycle delays the reset by 1 CPU cycle.
+        let write_on_odd_cpu_cycle = (self.apu_cycle % 2) != 0;
+        self.frame_counter.queue_delayed_write_with_jitter(
+            value,
+            write_delay,
+            write_on_odd_cpu_cycle,
+        );
     }
 
     /// Get reference to triangle channel
@@ -549,6 +596,153 @@ impl Default for Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_4017_write_takes_effect_after_3_cycles_when_during_apu_cycle() {
+        let mut apu = Apu::new_for_testing();
+
+        // Make sure we're well away from any frame counter wrap.
+        for _ in 0..100 {
+            apu.clock();
+        }
+
+        let before = apu.frame_counter().get_cycle_counter();
+        assert!(before >= 100);
+
+        // $4017 write should NOT take effect immediately; it takes effect after 3 CPU cycles
+        // when written during an APU cycle.
+        apu.write_frame_counter(0x80);
+
+        // Still not reset after 0,1,2 cycles.
+        for _ in 0..2 {
+            apu.clock();
+            assert!(
+                apu.frame_counter().get_cycle_counter() >= before,
+                "Frame counter should not have been reset yet"
+            );
+        }
+
+        // Takes effect on the 3rd cycle after the write.
+        apu.clock();
+        assert!(
+            apu.frame_counter().get_cycle_counter() < 10,
+            "Frame counter should have been reset by the delayed $4017 write"
+        );
+    }
+
+    #[test]
+    fn test_4017_write_takes_effect_after_4_cycles_when_between_apu_cycles() {
+        let mut apu = Apu::new_for_testing();
+
+        // Move to the in-between (odd) CPU cycle relative to the APU cycle.
+        apu.clock();
+
+        // Make sure we're well away from any frame counter wrap.
+        for _ in 0..100 {
+            apu.clock();
+        }
+
+        let before = apu.frame_counter().get_cycle_counter();
+        assert!(before >= 100);
+
+        // $4017 write should take effect after 4 CPU cycles when written between APU cycles.
+        apu.write_frame_counter(0x80);
+
+        // Still not reset after 0,1,2,3 cycles.
+        for _ in 0..3 {
+            apu.clock();
+            assert!(
+                apu.frame_counter().get_cycle_counter() >= before,
+                "Frame counter should not have been reset yet"
+            );
+        }
+
+        // Takes effect on the 4th cycle after the write.
+        apu.clock();
+        assert!(
+            apu.frame_counter().get_cycle_counter() < 10,
+            "Frame counter should have been reset by the delayed $4017 write"
+        );
+    }
+
+    #[test]
+    fn test_4017_odd_jitter_delays_effective_reset_by_one_cycle() {
+        let mut apu = Apu::new_for_testing();
+
+        // Move to the in-between (odd) CPU cycle relative to the APU cycle.
+        // This should produce the "odd jitter" behavior that shifts the frame counter by 1.
+        apu.clock();
+
+        apu.write_frame_counter(0x00);
+
+        // When written on an odd CPU cycle, the $4017 write takes effect after 4 cycles.
+        for _ in 0..4 {
+            apu.clock();
+        }
+
+        // Correct jitter behavior: on odd-cycle writes the reset is effectively delayed by 1
+        // cycle, meaning the frame counter starts at 0 on the effect cycle (not 1).
+        assert_eq!(apu.frame_counter().get_cycle_counter(), 0);
+    }
+
+    #[test]
+    fn test_soft_reset_positions_frame_counter_1_cycle_after_effective_4017_write_even_cpu_cycle() {
+        let mut apu = Apu::new_for_testing();
+
+        // Empirically (from tracing blargg's `4017_written`), we need the soft reset path to be
+        // aligned one cycle earlier than the previous hypothesis.
+        apu.reset(0, true);
+
+        assert_eq!(apu.frame_counter().get_cycle_counter(), 1);
+    }
+
+    #[test]
+    fn test_soft_reset_positions_frame_counter_1_cycle_after_effective_4017_write_odd_cpu_cycle() {
+        let mut apu = Apu::new_for_testing();
+
+        apu.reset(1, true);
+
+        assert_eq!(apu.frame_counter().get_cycle_counter(), 1);
+    }
+
+    #[test]
+    fn test_power_on_reset_advances_frame_counter_to_1_cycles_after_effective_4017_write() {
+        let mut apu = Apu::new_for_testing();
+
+        // Blargg's `4017_timing` describes power-on as:
+        // - effective `$4017 = $00` write
+        // - then a 9-12 CPU-cycle delay
+        // - then reset-vector fetch / execution begins
+        //
+        // In our emulator, `Cpu::reset(false)` consumes 7 CPU cycles before the first
+        // instruction fetch. Empirically for blargg's `4017_written`, we also need to account
+        // for the opcode fetch cycle alignment, so we advance only 1 cycle here.
+        apu.reset(0, false);
+
+        assert_eq!(apu.frame_counter().get_cycle_counter(), 1);
+    }
+
+    #[test]
+    fn test_apu_reset_distinguishes_power_on_from_soft_reset() {
+        let mut apu = Apu::new_for_testing();
+
+        // Set a non-default $4017 value.
+        apu.write_frame_counter(0x80);
+
+        // Soft reset should rewrite the last $4017 value.
+        apu.reset(0, true);
+        assert!(
+            apu.frame_counter().get_mode(),
+            "Soft reset should keep the last-written $4017 mode"
+        );
+
+        // Power-on reset should behave as if $4017=$00.
+        apu.reset(0, false);
+        assert!(
+            !apu.frame_counter().get_mode(),
+            "Power-on reset should behave as if $4017 was written with $00"
+        );
+    }
 
     #[test]
     fn test_apu_new() {
