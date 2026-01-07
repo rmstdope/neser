@@ -147,10 +147,43 @@ impl AudioCallback for AudioCallbackImpl {
 mod tests {
     use super::*;
     use serial_test::serial;
+    use std::env;
 
     #[test]
     #[serial]
     fn test_audio_functionality() {
+        // CI often runs without an audio device; force SDL to use its dummy backend.
+        // Restore the previous env value after the test to avoid cross-test pollution.
+        struct EnvRestore {
+            key: &'static str,
+            prev: Option<String>,
+        }
+
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(value) => unsafe {
+                        // SAFETY: This test is marked `#[serial]`, and this env var is only used
+                        // to configure SDL audio backend selection for this test.
+                        env::set_var(self.key, value)
+                    },
+                    None => unsafe {
+                        // SAFETY: See above.
+                        env::remove_var(self.key)
+                    },
+                }
+            }
+        }
+
+        let restore = EnvRestore {
+            key: "SDL_AUDIODRIVER",
+            prev: env::var("SDL_AUDIODRIVER").ok(),
+        };
+        unsafe {
+            // SAFETY: This test is marked `#[serial]`, and SDL reads this env var during init.
+            env::set_var("SDL_AUDIODRIVER", "dummy");
+        }
+
         // Test audio creation, control, and sample queueing
         // Combine into one test to avoid SDL2 thread issues
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
@@ -177,5 +210,7 @@ mod tests {
         audio.queue_sample(0.5);
         audio.queue_sample(0.3);
         audio.queue_sample(0.8);
+
+        drop(restore);
     }
 }
