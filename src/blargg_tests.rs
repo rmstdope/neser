@@ -426,6 +426,10 @@ mod tests {
         test_ppu_vbl_nmi_03,
         "roms/blargg/ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes"
     );
+    blargg_test!(
+        test_ppu_vbl_nmi_04,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/04-nmi_control.nes"
+    );
     blargg_test!(test_1_len_ctr, "roms/blargg/1-len_ctr.nes");
     blargg_test!(test_2_len_table, "roms/blargg/2-len_table.nes");
     blargg_test!(test_3_irq_flags, "roms/blargg/3-irq_flag.nes");

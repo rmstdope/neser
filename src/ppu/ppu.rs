@@ -484,8 +484,18 @@ impl Ppu {
 
     /// Write to control register ($2000)
     pub fn write_control(&mut self, value: u8) {
+        let nmi_was_enabled = self.registers.should_generate_nmi();
+
         self.registers.write_control(value);
         self.registers.set_io_bus(value); // Update I/O bus
+
+        let nmi_is_enabled = self.registers.should_generate_nmi();
+
+        // If NMI is enabled during VBlank (0→1 transition while VBlank flag is set),
+        // the PPU should immediately assert an NMI edge.
+        if !nmi_was_enabled && nmi_is_enabled && self.status.is_in_vblank() {
+            self.status.trigger_nmi();
+        }
     }
 
     /// Write to mask register ($2001)
@@ -883,6 +893,22 @@ mod tests {
         assert_eq!(ppu.scanline(), 261);
         assert_eq!(ppu.pixel(), 1);
         assert!(!ppu.is_in_vblank());
+    }
+
+    #[test]
+    fn test_enabling_nmi_while_in_vblank_triggers_nmi_edge() {
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+
+        // Enter VBlank with NMI disabled.
+        ppu.run_ppu_cycles(241 * 341 + 2);
+        assert!(ppu.is_in_vblank());
+        assert!(!ppu.should_generate_nmi());
+        assert!(!ppu.poll_nmi());
+
+        // Enabling NMI while VBlank flag is already set should immediately assert NMI.
+        ppu.write_control(0x80);
+        assert!(ppu.should_generate_nmi());
+        assert!(ppu.poll_nmi());
     }
 
     // PPU Data tests

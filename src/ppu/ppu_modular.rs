@@ -57,8 +57,6 @@ impl PPUModular {
 
     /// Process a single PPU cycle
     fn tick(&mut self) {
-
-
         // Advance timing
         let _skipped = self.timing.tick(self.registers.is_rendering_enabled());
 
@@ -343,7 +341,17 @@ impl PPUModular {
 
     /// Write to control register ($2000)
     pub fn write_control(&mut self, value: u8) {
+        let nmi_was_enabled = self.registers.should_generate_nmi();
+
         self.registers.write_control(value);
+
+        let nmi_is_enabled = self.registers.should_generate_nmi();
+
+        // If NMI is enabled during VBlank (0→1 transition while VBlank flag is set),
+        // the PPU should immediately assert an NMI edge.
+        if !nmi_was_enabled && nmi_is_enabled && self.status.is_in_vblank() {
+            self.status.trigger_nmi();
+        }
     }
 
     /// Write to mask register ($2001)
