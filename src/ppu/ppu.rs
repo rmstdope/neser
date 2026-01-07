@@ -90,15 +90,12 @@ impl Ppu {
                 .enter_vblank(self.registers.should_generate_nmi());
         }
 
-        // Exit VBlank at the end of scanline 260 (one scanline before pre-render)
-        // The hardware clears VBL slightly before the pre-render scanline starts
-        // This happens approximately 2270 CPU cycles after VBlank starts
+        // Exit VBlank at the pre-render scanline, pixel 1.
         let prerender_scanline = match self.timing.tv_system() {
             TvSystem::Ntsc => 261,
             TvSystem::Pal => 311,
         };
-        let vblank_end_scanline = prerender_scanline - 1;
-        if self.timing.scanline() == vblank_end_scanline && self.timing.pixel() == 340 {
+        if self.timing.scanline() == prerender_scanline && self.timing.pixel() == 1 {
             self.status.exit_vblank();
         }
 
@@ -106,7 +103,6 @@ impl Ppu {
         let pixel = self.timing.pixel();
 
         // Clear sprite 0 hit and sprite overflow at dot 0 of pre-render scanline
-        // This is 1 cycle after VBL flag is cleared (scanline 260, pixel 340)
         // For sprite_hit timing test: clear_time = 6819 cycles after VBL = scanline 261, pixel 0
         if scanline == prerender_scanline && pixel == 0 {
             self.status.clear_sprite_flags();
@@ -868,6 +864,25 @@ mod tests {
         // Second read (same dot in this unit test) should observe that the flag was cleared.
         let second = ppu.get_status();
         assert_eq!(second & 0x80, 0);
+    }
+
+    #[test]
+    fn test_vblank_flag_clears_on_prerender_dot_1() {
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+
+        // Advance to the pre-render scanline (261), dot 0.
+        ppu.run_ppu_cycles(261 * 341);
+        assert_eq!(ppu.scanline(), 261);
+        assert_eq!(ppu.pixel(), 0);
+
+        // VBlank should still be set at dot 0.
+        assert!(ppu.is_in_vblank());
+
+        // It should clear at dot 1.
+        ppu.run_ppu_cycles(1);
+        assert_eq!(ppu.scanline(), 261);
+        assert_eq!(ppu.pixel(), 1);
+        assert!(!ppu.is_in_vblank());
     }
 
     // PPU Data tests
