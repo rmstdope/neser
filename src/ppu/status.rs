@@ -64,6 +64,11 @@ impl Status {
         self.nmi_enabled = true;
     }
 
+    /// Clear any latched/pending NMI edge.
+    pub fn clear_nmi(&mut self) {
+        self.nmi_enabled = false;
+    }
+
     /// Read the status register (clears VBlank flag and write toggle)
     /// Returns the status byte
     pub fn read_status(&mut self) -> u8 {

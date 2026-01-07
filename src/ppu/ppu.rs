@@ -95,6 +95,7 @@ impl Ppu {
         if self.timing.scanline() == 241
             && self.timing.pixel() == 2
             && !self.vblank_suppressed_for_frame
+            && self.status.is_in_vblank()
             && self.registers.should_generate_nmi()
         {
             self.status.trigger_nmi();
@@ -516,10 +517,19 @@ impl Ppu {
 
     /// Read status register ($2002)
     pub fn get_status(&mut self) -> u8 {
+        let scanline = self.timing.scanline();
+        let pixel = self.timing.pixel();
+
         // VBlank suppression quirk: if $2002 is read right as VBlank is being set,
         // the flag can be suppressed for the frame.
-        if self.timing.scanline() == 241 && (self.timing.pixel() == 0 || self.timing.pixel() == 1) {
+        if scanline == 241 && (pixel == 0 || pixel == 1) {
             self.vblank_suppressed_for_frame = true;
+        }
+
+        // NMI suppression quirk: reading $2002 shortly after VBlank starts can prevent
+        // the VBlank NMI edge from being observed.
+        if scanline == 241 && (pixel == 2 || pixel == 3) {
+            self.status.clear_nmi();
         }
 
         let status = self.status.read_status();

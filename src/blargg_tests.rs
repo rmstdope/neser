@@ -434,6 +434,10 @@ mod tests {
         test_ppu_vbl_nmi_05,
         "roms/blargg/ppu_vbl_nmi/rom_singles/05-nmi_timing.nes"
     );
+    blargg_test!(
+        test_ppu_vbl_nmi_06,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/06-suppression.nes"
+    );
     blargg_test!(test_1_len_ctr, "roms/blargg/1-len_ctr.nes");
     blargg_test!(test_2_len_table, "roms/blargg/2-len_table.nes");
     blargg_test!(test_3_irq_flags, "roms/blargg/3-irq_flag.nes");
