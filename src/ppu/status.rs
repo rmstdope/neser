@@ -38,13 +38,10 @@ impl Status {
     }
 
     /// Enter VBlank period
-    pub fn enter_vblank(&mut self, nmi_on_vblank: bool) {
+    pub fn enter_vblank(&mut self) {
         // println!("PPU Status: Entering VBlank");
         self.vblank_flag = true;
         self.frame_complete = true;
-        if nmi_on_vblank {
-            self.nmi_enabled = true;
-        }
     }
 
     /// Exit VBlank period (clear VBL flag and NMI, but NOT sprite flags)
@@ -152,7 +149,7 @@ mod tests {
     #[test]
     fn test_status_reset() {
         let mut status = Status::new();
-        status.enter_vblank(true);
+        status.enter_vblank();
         status.reset();
         assert!(!status.is_in_vblank());
     }
@@ -160,14 +157,14 @@ mod tests {
     #[test]
     fn test_enter_vblank() {
         let mut status = Status::new();
-        status.enter_vblank(true);
+        status.enter_vblank();
         assert!(status.is_in_vblank());
     }
 
     #[test]
     fn test_exit_vblank() {
         let mut status = Status::new();
-        status.enter_vblank(true);
+        status.enter_vblank();
         status.exit_vblank();
         assert!(!status.is_in_vblank());
     }
@@ -175,7 +172,7 @@ mod tests {
     #[test]
     fn test_read_status_clears_vblank() {
         let mut status = Status::new();
-        status.enter_vblank(false);
+        status.enter_vblank();
 
         let status_byte = status.read_status();
         assert_eq!(status_byte & 0b1000_0000, 0b1000_0000);
@@ -185,7 +182,7 @@ mod tests {
     #[test]
     fn test_read_status_clears_vblank_even_on_vblank_start() {
         let mut status = Status::new();
-        status.enter_vblank(false);
+        status.enter_vblank();
 
         // Reading at the VBlank start dot should still clear the flag.
         let status_byte = status.read_status();
@@ -215,7 +212,10 @@ mod tests {
     #[test]
     fn test_poll_nmi() {
         let mut status = Status::new();
-        status.enter_vblank(true);
+        status.enter_vblank();
+
+        // NMI edge must be explicitly latched.
+        status.trigger_nmi();
 
         assert!(status.poll_nmi());
         assert!(!status.poll_nmi()); // Should be cleared after first poll
@@ -224,7 +224,7 @@ mod tests {
     #[test]
     fn test_poll_frame_complete() {
         let mut status = Status::new();
-        status.enter_vblank(false);
+        status.enter_vblank();
 
         assert!(status.poll_frame_complete());
         assert!(!status.poll_frame_complete()); // Should be cleared after first poll

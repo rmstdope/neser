@@ -86,8 +86,18 @@ impl Ppu {
             && self.timing.pixel() == 1
             && !self.vblank_suppressed_for_frame
         {
-            self.status
-                .enter_vblank(self.registers.should_generate_nmi());
+            // Hardware quirk/timing: VBlank flag is set at dot 1, but the NMI edge is observed
+            // slightly later. We latch the NMI edge at dot 2 (see below).
+            self.status.enter_vblank();
+        }
+
+        // Latch the VBlank-start NMI edge one dot after the VBlank flag is set.
+        if self.timing.scanline() == 241
+            && self.timing.pixel() == 2
+            && !self.vblank_suppressed_for_frame
+            && self.registers.should_generate_nmi()
+        {
+            self.status.trigger_nmi();
         }
 
         // Exit VBlank at the pre-render scanline, pixel 1.
@@ -1403,7 +1413,8 @@ mod tests {
     fn test_nmi_polling() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_control(0x80); // Enable NMI
-        ppu.run_ppu_cycles(241 * 341 + 1); // Enter VBlank
+        // VBlank flag is set at scanline 241 dot 1, but the NMI edge is latched at dot 2.
+        ppu.run_ppu_cycles(241 * 341 + 2);
 
         assert!(ppu.poll_nmi()); // Should return true once
         assert!(!ppu.poll_nmi()); // Should be cleared after polling
