@@ -446,6 +446,10 @@ mod tests {
         test_ppu_vbl_nmi_08,
         "roms/blargg/ppu_vbl_nmi/rom_singles/08-nmi_off_timing.nes"
     );
+    blargg_test!(
+        test_ppu_vbl_nmi_09,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/09-even_odd_frames.nes"
+    );
     blargg_test!(test_1_len_ctr, "roms/blargg/1-len_ctr.nes");
     blargg_test!(test_2_len_table, "roms/blargg/2-len_table.nes");
     blargg_test!(test_3_irq_flags, "roms/blargg/3-irq_flag.nes");
