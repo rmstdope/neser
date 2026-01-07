@@ -79,9 +79,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/cpu_interrupts.nes")?;
 
     // Load game cartridge
-    let rom_data = std::fs::read("roms/games/pac-man.nes")?;
+    // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
-    // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
+    let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
     // let rom_data = std::fs::read("roms/games/zelda.nes")?;
 
     // Unknown status
