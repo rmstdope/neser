@@ -12,8 +12,6 @@ pub struct Status {
     nmi_enabled: bool,
     /// Frame complete flag - set when VBlank starts, regardless of NMI generation
     frame_complete: bool,
-    /// Flag to track if we're on the exact cycle when VBlank starts (for race condition)
-    vblank_start_cycle: bool,
 }
 
 impl Status {
@@ -26,7 +24,6 @@ impl Status {
             sprite_overflow: false,
             nmi_enabled: false,
             frame_complete: false,
-            vblank_start_cycle: false,
         }
     }
 
@@ -38,25 +35,19 @@ impl Status {
         self.sprite_overflow = false;
         self.nmi_enabled = false;
         self.frame_complete = false;
-        self.vblank_start_cycle = false;
     }
 
     /// Enter VBlank period
-    pub fn enter_vblank(&mut self, nmi_on_vblank: bool) {
+    pub fn enter_vblank(&mut self) {
         // println!("PPU Status: Entering VBlank");
         self.vblank_flag = true;
         self.frame_complete = true;
-        self.vblank_start_cycle = true;
-        if nmi_on_vblank {
-            self.nmi_enabled = true;
-        }
     }
 
-    /// Exit VBlank period (clear VBL flag and NMI, but NOT sprite flags)
+    /// Exit VBlank period (clear VBL flag, but NOT sprite flags)
     pub fn exit_vblank(&mut self) {
         // println!("PPU Status: Exiting VBlank");
         self.vblank_flag = false;
-        self.nmi_enabled = false;
         // Note: Sprite 0 hit and sprite overflow are cleared separately at scanline 261, pixel 0
     }
 
@@ -72,14 +63,9 @@ impl Status {
         self.nmi_enabled = true;
     }
 
-    /// Clear the VBlank start cycle flag
-    pub fn clear_vblank_start_cycle(&mut self) {
-        self.vblank_start_cycle = false;
-    }
-
-    /// Check if we're on the VBlank start cycle
-    pub fn is_vblank_start_cycle(&self) -> bool {
-        self.vblank_start_cycle
+    /// Clear any latched/pending NMI edge.
+    pub fn clear_nmi(&mut self) {
+        self.nmi_enabled = false;
     }
 
     /// Read the status register (clears VBlank flag and write toggle)
@@ -97,10 +83,8 @@ impl Status {
             status |= 0b0010_0000; // Bit 5: Sprite overflow
         }
 
-        // Reading status clears VBlank flag (but not during vblank_start_cycle for race condition)
-        if !self.vblank_start_cycle {
-            self.vblank_flag = false;
-        }
+        // Reading status clears VBlank flag.
+        self.vblank_flag = false;
 
         status
     }
@@ -169,7 +153,7 @@ mod tests {
     #[test]
     fn test_status_reset() {
         let mut status = Status::new();
-        status.enter_vblank(true);
+        status.enter_vblank();
         status.reset();
         assert!(!status.is_in_vblank());
     }
@@ -177,15 +161,14 @@ mod tests {
     #[test]
     fn test_enter_vblank() {
         let mut status = Status::new();
-        status.enter_vblank(true);
+        status.enter_vblank();
         assert!(status.is_in_vblank());
-        assert!(status.is_vblank_start_cycle());
     }
 
     #[test]
     fn test_exit_vblank() {
         let mut status = Status::new();
-        status.enter_vblank(true);
+        status.enter_vblank();
         status.exit_vblank();
         assert!(!status.is_in_vblank());
     }
@@ -193,8 +176,7 @@ mod tests {
     #[test]
     fn test_read_status_clears_vblank() {
         let mut status = Status::new();
-        status.enter_vblank(false);
-        status.clear_vblank_start_cycle();
+        status.enter_vblank();
 
         let status_byte = status.read_status();
         assert_eq!(status_byte & 0b1000_0000, 0b1000_0000);
@@ -202,14 +184,14 @@ mod tests {
     }
 
     #[test]
-    fn test_read_status_during_vblank_start() {
+    fn test_read_status_clears_vblank_even_on_vblank_start() {
         let mut status = Status::new();
-        status.enter_vblank(false);
+        status.enter_vblank();
 
-        // Reading during vblank_start_cycle should not clear flag
+        // Reading at the VBlank start dot should still clear the flag.
         let status_byte = status.read_status();
         assert_eq!(status_byte & 0b1000_0000, 0b1000_0000);
-        assert!(status.is_in_vblank());
+        assert!(!status.is_in_vblank());
     }
 
     #[test]
@@ -234,7 +216,10 @@ mod tests {
     #[test]
     fn test_poll_nmi() {
         let mut status = Status::new();
-        status.enter_vblank(true);
+        status.enter_vblank();
+
+        // NMI edge must be explicitly latched.
+        status.trigger_nmi();
 
         assert!(status.poll_nmi());
         assert!(!status.poll_nmi()); // Should be cleared after first poll
@@ -243,7 +228,7 @@ mod tests {
     #[test]
     fn test_poll_frame_complete() {
         let mut status = Status::new();
-        status.enter_vblank(false);
+        status.enter_vblank();
 
         assert!(status.poll_frame_complete());
         assert!(!status.poll_frame_complete()); // Should be cleared after first poll

@@ -113,7 +113,7 @@ impl Nes {
         self.ready_to_render = false;
 
         // Re-establish 1-cycle PPU offset after reset
-        //self.ppu.borrow_mut().run_ppu_cycles(1);
+        self.ppu.borrow_mut().run_ppu_cycles(1);
     }
 
     /// Run one CPU "tick", executing one opcode and the corresponding PPU cycles
@@ -692,6 +692,20 @@ mod tests {
         // Reset just the PPU to test the counter is cleared
         nes.ppu.borrow_mut().reset();
         assert_eq!(nes.ppu.borrow().total_cycles(), 0);
+    }
+
+    #[test]
+    fn test_nes_reset_reestablishes_1_cycle_ppu_offset() {
+        let rom_data = create_minimal_rom();
+        let cartridge = Cartridge::new(&rom_data).expect("minimal ROM should parse");
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+
+        // After a power-on reset, CPU reset consumes 7 cycles (21 PPU cycles at 3x).
+        // The emulator maintains a 1-cycle PPU lead for timing quirks (sprite-0 hit, etc).
+        nes.reset(false);
+        assert_eq!(nes.ppu.borrow().total_cycles(), 22);
     }
 
     #[test]

@@ -418,14 +418,42 @@ mod tests {
         test_ppu_vbl_nmi_01,
         "roms/blargg/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes"
     );
-    // blargg_test!(
-    //     test_ppu_vbl_nmi_02,
-    //     "roms/blargg/ppu_vbl_nmi/rom_singles/02-vbl_set_time.nes"
-    // );
-    // blargg_test!(
-    //     test_ppu_vbl_nmi_03,
-    //     "roms/blargg/ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes"
-    // );
+    blargg_test!(
+        test_ppu_vbl_nmi_02,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/02-vbl_set_time.nes"
+    );
+    blargg_test!(
+        test_ppu_vbl_nmi_03,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes"
+    );
+    blargg_test!(
+        test_ppu_vbl_nmi_04,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/04-nmi_control.nes"
+    );
+    blargg_test!(
+        test_ppu_vbl_nmi_05,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/05-nmi_timing.nes"
+    );
+    blargg_test!(
+        test_ppu_vbl_nmi_06,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/06-suppression.nes"
+    );
+    blargg_test!(
+        test_ppu_vbl_nmi_07,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/07-nmi_on_timing.nes"
+    );
+    blargg_test!(
+        test_ppu_vbl_nmi_08,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/08-nmi_off_timing.nes"
+    );
+    blargg_test!(
+        test_ppu_vbl_nmi_09,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/09-even_odd_frames.nes"
+    );
+    blargg_test!(
+        test_ppu_vbl_nmi_10,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
+    );
     blargg_test!(test_1_len_ctr, "roms/blargg/1-len_ctr.nes");
     blargg_test!(test_2_len_table, "roms/blargg/2-len_table.nes");
     blargg_test!(test_3_irq_flags, "roms/blargg/3-irq_flag.nes");

@@ -1867,6 +1867,102 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "WIP: using blargg ppu_vbl_nmi/05 as red spec"]
+    fn test_nmi_timing_offset_02_matches_blargg_05() {
+        // blargg ppu_vbl_nmi/05-nmi_timing expected output:
+        // 00 4
+        // 01 4
+        // 02 4
+        // ...
+        // Our emulator currently produces 02 3 (NMI one instruction too early).
+
+        fn run_case(ppu_clock_offset: u64) -> u8 {
+            let (ppu, apu, memory) = create_test_memory();
+            let mut cpu = Cpu::new(
+                TvSystem::Ntsc,
+                Rc::clone(&memory),
+                Rc::clone(&ppu),
+                Rc::clone(&apu),
+            );
+
+            // Program at $8000:
+            //   LDX #$00
+            //   LDA #$80
+            //   STA $2000   ; enable NMI output
+            // landing:
+            //   LDX #$01
+            //   LDX #$02
+            //   LDX #$03
+            //   LDX #$04
+            //   JMP landing
+            // NMI handler at $9000:
+            //   STX $00
+            //   RTI
+            let mut prg_rom = vec![0; 0x4000];
+
+            let program: [u8; 18] = [
+                0xA2, 0x00, // LDX #$00
+                0xA9, 0x80, // LDA #$80
+                0x8D, 0x00, 0x20, // STA $2000
+                0xA2, 0x01, // LDX #$01
+                0xA2, 0x02, // LDX #$02
+                0xA2, 0x03, // LDX #$03
+                0xA2, 0x04, // LDX #$04
+                0x4C, 0x07, 0x80, // JMP $8007 (landing)
+            ];
+            prg_rom[0x0000..0x0000 + program.len()].copy_from_slice(&program);
+
+            // NMI handler at $9000 => PRG offset 0x1000
+            prg_rom[0x1000] = 0x86; // STX zp
+            prg_rom[0x1001] = 0x00; // $00
+            prg_rom[0x1002] = 0x40; // RTI
+
+            // Vectors
+            prg_rom[0x3FFA] = 0x00;
+            prg_rom[0x3FFB] = 0x90; // NMI vector = $9000
+            prg_rom[0x3FFC] = 0x00;
+            prg_rom[0x3FFD] = 0x80; // Reset vector = $8000
+
+            let chr_rom = vec![0; 0x2000];
+            let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+            cpu.memory.borrow_mut().map_cartridge(cartridge);
+
+            // Use the real reset path to keep CPU/PPU/APU and the master clock aligned.
+            cpu.reset(true);
+
+            // Apply a controllable initial phase offset between CPU and PPU.
+            // Use 1 master-tick increments to exercise sub-PPU-cycle phase differences.
+            cpu.master_clock
+                .set_master_cycles(cpu.master_clock.master_cycles() + ppu_clock_offset);
+            let phase_ppu_cycles = cpu.master_clock.ppu_cycles_since_last();
+            cpu.ppu.borrow_mut().run_ppu_cycles(phase_ppu_cycles);
+
+            // Initialize result byte.
+            cpu.memory.borrow_mut().write(0x0000, 0xFF, false);
+
+            // Run the program from reset and wait for VBlank NMI to fire.
+            // This ensures $2000 is enabled well before VBlank starts, so we measure the
+            // timing of the VBlank NMI edge (not the "$2000 enable while already in VBlank"
+            // immediate-edge behavior exercised by ppu_vbl_nmi/04).
+            for _ in 0..50_000 {
+                cpu.execute();
+                if cpu.memory.borrow().read(0x0000) != 0xFF {
+                    break;
+                }
+                if cpu.halted {
+                    break;
+                }
+            }
+
+            cpu.memory.borrow().read(0x0000)
+        }
+
+        let expected: [u8; 10] = [4, 4, 4, 3, 3, 3, 3, 3, 3, 2];
+        let observed: Vec<u8> = (0..10).map(run_case).collect();
+        assert_eq!(observed, expected);
+    }
+
+    #[test]
     fn test_cpu_new_stores_provided_ppu_and_apu_instances() {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(
             crate::nes::TvSystem::Ntsc,
