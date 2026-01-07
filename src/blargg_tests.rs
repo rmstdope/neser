@@ -200,22 +200,22 @@ mod tests {
     }
 
     // Branch timing tests
-    // blargg_console_test!(
-    //     test_branch_timing,
-    //     "roms/blargg/branch_timing_tests/1.Branch_Basics.nes"
-    // );
-    // blargg_console_test!(
-    //     test_backward_branch,
-    //     "roms/blargg/branch_timing_tests/2.Backward_Branch.nes"
-    // );
-    // blargg_console_test!(
-    //     test_forward_branch,
-    //     "roms/blargg/branch_timing_tests/3.Forward_Branch.nes"
-    // );
-    // blargg_console_test!(
-    //     test_cpu_dummy_reads,
-    //     "roms/blargg/cpu_dummy_reads/cpu_dummy_reads.nes"
-    // );
+    blargg_console_test!(
+        test_branch_timing,
+        "roms/blargg/branch_timing_tests/1.Branch_Basics.nes"
+    );
+    blargg_console_test!(
+        test_backward_branch,
+        "roms/blargg/branch_timing_tests/2.Backward_Branch.nes"
+    );
+    blargg_console_test!(
+        test_forward_branch,
+        "roms/blargg/branch_timing_tests/3.Forward_Branch.nes"
+    );
+    blargg_console_test!(
+        test_cpu_dummy_reads,
+        "roms/blargg/cpu_dummy_reads/cpu_dummy_reads.nes"
+    );
     blargg_test!(
         test_cpu_dummy_writes_oam,
         "roms/blargg/cpu_dummy_writes/cpu_dummy_writes_oam.nes"
@@ -236,18 +236,30 @@ mod tests {
         test_cpu_cli_latency,
         "roms/blargg/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"
     );
+    #[ignore = "Not working"]
+    #[test]
+    fn test_cpu_nmi_and_brk() { }
     // blargg_test!(
     //     test_cpu_nmi_and_brk,
     //     "roms/blargg/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes"
     // );
+    #[ignore = "Not working"]
+    #[test]
+    fn test_cpu_nmi_and_irq() { }
     // blargg_test!(
     //     test_cpu_nmi_and_irq,
     //     "roms/blargg/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes"
     // );
+    #[ignore = "Not working"]
+    #[test]
+    fn test_cpu_irq_and_dma() { }
     // blargg_test!(
     //     test_cpu_irq_and_dma,
     //     "roms/blargg/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes"
     // );
+    #[ignore = "Not working"]
+    #[test]
+    fn test_cpu_branch_delays_irq() { }
     // blargg_test!(
     //     test_cpu_branch_delays_irq,
     //     "roms/blargg/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes"
@@ -260,12 +272,12 @@ mod tests {
         test_cpu_reset_ram_after_reset,
         "roms/blargg/cpu_reset/ram_after_reset.nes"
     );
-    // blargg_console_test!(
-    //     test_cpu_timing_test,
-    //     "roms/blargg/cpu_timing_test6/cpu_timing_test.nes",
-    //     20 * 60 // Can take up to 16 * 60 frames according to README
-    // );
-    // blargg_test!(test_instr_misc, "roms/blargg/instr_misc/instr_misc.nes");
+    blargg_console_test!(
+        test_cpu_timing_test,
+        "roms/blargg/cpu_timing_test6/cpu_timing_test.nes",
+        20 * 60 // Can take up to 16 * 60 frames according to README
+    );
+    blargg_test!(test_instr_misc, "roms/blargg/instr_misc/instr_misc.nes");
     blargg_test!(
         test_instr_01_basics,
         "roms/blargg/instr_test-v5/rom_singles/01-basics.nes"
@@ -348,10 +360,10 @@ mod tests {
         test_sprite_ram,
         "roms/blargg/blargg_ppu_tests_2005.09.15b/sprite_ram.nes"
     );
-    // blargg_console_test!(
-    //     test_vbl_clear_time,
-    //     "roms/blargg/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes"
-    // );
+    blargg_console_test!(
+        test_vbl_clear_time,
+        "roms/blargg/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes"
+    );
     blargg_console_test!(
         test_vram_access,
         "roms/blargg/blargg_ppu_tests_2005.09.15b/vram_access.nes"
@@ -366,24 +378,27 @@ mod tests {
         test_ppu_open_bus,
         "roms/blargg/ppu_open_bus/ppu_open_bus.nes"
     );
-    // blargg_test!(
-    //     test_ppu_read_buffer,
-    //     "roms/blargg/ppu_read_buffer/test_ppu_read_buffer.nes",
-    //     60 * 25 // Takes about 20 seconds according to readme
-    // );
-    // blargg_test!(
-    //     test_sprite_hit,
-    //     "roms/blargg/ppu_sprite_hit/ppu_sprite_hit.nes",
-    //     60 * 5
-    // );
-    // blargg_test!(
-    //     test_sprite_overflow,
-    //     "roms/blargg/ppu_sprite_overflow/ppu_sprite_overflow.nes"
-    // );
+    blargg_test!(
+        test_ppu_read_buffer,
+        "roms/blargg/ppu_read_buffer/test_ppu_read_buffer.nes",
+        60 * 25 // Takes about 20 seconds according to readme
+    );
+    blargg_test!(
+        test_sprite_hit,
+        "roms/blargg/ppu_sprite_hit/ppu_sprite_hit.nes",
+        60 * 5
+    );
+    blargg_test!(
+        test_sprite_overflow,
+        "roms/blargg/ppu_sprite_overflow/ppu_sprite_overflow.nes"
+    );
 
     blargg_test!(test_4015_cleared, "roms/blargg/apu_reset/4015_cleared.nes");
+    #[ignore = "Not working"]
+    #[test]
+    fn test_4017_timing() { }
     // blargg_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
-    // blargg_test!(test_4017_written, "roms/blargg/apu_reset/4017_written.nes");
+    blargg_test!(test_4017_written, "roms/blargg/apu_reset/4017_written.nes");
     blargg_test!(
         test_irq_flag_cleared,
         "roms/blargg/apu_reset/irq_flag_cleared.nes"

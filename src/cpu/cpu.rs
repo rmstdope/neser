@@ -310,7 +310,8 @@ impl Cpu {
 
     fn after_cpu_cycle(&mut self, is_write: bool) {
         self.master_clock.after_cpu_cycle(is_write);
-
+        let ppu_cycles = self.master_clock.ppu_cycles_since_last();
+        self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
         // Mirror Mesen EndCpuCycle() behavior: latch interrupt lines at the end of each CPU cycle.
         self.end_cpu_cycle_latch_interrupt_lines();
     }
@@ -808,6 +809,14 @@ impl Cpu {
     /// Returns true if an IRQ is pending and the effective I flag (considering delays) allows IRQs
     pub fn should_poll_irq(&self) -> bool {
         self.irq_pending && !self.get_effective_i_flag()
+    }
+
+    /// Set the NMI pending flag (test-only helper).
+    ///
+    /// Some unit tests need to force an NMI edge before the next instruction.
+    #[cfg(test)]
+    pub(crate) fn set_nmi_pending(&mut self, pending: bool) {
+        self.nmi_pending = pending;
     }
 
     /// Set the IRQ pending flag

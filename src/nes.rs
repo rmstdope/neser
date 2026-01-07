@@ -643,7 +643,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "PPU-CPU sync is being rewritten"]
     fn test_ntsc_ppu_runs_3x_cpu_cycles() {
         let mut nes = Nes::new(TvSystem::Ntsc);
         // Write NOP to RAM and set PC directly (skip reset to avoid ROM requirement)
@@ -657,7 +656,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "PPU-CPU sync is being rewritten"]
     fn test_pal_ppu_runs_3_2x_cpu_cycles() {
         let mut nes = Nes::new(TvSystem::Pal);
         // Write NOP to RAM and set PC directly
@@ -672,7 +670,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "PPU-CPU sync is being rewritten"]
     fn test_pal_ppu_accumulates_fractional_cycles() {
         let mut nes = Nes::new(TvSystem::Pal);
         // Write NOP instructions to RAM
@@ -690,7 +687,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "PPU-CPU sync is being rewritten"]
     fn test_ntsc_ppu_accumulates_over_multiple_instructions() {
         let mut nes = Nes::new(TvSystem::Ntsc);
         // Write NOP instructions to RAM
@@ -707,7 +703,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "PPU-CPU sync is being rewritten"]
     fn test_ppu_cycles_reset_on_nes_reset() {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP
