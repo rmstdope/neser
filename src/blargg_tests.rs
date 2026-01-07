@@ -418,10 +418,10 @@ mod tests {
         test_ppu_vbl_nmi_01,
         "roms/blargg/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes"
     );
-    // blargg_test!(
-    //     test_ppu_vbl_nmi_02,
-    //     "roms/blargg/ppu_vbl_nmi/rom_singles/02-vbl_set_time.nes"
-    // );
+    blargg_test!(
+        test_ppu_vbl_nmi_02,
+        "roms/blargg/ppu_vbl_nmi/rom_singles/02-vbl_set_time.nes"
+    );
     // blargg_test!(
     //     test_ppu_vbl_nmi_03,
     //     "roms/blargg/ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes"

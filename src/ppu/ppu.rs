@@ -10,6 +10,10 @@ pub struct Ppu {
     timing: Timing,
     /// Status flags (VBlank, sprite 0 hit, NMI)
     status: Status,
+
+    // If PPUSTATUS is read right at the time VBlank would be set, the NES can
+    // suppress the VBlank flag for the entire frame (blargg ppu_vbl_nmi 02).
+    vblank_suppressed_for_frame: bool,
     /// Register management (PPUCTRL, PPUMASK, Loopy registers)
     /// Public to allow MemController to access I/O bus latch
     pub registers: Registers,
@@ -38,6 +42,7 @@ impl Ppu {
         Self {
             timing: Timing::new(tv_system),
             status: Status::new(),
+            vblank_suppressed_for_frame: false,
             registers: Registers::new(),
             memory: Memory::new(),
             background: Background::new(),
@@ -52,6 +57,7 @@ impl Ppu {
     pub fn reset(&mut self) {
         self.timing.reset();
         self.status.reset();
+        self.vblank_suppressed_for_frame = false;
         self.registers.reset();
         self.memory.reset();
         self.background.reset();
@@ -74,11 +80,12 @@ impl Ppu {
         // Tick the registers for decay timing
         self.registers.tick();
 
-        // Clear VBlank start cycle flag from previous cycle
-        self.status.clear_vblank_start_cycle();
-
-        // Enter VBlank at scanline 241, pixel 1
-        if self.timing.scanline() == 241 && self.timing.pixel() == 1 {
+        // Enter VBlank at scanline 241, pixel 1.
+        // Note: reading PPUSTATUS right at VBlank set time can suppress VBlank for the frame.
+        if self.timing.scanline() == 241
+            && self.timing.pixel() == 1
+            && !self.vblank_suppressed_for_frame
+        {
             self.status
                 .enter_vblank(self.registers.should_generate_nmi());
         }
@@ -103,6 +110,9 @@ impl Ppu {
         // For sprite_hit timing test: clear_time = 6819 cycles after VBL = scanline 261, pixel 0
         if scanline == prerender_scanline && pixel == 0 {
             self.status.clear_sprite_flags();
+
+            // New frame is about to start; clear any VBlank suppression state.
+            self.vblank_suppressed_for_frame = false;
         }
         let is_rendering_enabled = self.registers.is_rendering_enabled();
 
@@ -490,6 +500,12 @@ impl Ppu {
 
     /// Read status register ($2002)
     pub fn get_status(&mut self) -> u8 {
+        // VBlank suppression quirk: if $2002 is read right as VBlank is being set,
+        // the flag can be suppressed for the frame.
+        if self.timing.scanline() == 241 && (self.timing.pixel() == 0 || self.timing.pixel() == 1) {
+            self.vblank_suppressed_for_frame = true;
+        }
+
         let status = self.status.read_status();
         self.registers.clear_w(); // Reading status clears write toggle
         // Update I/O bus: status bits go to bits 5-7, bits 0-4 remain from previous value
@@ -766,14 +782,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_ppu_modular_new() {
+    fn test_ppu_new() {
         let ppu = Ppu::new(TvSystem::Ntsc);
         assert_eq!(ppu.scanline(), 0);
         assert_eq!(ppu.pixel(), 0);
     }
 
     #[test]
-    fn test_ppu_modular_reset() {
+    fn test_ppu_reset() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.run_ppu_cycles(100);
         ppu.reset();
@@ -782,14 +798,14 @@ mod tests {
     }
 
     #[test]
-    fn test_ppu_modular_write_control() {
+    fn test_ppu_write_control() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_control(0b1000_0000);
         // Control register should be set (verified internally)
     }
 
     #[test]
-    fn test_ppu_modular_read_write_data() {
+    fn test_ppu_read_write_data() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.write_address(0x3F, false);
         ppu.write_address(0x00, false);
@@ -804,25 +820,54 @@ mod tests {
     }
 
     #[test]
-    fn test_ppu_modular_vblank() {
+    fn test_ppu_vblank() {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
-        // Advance to VBlank (scanline 241, pixel 1)
-        ppu.run_ppu_cycles(241 * 341 + 1);
+        // Advance to VBlank (scanline 241, pixel 2).
+        // Pixel 1 is the VBlank set time and is subject to the $2002 suppression quirk.
+        ppu.run_ppu_cycles(241 * 341 + 2);
 
         let status = ppu.get_status();
         // VBlank flag should be set (bit 7)
         assert_eq!(status & 0x80, 0x80);
 
-        // Advance one more cycle to get past vblank_start_cycle
-        ppu.run_ppu_cycles(1);
-
-        // Reading status should clear VBlank flag (now that we're past vblank_start_cycle)
-        let status_first_read = ppu.get_status();
-        assert_eq!(status_first_read & 0x80, 0x80);
-
-        // Second read should show cleared flag
+        // Reading status should clear VBlank flag.
         let status_second_read = ppu.get_status();
         assert_eq!(status_second_read & 0x80, 0);
+    }
+
+    #[test]
+    fn test_status_read_at_vblank_set_time_suppresses_vblank_flag() {
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+
+        // Advance to scanline 241, pixel 0 (one PPU cycle before VBlank would normally be set).
+        ppu.run_ppu_cycles(241 * 341);
+
+        // Reading $2002 right before VBlank sets can suppress the VBlank flag for the frame.
+        let status_before = ppu.get_status();
+        assert_eq!(status_before & 0x80, 0);
+
+        // Advance into the normal VBlank-set cycle (scanline 241, pixel 1).
+        ppu.run_ppu_cycles(1);
+
+        // With suppression, the VBlank flag should still be clear.
+        let status_after = ppu.get_status();
+        assert_eq!(status_after & 0x80, 0);
+    }
+
+    #[test]
+    fn test_status_read_on_vblank_start_clears_vblank_flag() {
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+
+        // Advance to the VBlank start dot (scanline 241, pixel 1).
+        ppu.run_ppu_cycles(241 * 341 + 1);
+
+        // First read should observe VBlank set.
+        let first = ppu.get_status();
+        assert_eq!(first & 0x80, 0x80);
+
+        // Second read (same dot in this unit test) should observe that the flag was cleared.
+        let second = ppu.get_status();
+        assert_eq!(second & 0x80, 0);
     }
 
     // PPU Data tests

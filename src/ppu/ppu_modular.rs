@@ -62,9 +62,6 @@ impl PPUModular {
         // Advance timing
         let _skipped = self.timing.tick(self.registers.is_rendering_enabled());
 
-        // Clear VBlank start cycle flag from previous cycle
-        self.status.clear_vblank_start_cycle();
-
         // Enter VBlank at scanline 241, pixel 1
         if self.timing.scanline() == 241 && self.timing.pixel() == 1 {
             self.status
@@ -633,10 +630,7 @@ mod tests {
         // VBlank flag should be set (bit 7)
         assert_eq!(status & 0x80, 0x80);
 
-        // Advance one more cycle to get past vblank_start_cycle
-        ppu.run_ppu_cycles(1);
-
-        // Reading status should clear VBlank flag (now that we're past vblank_start_cycle)
+        // Reading status should clear VBlank flag.
         let status_first_read = ppu.get_status();
         assert_eq!(status_first_read & 0x80, 0x80);
 
