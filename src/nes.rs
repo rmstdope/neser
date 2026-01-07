@@ -153,42 +153,6 @@ impl Nes {
         cycles_consumed.min(255) as u8
     }
 
-    /// Run the PPU for the appropriate number of cycles based on CPU cycles
-    ///
-    /// For PAL, fractional cycles are accumulated to maintain timing accuracy.
-    fn tick_ppu(&mut self, cpu_cycles: u8) {
-        let ppu_cycles = cpu_cycles as f64 * self.tv_system.ppu_cycles_per_cpu_cycle();
-        self.fractional_ppu_cycles += ppu_cycles;
-
-        let ppu_cycles_to_run = self.fractional_ppu_cycles as u64;
-        self.fractional_ppu_cycles -= ppu_cycles_to_run as f64;
-
-        self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles_to_run);
-    }
-
-    fn tick_ppu_u16(&mut self, cpu_cycles: u16) {
-        let ppu_cycles = cpu_cycles as f64 * self.tv_system.ppu_cycles_per_cpu_cycle();
-        self.fractional_ppu_cycles += ppu_cycles;
-
-        let ppu_cycles_to_run = self.fractional_ppu_cycles as u64;
-        self.fractional_ppu_cycles -= ppu_cycles_to_run as f64;
-
-        self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles_to_run);
-    }
-
-    /// Clock the APU for the specified number of CPU cycles
-    fn tick_apu(&mut self, cpu_cycles: u8) {
-        for _ in 0..cpu_cycles {
-            self.apu.borrow_mut().clock();
-        }
-    }
-
-    fn tick_apu_u16(&mut self, cpu_cycles: u16) {
-        for _ in 0..cpu_cycles {
-            self.apu.borrow_mut().clock();
-        }
-    }
-
     /// NES system palette - 64 RGB color values (0x00-0x3F)
     /// TODO Implement all known palettes and have the user be able to select system palette variant
     #[rustfmt::skip]
@@ -583,7 +547,7 @@ mod tests {
         // Ensure the PPU reaches exactly 21 cycles (7 * 3) before the first traced instruction.
         let ppu_cycles_needed = 21u64.saturating_sub(nes.ppu.borrow().total_cycles());
         nes.ppu.borrow_mut().run_ppu_cycles(ppu_cycles_needed);
-        
+
         for line in golden_log.lines() {
             let expected = line.to_string();
             let actual = nes.trace(true);
