@@ -467,10 +467,10 @@ mod tests {
         test_apu_test_4,
         "roms/blargg/apu_test/rom_singles/4-jitter.nes"
     );
-    // blargg_test!(
-    //     test_apu_test_5,
-    //     "roms/blargg/apu_test/rom_singles/5-len_timing.nes"
-    // );
+    blargg_test!(
+        test_apu_test_5,
+        "roms/blargg/apu_test/rom_singles/5-len_timing.nes"
+    );
     // blargg_test!(
     //     test_apu_test_6,
     //     "roms/blargg/apu_test/rom_singles/6-irq_flag_timing.nes"
