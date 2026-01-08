@@ -106,11 +106,54 @@ impl Dmc {
 
     /// Clock the timer. When it reaches zero, clock the output unit.
     pub fn clock_timer(&mut self) {
+        // Memory reader runs independently and keeps the one-byte sample buffer filled.
+        // If the buffer is empty and there are bytes remaining, the DMC will fetch a byte.
+        // Blargg's `apu_test/7-dmc_basics` depends on this happening immediately when empty.
+        self.fill_sample_buffer_if_needed();
+
         if self.timer == 0 {
             self.timer = self.timer_period;
             self.clock_output_unit();
         } else {
             self.timer -= 1;
+        }
+    }
+
+    fn fill_sample_buffer_if_needed(&mut self) {
+        if self.sample_buffer.is_some() {
+            return;
+        }
+        if self.bytes_remaining == 0 {
+            return;
+        }
+
+        // TODO: Read actual byte from CPU memory at current_address.
+        // For now, use dummy data (0x00). Blargg's apu_test DMC samples are silent.
+        self.sample_buffer = Some(0x00);
+
+        self.advance_reader_after_fetch();
+    }
+
+    fn advance_reader_after_fetch(&mut self) {
+        // Advance to next byte
+        self.current_address = self.current_address.wrapping_add(1);
+        // Wrap address at $FFFF to $8000
+        if self.current_address == 0x0000 {
+            self.current_address = 0x8000;
+        }
+
+        // Decrement bytes remaining and handle completion
+        self.bytes_remaining -= 1;
+
+        if self.bytes_remaining == 0 {
+            // Sample finished (at end of memory fetch of the last byte)
+            if self.loop_flag {
+                // Loop: restart the sample
+                self.restart_sample();
+            } else if self.irq_enabled {
+                // No loop: set IRQ flag if enabled
+                self.interrupt_flag = true;
+            }
         }
     }
 
@@ -150,33 +193,6 @@ impl Dmc {
     fn start_output_cycle(&mut self) {
         self.bits_remaining = 8;
 
-        // If sample buffer is empty, try to fill it from memory
-        if self.sample_buffer.is_none() && self.bytes_remaining > 0 {
-            // TODO: Read actual byte from CPU memory at current_address
-            // For now, use dummy data (0x00) since we don't have memory access
-            self.sample_buffer = Some(0x00);
-
-            // Advance to next byte
-            self.current_address = self.current_address.wrapping_add(1);
-            // Wrap address at $FFFF to $8000
-            if self.current_address == 0x0000 {
-                self.current_address = 0x8000;
-            }
-
-            // Decrement bytes remaining and handle completion
-            self.bytes_remaining -= 1;
-            if self.bytes_remaining == 0 {
-                // Sample finished
-                if self.loop_flag {
-                    // Loop: restart the sample
-                    self.restart_sample();
-                } else if self.irq_enabled {
-                    // No loop: set IRQ flag if enabled
-                    self.interrupt_flag = true;
-                }
-            }
-        }
-
         // If sample buffer is empty, set silence flag
         // Otherwise, load sample buffer into shift register
         if let Some(sample) = self.sample_buffer {
@@ -204,6 +220,8 @@ impl Dmc {
         } else {
             // Disable: clear bytes remaining
             self.bytes_remaining = 0;
+            self.sample_buffer = None;
+            self.silence_flag = true;
         }
     }
 
