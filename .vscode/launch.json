@@ -9,7 +9,8 @@
                 "args": [
                     "build",
                     "--bin=neser",
-                    "--package=neser"
+                    "--package=neser",
+                    "--features=sdl"
                 ],
                 "filter": {
                     "name": "neser",
