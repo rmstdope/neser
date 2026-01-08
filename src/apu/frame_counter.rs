@@ -6,6 +6,7 @@ pub struct FrameCounter {
     irq_inhibit: bool,
     cycle_counter: u32,
     irq_flag: bool,
+    irq_assert_cycles_remaining: u8,
     reset_phase: bool, // Phase when counter was reset (for jitter calculation)
     five_step_extra_cycle: bool, // Alternating +1 cycle offset for 5-step sequencing
     pending_write: Option<u8>, // Pending write to $4017 register
@@ -34,6 +35,7 @@ impl FrameCounter {
             irq_inhibit: false,
             cycle_counter: 0,
             irq_flag: false,
+            irq_assert_cycles_remaining: 0,
             reset_phase: false, // Reset on even cycle
             five_step_extra_cycle: false,
             pending_write: None,
@@ -56,6 +58,7 @@ impl FrameCounter {
         self.cycle_counter = 0;
         // Note: Phase not tracked here as we don't know the APU cycle
         self.five_step_extra_cycle = false;
+        self.irq_assert_cycles_remaining = 0;
 
         // Writing 1 to IRQ inhibit clears the IRQ flag
         if (value & 0x40) != 0 {
@@ -145,6 +148,7 @@ impl FrameCounter {
 
         // Reset the 5-step alternating offset each time the sequencer is reset.
         self.five_step_extra_cycle = false;
+        self.irq_assert_cycles_remaining = 0;
 
         // Reset cycle_counter to match behavior of a direct write to $4017
         self.cycle_counter = if self.pending_write_on_odd_cpu_cycle {
@@ -208,6 +212,7 @@ impl FrameCounter {
         const STEP_3_CYCLES: u32 = 22371;
         const STEP_4_CYCLES: u32 = 29829;
         const IRQ_CYCLE: u32 = 29828; // Frame IRQ begins asserting (APU 14914 GET)
+        const IRQ_ASSERT_CYCLES: u8 = 3; // How long the internal IRQ signal keeps asserting
         const FRAME_CYCLES: u32 = 29830;
 
         let quarter_frame = matches!(
@@ -216,10 +221,20 @@ impl FrameCounter {
         );
         let half_frame = matches!(self.cycle_counter, STEP_2_CYCLES | STEP_4_CYCLES);
 
-        // Assert frame IRQ near the end of the 4-step sequence if not inhibited.
-        // The flag stays set until cleared by reading $4015.
+        // Blargg's `apu_test/6-irq_flag_timing` expects the frame IRQ to behave like a short
+        // *asserting signal* near the end of the 4-step sequence, not a one-shot edge.
+        //
+        // That means if $4015 is read (clearing the flag) while the internal IRQ signal is
+        // still asserting, the flag will be set again on subsequent cycles.
         if self.cycle_counter == IRQ_CYCLE && !self.irq_inhibit {
-            self.irq_flag = true;
+            self.irq_assert_cycles_remaining = IRQ_ASSERT_CYCLES;
+        }
+
+        if self.irq_assert_cycles_remaining > 0 {
+            if !self.irq_inhibit {
+                self.irq_flag = true;
+            }
+            self.irq_assert_cycles_remaining -= 1;
         }
 
         // 4-step sequence length is 29830 CPU cycles.
