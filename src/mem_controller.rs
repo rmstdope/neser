@@ -138,6 +138,16 @@ impl MemController {
         value
     }
 
+    /// Sample the mapper-generated IRQ line (e.g., MMC3 scanline IRQ).
+    ///
+    /// This is a level-triggered signal: it remains asserted until the mapper is acknowledged.
+    pub fn mapper_irq_pending(&self) -> bool {
+        self.cartridge
+            .as_ref()
+            .map(|cart| cart.borrow().mapper().irq_pending())
+            .unwrap_or(false)
+    }
+
     #[cfg(test)]
     pub fn read_for_testing(&self, addr: u16) -> u8 {
         let old_open_bus = *self.open_bus.borrow_mut();
@@ -151,6 +161,16 @@ impl MemController {
         let old_open_bus = *self.open_bus.borrow_mut();
         self.write(addr, value, false);
         *self.open_bus.borrow_mut() = old_open_bus;
+    }
+
+    #[cfg(test)]
+    pub fn mapper_ppu_address_changed_for_test(&mut self, addr: u16) {
+        if let Some(ref cartridge) = self.cartridge {
+            cartridge
+                .borrow_mut()
+                .mapper_mut()
+                .ppu_address_changed(addr & 0x1FFF);
+        }
     }
 
     /// Write a byte to memory

@@ -47,7 +47,10 @@ impl Memory {
     pub fn read_chr(&self, addr: u16, cartridge: &Option<Rc<RefCell<Cartridge>>>) -> u8 {
         let masked_addr = addr & 0x1FFF;
         if let Some(cart) = cartridge {
-            cart.borrow().mapper().read_chr(masked_addr)
+            let mut cart = cart.borrow_mut();
+            let mapper = cart.mapper_mut();
+            mapper.ppu_address_changed(masked_addr);
+            mapper.read_chr(masked_addr)
         } else {
             0 // No cartridge loaded, return 0
         }
@@ -65,7 +68,10 @@ impl Memory {
     pub fn write_chr(&mut self, addr: u16, value: u8, cartridge: &Option<Rc<RefCell<Cartridge>>>) {
         let masked_addr = addr & 0x1FFF;
         if let Some(cart) = cartridge {
-            cart.borrow_mut().mapper_mut().write_chr(masked_addr, value);
+            let mut cart = cart.borrow_mut();
+            let mapper = cart.mapper_mut();
+            mapper.ppu_address_changed(masked_addr);
+            mapper.write_chr(masked_addr, value);
         }
     }
 
@@ -152,12 +158,90 @@ impl Memory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::Cartridge;
 
     #[test]
     fn test_memory_new() {
         let mem = Memory::new();
         assert_eq!(mem.read_chr(0, &None), 0);
         assert_eq!(mem.read_palette(0x3F00), 0);
+    }
+
+    fn create_mmc3_ines_rom() -> Vec<u8> {
+        // Minimal iNES ROM with mapper 4 (MMC3):
+        // - 32KB PRG ROM (2 banks)
+        // - 8KB CHR ROM (1 bank)
+        let prg_rom_banks = 2u8;
+        let chr_rom_banks = 1u8;
+
+        // Mapper 4: lower nibble goes in flags6 high nibble.
+        let flags6 = 0x40; // mapper=4, horizontal mirroring
+        let flags7 = 0x00;
+
+        let mut rom = vec![
+            b'N',
+            b'E',
+            b'S',
+            0x1A,          // iNES header magic
+            prg_rom_banks, // PRG ROM size (16KB units)
+            chr_rom_banks, // CHR ROM size (8KB units)
+            flags6,        // Flags 6
+            flags7,        // Flags 7
+            0,             // Flags 8 (PRG RAM size)
+            0,             // Flags 9
+            0,             // Flags 10
+            0,
+            0,
+            0,
+            0,
+            0, // Reserved
+        ];
+
+        rom.extend(vec![0u8; prg_rom_banks as usize * 16384]);
+        rom.extend(vec![0u8; chr_rom_banks as usize * 8192]);
+        rom
+    }
+
+    fn clock_one_valid_a12_rising_edge_via_chr_reads(
+        mem: &Memory,
+        cartridge: &Option<Rc<RefCell<Cartridge>>>,
+    ) {
+        // MMC3 A12 low-pass filter: requires 8 PPU cycles low.
+        for _ in 0..8 {
+            mem.read_chr(0x0FFF, cartridge);
+        }
+        mem.read_chr(0x1000, cartridge);
+    }
+
+    #[test]
+    fn test_chr_reads_notify_mapper_address_changes_for_mmc3_irq() {
+        // RED: MMC3 scanline IRQ relies on seeing PPU address bus activity (A12 rising edges).
+        // If PPU CHR reads don't call mapper.ppu_address_changed(addr), MMC3 IRQ can never fire
+        // during real rendering.
+
+        let cartridge = Cartridge::new(&create_mmc3_ines_rom()).expect("MMC3 test ROM should load");
+        let cartridge_rc = Rc::new(RefCell::new(cartridge));
+        let cartridge_opt = Some(cartridge_rc.clone());
+
+        // Program MMC3 IRQ: latch=1, reload requested, IRQ enabled.
+        {
+            let mut cart = cartridge_rc.borrow_mut();
+            let mapper = cart.mapper_mut();
+            mapper.write_prg(0xC000, 1);
+            mapper.write_prg(0xC001, 0);
+            mapper.write_prg(0xE001, 0);
+        }
+
+        let mem = Memory::new();
+
+        // First valid A12 rising edge
+        clock_one_valid_a12_rising_edge_via_chr_reads(&mem, &cartridge_opt);
+        assert_eq!(cartridge_rc.borrow().mapper().irq_pending(), false);
+
+        // Second valid A12 rising edge should assert IRQ.
+        clock_one_valid_a12_rising_edge_via_chr_reads(&mem, &cartridge_opt);
+
+        assert_eq!(cartridge_rc.borrow().mapper().irq_pending(), true);
     }
 
     #[test]

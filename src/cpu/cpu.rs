@@ -153,10 +153,12 @@ impl Cpu {
 
         self.prev_run_irq = self.run_irq;
 
-        // Level-triggered IRQ line: sample the hardware line each CPU cycle.
+        // Level-triggered IRQ line: sample hardware lines each CPU cycle.
         // Unit tests may force an asserted IRQ via `forced_irq_pending`.
         let irq_asserted_from_apu = self.apu.borrow().poll_irq();
-        self.irq_pending = irq_asserted_from_apu || self.forced_irq_pending;
+        let irq_asserted_from_mapper = self.memory.borrow().mapper_irq_pending();
+        self.irq_pending =
+            irq_asserted_from_apu || irq_asserted_from_mapper || self.forced_irq_pending;
 
         // The value that will be used for the *next* instruction's interrupt check.
         self.run_irq = self.should_poll_irq();
@@ -2165,6 +2167,85 @@ mod tests {
 
         let expected_pushed_p = (p_before & !FLAG_BREAK) | FLAG_UNUSED;
         assert_eq!(pushed_p, expected_pushed_p);
+    }
+
+    #[test]
+    fn test_execute_services_mapper_irq_after_instruction() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        // Build a minimal iNES ROM for MMC3 (mapper 4):
+        // - 16KB PRG ROM (1 bank)
+        // - 8KB CHR ROM (1 bank)
+        // Vectors are stored at the end of the (fixed last) PRG bank.
+        let mut prg_rom = vec![0; 0x4000];
+        // Reset vector ($FFFC) -> $8000
+        prg_rom[0x3FFC] = 0x00;
+        prg_rom[0x3FFD] = 0x80;
+        // IRQ vector ($FFFE) -> $9000
+        prg_rom[0x3FFE] = 0x00;
+        prg_rom[0x3FFF] = 0x90;
+        // Code at $8000 and $9000
+        prg_rom[0x0000] = 0xEA; // NOP at $8000
+        prg_rom[0x1000] = 0xEA; // NOP at $9000
+        let chr_rom = vec![0; 0x2000];
+
+        let flags6 = 0x40; // mapper 4 in upper nibble, horizontal mirroring
+        let mut rom = vec![
+            b'N', b'E', b'S', 0x1A,   // iNES header
+            1,      // PRG ROM size (16KB units)
+            1,      // CHR ROM size (8KB units)
+            flags6, // flags 6
+            0,      // flags 7
+            0, 0, 0, 0, 0, 0, 0, 0, // padding
+        ];
+        rom.extend_from_slice(&prg_rom);
+        rom.extend_from_slice(&chr_rom);
+
+        let cartridge = Cartridge::new(&rom).expect("MMC3 iNES ROM should parse");
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+
+        cpu.reset(true);
+        cpu.p &= !FLAG_INTERRUPT; // allow IRQs
+
+        // Program MMC3 scanline IRQ: latch=1, reload, enable.
+        memory.borrow_mut().write_for_testing(0xC000, 1);
+        memory.borrow_mut().write_for_testing(0xC001, 0);
+        memory.borrow_mut().write_for_testing(0xE001, 0);
+
+        // Generate two valid A12 rising edges (requires 8 low cycles each) so MMC3 asserts IRQ.
+        for _ in 0..8 {
+            memory
+                .borrow_mut()
+                .mapper_ppu_address_changed_for_test(0x0FFF);
+        }
+        memory
+            .borrow_mut()
+            .mapper_ppu_address_changed_for_test(0x1000);
+
+        for _ in 0..8 {
+            memory
+                .borrow_mut()
+                .mapper_ppu_address_changed_for_test(0x0FFF);
+        }
+        memory
+            .borrow_mut()
+            .mapper_ppu_address_changed_for_test(0x1000);
+
+        assert!(
+            memory.borrow().mapper_irq_pending(),
+            "Mapper should have asserted IRQ before CPU executes"
+        );
+
+        cpu.execute();
+
+        // Expect CPU to take IRQ after completing the instruction.
+        assert_eq!(cpu.pc, 0x9000);
     }
 
     #[test]

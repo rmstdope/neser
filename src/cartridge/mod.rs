@@ -3,6 +3,7 @@ mod cartridge;
 mod cnrom;
 mod mapper;
 mod mmc1;
+mod mmc3;
 mod nrom;
 mod uxrom;
 

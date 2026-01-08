@@ -4,6 +4,7 @@ use std::io;
 use super::axrom::AxROMMapper;
 use super::cnrom::CNROMMapper;
 use super::mmc1::MMC1Mapper;
+use super::mmc3::MMC3Mapper;
 use super::nrom::NROMMapper;
 use super::uxrom::UxROMMapper;
 
@@ -31,6 +32,14 @@ pub trait Mapper {
     /// Used for detecting A12 rising edges (for MMC3 IRQ)
     fn ppu_address_changed(&mut self, addr: u16);
 
+    /// Whether the mapper is currently asserting IRQ.
+    ///
+    /// This is used to model mapper-generated IRQs (e.g., MMC3 scanline IRQ).
+    /// Default implementation returns false for mappers without IRQ support.
+    fn irq_pending(&self) -> bool {
+        false
+    }
+
     /// Get the current nametable mirroring mode
     /// Some mappers can change mirroring dynamically
     fn get_mirroring(&self) -> MirroringMode;
@@ -48,6 +57,7 @@ pub fn create_mapper(
         1 => Ok(Box::new(MMC1Mapper::new(prg_rom, chr_rom, mirroring))),
         2 => Ok(Box::new(UxROMMapper::new(prg_rom, chr_rom, mirroring))),
         3 => Ok(Box::new(CNROMMapper::new(prg_rom, chr_rom, mirroring))),
+        4 => Ok(Box::new(MMC3Mapper::new(prg_rom, chr_rom, mirroring))),
         7 => Ok(Box::new(AxROMMapper::new(prg_rom, chr_rom, mirroring))),
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,
