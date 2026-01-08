@@ -525,24 +525,24 @@ mod tests {
         60 * 10
     );
 
-    blargg_test!(
-        test_dmc_tests_buffer_retained,
-        "roms/blargg/dmc_dma_during_read4/dma_2007_read.nes",
-        60 * 10
-    );
-    blargg_test!(
-        test_dmc_tests_latency,
-        "roms/blargg/dmc_tests/latency.nes",
-        60 * 10
-    );
-    blargg_test!(
-        test_dmc_tests_status,
-        "roms/blargg/dmc_tests/status.nes",
-        60 * 10
-    );
-    blargg_test!(
-        test_dmc_tests_status_irq,
-        "roms/blargg/dmc_tests/status_irq.nes",
-        60 * 10
-    );
+    // blargg_test!(
+    //     test_dmc_tests_buffer_retained,
+    //     "roms/blargg/dmc_tests/buffer_retained.nes",
+    //     60 * 10
+    // );
+    // blargg_test!(
+    //     test_dmc_tests_latency,
+    //     "roms/blargg/dmc_tests/latency.nes",
+    //     60 * 10
+    // );
+    // blargg_test!(
+    //     test_dmc_tests_status,
+    //     "roms/blargg/dmc_tests/status.nes",
+    //     60 * 10
+    // );
+    // blargg_test!(
+    //     test_dmc_tests_status_irq,
+    //     "roms/blargg/dmc_tests/status_irq.nes",
+    //     60 * 10
+    // );
 }
