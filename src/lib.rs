@@ -4,6 +4,7 @@
 pub mod apu;
 pub mod blargg_tests;
 pub mod cartridge;
+pub mod tracing;
 pub mod cpu;
 pub mod input;
 pub mod mem_controller;

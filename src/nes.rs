@@ -3,6 +3,7 @@ use crate::cartridge::Cartridge;
 use crate::cpu;
 use crate::mem_controller;
 use crate::ppu;
+use crate::tracing::Tracing;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -148,6 +149,15 @@ impl Nes {
         cycles_consumed.min(255) as u8
     }
 
+    /// Run a single CPU tick, optionally emitting a trace line before execution.
+    pub fn run(&mut self, tracing: &Tracing) -> u8 {
+        if tracing.enabled {
+            println!("{}", self.trace(tracing));
+        }
+
+        self.run_cpu_tick()
+    }
+
     /// NES system palette - 64 RGB color values (0x00-0x3F)
     /// TODO Implement all known palettes and have the user be able to select system palette variant
     #[rustfmt::skip]
@@ -222,7 +232,8 @@ impl Nes {
     /// registers, and PPU state. Useful for debugging and comparing against reference logs.
     ///
     /// Format: `PC  OPCODE  INSTRUCTION                 A:XX X:XX Y:XX P:XX SP:XX PPU:SSS,PPP CYC:C`
-    pub fn trace(&mut self, nestest: bool) -> String {
+    pub fn trace(&mut self, tracing: &Tracing) -> String {
+        let nestest = tracing.nestest;
         let pc = self.cpu.get_state().pc;
         let memory = self.memory.borrow();
         // Read the opcode and determine instruction size
@@ -442,43 +453,66 @@ impl Nes {
             _ => panic!("Unknown addressing mode"),
         };
 
-        // Adjust spacing for 4-character mnemonics (starts one character earlier)
-        let (pad_before, width) = if instruction.mnemonic.len() == 4 {
-            (" ", 32)
-        } else {
-            ("  ", 31)
-        };
-
-        let total_cycles = self.cpu.get_total_cycles();
-        let state = self.cpu.get_state();
-        let ppu = self.ppu.borrow();
-        let mut scanline = ppu.scanline();
-        let mut pixel = ppu.pixel();
-        // Compensate for the +1 PPU tick
         if nestest {
+            let total_cycles = self.cpu.get_total_cycles();
+            let state = self.cpu.get_state();
+            let ppu = self.ppu.borrow();
+            let mut scanline = ppu.scanline();
+            let mut pixel = ppu.pixel();
+            // Compensate for the +1 PPU tick
             if pixel == 0 {
                 scanline -= 1;
                 pixel = 340;
             } else {
                 pixel -= 1;
             }
+            // Adjust spacing for 4-character mnemonics (starts one character earlier)
+            let (pad_before, width) = if instruction.mnemonic.len() == 4 {
+                (" ", 32)
+            } else {
+                ("  ", 31)
+            };
+            format!(
+                "{:04X}  {}{}{:<width$} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3},{:3} CYC:{}",
+                pc,
+                hex_dump,
+                pad_before,
+                asm,
+                state.a,
+                state.x,
+                state.y,
+                state.p,
+                state.sp,
+                scanline,
+                pixel,
+                total_cycles,
+                width = width
+            )
+        } else {
+            let total_cycles = self.cpu.get_total_cycles();
+            let state = self.cpu.get_state();
+            let ppu = self.ppu.borrow();
+            let scanline = ppu.scanline();
+            let pixel = ppu.pixel();
+            let apu_ticks = self.apu.borrow().debug_frame_counter_cycle();
+            let apu_cycles = self.apu.borrow().apu_cycle();
+            format!(
+                "{:04X} {} {:10} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3},{:3} CPU:{:8} PPU:{}/{}",
+                pc,
+                hex_dump,
+                asm,
+                state.a,
+                state.x,
+                state.y,
+                state.p,
+                state.sp,
+                scanline,
+                pixel,
+                total_cycles,
+                apu_ticks,
+                apu_cycles,
+            )
         }
-        format!(
-            "{:04X}  {}{}{:<width$} A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PPU:{:3},{:3} CYC:{}",
-            pc,
-            hex_dump,
-            pad_before,
-            asm,
-            state.a,
-            state.x,
-            state.y,
-            state.p,
-            state.sp,
-            scanline,
-            pixel,
-            total_cycles,
-            width = width
-        )
     }
 
     /// Get base nametable address from PPUCTRL (for testing)
@@ -527,6 +561,7 @@ impl Nes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tracing::Tracing;
     use std::fs;
 
     #[test]
@@ -556,7 +591,12 @@ mod tests {
 
         for line in golden_log.lines() {
             let expected = line.to_string();
-            let actual = nes.trace(true);
+            let actual = nes.trace(&Tracing {
+                enabled: true,
+                ppu: false,
+                apu: false,
+                nestest: true,
+            });
 
             assert_eq!(expected, actual);
             nes.run_cpu_tick();

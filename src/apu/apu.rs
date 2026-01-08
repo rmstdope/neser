@@ -152,6 +152,11 @@ impl Apu {
         apu
     }
 
+    /// Get APU cycle counter
+    pub fn apu_cycle(&self) -> u32 {
+        self.apu_cycle
+    }
+    
     /// Reset the APU.
     ///
     /// - `cpu_cycle`: The total CPU cycles executed before this reset (for coordinated timing)
@@ -227,7 +232,6 @@ impl Apu {
         // Note: triangle channel is preserved (unaffected by reset)
     }
 
-    #[cfg(test)]
     pub fn debug_frame_counter_cycle(&self) -> u32 {
         self.frame_counter.get_cycle_counter()
     }

@@ -79,7 +79,6 @@ impl FrameCounter {
     }
 
     /// Get the current cycle counter
-    #[cfg(test)]
     pub fn get_cycle_counter(&self) -> u32 {
         self.cycle_counter
     }

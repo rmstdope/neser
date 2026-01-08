@@ -8,6 +8,7 @@ mod mem_controller;
 mod nes;
 mod ppu;
 mod screen_buffer;
+mod tracing;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
@@ -18,8 +19,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("NES Emulator");
         println!("\nUsage: neser [OPTIONS]");
         println!("\nOptions:");
-        println!("  -pal                  Use PAL TV system (default: NTSC)");
+        println!("  --pal                 Use PAL TV system (default: NTSC)");
         println!("  --no-audio            Disable audio output");
+        println!("  --trace               Enable CPU trace output");
+        println!("  --trace-nestest        Enable CPU trace output (nestest.log format)");
+        println!("  --trace-ppu            Enable PPU trace output");
+        println!("  --trace-apu            Enable APU trace output");
         println!("\nAPU Channel Control (for debugging):");
         println!("  --disable-pulse1      Mute pulse 1 channel");
         println!("  --disable-pulse2      Mute pulse 2 channel");
@@ -31,12 +36,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let tv_system = if args.contains(&"-pal".to_string()) {
+    let tv_system = if args.contains(&"--pal".to_string()) {
         nes::TvSystem::Pal
     } else {
         nes::TvSystem::Ntsc
     };
     let no_audio = args.contains(&"--no-audio".to_string());
+    let tracing = tracing::Tracing::from_args(&args);
 
     // Channel enable/disable flags (default: all enabled)
     let pulse1_enabled = !args.contains(&"--disable-pulse1".to_string());
@@ -104,6 +110,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     event_loop
-        .run(&mut nes_instance, true)
+        .run(&mut nes_instance, tracing)
         .map_err(|e| e.into())
 }

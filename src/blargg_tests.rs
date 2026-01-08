@@ -104,7 +104,7 @@ mod tests {
                 }
                 const STATUS_POLL_INTERVAL: u32 = 256;
                 for cpu_cycle in 0..29780 {
-                    // println!("{}", nes.trace(false));
+                    // println!("{}", nes.trace(&crate::tracing::Tracing::default()));
                     nes.run_cpu_tick();
 
                     if cpu_cycle != 0 && cpu_cycle % STATUS_POLL_INTERVAL == 0 {

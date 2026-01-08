@@ -5,6 +5,7 @@ use sdl2::render::Canvas;
 use sdl2::video::Window;
 
 use crate::audio::NesAudio;
+use crate::tracing::Tracing;
 use crate::input::Button;
 use crate::nes::TvSystem;
 
@@ -251,12 +252,12 @@ impl EventLoop {
     /// # Arguments
     ///
     /// * `nes` - A mutable reference to the NES instance to run.
-    /// * `trace` - If `true`, prints a trace line for each CPU instruction executed.
+    /// * `tracing` - Controls whether CPU tracing is enabled and which trace format is used.
     ///
     /// # Errors
     ///
     /// Currently returns Ok(()) in all cases, but the Result type is kept for future error handling.
-    pub fn run(&mut self, nes: &mut crate::nes::Nes, trace: bool) -> Result<(), String> {
+    pub fn run(&mut self, nes: &mut crate::nes::Nes, tracing: Tracing) -> Result<(), String> {
         // Start audio playback if audio is enabled
         if let Some(ref audio) = self.audio {
             audio.resume();
@@ -327,10 +328,7 @@ impl EventLoop {
                 // automatically runs the correct number of PPU cycles per CPU instruction.
                 // A full frame is 262 scanlines × 341 pixels = 89,342 PPU cycles for NTSC
                 while !nes.is_ready_to_render() && !nes.cpu.is_halted() {
-                    if trace {
-                        println!("{}", nes.trace(false));
-                    }
-                    nes.run_cpu_tick();
+                    nes.run(&tracing);
 
                     // Poll audio samples from APU and queue them
                     if let Some(ref mut audio) = self.audio {
