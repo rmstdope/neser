@@ -46,6 +46,8 @@ pub struct Dmc {
 
     memory_bus: Weak<RefCell<MemController>>,
 
+    dma_fetch_requests: u8,
+
     // IRQ
     interrupt_flag: bool,
 }
@@ -67,8 +69,16 @@ impl Dmc {
             current_address: 0,
             bytes_remaining: 0,
             memory_bus: Weak::new(),
+            dma_fetch_requests: 0,
             interrupt_flag: false,
         }
+    }
+
+    /// Take and clear the number of DMC sample-byte DMA fetches accumulated since last call.
+    pub fn take_dma_fetch_requests(&mut self) -> u8 {
+        let requests = self.dma_fetch_requests;
+        self.dma_fetch_requests = 0;
+        requests
     }
 
     /// Provide a handle to the CPU memory bus so the DMC can fetch sample bytes.
@@ -148,6 +158,8 @@ impl Dmc {
             .upgrade()
             .map(|bus| bus.borrow().read(self.current_address))
             .unwrap_or(0x00);
+
+        self.dma_fetch_requests = self.dma_fetch_requests.saturating_add(1);
 
         self.sample_buffer = Some(sample);
 
@@ -629,6 +641,9 @@ mod sample_tests {
         // Assert: once the DMC reads 0xFF from $C000, output should have increased above 0.
         // This currently FAILS because the DMC memory reader is stubbed (uses 0x00).
         let output = nes.apu.borrow().dmc().output();
-        assert!(output > 0, "expected DMC output to be > 0 after reading sample; got {output}");
+        assert!(
+            output > 0,
+            "expected DMC output to be > 0 after reading sample; got {output}"
+        );
     }
 }

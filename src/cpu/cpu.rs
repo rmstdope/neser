@@ -221,6 +221,19 @@ impl Cpu {
         Some(dma_cycles)
     }
 
+    /// Apply an external stall for the given number of CPU cycles.
+    ///
+    /// This is used for synthetic cycles where the CPU does not execute instructions
+    /// but the PPU/APU must continue to advance (e.g., DMA stalls).
+    pub fn apply_external_stall(&mut self, cpu_cycles: u16) {
+        if cpu_cycles == 0 {
+            return;
+        }
+
+        self.tick_ppu_apu_for_cpu_cycles(cpu_cycles);
+        self.add_cycles(cpu_cycles as u64);
+    }
+
     fn tick_ppu_apu_for_cpu_cycles(&mut self, cpu_cycles: u16) {
         let cpu_divider = self.oob_master_clock.cpu_divider();
         let master_ticks_to_add = cpu_divider * cpu_cycles as u64;

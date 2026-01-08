@@ -154,6 +154,16 @@ impl Nes {
         // Execute exactly one CPU instruction.
         self.cpu.execute();
 
+        // DMC sample DMA reads stall the CPU for 1-4 cycles. For now we model this as
+        // a fixed 4-cycle stall per sample fetch.
+        const DMC_DMA_STALL_CYCLES_PER_FETCH: u16 = 4;
+        let dmc_dma_fetches = self.apu.borrow_mut().dmc_mut().take_dma_fetch_requests();
+        if dmc_dma_fetches > 0 {
+            self.cpu.apply_external_stall(
+                DMC_DMA_STALL_CYCLES_PER_FETCH.saturating_mul(dmc_dma_fetches as u16),
+            );
+        }
+
         // IRQ/NMI are handled by the CPU itself (Mesen-style) at the end of `execute()`.
 
         if self.ppu.borrow_mut().poll_frame_complete() {
@@ -1123,6 +1133,36 @@ mod tests {
             apu_cycles_elapsed == 513 || apu_cycles_elapsed == 514,
             "APU should be clocked 513 or 514 times during OAM DMA, got {}",
             apu_cycles_elapsed
+        );
+    }
+
+    #[test]
+    fn test_dmc_dma_stalls_cpu_on_sample_fetch() {
+        // DMC DMA reads should stall the CPU (RDY low) for 1-4 cycles.
+        // With a 2-cycle NOP instruction, this means the first tick should cost 3-6 cycles.
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Configure DMC to play 1 byte starting at $C000, at the fastest rate.
+        // The sample buffer starts empty, so the DMC should attempt a memory fetch
+        // immediately when the APU is clocked.
+        {
+            let mut apu = nes.apu.borrow_mut();
+            apu.dmc_mut().write_flags_and_rate(0x0F);
+            apu.dmc_mut().write_sample_address(0x00);
+            apu.dmc_mut().write_sample_length(0x00);
+            apu.write_enable(0x10);
+        }
+
+        let cpu_cycles = nes.run_cpu_tick();
+
+        assert!(
+            (3..=6).contains(&cpu_cycles),
+            "expected DMC DMA stalling to add 1-4 cycles to a 2-cycle NOP; got {cpu_cycles}"
         );
     }
 
