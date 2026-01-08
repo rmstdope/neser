@@ -485,5 +485,19 @@ mod tests {
     );
 
     blargg_test!(test_apu_mixer_dmc, "roms/blargg/apu_mixer/dmc.nes", 60 * 10);
-    blargg_test!(test_apu_mixer_noise, "roms/blargg/apu_mixer/noise.nes", 60 * 10);
+    blargg_test!(
+        test_apu_mixer_noise,
+        "roms/blargg/apu_mixer/noise.nes",
+        60 * 10
+    );
+    blargg_test!(
+        test_apu_mixer_triangle,
+        "roms/blargg/apu_mixer/triangle.nes",
+        60 * 10
+    );
+    blargg_test!(
+        test_apu_mixer_square,
+        "roms/blargg/apu_mixer/square.nes",
+        60 * 10
+    );
 }
