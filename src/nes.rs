@@ -71,9 +71,6 @@ impl Nes {
         )));
         let cpu = cpu::Cpu::new(tv_system, memory.clone(), ppu.clone(), apu.clone());
 
-        // Provide the DMC channel access to the CPU memory bus for sample fetching.
-        apu.borrow_mut().dmc_mut().set_memory_bus(Rc::downgrade(&memory));
-
         // Initialize PPU 1 cycle ahead for proper sprite 0 hit timing
         // This creates a one-cycle offset where PPU state changes become
         // visible to the CPU one cycle later, matching hardware behavior
@@ -112,12 +109,6 @@ impl Nes {
         self.ppu.borrow_mut().reset();
         self.apu.borrow_mut().reset(cpu_cycle, soft_reset);
         self.cpu.reset(soft_reset);
-
-        // The APU reset recreates the DMC, so reattach the memory bus.
-        self.apu
-            .borrow_mut()
-            .dmc_mut()
-            .set_memory_bus(Rc::downgrade(&self.memory));
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
 
@@ -153,16 +144,6 @@ impl Nes {
 
         // Execute exactly one CPU instruction.
         self.cpu.execute();
-
-        // DMC sample DMA reads stall the CPU for 1-4 cycles. For now we model this as
-        // a fixed 4-cycle stall per sample fetch.
-        const DMC_DMA_STALL_CYCLES_PER_FETCH: u16 = 4;
-        let dmc_dma_fetches = self.apu.borrow_mut().dmc_mut().take_dma_fetch_requests();
-        if dmc_dma_fetches > 0 {
-            self.cpu.apply_external_stall(
-                DMC_DMA_STALL_CYCLES_PER_FETCH.saturating_mul(dmc_dma_fetches as u16),
-            );
-        }
 
         // IRQ/NMI are handled by the CPU itself (Mesen-style) at the end of `execute()`.
 

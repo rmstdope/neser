@@ -14,10 +14,6 @@ const DMC_RATE_TABLE: [u16; 16] = [
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 ];
 
-use crate::mem_controller::MemController;
-use std::cell::RefCell;
-use std::rc::Weak;
-
 pub struct Dmc {
     // Timer
     timer: u16,
@@ -44,9 +40,7 @@ pub struct Dmc {
     current_address: u16,
     bytes_remaining: u16,
 
-    memory_bus: Weak<RefCell<MemController>>,
-
-    dma_fetch_requests: u8,
+    dma_pending: bool,
 
     // IRQ
     interrupt_flag: bool,
@@ -68,22 +62,30 @@ impl Dmc {
             sample_length: 0,
             current_address: 0,
             bytes_remaining: 0,
-            memory_bus: Weak::new(),
-            dma_fetch_requests: 0,
+            dma_pending: false,
             interrupt_flag: false,
         }
     }
 
-    /// Take and clear the number of DMC sample-byte DMA fetches accumulated since last call.
-    pub fn take_dma_fetch_requests(&mut self) -> u8 {
-        let requests = self.dma_fetch_requests;
-        self.dma_fetch_requests = 0;
-        requests
+    /// Returns true if the DMC has a pending DMA request for the next sample byte.
+    pub fn dma_pending(&self) -> bool {
+        self.dma_pending
     }
 
-    /// Provide a handle to the CPU memory bus so the DMC can fetch sample bytes.
-    pub fn set_memory_bus(&mut self, memory_bus: Weak<RefCell<MemController>>) {
-        self.memory_bus = memory_bus;
+    /// If a DMA request is pending, returns the address the DMA should read.
+    pub fn dma_address(&self) -> Option<u16> {
+        self.dma_pending.then_some(self.current_address)
+    }
+
+    /// Complete a pending DMA read by supplying the fetched byte.
+    pub fn complete_dma_read(&mut self, value: u8) {
+        if !self.dma_pending {
+            return;
+        }
+
+        self.dma_pending = false;
+        self.sample_buffer = Some(value);
+        self.advance_reader_after_fetch();
     }
 
     /// Get current output level (0-127)
@@ -153,17 +155,10 @@ impl Dmc {
             return;
         }
 
-        let sample = self
-            .memory_bus
-            .upgrade()
-            .map(|bus| bus.borrow().read(self.current_address))
-            .unwrap_or(0x00);
-
-        self.dma_fetch_requests = self.dma_fetch_requests.saturating_add(1);
-
-        self.sample_buffer = Some(sample);
-
-        self.advance_reader_after_fetch();
+        // Request a CPU-side DMA read. The CPU will stall and provide the byte.
+        if !self.dma_pending {
+            self.dma_pending = true;
+        }
     }
 
     fn advance_reader_after_fetch(&mut self) {

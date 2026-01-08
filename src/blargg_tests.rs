@@ -31,6 +31,10 @@ mod tests {
         StatusByte,
         /// Verify using console output
         Console,
+        /// Verify by matching a CRC-32 printed to the console output.
+        ///
+        /// Some blargg ROMs only print their CRC (and do not print "Passed"/"Failed").
+        ConsoleCrc(&'static [u32]),
     }
 
     /// Runner for OAM test ROMs
@@ -95,6 +99,7 @@ mod tests {
             for _frame in 1..=self.max_frames {
                 // Run one frame (roughly 29780 CPU cycles for NTSC)
                 let mut current_status = nes.memory.borrow().read_for_testing(0x6000);
+                println!("Frame {}, status=0x{:02X}", _frame, current_status);
                 if current_status == 0x80 {
                     running = true;
                 }
@@ -185,12 +190,49 @@ mod tests {
                         println!("Console output:\n{}", text);
                         return BlarggTestResult::Fail(1);
                     }
+                } else if let BlarggTestVerification::ConsoleCrc(expected_crcs) = self.verification
+                {
+                    let base_addr = nes.base_nametable_addr();
+                    let mut text = nes.read_nametable_text(base_addr, 32 * 32);
+                    text = text
+                        .as_bytes()
+                        .chunks(32)
+                        .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("\n");
+
+                    if let Some(crc) = parse_crc32_from_console_text(&text) {
+                        if expected_crcs.contains(&crc) {
+                            return BlarggTestResult::Pass;
+                        }
+                        println!("Test failed! Unexpected CRC 0x{:08X}", crc);
+                        println!("Console output:\n{}", text);
+                        return BlarggTestResult::Fail(1);
+                    }
                 }
             }
 
             // No result found within timeout
             BlarggTestResult::Timeout
         }
+    }
+
+    fn parse_crc32_from_console_text(text: &str) -> Option<u32> {
+        // The test framework prints CRCs as 8 hex digits (uppercase) on their own line.
+        // We accept either case and ignore any other tokens.
+        for token in text.split_whitespace() {
+            if token.len() != 8 {
+                continue;
+            }
+            if !token.chars().all(|c| c.is_ascii_hexdigit()) {
+                continue;
+            }
+            if let Ok(value) = u32::from_str_radix(token, 16) {
+                return Some(value);
+            }
+        }
+        None
     }
 
     /// Macro to generate $6000-based tests with custom timeout
@@ -226,6 +268,22 @@ mod tests {
         };
     }
 
+    macro_rules! blargg_console_crc_test {
+        ($test_name:ident, $rom_path:expr, $timeout:expr, $expected:expr) => {
+            #[test]
+            fn $test_name() {
+                let mut runner = BlarggTestRunner::new(
+                    $rom_path,
+                    $timeout,
+                    BlarggTestVerification::ConsoleCrc($expected),
+                );
+                let result = runner.run_test();
+                let rom_name = $rom_path.split('/').last().unwrap();
+                assert_eq!(result, BlarggTestResult::Pass, "{} should pass", rom_name);
+            }
+        };
+    }
+
     // Branch timing tests
     blargg_console_test!(
         test_branch_timing,
@@ -258,6 +316,35 @@ mod tests {
     blargg_test!(
         test_cpu_exec_space_apu,
         "roms/blargg/cpu_exec_space/test_cpu_exec_space_apu.nes"
+    );
+
+    // DMC DMA "register conflicts" and related timing edge cases
+    blargg_console_crc_test!(
+        test_dmc_dma_during_read4_2007_read,
+        "roms/blargg/dmc_dma_during_read4/dma_2007_read.nes",
+        300,
+        &[0x159A7A8F, 0x5E3DF9C4]
+    );
+    blargg_console_test!(
+        test_dmc_dma_during_read4_2007_write,
+        "roms/blargg/dmc_dma_during_read4/dma_2007_write.nes",
+        300
+    );
+    blargg_console_test!(
+        test_dmc_dma_during_read4_4016_read,
+        "roms/blargg/dmc_dma_during_read4/dma_4016_read.nes",
+        300
+    );
+    blargg_console_crc_test!(
+        test_dmc_dma_during_read4_double_2007_read,
+        "roms/blargg/dmc_dma_during_read4/double_2007_read.nes",
+        300,
+        &[0xF018C287, 0xD84F6815] //CRC1 - Mesen, loopyNES, etc., CRC2 - Nintendulator, FCEUX
+    );
+    blargg_console_test!(
+        test_dmc_dma_during_read4_read_write_2007,
+        "roms/blargg/dmc_dma_during_read4/read_write_2007.nes",
+        300
     );
     blargg_test!(
         test_cpu_cli_latency,
