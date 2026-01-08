@@ -475,10 +475,10 @@ mod tests {
         test_apu_test_6,
         "roms/blargg/apu_test/rom_singles/6-irq_flag_timing.nes"
     );
-    // blargg_test!(
-    //     test_apu_test_7,
-    //     "roms/blargg/apu_test/rom_singles/7-dmc_basics.nes"
-    // );
+    blargg_test!(
+        test_apu_test_7,
+        "roms/blargg/apu_test/rom_singles/7-dmc_basics.nes"
+    );
     // blargg_test!(
     //     test_apu_test_8,
     //     "roms/blargg/apu_test/rom_singles/8-dmc_rates.nes"
