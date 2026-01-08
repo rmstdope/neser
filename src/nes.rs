@@ -56,7 +56,6 @@ pub struct Nes {
     pub apu: Rc<RefCell<apu::Apu>>,
     pub memory: Rc<RefCell<mem_controller::MemController>>,
     pub cpu: cpu::Cpu,
-    tv_system: TvSystem,
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
 }
@@ -81,16 +80,9 @@ impl Nes {
             apu,
             memory,
             cpu,
-            tv_system,
             fractional_ppu_cycles: 0.0,
             ready_to_render: false,
         }
-    }
-
-    /// Get the TV system this NES instance is configured for
-    #[cfg(test)]
-    pub fn tv_system(&self) -> TvSystem {
-        self.tv_system
     }
 
     /// Insert a cartridge and map it into memory
@@ -569,27 +561,6 @@ mod tests {
             assert_eq!(expected, actual);
             nes.run_cpu_tick();
         }
-    }
-
-    #[test]
-    fn test_nes_new_with_ntsc() {
-        let nes = Nes::new(TvSystem::Ntsc);
-        assert_eq!(nes.tv_system(), TvSystem::Ntsc);
-    }
-
-    #[test]
-    fn test_nes_new_with_pal() {
-        let nes = Nes::new(TvSystem::Pal);
-        assert_eq!(nes.tv_system(), TvSystem::Pal);
-    }
-
-    #[test]
-    fn test_tv_system_stored_correctly() {
-        let ntsc_nes = Nes::new(TvSystem::Ntsc);
-        let pal_nes = Nes::new(TvSystem::Pal);
-
-        assert_eq!(ntsc_nes.tv_system(), TvSystem::Ntsc);
-        assert_eq!(pal_nes.tv_system(), TvSystem::Pal);
     }
 
     #[test]

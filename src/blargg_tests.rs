@@ -99,7 +99,6 @@ mod tests {
             for _frame in 1..=self.max_frames {
                 // Run one frame (roughly 29780 CPU cycles for NTSC)
                 let mut current_status = nes.memory.borrow().read_for_testing(0x6000);
-                println!("Frame {}, status=0x{:02X}", _frame, current_status);
                 if current_status == 0x80 {
                     running = true;
                 }
