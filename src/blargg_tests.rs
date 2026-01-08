@@ -94,38 +94,53 @@ mod tests {
             // Run frames and check for results
             for _frame in 1..=self.max_frames {
                 // Run one frame (roughly 29780 CPU cycles for NTSC)
-                let mut status = 0;
-                for _ in 0..29780 {
+                let mut current_status = nes.memory.borrow().read_for_testing(0x6000);
+                if current_status == 0x80 {
+                    running = true;
+                }
+                const STATUS_POLL_INTERVAL: u32 = 256;
+                for cpu_cycle in 0..29780 {
                     // println!("{}", nes.trace(false));
                     nes.run_cpu_tick();
-                    if nes.is_ready_to_render() {
-                        nes.clear_ready_to_render();
-                    }
-                    while nes.sample_ready() {
-                        nes.get_sample();
-                    }
-                    status = nes.memory.borrow().read_for_testing(0x6000);
-                    if status == 0x80 {
-                        running = true;
+
+                    if cpu_cycle != 0 && cpu_cycle % STATUS_POLL_INTERVAL == 0 {
+                        current_status = nes.memory.borrow().read_for_testing(0x6000);
+                        if current_status == 0x80 {
+                            running = true;
+                        }
                     }
                 }
+                // Make sure we observe any status update at end-of-frame.
+                let status = nes.memory.borrow().read_for_testing(0x6000);
+                if status == 0x80 {
+                    running = true;
+                }
+
+                // Drain side channels once per frame to avoid unbounded growth.
+                if nes.is_ready_to_render() {
+                    nes.clear_ready_to_render();
+                }
+                while nes.sample_ready() {
+                    nes.get_sample();
+                }
+
                 if self.verification == BlarggTestVerification::StatusByte && !running {
                     continue;
                 }
-                let base_addr = nes.base_nametable_addr();
-                let mut text = nes.read_nametable_text(base_addr, 32 * 32);
-                text = text
-                    .as_bytes()
-                    .chunks(32)
-                    .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n");
                 if self.verification == BlarggTestVerification::StatusByte {
                     if status == 0x00 {
-                        println!("Test passed!");
+                        // println!("Test passed!");
                         return BlarggTestResult::Pass;
                     } else if status > 0x00 && status < 0x80 {
+                        let base_addr = nes.base_nametable_addr();
+                        let mut text = nes.read_nametable_text(base_addr, 32 * 32);
+                        text = text
+                            .as_bytes()
+                            .chunks(32)
+                            .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>()
+                            .join("\n");
                         println!("Test failed with status code: 0x{:02X}", status);
                         println!("Console output:\n{}", text);
                         return BlarggTestResult::Fail(status);
@@ -148,6 +163,15 @@ mod tests {
                         continue;
                     }
                 } else if self.verification == BlarggTestVerification::Console {
+                    let base_addr = nes.base_nametable_addr();
+                    let mut text = nes.read_nametable_text(base_addr, 32 * 32);
+                    text = text
+                        .as_bytes()
+                        .chunks(32)
+                        .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
+                        .filter(|s| !s.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("\n");
                     // Check if $0x test
                     let is_0x = text.len() == 3 && text.starts_with("$0");
                     if text.to_uppercase().contains("PASSED") || text == "$01" {
