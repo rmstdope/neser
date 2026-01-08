@@ -455,12 +455,6 @@ mod tests {
         test_apu_test_1,
         "roms/blargg/apu_test/rom_singles/1-len_ctr.nes"
     );
-
-    blargg_test!(
-        test_apu_mixer_triangle,
-        "roms/blargg/apu_mixer/triangle.nes",
-        60 * 10
-    );
     blargg_test!(
         test_apu_test_2,
         "roms/blargg/apu_test/rom_singles/2-len_table.nes"
@@ -491,5 +485,19 @@ mod tests {
     );
 
     blargg_test!(test_apu_mixer_dmc, "roms/blargg/apu_mixer/dmc.nes", 60 * 10);
-    blargg_test!(test_apu_mixer_noise, "roms/blargg/apu_mixer/noise.nes", 60 * 10);
+    blargg_test!(
+        test_apu_mixer_noise,
+        "roms/blargg/apu_mixer/noise.nes",
+        60 * 10
+    );
+    blargg_test!(
+        test_apu_mixer_triangle,
+        "roms/blargg/apu_mixer/triangle.nes",
+        60 * 10
+    );
+    blargg_test!(
+        test_apu_mixer_square,
+        "roms/blargg/apu_mixer/square.nes",
+        60 * 10
+    );
 }
