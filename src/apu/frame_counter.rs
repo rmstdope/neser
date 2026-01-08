@@ -7,6 +7,7 @@ pub struct FrameCounter {
     cycle_counter: u32,
     irq_flag: bool,
     reset_phase: bool, // Phase when counter was reset (for jitter calculation)
+    five_step_extra_cycle: bool, // Alternating +1 cycle offset for 5-step sequencing
     pending_write: Option<u8>, // Pending write to $4017 register
     write_delay: u8,   // Cycles remaining before pending write takes effect
     pending_write_on_odd_cpu_cycle: bool,
@@ -34,6 +35,7 @@ impl FrameCounter {
             cycle_counter: 0,
             irq_flag: false,
             reset_phase: false, // Reset on even cycle
+            five_step_extra_cycle: false,
             pending_write: None,
             write_delay: 0,
             pending_write_on_odd_cpu_cycle: false,
@@ -53,6 +55,7 @@ impl FrameCounter {
         self.irq_inhibit = (value & 0x40) != 0;
         self.cycle_counter = 0;
         // Note: Phase not tracked here as we don't know the APU cycle
+        self.five_step_extra_cycle = false;
 
         // Writing 1 to IRQ inhibit clears the IRQ flag
         if (value & 0x40) != 0 {
@@ -111,9 +114,11 @@ impl FrameCounter {
     }
 
     /// Process pending delayed write (called at start of each clock cycle)
-    fn process_delayed_write(&mut self) {
+    ///
+    /// Returns true if a pending write took effect on this cycle.
+    fn process_delayed_write(&mut self) -> bool {
         if self.pending_write.is_none() {
-            return;
+            return false;
         }
 
         // NESDev: Effects of a $4017 write occur 3 or 4 CPU cycles later.
@@ -122,7 +127,7 @@ impl FrameCounter {
         if self.write_delay > 0 {
             self.write_delay -= 1;
             if self.write_delay > 0 {
-                return;
+                return false;
             }
         }
 
@@ -137,6 +142,9 @@ impl FrameCounter {
         // Apply the delayed write
         self.mode = new_mode;
         self.irq_inhibit = (value & 0x40) != 0;
+
+        // Reset the 5-step alternating offset each time the sequencer is reset.
+        self.five_step_extra_cycle = false;
 
         // Reset cycle_counter to match behavior of a direct write to $4017
         self.cycle_counter = if self.pending_write_on_odd_cpu_cycle {
@@ -160,17 +168,24 @@ impl FrameCounter {
         // Clear the pending write
         self.pending_write = None;
         self.pending_write_on_odd_cpu_cycle = false;
+
+        true
     }
 
     /// Clock the frame counter by one CPU cycle
     /// Returns (quarter_frame, half_frame) signals
     pub fn clock(&mut self) -> (bool, bool) {
         // Process any pending delayed write before advancing
-        self.process_delayed_write();
+        let write_took_effect = self.process_delayed_write();
 
-        // Frame counter increments every CPU cycle
-        // Use wrapping_add to handle the jitter case where cycle_counter starts at u32::MAX
-        self.cycle_counter = self.cycle_counter.wrapping_add(1);
+        // Frame counter increments every CPU cycle.
+        // Important timing detail: when a delayed $4017 write takes effect on this CPU cycle,
+        // the sequencer is reset but does not also immediately advance on the same cycle.
+        // This matches blargg's APU timing tests (e.g. apu_test 5-len_timing).
+        if !write_took_effect {
+            // Use wrapping_add to handle the jitter case where cycle_counter starts at u32::MAX
+            self.cycle_counter = self.cycle_counter.wrapping_add(1);
+        }
 
         let (quarter_frame, half_frame) = match self.mode {
             Mode::FourStep => self.clock_four_step(),
@@ -223,15 +238,26 @@ impl FrameCounter {
         const STEP_4_CYCLES: u32 = 29829;
         const STEP_5_CYCLES: u32 = 37281;
 
-        let quarter_frame = matches!(
-            self.cycle_counter,
-            STEP_1_CYCLES | STEP_2_CYCLES | STEP_3_CYCLES | STEP_4_CYCLES
-        );
-        let half_frame = matches!(self.cycle_counter, STEP_2_CYCLES | STEP_5_CYCLES);
+        // The 5-step sequence length is odd, which causes the relative phase to alternate.
+        // Model this by shifting the sequence boundaries by +1 CPU cycle every other 5-step run.
+        let offset: u32 = self.five_step_extra_cycle as u32;
+
+        let step_1 = STEP_1_CYCLES + offset;
+        let step_2 = STEP_2_CYCLES + offset;
+        let step_3 = STEP_3_CYCLES + offset;
+        let step_4 = STEP_4_CYCLES + offset;
+        let step_5 = STEP_5_CYCLES + offset;
+
+        let quarter_frame = self.cycle_counter == step_1
+            || self.cycle_counter == step_2
+            || self.cycle_counter == step_3
+            || self.cycle_counter == step_4;
+        let half_frame = self.cycle_counter == step_2 || self.cycle_counter == step_5;
 
         // Wrap around after step 5
-        if self.cycle_counter >= STEP_5_CYCLES {
+        if self.cycle_counter >= step_5 {
             self.cycle_counter = 0;
+            self.five_step_extra_cycle = !self.five_step_extra_cycle;
         }
 
         (quarter_frame, half_frame)

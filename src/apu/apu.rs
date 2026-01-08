@@ -217,7 +217,7 @@ impl Apu {
         // Our delayed-write implementation applies the write during `clock()` (before increment),
         // and then increments within that same `clock()` call. So on the clock where the delayed
         // write takes effect, the counter ends at 1.
-        let total_clocks = u32::from(write_delay);
+        let total_clocks = u32::from(write_delay) + 1;
         for _ in 0..total_clocks {
             self.frame_counter.clock();
         }
