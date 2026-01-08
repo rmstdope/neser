@@ -111,8 +111,12 @@ impl Dmc {
         // Blargg's `apu_test/7-dmc_basics` depends on this happening immediately when empty.
         self.fill_sample_buffer_if_needed();
 
+        // The DMC rate table values are expressed in CPU cycles per output-unit clock.
+        // To achieve an exact period of `timer_period`, we reload to `timer_period - 1`
+        // because the timer is decremented once per CPU cycle and only triggers when it
+        // is observed at zero.
         if self.timer == 0 {
-            self.timer = self.timer_period;
+            self.timer = self.timer_period.saturating_sub(1);
             self.clock_output_unit();
         } else {
             self.timer -= 1;
@@ -342,11 +346,11 @@ mod tests {
 
         // First clock loads the timer
         dmc.clock_timer();
-        assert_eq!(dmc.timer, 54);
+        assert_eq!(dmc.timer, 53);
 
         // Subsequent clocks count down
         dmc.clock_timer();
-        assert_eq!(dmc.timer, 53);
+        assert_eq!(dmc.timer, 52);
     }
 
     #[test]
