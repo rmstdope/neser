@@ -82,13 +82,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
-    let rom_data = std::fs::read("roms/games/zelda.nes")?;
+    // let rom_data = std::fs::read("roms/games/zelda.nes")?;
 
     // Unknown status
     // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
     // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
     // let rom_data = std::fs::read("roms/blargg/4015_cleared.nes")?;
-    // let rom_data = std::fs::read("roms/blargg/dmc_dma_during_read4/dma_2007_read.nes")?;
+    let rom_data = std::fs::read("roms/blargg/dmc_tests/status.nes")?;
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset(false);
@@ -104,6 +104,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     event_loop
-        .run(&mut nes_instance, false)
+        .run(&mut nes_instance, true)
         .map_err(|e| e.into())
 }

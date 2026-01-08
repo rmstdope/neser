@@ -63,6 +63,18 @@ impl Joypad {
         response
     }
 
+    /// Read the current controller bit without advancing the internal shift position.
+    ///
+    /// This is used to model DMA no-op cycles where the CPU repeats the last read cycle
+    /// externally, but the controller should not observe additional clock pulses.
+    pub fn read_no_clock(&self) -> u8 {
+        if self.button_index >= 8 {
+            return 1;
+        }
+
+        (self.button_states >> self.button_index) & 0x01
+    }
+
     /// Set the state of a button
     pub fn set_button(&mut self, button: Button, pressed: bool) {
         let bit = button as u8;

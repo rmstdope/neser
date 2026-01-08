@@ -57,6 +57,19 @@ impl MemController {
 
     /// Read a byte from memory
     pub fn read(&self, addr: u16) -> u8 {
+        self.read_internal(addr, true)
+    }
+
+    /// Read a byte from memory, optionally clocking joypad shift registers.
+    ///
+    /// During DMA no-op cycles, the CPU repeats the last read externally. For joypad
+    /// registers ($4016/$4017), real hardware does not necessarily clock the controller
+    /// shift register on these repeated reads; callers can disable joypad clocking.
+    pub fn read_without_joypad_clock(&self, addr: u16) -> u8 {
+        self.read_internal(addr, false)
+    }
+
+    fn read_internal(&self, addr: u16, clock_joypads: bool) -> u8 {
         let value = match addr {
             // RAM ($0000-$1FFF) with mirroring
             0x0000..=0x1FFF => self.cpu_ram[(addr & 0x07FF) as usize],
@@ -86,13 +99,21 @@ impl MemController {
             0x4015 => self.apu.borrow_mut().read_status(*self.open_bus.borrow()),
             0x4016 => {
                 // Joypad 1: bit 0 = button state, bits 1-7 = open bus
-                let button_state = self.joypad1.borrow_mut().read();
+                let button_state = if clock_joypads {
+                    self.joypad1.borrow_mut().read()
+                } else {
+                    self.joypad1.borrow().read_no_clock()
+                };
                 let open_bus = *self.open_bus.borrow();
                 (open_bus & 0xFE) | button_state
             }
             0x4017 => {
                 // Joypad 2: bit 0 = button state, bits 1-7 = open bus
-                let button_state = self.joypad2.borrow_mut().read();
+                let button_state = if clock_joypads {
+                    self.joypad2.borrow_mut().read()
+                } else {
+                    self.joypad2.borrow().read_no_clock()
+                };
                 let open_bus = *self.open_bus.borrow();
                 (open_bus & 0xFE) | button_state
             }

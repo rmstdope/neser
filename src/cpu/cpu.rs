@@ -70,6 +70,8 @@ pub struct Cpu {
     /// This is kept separate from `master_clock` because `master_clock` is also
     /// advanced by bus accesses during normal instruction execution.
     oob_master_clock: MasterClock,
+
+    dmc_dma_in_progress: bool,
 }
 
 // Status register flags
@@ -121,6 +123,8 @@ impl Cpu {
             forced_irq_pending: false,
             master_clock: MasterClock::new(tv_system),
             oob_master_clock: MasterClock::new(tv_system),
+
+            dmc_dma_in_progress: false,
         }
     }
 
@@ -360,6 +364,30 @@ impl Cpu {
     fn read(&mut self, addr: u16) -> u8 {
         // TODO Process any pending DMA
         self.before_cpu_cycle(false);
+        // If the DMC has a pending DMA read, the CPU will be halted on this *read* cycle.
+        // While halted, the 6502 repeats this read during each no-op DMA cycle, which is
+        // externally visible and can conflict with registers with side effects.
+        let dmc_dma_pending = !self.dmc_dma_in_progress
+            && {
+                let mut apu = self.apu.borrow_mut();
+                apu.dmc_mut().dma_pending()
+            };
+        if dmc_dma_pending {
+            self.dmc_dma_in_progress = true;
+
+            // Halt cycle: repeat the CPU read (discard value), then perform remaining DMA cycles.
+            let _ = self.memory.borrow().read(addr);
+            self.after_cpu_cycle(false);
+
+            self.run_dmc_dma_sequence(addr);
+
+            // After DMA completes, the CPU performs the read it attempted when halted.
+            let value = self.read(addr);
+
+            self.dmc_dma_in_progress = false;
+            return value;
+        }
+
         let value = self.memory.borrow().read(addr);
 
         #[cfg(test)]
@@ -380,6 +408,47 @@ impl Cpu {
         }
         self.after_cpu_cycle(false);
         value
+    }
+
+    fn run_dmc_dma_sequence(&mut self, halted_read_addr: u16) {
+        // DMC DMA: dummy cycle + optional alignment + get
+        // We approximate the get/put cadence via CPU cycle parity.
+        // During no-op cycles, the CPU repeats the read on which it was halted.
+
+        // Dummy cycle (no-op): repeat the halted read.
+        self.before_cpu_cycle(false);
+        let _ = self
+            .memory
+            .borrow()
+            .read_without_joypad_clock(halted_read_addr);
+        self.after_cpu_cycle(false);
+
+        // Optional alignment cycle if the next cycle is not a "get" cycle.
+        // We model "get" on even CPU cycles.
+        let next_is_get = self.total_cycles % 2 == 0;
+        if !next_is_get {
+            self.before_cpu_cycle(false);
+            let _ = self
+                .memory
+                .borrow()
+                .read_without_joypad_clock(halted_read_addr);
+            self.after_cpu_cycle(false);
+        }
+
+        // Get cycle: perform the actual DMC sample-byte read.
+        let dma_addr = match {
+            let mut apu = self.apu.borrow_mut();
+            apu.dmc_mut().dma_address()
+        } {
+            Some(addr) => addr,
+            None => return,
+        };
+
+        self.before_cpu_cycle(false);
+        let value = self.memory.borrow().read(dma_addr);
+        self.after_cpu_cycle(false);
+
+        self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
     }
 
     /// Dummy read a byte from memory at the specified address
