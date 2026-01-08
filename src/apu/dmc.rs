@@ -14,6 +14,10 @@ const DMC_RATE_TABLE: [u16; 16] = [
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 ];
 
+use crate::mem_controller::MemController;
+use std::cell::RefCell;
+use std::rc::Weak;
+
 pub struct Dmc {
     // Timer
     timer: u16,
@@ -40,6 +44,8 @@ pub struct Dmc {
     current_address: u16,
     bytes_remaining: u16,
 
+    memory_bus: Weak<RefCell<MemController>>,
+
     // IRQ
     interrupt_flag: bool,
 }
@@ -60,8 +66,14 @@ impl Dmc {
             sample_length: 0,
             current_address: 0,
             bytes_remaining: 0,
+            memory_bus: Weak::new(),
             interrupt_flag: false,
         }
+    }
+
+    /// Provide a handle to the CPU memory bus so the DMC can fetch sample bytes.
+    pub fn set_memory_bus(&mut self, memory_bus: Weak<RefCell<MemController>>) {
+        self.memory_bus = memory_bus;
     }
 
     /// Get current output level (0-127)
@@ -131,9 +143,13 @@ impl Dmc {
             return;
         }
 
-        // TODO: Read actual byte from CPU memory at current_address.
-        // For now, use dummy data (0x00). Blargg's apu_test DMC samples are silent.
-        self.sample_buffer = Some(0x00);
+        let sample = self
+            .memory_bus
+            .upgrade()
+            .map(|bus| bus.borrow().read(self.current_address))
+            .unwrap_or(0x00);
+
+        self.sample_buffer = Some(sample);
 
         self.advance_reader_after_fetch();
     }
@@ -445,6 +461,24 @@ mod tests {
 #[cfg(test)]
 mod sample_tests {
     use super::*;
+    use crate::cartridge::Cartridge;
+    use crate::nes::{Nes, TvSystem};
+
+    fn make_ines_nrom_32k(prg_rom: &[u8]) -> Vec<u8> {
+        assert_eq!(prg_rom.len(), 2 * 16 * 1024);
+        let mut rom = Vec::with_capacity(16 + prg_rom.len());
+        rom.extend_from_slice(b"NES\x1A");
+        rom.push(2); // 2 * 16KB PRG
+        rom.push(0); // 0 * 8KB CHR
+        rom.push(0); // flags 6
+        rom.push(0); // flags 7
+        rom.push(0); // PRG-RAM size (unused)
+        rom.push(0);
+        rom.push(0);
+        rom.extend_from_slice(&[0u8; 5]);
+        rom.extend_from_slice(prg_rom);
+        rom
+    }
 
     #[test]
     fn test_restart_sample() {
@@ -545,5 +579,56 @@ mod sample_tests {
         // When bytes_remaining = 0, channel is inactive
         dmc.bytes_remaining = 0;
         assert!(!dmc.has_bytes_remaining());
+    }
+
+    #[test]
+    fn test_dmc_reads_sample_byte_from_cpu_memory() {
+        // Arrange: build a tiny NROM-256 ROM with a known byte at CPU $C000.
+        // For 32KB PRG ROM, CPU $8000 maps to PRG[0x0000] and CPU $C000 maps to PRG[0x4000].
+        let mut prg = vec![0xEAu8; 2 * 16 * 1024]; // Fill with NOPs for safe CPU execution
+        // Simple infinite loop at $8000: NOP; NOP; NOP; JMP $8000
+        prg[0x0000] = 0xEA;
+        prg[0x0001] = 0xEA;
+        prg[0x0002] = 0xEA;
+        prg[0x0003] = 0x4C;
+        prg[0x0004] = 0x00;
+        prg[0x0005] = 0x80;
+
+        // DMC sample byte at CPU $C000
+        prg[0x4000] = 0xFF;
+
+        // Set vectors (NMI/RESET/IRQ) to $8000
+        prg[0x7FFA] = 0x00;
+        prg[0x7FFB] = 0x80;
+        prg[0x7FFC] = 0x00;
+        prg[0x7FFD] = 0x80;
+        prg[0x7FFE] = 0x00;
+        prg[0x7FFF] = 0x80;
+
+        let rom = make_ines_nrom_32k(&prg);
+        let cartridge = Cartridge::new(&rom).expect("test ROM should parse");
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Configure DMC to play 1 byte starting at $C000, at the fastest rate.
+        {
+            let mut apu = nes.apu.borrow_mut();
+            apu.dmc_mut().write_flags_and_rate(0x0F);
+            apu.dmc_mut().write_sample_address(0x00);
+            apu.dmc_mut().write_sample_length(0x00);
+            apu.write_enable(0x10);
+        }
+
+        // Act: run enough CPU cycles for DMC to fetch and output bits.
+        for _ in 0..5_000 {
+            nes.run_cpu_tick();
+        }
+
+        // Assert: once the DMC reads 0xFF from $C000, output should have increased above 0.
+        // This currently FAILS because the DMC memory reader is stubbed (uses 0x00).
+        let output = nes.apu.borrow().dmc().output();
+        assert!(output > 0, "expected DMC output to be > 0 after reading sample; got {output}");
     }
 }
