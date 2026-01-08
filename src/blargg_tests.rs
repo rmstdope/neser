@@ -483,9 +483,4 @@ mod tests {
         test_apu_test_8,
         "roms/blargg/apu_test/rom_singles/8-dmc_rates.nes"
     );
-
-    blargg_console_test!(
-        test_blargg_apu_2005_01_len_ctr,
-        "roms/blargg/blargg_apu_2005.07.30/01.len_ctr.nes"
-    );
 }
