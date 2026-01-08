@@ -1,6 +1,7 @@
 mod axrom;
 mod cartridge;
 mod cnrom;
+mod gxrom;
 mod mapper;
 mod mmc1;
 mod mmc3;
