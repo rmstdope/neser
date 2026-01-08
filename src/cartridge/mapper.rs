@@ -3,6 +3,7 @@ use std::io;
 
 use super::axrom::AxROMMapper;
 use super::cnrom::CNROMMapper;
+use super::gxrom::GxROMMapper;
 use super::mmc1::MMC1Mapper;
 use super::mmc3::MMC3Mapper;
 use super::nrom::NROMMapper;
@@ -59,6 +60,7 @@ pub fn create_mapper(
         3 => Ok(Box::new(CNROMMapper::new(prg_rom, chr_rom, mirroring))),
         4 => Ok(Box::new(MMC3Mapper::new(prg_rom, chr_rom, mirroring))),
         7 => Ok(Box::new(AxROMMapper::new(prg_rom, chr_rom, mirroring))),
+        66 => Ok(Box::new(GxROMMapper::new(prg_rom, chr_rom, mirroring))),
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,
             format!("Mapper {} not implemented", mapper_number),
