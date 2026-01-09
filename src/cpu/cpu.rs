@@ -5466,34 +5466,6 @@ mod tests {
     }
 
     #[test]
-    fn test_write_u16_to_addr() {
-        let (ppu, apu, memory) = create_test_memory();
-        let cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write_u16(0x1234, 0xABCD);
-        assert_eq!(cpu.memory.borrow().read(0x1234), 0xCD); // Low byte
-        assert_eq!(cpu.memory.borrow().read(0x1235), 0xAB); // High byte
-    }
-
-    #[test]
-    fn test_read_u16_from_addr() {
-        let (ppu, apu, memory) = create_test_memory();
-        let cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write(0x1234, 0xCD, false); // Low byte
-        cpu.memory.borrow_mut().write(0x1235, 0xAB, false); // High byte
-        let result = cpu.memory.borrow().read_u16(0x1234);
-        assert_eq!(result, 0xABCD);
-    }
-
-    #[test]
-    fn test_write_and_read_u16() {
-        let (ppu, apu, memory) = create_test_memory();
-        let cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write_u16(0x1000, 0x1234);
-        let result = cpu.memory.borrow().read_u16(0x1000);
-        assert_eq!(result, 0x1234);
-    }
-
-    #[test]
     fn test_load_program_at_custom_address() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);

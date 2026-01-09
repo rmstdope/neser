@@ -11,6 +11,7 @@ pub mod mem_controller;
 pub mod nes;
 pub mod ppu; // Modular PPU structure
 pub mod screen_buffer;
+pub mod save_ram;
 pub mod tracing;
 
 #[cfg(feature = "sdl")]

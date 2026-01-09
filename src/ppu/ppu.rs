@@ -744,11 +744,13 @@ impl Ppu {
     }
 
     /// Check if in VBlank period
+    #[cfg(test)]
     pub fn is_in_vblank(&self) -> bool {
         self.status.is_in_vblank()
     }
 
     /// Check if should generate NMI
+    #[cfg(test)]
     pub fn should_generate_nmi(&self) -> bool {
         self.registers.should_generate_nmi()
     }

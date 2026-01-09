@@ -9,7 +9,99 @@ mod mem_controller;
 mod nes;
 mod ppu;
 mod screen_buffer;
+mod save_ram;
 mod tracing;
+
+struct CliFlag {
+    flag: &'static str,
+    help: Option<&'static str>,
+}
+
+const CLI_FLAGS: &[CliFlag] = &[
+    CliFlag {
+        flag: "--help",
+        help: None,
+    },
+    CliFlag {
+        flag: "-h",
+        help: None,
+    },
+    CliFlag {
+        flag: "--pal",
+        help: Some("Use PAL TV system (default: NTSC)"),
+    },
+    CliFlag {
+        flag: "--no-audio",
+        help: Some("Disable audio output"),
+    },
+    CliFlag {
+        flag: "--trace",
+        help: Some("Enable CPU trace output"),
+    },
+    CliFlag {
+        flag: "--trace-nestest",
+        help: Some("Enable CPU trace output (nestest.log format)"),
+    },
+    CliFlag {
+        flag: "--trace-ppu",
+        help: Some("Enable PPU trace output"),
+    },
+    CliFlag {
+        flag: "--trace-apu",
+        help: Some("Enable APU trace output"),
+    },
+    CliFlag {
+        flag: "--disable-pulse1",
+        help: Some("Mute pulse 1 channel"),
+    },
+    CliFlag {
+        flag: "--disable-pulse2",
+        help: Some("Mute pulse 2 channel"),
+    },
+    CliFlag {
+        flag: "--disable-triangle",
+        help: Some("Mute triangle channel"),
+    },
+    CliFlag {
+        flag: "--disable-noise",
+        help: Some("Mute noise channel"),
+    },
+    CliFlag {
+        flag: "--disable-dmc",
+        help: Some("Mute DMC channel"),
+    },
+    CliFlag {
+        flag: "--no-vsync",
+        help: Some("Disable VSync (default: enabled)"),
+    },
+];
+
+fn vsync_enabled_from_args(args: &[String]) -> bool {
+    !args.iter().any(|a| a == "--no-vsync")
+}
+
+fn validate_no_unknown_args(args: &[String]) -> Result<(), String> {
+    // args[0] is the program name
+    for arg in args.iter().skip(1) {
+        if CLI_FLAGS.iter().any(|f| f.flag == arg) {
+            continue;
+        }
+
+        if arg.starts_with('-') {
+            return Err(format!(
+                "Unknown argument: {arg}\nTry --help for usage.",
+                arg = arg
+            ));
+        }
+
+        return Err(format!(
+            "Unexpected positional argument: {arg}\nTry --help for usage.",
+            arg = arg
+        ));
+    }
+
+    Ok(())
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
@@ -20,21 +112,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("NES Emulator");
         println!("\nUsage: neser [OPTIONS]");
         println!("\nOptions:");
-        println!("  --pal                 Use PAL TV system (default: NTSC)");
-        println!("  --no-audio            Disable audio output");
-        println!("  --trace               Enable CPU trace output");
-        println!("  --trace-nestest        Enable CPU trace output (nestest.log format)");
-        println!("  --trace-ppu            Enable PPU trace output");
-        println!("  --trace-apu            Enable APU trace output");
-        println!("\nAPU Channel Control (for debugging):");
-        println!("  --disable-pulse1      Mute pulse 1 channel");
-        println!("  --disable-pulse2      Mute pulse 2 channel");
-        println!("  --disable-triangle    Mute triangle channel");
-        println!("  --disable-noise       Mute noise channel");
-        println!("  --disable-dmc         Mute DMC channel");
+
+        for flag in CLI_FLAGS {
+            if let Some(help) = flag.help {
+                println!("  {:<19} {}", flag.flag, help);
+            }
+        }
+
         println!("\nExample:");
         println!("  neser --disable-pulse2 --disable-triangle    # Only pulse1, noise, and DMC");
         return Ok(());
+    }
+
+    if let Err(message) = validate_no_unknown_args(&args) {
+        eprintln!("{message}");
+        return Err(message.into());
     }
 
     let tv_system = if args.contains(&"--pal".to_string()) {
@@ -43,6 +135,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         nes::TvSystem::Ntsc
     };
     let no_audio = args.contains(&"--no-audio".to_string());
+    let vsync_enabled = vsync_enabled_from_args(&args);
     let tracing = tracing::Tracing::from_args(&args);
 
     // Channel enable/disable flags (default: all enabled)
@@ -68,7 +161,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(audio)
     };
 
-    let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, audio)?;
+    let mut event_loop =
+        eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, vsync_enabled, audio)?;
 
     // Palette display requiring only scanline-based palette changes,
     // intended to demonstrate the full palette even on less advanced emulators
@@ -83,18 +177,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
-    // let rom_data = std::fs::read("roms/games/zelda.nes")?;
+    let rom_path = "roms/games/zelda.nes";
+    let rom_data = std::fs::read(rom_path)?;
 
     // Manual testing of Blargg
     // let rom_data = std::fs::read("roms/blargg/dmc_tests/status.nes")?;
 
-    let rom_data = manual_test_cartridges::triangle_only_nrom_128();
+    // let rom_data = manual_test_cartridges::triangle_only_nrom_128();
     // let rom_data = manual_test_cartridges::pulse1_only_nrom_128();
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
+
+    let save_path = save_ram::default_save_path_for_rom(std::path::Path::new(rom_path));
+    if let Err(e) = save_ram::load_battery_backed_prg_ram(&mut nes_instance, &save_path) {
+        eprintln!("Warning: failed to load save RAM from {:?}: {}", save_path, e);
+    }
+
     nes_instance.reset(false);
 
     // Apply channel enable/disable settings
@@ -107,7 +208,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         apu.set_dmc_enabled(dmc_enabled);
     }
 
-    event_loop
-        .run(&mut nes_instance, tracing)
-        .map_err(|e| e.into())
+    let run_result = event_loop.run(&mut nes_instance, tracing);
+    // Best-effort save on clean shutdown (Escape/Quit).
+    if run_result.is_ok() {
+        if let Err(e) = save_ram::save_battery_backed_prg_ram(&nes_instance, &save_path) {
+            eprintln!("Warning: failed to save RAM to {:?}: {}", save_path, e);
+        }
+    }
+
+    run_result.map_err(|e| e.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_vsync_enabled_by_default() {
+        let args = vec!["neser".to_string()];
+        assert!(vsync_enabled_from_args(&args));
+    }
+
+    #[test]
+    fn test_no_vsync_flag_disables_vsync() {
+        let args = vec!["neser".to_string(), "--no-vsync".to_string()];
+        assert!(!vsync_enabled_from_args(&args));
+    }
+
+    #[test]
+    fn test_unknown_argument_causes_error() {
+        let args = vec![
+            "neser".to_string(),
+            "--definitely-not-a-real-flag".to_string(),
+        ];
+        assert!(validate_no_unknown_args(&args).is_err());
+    }
 }

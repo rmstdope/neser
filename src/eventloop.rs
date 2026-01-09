@@ -17,8 +17,15 @@ pub struct EventLoop {
     canvas: Option<Canvas<Window>>,
     event_pump: sdl2::EventPump,
     timing_scale: f32,
+    vsync_enabled: bool,
     paused: bool,
     audio: Option<NesAudio>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyDownOutcome {
+    Continue,
+    Quit,
 }
 
 impl EventLoop {
@@ -60,13 +67,13 @@ impl EventLoop {
     /// use neser::nes::TvSystem;
     ///
     /// // Create a headless EventLoop for testing
-    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None)?;
+    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None)?;
     ///
     /// // Create an EventLoop with an NTSC window at 2x scale
-    /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0, None)?;
+    /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0, true, None)?;
     ///
     /// // Create an EventLoop with a PAL window at 3x scale at 2x speed
-    /// let pal = EventLoop::new(false, TvSystem::Pal, 3.0, 2.0, None)?;
+    /// let pal = EventLoop::new(false, TvSystem::Pal, 3.0, 2.0, true, None)?;
     /// # Ok::<(), String>(())
     /// ```
     pub fn new(
@@ -74,6 +81,7 @@ impl EventLoop {
         tv_system: TvSystem,
         video_scale: f32,
         timing_scale: f32,
+        vsync_enabled: bool,
         audio: Option<NesAudio>,
     ) -> Result<Self, String> {
         let clamped_video_scale = Self::clamp_scale(video_scale);
@@ -89,6 +97,7 @@ impl EventLoop {
                 &sdl_context,
                 tv_system,
                 clamped_video_scale,
+                vsync_enabled,
             )?)
         };
 
@@ -97,6 +106,7 @@ impl EventLoop {
             canvas,
             event_pump,
             timing_scale: clamped_timing_scale,
+            vsync_enabled,
             paused: false,
             audio,
         })
@@ -156,6 +166,7 @@ impl EventLoop {
         sdl_context: &sdl2::Sdl,
         tv_system: TvSystem,
         scale: f32,
+        vsync_enabled: bool,
     ) -> Result<Canvas<Window>, String> {
         let base_width = tv_system.screen_width();
         let base_height = tv_system.screen_height();
@@ -169,7 +180,13 @@ impl EventLoop {
             .build()
             .map_err(|e| e.to_string())?;
 
-        let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+        let canvas_builder = window.into_canvas();
+        let canvas_builder = if vsync_enabled {
+            canvas_builder.present_vsync()
+        } else {
+            canvas_builder
+        };
+        let mut canvas = canvas_builder.build().map_err(|e| e.to_string())?;
         canvas.set_draw_color(sdl2::pixels::Color::RGB(
             Self::CLEAR_COLOR_R,
             Self::CLEAR_COLOR_G,
@@ -179,6 +196,10 @@ impl EventLoop {
         canvas.present();
 
         Ok(canvas)
+    }
+
+    fn should_manual_frame_limit(vsync_enabled: bool) -> bool {
+        !vsync_enabled
     }
 
     /// Checks if the user has requested to quit via Escape key or window close.
@@ -210,7 +231,7 @@ impl EventLoop {
         texture
             .with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 // Get the PPU screen buffer and copy its RGB data to the texture
-                let mut screen_buffer = nes.get_screen_buffer();
+                let screen_buffer = nes.get_screen_buffer();
 
                 // Check if we can do a direct copy (pitch == width * 3 bytes per pixel)
                 if pitch == (TEXTURE_WIDTH as usize * 3) {
@@ -288,29 +309,20 @@ impl EventLoop {
                 // 1. Poll ALL events (non-blocking)
                 for event in self.event_pump.poll_iter() {
                     match event {
-                        Event::Quit { .. }
-                        | Event::KeyDown {
-                            keycode: Some(Keycode::Escape),
-                            ..
-                        } => return Ok(()),
-                        Event::KeyDown {
-                            keycode: Some(Keycode::Space),
-                            ..
-                        } => {
-                            self.paused = !self.paused;
-                        }
-                        Event::KeyDown {
-                            keycode: Some(Keycode::F1),
-                            ..
-                        } => {
-                            println!("Resetting NES...");
-                            nes.reset(true);
-                        }
+                        Event::Quit { .. } => return Ok(()),
                         Event::KeyDown {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            Self::handle_key_down(nes, keycode);
+                            if Self::handle_key_down(
+                                nes,
+                                keycode,
+                                self.audio.as_ref(),
+                                &mut self.paused,
+                            ) == KeyDownOutcome::Quit
+                            {
+                                return Ok(());
+                            }
                         }
                         Event::KeyUp {
                             keycode: Some(keycode),
@@ -391,7 +403,9 @@ impl EventLoop {
                 // Update last_frame_time before sleeping to avoid timing drift
                 last_frame_time = current_time;
 
-                if elapsed_seconds < target_frame_time {
+                if Self::should_manual_frame_limit(self.vsync_enabled)
+                    && elapsed_seconds < target_frame_time
+                {
                     let sleep_time = target_frame_time - elapsed_seconds;
                     std::thread::sleep(std::time::Duration::from_secs_f64(sleep_time));
                 }
@@ -402,23 +416,20 @@ impl EventLoop {
             loop {
                 for event in self.event_pump.poll_iter() {
                     match event {
-                        Event::Quit { .. }
-                        | Event::KeyDown {
-                            keycode: Some(Keycode::Escape),
-                            ..
-                        } => return Ok(()),
-                        Event::KeyDown {
-                            keycode: Some(Keycode::F1),
-                            ..
-                        } => {
-                            println!("Resetting NES...");
-                            nes.reset(true);
-                        }
+                        Event::Quit { .. } => return Ok(()),
                         Event::KeyDown {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            Self::handle_key_down(nes, keycode);
+                            if Self::handle_key_down(
+                                nes,
+                                keycode,
+                                self.audio.as_ref(),
+                                &mut self.paused,
+                            ) == KeyDownOutcome::Quit
+                            {
+                                return Ok(());
+                            }
                         }
                         Event::KeyUp {
                             keycode: Some(keycode),
@@ -467,40 +478,84 @@ impl EventLoop {
     /// Handle keyboard key press events
     ///
     /// Maps keyboard keys to NES controller buttons:
-    /// - Arrow Keys: D-Pad (Up, Down, Left, Right)
-    /// - Z: B button
-    /// - X: A button
-    /// - A: Select button
-    /// - S: Start button
-    fn handle_key_down(nes: &mut crate::nes::Nes, keycode: Keycode) {
+    /// - W/A/S/D: D-Pad (Up, Left, Down, Right)
+    /// - G: B button
+    /// - F: A button
+    /// - R: Select button
+    /// - T: Start button
+    ///
+    /// Emulator controls:
+    /// - Escape: Quit
+    /// - Space: Toggle pause
+    /// - F1: Reset
+    /// - F2/F3: Volume up/down (when audio is enabled)
+    fn handle_key_down(
+        nes: &mut crate::nes::Nes,
+        keycode: Keycode,
+        audio: Option<&NesAudio>,
+        paused: &mut bool,
+    ) -> KeyDownOutcome {
         match keycode {
-            Keycode::Up => nes.set_button(1, Button::Up, true),
-            Keycode::Down => nes.set_button(1, Button::Down, true),
-            Keycode::Left => nes.set_button(1, Button::Left, true),
-            Keycode::Right => nes.set_button(1, Button::Right, true),
-            Keycode::Z => nes.set_button(1, Button::B, true),
-            Keycode::X => nes.set_button(1, Button::A, true),
-            Keycode::A => nes.set_button(1, Button::Select, true),
-            Keycode::S => nes.set_button(1, Button::Start, true),
+            Keycode::Escape => return KeyDownOutcome::Quit,
+            Keycode::Space => {
+                *paused = !*paused;
+            }
+            Keycode::F1 => {
+                println!("Resetting NES...");
+                nes.reset(true);
+            }
+            Keycode::F2 => {
+                if let Some(audio) = audio {
+                    apply_volume_hotkey(audio, Keycode::F2);
+                }
+            }
+            Keycode::F3 => {
+                if let Some(audio) = audio {
+                    apply_volume_hotkey(audio, Keycode::F3);
+                }
+            }
+            Keycode::W => nes.set_button(1, Button::Up, true),
+            Keycode::S => nes.set_button(1, Button::Down, true),
+            Keycode::A => nes.set_button(1, Button::Left, true),
+            Keycode::D => nes.set_button(1, Button::Right, true),
+            Keycode::G => nes.set_button(1, Button::B, true),
+            Keycode::F => nes.set_button(1, Button::A, true),
+            Keycode::R => nes.set_button(1, Button::Select, true),
+            Keycode::T => nes.set_button(1, Button::Start, true),
             _ => {}
         }
+
+        KeyDownOutcome::Continue
     }
 
     /// Handle keyboard key release events
     fn handle_key_up(nes: &mut crate::nes::Nes, keycode: Keycode) {
         use crate::input::Button;
         match keycode {
-            Keycode::Up => nes.set_button(1, Button::Up, false),
-            Keycode::Down => nes.set_button(1, Button::Down, false),
-            Keycode::Left => nes.set_button(1, Button::Left, false),
-            Keycode::Right => nes.set_button(1, Button::Right, false),
-            Keycode::Z => nes.set_button(1, Button::B, false),
-            Keycode::X => nes.set_button(1, Button::A, false),
-            Keycode::A => nes.set_button(1, Button::Select, false),
-            Keycode::S => nes.set_button(1, Button::Start, false),
+            Keycode::W => nes.set_button(1, Button::Up, false),
+            Keycode::S => nes.set_button(1, Button::Down, false),
+            Keycode::A => nes.set_button(1, Button::Left, false),
+            Keycode::D => nes.set_button(1, Button::Right, false),
+            Keycode::G => nes.set_button(1, Button::B, false),
+            Keycode::F => nes.set_button(1, Button::A, false),
+            Keycode::R => nes.set_button(1, Button::Select, false),
+            Keycode::T => nes.set_button(1, Button::Start, false),
             _ => {}
         }
     }
+}
+
+fn apply_volume_hotkey(audio: &NesAudio, keycode: Keycode) {
+    const STEP: f32 = 0.1;
+
+    let current = audio.get_volume();
+    let next = match keycode {
+        Keycode::F2 => current + STEP,
+        Keycode::F3 => current - STEP,
+        _ => current,
+    };
+
+    audio.set_volume(next);
 }
 
 #[cfg(test)]
@@ -508,53 +563,265 @@ mod tests {
     use super::*;
     use crate::nes::{Nes, TvSystem};
     use serial_test::serial;
+    use std::env;
+
+    fn read_joypad1_buttons(nes: &mut Nes) -> [u8; 8] {
+        // Joypad serial order: A, B, Select, Start, Up, Down, Left, Right
+        {
+            let mut mem = nes.memory.borrow_mut();
+            mem.write(0x4016, 1, false);
+            mem.write(0x4016, 0, false);
+        }
+
+        let mut out = [0u8; 8];
+        for i in 0..8 {
+            let value = nes.memory.borrow_mut().read(0x4016) & 0x01;
+            out[i] = value;
+        }
+        out
+    }
+
+    #[test]
+    fn test_manual_frame_limiting_is_disabled_with_vsync() {
+        assert!(!EventLoop::should_manual_frame_limit(true));
+    }
+
+    #[test]
+    fn test_manual_frame_limiting_is_enabled_without_vsync() {
+        assert!(EventLoop::should_manual_frame_limit(false));
+    }
 
     #[test]
     #[serial]
     fn test_eventloop_creation() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
+    fn test_volume_hotkeys_f2_f3_adjust_by_point_one() {
+        // CI often runs without an audio device; force SDL to use its dummy backend.
+        // Restore the previous env value after the test to avoid cross-test pollution.
+        struct EnvRestore {
+            key: &'static str,
+            prev: Option<String>,
+        }
+
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(value) => unsafe { env::set_var(self.key, value) },
+                    None => unsafe { env::remove_var(self.key) },
+                }
+            }
+        }
+
+        let restore = EnvRestore {
+            key: "SDL_AUDIODRIVER",
+            prev: env::var("SDL_AUDIODRIVER").ok(),
+        };
+        unsafe {
+            env::set_var("SDL_AUDIODRIVER", "dummy");
+        }
+
+        let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
+        let audio = NesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
+
+        // Default volume is 0.25.
+        assert!((audio.get_volume() - 0.25).abs() < 1e-6);
+
+        apply_volume_hotkey(&audio, Keycode::F2);
+        assert!(
+            (audio.get_volume() - 0.35).abs() < 1e-6,
+            "F2 should raise volume by 0.1"
+        );
+
+        apply_volume_hotkey(&audio, Keycode::F3);
+        assert!(
+            (audio.get_volume() - 0.25).abs() < 1e-6,
+            "F3 should lower volume by 0.1"
+        );
+
+        drop(restore);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_key_down_routes_f2_f3_to_audio() {
+        struct EnvRestore {
+            key: &'static str,
+            prev: Option<String>,
+        }
+
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(value) => unsafe { env::set_var(self.key, value) },
+                    None => unsafe { env::remove_var(self.key) },
+                }
+            }
+        }
+
+        let restore = EnvRestore {
+            key: "SDL_AUDIODRIVER",
+            prev: env::var("SDL_AUDIODRIVER").ok(),
+        };
+        unsafe {
+            env::set_var("SDL_AUDIODRIVER", "dummy");
+        }
+
+        let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
+        let audio = NesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = false;
+
+        let before = audio.get_volume();
+        EventLoop::handle_key_down(&mut nes, Keycode::F2, Some(&audio), &mut paused);
+        assert!((audio.get_volume() - (before + 0.1)).abs() < 1e-6);
+        EventLoop::handle_key_down(&mut nes, Keycode::F3, Some(&audio), &mut paused);
+        assert!((audio.get_volume() - before).abs() < 1e-6);
+
+        drop(restore);
+    }
+
+    #[test]
+    fn test_handle_key_down_escape_requests_quit() {
+        // Desired behavior: key handling for Escape is centralized in handle_key_down,
+        // and it indicates that the event loop should exit.
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = false;
+
+        let outcome = EventLoop::handle_key_down(&mut nes, Keycode::Escape, None, &mut paused);
+        assert_eq!(outcome, KeyDownOutcome::Quit);
+    }
+
+    #[test]
+    fn test_handle_key_down_space_toggles_pause() {
+        // Desired behavior: Space toggles pause state via centralized handle_key_down.
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = false;
+
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::Space, None, &mut paused);
+        assert!(paused);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::Space, None, &mut paused);
+        assert!(!paused);
+    }
+
+    #[test]
+    fn test_handle_key_down_f1_resets_nes() {
+        // Desired behavior: F1 triggers a reset through centralized handle_key_down.
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = false;
+
+        // Reset reads the reset vector from $FFFC-$FFFD. Inserting a minimal cartridge
+        // avoids panicking on unmapped reads.
+        let mut prg_rom = vec![0u8; 0x8000];
+        let reset_vector: u16 = 0x8000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8;
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+
+        nes.cpu.pc = 0x1234;
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::F1, None, &mut paused);
+        assert_eq!(nes.cpu.pc, reset_vector);
+    }
+
+    #[test]
+    fn test_joypad1_keyboard_mapping_wasd_r_t_f_g() {
+        // Desired mapping (Joypad 1):
+        // - D-pad: W/A/S/D
+        // - Select: R
+        // - Start:  T
+        // - A:      F
+        // - B:      G
+        let mut paused = false;
+
+        // W => Up
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::W, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 1, 0, 0, 0]);
+
+        // S => Down
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::S, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 1, 0, 0]);
+
+        // A => Left
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::A, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 1, 0]);
+
+        // D => Right
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::D, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 0, 1]);
+
+        // R => Select
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::R, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 1, 0, 0, 0, 0, 0]);
+
+        // T => Start
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::T, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 1, 0, 0, 0, 0]);
+
+        // F => A
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::F, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [1, 0, 0, 0, 0, 0, 0, 0]);
+
+        // G => B
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::G, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 1, 0, 0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    #[serial]
     fn test_new_headless() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_below_minimum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_above_maximum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_at_minimum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_at_maximum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_run_with_nes() {
-        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None).unwrap();
+        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance

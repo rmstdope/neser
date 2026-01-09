@@ -55,6 +55,10 @@ impl MemController {
         self.cartridge = Some(cartridge_rc);
     }
 
+    fn sync_ppu_mirroring_from_mapper(&mut self, mirroring: crate::cartridge::MirroringMode) {
+        self.ppu.borrow_mut().set_mirroring(mirroring);
+    }
+
     /// Read a byte from memory
     pub fn read(&self, addr: u16) -> u8 {
         self.read_internal(addr, true)
@@ -314,7 +318,12 @@ impl MemController {
                     );
                 }
                 if let Some(ref cartridge) = self.cartridge {
+                    let old_mirroring = cartridge.borrow().mapper().get_mirroring();
                     cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
+                    let new_mirroring = cartridge.borrow().mapper().get_mirroring();
+                    if new_mirroring != old_mirroring {
+                        self.sync_ppu_mirroring_from_mapper(new_mirroring);
+                    }
                 } else {
                     eprintln!(
                         "Warning: Write to PRG-RAM {:04X} without cartridge, ignored",
@@ -327,7 +336,12 @@ impl MemController {
             // Writes here are typically mapper register writes, not ROM writes
             0x8000..=0xFFFF => {
                 if let Some(ref cartridge) = self.cartridge {
+                    let old_mirroring = cartridge.borrow().mapper().get_mirroring();
                     cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
+                    let new_mirroring = cartridge.borrow().mapper().get_mirroring();
+                    if new_mirroring != old_mirroring {
+                        self.sync_ppu_mirroring_from_mapper(new_mirroring);
+                    }
                 } else {
                     eprintln!(
                         "Warning: Write to PRG ROM area {:04X} without cartridge, ignored",
@@ -345,13 +359,6 @@ impl MemController {
             }
         }
         false // No DMA triggered
-    }
-
-    /// Read a 16-bit word from memory (little-endian)
-    pub fn read_u16(&self, addr: u16) -> u16 {
-        let lo = self.read(addr) as u16;
-        let hi = self.read(addr.wrapping_add(1)) as u16;
-        (hi << 8) | lo
     }
 
     /// Write a 16-bit word to memory (little-endian)
@@ -387,20 +394,104 @@ impl MemController {
         }
     }
 
-    /// Print the current open bus value to stdout (for debugging)
-    pub fn print_open_bus(&self) {
-        println!("Open bus: 0x{:02X}", *self.open_bus.borrow());
-    }
+    // /// Print the current open bus value to stdout (for debugging)
+    // pub fn print_open_bus(&self) {
+    //     println!("Open bus: 0x{:02X}", *self.open_bus.borrow());
+    // }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn create_mmc1_ines_rom_with_vertical_mirroring() -> Vec<u8> {
+        // Minimal iNES ROM with mapper 1 (MMC1):
+        // - 32KB PRG ROM (2 * 16KB)
+        // - 8KB CHR ROM (1 * 8KB)
+        // - Flags 6: mapper low nibble=1, vertical mirroring
+        let prg_rom_banks = 2u8;
+        let chr_rom_banks = 1u8;
+
+        let flags6 = 0x10 | 0x01; // mapper=1 in upper nibble, vertical mirroring
+        let flags7 = 0x00;
+
+        let mut rom = vec![
+            b'N',
+            b'E',
+            b'S',
+            0x1A,          // iNES header magic
+            prg_rom_banks, // PRG ROM size (16KB units)
+            chr_rom_banks, // CHR ROM size (8KB units)
+            flags6,        // Flags 6
+            flags7,        // Flags 7
+            0,             // Flags 8 (PRG RAM size)
+            0,             // Flags 9
+            0,             // Flags 10
+            0,
+            0,
+            0,
+            0,
+            0, // Reserved
+        ];
+
+        rom.extend(vec![0u8; prg_rom_banks as usize * 16 * 1024]);
+        rom.extend(vec![0u8; chr_rom_banks as usize * 8 * 1024]);
+        rom
+    }
+
     fn create_test_memory() -> MemController {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new(crate::nes::TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         MemController::new(ppu, apu)
+    }
+
+    #[test]
+    fn test_mmc1_runtime_mirroring_change_propagates_to_ppu() {
+        // RED: Zelda (MMC1) can change mirroring via MMC1 control register writes.
+        // If we only set PPU mirroring once at cartridge load, scrolling across
+        // a nametable boundary can show duplicated screens.
+
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(crate::nes::TvSystem::Ntsc)));
+        let apu = Rc::new(RefCell::new(apu::Apu::new()));
+        let mut mem = MemController::new(ppu.clone(), apu);
+
+        let cart = Cartridge::new(&create_mmc1_ines_rom_with_vertical_mirroring())
+            .expect("MMC1 test ROM should load");
+        mem.map_cartridge(cart);
+
+        // Sanity: initial mirroring is vertical (tables 0 and 2 are mirrored).
+        {
+            let mut ppu = ppu.borrow_mut();
+            ppu.write_address(0x20, false);
+            ppu.write_address(0x00, false);
+            ppu.write_data(0xAA);
+            assert_eq!(ppu.read_nametable_for_debug(0x2000), 0xAA);
+            assert_eq!(ppu.read_nametable_for_debug(0x2800), 0xAA);
+        }
+
+        // Program MMC1 control register to mirroring=horizontal (control bits 0-1 = 0b11).
+        // Load value 0b00011 into $8000-$9FFF via 5 writes (see MMC1 unit tests).
+        mem.write(0x8000, 0b0000_0001, false);
+        mem.write(0x8000, 0b0000_0001, false);
+        mem.write(0x8000, 0b0000_0000, false);
+        mem.write(0x8000, 0b0000_0000, false);
+        mem.write(0x8000, 0b0000_0000, false);
+
+        // After switching to horizontal mirroring, tables 0 and 1 are mirrored.
+        // Writing to $2800 should NOT affect $2000 anymore.
+        {
+            let mut ppu = ppu.borrow_mut();
+            ppu.write_address(0x20, false);
+            ppu.write_address(0x00, false);
+            ppu.write_data(0x33);
+
+            ppu.write_address(0x28, false);
+            ppu.write_address(0x00, false);
+            ppu.write_data(0x44);
+
+            assert_eq!(ppu.read_nametable_for_debug(0x2000), 0x33);
+            assert_eq!(ppu.read_nametable_for_debug(0x2400), 0x33);
+        }
     }
 
     #[test]
@@ -425,23 +516,6 @@ mod tests {
         memory.write_u16(0x1234, 0xABCD);
         assert_eq!(memory.read(0x1234), 0xCD); // Low byte
         assert_eq!(memory.read(0x1235), 0xAB); // High byte
-    }
-
-    #[test]
-    fn test_read_u16_little_endian() {
-        let mut memory = create_test_memory();
-        memory.write(0x1234, 0xCD, false); // Low byte
-        memory.write(0x1235, 0xAB, false); // High byte
-        let result = memory.read_u16(0x1234);
-        assert_eq!(result, 0xABCD);
-    }
-
-    #[test]
-    fn test_write_and_read_u16_round_trip() {
-        let mut memory = create_test_memory();
-        memory.write_u16(0x1000, 0x1234);
-        let result = memory.read_u16(0x1000);
-        assert_eq!(result, 0x1234);
     }
 
     #[test]

@@ -114,18 +114,18 @@ impl Status {
         self.sprite_0_hit = true;
     }
 
-    /// Set pending sprite 0 hit (will be applied next cycle)
-    pub fn set_pending_sprite_0_hit(&mut self) {
-        self.pending_sprite_0_hit = true;
-    }
+    // /// Set pending sprite 0 hit (will be applied next cycle)
+    // pub fn set_pending_sprite_0_hit(&mut self) {
+    //     self.pending_sprite_0_hit = true;
+    // }
 
-    /// Apply pending sprite 0 hit flag (call at start of cycle)
-    pub fn apply_pending_sprite_0_hit(&mut self) {
-        if self.pending_sprite_0_hit {
-            self.sprite_0_hit = true;
-            self.pending_sprite_0_hit = false;
-        }
-    }
+    // /// Apply pending sprite 0 hit flag (call at start of cycle)
+    // pub fn apply_pending_sprite_0_hit(&mut self) {
+    //     if self.pending_sprite_0_hit {
+    //         self.sprite_0_hit = true;
+    //         self.pending_sprite_0_hit = false;
+    //     }
+    // }
 
     /// Set sprite overflow flag
     pub fn set_sprite_overflow(&mut self) {
@@ -134,6 +134,7 @@ impl Status {
     }
 
     /// Check if sprite 0 hit flag is set
+    #[cfg(test)]
     pub fn is_sprite_0_hit(&self) -> bool {
         self.sprite_0_hit
     }

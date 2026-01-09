@@ -3,9 +3,19 @@ use super::frame_counter::FrameCounter;
 use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
+use std::collections::VecDeque;
 
 // CPU clock frequency (NTSC)
 const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
+
+// Upper bound for queued audio samples awaiting retrieval.
+//
+// Rationale:
+// - The emulator can run with `--no-audio` (no consumer), and some workloads (e.g. DMA stalls)
+//   may temporarily delay polling.
+// - Keeping this bounded prevents unbounded memory growth while still providing ample headroom
+//   for short-lived stalls.
+const MAX_PENDING_SAMPLES: usize = 16_384;
 
 // Status register ($4015) bit masks
 const STATUS_PULSE1: u8 = 1 << 0;
@@ -74,7 +84,7 @@ pub struct Apu {
     // Sample generation
     sample_accumulator: f32,
     cycles_per_sample: f32,
-    pending_sample: Option<f32>,
+    pending_samples: VecDeque<f32>,
     // Channel enable/disable flags for debugging
     pulse1_enabled: bool,
     pulse2_enabled: bool,
@@ -101,7 +111,7 @@ impl Apu {
             dmc: Dmc::new(),
             sample_accumulator: 0.0,
             cycles_per_sample: CPU_CLOCK_NTSC / DEFAULT_SAMPLE_RATE,
-            pending_sample: None,
+            pending_samples: VecDeque::new(),
             pulse1_enabled: true,
             pulse2_enabled: true,
             triangle_enabled: true,
@@ -135,7 +145,7 @@ impl Apu {
             dmc: Dmc::new(),
             sample_accumulator: 0.0,
             cycles_per_sample: CPU_CLOCK_NTSC / DEFAULT_SAMPLE_RATE,
-            pending_sample: None,
+            pending_samples: VecDeque::new(),
             // For testing: start with all channels enabled for convenience
             pulse1_enabled: true,
             pulse2_enabled: true,
@@ -170,7 +180,7 @@ impl Apu {
         self.noise = Noise::new();
         self.dmc = Dmc::new();
         self.sample_accumulator = 0.0;
-        self.pending_sample = None;
+        self.pending_samples.clear();
         self.apu_cycle = 0;
 
         // Power-on: behave as if `$4017 = $00`.
@@ -388,8 +398,27 @@ impl Apu {
         self.sample_accumulator += 1.0;
         if self.sample_accumulator >= self.cycles_per_sample {
             self.sample_accumulator -= self.cycles_per_sample;
-            self.pending_sample = Some(self.mix());
+            self.pending_samples.push_back(self.mix());
+
+            if self.pending_samples.len() > MAX_PENDING_SAMPLES {
+                self.pending_samples.pop_front();
+            }
         }
+    }
+
+    /// Check if an audio sample is ready for retrieval
+    ///
+    /// Returns true when the APU has generated at least one new audio sample.
+    pub fn sample_ready(&self) -> bool {
+        !self.pending_samples.is_empty()
+    }
+
+    /// Get the next audio sample if one is ready
+    ///
+    /// Returns `Some(sample)` if a sample is available, `None` otherwise.
+    /// The sample is in the range 0.0 to 1.0.
+    pub fn get_sample(&mut self) -> Option<f32> {
+        self.pending_samples.pop_front()
     }
 
     /// Poll the APU IRQ flag (frame counter or DMC IRQ)
@@ -552,20 +581,7 @@ impl Apu {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.cycles_per_sample = CPU_CLOCK_NTSC / sample_rate;
         self.sample_accumulator = 0.0;
-        self.pending_sample = None;
-    }
-
-    /// Check if an audio sample is ready for retrieval
-    pub fn sample_ready(&self) -> bool {
-        self.pending_sample.is_some()
-    }
-
-    /// Get the next audio sample if one is ready
-    ///
-    /// Returns `Some(sample)` if a sample is available, `None` otherwise.
-    /// After calling this, `sample_ready()` will return false until the next sample is generated.
-    pub fn get_sample(&mut self) -> Option<f32> {
-        self.pending_sample.take()
+        self.pending_samples.clear();
     }
 
     /// Enable or disable individual channels for debugging
@@ -934,8 +950,23 @@ mod tests {
     fn test_triangle_linear_counter_clocks_only_on_quarter_frames_in_5_step_mode() {
         let mut apu = Apu::new_for_testing();
 
-        // Switch to 5-step mode.
-        apu.frame_counter_mut().write_register(0b1000_0000);
+        // Switch to 5-step mode via the public $4017 write path.
+        // This models the delayed write + immediate clock side-effects correctly.
+        apu.write_frame_counter(0b1000_0000);
+
+        // Advance until the delayed $4017 write takes effect (frame counter reset).
+        // We intentionally configure triangle AFTER this, so the immediate quarter+half clocks
+        // from the mode switch don't affect the assertions below.
+        let mut prev = apu.debug_frame_counter_cycle();
+        for _ in 0..10 {
+            apu.clock();
+            let now = apu.debug_frame_counter_cycle();
+            if now == 0 && prev != 0 {
+                break;
+            }
+            prev = now;
+        }
+        assert_eq!(apu.debug_frame_counter_cycle(), 0);
 
         // Enable triangle and configure linear counter reload value = 3.
         apu.write_enable(STATUS_TRIANGLE);
@@ -984,8 +1015,23 @@ mod tests {
     fn test_triangle_length_counter_clocks_only_on_half_frames_in_5_step_mode() {
         let mut apu = Apu::new_for_testing();
 
-        // Switch to 5-step mode.
-        apu.frame_counter_mut().write_register(0b1000_0000);
+        // Switch to 5-step mode via the public $4017 write path.
+        // This models the delayed write + immediate clock side-effects correctly.
+        apu.write_frame_counter(0b1000_0000);
+
+        // Advance until the delayed $4017 write takes effect (frame counter reset).
+        // We intentionally configure triangle AFTER this, so the immediate quarter+half clocks
+        // from the mode switch don't affect the assertions below.
+        let mut prev = apu.debug_frame_counter_cycle();
+        for _ in 0..10 {
+            apu.clock();
+            let now = apu.debug_frame_counter_cycle();
+            if now == 0 && prev != 0 {
+                break;
+            }
+            prev = now;
+        }
+        assert_eq!(apu.debug_frame_counter_cycle(), 0);
 
         apu.write_enable(STATUS_TRIANGLE);
         apu.triangle_mut().load_length_counter(3); // index 3 => length 2
@@ -1518,5 +1564,46 @@ mod tests {
 
         // Should generate approximately 48 samples (1789 / 37.27 ≈ 48)
         assert!(sample_count >= 47 && sample_count <= 49);
+    }
+
+    #[test]
+    fn test_sample_generation_does_not_drop_samples_when_not_polled_each_cycle() {
+        let mut apu = Apu::new_for_testing();
+
+        // Clock for 1789 cycles (~44 samples at 44100 Hz) without polling samples.
+        for _ in 0..1789 {
+            apu.clock();
+        }
+
+        // Now drain everything that was generated.
+        let mut sample_count = 0;
+        while apu.sample_ready() {
+            apu.get_sample();
+            sample_count += 1;
+        }
+
+        // Should still have generated approximately 44 samples.
+        assert!(sample_count >= 43 && sample_count <= 45);
+    }
+
+    #[test]
+    fn test_sample_generation_pending_queue_is_bounded() {
+        let mut apu = Apu::new_for_testing();
+
+        // Generate more than the max queued samples without polling.
+        // ~41 CPU cycles per sample at 44100 Hz.
+        let samples_to_generate = MAX_PENDING_SAMPLES + 100;
+        for _ in 0..(samples_to_generate * 41) {
+            apu.clock();
+        }
+
+        // Drain what's available; it must be capped.
+        let mut drained = 0usize;
+        while apu.sample_ready() {
+            apu.get_sample();
+            drained += 1;
+        }
+
+        assert_eq!(drained, MAX_PENDING_SAMPLES);
     }
 }
