@@ -245,6 +245,13 @@ impl FrameCounter {
     }
 
     /// Clock the 5-step sequencer
+    /// Mesen2/NESDev: 5-step mode clocks at cycles 7457, 14913, 22371, 29829, 37281
+    /// Frame types per Mesen2:
+    /// - 7457:  QuarterFrame (envelope only)
+    /// - 14913: HalfFrame (envelope + length)
+    /// - 22371: QuarterFrame (envelope only)
+    /// - 29829: None (no clocks)
+    /// - 37281: HalfFrame (envelope + length)
     fn clock_five_step(&mut self) -> (bool, bool) {
         const STEP_1_CYCLES: u32 = 7457;
         const STEP_2_CYCLES: u32 = 14913;
@@ -259,13 +266,15 @@ impl FrameCounter {
         let step_1 = STEP_1_CYCLES + offset;
         let step_2 = STEP_2_CYCLES + offset;
         let step_3 = STEP_3_CYCLES + offset;
-        let step_4 = STEP_4_CYCLES + offset;
+        let _step_4 = STEP_4_CYCLES + offset; // No clocks at step 4
         let step_5 = STEP_5_CYCLES + offset;
 
+        // Quarter frame (envelope) clocks at steps 1, 2, 3, and 5 (NOT step 4)
         let quarter_frame = self.cycle_counter == step_1
             || self.cycle_counter == step_2
             || self.cycle_counter == step_3
-            || self.cycle_counter == step_4;
+            || self.cycle_counter == step_5;
+        // Half frame (length counter) clocks at steps 2 and 5
         let half_frame = self.cycle_counter == step_2 || self.cycle_counter == step_5;
 
         // Wrap around after step 5
@@ -625,9 +634,9 @@ mod tests {
             fc.clock();
         }
 
-        // At cycle 29829, quarter frame signal (no half frame!)
+        // At cycle 29829, NO clocks at all (per Mesen2 - step 4 is "None" type)
         let (quarter, half) = fc.clock();
-        assert!(quarter);
+        assert!(!quarter);
         assert!(!half);
     }
 
@@ -641,9 +650,9 @@ mod tests {
             fc.clock();
         }
 
-        // At cycle 37281, half frame signal ONLY (no quarter frame!)
+        // At cycle 37281, BOTH quarter and half frame signals (per Mesen2 - "HalfFrame" type)
         let (quarter, half) = fc.clock();
-        assert!(!quarter);
+        assert!(quarter);
         assert!(half);
     }
 
@@ -684,8 +693,10 @@ mod tests {
             }
         }
 
-        assert_eq!(quarter_count, 4); // 4 quarter frame clocks (steps 1-4)
-        assert_eq!(half_count, 2); // 2 half frame clocks (step 2 and step 5)
+        // 4 quarter frame clocks (steps 1-4) and 2 half frame clocks (steps 2 and 5)
+        // This matches Mesen2's behavior
+        assert_eq!(quarter_count, 4);
+        assert_eq!(half_count, 2);
         assert_eq!(fc.get_cycle_counter(), 0); // Wrapped around
     }
 
