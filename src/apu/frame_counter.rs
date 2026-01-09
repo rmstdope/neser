@@ -7,10 +7,9 @@ pub struct FrameCounter {
     cycle_counter: u32,
     irq_flag: bool,
     irq_assert_cycles_remaining: u8,
-    reset_phase: bool, // Phase when counter was reset (for jitter calculation)
     five_step_extra_cycle: bool, // Alternating +1 cycle offset for 5-step sequencing
-    pending_write: Option<u8>, // Pending write to $4017 register
-    write_delay: u8,   // Cycles remaining before pending write takes effect
+    pending_write: Option<u8>,   // Pending write to $4017 register
+    write_delay: u8,             // Cycles remaining before pending write takes effect
     pending_write_on_odd_cpu_cycle: bool,
     pending_immediate_clock: (bool, bool), // Extra quarter/half clocks from delayed $4017 side-effects
 }
@@ -36,7 +35,6 @@ impl FrameCounter {
             cycle_counter: 0,
             irq_flag: false,
             irq_assert_cycles_remaining: 0,
-            reset_phase: false, // Reset on even cycle
             five_step_extra_cycle: false,
             pending_write: None,
             write_delay: 0,
@@ -45,15 +43,21 @@ impl FrameCounter {
         }
     }
 
-    /// Write to frame counter register ($4017)
+    /// Write to frame counter register ($4017) immediately (for internal/test use only)
+    ///
+    /// **Note**: For CPU writes to $4017, use `Apu::write_frame_counter()` instead.
+    /// This method applies the write immediately without the 3-4 cycle delay
+    /// that real hardware exhibits for CPU writes.
+    ///
     /// Bit 7: Mode (0 = 4-step, 1 = 5-step)
     /// Bit 6: IRQ inhibit (1 = disable IRQ)
-    pub fn write_register(&mut self, value: u8) {
-        self.mode = if (value & 0x80) != 0 {
+    pub(crate) fn write_register(&mut self, value: u8) {
+        let new_mode = if (value & 0x80) != 0 {
             Mode::FiveStep
         } else {
             Mode::FourStep
         };
+        self.mode = new_mode;
         self.irq_inhibit = (value & 0x40) != 0;
         self.cycle_counter = 0;
         // Note: Phase not tracked here as we don't know the APU cycle
@@ -63,6 +67,13 @@ impl FrameCounter {
         // Writing 1 to IRQ inhibit clears the IRQ flag
         if (value & 0x40) != 0 {
             self.irq_flag = false;
+        }
+
+        // If mode is set (5-step), generate immediate quarter+half clocks.
+        // This matches NESDev: "Writing to $4017 with bit 7 set will immediately
+        // generate a clock for both the quarter frame and the half frame units."
+        if new_mode == Mode::FiveStep {
+            self.pending_immediate_clock = (true, true);
         }
     }
 
@@ -149,14 +160,10 @@ impl FrameCounter {
         self.five_step_extra_cycle = false;
         self.irq_assert_cycles_remaining = 0;
 
-        // Reset cycle_counter to match behavior of a direct write to $4017
-        self.cycle_counter = if self.pending_write_on_odd_cpu_cycle {
-            // Odd write: start at -1 (will become 0 on increment) to delay by 1 cycle.
-            u32::MAX
-        } else {
-            0
-        };
-        self.reset_phase = self.pending_write_on_odd_cpu_cycle;
+        // Reset cycle_counter to 0.
+        // Note: The jitter effect (odd vs even cycle writes) is handled by the 3 vs 4 cycle
+        // delay already. We just reset to 0 here.
+        self.cycle_counter = 0;
 
         // Writing 1 to IRQ inhibit clears the IRQ flag
         if (value & 0x40) != 0 {
@@ -186,7 +193,6 @@ impl FrameCounter {
         // the sequencer is reset but does not also immediately advance on the same cycle.
         // This matches blargg's APU timing tests (e.g. apu_test 5-len_timing).
         if !write_took_effect {
-            // Use wrapping_add to handle the jitter case where cycle_counter starts at u32::MAX
             self.cycle_counter = self.cycle_counter.wrapping_add(1);
         }
 
@@ -205,6 +211,21 @@ impl FrameCounter {
     }
 
     /// Clock the 4-step sequencer
+    ///
+    /// # IRQ Semantics (blargg compatibility mode)
+    ///
+    /// The frame IRQ in 4-step mode is implemented as a 3-cycle "asserting signal" that begins
+    /// at cycle 29828 (APU cycle 14914). This behavior differs from a strict reading of NESDev's
+    /// `apu_ref.txt`, which describes a simple flag that's set once by the sequencer.
+    ///
+    /// The multi-cycle assertion model was chosen to pass blargg's `apu_test/6-irq_flag_timing`,
+    /// which tests that reading $4015 (which clears the IRQ flag) during the asserting window
+    /// will cause the flag to be re-set on subsequent cycles.
+    ///
+    /// If you're debugging IRQ timing issues and need spec-first behavior, the alternative is:
+    /// - Set `irq_flag = true` once at IRQ_CYCLE
+    /// - Remove the `irq_assert_cycles_remaining` mechanism
+    /// - This will likely break blargg test 6
     fn clock_four_step(&mut self) -> (bool, bool) {
         const STEP_1_CYCLES: u32 = 7457;
         const STEP_2_CYCLES: u32 = 14913;
@@ -220,15 +241,14 @@ impl FrameCounter {
         );
         let half_frame = matches!(self.cycle_counter, STEP_2_CYCLES | STEP_4_CYCLES);
 
-        // Blargg's `apu_test/6-irq_flag_timing` expects the frame IRQ to behave like a short
-        // *asserting signal* near the end of the 4-step sequence, not a one-shot edge.
-        //
-        // That means if $4015 is read (clearing the flag) while the internal IRQ signal is
-        // still asserting, the flag will be set again on subsequent cycles.
+        // Start the IRQ asserting window at the designated cycle.
+        // See doc comment above for why we use a multi-cycle window instead of a one-shot.
         if self.cycle_counter == IRQ_CYCLE && !self.irq_inhibit {
             self.irq_assert_cycles_remaining = IRQ_ASSERT_CYCLES;
         }
 
+        // While the IRQ signal is asserting, keep (re-)setting the flag each cycle.
+        // This allows the flag to be re-set if cleared during the window.
         if self.irq_assert_cycles_remaining > 0 {
             if !self.irq_inhibit {
                 self.irq_flag = true;
@@ -245,11 +265,18 @@ impl FrameCounter {
     }
 
     /// Clock the 5-step sequencer
+    /// Mesen2/NESDev: 5-step mode clocks at cycles 7457, 14913, 22371, 29829, 37281
+    /// Frame types per Mesen2:
+    /// - 7457:  QuarterFrame (envelope only)
+    /// - 14913: HalfFrame (envelope + length)
+    /// - 22371: QuarterFrame (envelope only)
+    /// - 29829: None (no clocks)
+    /// - 37281: HalfFrame (envelope + length)
     fn clock_five_step(&mut self) -> (bool, bool) {
         const STEP_1_CYCLES: u32 = 7457;
         const STEP_2_CYCLES: u32 = 14913;
         const STEP_3_CYCLES: u32 = 22371;
-        const STEP_4_CYCLES: u32 = 29829;
+        // Note: Step 4 (cycle 29829) has no clocks in 5-step mode
         const STEP_5_CYCLES: u32 = 37281;
 
         // The 5-step sequence length is odd, which causes the relative phase to alternate.
@@ -259,13 +286,14 @@ impl FrameCounter {
         let step_1 = STEP_1_CYCLES + offset;
         let step_2 = STEP_2_CYCLES + offset;
         let step_3 = STEP_3_CYCLES + offset;
-        let step_4 = STEP_4_CYCLES + offset;
         let step_5 = STEP_5_CYCLES + offset;
 
+        // Quarter frame (envelope) clocks at steps 1, 2, 3, and 5 (NOT step 4)
         let quarter_frame = self.cycle_counter == step_1
             || self.cycle_counter == step_2
             || self.cycle_counter == step_3
-            || self.cycle_counter == step_4;
+            || self.cycle_counter == step_5;
+        // Half frame (length counter) clocks at steps 2 and 5
         let half_frame = self.cycle_counter == step_2 || self.cycle_counter == step_5;
 
         // Wrap around after step 5
@@ -363,6 +391,34 @@ mod tests {
 
         fc.write_register(0b0000_0000); // 4-step
         assert!(!fc.get_mode());
+    }
+
+    #[test]
+    fn test_write_register_5_step_generates_immediate_clock() {
+        let mut fc = FrameCounter::new();
+
+        // Writing to $4017 with bit 7 set (5-step mode) should generate
+        // immediate quarter+half frame clocks on the next clock() call.
+        fc.write_register(0b1000_0000); // 5-step mode
+
+        // The first clock() after the write should include the immediate clocks
+        let (quarter, half) = fc.clock();
+        assert!(quarter, "5-step mode write should generate immediate quarter frame clock");
+        assert!(half, "5-step mode write should generate immediate half frame clock");
+    }
+
+    #[test]
+    fn test_write_register_4_step_no_immediate_clock() {
+        let mut fc = FrameCounter::new();
+
+        // Writing to $4017 with bit 7 clear (4-step mode) should NOT generate
+        // immediate quarter+half frame clocks.
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // The first clock() after the write should NOT have immediate clocks
+        let (quarter, half) = fc.clock();
+        assert!(!quarter, "4-step mode write should not generate immediate quarter frame clock");
+        assert!(!half, "4-step mode write should not generate immediate half frame clock");
     }
 
     #[test]
@@ -570,8 +626,15 @@ mod tests {
         let mut fc = FrameCounter::new();
         fc.write_register(0b1000_0000); // 5-step mode
 
-        // Clock up to step 1 (7457 cycles)
-        for _ in 0..7456 {
+        // The first clock after setting 5-step mode generates immediate quarter+half
+        // (per NESDev: "Writing to $4017 with bit 7 set will immediately generate a clock")
+        let (quarter, half) = fc.clock();
+        assert!(quarter, "5-step mode should generate immediate quarter frame");
+        assert!(half, "5-step mode should generate immediate half frame");
+
+        // After the immediate clock, no more signals until step 1 (7457 cycles)
+        // We're at cycle 1 now, need 7456 more clocks to reach 7457
+        for _ in 1..7456 {
             let (quarter, half) = fc.clock();
             assert!(!quarter);
             assert!(!half);
@@ -625,9 +688,9 @@ mod tests {
             fc.clock();
         }
 
-        // At cycle 29829, quarter frame signal (no half frame!)
+        // At cycle 29829, NO clocks at all (per Mesen2 - step 4 is "None" type)
         let (quarter, half) = fc.clock();
-        assert!(quarter);
+        assert!(!quarter);
         assert!(!half);
     }
 
@@ -641,9 +704,9 @@ mod tests {
             fc.clock();
         }
 
-        // At cycle 37281, half frame signal ONLY (no quarter frame!)
+        // At cycle 37281, BOTH quarter and half frame signals (per Mesen2 - "HalfFrame" type)
         let (quarter, half) = fc.clock();
-        assert!(!quarter);
+        assert!(quarter);
         assert!(half);
     }
 
@@ -684,8 +747,11 @@ mod tests {
             }
         }
 
-        assert_eq!(quarter_count, 4); // 4 quarter frame clocks (steps 1-4)
-        assert_eq!(half_count, 2); // 2 half frame clocks (step 2 and step 5)
+        // Per NESDev: Writing to $4017 with bit 7 set generates immediate quarter+half clocks.
+        // Then the regular sequence has 4 quarter frames and 2 half frames.
+        // Total: 5 quarter frames (1 immediate + 4 regular), 3 half frames (1 immediate + 2 regular)
+        assert_eq!(quarter_count, 5);
+        assert_eq!(half_count, 3);
         assert_eq!(fc.get_cycle_counter(), 0); // Wrapped around
     }
 
