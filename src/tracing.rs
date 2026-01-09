@@ -31,16 +31,12 @@ impl Tracing {
     }
 }
 
-pub fn parse_tracing_from_args(args: &[String]) -> Tracing {
-    Tracing::from_args(args)
-}
-
 #[cfg(test)]
 mod tests {
     #[test]
     fn tracing_defaults_to_disabled() {
         let args = vec!["neser".to_string()];
-        let tracing = super::parse_tracing_from_args(&args);
+        let tracing = super::Tracing::from_args(&args);
         assert!(!tracing.enabled);
         assert!(!tracing.ppu);
         assert!(!tracing.apu);
@@ -50,7 +46,7 @@ mod tests {
     #[test]
     fn tracing_is_enabled_with_trace_flag() {
         let args = vec!["neser".to_string(), "--trace".to_string()];
-        let tracing = super::parse_tracing_from_args(&args);
+        let tracing = super::Tracing::from_args(&args);
         assert!(tracing.enabled);
         assert!(!tracing.ppu);
         assert!(!tracing.apu);
@@ -60,7 +56,7 @@ mod tests {
     #[test]
     fn tracing_uses_nestest_format_when_requested() {
         let args = vec!["neser".to_string(), "--trace-nestest".to_string()];
-        let tracing = super::parse_tracing_from_args(&args);
+        let tracing = super::Tracing::from_args(&args);
         assert!(tracing.enabled);
         assert!(!tracing.ppu);
         assert!(!tracing.apu);
@@ -70,7 +66,7 @@ mod tests {
     #[test]
     fn tracing_enables_ppu_trace_with_trace_ppu_flag() {
         let args = vec!["neser".to_string(), "--trace-ppu".to_string()];
-        let tracing = super::parse_tracing_from_args(&args);
+        let tracing = super::Tracing::from_args(&args);
         assert!(tracing.enabled);
         assert!(tracing.ppu);
         assert!(!tracing.apu);
@@ -80,7 +76,7 @@ mod tests {
     #[test]
     fn tracing_enables_apu_trace_with_trace_apu_flag() {
         let args = vec!["neser".to_string(), "--trace-apu".to_string()];
-        let tracing = super::parse_tracing_from_args(&args);
+        let tracing = super::Tracing::from_args(&args);
         assert!(tracing.enabled);
         assert!(!tracing.ppu);
         assert!(tracing.apu);

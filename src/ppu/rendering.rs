@@ -15,6 +15,7 @@ impl Rendering {
     }
 
     /// Get reference to screen buffer
+    #[cfg(test)]
     pub fn screen_buffer(&self) -> &ScreenBuffer {
         &self.screen_buffer
     }
@@ -25,6 +26,7 @@ impl Rendering {
     }
 
     /// Compose and render a pixel to the screen buffer
+    #[cfg(test)]
     pub fn render_pixel(
         &mut self,
         screen_x: u32,
@@ -37,30 +39,32 @@ impl Rendering {
         system_palette_lookup: impl Fn(u8) -> (u8, u8, u8),
     ) -> bool {
         // Determine final palette index based on sprite/background priority
-        let mut palette_index = if let Some((sprite_palette_idx, _sprite_idx, is_foreground)) = sprite_pixel {
-            if bg_pixel == 0 {
-                // Background is transparent, always show sprite
-                sprite_palette_idx
-            } else if is_foreground {
-                // Sprite is in foreground, show sprite
-                sprite_palette_idx
+        let mut palette_index =
+            if let Some((sprite_palette_idx, _sprite_idx, is_foreground)) = sprite_pixel {
+                if bg_pixel == 0 {
+                    // Background is transparent, always show sprite
+                    sprite_palette_idx
+                } else if is_foreground {
+                    // Sprite is in foreground, show sprite
+                    sprite_palette_idx
+                } else {
+                    // Sprite is in background, show background
+                    bg_pixel
+                }
             } else {
-                // Sprite is in background, show background
+                // No sprite pixel, show background (or backdrop if transparent)
                 bg_pixel
-            }
-        } else {
-            // No sprite pixel, show background (or backdrop if transparent)
-            bg_pixel
-        };
+            };
 
         // Palette index 0 represents backdrop color (palette[0])
 
         // Check for sprite 0 hit (both sprite 0 and background have opaque pixels)
-        let sprite_0_hit = if let Some((_sprite_palette_idx, sprite_idx, _is_foreground)) = sprite_pixel {
-            sprite_idx == 0 && bg_pixel != 0
-        } else {
-            false
-        };
+        let sprite_0_hit =
+            if let Some((_sprite_palette_idx, sprite_idx, _is_foreground)) = sprite_pixel {
+                sprite_idx == 0 && bg_pixel != 0
+            } else {
+                false
+            };
 
         // Apply grayscale mode if enabled
         if grayscale {
@@ -132,13 +136,14 @@ mod tests {
     fn test_render_pixel_background() {
         let mut rendering = Rendering::new();
         rendering.render_pixel(
-            10, 10,
-            1,  // bg_pixel
-            None,  // sprite_pixel
-            false, // grayscale
-            0,     // color_emphasis
-            |idx| idx,  // palette_lookup
-            |_| (255, 0, 0),  // system_palette_lookup (red)
+            10,
+            10,
+            1,               // bg_pixel
+            None,            // sprite_pixel
+            false,           // grayscale
+            0,               // color_emphasis
+            |idx| idx,       // palette_lookup
+            |_| (255, 0, 0), // system_palette_lookup (red)
         );
         assert_eq!(rendering.screen_buffer().get_pixel(10, 10), (255, 0, 0));
     }
@@ -147,9 +152,10 @@ mod tests {
     fn test_render_pixel_sprite_foreground() {
         let mut rendering = Rendering::new();
         rendering.render_pixel(
-            10, 10,
-            1,  // bg_pixel (opaque)
-            Some((16, 0, true)),  // sprite_pixel (foreground)
+            10,
+            10,
+            1,                   // bg_pixel (opaque)
+            Some((16, 0, true)), // sprite_pixel (foreground)
             false,
             0,
             |idx| idx,
@@ -163,9 +169,10 @@ mod tests {
     fn test_render_pixel_sprite_background_priority() {
         let mut rendering = Rendering::new();
         rendering.render_pixel(
-            10, 10,
-            1,  // bg_pixel (opaque)
-            Some((16, 0, false)),  // sprite_pixel (background priority)
+            10,
+            10,
+            1,                    // bg_pixel (opaque)
+            Some((16, 0, false)), // sprite_pixel (background priority)
             false,
             0,
             |idx| idx,
@@ -179,10 +186,11 @@ mod tests {
     fn test_render_pixel_grayscale() {
         let mut rendering = Rendering::new();
         rendering.render_pixel(
-            10, 10,
+            10,
+            10,
             1,
             None,
-            true,  // grayscale
+            true, // grayscale
             0,
             |idx| idx & 0x30,
             |_| (128, 128, 128),
@@ -194,29 +202,31 @@ mod tests {
     fn test_render_pixel_sprite_0_hit() {
         let mut rendering = Rendering::new();
         let hit = rendering.render_pixel(
-            10, 10,
-            1,  // bg_pixel (opaque)
-            Some((16, 0, true)),  // sprite 0 (index 0)
+            10,
+            10,
+            1,                   // bg_pixel (opaque)
+            Some((16, 0, true)), // sprite 0 (index 0)
             false,
             0,
             |idx| idx,
             |_| (255, 255, 255),
         );
-        assert!(hit);  // Should detect sprite 0 hit
+        assert!(hit); // Should detect sprite 0 hit
     }
 
     #[test]
     fn test_render_pixel_no_sprite_0_hit_transparent_bg() {
         let mut rendering = Rendering::new();
         let hit = rendering.render_pixel(
-            10, 10,
-            0,  // bg_pixel (transparent)
-            Some((16, 0, true)),  // sprite 0
+            10,
+            10,
+            0,                   // bg_pixel (transparent)
+            Some((16, 0, true)), // sprite 0
             false,
             0,
             |idx| idx,
             |_| (255, 255, 255),
         );
-        assert!(!hit);  // No hit when bg is transparent
+        assert!(!hit); // No hit when bg is transparent
     }
 }

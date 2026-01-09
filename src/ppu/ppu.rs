@@ -733,11 +733,13 @@ impl Ppu {
     }
 
     /// Get reference to screen buffer
+    #[cfg(test)]
     pub fn screen_buffer(&self) -> &crate::screen_buffer::ScreenBuffer {
         self.rendering.screen_buffer()
     }
 
     /// Get mutable reference to screen buffer (for compatibility)
+    #[cfg(test)]
     pub fn screen_buffer_mut(&mut self) -> &mut crate::screen_buffer::ScreenBuffer {
         self.rendering.screen_buffer_mut()
     }
