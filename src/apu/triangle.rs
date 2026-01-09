@@ -329,6 +329,70 @@ mod tests {
     }
 
     #[test]
+    fn test_linear_counter_reload_timing_requires_reload_flag_and_clears_when_control_clear() {
+        let mut triangle = Triangle::new();
+        triangle.set_length_counter_enabled(true);
+
+        // 1) Write $4008 with reload=7 (control/halt clear)
+        triangle.write_linear_counter(0b0000_0111);
+
+        // 2) Wait several frames (simulate quarter-frame clocks)
+        // 3) Verify counter does NOT reload unless reload flag is set.
+        for _ in 0..20 {
+            triangle.clock_linear_counter_with_reload();
+        }
+        assert_eq!(triangle.get_linear_counter(), 0);
+        assert!(!triangle.is_linear_counter_reload_flag_set());
+
+        // Now set the reload flag via $400B and verify reload happens on quarter frame.
+        triangle.write_length_counter_timer_high(0b0000_0000);
+        assert!(triangle.is_linear_counter_reload_flag_set());
+
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.get_linear_counter(), 7);
+
+        // Reload flag clears when control flag is 0.
+        assert!(!triangle.is_linear_counter_reload_flag_set());
+
+        // Subsequent quarter frames decrement.
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.get_linear_counter(), 6);
+    }
+
+    #[test]
+    fn test_linear_counter_halt_control_flag_stops_decrement_and_resumes_when_cleared() {
+        let mut triangle = Triangle::new();
+        triangle.set_length_counter_enabled(true);
+
+        // Enable halt/control flag and set reload=7.
+        triangle.write_linear_counter(0b1000_0111);
+
+        // Set reload flag via $400B.
+        triangle.write_length_counter_timer_high(0b0000_0000);
+        assert!(triangle.is_linear_counter_reload_flag_set());
+
+        // While halt/control is set, reload flag persists and the counter reloads each quarter frame.
+        for _ in 0..5 {
+            triangle.clock_linear_counter_with_reload();
+            assert_eq!(triangle.get_linear_counter(), 7);
+            assert!(triangle.is_linear_counter_reload_flag_set());
+        }
+
+        // Clear halt/control flag; the reload flag should clear on the next quarter frame,
+        // and the counter should begin decrementing afterwards.
+        triangle.write_linear_counter(0b0000_0111);
+
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.get_linear_counter(), 7);
+        assert!(!triangle.is_linear_counter_reload_flag_set());
+
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.get_linear_counter(), 6);
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.get_linear_counter(), 5);
+    }
+
+    #[test]
     fn test_length_counter_clocking() {
         let mut triangle = Triangle::new();
 
