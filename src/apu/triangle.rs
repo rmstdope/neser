@@ -30,7 +30,6 @@ const TRIANGLE_SEQUENCE: [u8; TRIANGLE_SEQUENCE_LENGTH as usize] = [
     13, 14, 15,
 ];
 
-
 impl Default for Triangle {
     fn default() -> Self {
         Self::new()
@@ -56,7 +55,11 @@ impl Triangle {
     pub fn clock_timer(&mut self) {
         if self.timer_counter == 0 {
             self.timer_counter = self.timer_period;
-            self.clock_sequencer();
+            // NESDev: The triangle sequencer only advances when the timer clocks
+            // and both the length counter and linear counter are non-zero.
+            if self.linear_counter != 0 && self.length_counter.value() != 0 {
+                self.clock_sequencer();
+            }
         } else {
             self.timer_counter -= 1;
         }
@@ -65,6 +68,12 @@ impl Triangle {
     /// Clock the sequencer (advances through triangle wave)
     fn clock_sequencer(&mut self) {
         self.sequence_position = (self.sequence_position + 1) % TRIANGLE_SEQUENCE_LENGTH;
+    }
+
+    /// Expose the current sequencer position for integration tests.
+    #[cfg(test)]
+    pub fn debug_sequence_position(&self) -> u8 {
+        self.sequence_position
     }
 
     /// Get the current output sample from the triangle channel
@@ -181,8 +190,7 @@ impl Triangle {
     }
 
     /// Set length counter enabled/disabled (from $4015)
-    /// Set length counter enabled/disabled (from $4015)
-    /// When disabled, the channel is silenced but the length counter value is preserved
+    /// When disabled, the length counter is cleared.
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         self.length_counter.set_enabled(enabled);
     }
@@ -196,6 +204,15 @@ impl Triangle {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn enabled_triangle_with_counters() -> Triangle {
+        let mut triangle = Triangle::new();
+        triangle.set_length_counter_enabled(true);
+        triangle.load_length_counter(1); // Large non-zero length value
+        triangle.write_linear_counter(0x7F); // control=0 (no halt), reload=max
+        triangle.trigger_linear_counter_reload();
+        triangle
+    }
 
     #[test]
     fn test_triangle_new() {
@@ -475,5 +492,116 @@ mod tests {
         // Now that it's enabled, we can load a value
         triangle.load_length_counter(11);
         assert_eq!(triangle.get_length_counter(), 10); // Index 11 = value 10
+    }
+
+    #[test]
+    fn test_triangle_timer_period_sweep_no_skipping_steps() {
+        let mut triangle = enabled_triangle_with_counters();
+
+        // Sweep a few representative timer periods from small -> larger.
+        // For each period, the sequencer should advance by exactly 1 step every (period + 1)
+        // timer clocks, with no skipping.
+        let periods = [0u16, 1, 2, 3, 7, 15, 31, 63];
+
+        for &period in &periods {
+            triangle.timer_period = period;
+            triangle.timer_counter = period; // Avoid the special "starts at 0" immediate-clock case
+
+            let mut prev_pos = triangle.sequence_position;
+            let mut steps_seen = 0u32;
+            let mut clocks_since_step = 0u16;
+
+            while steps_seen < 64 {
+                triangle.clock_timer();
+                clocks_since_step += 1;
+
+                if triangle.sequence_position != prev_pos {
+                    // Step occurred; it should be exactly +1 mod 32.
+                    let expected = (prev_pos + 1) % TRIANGLE_SEQUENCE_LENGTH;
+                    assert_eq!(
+                        triangle.sequence_position, expected,
+                        "period={}: step skipped: prev={}, got={}, expected={}",
+                        period, prev_pos, triangle.sequence_position, expected
+                    );
+
+                    assert_eq!(
+                        clocks_since_step,
+                        period + 1,
+                        "period={}: step interval mismatch",
+                        period
+                    );
+
+                    prev_pos = triangle.sequence_position;
+                    clocks_since_step = 0;
+                    steps_seen += 1;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_triangle_timer_period_change_does_not_affect_current_countdown() {
+        let mut triangle = enabled_triangle_with_counters();
+
+        // Start mid-countdown.
+        triangle.timer_period = 5;
+        triangle.timer_counter = 3;
+        let start_pos = triangle.sequence_position;
+
+        // Change period while countdown is in progress.
+        triangle.timer_period = 10;
+
+        // The next sequencer tick should occur after the remaining countdown reaches 0,
+        // i.e. after 4 timer clocks (3 -> 2 -> 1 -> 0, then tick).
+        for _ in 0..3 {
+            triangle.clock_timer();
+            assert_eq!(triangle.sequence_position, start_pos);
+        }
+
+        // On the 4th clock, the sequencer should tick exactly once.
+        triangle.clock_timer();
+        assert_eq!(
+            triangle.sequence_position,
+            (start_pos + 1) % TRIANGLE_SEQUENCE_LENGTH
+        );
+
+        // And after ticking, it should have reloaded with the new period (10).
+        assert_eq!(triangle.timer_counter, 10);
+    }
+
+    #[test]
+    fn test_triangle_sequencer_does_not_advance_when_linear_counter_zero() {
+        let mut triangle = enabled_triangle_with_counters();
+        triangle.linear_counter = 0;
+        triangle.timer_period = 0;
+        triangle.timer_counter = 0;
+
+        let start_pos = triangle.sequence_position;
+        for _ in 0..100 {
+            triangle.clock_timer();
+        }
+
+        assert_eq!(
+            triangle.sequence_position, start_pos,
+            "Sequencer should not advance when linear counter is zero"
+        );
+    }
+
+    #[test]
+    fn test_triangle_sequencer_does_not_advance_when_length_counter_zero() {
+        let mut triangle = enabled_triangle_with_counters();
+        triangle.clear_length_counter();
+        triangle.timer_period = 0;
+        triangle.timer_counter = 0;
+
+        let start_pos = triangle.sequence_position;
+        for _ in 0..100 {
+            triangle.clock_timer();
+        }
+
+        assert_eq!(
+            triangle.sequence_position, start_pos,
+            "Sequencer should not advance when length counter is zero"
+        );
     }
 }

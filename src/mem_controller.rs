@@ -881,6 +881,86 @@ mod tests {
     }
 
     #[test]
+    fn test_triangle_period_sweep_via_bus_no_skipped_steps() {
+        let mut memory = create_test_memory();
+
+        // 1) Enable triangle ($4015)
+        memory.write(0x4015, 0b0000_0100, false);
+
+        // 2) Disable length counter halt + set linear counter reload to max ($4008)
+        // control=0 (no halt), reload=127
+        memory.write(0x4008, 0x7F, false);
+
+        // 3) Write $400B to load length counter and set linear reload flag.
+        // length index = 1 (upper 5 bits), timer high = 0
+        memory.write(0x400B, 0x08, false);
+
+        // 4) Switch to 5-step mode ($4017) so the delayed-write effect produces an immediate
+        // quarter-frame clock. This should quickly reload the linear counter.
+        memory.write(0x4017, 0b1000_0000, false);
+        for _ in 0..4 {
+            memory.apu.borrow_mut().clock();
+        }
+
+        // Now sweep timer period low from small -> larger via $400A.
+        // Triangle timer clocks every 2 CPU cycles in our model, so the sequencer step interval
+        // should be 2 * (period + 1) CPU cycles.
+        let periods = [0u8, 1, 2, 3, 7, 15, 31, 63];
+
+        for &period in &periods {
+            memory.write(0x400A, period, false);
+
+            // Ignore the first observed step after changing period to avoid dependence on the
+            // current timer countdown value.
+            let prev_pos = memory.apu.borrow().triangle().debug_sequence_position();
+            let mut prev_pos = prev_pos;
+
+            // Wait for the first step.
+            loop {
+                memory.apu.borrow_mut().clock();
+                let apu = memory.apu.borrow();
+                let pos = apu.triangle().debug_sequence_position();
+                if pos != prev_pos {
+                    prev_pos = pos;
+                    break;
+                }
+            }
+
+            // Now verify a bunch of subsequent steps have correct spacing and no skips.
+            let mut cycles_since_step: u32 = 0;
+            let mut steps_seen: u32 = 0;
+            while steps_seen < 64 {
+                memory.apu.borrow_mut().clock();
+                cycles_since_step += 1;
+
+                let apu = memory.apu.borrow();
+                let pos = apu.triangle().debug_sequence_position();
+                drop(apu);
+
+                if pos != prev_pos {
+                    let expected = (prev_pos + 1) % 32;
+                    assert_eq!(
+                        pos, expected,
+                        "period={}: step skipped: prev={}, got={}, expected={}",
+                        period, prev_pos, pos, expected
+                    );
+
+                    let expected_cycles = 2u32 * (period as u32 + 1);
+                    assert_eq!(
+                        cycles_since_step, expected_cycles,
+                        "period={}: step interval mismatch",
+                        period
+                    );
+
+                    prev_pos = pos;
+                    cycles_since_step = 0;
+                    steps_seen += 1;
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_write_noise_registers() {
         // Test writing to noise registers ($400C-$400F)
         let mut memory = create_test_memory();
