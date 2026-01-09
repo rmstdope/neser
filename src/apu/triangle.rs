@@ -420,6 +420,50 @@ mod tests {
     }
 
     #[test]
+    fn test_length_counter_zero_mutes_output_but_linear_counter_still_clocks() {
+        let mut triangle = Triangle::new();
+
+        // Set length to a small value: table index 3 => length 2.
+        triangle.set_length_counter_enabled(true);
+        triangle.load_length_counter(3);
+        assert_eq!(triangle.get_length_counter(), 2);
+
+        // Set linear reload=3 (control/halt clear) and perform a quarter-frame clock
+        // to load the counter via the reload flag.
+        triangle.write_linear_counter(0b0000_0011);
+        triangle.set_linear_counter_reload_flag();
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.get_linear_counter(), 3);
+
+        // Output is audible while both counters are non-zero.
+        assert_ne!(triangle.output(), 0);
+
+        // Length counter decrements on half-frame clocks.
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 1);
+        assert_ne!(triangle.output(), 0);
+
+        // Output stops exactly when length reaches zero.
+        triangle.clock_length_counter();
+        assert_eq!(triangle.get_length_counter(), 0);
+        assert_eq!(triangle.output(), 0);
+
+        // Linear counter still behaves internally even while output is muted by length=0.
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.get_linear_counter(), 2);
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.get_linear_counter(), 1);
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.get_linear_counter(), 0);
+
+        // And reload still works irrespective of length counter being zero.
+        triangle.set_linear_counter_reload_flag();
+        triangle.clock_linear_counter_with_reload();
+        assert_eq!(triangle.get_linear_counter(), 3);
+        assert_eq!(triangle.output(), 0);
+    }
+
+    #[test]
     fn test_length_counter_halt() {
         let mut triangle = Triangle::new();
 
