@@ -45,15 +45,21 @@ impl FrameCounter {
         }
     }
 
-    /// Write to frame counter register ($4017)
+    /// Write to frame counter register ($4017) immediately (for internal/test use only)
+    ///
+    /// **Note**: For CPU writes to $4017, use `Apu::write_frame_counter()` instead.
+    /// This method applies the write immediately without the 3-4 cycle delay
+    /// that real hardware exhibits for CPU writes.
+    ///
     /// Bit 7: Mode (0 = 4-step, 1 = 5-step)
     /// Bit 6: IRQ inhibit (1 = disable IRQ)
-    pub fn write_register(&mut self, value: u8) {
-        self.mode = if (value & 0x80) != 0 {
+    pub(crate) fn write_register(&mut self, value: u8) {
+        let new_mode = if (value & 0x80) != 0 {
             Mode::FiveStep
         } else {
             Mode::FourStep
         };
+        self.mode = new_mode;
         self.irq_inhibit = (value & 0x40) != 0;
         self.cycle_counter = 0;
         // Note: Phase not tracked here as we don't know the APU cycle
@@ -63,6 +69,13 @@ impl FrameCounter {
         // Writing 1 to IRQ inhibit clears the IRQ flag
         if (value & 0x40) != 0 {
             self.irq_flag = false;
+        }
+
+        // If mode is set (5-step), generate immediate quarter+half clocks.
+        // This matches NESDev: "Writing to $4017 with bit 7 set will immediately
+        // generate a clock for both the quarter frame and the half frame units."
+        if new_mode == Mode::FiveStep {
+            self.pending_immediate_clock = (true, true);
         }
     }
 
@@ -372,6 +385,34 @@ mod tests {
 
         fc.write_register(0b0000_0000); // 4-step
         assert!(!fc.get_mode());
+    }
+
+    #[test]
+    fn test_write_register_5_step_generates_immediate_clock() {
+        let mut fc = FrameCounter::new();
+
+        // Writing to $4017 with bit 7 set (5-step mode) should generate
+        // immediate quarter+half frame clocks on the next clock() call.
+        fc.write_register(0b1000_0000); // 5-step mode
+
+        // The first clock() after the write should include the immediate clocks
+        let (quarter, half) = fc.clock();
+        assert!(quarter, "5-step mode write should generate immediate quarter frame clock");
+        assert!(half, "5-step mode write should generate immediate half frame clock");
+    }
+
+    #[test]
+    fn test_write_register_4_step_no_immediate_clock() {
+        let mut fc = FrameCounter::new();
+
+        // Writing to $4017 with bit 7 clear (4-step mode) should NOT generate
+        // immediate quarter+half frame clocks.
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // The first clock() after the write should NOT have immediate clocks
+        let (quarter, half) = fc.clock();
+        assert!(!quarter, "4-step mode write should not generate immediate quarter frame clock");
+        assert!(!half, "4-step mode write should not generate immediate half frame clock");
     }
 
     #[test]
