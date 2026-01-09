@@ -175,11 +175,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load game cartridge
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
-    // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
-    // let rom_path = "roms/games/zelda.nes";
+    // let rom_path = "roms/games/donkey kong.nes";
+    let rom_path = "roms/games/zelda.nes";
 
     // Manual testing of Blargg
-    let rom_path = "roms/blargg/dmc_tests/buffer_retained.nes";
+    // let rom_path = "roms/blargg/dmc_tests/buffer_retained.nes";
 
     // let rom_data = manual_test_cartridges::triangle_only_nrom_128();
     // let rom_data = manual_test_cartridges::pulse1_only_nrom_128();
