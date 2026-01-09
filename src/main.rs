@@ -4,6 +4,7 @@ mod cartridge;
 mod cpu;
 mod eventloop;
 mod input;
+mod manual_test_cartridges;
 mod mem_controller;
 mod nes;
 mod ppu;
@@ -73,28 +74,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Seems to work ok!
     // let rom_data = std::fs::read("roms/rainwarrior/color_test.nes")?;
 
-    // NTSC Torture Test displays visual patterns to demonstrate NTSC signal artifacts
-    // Shows a but for x < 8 pixels on each scanline where the leftmost 8 pixels are incorrect
-    // but otherwise seems to work well
-    // let rom_data = std::fs::read("roms/rainwarrior/ntsc_torture.nes")?;
-
-    // Verifies NMI timing by creating a specific pattern on the screen (NTSC & PAL versions)
-    // Not working ok right now. NMI sync seems off.
-    // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
-
-    // let rom_data = std::fs::read("roms/cpu_interrupts.nes")?;
-
     // Load game cartridge
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
-    let rom_data = std::fs::read("roms/games/zelda.nes")?;
+    // let rom_data = std::fs::read("roms/games/zelda.nes")?;
 
-    // Unknown status
-    // let rom_data = std::fs::read("roms/full_nes_palette.nes")?;
-    // let rom_data = std::fs::read("roms/nmi_sync/demo_ntsc.nes")?;
-    // let rom_data = std::fs::read("roms/blargg/4015_cleared.nes")?;
+    // Manual testing of Blargg
     // let rom_data = std::fs::read("roms/blargg/dmc_tests/status.nes")?;
+
+    let rom_data = manual_test_cartridges::triangle_only_nrom_128();
+
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
     nes_instance.reset(false);

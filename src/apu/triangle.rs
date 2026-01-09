@@ -576,6 +576,44 @@ mod tests {
     }
 
     #[test]
+    fn test_output_mutes_immediately_when_linear_counter_zero_and_recovers() {
+        let mut triangle = Triangle::new();
+        triangle.set_length_counter_enabled(true);
+        triangle.load_length_counter(1); // Non-zero length
+
+        // Start audible.
+        triangle.linear_counter = 5;
+        assert_ne!(triangle.output(), 0);
+
+        // Force linear counter to zero: output must go silent immediately.
+        triangle.linear_counter = 0;
+        assert_eq!(triangle.output(), 0);
+
+        // Recover by restoring linear counter to non-zero.
+        triangle.linear_counter = 5;
+        assert_ne!(triangle.output(), 0);
+    }
+
+    #[test]
+    fn test_output_mutes_immediately_when_length_counter_zero_and_recovers() {
+        let mut triangle = Triangle::new();
+        triangle.set_length_counter_enabled(true);
+
+        // Start audible.
+        triangle.linear_counter = 5;
+        triangle.load_length_counter(3); // index 3 => length 2
+        assert_ne!(triangle.output(), 0);
+
+        // Force length counter to zero: output must go silent immediately.
+        triangle.clear_length_counter();
+        assert_eq!(triangle.output(), 0);
+
+        // Recover by reloading length to a non-zero value.
+        triangle.load_length_counter(3);
+        assert_ne!(triangle.output(), 0);
+    }
+
+    #[test]
     fn test_set_length_counter_enabled() {
         let mut triangle = Triangle::new();
 

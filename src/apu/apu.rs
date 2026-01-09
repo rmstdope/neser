@@ -156,7 +156,7 @@ impl Apu {
     pub fn apu_cycle(&self) -> u32 {
         self.apu_cycle
     }
-    
+
     /// Reset the APU.
     ///
     /// - `cpu_cycle`: The total CPU cycles executed before this reset (for coordinated timing)
@@ -932,6 +932,38 @@ mod tests {
     }
 
     #[test]
+    fn test_triangle_linear_counter_clocks_only_on_quarter_frames_in_5_step_mode() {
+        let mut apu = Apu::new_for_testing();
+
+        // Switch to 5-step mode.
+        apu.frame_counter_mut().write_register(0b1000_0000);
+
+        // Enable triangle and configure linear counter reload value = 3.
+        apu.write_enable(STATUS_TRIANGLE);
+        apu.triangle_mut().write_linear_counter(0b0000_0011); // reload=3, control off
+        apu.triangle_mut().write_length_counter_timer_high(0x00); // sets reload flag
+        assert!(apu.triangle().is_linear_counter_reload_flag_set());
+
+        // Before the first quarter frame, the linear counter must not change.
+        for _ in 0..7456 {
+            apu.clock();
+        }
+        assert_eq!(apu.triangle().get_linear_counter(), 0);
+        assert!(apu.triangle().is_linear_counter_reload_flag_set());
+
+        // At cycle 7457, quarter-frame clocks and reloads.
+        apu.clock();
+        assert_eq!(apu.triangle().get_linear_counter(), 3);
+        assert!(!apu.triangle().is_linear_counter_reload_flag_set());
+
+        // Next quarter frame is at cycle 14913. It should decrement by exactly 1 (not per CPU cycle).
+        for _ in 0..7456 {
+            apu.clock();
+        }
+        assert_eq!(apu.triangle().get_linear_counter(), 2);
+    }
+
+    #[test]
     fn test_triangle_length_counter_gets_clocked() {
         let mut apu = Apu::new_for_testing();
 
@@ -947,6 +979,48 @@ mod tests {
 
         // Length counter should have decremented
         assert_eq!(apu.triangle().get_length_counter(), 3);
+    }
+
+    #[test]
+    fn test_triangle_length_counter_clocks_only_on_half_frames_in_5_step_mode() {
+        let mut apu = Apu::new_for_testing();
+
+        // Switch to 5-step mode.
+        apu.frame_counter_mut().write_register(0b1000_0000);
+
+        apu.write_enable(STATUS_TRIANGLE);
+        apu.triangle_mut().load_length_counter(3); // index 3 => length 2
+        assert_eq!(apu.triangle().get_length_counter(), 2);
+
+        // At cycle 7457 (quarter frame only), length must not decrement.
+        for _ in 0..7457 {
+            apu.clock();
+        }
+        assert_eq!(apu.triangle().get_length_counter(), 2);
+
+        // At cycle 14913 (half frame), length decrements.
+        for _ in 0..7456 {
+            apu.clock();
+        }
+        assert_eq!(apu.triangle().get_length_counter(), 1);
+
+        // At cycle 22371 (quarter only), length must not decrement.
+        for _ in 0..7458 {
+            apu.clock();
+        }
+        assert_eq!(apu.triangle().get_length_counter(), 1);
+
+        // At cycle 29829 (quarter only), length must not decrement.
+        for _ in 0..7458 {
+            apu.clock();
+        }
+        assert_eq!(apu.triangle().get_length_counter(), 1);
+
+        // At cycle 37281 (half only), length decrements again.
+        for _ in 0..7452 {
+            apu.clock();
+        }
+        assert_eq!(apu.triangle().get_length_counter(), 0);
     }
 
     #[test]
@@ -1223,6 +1297,73 @@ mod tests {
         let output = apu.mix();
         assert!(output > 0.0);
         assert!(output <= 1.0);
+    }
+
+    #[test]
+    fn test_mixer_isolation_triangle_only_no_bleed_from_muted_channels() {
+        // Arrange: mute all channels except triangle (debug mixer mutes),
+        // and make triangle output non-zero.
+        let mut triangle_only = Apu::new_for_testing();
+        triangle_only.set_pulse1_enabled(false);
+        triangle_only.set_pulse2_enabled(false);
+        triangle_only.set_noise_enabled(false);
+        triangle_only.set_dmc_enabled(false);
+        triangle_only.set_triangle_enabled(true);
+
+        triangle_only.write_enable(STATUS_TRIANGLE);
+        triangle_only.triangle_mut().write_linear_counter(0x7F);
+        triangle_only.triangle_mut().trigger_linear_counter_reload();
+        triangle_only
+            .triangle_mut()
+            .write_length_counter_timer_high(0b00001_000);
+
+        let baseline = triangle_only.mix();
+        assert!(baseline > 0.0, "Expected non-zero triangle-only mix output");
+
+        // Arrange: same triangle setup, but configure other channels to be "loud"
+        // while keeping them muted by the debug mixer flags.
+        let mut loud_but_muted = Apu::new_for_testing();
+        loud_but_muted.set_pulse1_enabled(false);
+        loud_but_muted.set_pulse2_enabled(false);
+        loud_but_muted.set_noise_enabled(false);
+        loud_but_muted.set_dmc_enabled(false);
+        loud_but_muted.set_triangle_enabled(true);
+
+        loud_but_muted.write_enable(STATUS_TRIANGLE);
+        loud_but_muted.triangle_mut().write_linear_counter(0x7F);
+        loud_but_muted
+            .triangle_mut()
+            .trigger_linear_counter_reload();
+        loud_but_muted
+            .triangle_mut()
+            .write_length_counter_timer_high(0b00001_000);
+
+        // Pulse channels (would be non-zero if enabled)
+        loud_but_muted.pulse1_mut().write_control(0b1111_1111);
+        loud_but_muted.pulse1_mut().write_timer_low(0x08);
+        loud_but_muted
+            .pulse1_mut()
+            .write_length_counter_timer_high(0b00001_000);
+        loud_but_muted.pulse2_mut().write_control(0b1111_1111);
+        loud_but_muted.pulse2_mut().write_timer_low(0x08);
+        loud_but_muted
+            .pulse2_mut()
+            .write_length_counter_timer_high(0b00001_000);
+
+        // Noise channel (would be non-zero if enabled)
+        loud_but_muted.noise_mut().write_envelope(0b0011_1111);
+        loud_but_muted.noise_mut().write_length(0xFF);
+
+        // DMC channel (would be non-zero if not muted)
+        loud_but_muted.dmc_mut().write_direct_load(0b0111_1111);
+
+        let with_muted_channels_configured = loud_but_muted.mix();
+
+        // Assert: muted channels contribute nothing to the mix.
+        assert!(
+            (with_muted_channels_configured - baseline).abs() < 1e-9,
+            "Muted channels must not affect mixer output"
+        );
     }
 
     #[test]
