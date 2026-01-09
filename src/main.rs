@@ -83,12 +83,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
-    let rom_data = std::fs::read("roms/games/zelda.nes")?;
+    // let rom_data = std::fs::read("roms/games/zelda.nes")?;
 
     // Manual testing of Blargg
     // let rom_data = std::fs::read("roms/blargg/dmc_tests/status.nes")?;
 
-    // let rom_data = manual_test_cartridges::triangle_only_nrom_128();
+    let rom_data = manual_test_cartridges::triangle_only_nrom_128();
+    // let rom_data = manual_test_cartridges::pulse1_only_nrom_128();
+    // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
+    // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
     let cart = cartridge::Cartridge::new(&rom_data)?;
     nes_instance.insert_cartridge(cart);
