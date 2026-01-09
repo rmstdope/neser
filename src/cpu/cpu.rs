@@ -216,7 +216,9 @@ impl Cpu {
     pub fn handle_oam_dma_if_pending(&mut self) -> Option<u16> {
         let page = self.memory.borrow_mut().take_oam_dma_page()?;
 
-        let is_odd_cycle = self.get_total_cycles() % 2 == 1;
+        // OAM DMA starts on the *next* CPU cycle after the $4014 write.
+        // If that starting cycle is odd, the DMA incurs an extra alignment cycle.
+        let is_odd_cycle = (self.get_total_cycles() + 1) % 2 == 1;
         let dma_cycles = if is_odd_cycle { 514u16 } else { 513u16 };
 
         self.memory.borrow_mut().execute_oam_dma(page);
@@ -258,7 +260,21 @@ impl Cpu {
 
         for _ in 0..cpu_cycles {
             self.apu.borrow_mut().clock();
+            self.end_cpu_cycle_latch_irq_line_only();
         }
+    }
+
+    fn end_cpu_cycle_latch_irq_line_only(&mut self) {
+        // When ticking synthetic CPU cycles (e.g., DMA stalls), we need IRQ sampling to keep
+        // running, but we must not poll/clear the PPU's edge-latched NMI flag.
+        self.prev_run_irq = self.run_irq;
+
+        let irq_asserted_from_apu = self.apu.borrow().poll_irq();
+        let irq_asserted_from_mapper = self.memory.borrow().mapper_irq_pending();
+        self.irq_pending =
+            irq_asserted_from_apu || irq_asserted_from_mapper || self.forced_irq_pending;
+
+        self.run_irq = self.should_poll_irq();
     }
 
     fn trigger_nmi_without_bus_cycles(&mut self) {
@@ -2089,8 +2105,8 @@ mod tests {
             .handle_oam_dma_if_pending()
             .expect("DMA should be pending");
 
-        assert_eq!(dma_cycles, 513);
-        assert_eq!(cpu.get_total_cycles() - cycles_before, 513);
+        assert_eq!(dma_cycles, 514);
+        assert_eq!(cpu.get_total_cycles() - cycles_before, 514);
     }
 
     #[test]
@@ -2108,8 +2124,8 @@ mod tests {
             .handle_oam_dma_if_pending()
             .expect("DMA should be pending");
 
-        assert_eq!(dma_cycles, 514);
-        assert_eq!(cpu.get_total_cycles() - cycles_before, 514);
+        assert_eq!(dma_cycles, 513);
+        assert_eq!(cpu.get_total_cycles() - cycles_before, 513);
     }
 
     #[test]

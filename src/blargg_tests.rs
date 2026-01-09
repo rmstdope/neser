@@ -360,13 +360,10 @@ mod tests {
         test_cpu_nmi_and_irq,
         "roms/blargg/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes"
     );
-    #[ignore = "Not working"]
-    #[test]
-    fn test_cpu_irq_and_dma() {}
-    // blargg_test!(
-    //     test_cpu_irq_and_dma,
-    //     "roms/blargg/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes"
-    // );
+    blargg_test!(
+        test_cpu_irq_and_dma,
+        "roms/blargg/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes"
+    );
     #[ignore = "Not working"]
     #[test]
     fn test_cpu_branch_delays_irq() {}

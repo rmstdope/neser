@@ -848,12 +848,12 @@ mod tests {
         // Run one CPU tick which should process the DMA
         nes.run_cpu_tick();
 
-        // On even alignment, DMA should take 513 CPU cycles
+        // On even alignment, DMA begins on the next cycle (odd) and takes 514 CPU cycles
         let cycles_after = nes.cpu.get_total_cycles();
         assert_eq!(
             cycles_after - cycles_before,
-            513,
-            "DMA should take 513 cycles on even alignment"
+            514,
+            "DMA should take 514 cycles on even alignment"
         );
     }
 
@@ -877,12 +877,12 @@ mod tests {
         // Run one CPU tick which should process the DMA
         nes.run_cpu_tick();
 
-        // On odd alignment, DMA should take 514 CPU cycles (513 + 1 wait cycle)
+        // On odd alignment, DMA begins on the next cycle (even) and takes 513 CPU cycles
         let cycles_after = nes.cpu.get_total_cycles();
         assert_eq!(
             cycles_after - cycles_before,
-            514,
-            "DMA should take 514 cycles on odd alignment"
+            513,
+            "DMA should take 513 cycles on odd alignment"
         );
     }
 
@@ -982,17 +982,17 @@ mod tests {
         nes.run_cpu_tick();
 
         // With CPU-owned DMA ticking using MasterClock, the PPU advances by at least
-        // 513 CPU cycles * 3 PPU cycles per CPU cycle.
+        // 514 CPU cycles * 3 PPU cycles per CPU cycle (DMA starts on the next cycle).
         //
         // Depending on where the CPU was in its internal master-clock phase when DMA
         // begins, up to 2 additional PPU cycles may be flushed as part of the DMA tick.
-        let expected_ppu_cycles = initial_ppu_cycles + (513 * 3);
+        let expected_ppu_cycles = initial_ppu_cycles + (514 * 3);
         let actual_ppu_cycles = nes.ppu.borrow().total_cycles();
 
         assert!(
             actual_ppu_cycles >= expected_ppu_cycles
                 && actual_ppu_cycles <= expected_ppu_cycles + 2,
-            "PPU should advance by 513*3 cycles during DMA on even alignment (got {}, expected {}..={})",
+            "PPU should advance by 514*3 cycles during DMA on even alignment (got {}, expected {}..={})",
             actual_ppu_cycles,
             expected_ppu_cycles,
             expected_ppu_cycles + 2
