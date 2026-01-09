@@ -276,7 +276,7 @@ impl FrameCounter {
         const STEP_1_CYCLES: u32 = 7457;
         const STEP_2_CYCLES: u32 = 14913;
         const STEP_3_CYCLES: u32 = 22371;
-        const STEP_4_CYCLES: u32 = 29829;
+        // Note: Step 4 (cycle 29829) has no clocks in 5-step mode
         const STEP_5_CYCLES: u32 = 37281;
 
         // The 5-step sequence length is odd, which causes the relative phase to alternate.
@@ -286,7 +286,6 @@ impl FrameCounter {
         let step_1 = STEP_1_CYCLES + offset;
         let step_2 = STEP_2_CYCLES + offset;
         let step_3 = STEP_3_CYCLES + offset;
-        let _step_4 = STEP_4_CYCLES + offset; // No clocks at step 4
         let step_5 = STEP_5_CYCLES + offset;
 
         // Quarter frame (envelope) clocks at steps 1, 2, 3, and 5 (NOT step 4)
