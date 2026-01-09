@@ -394,10 +394,10 @@ impl MemController {
         }
     }
 
-    /// Print the current open bus value to stdout (for debugging)
-    pub fn print_open_bus(&self) {
-        println!("Open bus: 0x{:02X}", *self.open_bus.borrow());
-    }
+    // /// Print the current open bus value to stdout (for debugging)
+    // pub fn print_open_bus(&self) {
+    //     println!("Open bus: 0x{:02X}", *self.open_bus.borrow());
+    // }
 }
 
 #[cfg(test)]

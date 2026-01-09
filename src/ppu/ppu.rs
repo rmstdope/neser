@@ -750,6 +750,7 @@ impl Ppu {
     }
 
     /// Check if should generate NMI
+    #[cfg(test)]
     pub fn should_generate_nmi(&self) -> bool {
         self.registers.should_generate_nmi()
     }

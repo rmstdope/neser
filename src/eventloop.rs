@@ -302,7 +302,7 @@ impl EventLoop {
                 .map_err(|e| e.to_string())?;
 
             let timer = self._sdl_context.timer()?;
-            let last_frame_time = timer.performance_counter();
+            let mut last_frame_time = timer.performance_counter();
             let performance_frequency = timer.performance_frequency() as f64;
 
             loop {
@@ -314,8 +314,12 @@ impl EventLoop {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            if Self::handle_key_down(nes, keycode, self.audio.as_ref(), &mut self.paused)
-                                == KeyDownOutcome::Quit
+                            if Self::handle_key_down(
+                                nes,
+                                keycode,
+                                self.audio.as_ref(),
+                                &mut self.paused,
+                            ) == KeyDownOutcome::Quit
                             {
                                 return Ok(());
                             }
@@ -417,8 +421,12 @@ impl EventLoop {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            if Self::handle_key_down(nes, keycode, self.audio.as_ref(), &mut self.paused)
-                                == KeyDownOutcome::Quit
+                            if Self::handle_key_down(
+                                nes,
+                                keycode,
+                                self.audio.as_ref(),
+                                &mut self.paused,
+                            ) == KeyDownOutcome::Quit
                             {
                                 return Ok(());
                             }
@@ -470,11 +478,11 @@ impl EventLoop {
     /// Handle keyboard key press events
     ///
     /// Maps keyboard keys to NES controller buttons:
-    /// - Arrow Keys: D-Pad (Up, Down, Left, Right)
-    /// - Z: B button
-    /// - X: A button
-    /// - A: Select button
-    /// - S: Start button
+    /// - W/A/S/D: D-Pad (Up, Left, Down, Right)
+    /// - G: B button
+    /// - F: A button
+    /// - R: Select button
+    /// - T: Start button
     ///
     /// Emulator controls:
     /// - Escape: Quit
@@ -506,14 +514,14 @@ impl EventLoop {
                     apply_volume_hotkey(audio, Keycode::F3);
                 }
             }
-            Keycode::Up => nes.set_button(1, Button::Up, true),
-            Keycode::Down => nes.set_button(1, Button::Down, true),
-            Keycode::Left => nes.set_button(1, Button::Left, true),
-            Keycode::Right => nes.set_button(1, Button::Right, true),
-            Keycode::Z => nes.set_button(1, Button::B, true),
-            Keycode::X => nes.set_button(1, Button::A, true),
-            Keycode::A => nes.set_button(1, Button::Select, true),
-            Keycode::S => nes.set_button(1, Button::Start, true),
+            Keycode::W => nes.set_button(1, Button::Up, true),
+            Keycode::S => nes.set_button(1, Button::Down, true),
+            Keycode::A => nes.set_button(1, Button::Left, true),
+            Keycode::D => nes.set_button(1, Button::Right, true),
+            Keycode::G => nes.set_button(1, Button::B, true),
+            Keycode::F => nes.set_button(1, Button::A, true),
+            Keycode::R => nes.set_button(1, Button::Select, true),
+            Keycode::T => nes.set_button(1, Button::Start, true),
             _ => {}
         }
 
@@ -524,14 +532,14 @@ impl EventLoop {
     fn handle_key_up(nes: &mut crate::nes::Nes, keycode: Keycode) {
         use crate::input::Button;
         match keycode {
-            Keycode::Up => nes.set_button(1, Button::Up, false),
-            Keycode::Down => nes.set_button(1, Button::Down, false),
-            Keycode::Left => nes.set_button(1, Button::Left, false),
-            Keycode::Right => nes.set_button(1, Button::Right, false),
-            Keycode::Z => nes.set_button(1, Button::B, false),
-            Keycode::X => nes.set_button(1, Button::A, false),
-            Keycode::A => nes.set_button(1, Button::Select, false),
-            Keycode::S => nes.set_button(1, Button::Start, false),
+            Keycode::W => nes.set_button(1, Button::Up, false),
+            Keycode::S => nes.set_button(1, Button::Down, false),
+            Keycode::A => nes.set_button(1, Button::Left, false),
+            Keycode::D => nes.set_button(1, Button::Right, false),
+            Keycode::G => nes.set_button(1, Button::B, false),
+            Keycode::F => nes.set_button(1, Button::A, false),
+            Keycode::R => nes.set_button(1, Button::Select, false),
+            Keycode::T => nes.set_button(1, Button::Start, false),
             _ => {}
         }
     }
@@ -556,6 +564,22 @@ mod tests {
     use crate::nes::{Nes, TvSystem};
     use serial_test::serial;
     use std::env;
+
+    fn read_joypad1_buttons(nes: &mut Nes) -> [u8; 8] {
+        // Joypad serial order: A, B, Select, Start, Up, Down, Left, Right
+        {
+            let mut mem = nes.memory.borrow_mut();
+            mem.write(0x4016, 1, false);
+            mem.write(0x4016, 0, false);
+        }
+
+        let mut out = [0u8; 8];
+        for i in 0..8 {
+            let value = nes.memory.borrow_mut().read(0x4016) & 0x01;
+            out[i] = value;
+        }
+        out
+    }
 
     #[test]
     fn test_manual_frame_limiting_is_disabled_with_vsync() {
@@ -690,9 +714,73 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         let mut paused = false;
 
+        // Reset reads the reset vector from $FFFC-$FFFD. Inserting a minimal cartridge
+        // avoids panicking on unmapped reads.
+        let mut prg_rom = vec![0u8; 0x8000];
+        let reset_vector: u16 = 0x8000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8;
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+
         nes.cpu.pc = 0x1234;
         let _ = EventLoop::handle_key_down(&mut nes, Keycode::F1, None, &mut paused);
-        assert_ne!(nes.cpu.pc, 0x1234);
+        assert_eq!(nes.cpu.pc, reset_vector);
+    }
+
+    #[test]
+    fn test_joypad1_keyboard_mapping_wasd_r_t_f_g() {
+        // Desired mapping (Joypad 1):
+        // - D-pad: W/A/S/D
+        // - Select: R
+        // - Start:  T
+        // - A:      F
+        // - B:      G
+        let mut paused = false;
+
+        // W => Up
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::W, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 1, 0, 0, 0]);
+
+        // S => Down
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::S, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 1, 0, 0]);
+
+        // A => Left
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::A, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 1, 0]);
+
+        // D => Right
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::D, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 0, 1]);
+
+        // R => Select
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::R, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 1, 0, 0, 0, 0, 0]);
+
+        // T => Start
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::T, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 1, 0, 0, 0, 0]);
+
+        // F => A
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::F, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [1, 0, 0, 0, 0, 0, 0, 0]);
+
+        // G => B
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::G, None, &mut paused);
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 1, 0, 0, 0, 0, 0, 0]);
     }
 
     #[test]

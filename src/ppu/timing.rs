@@ -97,6 +97,7 @@ impl Timing {
     }
 
     /// Get the total number of cycles since reset
+    #[cfg(test)]
     pub fn total_cycles(&self) -> u64 {
         self.total_cycles
     }
@@ -112,6 +113,7 @@ impl Timing {
     }
 
     /// Get the frame count
+    #[cfg(test)]
     pub fn frame_count(&self) -> u64 {
         self.frame_count
     }
@@ -124,6 +126,7 @@ impl Timing {
     /// Check if we're currently in a rendering cycle
     /// Rendering cycles occur during visible scanlines (0-239) and pre-render scanline (261)
     /// at pixel positions 0-256 and 328-336
+    #[cfg(test)]
     pub fn is_rendering_cycle(&self) -> bool {
         let is_visible_scanline = self.scanline < 240;
         let is_prerender_scanline = self.scanline == 261;
@@ -141,18 +144,21 @@ impl Timing {
 
     /// Check if we're currently rendering a visible pixel
     /// Visible pixels are rendered during scanlines 0-239, pixels 1-256
+    #[cfg(test)]
     pub fn is_visible_pixel(&self) -> bool {
         self.scanline < 240 && self.pixel >= 1 && self.pixel <= 256
     }
 
     /// Get the current fetch step (0-7) within the 8-cycle pattern
     /// Returns which of the 8 fetch operations should occur this cycle
+    #[cfg(test)]
     pub fn get_fetch_step(&self) -> u8 {
         ((self.pixel - 1) % 8) as u8
     }
 
     /// Check if shift registers should be loaded this cycle
     /// This occurs every 8 cycles during rendering (after pattern fetch completes)
+    #[cfg(test)]
     pub fn should_load_shift_registers(&self) -> bool {
         self.pixel > 0 && (self.pixel % 8) == 0
     }

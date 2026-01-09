@@ -418,15 +418,15 @@ impl Sprites {
         None
     }
 
-    /// Check if sprite 0 is in the current sprite buffer at the given index
-    pub fn is_sprite_0(&self, sprite_idx: usize) -> bool {
-        self.sprite_0_index.map_or(false, |idx| idx == sprite_idx)
-    }
+    // /// Check if sprite 0 is in the current sprite buffer at the given index
+    // pub fn is_sprite_0(&self, sprite_idx: usize) -> bool {
+    //     self.sprite_0_index.map_or(false, |idx| idx == sprite_idx)
+    // }
 
-    /// Get sprite 0 X position (if sprite 0 is in the current scanline)
-    pub fn sprite_0_x_position(&self) -> Option<u8> {
-        self.sprite_0_index.map(|idx| self.sprite_x_positions[idx])
-    }
+    // /// Get sprite 0 X position (if sprite 0 is in the current scanline)
+    // pub fn sprite_0_x_position(&self) -> Option<u8> {
+    //     self.sprite_0_index.map(|idx| self.sprite_x_positions[idx])
+    // }
 
     /// Get sprite 0's Y position from OAM (byte 0 of sprite 0)
     pub fn sprite_0_oam_y(&self) -> u8 {
@@ -464,6 +464,7 @@ impl Sprites {
     }
 
     /// Get sprite count for rendering
+    #[cfg(test)]
     pub fn sprite_count(&self) -> u8 {
         self.sprite_count
     }

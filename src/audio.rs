@@ -119,6 +119,7 @@ impl NesAudio {
     }
 
     /// Pause audio playback
+    #[cfg(test)]
     pub fn pause(&self) {
         self.device.pause();
     }
