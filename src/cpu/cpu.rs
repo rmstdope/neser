@@ -64,6 +64,12 @@ pub struct Cpu {
     /// Master clock (timing model)
     master_clock: MasterClock,
 
+    /// When set, the next CPU cycle will not latch IRQ/NMI line state at the end of the cycle.
+    ///
+    /// This is used to model edge-case timing where certain instructions (notably taken
+    /// non-page-crossing branches) ignore interrupts during their final clock.
+    skip_interrupt_latch_this_cycle: bool,
+
     /// Out-of-band master clock used when the CPU itself must tick PPU/APU for
     /// synthetic CPU cycles (e.g., DMA stalls or interrupt sequences).
     ///
@@ -123,6 +129,8 @@ impl Cpu {
             forced_irq_pending: false,
             master_clock: MasterClock::new(tv_system),
             oob_master_clock: MasterClock::new(tv_system),
+
+            skip_interrupt_latch_this_cycle: false,
 
             dmc_dma_in_progress: false,
         }
@@ -343,6 +351,7 @@ impl Cpu {
         self.prev_need_nmi = false;
         self.prev_run_irq = false;
         self.run_irq = false;
+        self.skip_interrupt_latch_this_cycle = false;
 
         // Reset cycle counters and master clock alignment.
         self.total_cycles = 0;
@@ -382,7 +391,12 @@ impl Cpu {
         let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
         // Mirror Mesen EndCpuCycle() behavior: latch interrupt lines at the end of each CPU cycle.
-        self.end_cpu_cycle_latch_interrupt_lines();
+        // Some edge cases require skipping latching for a single cycle.
+        if self.skip_interrupt_latch_this_cycle {
+            self.skip_interrupt_latch_this_cycle = false;
+        } else {
+            self.end_cpu_cycle_latch_interrupt_lines();
+        }
     }
 
     /// Read a byte from memory at the specified address
@@ -1168,10 +1182,16 @@ impl Cpu {
                 if self.p & FLAG_NEGATIVE == 0 {
                     let old_pc = self.pc;
                     self.pc = self.pc.wrapping_add(offset as u16);
-                    // Branch taken - do a dummy read
-                    self.dummy_read(self.pc);
-                    // Check for page crossing - do another dummy read
-                    if Self::page_crossed(old_pc, self.pc) {
+                    let page_crossed = Self::page_crossed(old_pc, self.pc);
+                    if page_crossed {
+                        // Branch taken - do a dummy read
+                        self.dummy_read(self.pc);
+                        // Page crossing: extra dummy read
+                        self.dummy_read(self.pc);
+                    } else {
+                        // Taken non-page-crossing branches ignore interrupts during their last
+                        // clock (blargg cpu_interrupts_v2/5-branch_delays_irq).
+                        self.skip_interrupt_latch_this_cycle = true;
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1244,10 +1264,12 @@ impl Cpu {
                 if self.p & FLAG_NEGATIVE != 0 {
                     let old_pc = self.pc;
                     self.pc = self.pc.wrapping_add(offset as u16);
-                    // Branch taken - do a dummy read
-                    self.dummy_read(self.pc);
-                    // Check for page crossing - do another dummy read
-                    if Self::page_crossed(old_pc, self.pc) {
+                    let page_crossed = Self::page_crossed(old_pc, self.pc);
+                    if page_crossed {
+                        self.dummy_read(self.pc);
+                        self.dummy_read(self.pc);
+                    } else {
+                        self.skip_interrupt_latch_this_cycle = true;
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1313,10 +1335,12 @@ impl Cpu {
                 if (self.p & FLAG_OVERFLOW) == 0 {
                     let old_pc = self.pc;
                     self.pc = self.pc.wrapping_add(offset as u16);
-                    // Branch taken - do a dummy read
-                    self.dummy_read(self.pc);
-                    // Check for page crossing - do another dummy read
-                    if Self::page_crossed(old_pc, self.pc) {
+                    let page_crossed = Self::page_crossed(old_pc, self.pc);
+                    if page_crossed {
+                        self.dummy_read(self.pc);
+                        self.dummy_read(self.pc);
+                    } else {
+                        self.skip_interrupt_latch_this_cycle = true;
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1383,10 +1407,12 @@ impl Cpu {
                 if (self.p & FLAG_OVERFLOW) != 0 {
                     let old_pc = self.pc;
                     self.pc = self.pc.wrapping_add(offset as u16);
-                    // Branch taken - do a dummy read
-                    self.dummy_read(self.pc);
-                    // Check for page crossing - do another dummy read
-                    if Self::page_crossed(old_pc, self.pc) {
+                    let page_crossed = Self::page_crossed(old_pc, self.pc);
+                    if page_crossed {
+                        self.dummy_read(self.pc);
+                        self.dummy_read(self.pc);
+                    } else {
+                        self.skip_interrupt_latch_this_cycle = true;
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1433,10 +1459,12 @@ impl Cpu {
                 if self.p & FLAG_CARRY == 0 {
                     let old_pc = self.pc;
                     self.pc = self.pc.wrapping_add(offset as u16);
-                    // Branch taken - do a dummy read
-                    self.dummy_read(self.pc);
-                    // Check for page crossing - do another dummy read
-                    if Self::page_crossed(old_pc, self.pc) {
+                    let page_crossed = Self::page_crossed(old_pc, self.pc);
+                    if page_crossed {
+                        self.dummy_read(self.pc);
+                        self.dummy_read(self.pc);
+                    } else {
+                        self.skip_interrupt_latch_this_cycle = true;
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1515,10 +1543,12 @@ impl Cpu {
                 if self.p & FLAG_CARRY != 0 {
                     let old_pc = self.pc;
                     self.pc = self.pc.wrapping_add(offset as u16);
-                    // Branch taken - do a dummy read
-                    self.dummy_read(self.pc);
-                    // Check for page crossing - do another dummy read
-                    if Self::page_crossed(old_pc, self.pc) {
+                    let page_crossed = Self::page_crossed(old_pc, self.pc);
+                    if page_crossed {
+                        self.dummy_read(self.pc);
+                        self.dummy_read(self.pc);
+                    } else {
+                        self.skip_interrupt_latch_this_cycle = true;
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1567,10 +1597,12 @@ impl Cpu {
                 if self.p & FLAG_ZERO == 0 {
                     let old_pc = self.pc;
                     self.pc = self.pc.wrapping_add(offset as u16);
-                    // Branch taken - do a dummy read
-                    self.dummy_read(self.pc);
-                    // Check for page crossing - do another dummy read
-                    if Self::page_crossed(old_pc, self.pc) {
+                    let page_crossed = Self::page_crossed(old_pc, self.pc);
+                    if page_crossed {
+                        self.dummy_read(self.pc);
+                        self.dummy_read(self.pc);
+                    } else {
+                        self.skip_interrupt_latch_this_cycle = true;
                         self.dummy_read(self.pc);
                     }
                 }
@@ -1604,10 +1636,12 @@ impl Cpu {
                 if self.p & FLAG_ZERO != 0 {
                     let old_pc = self.pc;
                     self.pc = self.pc.wrapping_add(offset as u16);
-                    // Branch taken - do a dummy read
-                    self.dummy_read(self.pc);
-                    // Check for page crossing - do another dummy read
-                    if Self::page_crossed(old_pc, self.pc) {
+                    let page_crossed = Self::page_crossed(old_pc, self.pc);
+                    if page_crossed {
+                        self.dummy_read(self.pc);
+                        self.dummy_read(self.pc);
+                    } else {
+                        self.skip_interrupt_latch_this_cycle = true;
                         self.dummy_read(self.pc);
                     }
                 }
