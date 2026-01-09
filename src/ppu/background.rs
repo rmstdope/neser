@@ -46,9 +46,9 @@ impl Background {
     }
 
     /// Debug: Get shift register state
-    pub fn debug_shift_registers(&self) -> (u16, u16) {
-        (self.bg_pattern_shift_lo, self.bg_pattern_shift_hi)
-    }
+    // pub fn debug_shift_registers(&self) -> (u16, u16) {
+    //     (self.bg_pattern_shift_lo, self.bg_pattern_shift_hi)
+    // }
 
     /// Fetch nametable byte from memory
     pub fn fetch_nametable<F>(&mut self, v: u16, read_nametable: F)

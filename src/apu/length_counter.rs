@@ -40,6 +40,7 @@ impl LengthCounter {
         self.halt = halt;
     }
 
+    #[cfg(test)]
     pub fn is_halted(&self) -> bool {
         self.halt
     }

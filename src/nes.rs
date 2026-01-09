@@ -18,6 +18,7 @@ impl TvSystem {
     ///
     /// NTSC: 3.0 PPU cycles per CPU cycle (exact)
     /// PAL: 3.2 PPU cycles per CPU cycle (requires fractional tracking)
+    #[cfg(test)]
     pub fn ppu_cycles_per_cpu_cycle(&self) -> f64 {
         match self {
             TvSystem::Ntsc => 3.0,

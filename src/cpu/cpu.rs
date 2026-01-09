@@ -229,14 +229,14 @@ impl Cpu {
     ///
     /// This is used for synthetic cycles where the CPU does not execute instructions
     /// but the PPU/APU must continue to advance (e.g., DMA stalls).
-    pub fn apply_external_stall(&mut self, cpu_cycles: u16) {
-        if cpu_cycles == 0 {
-            return;
-        }
+    // pub fn apply_external_stall(&mut self, cpu_cycles: u16) {
+    //     if cpu_cycles == 0 {
+    //         return;
+    //     }
 
-        self.tick_ppu_apu_for_cpu_cycles(cpu_cycles);
-        self.add_cycles(cpu_cycles as u64);
-    }
+    //     self.tick_ppu_apu_for_cpu_cycles(cpu_cycles);
+    //     self.add_cycles(cpu_cycles as u64);
+    // }
 
     fn tick_ppu_apu_for_cpu_cycles(&mut self, cpu_cycles: u16) {
         let cpu_divider = self.oob_master_clock.cpu_divider();
@@ -367,11 +367,10 @@ impl Cpu {
         // If the DMC has a pending DMA read, the CPU will be halted on this *read* cycle.
         // While halted, the 6502 repeats this read during each no-op DMA cycle, which is
         // externally visible and can conflict with registers with side effects.
-        let dmc_dma_pending = !self.dmc_dma_in_progress
-            && {
-                let mut apu = self.apu.borrow_mut();
-                apu.dmc_mut().dma_pending()
-            };
+        let dmc_dma_pending = !self.dmc_dma_in_progress && {
+            let mut apu = self.apu.borrow_mut();
+            apu.dmc_mut().dma_pending()
+        };
         if dmc_dma_pending {
             self.dmc_dma_in_progress = true;
 

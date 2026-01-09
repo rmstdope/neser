@@ -149,10 +149,10 @@ impl Memory {
         }
     }
 
-    /// Get mirroring mode
-    pub fn mirroring_mode(&self) -> MirroringMode {
-        self.mirroring_mode
-    }
+    // /// Get mirroring mode
+    // pub fn mirroring_mode(&self) -> MirroringMode {
+    //     self.mirroring_mode
+    // }
 }
 
 #[cfg(test)]
