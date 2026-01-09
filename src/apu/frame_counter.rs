@@ -211,6 +211,21 @@ impl FrameCounter {
     }
 
     /// Clock the 4-step sequencer
+    ///
+    /// # IRQ Semantics (blargg compatibility mode)
+    ///
+    /// The frame IRQ in 4-step mode is implemented as a 3-cycle "asserting signal" that begins
+    /// at cycle 29828 (APU cycle 14914). This behavior differs from a strict reading of NESDev's
+    /// `apu_ref.txt`, which describes a simple flag that's set once by the sequencer.
+    ///
+    /// The multi-cycle assertion model was chosen to pass blargg's `apu_test/6-irq_flag_timing`,
+    /// which tests that reading $4015 (which clears the IRQ flag) during the asserting window
+    /// will cause the flag to be re-set on subsequent cycles.
+    ///
+    /// If you're debugging IRQ timing issues and need spec-first behavior, the alternative is:
+    /// - Set `irq_flag = true` once at IRQ_CYCLE
+    /// - Remove the `irq_assert_cycles_remaining` mechanism
+    /// - This will likely break blargg test 6
     fn clock_four_step(&mut self) -> (bool, bool) {
         const STEP_1_CYCLES: u32 = 7457;
         const STEP_2_CYCLES: u32 = 14913;
@@ -226,15 +241,14 @@ impl FrameCounter {
         );
         let half_frame = matches!(self.cycle_counter, STEP_2_CYCLES | STEP_4_CYCLES);
 
-        // Blargg's `apu_test/6-irq_flag_timing` expects the frame IRQ to behave like a short
-        // *asserting signal* near the end of the 4-step sequence, not a one-shot edge.
-        //
-        // That means if $4015 is read (clearing the flag) while the internal IRQ signal is
-        // still asserting, the flag will be set again on subsequent cycles.
+        // Start the IRQ asserting window at the designated cycle.
+        // See doc comment above for why we use a multi-cycle window instead of a one-shot.
         if self.cycle_counter == IRQ_CYCLE && !self.irq_inhibit {
             self.irq_assert_cycles_remaining = IRQ_ASSERT_CYCLES;
         }
 
+        // While the IRQ signal is asserting, keep (re-)setting the flag each cycle.
+        // This allows the flag to be re-set if cleared during the window.
         if self.irq_assert_cycles_remaining > 0 {
             if !self.irq_inhibit {
                 self.irq_flag = true;
