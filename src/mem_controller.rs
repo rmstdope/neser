@@ -361,12 +361,12 @@ impl MemController {
         false // No DMA triggered
     }
 
-    /// Read a 16-bit word from memory (little-endian)
-    pub fn read_u16(&self, addr: u16) -> u16 {
-        let lo = self.read(addr) as u16;
-        let hi = self.read(addr.wrapping_add(1)) as u16;
-        (hi << 8) | lo
-    }
+    // /// Read a 16-bit word from memory (little-endian)
+    // pub fn read_u16(&self, addr: u16) -> u16 {
+    //     let lo = self.read(addr) as u16;
+    //     let hi = self.read(addr.wrapping_add(1)) as u16;
+    //     (hi << 8) | lo
+    // }
 
     /// Write a 16-bit word to memory (little-endian)
     #[cfg(test)]
@@ -525,22 +525,22 @@ mod tests {
         assert_eq!(memory.read(0x1235), 0xAB); // High byte
     }
 
-    #[test]
-    fn test_read_u16_little_endian() {
-        let mut memory = create_test_memory();
-        memory.write(0x1234, 0xCD, false); // Low byte
-        memory.write(0x1235, 0xAB, false); // High byte
-        let result = memory.read_u16(0x1234);
-        assert_eq!(result, 0xABCD);
-    }
+    // #[test]
+    // fn test_read_u16_little_endian() {
+    //     let mut memory = create_test_memory();
+    //     memory.write(0x1234, 0xCD, false); // Low byte
+    //     memory.write(0x1235, 0xAB, false); // High byte
+    //     let result = memory.read_u16(0x1234);
+    //     assert_eq!(result, 0xABCD);
+    // }
 
-    #[test]
-    fn test_write_and_read_u16_round_trip() {
-        let mut memory = create_test_memory();
-        memory.write_u16(0x1000, 0x1234);
-        let result = memory.read_u16(0x1000);
-        assert_eq!(result, 0x1234);
-    }
+    // #[test]
+    // fn test_write_and_read_u16_round_trip() {
+    //     let mut memory = create_test_memory();
+    //     memory.write_u16(0x1000, 0x1234);
+    //     let result = memory.read_u16(0x1000);
+    //     assert_eq!(result, 0x1234);
+    // }
 
     #[test]
     fn test_ram_mirror_0800() {

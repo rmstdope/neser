@@ -17,6 +17,7 @@ pub struct EventLoop {
     canvas: Option<Canvas<Window>>,
     event_pump: sdl2::EventPump,
     timing_scale: f32,
+    vsync_enabled: bool,
     paused: bool,
     audio: Option<NesAudio>,
 }
@@ -60,13 +61,13 @@ impl EventLoop {
     /// use neser::nes::TvSystem;
     ///
     /// // Create a headless EventLoop for testing
-    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None)?;
+    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None)?;
     ///
     /// // Create an EventLoop with an NTSC window at 2x scale
-    /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0, None)?;
+    /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0, true, None)?;
     ///
     /// // Create an EventLoop with a PAL window at 3x scale at 2x speed
-    /// let pal = EventLoop::new(false, TvSystem::Pal, 3.0, 2.0, None)?;
+    /// let pal = EventLoop::new(false, TvSystem::Pal, 3.0, 2.0, true, None)?;
     /// # Ok::<(), String>(())
     /// ```
     pub fn new(
@@ -74,6 +75,7 @@ impl EventLoop {
         tv_system: TvSystem,
         video_scale: f32,
         timing_scale: f32,
+        vsync_enabled: bool,
         audio: Option<NesAudio>,
     ) -> Result<Self, String> {
         let clamped_video_scale = Self::clamp_scale(video_scale);
@@ -89,6 +91,7 @@ impl EventLoop {
                 &sdl_context,
                 tv_system,
                 clamped_video_scale,
+                vsync_enabled,
             )?)
         };
 
@@ -97,6 +100,7 @@ impl EventLoop {
             canvas,
             event_pump,
             timing_scale: clamped_timing_scale,
+            vsync_enabled,
             paused: false,
             audio,
         })
@@ -156,6 +160,7 @@ impl EventLoop {
         sdl_context: &sdl2::Sdl,
         tv_system: TvSystem,
         scale: f32,
+        vsync_enabled: bool,
     ) -> Result<Canvas<Window>, String> {
         let base_width = tv_system.screen_width();
         let base_height = tv_system.screen_height();
@@ -169,7 +174,13 @@ impl EventLoop {
             .build()
             .map_err(|e| e.to_string())?;
 
-        let mut canvas = window.into_canvas().build().map_err(|e| e.to_string())?;
+        let canvas_builder = window.into_canvas();
+        let canvas_builder = if vsync_enabled {
+            canvas_builder.present_vsync()
+        } else {
+            canvas_builder
+        };
+        let mut canvas = canvas_builder.build().map_err(|e| e.to_string())?;
         canvas.set_draw_color(sdl2::pixels::Color::RGB(
             Self::CLEAR_COLOR_R,
             Self::CLEAR_COLOR_G,
@@ -179,6 +190,10 @@ impl EventLoop {
         canvas.present();
 
         Ok(canvas)
+    }
+
+    fn should_manual_frame_limit(vsync_enabled: bool) -> bool {
+        !vsync_enabled
     }
 
     /// Checks if the user has requested to quit via Escape key or window close.
@@ -210,7 +225,7 @@ impl EventLoop {
         texture
             .with_lock(None, |buffer: &mut [u8], pitch: usize| {
                 // Get the PPU screen buffer and copy its RGB data to the texture
-                let mut screen_buffer = nes.get_screen_buffer();
+                let screen_buffer = nes.get_screen_buffer();
 
                 // Check if we can do a direct copy (pitch == width * 3 bytes per pixel)
                 if pitch == (TEXTURE_WIDTH as usize * 3) {
@@ -391,7 +406,9 @@ impl EventLoop {
                 // Update last_frame_time before sleeping to avoid timing drift
                 last_frame_time = current_time;
 
-                if elapsed_seconds < target_frame_time {
+                if Self::should_manual_frame_limit(self.vsync_enabled)
+                    && elapsed_seconds < target_frame_time
+                {
                     let sleep_time = target_frame_time - elapsed_seconds;
                     std::thread::sleep(std::time::Duration::from_secs_f64(sleep_time));
                 }
@@ -534,9 +551,19 @@ mod tests {
     use std::env;
 
     #[test]
+    fn test_manual_frame_limiting_is_disabled_with_vsync() {
+        assert!(!EventLoop::should_manual_frame_limit(true));
+    }
+
+    #[test]
+    fn test_manual_frame_limiting_is_enabled_without_vsync() {
+        assert!(EventLoop::should_manual_frame_limit(false));
+    }
+
+    #[test]
     #[serial]
     fn test_eventloop_creation() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
@@ -553,12 +580,8 @@ mod tests {
         impl Drop for EnvRestore {
             fn drop(&mut self) {
                 match &self.prev {
-                    Some(value) => unsafe {
-                        env::set_var(self.key, value)
-                    },
-                    None => unsafe {
-                        env::remove_var(self.key)
-                    },
+                    Some(value) => unsafe { env::set_var(self.key, value) },
+                    None => unsafe { env::remove_var(self.key) },
                 }
             }
         }
@@ -633,42 +656,42 @@ mod tests {
     #[test]
     #[serial]
     fn test_new_headless() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_below_minimum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_above_maximum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_at_minimum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_at_maximum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0, true, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_run_with_nes() {
-        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None).unwrap();
+        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance
