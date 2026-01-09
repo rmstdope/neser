@@ -1,5 +1,7 @@
 /// Pulse wave channel for the NES APU
 /// Generates square waves with variable duty cycle
+use super::length_counter::LengthCounter;
+
 pub struct Pulse {
     // Channel identifier (true = Pulse 1, false = Pulse 2)
     // Used for sweep complement mode: Pulse 1 uses ones' complement, Pulse 2 uses two's complement
@@ -22,9 +24,7 @@ pub struct Pulse {
     envelope_decay_level: u8,
 
     // Length counter fields
-    length_counter: u8,
-    length_counter_halt: bool,
-    length_counter_enabled: bool, // Controlled by $4015
+    length_counter: LengthCounter,
 
     // Sweep unit fields
     sweep_enabled: bool,
@@ -34,12 +34,6 @@ pub struct Pulse {
     sweep_reload: bool,
     sweep_divider: u8,
 }
-
-/// Length counter load table (indexed by bits 7-3 of $4003/$4007)
-const LENGTH_COUNTER_TABLE: [u8; 32] = [
-    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
-    192, 24, 72, 26, 16, 28, 32, 30,
-];
 
 /// Duty cycle sequence lookup tables
 /// Sequencer starts at 0 and counts down (reads 0, 7, 6, 5, 4, 3, 2, 1)
@@ -74,9 +68,7 @@ impl Pulse {
             volume_envelope_period: 0,
             envelope_divider: 0,
             envelope_decay_level: 0,
-            length_counter: 0,
-            length_counter_halt: false,
-            length_counter_enabled: false, // Disabled at power-on
+            length_counter: LengthCounter::new(),
 
             // Sweep unit fields
             sweep_enabled: false,
@@ -138,7 +130,7 @@ impl Pulse {
     pub fn write_control(&mut self, value: u8) {
         self.duty_mode = (value >> 6) & 0x03;
         self.envelope_loop_flag = (value & 0x20) != 0;
-        self.length_counter_halt = (value & 0x20) != 0; // Same bit as envelope loop
+        self.length_counter.set_halt((value & 0x20) != 0); // Same bit as envelope loop
         self.constant_volume_flag = (value & 0x10) != 0;
         self.volume_envelope_period = value & 0x0F;
     }
@@ -148,10 +140,8 @@ impl Pulse {
         self.write_timer_high(value);
         self.envelope_start_flag = true;
         // Load length counter from bits 7-3 (only if channel is enabled via $4015)
-        if self.length_counter_enabled {
-            let index = (value >> 3) as usize;
-            self.length_counter = LENGTH_COUNTER_TABLE[index];
-        }
+        let index = value >> 3;
+        self.length_counter.load_from_index(index);
     }
 
     /// Clock the envelope (called by quarter frame from frame counter)
@@ -183,19 +173,17 @@ impl Pulse {
 
     /// Clock the length counter (called by half frame from frame counter)
     pub fn clock_length_counter(&mut self) {
-        if !self.length_counter_halt && self.length_counter > 0 {
-            self.length_counter -= 1;
-        }
+        self.length_counter.clock();
     }
 
     /// Get the current length counter value
     pub fn get_length_counter(&self) -> u8 {
-        self.length_counter
+        self.length_counter.value()
     }
 
     /// Clear the length counter to 0
     pub fn clear_length_counter(&mut self) {
-        self.length_counter = 0;
+        self.length_counter.clear();
     }
 
     /// Get the envelope start flag state
@@ -213,12 +201,12 @@ impl Pulse {
     /// Set length counter enabled/disabled (from $4015)
     /// When disabled, the channel is silenced but the length counter value is preserved
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
-        self.length_counter_enabled = enabled;
+        self.length_counter.set_enabled(enabled);
     }
 
     /// Get whether length counter is enabled (from $4015)
     pub fn is_length_counter_enabled(&self) -> bool {
-        self.length_counter_enabled
+        self.length_counter.is_enabled()
     }
 
     /// Write to sweep register ($4001/$4005)
@@ -295,8 +283,8 @@ impl Pulse {
     pub fn output(&self) -> u8 {
         // Check all muting conditions
         if self.get_sequencer_output() == 0
-            || !self.length_counter_enabled // Channel disabled via $4015
-            || self.length_counter == 0
+            || !self.length_counter.is_enabled() // Channel disabled via $4015
+            || self.length_counter.value() == 0
             || self.timer_period < 8
             || self.get_sweep_target_period() > 0x7FF
         {
@@ -745,12 +733,12 @@ mod tests {
         pulse.write_control(0b0010_0000); // Bit 5 set
 
         // Both flags should be set from same bit
-        assert!(pulse.length_counter_halt);
+        assert!(pulse.length_counter.is_halted());
         assert!(pulse.envelope_loop_flag);
 
         pulse.write_control(0b0000_0000); // Bit 5 clear
 
-        assert!(!pulse.length_counter_halt);
+        assert!(!pulse.length_counter.is_halted());
         assert!(!pulse.envelope_loop_flag);
     }
 
@@ -762,13 +750,13 @@ mod tests {
         pulse.write_length_counter_timer_high(0b01010_000); // Load some value
         assert_eq!(pulse.get_length_counter(), 60);
 
-        // Disable should NOT clear counter
+        // Disabling via $4015 clears the length counter
         pulse.set_length_counter_enabled(false);
-        assert_eq!(pulse.get_length_counter(), 60);
+        assert_eq!(pulse.get_length_counter(), 0);
 
-        // Enable again - counter stays at current value (60)
+        // Enable again - counter stays at 0 until reloaded
         pulse.set_length_counter_enabled(true);
-        assert_eq!(pulse.get_length_counter(), 60);
+        assert_eq!(pulse.get_length_counter(), 0);
 
         // Now we can load again since it's enabled
         pulse.write_length_counter_timer_high(0b00100_000); // Load different value

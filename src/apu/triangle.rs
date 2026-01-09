@@ -1,5 +1,7 @@
 /// Triangle wave channel for the NES APU
 /// Generates triangle waves with a 32-step linear sequence
+use super::length_counter::LengthCounter;
+
 pub struct Triangle {
     // Timer fields (11-bit)
     timer_period: u16,
@@ -15,8 +17,7 @@ pub struct Triangle {
     control_flag: bool, // Also acts as length counter halt
 
     // Length counter fields
-    length_counter: u8,
-    length_counter_enabled: bool, // Controlled by $4015
+    length_counter: LengthCounter,
 }
 
 /// Length of the triangle wave sequence
@@ -29,11 +30,6 @@ const TRIANGLE_SEQUENCE: [u8; TRIANGLE_SEQUENCE_LENGTH as usize] = [
     13, 14, 15,
 ];
 
-/// Length counter lookup table (shared across all channels)
-const LENGTH_COUNTER_TABLE: [u8; 32] = [
-    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
-    192, 24, 72, 26, 16, 28, 32, 30,
-];
 
 impl Default for Triangle {
     fn default() -> Self {
@@ -52,8 +48,7 @@ impl Triangle {
             linear_counter_reload_value: 0,
             linear_counter_reload_flag: false,
             control_flag: false,
-            length_counter: 0,
-            length_counter_enabled: false, // Disabled at power-on
+            length_counter: LengthCounter::new(),
         }
     }
 
@@ -75,7 +70,7 @@ impl Triangle {
     /// Get the current output sample from the triangle channel
     pub fn output(&self) -> u8 {
         // Triangle is muted when either linear counter or length counter is zero
-        if self.linear_counter == 0 || self.length_counter == 0 {
+        if self.linear_counter == 0 || self.length_counter.value() == 0 {
             return 0;
         }
         TRIANGLE_SEQUENCE[self.sequence_position as usize]
@@ -84,6 +79,7 @@ impl Triangle {
     /// Write to $4008 register (linear counter control and reload value)
     pub fn write_linear_counter(&mut self, value: u8) {
         self.control_flag = (value & 0x80) != 0;
+        self.length_counter.set_halt(self.control_flag);
         self.linear_counter_reload_value = value & 0x7F;
     }
 
@@ -155,25 +151,22 @@ impl Triangle {
     #[cfg(test)]
     pub fn set_control_flag(&mut self, value: bool) {
         self.control_flag = value;
+        self.length_counter.set_halt(value);
     }
 
     /// Load the length counter from the lookup table
     pub fn load_length_counter(&mut self, index: u8) {
-        // Only load length counter if channel is enabled via $4015
-        if self.length_counter_enabled {
-            let table_index = (index & 0x1F) as usize;
-            self.length_counter = LENGTH_COUNTER_TABLE[table_index];
-        }
+        self.length_counter.load_from_index(index);
     }
 
     /// Get the current length counter value
     pub fn get_length_counter(&self) -> u8 {
-        self.length_counter
+        self.length_counter.value()
     }
 
     /// Clear the length counter to 0
     pub fn clear_length_counter(&mut self) {
-        self.length_counter = 0;
+        self.length_counter.clear();
     }
 
     /// Get the current linear counter value
@@ -184,21 +177,19 @@ impl Triangle {
 
     /// Clock the length counter (called by frame counter half frame)
     pub fn clock_length_counter(&mut self) {
-        if !self.control_flag && self.length_counter > 0 {
-            self.length_counter -= 1;
-        }
+        self.length_counter.clock();
     }
 
     /// Set length counter enabled/disabled (from $4015)
     /// Set length counter enabled/disabled (from $4015)
     /// When disabled, the channel is silenced but the length counter value is preserved
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
-        self.length_counter_enabled = enabled;
+        self.length_counter.set_enabled(enabled);
     }
 
     /// Get whether length counter is enabled (from $4015)
     pub fn is_length_counter_enabled(&self) -> bool {
-        self.length_counter_enabled
+        self.length_counter.is_enabled()
     }
 }
 
@@ -213,7 +204,7 @@ mod tests {
         assert_eq!(triangle.timer_counter, 0);
         assert_eq!(triangle.sequence_position, 0);
         assert_eq!(triangle.linear_counter, 0);
-        assert_eq!(triangle.length_counter, 0);
+        assert_eq!(triangle.get_length_counter(), 0);
     }
 
     #[test]
@@ -223,7 +214,8 @@ mod tests {
 
         // Set counters to non-zero to enable output
         triangle.linear_counter = 1;
-        triangle.length_counter = 1;
+        triangle.set_length_counter_enabled(true);
+        triangle.load_length_counter(0); // 10
 
         // The triangle wave should produce values 0-15 ascending, then 15-0 descending
         // Creating a 32-step sequence: 15,14,13,...,1,0,0,1,2,...,14,15
@@ -449,7 +441,7 @@ mod tests {
         // Triangle should be muted when length counter is 0
         triangle.set_linear_counter_reload(10);
         triangle.trigger_linear_counter_reload();
-        triangle.length_counter = 0;
+        triangle.clear_length_counter();
         assert_eq!(triangle.output(), 0); // Muted
 
         // Triangle should output when both counters are non-zero
@@ -467,18 +459,18 @@ mod tests {
         triangle.load_length_counter(5);
         assert_eq!(triangle.get_length_counter(), 4);
 
-        // Disabling should NOT clear the length counter
+        // Disabling via $4015 clears the length counter
         triangle.set_length_counter_enabled(false);
-        assert_eq!(triangle.get_length_counter(), 4);
+        assert_eq!(triangle.get_length_counter(), 0);
 
         // Load again while disabled - should NOT load (NES hardware behavior)
         // Length counter can only be loaded when channel is enabled via $4015
         triangle.load_length_counter(10);
-        assert_eq!(triangle.get_length_counter(), 4); // Stays at 4, not loaded
+        assert_eq!(triangle.get_length_counter(), 0); // Cleared when disabled
 
         // Enabling should not affect the counter (stays at 4)
         triangle.set_length_counter_enabled(true);
-        assert_eq!(triangle.get_length_counter(), 4);
+        assert_eq!(triangle.get_length_counter(), 0);
 
         // Now that it's enabled, we can load a value
         triangle.load_length_counter(11);

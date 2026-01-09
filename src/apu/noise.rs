@@ -8,16 +8,13 @@
 /// - Envelope generator for volume control
 /// - Length counter
 
+use super::length_counter::LengthCounter;
+
 // Period lookup table for NTSC (in CPU cycles)
 const NOISE_PERIOD_TABLE: [u16; 16] = [
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 ];
 
-// Length counter lookup table (shared with pulse channels)
-const LENGTH_COUNTER_TABLE: [u8; 32] = [
-    10, 254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22,
-    192, 24, 72, 26, 16, 28, 32, 30,
-];
 
 pub struct Noise {
     // Linear Feedback Shift Register (15-bit)
@@ -39,9 +36,7 @@ pub struct Noise {
     envelope_decay_level: u8,
 
     // Length counter
-    length_counter: u8,
-    length_counter_halt: bool,
-    length_counter_enabled: bool, // Controlled by $4015
+    length_counter: LengthCounter,
 }
 
 impl Noise {
@@ -57,9 +52,7 @@ impl Noise {
             envelope_divider_period: 0,
             envelope_divider: 0,
             envelope_decay_level: 0,
-            length_counter: 0,
-            length_counter_halt: false,
-            length_counter_enabled: false, // Disabled at power-on
+            length_counter: LengthCounter::new(),
         }
     }
 
@@ -114,9 +107,7 @@ impl Noise {
 
     /// Clock the length counter
     pub fn clock_length_counter(&mut self) {
-        if !self.length_counter_halt && self.length_counter > 0 {
-            self.length_counter -= 1;
-        }
+        self.length_counter.clock();
     }
 
     /// Write to envelope register ($400C)
@@ -125,8 +116,9 @@ impl Noise {
     /// c = constant volume flag
     /// v = volume / envelope period
     pub fn write_envelope(&mut self, value: u8) {
-        self.length_counter_halt = (value >> 5) & 1 == 1;
-        self.envelope_loop = self.length_counter_halt;
+        let halt = (value >> 5) & 1 == 1;
+        self.length_counter.set_halt(halt);
+        self.envelope_loop = halt;
         self.envelope_constant_volume = (value >> 4) & 1 == 1;
         self.envelope_divider_period = value & 0x0F;
     }
@@ -145,11 +137,9 @@ impl Noise {
     /// Format: llll l---
     /// l = length counter load value (index into lookup table)
     pub fn write_length(&mut self, value: u8) {
-        // Only load length counter if channel is enabled via $4015
-        if self.length_counter_enabled {
-            let length_index = ((value >> 3) & 0x1F) as usize;
-            self.length_counter = LENGTH_COUNTER_TABLE[length_index];
-        }
+        // Only loads if enabled via $4015 (handled by LengthCounter)
+        let length_index = (value >> 3) & 0x1F;
+        self.length_counter.load_from_index(length_index);
         self.envelope_start = true;
     }
 
@@ -158,8 +148,8 @@ impl Noise {
     /// Otherwise returns envelope volume
     pub fn output(&self) -> u8 {
         // Muted if length counter is disabled/0 or shift register bit 0 is set
-        if !self.length_counter_enabled
-            || self.length_counter == 0
+        if !self.length_counter.is_enabled()
+            || self.length_counter.value() == 0
             || (self.shift_register & 1) == 1
         {
             return 0;
@@ -178,22 +168,22 @@ impl Noise {
     /// Set length counter enabled/disabled (from $4015)
     /// When disabled, the channel is silenced but the length counter value is preserved
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
-        self.length_counter_enabled = enabled;
+        self.length_counter.set_enabled(enabled);
     }
 
     /// Get whether length counter is enabled (from $4015)
     pub fn is_length_counter_enabled(&self) -> bool {
-        self.length_counter_enabled
+        self.length_counter.is_enabled()
     }
 
     /// Get the current length counter value
     pub fn get_length_counter(&self) -> u8 {
-        self.length_counter
+        self.length_counter.value()
     }
 
     /// Clear the length counter to 0
     pub fn clear_length_counter(&mut self) {
-        self.length_counter = 0;
+        self.length_counter.clear();
     }
 }
 
@@ -291,24 +281,26 @@ mod tests {
     #[test]
     fn test_length_counter_clocking() {
         let mut noise = Noise::new();
-        noise.length_counter = 10;
-        noise.length_counter_halt = false;
+        noise.set_length_counter_enabled(true);
+        noise.length_counter.load_from_index(0); // 10
+        noise.length_counter.set_halt(false);
 
         noise.clock_length_counter();
-        assert_eq!(noise.length_counter, 9);
+        assert_eq!(noise.get_length_counter(), 9);
 
         noise.clock_length_counter();
-        assert_eq!(noise.length_counter, 8);
+        assert_eq!(noise.get_length_counter(), 8);
     }
 
     #[test]
     fn test_length_counter_halt() {
         let mut noise = Noise::new();
-        noise.length_counter = 5;
-        noise.length_counter_halt = true;
+        noise.set_length_counter_enabled(true);
+        noise.length_counter.load_from_index(0); // 10
+        noise.length_counter.set_halt(true);
 
         noise.clock_length_counter();
-        assert_eq!(noise.length_counter, 5); // Should not decrement when halted
+        assert_eq!(noise.get_length_counter(), 10); // Should not decrement when halted
     }
 
     #[test]
@@ -321,7 +313,7 @@ mod tests {
         // v = volume/envelope divider period
         noise.write_envelope(0b0001_0101); // halt=0, constant=1, volume=5
 
-        assert_eq!(noise.length_counter_halt, false);
+        assert_eq!(noise.length_counter.is_halted(), false);
         assert_eq!(noise.envelope_loop, false);
         assert_eq!(noise.envelope_constant_volume, true);
         assert_eq!(noise.envelope_divider_period, 5);
@@ -349,14 +341,14 @@ mod tests {
         noise.set_length_counter_enabled(true);
         noise.write_length(0b10110_000); // load index 22
 
-        assert_eq!(noise.length_counter, LENGTH_COUNTER_TABLE[22]);
+        assert_eq!(noise.get_length_counter(), LengthCounter::lookup(22));
         assert_eq!(noise.envelope_start, true); // Should trigger envelope restart
     }
 
     #[test]
     fn test_output_muted_when_length_zero() {
         let mut noise = Noise::new();
-        noise.length_counter = 0;
+        noise.length_counter.clear();
         noise.envelope_decay_level = 10;
 
         assert_eq!(noise.output(), 0);
@@ -365,7 +357,8 @@ mod tests {
     #[test]
     fn test_output_muted_when_shift_register_bit_0_set() {
         let mut noise = Noise::new();
-        noise.length_counter = 5;
+        noise.set_length_counter_enabled(true);
+        noise.length_counter.load_from_index(0); // 10
         noise.envelope_decay_level = 10;
         noise.envelope_constant_volume = false;
         noise.shift_register = 0b0000_0000_0000_0001; // bit 0 set
@@ -377,7 +370,7 @@ mod tests {
     fn test_output_uses_envelope_volume() {
         let mut noise = Noise::new();
         noise.set_length_counter_enabled(true); // Must be enabled for output
-        noise.length_counter = 5;
+        noise.length_counter.load_from_index(0); // 10
         noise.envelope_decay_level = 7;
         noise.envelope_constant_volume = false;
         noise.shift_register = 0b0000_0000_0000_0010; // bit 0 clear
@@ -389,7 +382,7 @@ mod tests {
     fn test_output_uses_constant_volume() {
         let mut noise = Noise::new();
         noise.set_length_counter_enabled(true); // Must be enabled for output
-        noise.length_counter = 5;
+        noise.length_counter.load_from_index(0); // 10
         noise.envelope_divider_period = 12;
         noise.envelope_constant_volume = true;
         noise.shift_register = 0b0000_0000_0000_0010; // bit 0 clear
@@ -400,14 +393,15 @@ mod tests {
     #[test]
     fn test_set_length_counter_enabled() {
         let mut noise = Noise::new();
-        noise.length_counter = 10;
-
-        // Disabling should NOT clear length counter
-        noise.set_length_counter_enabled(false);
-        assert_eq!(noise.length_counter, 10);
-
-        noise.length_counter = 15;
         noise.set_length_counter_enabled(true);
-        assert_eq!(noise.length_counter, 15); // Should not change when enabling
+        noise.length_counter.load_from_index(0);
+        assert_eq!(noise.get_length_counter(), 10);
+
+        // Disabling via $4015 clears length counter
+        noise.set_length_counter_enabled(false);
+        assert_eq!(noise.get_length_counter(), 0);
+
+        noise.set_length_counter_enabled(true);
+        assert_eq!(noise.get_length_counter(), 0);
     }
 }
