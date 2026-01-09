@@ -5,9 +5,9 @@ use sdl2::render::Canvas;
 use sdl2::video::Window;
 
 use crate::audio::NesAudio;
-use crate::tracing::Tracing;
 use crate::input::Button;
 use crate::nes::TvSystem;
+use crate::tracing::Tracing;
 
 /// EventLoop manages the SDL2 event loop for the application.
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
