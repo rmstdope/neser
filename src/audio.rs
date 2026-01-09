@@ -5,6 +5,7 @@
 use sdl2::audio::{AudioCallback, AudioDevice, AudioSpecDesired};
 use std::sync::{
     Arc,
+    atomic::AtomicU64,
     atomic::{AtomicU32, Ordering},
     mpsc::{Receiver, SyncSender, sync_channel},
 };
@@ -14,6 +15,14 @@ pub struct NesAudio {
     device: AudioDevice<AudioCallbackImpl>,
     sample_sender: SyncSender<f32>,
     volume: Arc<AtomicU32>,
+    stats: Arc<AudioStats>,
+}
+
+#[derive(Default)]
+struct AudioStats {
+    received_samples: AtomicU64,
+    dropped_samples: AtomicU64,
+    underrun_samples: AtomicU64,
 }
 
 impl NesAudio {
@@ -49,30 +58,52 @@ impl NesAudio {
         let volume = Arc::new(AtomicU32::new(f32::to_bits(0.25)));
         let volume_clone = Arc::clone(&volume);
 
+        let stats = Arc::new(AudioStats::default());
+        let stats_clone = Arc::clone(&stats);
+
         let device =
             audio_subsystem.open_playback(None, &desired_spec, |_spec| AudioCallbackImpl {
                 sample_receiver: receiver,
                 volume: volume_clone,
+                stats: stats_clone,
             })?;
+
+        let actual_rate = device.spec().freq;
+        if actual_rate != sample_rate {
+            eprintln!(
+                "Audio: requested {} Hz, got {} Hz from SDL device",
+                sample_rate, actual_rate
+            );
+        }
 
         Ok(Self {
             device,
             sample_sender: sender,
             volume,
+            stats,
         })
     }
 
     /// Send an audio sample to the audio output
     ///
     /// Sends a sample to the audio callback for playback.
-    /// If the buffer is full, the sample will be dropped to prevent blocking.
+    /// If the buffer is full, this will block until the audio callback consumes samples.
     ///
     /// # Arguments
     /// * `sample` - Audio sample in range 0.0 to 1.0
     pub fn queue_sample(&mut self, sample: f32) {
-        // Send sample to audio callback using try_send to avoid blocking
-        // If the buffer is full, drop the sample to prevent emulation slowdown
-        let _ = self.sample_sender.try_send(sample);
+        queue_sample_to_sender(&self.sample_sender, sample, &self.stats);
+    }
+
+    /// Returns and resets audio stats counters.
+    ///
+    /// Useful for debugging pops/clicks: underruns correspond to the audio callback
+    /// outputting silence because it had no queued samples available.
+    pub fn take_and_reset_stats(&self) -> (u64, u64, u64) {
+        let received = self.stats.received_samples.swap(0, Ordering::Relaxed);
+        let dropped = self.stats.dropped_samples.swap(0, Ordering::Relaxed);
+        let underrun = self.stats.underrun_samples.swap(0, Ordering::Relaxed);
+        (received, dropped, underrun)
     }
 
     /// Start audio playback
@@ -103,10 +134,20 @@ impl NesAudio {
     }
 }
 
+fn queue_sample_to_sender(sender: &SyncSender<f32>, sample: f32, stats: &AudioStats) {
+    // Blocking send provides backpressure instead of dropping samples.
+    // Dropped samples create discontinuities that can manifest as audible clicks.
+    if sender.send(sample).is_err() {
+        // Receiver was dropped; not expected during normal execution.
+        stats.dropped_samples.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// SDL2 audio callback implementation
 struct AudioCallbackImpl {
     sample_receiver: Receiver<f32>,
     volume: Arc<AtomicU32>,
+    stats: Arc<AudioStats>,
 }
 
 impl AudioCallback for AudioCallbackImpl {
@@ -121,6 +162,7 @@ impl AudioCallback for AudioCallbackImpl {
             // If no sample is available, output silence (0.0 for signed audio)
             match self.sample_receiver.try_recv() {
                 Ok(raw_sample) => {
+                    self.stats.received_samples.fetch_add(1, Ordering::Relaxed);
                     // NES APU mix() outputs 0.0-1.177, where 0.0 represents silence
                     // SDL2 f32 format expects -1.0 to +1.0 where 0.0 is silence
                     // The NES output needs to be scaled to use the full SDL2 range
@@ -135,6 +177,7 @@ impl AudioCallback for AudioCallbackImpl {
                     *sample = final_sample.clamp(-1.0, 1.0);
                 }
                 Err(_) => {
+                    self.stats.underrun_samples.fetch_add(1, Ordering::Relaxed);
                     // Buffer underrun - output silence
                     *sample = 0.0;
                 }
@@ -148,6 +191,8 @@ mod tests {
     use super::*;
     use serial_test::serial;
     use std::env;
+    use std::sync::{Arc, Barrier};
+    use std::time::Duration;
 
     #[test]
     #[serial]
@@ -212,5 +257,68 @@ mod tests {
         audio.queue_sample(0.8);
 
         drop(restore);
+    }
+
+    #[test]
+    fn test_queue_sample_does_not_drop_when_buffer_full() {
+        // Desired behavior: when the bounded audio buffer is full, do NOT drop samples.
+        // Dropping samples introduces discontinuities that can manifest as clicks.
+        //
+        // Current implementation drops, so this test is expected to FAIL until fixed.
+
+        let stats = Arc::new(AudioStats::default());
+        let (sender, receiver) = sync_channel::<f32>(1);
+
+        // Fill the buffer.
+        queue_sample_to_sender(&sender, 0.1, &stats);
+
+        let barrier = Arc::new(Barrier::new(2));
+        let barrier_consumer = Arc::clone(&barrier);
+        let (result_tx, result_rx) = std::sync::mpsc::channel::<(f32, f32)>();
+        let (producer_ready_tx, producer_ready_rx) = std::sync::mpsc::channel::<()>();
+
+        let consumer = std::thread::spawn(move || {
+            // Ensure producer attempts to enqueue while the queue is full.
+            barrier_consumer.wait();
+
+            let first = receiver
+                .recv_timeout(Duration::from_millis(200))
+                .expect("expected first sample");
+            let second = receiver
+                .recv_timeout(Duration::from_millis(200))
+                .expect("expected second sample (must not be dropped)");
+
+            result_tx
+                .send((first, second))
+                .expect("failed to send samples to main thread");
+        });
+
+        let stats_producer = Arc::clone(&stats);
+        let producer = std::thread::spawn(move || {
+            // Signal that we're about to attempt enqueue while the queue is full.
+            producer_ready_tx
+                .send(())
+                .expect("failed to signal producer readiness");
+            queue_sample_to_sender(&sender, 0.2, &stats_producer);
+        });
+
+        // Ensure the producer has started the enqueue attempt before letting the consumer drain.
+        producer_ready_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("producer did not become ready");
+
+        barrier.wait();
+
+        producer.join().expect("producer thread panicked");
+        consumer.join().expect("consumer thread panicked");
+
+        let (first, second) = result_rx
+            .recv_timeout(Duration::from_millis(200))
+            .expect("expected samples from consumer");
+        assert_eq!(first, 0.1);
+        assert_eq!(second, 0.2);
+
+        let dropped = stats.dropped_samples.load(Ordering::Relaxed);
+        assert_eq!(dropped, 0, "no samples should be dropped");
     }
 }

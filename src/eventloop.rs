@@ -8,6 +8,7 @@ use crate::audio::NesAudio;
 use crate::input::Button;
 use crate::nes::TvSystem;
 use crate::tracing::Tracing;
+use std::time::{Duration, Instant};
 
 /// EventLoop manages the SDL2 event loop for the application.
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
@@ -258,6 +259,8 @@ impl EventLoop {
     ///
     /// Currently returns Ok(()) in all cases, but the Result type is kept for future error handling.
     pub fn run(&mut self, nes: &mut crate::nes::Nes, tracing: Tracing) -> Result<(), String> {
+        let mut last_audio_stats_print = Instant::now();
+
         // Start audio playback if audio is enabled
         if let Some(ref audio) = self.audio {
             audio.resume();
@@ -339,6 +342,19 @@ impl EventLoop {
                         }
                     }
                 }
+
+                if let Some(ref audio) = self.audio {
+                    if last_audio_stats_print.elapsed() >= Duration::from_secs(1) {
+                        let (received, dropped, underrun) = audio.take_and_reset_stats();
+                        if dropped != 0 || underrun != 0 {
+                            eprintln!(
+                                "Audio stats (last 1s): received={}, dropped={}, underrun={}",
+                                received, dropped, underrun
+                            );
+                        }
+                        last_audio_stats_print = Instant::now();
+                    }
+                }
                 nes.clear_ready_to_render();
                 // println!(
                 //     "Frame emulated. Scanline: {}, Pixel: {}",
@@ -411,6 +427,17 @@ impl EventLoop {
                         if let Some(sample) = nes.get_sample() {
                             audio.queue_sample(sample);
                         }
+                    }
+
+                    if last_audio_stats_print.elapsed() >= Duration::from_secs(1) {
+                        let (received, dropped, underrun) = audio.take_and_reset_stats();
+                        if dropped != 0 || underrun != 0 {
+                            eprintln!(
+                                "Audio stats (last 1s): received={}, dropped={}, underrun={}",
+                                received, dropped, underrun
+                            );
+                        }
+                        last_audio_stats_print = Instant::now();
                     }
                 }
             }
