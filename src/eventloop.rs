@@ -296,7 +296,7 @@ impl EventLoop {
                 .map_err(|e| e.to_string())?;
 
             let timer = self._sdl_context.timer()?;
-            let mut last_frame_time = timer.performance_counter();
+            let last_frame_time = timer.performance_counter();
             let performance_frequency = timer.performance_frequency() as f64;
 
             loop {

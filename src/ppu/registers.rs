@@ -274,6 +274,7 @@ impl Registers {
     }
 
     /// Get temporary VRAM address
+    #[cfg(test)]
     pub fn t(&self) -> u16 {
         self.t
     }
@@ -284,6 +285,7 @@ impl Registers {
     }
 
     /// Get write toggle
+    #[cfg(test)]
     pub fn w(&self) -> bool {
         self.w
     }

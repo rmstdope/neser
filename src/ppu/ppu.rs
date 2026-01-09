@@ -744,6 +744,7 @@ impl Ppu {
     }
 
     /// Check if in VBlank period
+    #[cfg(test)]
     pub fn is_in_vblank(&self) -> bool {
         self.status.is_in_vblank()
     }
