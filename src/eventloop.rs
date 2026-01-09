@@ -22,6 +22,12 @@ pub struct EventLoop {
     audio: Option<NesAudio>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyDownOutcome {
+    Continue,
+    Quit,
+}
+
 impl EventLoop {
     const MIN_SCALE: f32 = 1.0;
     const MAX_SCALE: f32 = 5.0;
@@ -303,29 +309,16 @@ impl EventLoop {
                 // 1. Poll ALL events (non-blocking)
                 for event in self.event_pump.poll_iter() {
                     match event {
-                        Event::Quit { .. }
-                        | Event::KeyDown {
-                            keycode: Some(Keycode::Escape),
-                            ..
-                        } => return Ok(()),
-                        Event::KeyDown {
-                            keycode: Some(Keycode::Space),
-                            ..
-                        } => {
-                            self.paused = !self.paused;
-                        }
-                        Event::KeyDown {
-                            keycode: Some(Keycode::F1),
-                            ..
-                        } => {
-                            println!("Resetting NES...");
-                            nes.reset(true);
-                        }
+                        Event::Quit { .. } => return Ok(()),
                         Event::KeyDown {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            Self::handle_key_down(nes, keycode, self.audio.as_ref());
+                            if Self::handle_key_down(nes, keycode, self.audio.as_ref(), &mut self.paused)
+                                == KeyDownOutcome::Quit
+                            {
+                                return Ok(());
+                            }
                         }
                         Event::KeyUp {
                             keycode: Some(keycode),
@@ -419,23 +412,16 @@ impl EventLoop {
             loop {
                 for event in self.event_pump.poll_iter() {
                     match event {
-                        Event::Quit { .. }
-                        | Event::KeyDown {
-                            keycode: Some(Keycode::Escape),
-                            ..
-                        } => return Ok(()),
-                        Event::KeyDown {
-                            keycode: Some(Keycode::F1),
-                            ..
-                        } => {
-                            println!("Resetting NES...");
-                            nes.reset(true);
-                        }
+                        Event::Quit { .. } => return Ok(()),
                         Event::KeyDown {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            Self::handle_key_down(nes, keycode, self.audio.as_ref());
+                            if Self::handle_key_down(nes, keycode, self.audio.as_ref(), &mut self.paused)
+                                == KeyDownOutcome::Quit
+                            {
+                                return Ok(());
+                            }
                         }
                         Event::KeyUp {
                             keycode: Some(keycode),
@@ -489,8 +475,27 @@ impl EventLoop {
     /// - X: A button
     /// - A: Select button
     /// - S: Start button
-    fn handle_key_down(nes: &mut crate::nes::Nes, keycode: Keycode, audio: Option<&NesAudio>) {
+    ///
+    /// Emulator controls:
+    /// - Escape: Quit
+    /// - Space: Toggle pause
+    /// - F1: Reset
+    /// - F2/F3: Volume up/down (when audio is enabled)
+    fn handle_key_down(
+        nes: &mut crate::nes::Nes,
+        keycode: Keycode,
+        audio: Option<&NesAudio>,
+        paused: &mut bool,
+    ) -> KeyDownOutcome {
         match keycode {
+            Keycode::Escape => return KeyDownOutcome::Quit,
+            Keycode::Space => {
+                *paused = !*paused;
+            }
+            Keycode::F1 => {
+                println!("Resetting NES...");
+                nes.reset(true);
+            }
             Keycode::F2 => {
                 if let Some(audio) = audio {
                     apply_volume_hotkey(audio, Keycode::F2);
@@ -511,6 +516,8 @@ impl EventLoop {
             Keycode::S => nes.set_button(1, Button::Start, true),
             _ => {}
         }
+
+        KeyDownOutcome::Continue
     }
 
     /// Handle keyboard key release events
@@ -643,14 +650,49 @@ mod tests {
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
         let audio = NesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
         let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = false;
 
         let before = audio.get_volume();
-        EventLoop::handle_key_down(&mut nes, Keycode::F2, Some(&audio));
+        EventLoop::handle_key_down(&mut nes, Keycode::F2, Some(&audio), &mut paused);
         assert!((audio.get_volume() - (before + 0.1)).abs() < 1e-6);
-        EventLoop::handle_key_down(&mut nes, Keycode::F3, Some(&audio));
+        EventLoop::handle_key_down(&mut nes, Keycode::F3, Some(&audio), &mut paused);
         assert!((audio.get_volume() - before).abs() < 1e-6);
 
         drop(restore);
+    }
+
+    #[test]
+    fn test_handle_key_down_escape_requests_quit() {
+        // Desired behavior: key handling for Escape is centralized in handle_key_down,
+        // and it indicates that the event loop should exit.
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = false;
+
+        let outcome = EventLoop::handle_key_down(&mut nes, Keycode::Escape, None, &mut paused);
+        assert_eq!(outcome, KeyDownOutcome::Quit);
+    }
+
+    #[test]
+    fn test_handle_key_down_space_toggles_pause() {
+        // Desired behavior: Space toggles pause state via centralized handle_key_down.
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = false;
+
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::Space, None, &mut paused);
+        assert!(paused);
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::Space, None, &mut paused);
+        assert!(!paused);
+    }
+
+    #[test]
+    fn test_handle_key_down_f1_resets_nes() {
+        // Desired behavior: F1 triggers a reset through centralized handle_key_down.
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = false;
+
+        nes.cpu.pc = 0x1234;
+        let _ = EventLoop::handle_key_down(&mut nes, Keycode::F1, None, &mut paused);
+        assert_ne!(nes.cpu.pc, 0x1234);
     }
 
     #[test]
