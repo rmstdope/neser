@@ -110,24 +110,7 @@ impl ScreenBuffer {
     /// # Arguments
     ///
     /// * `dest` - Destination buffer slice to copy to. Must be at least as large as the source buffer.
-    pub fn copy_buffer(&mut self, dest: &mut [u8]) {
-        // Set pixels at y=10, x=[0..7] to red for testing
-        for y in 148..150 {
-            for x in 0..8 {
-                if x % 2 == 1 {
-                    self.set_pixel(x, y, 255, 0, 0);
-                } else {
-                    self.set_pixel(x, y, 0, 255, 0);
-                }
-            }
-            for x in 8..14 {
-                if x % 2 == 1 {
-                    self.set_pixel(x, y, 0, 0, 255);
-                } else {
-                    self.set_pixel(x, y, 0, 255, 255);
-                }
-            }
-        }
+    pub fn copy_buffer(&self, dest: &mut [u8]) {
         dest[..self.buffer.len()].copy_from_slice(&self.buffer);
     }
 }
@@ -234,5 +217,21 @@ mod tests {
         assert_eq!(dest_buffer[offset_255_239], 128);
         assert_eq!(dest_buffer[offset_255_239 + 1], 64);
         assert_eq!(dest_buffer[offset_255_239 + 2], 32);
+    }
+
+    #[test]
+    fn test_copy_buffer_does_not_modify_source() {
+        let mut source = ScreenBuffer::new();
+
+        // Pick a pixel in the region that should be copied verbatim.
+        // This test also guards against accidental debug drawing inside `copy_buffer()`.
+        source.set_pixel(0, 148, 1, 2, 3);
+        let before = source.get_pixel(0, 148);
+
+        let mut dest_buffer = vec![0u8; 256 * 240 * 3];
+        source.copy_buffer(&mut dest_buffer);
+
+        let after = source.get_pixel(0, 148);
+        assert_eq!(after, before, "copy_buffer must not mutate the source buffer");
     }
 }

@@ -549,7 +549,6 @@ impl Apu {
     ///
     /// # Arguments
     /// * `sample_rate` - Target sample rate in Hz (e.g., 44100.0, 48000.0)
-    #[cfg(test)]
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.cycles_per_sample = CPU_CLOCK_NTSC / sample_rate;
         self.sample_accumulator = 0.0;

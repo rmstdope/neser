@@ -260,6 +260,8 @@ impl EventLoop {
     /// Currently returns Ok(()) in all cases, but the Result type is kept for future error handling.
     pub fn run(&mut self, nes: &mut crate::nes::Nes, tracing: Tracing) -> Result<(), String> {
         let mut last_audio_stats_print = Instant::now();
+        let mut last_cpu_cycles = nes.cpu.get_total_cycles();
+        let mut last_perf_instant = Instant::now();
 
         // Start audio playback if audio is enabled
         if let Some(ref audio) = self.audio {
@@ -346,12 +348,21 @@ impl EventLoop {
                 if let Some(ref audio) = self.audio {
                     if last_audio_stats_print.elapsed() >= Duration::from_secs(1) {
                         let (received, dropped, underrun) = audio.take_and_reset_stats();
+                        let now_cycles = nes.cpu.get_total_cycles();
+                        let elapsed = last_perf_instant.elapsed().as_secs_f64();
+                        let cycles_per_sec = if elapsed > 0.0 {
+                            (now_cycles - last_cpu_cycles) as f64 / elapsed
+                        } else {
+                            0.0
+                        };
                         if dropped != 0 || underrun != 0 {
                             eprintln!(
-                                "Audio stats (last 1s): received={}, dropped={}, underrun={}",
-                                received, dropped, underrun
+                                "Audio stats (last ~1s): received={}, dropped={}, underrun={}, cpu_cycles_per_sec≈{:.0}",
+                                received, dropped, underrun, cycles_per_sec
                             );
                         }
+                        last_cpu_cycles = now_cycles;
+                        last_perf_instant = Instant::now();
                         last_audio_stats_print = Instant::now();
                     }
                 }
@@ -431,12 +442,21 @@ impl EventLoop {
 
                     if last_audio_stats_print.elapsed() >= Duration::from_secs(1) {
                         let (received, dropped, underrun) = audio.take_and_reset_stats();
+                        let now_cycles = nes.cpu.get_total_cycles();
+                        let elapsed = last_perf_instant.elapsed().as_secs_f64();
+                        let cycles_per_sec = if elapsed > 0.0 {
+                            (now_cycles - last_cpu_cycles) as f64 / elapsed
+                        } else {
+                            0.0
+                        };
                         if dropped != 0 || underrun != 0 {
                             eprintln!(
-                                "Audio stats (last 1s): received={}, dropped={}, underrun={}",
-                                received, dropped, underrun
+                                "Audio stats (last ~1s): received={}, dropped={}, underrun={}, cpu_cycles_per_sec≈{:.0}",
+                                received, dropped, underrun, cycles_per_sec
                             );
                         }
+                        last_cpu_cycles = now_cycles;
+                        last_perf_instant = Instant::now();
                         last_audio_stats_print = Instant::now();
                     }
                 }

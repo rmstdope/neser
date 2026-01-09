@@ -16,6 +16,7 @@ pub struct NesAudio {
     sample_sender: SyncSender<f32>,
     volume: Arc<AtomicU32>,
     stats: Arc<AudioStats>,
+    actual_sample_rate: i32,
 }
 
 #[derive(Default)]
@@ -81,7 +82,13 @@ impl NesAudio {
             sample_sender: sender,
             volume,
             stats,
+            actual_sample_rate: actual_rate,
         })
+    }
+
+    /// Returns the actual sample rate of the opened SDL audio device.
+    pub fn actual_sample_rate(&self) -> i32 {
+        self.actual_sample_rate
     }
 
     /// Send an audio sample to the audio output

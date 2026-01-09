@@ -54,16 +54,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize SDL2
     let sdl_context = sdl2::init()?;
+    let mut nes_instance = nes::Nes::new(tv_system);
 
-    // Create audio output (44.1 kHz) unless disabled
+    // Create audio output (request 44.1 kHz) unless disabled.
+    // SDL may open the device at a different rate; always sync the APU to the actual rate
+    // to avoid steady underruns.
     let audio = if no_audio {
         None
     } else {
-        Some(audio::NesAudio::new(&sdl_context, 44100)?)
+        let audio = audio::NesAudio::new(&sdl_context, 44100)?;
+        let actual_rate = audio.actual_sample_rate() as f32;
+        nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
+        Some(audio)
     };
 
     let mut event_loop = eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, audio)?;
-    let mut nes_instance = nes::Nes::new(tv_system);
 
     // Palette display requiring only scanline-based palette changes,
     // intended to demonstrate the full palette even on less advanced emulators
