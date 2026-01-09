@@ -181,7 +181,6 @@ impl Nes {
     /// Get a reference to the PPU's screen buffer
     ///
     /// Returns a mutable reference to the 256x240 RGB buffer containing the current frame.
-    #[cfg(test)]
     pub fn get_screen_buffer(&self) -> std::cell::RefMut<'_, crate::screen_buffer::ScreenBuffer> {
         std::cell::RefMut::map(self.ppu.borrow_mut(), |ppu| ppu.screen_buffer_mut())
     }

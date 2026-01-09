@@ -7,14 +7,13 @@
 /// - Timer with period lookup table
 /// - Envelope generator for volume control
 /// - Length counter
-
+use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
 
 // Period lookup table for NTSC (in CPU cycles)
 const NOISE_PERIOD_TABLE: [u16; 16] = [
     4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
 ];
-
 
 pub struct Noise {
     // Linear Feedback Shift Register (15-bit)
@@ -28,12 +27,7 @@ pub struct Noise {
     timer_period: u16,
 
     // Envelope
-    envelope_start: bool,
-    envelope_loop: bool,
-    envelope_constant_volume: bool,
-    envelope_divider_period: u8,
-    envelope_divider: u8,
-    envelope_decay_level: u8,
+    envelope: Envelope,
 
     // Length counter
     length_counter: LengthCounter,
@@ -46,12 +40,7 @@ impl Noise {
             mode: false,
             timer: 0,
             timer_period: NOISE_PERIOD_TABLE[0],
-            envelope_start: false,
-            envelope_loop: false,
-            envelope_constant_volume: false,
-            envelope_divider_period: 0,
-            envelope_divider: 0,
-            envelope_decay_level: 0,
+            envelope: Envelope::new(),
             length_counter: LengthCounter::new(),
         }
     }
@@ -86,23 +75,7 @@ impl Noise {
 
     /// Clock the envelope generator
     pub fn clock_envelope(&mut self) {
-        if self.envelope_start {
-            self.envelope_start = false;
-            self.envelope_decay_level = 15;
-            self.envelope_divider = self.envelope_divider_period;
-        } else {
-            if self.envelope_divider > 0 {
-                self.envelope_divider -= 1;
-            } else {
-                self.envelope_divider = self.envelope_divider_period;
-
-                if self.envelope_decay_level > 0 {
-                    self.envelope_decay_level -= 1;
-                } else if self.envelope_loop {
-                    self.envelope_decay_level = 15;
-                }
-            }
-        }
+        self.envelope.clock();
     }
 
     /// Clock the length counter
@@ -118,9 +91,7 @@ impl Noise {
     pub fn write_envelope(&mut self, value: u8) {
         let halt = (value >> 5) & 1 == 1;
         self.length_counter.set_halt(halt);
-        self.envelope_loop = halt;
-        self.envelope_constant_volume = (value >> 4) & 1 == 1;
-        self.envelope_divider_period = value & 0x0F;
+        self.envelope.write_control(value);
     }
 
     /// Write to period register ($400E)
@@ -140,7 +111,7 @@ impl Noise {
         // Only loads if enabled via $4015 (handled by LengthCounter)
         let length_index = (value >> 3) & 0x1F;
         self.length_counter.load_from_index(length_index);
-        self.envelope_start = true;
+        self.envelope.restart();
     }
 
     /// Get the current output sample (0-15)
@@ -155,18 +126,11 @@ impl Noise {
             return 0;
         }
 
-        // Return constant volume or envelope decay level
-        if self.envelope_constant_volume {
-            self.envelope_divider_period
-        } else {
-            self.envelope_decay_level
-        }
+        self.envelope.volume()
     }
 
-    /// Enable or disable the length counter (controlled by APU status register)
-    /// When disabled, the length counter is immediately cleared
     /// Set length counter enabled/disabled (from $4015)
-    /// When disabled, the channel is silenced but the length counter value is preserved
+    /// When disabled, the length counter is immediately cleared
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         self.length_counter.set_enabled(enabled);
     }
@@ -257,25 +221,28 @@ mod tests {
     #[test]
     fn test_envelope_decay_mode() {
         let mut noise = Noise::new();
-        noise.envelope_constant_volume = false;
-        noise.envelope_divider_period = 2;
-        noise.envelope_decay_level = 15;
-        noise.envelope_divider = 2;
+        noise.envelope.write_control(0b0000_0010); // loop=0, disable=0, n=2
+        noise.envelope.restart();
+
+        // Restart should be applied on first clock.
+        noise.clock_envelope();
+        assert_eq!(noise.envelope.debug_counter(), 15);
+        assert_eq!(noise.envelope.debug_divider(), 2);
 
         // Clock envelope - divider should decrement
         noise.clock_envelope();
-        assert_eq!(noise.envelope_decay_level, 15); // No change yet
-        assert_eq!(noise.envelope_divider, 1);
+        assert_eq!(noise.envelope.debug_counter(), 15); // No change yet
+        assert_eq!(noise.envelope.debug_divider(), 1);
 
         // Clock again - divider decrements to 0, then reloads and decay decrements
         noise.clock_envelope();
-        assert_eq!(noise.envelope_decay_level, 15); // Still no change
-        assert_eq!(noise.envelope_divider, 0);
+        assert_eq!(noise.envelope.debug_counter(), 15); // Still no change
+        assert_eq!(noise.envelope.debug_divider(), 0);
 
         // Clock third time - divider at 0, reload and decrement decay
         noise.clock_envelope();
-        assert_eq!(noise.envelope_decay_level, 14);
-        assert_eq!(noise.envelope_divider, 2); // Divider reloaded
+        assert_eq!(noise.envelope.debug_counter(), 14);
+        assert_eq!(noise.envelope.debug_divider(), 2); // Divider reloaded
     }
 
     #[test]
@@ -314,9 +281,9 @@ mod tests {
         noise.write_envelope(0b0001_0101); // halt=0, constant=1, volume=5
 
         assert_eq!(noise.length_counter.is_halted(), false);
-        assert_eq!(noise.envelope_loop, false);
-        assert_eq!(noise.envelope_constant_volume, true);
-        assert_eq!(noise.envelope_divider_period, 5);
+        assert_eq!(noise.envelope.debug_loop_flag(), false);
+        assert_eq!(noise.envelope.debug_disable_flag(), true);
+        assert_eq!(noise.envelope.debug_n(), 5);
     }
 
     #[test]
@@ -342,14 +309,14 @@ mod tests {
         noise.write_length(0b10110_000); // load index 22
 
         assert_eq!(noise.get_length_counter(), LengthCounter::lookup(22));
-        assert_eq!(noise.envelope_start, true); // Should trigger envelope restart
+        assert_eq!(noise.envelope.debug_start_flag(), true); // Should trigger envelope restart
     }
 
     #[test]
     fn test_output_muted_when_length_zero() {
         let mut noise = Noise::new();
         noise.length_counter.clear();
-        noise.envelope_decay_level = 10;
+        noise.write_envelope(0b0001_1010); // constant volume 10
 
         assert_eq!(noise.output(), 0);
     }
@@ -359,8 +326,7 @@ mod tests {
         let mut noise = Noise::new();
         noise.set_length_counter_enabled(true);
         noise.length_counter.load_from_index(0); // 10
-        noise.envelope_decay_level = 10;
-        noise.envelope_constant_volume = false;
+        noise.write_envelope(0b0001_1010); // constant volume 10
         noise.shift_register = 0b0000_0000_0000_0001; // bit 0 set
 
         assert_eq!(noise.output(), 0);
@@ -371,8 +337,16 @@ mod tests {
         let mut noise = Noise::new();
         noise.set_length_counter_enabled(true); // Must be enabled for output
         noise.length_counter.load_from_index(0); // 10
-        noise.envelope_decay_level = 7;
-        noise.envelope_constant_volume = false;
+        noise.write_envelope(0b0000_0000); // decay mode, n=0
+        // Trigger envelope restart like a real length write would.
+        noise.write_length(0b00000_000);
+        noise.clock_envelope();
+
+        // With n=0, the counter decrements every envelope clock.
+        for _ in 0..8 {
+            noise.clock_envelope();
+        }
+        assert_eq!(noise.envelope.debug_counter(), 7);
         noise.shift_register = 0b0000_0000_0000_0010; // bit 0 clear
 
         assert_eq!(noise.output(), 7);
@@ -383,8 +357,7 @@ mod tests {
         let mut noise = Noise::new();
         noise.set_length_counter_enabled(true); // Must be enabled for output
         noise.length_counter.load_from_index(0); // 10
-        noise.envelope_divider_period = 12;
-        noise.envelope_constant_volume = true;
+        noise.write_envelope(0b0001_1100); // constant volume 12
         noise.shift_register = 0b0000_0000_0000_0010; // bit 0 clear
 
         assert_eq!(noise.output(), 12);
