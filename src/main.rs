@@ -9,7 +9,6 @@ mod mem_controller;
 mod nes;
 mod ppu;
 mod screen_buffer;
-mod save_ram;
 mod tracing;
 
 struct CliFlag {
@@ -177,24 +176,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_data = std::fs::read("roms/games/donkey kong.nes")?;
-    let rom_path = "roms/games/zelda.nes";
-    let rom_data = std::fs::read(rom_path)?;
+    // let rom_path = "roms/games/zelda.nes";
 
     // Manual testing of Blargg
-    // let rom_data = std::fs::read("roms/blargg/dmc_tests/status.nes")?;
+    let rom_path = "roms/blargg/dmc_tests/buffer_retained.nes";
 
     // let rom_data = manual_test_cartridges::triangle_only_nrom_128();
     // let rom_data = manual_test_cartridges::pulse1_only_nrom_128();
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
-    let cart = cartridge::Cartridge::new(&rom_data)?;
+    let cart = cartridge::Cartridge::load_from_file(rom_path)?;
     nes_instance.insert_cartridge(cart);
-
-    let save_path = save_ram::default_save_path_for_rom(std::path::Path::new(rom_path));
-    if let Err(e) = save_ram::load_battery_backed_prg_ram(&mut nes_instance, &save_path) {
-        eprintln!("Warning: failed to load save RAM from {:?}: {}", save_path, e);
-    }
 
     nes_instance.reset(false);
 
@@ -211,8 +204,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_result = event_loop.run(&mut nes_instance, tracing);
     // Best-effort save on clean shutdown (Escape/Quit).
     if run_result.is_ok() {
-        if let Err(e) = save_ram::save_battery_backed_prg_ram(&nes_instance, &save_path) {
-            eprintln!("Warning: failed to save RAM to {:?}: {}", save_path, e);
+        if let Err(e) = nes_instance.memory.borrow().save_ram() {
+            eprintln!("Warning: failed to save RAM: {}", e);
         }
     }
 

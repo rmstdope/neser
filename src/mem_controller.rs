@@ -3,6 +3,7 @@ use crate::cartridge::Cartridge;
 use crate::input::Joypad;
 use crate::ppu;
 use std::cell::RefCell;
+use std::io;
 use std::rc::Rc;
 
 /// NES Memory (64KB address space)
@@ -53,6 +54,14 @@ impl MemController {
         ppu.set_mirroring(cartridge_rc.borrow().mapper().get_mirroring());
 
         self.cartridge = Some(cartridge_rc);
+    }
+
+    pub fn save_ram(&self) -> io::Result<()> {
+        let Some(cartridge) = self.cartridge.as_ref() else {
+            return Ok(());
+        };
+
+        cartridge.borrow().save_ram()
     }
 
     fn sync_ppu_mirroring_from_mapper(&mut self, mirroring: crate::cartridge::MirroringMode) {

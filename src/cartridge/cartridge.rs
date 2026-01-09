@@ -1,4 +1,6 @@
+use std::fs;
 use std::io;
+use std::path::{Path, PathBuf};
 
 use crate::cartridge::Mapper;
 
@@ -14,6 +16,9 @@ pub enum MirroringMode {
 pub struct Cartridge {
     /// Mapper instance that handles banking and memory access
     mapper: Box<dyn Mapper>,
+
+    save_path: Option<PathBuf>,
+    battery_backed_prg_ram: bool,
 }
 
 impl Cartridge {
@@ -32,6 +37,9 @@ impl Cartridge {
         let chr_rom_size = data[5] as usize * 8192; // 8 KB units
         let flags6 = data[6];
         let flags7 = data[7];
+
+        // Battery-backed PRG-RAM present (iNES v1): bit 1 of flags6.
+        let battery_backed_prg_ram = (flags6 & 0x02) != 0;
 
         // Parse mapper number from flags6 and flags7
         // Lower nibble: bits 4-7 of flags6
@@ -75,7 +83,78 @@ impl Cartridge {
         let mapper =
             crate::cartridge::mapper::create_mapper(mapper_number, prg_rom, chr_rom, mirroring)?;
 
-        Ok(Self { mapper })
+        Ok(Self {
+            mapper,
+            save_path: None,
+            battery_backed_prg_ram,
+        })
+    }
+
+    /// Create a new cartridge by loading an iNES ROM from disk.
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let rom_path = path.as_ref().to_path_buf();
+        let data = fs::read(&rom_path)?;
+        let mut cart = Self::new(&data)?;
+
+        cart.save_path = Some(rom_path.with_extension("sav"));
+        cart.load_save_ram_from_disk()?;
+
+        Ok(cart)
+    }
+
+    pub fn save_ram(&self) -> io::Result<()> {
+        if !self.battery_backed_prg_ram {
+            return Ok(());
+        }
+
+        let Some(save_path) = self.save_path.as_ref() else {
+            return Ok(());
+        };
+
+        if let Some(parent) = save_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let mut prg_ram = vec![0u8; 0x2000];
+        for (i, byte) in prg_ram.iter_mut().enumerate() {
+            *byte = self.mapper().read_prg(0x6000 + i as u16);
+        }
+
+        let mut tmp_path = save_path.to_path_buf();
+        tmp_path.set_extension(format!("sav.tmp.{}", std::process::id()));
+
+        fs::write(&tmp_path, prg_ram)?;
+
+        // Best-effort: on Unix this replaces atomically; on other platforms it may fail if exists.
+        // Keep the behavior simple; callers can surface the error.
+        if save_path.exists() {
+            let _ = fs::remove_file(save_path);
+        }
+        fs::rename(tmp_path, save_path)?;
+
+        Ok(())
+    }
+
+    fn load_save_ram_from_disk(&mut self) -> io::Result<()> {
+        if !self.battery_backed_prg_ram {
+            return Ok(());
+        }
+
+        let Some(save_path) = self.save_path.as_ref() else {
+            return Ok(());
+        };
+
+        if !save_path.exists() {
+            return Ok(());
+        }
+
+        let sav = fs::read(save_path)?;
+        let to_copy = sav.len().min(0x2000);
+        for (i, byte) in sav.iter().take(to_copy).enumerate() {
+            self.mapper_mut().write_prg(0x6000 + i as u16, *byte);
+        }
+
+        Ok(())
     }
 
     /// Get a reference to the mapper
@@ -93,13 +172,18 @@ impl Cartridge {
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         use crate::cartridge::nrom::NROMMapper;
         let mapper = Box::new(NROMMapper::new(prg_rom, chr_rom, mirroring));
-        Self { mapper }
+        Self {
+            mapper,
+            save_path: None,
+            battery_backed_prg_ram: false,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn create_test_rom(
         prg_rom_banks: u8,
@@ -140,6 +224,79 @@ mod tests {
         rom.extend(vec![0xBB; chr_size]);
 
         rom
+    }
+
+    fn unique_temp_path(filename: &str) -> PathBuf {
+        let mut path = std::env::temp_dir();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        path.push(format!("neser-{nonce}-{filename}"));
+        path
+    }
+
+    #[test]
+    fn test_load_from_file_parses_ines_rom() {
+        // iNES Flags 6 bit 0 set => vertical mirroring.
+        let rom_data = create_test_rom(1, 1, 0x01, false);
+        let path = unique_temp_path("test_load_from_file.nes");
+        std::fs::write(&path, &rom_data).expect("writing temp ROM should succeed");
+
+        let cart = Cartridge::load_from_file(&path).expect("load_from_file should succeed");
+        assert_eq!(cart.mapper().get_mirroring(), MirroringMode::Vertical);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_load_from_file_loads_save_ram_from_sav_with_same_basename() {
+        // Arrange a ROM on disk plus a matching .sav file.
+        // The cartridge should load PRG-RAM from <rom>.sav automatically.
+        let rom_data = create_test_rom(1, 1, 0x02, false); // flags6 bit 1 = battery-backed PRG-RAM
+        let rom_path = unique_temp_path("save_ram_load_test.nes");
+        std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
+
+        let sav_path = rom_path.with_extension("sav");
+        let mut sav = vec![0u8; 0x2000]; // 8KB PRG-RAM
+        sav[0] = 0x42;
+        sav[0x1FFF] = 0x99;
+        std::fs::write(&sav_path, &sav).expect("writing temp SAV should succeed");
+
+        // Act
+        let cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+
+        // Assert: PRG-RAM reads reflect loaded save.
+        assert_eq!(cart.mapper().read_prg(0x6000), 0x42);
+        assert_eq!(cart.mapper().read_prg(0x7FFF), 0x99);
+
+        let _ = std::fs::remove_file(&rom_path);
+        let _ = std::fs::remove_file(&sav_path);
+    }
+
+    #[test]
+    fn test_save_ram_writes_to_sav_with_same_basename() {
+        // Arrange a ROM loaded from disk; the cartridge should know where to save.
+        let rom_data = create_test_rom(1, 1, 0x02, false);
+        let rom_path = unique_temp_path("save_ram_save_test.nes");
+        std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
+
+        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+        cart.mapper_mut().write_prg(0x6000, 0xAB);
+        cart.mapper_mut().write_prg(0x7FFF, 0xCD);
+
+        // Act
+        cart.save_ram().expect("save_ram should succeed");
+
+        // Assert
+        let sav_path = rom_path.with_extension("sav");
+        let sav = std::fs::read(&sav_path).expect("SAV should be written");
+        assert_eq!(sav.len(), 0x2000);
+        assert_eq!(sav[0], 0xAB);
+        assert_eq!(sav[0x1FFF], 0xCD);
+
+        let _ = std::fs::remove_file(&rom_path);
+        let _ = std::fs::remove_file(&sav_path);
     }
 
     #[test]
