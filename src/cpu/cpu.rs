@@ -171,13 +171,22 @@ impl Cpu {
     fn service_irq_or_nmi_sequence(&mut self) {
         // Mesen-style shared interrupt sequence used after an instruction completes.
         // Two dummy reads with suppressed PC increment, then push PC, push PS, set I, vector.
-
         // PAL DMA nuances omitted for now.
+        // NMI can interrupt IRQ vectoring, but only if it becomes pending early enough.
+        // This behavior is required for blargg cpu_interrupts_v2/3-nmi_and_irq.
+        let mut nmi_hijack = self.nmi_pending;
+
         let pc = self.pc;
         self.dummy_read(pc);
+        nmi_hijack |= self.nmi_pending;
         self.dummy_read(pc);
+        nmi_hijack |= self.nmi_pending;
 
-        self.push_word(self.pc);
+        // Push PC (high then low). Sample NMI between the two stack writes.
+        self.push_byte((self.pc >> 8) as u8);
+        nmi_hijack |= self.nmi_pending;
+        self.push_byte(self.pc as u8);
+        nmi_hijack |= self.nmi_pending;
 
         // For IRQ/NMI, the pushed status has B cleared and bit 5 set.
         let flags = (self.p & !FLAG_BREAK) | FLAG_UNUSED;
@@ -187,7 +196,7 @@ impl Cpu {
         // must not leak into the handler.
         self.delayed_i_flag = None;
 
-        if self.prev_need_nmi {
+        if nmi_hijack {
             self.nmi_pending = false;
             self.pc = self.read_u16(NMI_VECTOR);
         } else {
@@ -1614,6 +1623,7 @@ impl Cpu {
 
         // Clear the previous delayed-I state after exactly one instruction.
         // If this instruction introduced a new delay, keep that for the next instruction.
+        let cleared_delayed_i_flag_this_instruction = had_delayed_i_flag;
         if had_delayed_i_flag {
             self.delayed_i_flag = None;
         }
@@ -1623,11 +1633,13 @@ impl Cpu {
 
         // Mesen-style: IRQ/NMI are taken after the instruction completes.
         //
-        // For CLI/PLP/SEI timing, IRQ enable/disable has a one-instruction delay.
-        // We clear `delayed_i_flag` above before checking here, so the IRQ decision
-        // reflects the correct instruction-boundary behavior (e.g., CLI allows the IRQ
-        // immediately after exactly one following instruction).
-        if self.prev_need_nmi || self.prev_run_irq || self.should_poll_irq() {
+        // Special case: when the delayed-I state just expired (e.g., the instruction after CLI),
+        // IRQ recognition must reflect the *new* I state immediately at this boundary.
+        // We accomplish this by re-evaluating `should_poll_irq()` only in that case.
+        let irq_after_delayed_i_expires =
+            cleared_delayed_i_flag_this_instruction && self.should_poll_irq();
+
+        if self.prev_need_nmi || self.prev_run_irq || irq_after_delayed_i_expires {
             self.service_irq_or_nmi_sequence();
         }
     }

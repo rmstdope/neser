@@ -353,13 +353,13 @@ mod tests {
         test_cpu_nmi_and_brk,
         "roms/blargg/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes"
     );
-    #[ignore = "Not working"]
-    #[test]
-    fn test_cpu_nmi_and_irq() {}
-    // blargg_test!(
-    //     test_cpu_nmi_and_irq,
-    //     "roms/blargg/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes"
-    // );
+    // #[ignore = "Not working"]
+    // #[test]
+    // fn test_cpu_nmi_and_irq() {}
+    blargg_test!(
+        test_cpu_nmi_and_irq,
+        "roms/blargg/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes"
+    );
     #[ignore = "Not working"]
     #[test]
     fn test_cpu_irq_and_dma() {}
