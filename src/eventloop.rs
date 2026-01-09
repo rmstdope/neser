@@ -310,7 +310,7 @@ impl EventLoop {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            Self::handle_key_down(nes, keycode);
+                            Self::handle_key_down(nes, keycode, self.audio.as_ref());
                         }
                         Event::KeyUp {
                             keycode: Some(keycode),
@@ -418,7 +418,7 @@ impl EventLoop {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            Self::handle_key_down(nes, keycode);
+                            Self::handle_key_down(nes, keycode, self.audio.as_ref());
                         }
                         Event::KeyUp {
                             keycode: Some(keycode),
@@ -472,8 +472,18 @@ impl EventLoop {
     /// - X: A button
     /// - A: Select button
     /// - S: Start button
-    fn handle_key_down(nes: &mut crate::nes::Nes, keycode: Keycode) {
+    fn handle_key_down(nes: &mut crate::nes::Nes, keycode: Keycode, audio: Option<&NesAudio>) {
         match keycode {
+            Keycode::F2 => {
+                if let Some(audio) = audio {
+                    apply_volume_hotkey(audio, Keycode::F2);
+                }
+            }
+            Keycode::F3 => {
+                if let Some(audio) = audio {
+                    apply_volume_hotkey(audio, Keycode::F3);
+                }
+            }
             Keycode::Up => nes.set_button(1, Button::Up, true),
             Keycode::Down => nes.set_button(1, Button::Down, true),
             Keycode::Left => nes.set_button(1, Button::Left, true),
@@ -503,17 +513,121 @@ impl EventLoop {
     }
 }
 
+fn apply_volume_hotkey(audio: &NesAudio, keycode: Keycode) {
+    const STEP: f32 = 0.1;
+
+    let current = audio.get_volume();
+    let next = match keycode {
+        Keycode::F2 => current + STEP,
+        Keycode::F3 => current - STEP,
+        _ => current,
+    };
+
+    audio.set_volume(next);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::nes::{Nes, TvSystem};
     use serial_test::serial;
+    use std::env;
 
     #[test]
     #[serial]
     fn test_eventloop_creation() {
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, None);
         assert!(event_loop.is_ok());
+    }
+
+    #[test]
+    #[serial]
+    fn test_volume_hotkeys_f2_f3_adjust_by_point_one() {
+        // CI often runs without an audio device; force SDL to use its dummy backend.
+        // Restore the previous env value after the test to avoid cross-test pollution.
+        struct EnvRestore {
+            key: &'static str,
+            prev: Option<String>,
+        }
+
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(value) => unsafe {
+                        env::set_var(self.key, value)
+                    },
+                    None => unsafe {
+                        env::remove_var(self.key)
+                    },
+                }
+            }
+        }
+
+        let restore = EnvRestore {
+            key: "SDL_AUDIODRIVER",
+            prev: env::var("SDL_AUDIODRIVER").ok(),
+        };
+        unsafe {
+            env::set_var("SDL_AUDIODRIVER", "dummy");
+        }
+
+        let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
+        let audio = NesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
+
+        // Default volume is 0.25.
+        assert!((audio.get_volume() - 0.25).abs() < 1e-6);
+
+        apply_volume_hotkey(&audio, Keycode::F2);
+        assert!(
+            (audio.get_volume() - 0.35).abs() < 1e-6,
+            "F2 should raise volume by 0.1"
+        );
+
+        apply_volume_hotkey(&audio, Keycode::F3);
+        assert!(
+            (audio.get_volume() - 0.25).abs() < 1e-6,
+            "F3 should lower volume by 0.1"
+        );
+
+        drop(restore);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_key_down_routes_f2_f3_to_audio() {
+        struct EnvRestore {
+            key: &'static str,
+            prev: Option<String>,
+        }
+
+        impl Drop for EnvRestore {
+            fn drop(&mut self) {
+                match &self.prev {
+                    Some(value) => unsafe { env::set_var(self.key, value) },
+                    None => unsafe { env::remove_var(self.key) },
+                }
+            }
+        }
+
+        let restore = EnvRestore {
+            key: "SDL_AUDIODRIVER",
+            prev: env::var("SDL_AUDIODRIVER").ok(),
+        };
+        unsafe {
+            env::set_var("SDL_AUDIODRIVER", "dummy");
+        }
+
+        let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
+        let audio = NesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let before = audio.get_volume();
+        EventLoop::handle_key_down(&mut nes, Keycode::F2, Some(&audio));
+        assert!((audio.get_volume() - (before + 0.1)).abs() < 1e-6);
+        EventLoop::handle_key_down(&mut nes, Keycode::F3, Some(&audio));
+        assert!((audio.get_volume() - before).abs() < 1e-6);
+
+        drop(restore);
     }
 
     #[test]
