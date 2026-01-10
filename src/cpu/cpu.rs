@@ -246,18 +246,6 @@ impl Cpu {
             base_dma_cycles
         };
 
-        #[cfg(test)]
-        if std::env::var("NESER_DMA_DEBUG").is_ok() {
-            eprintln!(
-                "[DMA] total_cycles={} is_odd={} dmc_active={} base={} dma_cycles={}",
-                self.get_total_cycles(),
-                is_odd_cycle,
-                dmc_active,
-                base_dma_cycles,
-                dma_cycles
-            );
-        }
-
         self.memory.borrow_mut().execute_oam_dma(page);
 
         self.tick_ppu_apu_for_cpu_cycles(dma_cycles);
