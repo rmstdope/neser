@@ -219,11 +219,11 @@ impl Cpu {
     /// return the number of CPU cycles consumed.
     ///
     /// Cycle cost:
-    /// - 514 cycles when starting on an even CPU cycle (next cycle is odd, needs alignment)
-    /// - 513 cycles when starting on an odd CPU cycle (next cycle is even)
+    /// - 513 cycles when DMA starts on an even CPU cycle
+    /// - 514 cycles when DMA starts on an odd CPU cycle (extra alignment cycle)
     ///
-    /// When DMC is active, OAM DMA and DMC DMA share alignment cycles,
-    /// reducing the total cycle count by 2.
+    /// Cycle adjustments:
+    /// - DMC active: save 2 cycles (DMA alignment sharing)
     pub fn handle_oam_dma_if_pending(&mut self) -> Option<u16> {
         let page = self.memory.borrow_mut().take_oam_dma_page()?;
 
@@ -233,14 +233,13 @@ impl Cpu {
         drop(dmc);
 
         // OAM DMA starts on the *next* CPU cycle after the $4014 write.
-        // If that starting cycle is odd, the DMA incurs an extra alignment cycle.
+        // is_odd_cycle is true when next cycle is odd.
         let is_odd_cycle = (self.get_total_cycles() + 1) % 2 == 1;
 
-        // Base cycle calculation
+        // Base cycle calculation: 514 on odd start, 513 on even start
         let base_dma_cycles = if is_odd_cycle { 514u16 } else { 513u16 };
 
-        // When DMC is active, OAM DMA and DMC DMA share alignment cycles,
-        // saving 2 cycles.
+        // When DMC is active, DMA alignment sharing saves 2 cycles
         let dma_cycles = if dmc_active {
             base_dma_cycles.saturating_sub(2)
         } else {
@@ -2157,6 +2156,7 @@ mod tests {
             .handle_oam_dma_if_pending()
             .expect("DMA should be pending");
 
+        // Even cycle start: DMA starts on next (odd) cycle, uses 514 cycles
         assert_eq!(dma_cycles, 514);
         assert_eq!(cpu.get_total_cycles() - cycles_before, 514);
     }
@@ -2176,6 +2176,7 @@ mod tests {
             .handle_oam_dma_if_pending()
             .expect("DMA should be pending");
 
+        // Odd cycle start: DMA starts on next (even) cycle, uses 513 cycles
         assert_eq!(dma_cycles, 513);
         assert_eq!(cpu.get_total_cycles() - cycles_before, 513);
     }

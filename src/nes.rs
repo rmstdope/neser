@@ -848,12 +848,12 @@ mod tests {
         // Run one CPU tick which should process the DMA
         nes.run_cpu_tick();
 
-        // On even alignment, DMA begins on the next cycle (odd) and takes 514 CPU cycles
+        // On even cycle, DMA starts on next (odd) cycle and takes 514 CPU cycles
         let cycles_after = nes.cpu.get_total_cycles();
         assert_eq!(
             cycles_after - cycles_before,
             514,
-            "DMA should take 514 cycles on even alignment"
+            "DMA should take 514 cycles when starting on even cycle"
         );
     }
 
@@ -877,12 +877,12 @@ mod tests {
         // Run one CPU tick which should process the DMA
         nes.run_cpu_tick();
 
-        // On odd alignment, DMA begins on the next cycle (even) and takes 513 CPU cycles
+        // On odd cycle, DMA starts on next (even) cycle and takes 513 CPU cycles
         let cycles_after = nes.cpu.get_total_cycles();
         assert_eq!(
             cycles_after - cycles_before,
             513,
-            "DMA should take 513 cycles on odd alignment"
+            "DMA should take 513 cycles when starting on odd cycle"
         );
     }
 
