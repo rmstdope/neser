@@ -224,58 +224,111 @@ impl Cpu {
     /// - Maintains correct get/put cycle semantics for DMC DMA collision
     ///
     /// Cycle cost (without DMC collision):
-    /// - 513 cycles when DMA starts on a "get" cycle (even total_cycles at DMA start)
-    /// - 514 cycles when DMA starts on a "put" cycle (odd total_cycles at DMA start)
+    /// - 513 cycles when DMA starts on a "put" cycle (odd total_cycles at DMA start)
+    /// - 514 cycles when DMA starts on a "get" cycle (even total_cycles at DMA start)
     ///
     /// NES DMA timing:
     /// - DMA begins on the next CPU cycle after $4014 write
-    /// - If $4014 written on even cycle (8): DMA starts on odd cycle (9) = "put" = needs align = 514
-    /// - If $4014 written on odd cycle (7): DMA starts on even cycle (8) = "get" = no align = 513
+    /// - If $4014 written on even cycle: DMA starts on odd cycle = "put" = no extra align = 513
+    /// - If $4014 written on odd cycle: DMA starts on even cycle = "get" = needs align = 514
     ///
     /// With DMC DMA collision:
-    /// - Additional 1-4 cycles depending on timing and alignment
+    /// - DMC and OAM share cycles where possible
+    /// - Extra 2-4 cycles depending on when collision occurs
     pub fn handle_oam_dma_if_pending(&mut self) -> Option<u16> {
         let page = self.memory.borrow_mut().take_oam_dma_page()?;
-
         let source_base = (page as u16) << 8;
-        let mut dma_cycles: u16 = 0;
 
-        // DMA starts on the *next* CPU cycle after the $4014 write.
-        // We check alignment based on what the cycle counter will be when DMA starts.
-        // If the current cycle is even (e.g., 8), the next cycle (9) is odd = "put" cycle = needs alignment
-        // If the current cycle is odd (e.g., 7), the next cycle (8) is even = "get" cycle = no alignment needed
-        let dma_start_is_put_cycle = self.get_total_cycles() % 2 == 0;
+        let cycles_before = self.total_cycles;
 
-        // Halt cycle - always the first cycle of DMA
-        dma_cycles += 1;
+        // Check if DMC DMA is also pending at the start
+        let dmc_pending_at_start = {
+            let mut apu = self.apu.borrow_mut();
+            apu.dmc_mut().dma_pending()
+        };
+
+        // Track DMC DMA progress (like Pinky)
+        // 0 = not started, 1 = halt done, 2 = dummy done (ready to read)
+        let mut dmc_progress: u8 = if dmc_pending_at_start { 1 } else { 0 };
+        let mut sprite_dma_value: Option<u8> = None;
+        let mut sprite_offset: u16 = 0;
+        let mut sprite_dma_done = false;
+
+        // Halt cycle - hijack the read the CPU was trying to do
+        // This is shared by both OAM and DMC DMA if both are pending
         self.tick_single_dma_cycle();
 
-        // Alignment cycle: if DMA started on a "put" cycle, we need to wait for a "get" cycle
-        if dma_start_is_put_cycle {
-            dma_cycles += 1;
-            self.tick_single_dma_cycle();
+        loop {
+            // Check DMC progress
+            let dmc_pending = {
+                let mut apu = self.apu.borrow_mut();
+                apu.dmc_mut().dma_pending()
+            };
+
+            // If DMC becomes pending during OAM DMA, start tracking it
+            if dmc_pending && dmc_progress == 0 {
+                dmc_progress = 1; // halt done (shared with OAM cycle)
+            }
+
+            // Helper: are we on a get or put phase?
+            let on_get_phase = self.total_cycles % 2 == 0;
+            let on_put_phase = !on_get_phase;
+
+            // Can DMC read this cycle?
+            let dmc_ready_to_read = dmc_pending && dmc_progress >= 2 && on_get_phase;
+
+            // Can OAM read this cycle?
+            let oam_ready_to_read = !sprite_dma_done && sprite_dma_value.is_none() && on_get_phase;
+
+            // Can OAM write this cycle?
+            let oam_ready_to_write = !sprite_dma_done && sprite_dma_value.is_some() && on_put_phase;
+
+            if dmc_ready_to_read {
+                // DMC takes priority - do the DMC read
+                let dma_addr = {
+                    let mut apu = self.apu.borrow_mut();
+                    apu.dmc_mut().dma_address()
+                };
+
+                if let Some(addr) = dma_addr {
+                    let value = self.memory.borrow().read(addr);
+                    self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
+                }
+                self.tick_single_dma_cycle();
+                dmc_progress = 0; // DMC done
+            } else if oam_ready_to_read {
+                // OAM read cycle - also counts as DMC dummy if DMC is waiting
+                if dmc_pending && dmc_progress == 1 {
+                    dmc_progress = 2; // dummy done
+                }
+                let addr = source_base.wrapping_add(sprite_offset);
+                let value = self.memory.borrow().read(addr);
+                sprite_dma_value = Some(value);
+                self.tick_single_dma_cycle();
+            } else if oam_ready_to_write {
+                // OAM write cycle - also counts as DMC alignment if DMC is waiting
+                if dmc_pending && dmc_progress == 1 {
+                    dmc_progress = 2; // alignment done
+                }
+                self.ppu.borrow_mut().write_oam_data(sprite_dma_value.take().unwrap());
+                self.tick_single_dma_cycle();
+                sprite_offset += 1;
+                if sprite_offset >= 256 {
+                    sprite_dma_done = true;
+                }
+            } else if dmc_pending || !sprite_dma_done {
+                // Alignment/dummy cycle
+                if dmc_pending && dmc_progress == 1 {
+                    dmc_progress = 2;
+                }
+                self.tick_single_dma_cycle();
+            } else {
+                // All done
+                break;
+            }
         }
 
-        // Now we're aligned on a "get" cycle - transfer 256 bytes
-        for offset in 0u16..256 {
-            let addr = source_base.wrapping_add(offset);
-
-            // Check for DMC DMA request before doing our read
-            // DMC DMA can only start on "get" cycles (even total_cycles)
-            let dmc_cycles = self.handle_dmc_dma_if_pending_during_oam(addr);
-            dma_cycles += dmc_cycles;
-
-            // OAM read cycle (get cycle)
-            let byte = self.dma_read(addr);
-            dma_cycles += 1;
-
-            // OAM write cycle (put cycle) - write to $2004
-            self.dma_write_oam(byte);
-            dma_cycles += 1;
-        }
-
-        // Cycles are already added in tick_single_dma_cycle, so don't double-count
-        // self.add_cycles(dma_cycles as u64);
+        let dma_cycles = (self.total_cycles - cycles_before) as u16;
 
         // Check for NMI after DMA
         if self.ppu.borrow_mut().poll_nmi() {
@@ -285,57 +338,6 @@ impl Cpu {
         }
 
         Some(dma_cycles)
-    }
-
-    /// Handle DMC DMA if pending during OAM DMA.
-    /// Called on "get" cycles during OAM DMA to check if DMC needs a byte.
-    /// Returns the number of extra cycles consumed by DMC DMA.
-    ///
-    /// When DMC DMA happens during OAM DMA:
-    /// - The OAM DMA read cycle becomes DMC's "halt" cycle (OAM read is delayed)
-    /// - DMC may need an alignment cycle to reach a "get" cycle
-    /// - DMC performs its sample read on a "get" cycle
-    /// - OAM DMA resumes from where it left off
-    ///
-    /// According to Mesen/hardware, when DMC interrupts OAM DMA:
-    /// - DMC "hijacks" cycles from OAM DMA
-    /// - This adds 2-4 cycles total depending on alignment
-    fn handle_dmc_dma_if_pending_during_oam(&mut self, _last_read_addr: u16) -> u16 {
-        let dmc_dma_pending = {
-            let mut apu = self.apu.borrow_mut();
-            apu.dmc_mut().dma_pending()
-        };
-
-        if !dmc_dma_pending {
-            return 0;
-        }
-
-        // DMC DMA during OAM DMA:
-        // The OAM's get cycle becomes DMC's halt cycle.
-        // We need to do: halt (implicit in OAM) + alignment (if needed) + DMC get
-        //
-        // Mesen's approach: the processCycle() lambda handles the halt/dummy cycles
-        // and shares them with OAM DMA cycles where possible.
-        //
-        // After DMC completes, OAM continues with its read cycle.
-
-        let mut dmc_cycles: u16 = 0;
-
-        // DMC get cycle: read the sample byte
-        // The halt/alignment are shared with OAM's cycles.
-        let dma_addr = {
-            let mut apu = self.apu.borrow_mut();
-            apu.dmc_mut().dma_address()
-        };
-
-        if let Some(addr) = dma_addr {
-            let value = self.memory.borrow().read(addr);
-            self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
-            dmc_cycles += 1;
-            self.tick_single_dma_cycle();
-        }
-
-        dmc_cycles
     }
 
     /// Tick a single DMA cycle (advances PPU/APU by one CPU cycle).
@@ -353,19 +355,6 @@ impl Cpu {
 
         // Increment internal cycle counter for get/put cycle tracking
         self.total_cycles += 1;
-    }
-
-    /// DMA read - used during OAM DMA
-    fn dma_read(&mut self, addr: u16) -> u8 {
-        let value = self.memory.borrow().read(addr);
-        self.tick_single_dma_cycle();
-        value
-    }
-
-    /// DMA write to OAM ($2004)
-    fn dma_write_oam(&mut self, value: u8) {
-        self.ppu.borrow_mut().write_oam_data(value);
-        self.tick_single_dma_cycle();
     }
 
     /// Apply an external stall for the given number of CPU cycles.
