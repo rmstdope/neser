@@ -602,6 +602,12 @@ mod tests {
         60 * 10
     );
 
+    blargg_test!(
+        test_sprdma_and_dmc_dma,
+        "roms/blargg/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes",
+        60 * 10
+    );
+
     // blargg_test!(
     //     test_dmc_tests_buffer_retained,
     //     "roms/blargg/dmc_tests/buffer_retained.nes",
