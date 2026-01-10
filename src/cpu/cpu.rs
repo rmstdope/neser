@@ -233,8 +233,6 @@ impl Cpu {
         let dmc_active = dmc.dmc().is_active();
         drop(dmc);
 
-        let start_cycles = self.get_total_cycles();
-
         // Determine if next cycle is odd (needs alignment for normal DMA)
         let is_odd_cycle = (self.get_total_cycles() + 1) % 2 == 1;
 
@@ -260,16 +258,13 @@ impl Cpu {
         self.tick_ppu_apu_for_cpu_cycles(dma_cycles);
         self.add_cycles(dma_cycles as u64);
 
-        let end_cycles = self.get_total_cycles();
-
         #[cfg(test)]
         if std::env::var("NESER_DEBUG_DMA").is_ok() {
             eprintln!(
-                "[DMA DEBUG] start={} end={} dma_cycles={} dmc_active={}",
-                start_cycles,
-                end_cycles,
+                "[DMA DEBUG] dma_cycles={} dmc_active={} is_odd_cycle={}",
                 dma_cycles,
-                dmc_active
+                dmc_active,
+                is_odd_cycle
             );
         }
 
@@ -440,8 +435,8 @@ impl Cpu {
 
     /// Read a byte from memory at the specified address
     fn read(&mut self, addr: u16) -> u8 {
-        // TODO Process any pending DMA
         self.before_cpu_cycle(false);
+
         // If the DMC has a pending DMA read, the CPU will be halted on this *read* cycle.
         // While halted, the 6502 repeats this read during each no-op DMA cycle, which is
         // externally visible and can conflict with registers with side effects.

@@ -379,6 +379,12 @@ impl MemController {
         self.write(addr.wrapping_add(1), hi, false);
     }
 
+    /// Check if an OAM DMA is pending
+    #[allow(dead_code)]
+    pub fn has_oam_dma_pending(&self) -> bool {
+        self.oam_dma_page.is_some()
+    }
+
     /// Check if an OAM DMA is pending and get the page value
     pub fn take_oam_dma_page(&mut self) -> Option<u8> {
         self.oam_dma_page.take()
