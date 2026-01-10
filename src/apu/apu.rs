@@ -345,7 +345,6 @@ impl Apu {
     }
 
     /// Get reference to DMC channel
-    #[cfg(test)]
     pub fn dmc(&self) -> &Dmc {
         &self.dmc
     }

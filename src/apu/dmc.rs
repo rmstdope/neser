@@ -72,6 +72,12 @@ impl Dmc {
         self.dma_pending
     }
 
+    /// Returns true if the DMC is actively playing (has bytes remaining to read).
+    /// This is different from dma_pending which only indicates a pending read.
+    pub fn is_active(&self) -> bool {
+        self.bytes_remaining > 0
+    }
+
     /// If a DMA request is pending, returns the address the DMA should read.
     pub fn dma_address(&self) -> Option<u16> {
         self.dma_pending.then_some(self.current_address)

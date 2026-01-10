@@ -221,13 +221,31 @@ impl Cpu {
     /// Cycle cost:
     /// - 513 cycles when starting on an even CPU cycle
     /// - 514 cycles when starting on an odd CPU cycle
+    ///
+    /// When DMC is active and OAM DMA starts on even alignment, the $4014 write
+    /// cycle cannot be shared with the first OAM DMA dummy cycle because DMC
+    /// has bus priority. This adds 2 cycles for alignment.
     pub fn handle_oam_dma_if_pending(&mut self) -> Option<u16> {
         let page = self.memory.borrow_mut().take_oam_dma_page()?;
+
+        // Check if DMC is active (has bytes remaining to play)
+        let dmc_active = self.apu.borrow().dmc().is_active();
 
         // OAM DMA starts on the *next* CPU cycle after the $4014 write.
         // If that starting cycle is odd, the DMA incurs an extra alignment cycle.
         let is_odd_cycle = (self.get_total_cycles() + 1) % 2 == 1;
-        let dma_cycles = if is_odd_cycle { 514u16 } else { 513u16 };
+
+        // Base cycle calculation
+        let base_dma_cycles = if is_odd_cycle { 514u16 } else { 513u16 };
+
+        // When DMC is active and we're on even alignment (is_odd=false):
+        // The $4014 write cycle cannot be consumed as the first OAM DMA dummy
+        // cycle because DMC has priority. This adds 2 cycles.
+        let dma_cycles = if dmc_active && !is_odd_cycle {
+            base_dma_cycles + 2
+        } else {
+            base_dma_cycles
+        };
 
         self.memory.borrow_mut().execute_oam_dma(page);
 
