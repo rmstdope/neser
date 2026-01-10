@@ -848,7 +848,7 @@ mod tests {
         // Run one CPU tick which should process the DMA
         nes.run_cpu_tick();
 
-        // On even cycle, DMA starts on next (odd) cycle and takes 514 CPU cycles
+        // Even cycle start: next cycle is odd, 514 CPU cycles
         let cycles_after = nes.cpu.get_total_cycles();
         assert_eq!(
             cycles_after - cycles_before,
@@ -858,7 +858,7 @@ mod tests {
     }
 
     #[test]
-    fn test_oam_dma_takes_514_cycles_on_odd_cpu_cycle() {
+    fn test_oam_dma_takes_513_cycles_on_odd_cpu_cycle() {
         let mut nes = Nes::new(TvSystem::Ntsc);
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
@@ -877,7 +877,7 @@ mod tests {
         // Run one CPU tick which should process the DMA
         nes.run_cpu_tick();
 
-        // On odd cycle, DMA starts on next (even) cycle and takes 513 CPU cycles
+        // Odd cycle start: next cycle is even, 513 CPU cycles
         let cycles_after = nes.cpu.get_total_cycles();
         assert_eq!(
             cycles_after - cycles_before,
