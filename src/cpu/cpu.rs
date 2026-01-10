@@ -290,7 +290,17 @@ impl Cpu {
     /// Handle DMC DMA if pending during OAM DMA.
     /// Called on "get" cycles during OAM DMA to check if DMC needs a byte.
     /// Returns the number of extra cycles consumed by DMC DMA.
-    fn handle_dmc_dma_if_pending_during_oam(&mut self, last_read_addr: u16) -> u16 {
+    ///
+    /// When DMC DMA happens during OAM DMA:
+    /// - The OAM DMA read cycle becomes DMC's "halt" cycle (OAM read is delayed)
+    /// - DMC may need an alignment cycle to reach a "get" cycle
+    /// - DMC performs its sample read on a "get" cycle
+    /// - OAM DMA resumes from where it left off
+    ///
+    /// According to Mesen/hardware, when DMC interrupts OAM DMA:
+    /// - DMC "hijacks" cycles from OAM DMA
+    /// - This adds 2-4 cycles total depending on alignment
+    fn handle_dmc_dma_if_pending_during_oam(&mut self, _last_read_addr: u16) -> u16 {
         let dmc_dma_pending = {
             let mut apu = self.apu.borrow_mut();
             apu.dmc_mut().dma_pending()
@@ -301,29 +311,18 @@ impl Cpu {
         }
 
         // DMC DMA during OAM DMA:
-        // 1. The current OAM DMA cycle becomes a "halt" for DMC
-        // 2. We do dummy/alignment cycles as needed
-        // 3. We do the DMC get cycle
-        // 4. OAM DMA resumes (potentially needing realignment)
+        // The OAM's get cycle becomes DMC's halt cycle.
+        // We need to do: halt (implicit in OAM) + alignment (if needed) + DMC get
+        //
+        // Mesen's approach: the processCycle() lambda handles the halt/dummy cycles
+        // and shares them with OAM DMA cycles where possible.
+        //
+        // After DMC completes, OAM continues with its read cycle.
 
         let mut dmc_cycles: u16 = 0;
 
-        // Halt cycle: repeat the last read (dummy read)
-        let _ = self.memory.borrow().read_without_joypad_clock(last_read_addr);
-        dmc_cycles += 1;
-        self.tick_single_dma_cycle();
-
-        // Check if next cycle is a "get" cycle (even total_cycles)
-        // DMC DMA get must happen on a "get" cycle
-        let next_is_get = self.get_total_cycles() % 2 == 0;
-        if !next_is_get {
-            // Alignment cycle needed
-            let _ = self.memory.borrow().read_without_joypad_clock(last_read_addr);
-            dmc_cycles += 1;
-            self.tick_single_dma_cycle();
-        }
-
         // DMC get cycle: read the sample byte
+        // The halt/alignment are shared with OAM's cycles.
         let dma_addr = {
             let mut apu = self.apu.borrow_mut();
             apu.dmc_mut().dma_address()
@@ -332,15 +331,6 @@ impl Cpu {
         if let Some(addr) = dma_addr {
             let value = self.memory.borrow().read(addr);
             self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
-            dmc_cycles += 1;
-            self.tick_single_dma_cycle();
-        }
-
-        // After DMC DMA completes, OAM DMA resumes.
-        // If we're now on a "put" cycle, OAM read needs to wait for "get" cycle
-        let now_on_put = self.get_total_cycles() % 2 == 1;
-        if now_on_put {
-            // Realignment cycle for OAM DMA
             dmc_cycles += 1;
             self.tick_single_dma_cycle();
         }
