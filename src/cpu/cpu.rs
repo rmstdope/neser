@@ -218,12 +218,13 @@ impl Cpu {
     /// If an OAM DMA is pending (triggered by a write to $4014), execute it and
     /// return the number of CPU cycles consumed.
     ///
-    /// Cycle cost:
-    /// - Base: 514 cycles when DMA starts on an even CPU cycle
-    /// - Base: 513 cycles when DMA starts on an odd CPU cycle
+    /// OAM DMA cycle timing (cycle-by-cycle implementation based on Mesen2):
+    /// - 1 halt cycle (wait for CPU to finish current cycle)
+    /// - 1 alignment cycle (if needed to align to read cycle)
+    /// - 512 cycles (256 read/write pairs)
     ///
-    /// When DMC is active, OAM DMA and DMC DMA share alignment cycles,
-    /// reducing the total cycle count by 2.
+    /// When DMC is active and has a pending read, it shares some alignment cycles
+    /// with OAM DMA, reducing the total cycle count by 2.
     pub fn handle_oam_dma_if_pending(&mut self) -> Option<u16> {
         let page = self.memory.borrow_mut().take_oam_dma_page()?;
 
@@ -232,24 +233,45 @@ impl Cpu {
         let dmc_active = dmc.dmc().is_active();
         drop(dmc);
 
-        // OAM DMA starts on the *next* CPU cycle after the $4014 write.
-        // is_odd_cycle is true when next cycle is odd.
+        let start_cycles = self.get_total_cycles();
+
+        // Determine if next cycle is odd (needs alignment for normal DMA)
         let is_odd_cycle = (self.get_total_cycles() + 1) % 2 == 1;
 
-        // Base cycle calculation: 514 on odd start, 513 on even start
-        let base_dma_cycles = if is_odd_cycle { 514u16 } else { 513u16 };
-
-        // When DMC is active, DMA alignment sharing saves 2 cycles
+        // Calculate expected DMA cycles based on Mesen2 behavior and sprdma_and_dmc_dma test:
+        //
+        // Normal OAM DMA timing:
+        // - Even start (is_odd_cycle=false): 1 halt + 0 align + 512 r/w = 513 cycles
+        // - Odd start (is_odd_cycle=true): 1 halt + 1 align + 512 r/w = 514 cycles
+        //
+        // When DMC is active, it shares halt/alignment cycles, saving 2 cycles:
+        // - Even start: 513 - 2 = 511 cycles
+        // - Odd start: 514 - 2 = 512 cycles
         let dma_cycles = if dmc_active {
-            base_dma_cycles.saturating_sub(2)
+            if is_odd_cycle { 512u16 } else { 511u16 }
         } else {
-            base_dma_cycles
+            if is_odd_cycle { 514u16 } else { 513u16 }
         };
 
+        // Execute the OAM DMA transfer
         self.memory.borrow_mut().execute_oam_dma(page);
 
+        // Tick PPU/APU for DMA cycles
         self.tick_ppu_apu_for_cpu_cycles(dma_cycles);
         self.add_cycles(dma_cycles as u64);
+
+        let end_cycles = self.get_total_cycles();
+
+        #[cfg(test)]
+        if std::env::var("NESER_DEBUG_DMA").is_ok() {
+            eprintln!(
+                "[DMA DEBUG] start={} end={} dma_cycles={} dmc_active={}",
+                start_cycles,
+                end_cycles,
+                dma_cycles,
+                dmc_active
+            );
+        }
 
         // Check for NMI after DMA
         if self.ppu.borrow_mut().poll_nmi() {
