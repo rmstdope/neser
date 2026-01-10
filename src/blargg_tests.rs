@@ -622,4 +622,16 @@ mod tests {
     //     "roms/blargg/dmc_tests/status_irq.nes",
     //     60 * 10
     // );
+
+    // Tests for OAM DMA and DMC DMA collision handling
+    blargg_test!(
+        test_sprdma_and_dmc_dma,
+        "roms/blargg/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes",
+        60 * 15
+    );
+    blargg_test!(
+        test_sprdma_and_dmc_dma_512,
+        "roms/blargg/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes",
+        60 * 15
+    );
 }
