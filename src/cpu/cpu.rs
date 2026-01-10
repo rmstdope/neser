@@ -247,9 +247,16 @@ impl Cpu {
             apu.dmc_mut().dma_pending()
         };
 
-        // Track DMC DMA progress (like Pinky)
-        // 0 = not started, 1 = halt done, 2 = dummy done (ready to read)
-        let mut dmc_progress: u8 = if dmc_pending_at_start { 1 } else { 0 };
+        // DMC DMA progress states (like Pinky)
+        const DMC_IDLE: u8 = 0;
+        const DMC_HALT_DONE: u8 = 1;
+        const DMC_READY_TO_READ: u8 = 2;
+
+        // OAM size in bytes
+        const OAM_SIZE: u16 = 256;
+
+        // Track DMC DMA progress
+        let mut dmc_progress: u8 = if dmc_pending_at_start { DMC_HALT_DONE } else { DMC_IDLE };
         let mut sprite_dma_value: Option<u8> = None;
         let mut sprite_offset: u16 = 0;
         let mut sprite_dma_done = false;
@@ -266,8 +273,8 @@ impl Cpu {
             };
 
             // If DMC becomes pending during OAM DMA, start tracking it
-            if dmc_pending && dmc_progress == 0 {
-                dmc_progress = 1; // halt done (shared with OAM cycle)
+            if dmc_pending && dmc_progress == DMC_IDLE {
+                dmc_progress = DMC_HALT_DONE; // halt done (shared with OAM cycle)
             }
 
             // Helper: are we on a get or put phase?
@@ -275,7 +282,7 @@ impl Cpu {
             let on_put_phase = !on_get_phase;
 
             // Can DMC read this cycle?
-            let dmc_ready_to_read = dmc_pending && dmc_progress >= 2 && on_get_phase;
+            let dmc_ready_to_read = dmc_pending && dmc_progress >= DMC_READY_TO_READ && on_get_phase;
 
             // Can OAM read this cycle?
             let oam_ready_to_read = !sprite_dma_done && sprite_dma_value.is_none() && on_get_phase;
@@ -295,11 +302,11 @@ impl Cpu {
                     self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
                 }
                 self.tick_single_dma_cycle();
-                dmc_progress = 0; // DMC done
+                dmc_progress = DMC_IDLE; // DMC done
             } else if oam_ready_to_read {
                 // OAM read cycle - also counts as DMC dummy if DMC is waiting
-                if dmc_pending && dmc_progress == 1 {
-                    dmc_progress = 2; // dummy done
+                if dmc_pending && dmc_progress == DMC_HALT_DONE {
+                    dmc_progress = DMC_READY_TO_READ; // dummy done
                 }
                 let addr = source_base.wrapping_add(sprite_offset);
                 let value = self.memory.borrow().read(addr);
@@ -307,19 +314,19 @@ impl Cpu {
                 self.tick_single_dma_cycle();
             } else if oam_ready_to_write {
                 // OAM write cycle - also counts as DMC alignment if DMC is waiting
-                if dmc_pending && dmc_progress == 1 {
-                    dmc_progress = 2; // alignment done
+                if dmc_pending && dmc_progress == DMC_HALT_DONE {
+                    dmc_progress = DMC_READY_TO_READ; // alignment done
                 }
                 self.ppu.borrow_mut().write_oam_data(sprite_dma_value.take().unwrap());
                 self.tick_single_dma_cycle();
                 sprite_offset += 1;
-                if sprite_offset >= 256 {
+                if sprite_offset >= OAM_SIZE {
                     sprite_dma_done = true;
                 }
             } else if dmc_pending || !sprite_dma_done {
                 // Alignment/dummy cycle
-                if dmc_pending && dmc_progress == 1 {
-                    dmc_progress = 2;
+                if dmc_pending && dmc_progress == DMC_HALT_DONE {
+                    dmc_progress = DMC_READY_TO_READ;
                 }
                 self.tick_single_dma_cycle();
             } else {
