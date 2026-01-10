@@ -222,8 +222,8 @@ impl Cpu {
     /// - 513 cycles when DMA starts on an even CPU cycle
     /// - 514 cycles when DMA starts on an odd CPU cycle (extra alignment cycle)
     ///
-    /// Cycle adjustments:
-    /// - DMC active: save 2 cycles (DMA alignment sharing)
+    /// When DMC is active, OAM DMA and DMC DMA share alignment cycles,
+    /// reducing the total cycle count by 2.
     pub fn handle_oam_dma_if_pending(&mut self) -> Option<u16> {
         let page = self.memory.borrow_mut().take_oam_dma_page()?;
 
