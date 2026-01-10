@@ -222,15 +222,17 @@ impl Cpu {
     /// - 513 cycles when starting on an even CPU cycle
     /// - 514 cycles when starting on an odd CPU cycle
     ///
-    /// When DMC is actively playing and OAM DMA starts on even alignment, the
-    /// $4014 write cycle cannot be shared with OAM DMA's first dummy cycle
-    /// because DMC DMA takes bus priority. This adds 2 cycles for proper
-    /// alignment.
+    /// When DMC DMA is pending or DMC is actively playing on even alignment,
+    /// the $4014 write cycle cannot be shared with OAM DMA's first dummy cycle
+    /// because DMC DMA takes bus priority. This adds 2 cycles for alignment.
     pub fn handle_oam_dma_if_pending(&mut self) -> Option<u16> {
         let page = self.memory.borrow_mut().take_oam_dma_page()?;
 
-        // Check if DMC is active (has bytes remaining to play)
-        let dmc_active = self.apu.borrow().dmc().is_active();
+        // Check DMC state
+        let dmc = self.apu.borrow();
+        let dmc_active = dmc.dmc().is_active();
+        let dmc_pending = dmc.dmc().dma_pending();
+        drop(dmc);
 
         // OAM DMA starts on the *next* CPU cycle after the $4014 write.
         // If that starting cycle is odd, the DMA incurs an extra alignment cycle.
@@ -239,10 +241,10 @@ impl Cpu {
         // Base cycle calculation
         let base_dma_cycles = if is_odd_cycle { 514u16 } else { 513u16 };
 
-        // When DMC is active and we're starting on even alignment (is_odd=false),
+        // When DMC is active/pending and we're starting on even alignment,
         // the $4014 write cycle cannot serve as the first OAM DMA dummy cycle.
         // This requires 2 additional cycles for proper bus alignment.
-        let dma_cycles = if dmc_active && !is_odd_cycle {
+        let dma_cycles = if (dmc_active || dmc_pending) && !is_odd_cycle {
             base_dma_cycles + 2
         } else {
             base_dma_cycles
