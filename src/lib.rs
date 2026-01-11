@@ -5,6 +5,8 @@ pub mod apu;
 pub mod blargg_tests;
 pub mod cartridge;
 pub mod cpu;
+pub mod debugger;
+pub mod debugger_ui;
 pub mod input;
 pub mod manual_test_cartridges;
 pub mod mem_controller;
@@ -18,3 +20,6 @@ pub mod audio;
 
 #[cfg(feature = "sdl")]
 pub mod eventloop;
+
+#[cfg(feature = "sdl")]
+pub(crate) mod gl_backend;

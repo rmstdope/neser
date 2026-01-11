@@ -599,12 +599,6 @@ mod tests {
         60 * 10
     );
 
-    // blargg_test!(
-    //     test_dmc_tests_status,
-    //     "roms/blargg/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes",
-    //     60 * 10
-    // );
-
     // Tests for OAM DMA and DMC DMA collision handling
     // TODO: These tests are disabled pending investigation of ~12 cycle timing offset
     // blargg_test!(
@@ -614,7 +608,7 @@ mod tests {
     // );
     // blargg_test!(
     //     test_sprdma_and_dmc_dma_512,
-    //     "roms/blargg/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes",
+    //     "roms/blargg/sprdma_and_dmc_dma/  cn+",
     //     60 * 15
     // );
 }

@@ -73,6 +73,43 @@ impl MemController {
         self.read_internal(addr, true)
     }
 
+    /// Debug-only-ish helper: read PRG ROM without affecting open bus or joypads.
+    ///
+    /// This is intended for debugger visualization (e.g., PRG ROM hexdumps).
+    /// It only supports the PRG ROM CPU address range ($8000-$FFFF).
+    pub fn read_prg_rom_for_debugger(&self, addr: u16) -> u8 {
+        if !(0x8000..=0xFFFF).contains(&addr) {
+            return 0;
+        }
+
+        self.cartridge
+            .as_ref()
+            .map(|cart| cart.borrow().mapper().read_prg(addr))
+            .unwrap_or(0)
+    }
+
+    /// Side-effect-free debug read of CPU-visible memory.
+    ///
+    /// Intended for debugger visualization (e.g., disassembly around PC). It avoids:
+    /// - updating open bus
+    /// - clocking controllers
+    /// - touching PPU/APU registers
+    ///
+    /// Supported ranges:
+    /// - $0000-$1FFF (CPU RAM with mirroring)
+    /// - $6000-$FFFF (PRG RAM/ROM via mapper)
+    pub fn read_cpu_for_debugger(&self, addr: u16) -> u8 {
+        match addr {
+            0x0000..=0x1FFF => self.cpu_ram[(addr & 0x07FF) as usize],
+            0x6000..=0xFFFF => self
+                .cartridge
+                .as_ref()
+                .map(|cart| cart.borrow().mapper().read_prg(addr))
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
     /// Read a byte from memory, optionally clocking joypad shift registers.
     ///
     /// During DMA no-op cycles, the CPU repeats the last read externally. For joypad
