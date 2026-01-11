@@ -495,9 +495,6 @@ mod tests {
     );
 
     blargg_test!(test_4015_cleared, "roms/blargg/apu_reset/4015_cleared.nes");
-    // #[ignore = "Not working"]
-    // #[test]
-    // fn test_4017_timing() { }
     blargg_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
     blargg_test!(test_4017_written, "roms/blargg/apu_reset/4017_written.nes");
     blargg_test!(
@@ -603,23 +600,8 @@ mod tests {
     );
 
     // blargg_test!(
-    //     test_dmc_tests_buffer_retained,
-    //     "roms/blargg/dmc_tests/buffer_retained.nes",
-    //     60 * 10
-    // );
-    // blargg_test!(
-    //     test_dmc_tests_latency,
-    //     "roms/blargg/dmc_tests/latency.nes",
-    //     60 * 10
-    // );
-    // blargg_test!(
     //     test_dmc_tests_status,
-    //     "roms/blargg/dmc_tests/status.nes",
-    //     60 * 10
-    // );
-    // blargg_test!(
-    //     test_dmc_tests_status_irq,
-    //     "roms/blargg/dmc_tests/status_irq.nes",
+    //     "roms/blargg/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes",
     //     60 * 10
     // );
 }
