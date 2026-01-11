@@ -84,6 +84,10 @@ const CLI_FLAGS: &[CliFlag] = &[
         flag: "--enable-debugger",
         help: Some("Open debugger windows (CPU/PPU/APU) on startup"),
     },
+    CliFlag {
+        flag: "--fullscreen",
+        help: Some("Run emulator in fullscreen mode"),
+    },
 ];
 
 fn vsync_enabled_from_args(args: &[String]) -> bool {
@@ -157,6 +161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let no_audio = args.contains(&"--no-audio".to_string());
     let vsync_enabled = vsync_enabled_from_args(&args);
     let gamepads_enabled = !args.contains(&"--no-gamepads".to_string());
+    let fullscreen = args.contains(&"--fullscreen".to_string());
     let tracing = tracing::Tracing::from_args(&args);
 
     // Channel enable/disable flags (default: all enabled)
@@ -190,6 +195,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vsync_enabled,
         audio,
         gamepads_enabled,
+        fullscreen,
     )?;
 
     // Palette display requiring only scanline-based palette changes,
@@ -301,6 +307,7 @@ mod tests {
             true,
             None,
             false,
+            false,
         )
         .unwrap();
 
@@ -308,5 +315,11 @@ mod tests {
 
         assert!(event_loop.is_paused());
         assert!(event_loop.debugger_open_requested());
+    }
+
+    #[test]
+    fn test_fullscreen_flag_recognized() {
+        let args = vec!["neser".to_string(), "--fullscreen".to_string()];
+        assert!(validate_no_unknown_args(&args).is_ok());
     }
 }
