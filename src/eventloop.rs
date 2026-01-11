@@ -19,6 +19,7 @@ pub struct EventLoop {
     vsync_enabled: bool,
     paused: bool,
     debugger_open_requested: bool,
+    breakpoints: Vec<u16>,
     #[cfg_attr(not(test), allow(dead_code))]
     debugger_renderer: Option<Box<dyn DebuggerRenderer>>,
     audio: Option<NesAudio>,
@@ -128,6 +129,7 @@ impl EventLoop {
             vsync_enabled,
             paused: false,
             debugger_open_requested: false,
+            breakpoints: Vec::new(),
             debugger_renderer: None,
             audio,
             controllers,
@@ -237,6 +239,20 @@ impl EventLoop {
 
     fn should_manual_frame_limit(vsync_enabled: bool) -> bool {
         !vsync_enabled
+    }
+
+    fn enter_debugger(&mut self) {
+        self.paused = true;
+        self.debugger_open_requested = true;
+    }
+
+    fn check_breakpoint_hit(&mut self, pc: u16) -> bool {
+        if self.breakpoints.contains(&pc) {
+            self.enter_debugger();
+            true
+        } else {
+            false
+        }
     }
 
     /// Checks if the user has requested to quit via Escape key or window close.
@@ -374,6 +390,10 @@ impl EventLoop {
                 // automatically runs the correct number of PPU cycles per CPU instruction.
                 // A full frame is 262 scanlines × 341 pixels = 89,342 PPU cycles for NTSC
                 while !nes.is_ready_to_render() && !nes.cpu.is_halted() {
+                    if self.check_breakpoint_hit(nes.cpu.pc) {
+                        break;
+                    }
+
                     nes.run(&tracing);
 
                     // Poll audio samples from APU and queue them
@@ -384,6 +404,12 @@ impl EventLoop {
                             }
                         }
                     }
+                }
+
+                // If we paused due to a breakpoint, restart the loop so the "paused" branch
+                // renders the debugger and accepts debugger UI actions.
+                if self.paused {
+                    continue;
                 }
 
                 if let Some(ref audio) = self.audio {
@@ -492,6 +518,18 @@ impl EventLoop {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn add_breakpoint(&mut self, addr: u16) {
+        if !self.breakpoints.contains(&addr) {
+            self.breakpoints.push(addr);
+        }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn remove_breakpoint(&mut self, addr: u16) {
+        self.breakpoints.retain(|&bp| bp != addr);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn set_debugger_renderer(&mut self, renderer: Box<dyn DebuggerRenderer>) {
         self.debugger_renderer = Some(renderer);
     }
@@ -552,6 +590,10 @@ impl EventLoop {
 
         if self.paused {
             self.render_debugger_if_needed(nes);
+            return false;
+        }
+
+        if self.check_breakpoint_hit(nes.cpu.pc) {
             return false;
         }
 
@@ -913,6 +955,26 @@ mod tests {
     use std::env;
     use std::rc::Rc;
 
+    fn insert_nop_cartridge(nes: &mut Nes, reset_vector: u16) {
+        // Minimal NROM-style PRG filled with NOPs and a RESET vector.
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8;
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+
+        // Provide sane defaults for NMI/IRQ vectors (not used by these tests).
+        prg_rom[0x7FFA] = 0x00;
+        prg_rom[0x7FFB] = 0x80;
+        prg_rom[0x7FFE] = 0x00;
+        prg_rom[0x7FFF] = 0x80;
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+    }
+
     fn read_joypad1_buttons(nes: &mut Nes) -> [u8; 8] {
         // Joypad serial order: A, B, Select, Start, Up, Down, Left, Right
         {
@@ -930,40 +992,54 @@ mod tests {
     }
 
     fn tick_headless_once(event_loop: &mut EventLoop, nes: &mut Nes) {
-        for event in event_loop.event_pump.poll_iter() {
-            match event {
-                Event::Quit { .. } => {
-                    // In unit tests we don't currently observe quitting; just stop ticking.
-                    return;
-                }
-                Event::KeyDown {
-                    keycode: Some(keycode),
-                    ..
-                } => {
-                    let _ = EventLoop::handle_key_down(
-                        nes,
-                        keycode,
-                        event_loop.audio.as_ref(),
-                        &mut event_loop.paused,
-                        &mut event_loop.debugger_open_requested,
-                    );
-                }
-                Event::KeyUp {
-                    keycode: Some(keycode),
-                    ..
-                } => {
-                    EventLoop::handle_key_up(nes, keycode);
-                }
-                _ => {}
-            }
-        }
+        let _should_quit = event_loop.tick_headless_once_for_run(nes);
+    }
 
-        if event_loop.paused {
-            event_loop.render_debugger_if_needed(nes);
-            return;
-        }
+    #[test]
+    #[serial]
+    fn test_breakpoint_hit_pauses_and_opens_debugger() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
 
-        nes.run_cpu_tick();
+        insert_nop_cartridge(&mut nes, 0x8000);
+        nes.reset(false);
+
+        // Run until PC reaches $8002, then expect the breakpoint to pause *before* executing it.
+        event_loop.add_breakpoint(0x8002);
+
+        // Execute two instructions: $8000 and $8001.
+        tick_headless_once(&mut event_loop, &mut nes);
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert_eq!(nes.cpu.pc, 0x8002);
+        assert!(!event_loop.is_paused());
+        assert!(!event_loop.debugger_open_requested());
+
+        // Next tick should notice the breakpoint and enter the debugger (paused).
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert_eq!(nes.cpu.pc, 0x8002);
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
+    }
+
+    #[test]
+    #[serial]
+    fn test_remove_breakpoint_allows_execution_to_continue() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        insert_nop_cartridge(&mut nes, 0x8000);
+        nes.reset(false);
+
+        event_loop.add_breakpoint(0x8001);
+        event_loop.remove_breakpoint(0x8001);
+
+        // If the breakpoint was removed, we should not pause when reaching $8001.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert_eq!(nes.cpu.pc, 0x8001);
+        assert!(!event_loop.is_paused());
+        assert!(!event_loop.debugger_open_requested());
     }
 
     #[test]

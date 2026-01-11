@@ -200,6 +200,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fullscreen,
     )?;
 
+    // Temporary hard-coded breakpoint for debugger development.
+    event_loop.add_breakpoint(0xE486);
+
     // Palette display requiring only scanline-based palette changes,
     // intended to demonstrate the full palette even on less advanced emulators
     // Seems to work ok!
