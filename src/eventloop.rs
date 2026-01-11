@@ -3,12 +3,13 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::audio::NesAudio;
 use crate::input::Button;
 use crate::nes::TvSystem;
 use crate::tracing::Tracing;
-use std::time::{Duration, Instant};
 
 /// EventLoop manages the SDL2 event loop for the application.
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
@@ -21,7 +22,7 @@ pub struct EventLoop {
     paused: bool,
     audio: Option<NesAudio>,
     controllers: Vec<sdl2::controller::GameController>,
-    controller_player_map: std::collections::HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
+    controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +111,7 @@ impl EventLoop {
         let (controllers, controller_player_map) = if gamepads_enabled {
             Self::init_gamepads(&sdl_context)?
         } else {
-            (Vec::new(), std::collections::HashMap::new())
+            (Vec::new(), HashMap::new())
         };
 
         Ok(EventLoop {
@@ -134,13 +135,7 @@ impl EventLoop {
     /// Returns a tuple of (controllers vector, player mapping HashMap)
     fn init_gamepads(
         sdl_context: &sdl2::Sdl,
-    ) -> Result<
-        (
-            Vec<sdl2::controller::GameController>,
-            std::collections::HashMap<u32, u8>,
-        ),
-        String,
-    > {
+    ) -> Result<(Vec<sdl2::controller::GameController>, HashMap<u32, u8>), String> {
         let game_controller_subsystem = sdl_context.game_controller()?;
         let available = game_controller_subsystem
             .num_joysticks()
@@ -149,7 +144,7 @@ impl EventLoop {
         println!("{} joystick(s) available", available);
 
         let mut controllers = Vec::new();
-        let mut controller_player_map = std::collections::HashMap::new();
+        let mut controller_player_map = HashMap::new();
 
         // Try to open up to 2 controllers
         for id in 0..available.min(2) {
@@ -443,8 +438,9 @@ impl EventLoop {
                     self.handle_controller_button(nes, which, button, pressed);
                 }
                 
-                // Take canvas back
-                canvas = self.canvas.take().unwrap();
+                // Take canvas back - this should never fail since we just put it back
+                canvas = self.canvas.take()
+                    .expect("Canvas should be present after controller event handling");
 
                 // Skip emulation and rendering if paused
                 if self.paused {
@@ -1068,7 +1064,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_gamepad_disabled_by_default() {
-        // Gamepads should be enabled by default (no controllers initialized in tests)
+        // When gamepads are disabled, no controllers should be initialized
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false);
         assert!(event_loop.is_ok());
         let event_loop = event_loop.unwrap();
