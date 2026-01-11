@@ -1,5 +1,11 @@
 use crate::debugger::DebuggerSnapshot;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct DebuggerUiAction {
+    pub step_cpu: bool,
+    pub continue_run: bool,
+}
+
 pub fn layout_models(display_size: [f32; 2]) -> [(&'static str, [f32; 2], [f32; 2]); 3] {
     let [display_w, display_h] = display_size;
 
@@ -34,7 +40,8 @@ pub fn window_models(snapshot: &DebuggerSnapshot) -> [(&'static str, &str); 3] {
     ]
 }
 
-pub fn render(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) {
+pub fn render(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) -> DebuggerUiAction {
+    let mut action = DebuggerUiAction::default();
     let models = window_models(snapshot);
     let layouts = layout_models(ui.io().display_size);
 
@@ -50,7 +57,7 @@ pub fn render(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) {
             .size(size, imgui::Condition::Always)
             .build(|| {
                 if title == "CPU" {
-                    render_cpu_window(ui, snapshot);
+                    render_cpu_window(ui, snapshot, &mut action);
                 } else {
                     for line in text.lines() {
                         ui.text(line);
@@ -58,9 +65,21 @@ pub fn render(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) {
                 }
             });
     }
+
+    action
 }
 
-fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) {
+fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, action: &mut DebuggerUiAction) {
+    // Controls
+    if ui.button("Step") {
+        action.step_cpu = true;
+    }
+    ui.same_line();
+    if ui.button("Continue") {
+        action.continue_run = true;
+    }
+    ui.separator();
+
     // Layout: left code view, right column split into registers (top) + PRG hexdump (bottom)
     let avail = ui.content_region_avail();
     let gap = 8.0;
@@ -119,10 +138,9 @@ fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) {
                     ));
                     ui.separator();
 
-                    for line in format_hexdump_lines(
-                        snapshot.prg_hexdump_base,
-                        &snapshot.prg_hexdump_bytes,
-                    ) {
+                    for line in
+                        format_hexdump_lines(snapshot.prg_hexdump_base, &snapshot.prg_hexdump_bytes)
+                    {
                         ui.text(line);
                     }
                 });

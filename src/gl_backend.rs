@@ -52,7 +52,9 @@ impl GlBackend {
             .map_err(|e| e.to_string())?;
 
         let gl_context = window.gl_create_context().map_err(|e| e.to_string())?;
-        window.gl_make_current(&gl_context).map_err(|e| e.to_string())?;
+        window
+            .gl_make_current(&gl_context)
+            .map_err(|e| e.to_string())?;
 
         video_subsystem
             .gl_set_swap_interval(if vsync_enabled { 1 } else { 0 })
@@ -192,7 +194,13 @@ impl GlBackend {
         }
     }
 
-    pub(crate) fn render(&mut self, nes: &crate::nes::Nes, show_debugger: bool) {
+    pub(crate) fn render(
+        &mut self,
+        nes: &crate::nes::Nes,
+        show_debugger: bool,
+    ) -> crate::debugger_ui::DebuggerUiAction {
+        let mut action = crate::debugger_ui::DebuggerUiAction::default();
+
         // Per-frame IO updates
         let now = Instant::now();
         let dt = now.saturating_duration_since(self.last_frame);
@@ -247,18 +255,24 @@ impl GlBackend {
 
             // Draw NES frame as a background image (stretch to window).
             ui.get_background_draw_list()
-                .add_image(self.nes_texture_id, [0.0, 0.0], [win_w as f32, win_h as f32])
+                .add_image(
+                    self.nes_texture_id,
+                    [0.0, 0.0],
+                    [win_w as f32, win_h as f32],
+                )
                 .build();
 
             if show_debugger {
                 let snapshot = debugger::snapshot(nes);
-                debugger_ui::render(&ui, &snapshot);
+                action = debugger_ui::render(&ui, &snapshot);
             }
         }
 
         self.renderer.render(&mut self.imgui);
 
         self.window.gl_swap_window();
+
+        action
     }
 }
 

@@ -357,7 +357,14 @@ impl EventLoop {
                         &mut self.debugger_renderer,
                         nes,
                     );
-                    gl_backend.render(nes, self.debugger_open_requested);
+
+                    let action = gl_backend.render(nes, self.debugger_open_requested);
+                    Self::apply_debugger_ui_action(
+                        nes,
+                        action,
+                        &mut self.paused,
+                        &mut self.debugger_open_requested,
+                    );
                     std::thread::sleep(std::time::Duration::from_millis(16));
                     continue;
                 }
@@ -408,7 +415,7 @@ impl EventLoop {
                 // );
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
-                gl_backend.render(nes, self.debugger_open_requested);
+                let _ = gl_backend.render(nes, self.debugger_open_requested);
                 // println!("Frame rendered.");
 
                 // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
@@ -569,6 +576,25 @@ impl EventLoop {
         renderer.render(&snapshot);
     }
 
+    fn apply_debugger_ui_action(
+        nes: &mut crate::nes::Nes,
+        action: crate::debugger_ui::DebuggerUiAction,
+        paused: &mut bool,
+        debugger_open_requested: &mut bool,
+    ) {
+        if !*debugger_open_requested {
+            return;
+        }
+
+        if action.step_cpu {
+            nes.run_cpu_tick();
+        }
+        if action.continue_run {
+            *paused = false;
+            *debugger_open_requested = false;
+        }
+    }
+
     /// Handle keyboard key press events
     ///
     /// Maps keyboard keys to NES controller buttons:
@@ -599,6 +625,13 @@ impl EventLoop {
                 // Debugger hotkey: opening debugger windows should immediately pause emulation.
                 *paused = true;
                 *debugger_open_requested = true;
+            }
+            Keycode::F11 => {
+                // Debugger single-step: execute one CPU tick and remain paused.
+                // Ensure debugger stays open while stepping.
+                *paused = true;
+                *debugger_open_requested = true;
+                nes.run_cpu_tick();
             }
             Keycode::F1 => {
                 println!("Resetting NES...");
@@ -991,6 +1024,68 @@ mod tests {
             &mut debugger_open_requested,
         );
         assert!(paused);
+    }
+
+    #[test]
+    fn test_handle_key_down_f11_steps_one_instruction_while_paused() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Provide a minimal cartridge so opcode fetches/vectors are valid.
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOPs
+        let reset_vector: u16 = 0x8000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFA] = (reset_vector & 0x00FF) as u8; // NMI
+        prg_rom[0x7FFB] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFE] = (reset_vector & 0x00FF) as u8; // IRQ/BRK
+        prg_rom[0x7FFF] = (reset_vector >> 8) as u8;
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        let mut paused = true;
+        let mut debugger_open_requested = true;
+
+        let cycles_before = nes.cpu.get_total_cycles();
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F11,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+        let cycles_after = nes.cpu.get_total_cycles();
+
+        assert!(paused, "step should keep emulator paused");
+        assert!(debugger_open_requested, "step should keep debugger open");
+        assert!(
+            cycles_after > cycles_before,
+            "expected step to advance CPU cycles"
+        );
+    }
+
+    #[test]
+    fn test_continue_action_unpauses_and_closes_debugger() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = true;
+        let mut debugger_open_requested = true;
+
+        EventLoop::apply_debugger_ui_action(
+            &mut nes,
+            crate::debugger_ui::DebuggerUiAction {
+                continue_run: true,
+                step_cpu: false,
+            },
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+
+        assert!(!paused, "continue should unpause");
+        assert!(!debugger_open_requested, "continue should close debugger");
     }
 
     #[test]
