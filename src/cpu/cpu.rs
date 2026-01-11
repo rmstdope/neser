@@ -243,107 +243,19 @@ impl Cpu {
     /// - Extra 2-4 cycles depending on when collision occurs
     pub fn handle_oam_dma_if_pending(&mut self) -> Option<u16> {
         let page = self.memory.borrow_mut().take_oam_dma_page()?;
-        let source_base = (page as u16) << 8;
 
         let cycles_before = self.total_cycles;
-
-        // Check if DMC DMA is also pending at the start
-        let dmc_pending_at_start = {
-            let mut apu = self.apu.borrow_mut();
-            apu.dmc_mut().dma_pending()
-        };
-
-        // DMC DMA progress states (like Pinky)
-        const DMC_IDLE: u8 = 0;
-        const DMC_HALT_DONE: u8 = 1;
-        const DMC_READY_TO_READ: u8 = 2;
-
-        // OAM size in bytes
-        const OAM_SIZE: u16 = 256;
-
-        // Track DMC DMA progress
-        let mut dmc_progress: u8 = if dmc_pending_at_start { DMC_HALT_DONE } else { DMC_IDLE };
-        let mut sprite_dma_value: Option<u8> = None;
-        let mut sprite_offset: u16 = 0;
-        let mut sprite_dma_done = false;
 
         // Halt cycle - hijack the read the CPU was trying to do
         // This is shared by both OAM and DMC DMA if both are pending
         self.tick_single_dma_cycle();
 
-        loop {
-            // Check DMC progress
-            let dmc_pending = {
-                let mut apu = self.apu.borrow_mut();
-                apu.dmc_mut().dma_pending()
-            };
-
-            // If DMC becomes pending during OAM DMA, start tracking it
-            if dmc_pending && dmc_progress == DMC_IDLE {
-                dmc_progress = DMC_HALT_DONE; // halt done (shared with OAM cycle)
-            }
-
-            // Helper: are we on a get or put phase?
-            let on_get_phase = self.total_cycles % 2 == 0;
-            let on_put_phase = !on_get_phase;
-
-            // Can DMC read this cycle?
-            let dmc_ready_to_read = dmc_pending && dmc_progress >= DMC_READY_TO_READ && on_get_phase;
-
-            // Can OAM read this cycle?
-            let oam_ready_to_read = !sprite_dma_done && sprite_dma_value.is_none() && on_get_phase;
-
-            // Can OAM write this cycle?
-            let oam_ready_to_write = !sprite_dma_done && sprite_dma_value.is_some() && on_put_phase;
-
-            if dmc_ready_to_read {
-                // DMC takes priority - do the DMC read
-                let dma_addr = {
-                    let mut apu = self.apu.borrow_mut();
-                    apu.dmc_mut().dma_address()
-                };
-
-                if let Some(addr) = dma_addr {
-                    let value = self.memory.borrow().read(addr);
-                    self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
-                }
-                self.tick_single_dma_cycle();
-                dmc_progress = DMC_IDLE; // DMC done
-            } else if oam_ready_to_read {
-                // OAM read cycle - also counts as DMC dummy if DMC is waiting
-                if dmc_pending && dmc_progress == DMC_HALT_DONE {
-                    dmc_progress = DMC_READY_TO_READ; // dummy done
-                }
-                let addr = source_base.wrapping_add(sprite_offset);
-                let value = self.memory.borrow().read(addr);
-                sprite_dma_value = Some(value);
-                self.tick_single_dma_cycle();
-            } else if oam_ready_to_write {
-                // OAM write cycle - also counts as DMC alignment if DMC is waiting
-                if dmc_pending && dmc_progress == DMC_HALT_DONE {
-                    dmc_progress = DMC_READY_TO_READ; // alignment done
-                }
-                self.ppu.borrow_mut().write_oam_data(sprite_dma_value.take().unwrap());
-                self.tick_single_dma_cycle();
-                sprite_offset += 1;
-                if sprite_offset >= OAM_SIZE {
-                    sprite_dma_done = true;
-                }
-            } else if dmc_pending || !sprite_dma_done {
-                // Alignment/dummy cycle
-                if dmc_pending && dmc_progress == DMC_HALT_DONE {
-                    dmc_progress = DMC_READY_TO_READ;
-                }
-                self.tick_single_dma_cycle();
-            } else {
-                // All done
-                break;
-            }
-        }
+        // Run the OAM DMA transfer with DMC collision handling
+        self.run_oam_dma_internal_no_nmi(page);
 
         let dma_cycles = (self.total_cycles - cycles_before) as u16;
 
-        // Check for NMI after DMA
+        // Check for NMI after DMA (outside of cycle count for backward compatibility)
         if self.ppu.borrow_mut().poll_nmi() {
             self.trigger_nmi_without_bus_cycles();
             self.tick_ppu_apu_for_cpu_cycles(7);
@@ -621,9 +533,11 @@ impl Cpu {
         true
     }
 
-    /// Run OAM DMA internally (called from process_pending_dma).
+    /// Run OAM DMA internally (called from process_pending_dma or handle_oam_dma_if_pending).
     /// This is the actual OAM DMA loop with DMC collision handling.
-    fn run_oam_dma_internal(&mut self, page: u8) {
+    /// 
+    /// If `handle_nmi` is true, checks for and handles NMI after DMA completes.
+    fn run_oam_dma_internal_impl(&mut self, page: u8, handle_nmi: bool) {
         let source_base = (page as u16) << 8;
 
         // Check if DMC DMA is also pending at the start
@@ -717,44 +631,56 @@ impl Cpu {
             }
         }
 
-        // Check for NMI after DMA
-        if self.ppu.borrow_mut().poll_nmi() {
+        // Check for NMI after DMA (only if requested)
+        if handle_nmi && self.ppu.borrow_mut().poll_nmi() {
             self.trigger_nmi_without_bus_cycles();
             self.tick_ppu_apu_for_cpu_cycles(7);
             self.add_cycles(7);
         }
     }
 
+    /// Run OAM DMA without NMI handling (for handle_oam_dma_if_pending which handles NMI separately)
+    fn run_oam_dma_internal_no_nmi(&mut self, page: u8) {
+        self.run_oam_dma_internal_impl(page, false);
+    }
+
+    /// Run OAM DMA with NMI handling (for process_pending_dma)
+    fn run_oam_dma_internal(&mut self, page: u8) {
+        self.run_oam_dma_internal_impl(page, true);
+    }
+
     /// Read a byte from memory at the specified address
     fn read(&mut self, addr: u16) -> u8 {
-        self.before_cpu_cycle(false);
+        loop {
+            self.before_cpu_cycle(false);
 
-        // Process any pending DMA (OAM and/or DMC) - Mesen-style
-        if self.process_pending_dma(addr) {
-            // DMA was processed; retry the read
-            return self.read(addr);
-        }
-
-        let value = self.memory.borrow().read(addr);
-
-        #[cfg(test)]
-        {
-            if addr == 0x4015 && std::env::var("NESER_TRACE_4015").is_ok() {
-                let apu = self.apu.borrow();
-                eprintln!(
-                    "[trace $4015] cpu_cycle={} apu_fc_cycle={} apu_fc_irq_inhibit={} apu_fc_irq_flag={} pulse1_len_en={} pulse1_len={} value=0x{:02X}",
-                    self.total_cycles,
-                    apu.debug_frame_counter_cycle(),
-                    apu.debug_frame_counter_irq_inhibit(),
-                    apu.debug_frame_counter_irq_flag(),
-                    apu.debug_pulse1_length_enabled(),
-                    apu.debug_pulse1_length_counter(),
-                    value
-                );
+            // Process any pending DMA (OAM and/or DMC) - Mesen-style
+            if self.process_pending_dma(addr) {
+                // DMA was processed; retry the read from the beginning
+                continue;
             }
+
+            let value = self.memory.borrow().read(addr);
+
+            #[cfg(test)]
+            {
+                if addr == 0x4015 && std::env::var("NESER_TRACE_4015").is_ok() {
+                    let apu = self.apu.borrow();
+                    eprintln!(
+                        "[trace $4015] cpu_cycle={} apu_fc_cycle={} apu_fc_irq_inhibit={} apu_fc_irq_flag={} pulse1_len_en={} pulse1_len={} value=0x{:02X}",
+                        self.total_cycles,
+                        apu.debug_frame_counter_cycle(),
+                        apu.debug_frame_counter_irq_inhibit(),
+                        apu.debug_frame_counter_irq_flag(),
+                        apu.debug_pulse1_length_enabled(),
+                        apu.debug_pulse1_length_counter(),
+                        value
+                    );
+                }
+            }
+            self.after_cpu_cycle(false);
+            return value;
         }
-        self.after_cpu_cycle(false);
-        value
     }
 
     /// Dummy read a byte from memory at the specified address
