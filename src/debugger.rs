@@ -10,6 +10,9 @@ pub struct CpuRegsSnapshot {
     pub sp: u8,
     pub p: u8,
     pub cycles: u64,
+    pub interrupt: Option<crate::cpu::InterruptKind>,
+    pub nmi_vector: u16,
+    pub irq_vector: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +71,15 @@ pub fn snapshot(nes: &Nes) -> DebuggerSnapshot {
         )
     };
 
+    let (nmi_vector, irq_vector) = {
+        let memory = nes.memory.borrow();
+        let nmi_lo = memory.read_cpu_for_debugger(0xFFFA) as u16;
+        let nmi_hi = memory.read_cpu_for_debugger(0xFFFB) as u16;
+        let irq_lo = memory.read_cpu_for_debugger(0xFFFE) as u16;
+        let irq_hi = memory.read_cpu_for_debugger(0xFFFF) as u16;
+        ((nmi_hi << 8) | nmi_lo, (irq_hi << 8) | irq_lo)
+    };
+
     let cpu_regs = CpuRegsSnapshot {
         pc: nes.cpu.pc,
         a: nes.cpu.a,
@@ -76,6 +88,9 @@ pub fn snapshot(nes: &Nes) -> DebuggerSnapshot {
         sp: nes.cpu.sp,
         p: nes.cpu.p,
         cycles: cpu_cycles,
+        interrupt: nes.cpu.current_interrupt(),
+        nmi_vector,
+        irq_vector,
     };
 
     let cpu = format!(
@@ -165,6 +180,15 @@ pub fn snapshot_with_disasm_state(nes: &Nes, state: &mut CpuDisasmWindowState) -
         )
     };
 
+    let (nmi_vector, irq_vector) = {
+        let memory = nes.memory.borrow();
+        let nmi_lo = memory.read_cpu_for_debugger(0xFFFA) as u16;
+        let nmi_hi = memory.read_cpu_for_debugger(0xFFFB) as u16;
+        let irq_lo = memory.read_cpu_for_debugger(0xFFFE) as u16;
+        let irq_hi = memory.read_cpu_for_debugger(0xFFFF) as u16;
+        ((nmi_hi << 8) | nmi_lo, (irq_hi << 8) | irq_lo)
+    };
+
     let cpu_regs = CpuRegsSnapshot {
         pc: nes.cpu.pc,
         a: nes.cpu.a,
@@ -173,6 +197,9 @@ pub fn snapshot_with_disasm_state(nes: &Nes, state: &mut CpuDisasmWindowState) -
         sp: nes.cpu.sp,
         p: nes.cpu.p,
         cycles: cpu_cycles,
+        interrupt: nes.cpu.current_interrupt(),
+        nmi_vector,
+        irq_vector,
     };
 
     let cpu = format!(
@@ -422,6 +449,19 @@ mod tests {
         prg_rom[1] = 0x01;
         prg_rom[2] = 0x02;
         prg_rom[3] = 0x03;
+
+        // Seed interrupt vectors in the PRG ROM image.
+        // For a 32 KiB NROM mapping, CPU $8000-$FFFF maps to prg_rom[0x0000..0x8000).
+        // So vectors at $FFFA/$FFFE correspond to the last bytes of PRG ROM.
+        let nmi_vector = 0x1234u16;
+        let irq_vector = 0xABCDu16;
+        let [nmi_lo, nmi_hi] = nmi_vector.to_le_bytes();
+        let [irq_lo, irq_hi] = irq_vector.to_le_bytes();
+        prg_rom[0x7FFA] = nmi_lo;
+        prg_rom[0x7FFB] = nmi_hi;
+        prg_rom[0x7FFE] = irq_lo;
+        prg_rom[0x7FFF] = irq_hi;
+
         let cartridge = Cartridge::from_parts(prg_rom, vec![], MirroringMode::Horizontal);
         nes.insert_cartridge(cartridge);
 
@@ -453,6 +493,9 @@ mod tests {
         assert_eq!(snap.cpu_regs.y, 0x56);
         assert_eq!(snap.cpu_regs.sp, 0xFD);
         assert_eq!(snap.cpu_regs.p, 0x24);
+
+        assert_eq!(snap.cpu_regs.nmi_vector, nmi_vector);
+        assert_eq!(snap.cpu_regs.irq_vector, irq_vector);
 
         assert!(snap.prg_hexdump_base >= 0x8000);
         assert_eq!(snap.prg_hexdump_bytes.len(), 0x100);

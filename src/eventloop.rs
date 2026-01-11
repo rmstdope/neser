@@ -594,10 +594,10 @@ impl EventLoop {
             Self::debugger_run_to_next_frame(nes);
         }
         if action.run_to_nmi {
-            Self::debugger_run_to_vector(nes, 0xFFFA);
+            Self::debugger_run_to_vector(nes, 0xFFFA, crate::cpu::InterruptKind::Nmi);
         }
         if action.run_to_irq {
-            Self::debugger_run_to_vector(nes, 0xFFFE);
+            Self::debugger_run_to_vector(nes, 0xFFFE, crate::cpu::InterruptKind::Irq);
         }
 
         if action.continue_run {
@@ -639,7 +639,11 @@ impl EventLoop {
         }
     }
 
-    fn debugger_run_to_vector(nes: &mut crate::nes::Nes, vector_addr: u16) {
+    fn debugger_run_to_vector(
+        nes: &mut crate::nes::Nes,
+        vector_addr: u16,
+        expected_interrupt: crate::cpu::InterruptKind,
+    ) {
         const MAX_STEPS: usize = 2_000_000;
 
         let target = {
@@ -650,7 +654,13 @@ impl EventLoop {
         };
 
         for _ in 0..MAX_STEPS {
-            if nes.cpu.pc == target || nes.cpu.is_halted() {
+            if nes.cpu.is_halted() {
+                break;
+            }
+
+            // Avoid false positives where PC happens to equal the vector target during normal
+            // execution (e.g., IRQ vector points at the main loop).
+            if nes.cpu.current_interrupt() == Some(expected_interrupt) && nes.cpu.pc == target {
                 break;
             }
             nes.run_cpu_tick();
@@ -1380,6 +1390,58 @@ mod tests {
             "run-to actions should keep debugger open"
         );
         assert_eq!(nes.cpu.pc, irq_vector);
+    }
+
+    #[test]
+    fn test_run_to_irq_requires_actual_irq_entry_not_just_pc_match() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Minimal cartridge where IRQ vector points at the reset entrypoint.
+        // This catches false positives where the debugger stops just because PC == vector.
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
+        let reset_vector: u16 = 0x8000;
+        let irq_vector: u16 = 0x8000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFA] = 0x00; // NMI (unused)
+        prg_rom[0x7FFB] = 0x80;
+        prg_rom[0x7FFE] = (irq_vector & 0x00FF) as u8; // IRQ/BRK
+        prg_rom[0x7FFF] = (irq_vector >> 8) as u8;
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Ensure IRQs are unmasked (clear I flag).
+        nes.cpu.p &= !0b0000_0100;
+        // Force an IRQ to be pending.
+        nes.cpu.set_irq_pending(true);
+
+        let mut paused = true;
+        let mut debugger_open_requested = true;
+
+        EventLoop::apply_debugger_ui_action(
+            &mut nes,
+            crate::debugger_ui::DebuggerUiAction {
+                continue_run: false,
+                step_cpu: false,
+                run_to_next_frame: false,
+                run_to_nmi: false,
+                run_to_irq: true,
+            },
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+
+        assert_eq!(nes.cpu.pc, irq_vector);
+        assert_eq!(
+            nes.cpu.current_interrupt(),
+            Some(crate::cpu::InterruptKind::Irq)
+        );
     }
 
     #[test]

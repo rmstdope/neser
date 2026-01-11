@@ -81,6 +81,11 @@ pub struct Cpu {
     dmc_dma_running: bool,
     dmc_dma_need_halt: bool,
     dmc_dma_need_dummy_read: bool,
+
+    /// Tracks whether the CPU is currently executing inside an interrupt handler.
+    ///
+    /// This is derived from interrupt entry (IRQ/NMI) and cleared on RTI.
+    interrupt_stack: Vec<InterruptKind>,
 }
 
 // Status register flags
@@ -97,7 +102,17 @@ const NMI_VECTOR: u16 = 0xFFFA;
 const RESET_VECTOR: u16 = 0xFFFC;
 const IRQ_VECTOR: u16 = 0xFFFE;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InterruptKind {
+    Nmi,
+    Irq,
+}
+
 impl Cpu {
+    pub fn current_interrupt(&self) -> Option<InterruptKind> {
+        self.interrupt_stack.last().copied()
+    }
+
     /// Create a new CPU with default register values at power-on
     pub fn new(
         tv_system: TvSystem,
@@ -139,6 +154,8 @@ impl Cpu {
             dmc_dma_running: false,
             dmc_dma_need_halt: false,
             dmc_dma_need_dummy_read: false,
+
+            interrupt_stack: Vec::with_capacity(2),
         }
     }
 
@@ -212,11 +229,13 @@ impl Cpu {
 
         if nmi_hijack {
             self.nmi_pending = false;
+            self.interrupt_stack.push(InterruptKind::Nmi);
             self.pc = self.read_u16(NMI_VECTOR);
         } else {
             // IRQ has been serviced; clear any forced IRQ. Hardware IRQ remains asserted
             // only if the APU line is still high and will be re-sampled next cycle.
             self.forced_irq_pending = false;
+            self.interrupt_stack.push(InterruptKind::Irq);
             self.pc = self.read_u16(IRQ_VECTOR);
         }
     }
@@ -352,6 +371,8 @@ impl Cpu {
         let hi = self.memory.borrow().read(NMI_VECTOR + 1) as u16;
         self.pc = (hi << 8) | lo;
 
+        self.interrupt_stack.push(InterruptKind::Nmi);
+
         // Set Interrupt Disable flag
         self.p |= FLAG_INTERRUPT;
     }
@@ -390,6 +411,7 @@ impl Cpu {
         self.prev_run_irq = false;
         self.run_irq = false;
         self.skip_interrupt_latch_this_cycle = false;
+        self.interrupt_stack.clear();
 
         // Reset cycle counters and master clock alignment.
         self.total_cycles = 0;
@@ -1501,6 +1523,9 @@ impl Cpu {
 
                 // Cycle 5-6: Pull PC from stack (low byte, then high byte)
                 self.pc = self.pop_word();
+
+                // Leaving interrupt handler.
+                let _ = self.interrupt_stack.pop();
             }
             "EOR" => {
                 let value = self.get_operand_value(&op, operand);
@@ -2212,9 +2237,65 @@ mod tests {
 
         // Assert: NMI was latched and then serviced (PC jumps to NMI vector), and the PPU NMI flag was consumed.
         assert_eq!(cpu.pc, 0x9000, "CPU should service NMI after execute()");
+        assert_eq!(
+            cpu.current_interrupt(),
+            Some(InterruptKind::Nmi),
+            "CPU should report being in NMI handler after vectoring"
+        );
         assert!(
             !ppu.borrow_mut().poll_nmi(),
             "PPU NMI flag should be cleared once CPU polls it"
+        );
+    }
+
+    #[test]
+    fn test_rti_clears_interrupt_indicator_after_nmi() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        // Minimal cartridge: reset vector -> $8000, NMI vector -> $9000.
+        // Put NOP at $8000 and RTI at $9000.
+        let mut prg_rom = vec![0; 0x4000];
+        // NMI vector ($FFFA)
+        prg_rom[0x3FFA] = 0x00;
+        prg_rom[0x3FFB] = 0x90;
+        // Reset vector ($FFFC)
+        prg_rom[0x3FFC] = 0x00;
+        prg_rom[0x3FFD] = 0x80;
+        // Code at $8000 and $9000
+        prg_rom[0x0000] = 0xEA; // NOP at $8000
+        prg_rom[0x1000] = 0x40; // RTI at $9000
+        let chr_rom = vec![0; 0x2000];
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        cpu.memory.borrow_mut().map_cartridge(cartridge);
+
+        cpu.reset(true);
+
+        // Arrange: make PPU enter VBlank with NMI enabled.
+        ppu.borrow_mut().write_control(0x80);
+        ppu.borrow_mut().run_ppu_cycles(241 * 341 + 1);
+
+        // Act: execute NOP, then the CPU should service NMI and jump to $9000.
+        cpu.execute();
+        assert_eq!(cpu.pc, 0x9000);
+        assert_eq!(cpu.current_interrupt(), Some(InterruptKind::Nmi));
+
+        // Act: execute RTI at $9000.
+        cpu.execute();
+
+        assert_eq!(
+            cpu.current_interrupt(),
+            None,
+            "RTI should clear the interrupt indicator"
+        );
+        assert_eq!(
+            cpu.pc, 0x8001,
+            "RTI should return to the instruction after the interrupted one"
         );
     }
 
@@ -2398,6 +2479,12 @@ mod tests {
 
         // PC loaded from IRQ vector
         assert_eq!(cpu.pc, 0x9000);
+
+        assert_eq!(
+            cpu.current_interrupt(),
+            Some(InterruptKind::Irq),
+            "CPU should report being in IRQ handler after vectoring"
+        );
 
         // I flag set
         assert_ne!(cpu.p & FLAG_INTERRUPT, 0);

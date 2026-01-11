@@ -193,10 +193,18 @@ fn render_cpu_registers(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) {
 
 fn cpu_register_lines(snapshot: &DebuggerSnapshot) -> Vec<String> {
     let r = snapshot.cpu_regs;
+    let interrupt = match r.interrupt {
+        None => "-",
+        Some(crate::cpu::InterruptKind::Nmi) => "NMI",
+        Some(crate::cpu::InterruptKind::Irq) => "IRQ",
+    };
+
     vec![
         format!("PC: {:04X}  SP: {:02X}", r.pc, r.sp),
         format!("A:  {:02X}  X:  {:02X}  Y:  {:02X}", r.a, r.x, r.y),
         format!("P:  {:02X}  {}", r.p, format_status_flags(r.p)),
+        format!("INT: {interrupt}"),
+        format!("VEC: NMI {:04X}  IRQ {:04X}", r.nmi_vector, r.irq_vector),
         format!("CYC: {}", r.cycles),
     ]
 }
