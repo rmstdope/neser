@@ -193,7 +193,11 @@ impl DmaController {
                 DmaAction::OamRead(addr)
             }
 
-            OamDmaState::Writing { page, offset, value } => {
+            OamDmaState::Writing {
+                page,
+                offset,
+                value,
+            } => {
                 // Write to $2004
                 let next_offset = offset.wrapping_add(1);
                 if next_offset == 0 {

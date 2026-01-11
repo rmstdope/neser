@@ -103,7 +103,21 @@ fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, action: &mut D
                 let bytes = format_disasm_bytes(&line.bytes);
                 let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
                 if line.is_current {
-                    ui.text_colored([1.0, 1.0, 0.0, 1.0], text);
+                    let cursor = ui.cursor_screen_pos();
+                    let draw_w = ui.content_region_avail()[0];
+                    let draw_h = ui.text_line_height();
+
+                    ui.get_window_draw_list()
+                        .add_rect(
+                            cursor,
+                            [cursor[0] + draw_w, cursor[1] + draw_h],
+                            [1.0, 1.0, 1.0, 1.0],
+                        )
+                        .filled(true)
+                        .build();
+
+                    let _text = ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 0.0, 1.0]);
+                    ui.text(text);
                 } else {
                     ui.text(text);
                 }
