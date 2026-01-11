@@ -187,6 +187,7 @@ use std::time::{Duration, Instant};
             scale
         }
     }
+
     fn should_manual_frame_limit(vsync_enabled: bool) -> bool {
         !vsync_enabled
     }
