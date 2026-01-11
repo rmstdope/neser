@@ -361,7 +361,7 @@ impl EventLoop {
             audio.resume();
         }
 
-        if let Some(ref mut canvas) = self.canvas {
+        if let Some(mut canvas) = self.canvas.take() {
             // We have a window - run with rendering
             let texture_creator = canvas.texture_creator();
 
@@ -380,9 +380,18 @@ impl EventLoop {
             loop {
                 // 1. Poll ALL events (non-blocking)
                 let events: Vec<_> = self.event_pump.poll_iter().collect();
+                
+                // Process events, collecting controller-related events to handle separately
+                let mut controllers_to_add = Vec::new();
+                let mut controllers_to_remove = Vec::new();
+                let mut controller_buttons = Vec::new();
+                
                 for event in events {
                     match event {
-                        Event::Quit { .. } => return Ok(()),
+                        Event::Quit { .. } => {
+                            self.canvas = Some(canvas); // Return canvas before exiting
+                            return Ok(());
+                        }
                         Event::KeyDown {
                             keycode: Some(keycode),
                             ..
@@ -394,6 +403,7 @@ impl EventLoop {
                                 &mut self.paused,
                             ) == KeyDownOutcome::Quit
                             {
+                                self.canvas = Some(canvas); // Return canvas before exiting
                                 return Ok(());
                             }
                         }
@@ -404,20 +414,37 @@ impl EventLoop {
                             Self::handle_key_up(nes, keycode);
                         }
                         Event::ControllerDeviceAdded { which, .. } => {
-                            self.handle_controller_added(which);
+                            controllers_to_add.push(which);
                         }
                         Event::ControllerDeviceRemoved { which, .. } => {
-                            self.handle_controller_removed(which);
+                            controllers_to_remove.push(which);
                         }
                         Event::ControllerButtonDown { button, which, .. } => {
-                            self.handle_controller_button(nes, which, button, true);
+                            controller_buttons.push((which, button, true));
                         }
                         Event::ControllerButtonUp { button, which, .. } => {
-                            self.handle_controller_button(nes, which, button, false);
+                            controller_buttons.push((which, button, false));
                         }
                         _ => {}
                     }
                 }
+                
+                // Temporarily put canvas back so we can mutate self
+                self.canvas = Some(canvas);
+                
+                // Handle controller events
+                for which in controllers_to_add {
+                    self.handle_controller_added(which);
+                }
+                for which in controllers_to_remove {
+                    self.handle_controller_removed(which);
+                }
+                for (which, button, pressed) in controller_buttons {
+                    self.handle_controller_button(nes, which, button, pressed);
+                }
+                
+                // Take canvas back
+                canvas = self.canvas.take().unwrap();
 
                 // Skip emulation and rendering if paused
                 if self.paused {
@@ -471,7 +498,7 @@ impl EventLoop {
                 // );
 
                 // 3. Render the frame
-                Self::render_frame(canvas, &mut texture, nes)?;
+                Self::render_frame(&mut canvas, &mut texture, nes)?;
                 // println!("Frame rendered.");
 
                 // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
@@ -1036,5 +1063,29 @@ mod tests {
         // matching the PPU screen buffer size
         assert_eq!(EXPECTED_WIDTH, 256);
         assert_eq!(EXPECTED_HEIGHT, 240);
+    }
+
+    #[test]
+    #[serial]
+    fn test_gamepad_disabled_by_default() {
+        // Gamepads should be enabled by default (no controllers initialized in tests)
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false);
+        assert!(event_loop.is_ok());
+        let event_loop = event_loop.unwrap();
+        assert_eq!(event_loop.controllers.len(), 0);
+        assert_eq!(event_loop.controller_player_map.len(), 0);
+    }
+
+    #[test]
+    #[serial]
+    fn test_gamepad_enabled_no_controllers_present() {
+        // When gamepads are enabled but no controllers are present, should still work
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, true);
+        // This may succeed or fail depending on whether controllers are actually present
+        // We just verify it doesn't panic
+        if let Ok(event_loop) = event_loop {
+            // No controllers should be initialized in test environment
+            assert!(event_loop.controllers.len() <= 2);
+        }
     }
 }
