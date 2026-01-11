@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use crate::gl_backend::GlBackend;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::audio::NesAudio;
 use crate::input::Button;
@@ -772,7 +772,8 @@ impl EventLoop {
             for (idx, controller) in self.controllers.iter().enumerate() {
                 let instance_id = controller.instance_id();
                 let new_player_num = (idx + 1) as u8;
-                self.controller_player_map.insert(instance_id, new_player_num);
+                self.controller_player_map
+                    .insert(instance_id, new_player_num);
                 println!(
                     "Reassigned controller {} to player {}",
                     instance_id, new_player_num
@@ -1151,9 +1152,18 @@ mod tests {
         );
 
         assert!(paused, "step-over should keep emulator paused");
-        assert!(debugger_open_requested, "step-over should keep debugger open");
-        assert_eq!(nes.cpu.pc, 0x8003, "expected step-over to stop at next instruction");
-        assert_eq!(nes.cpu.x, 1, "expected subroutine to have executed (INX) before returning");
+        assert!(
+            debugger_open_requested,
+            "step-over should keep debugger open"
+        );
+        assert_eq!(
+            nes.cpu.pc, 0x8003,
+            "expected step-over to stop at next instruction"
+        );
+        assert_eq!(
+            nes.cpu.x, 1,
+            "expected subroutine to have executed (INX) before returning"
+        );
     }
 
     #[test]
@@ -1173,9 +1183,15 @@ mod tests {
         );
 
         assert!(paused, "step-into should keep emulator paused");
-        assert!(debugger_open_requested, "step-into should keep debugger open");
+        assert!(
+            debugger_open_requested,
+            "step-into should keep debugger open"
+        );
         assert_eq!(nes.cpu.pc, 0x8006, "expected step-into to enter subroutine");
-        assert_eq!(nes.cpu.x, 0, "expected to not execute INX when stepping into JSR");
+        assert_eq!(
+            nes.cpu.x, 0,
+            "expected to not execute INX when stepping into JSR"
+        );
     }
 
     #[test]
@@ -1201,7 +1217,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_request_debugger_open_pauses_and_sets_request_flag() {
-        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
 
         assert!(!event_loop.paused);
         assert!(!event_loop.debugger_open_requested);
@@ -1381,7 +1398,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_run_with_nes() {
-        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+        let _event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance
@@ -1440,8 +1458,8 @@ mod tests {
         }
 
         let calls = Rc::new(RefCell::new(0usize));
-        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false)
-            .unwrap();
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1468,8 +1486,8 @@ mod tests {
         }
 
         let calls = Rc::new(RefCell::new(0usize));
-        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false)
-            .unwrap();
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1525,8 +1543,8 @@ mod tests {
         }
 
         let calls = Rc::new(RefCell::new(0usize));
-        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false)
-            .unwrap();
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1583,8 +1601,8 @@ mod tests {
         }
 
         let calls = Rc::new(RefCell::new(0usize));
-        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false)
-            .unwrap();
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
