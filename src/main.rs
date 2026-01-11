@@ -73,6 +73,10 @@ const CLI_FLAGS: &[CliFlag] = &[
         flag: "--no-vsync",
         help: Some("Disable VSync (default: enabled)"),
     },
+    CliFlag {
+        flag: "--no-gamepads",
+        help: Some("Disable gamepad/joystick support"),
+    },
 ];
 
 fn vsync_enabled_from_args(args: &[String]) -> bool {
@@ -135,6 +139,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let no_audio = args.contains(&"--no-audio".to_string());
     let vsync_enabled = vsync_enabled_from_args(&args);
+    let gamepads_enabled = !args.contains(&"--no-gamepads".to_string());
     let tracing = tracing::Tracing::from_args(&args);
 
     // Channel enable/disable flags (default: all enabled)
@@ -160,8 +165,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(audio)
     };
 
-    let mut event_loop =
-        eventloop::EventLoop::new(false, tv_system, 4.0, 1.0, vsync_enabled, audio)?;
+    let mut event_loop = eventloop::EventLoop::new(
+        false,
+        tv_system,
+        4.0,
+        1.0,
+        vsync_enabled,
+        audio,
+        gamepads_enabled,
+    )?;
 
     // Palette display requiring only scanline-based palette changes,
     // intended to demonstrate the full palette even on less advanced emulators
@@ -235,5 +247,11 @@ mod tests {
             "--definitely-not-a-real-flag".to_string(),
         ];
         assert!(validate_no_unknown_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_no_gamepads_flag_recognized() {
+        let args = vec!["neser".to_string(), "--no-gamepads".to_string()];
+        assert!(validate_no_unknown_args(&args).is_ok());
     }
 }

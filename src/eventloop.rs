@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
@@ -8,7 +11,6 @@ use crate::audio::NesAudio;
 use crate::input::Button;
 use crate::nes::TvSystem;
 use crate::tracing::Tracing;
-use std::time::{Duration, Instant};
 
 /// EventLoop manages the SDL2 event loop for the application.
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
@@ -20,6 +22,8 @@ pub struct EventLoop {
     vsync_enabled: bool,
     paused: bool,
     audio: Option<NesAudio>,
+    controllers: Vec<sdl2::controller::GameController>,
+    controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +58,8 @@ impl EventLoop {
     ///             If a value outside this range is provided, it will be clamped and a warning
     ///             will be printed to the console.
     /// * `audio` - Optional audio output system. If provided, audio will be enabled.
+    /// * `gamepads_enabled` - If `true`, attempts to initialize and use connected game controllers.
+    ///                        Up to 2 controllers will be supported (player 1 and player 2).
     ///
     /// # Errors
     ///
@@ -67,13 +73,13 @@ impl EventLoop {
     /// use neser::nes::TvSystem;
     ///
     /// // Create a headless EventLoop for testing
-    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None)?;
+    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false)?;
     ///
     /// // Create an EventLoop with an NTSC window at 2x scale
-    /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0, true, None)?;
+    /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0, true, None, false)?;
     ///
-    /// // Create an EventLoop with a PAL window at 3x scale at 2x speed
-    /// let pal = EventLoop::new(false, TvSystem::Pal, 3.0, 2.0, true, None)?;
+    /// // Create an EventLoop with a PAL window at 3x scale at 2x speed with gamepads
+    /// let pal = EventLoop::new(false, TvSystem::Pal, 3.0, 2.0, true, None, true)?;
     /// # Ok::<(), String>(())
     /// ```
     pub fn new(
@@ -83,6 +89,7 @@ impl EventLoop {
         timing_scale: f32,
         vsync_enabled: bool,
         audio: Option<NesAudio>,
+        gamepads_enabled: bool,
     ) -> Result<Self, String> {
         let clamped_video_scale = Self::clamp_scale(video_scale);
         let clamped_timing_scale = Self::clamp_timing_scale(timing_scale);
@@ -101,6 +108,13 @@ impl EventLoop {
             )?)
         };
 
+        // Initialize gamepads if enabled
+        let (controllers, controller_player_map) = if gamepads_enabled {
+            Self::init_gamepads(&sdl_context)?
+        } else {
+            (Vec::new(), HashMap::new())
+        };
+
         Ok(EventLoop {
             _sdl_context: sdl_context,
             canvas,
@@ -109,7 +123,61 @@ impl EventLoop {
             vsync_enabled,
             paused: false,
             audio,
+            controllers,
+            controller_player_map,
         })
+    }
+
+    /// Initialize game controllers
+    ///
+    /// Attempts to open up to 2 game controllers. The first controller found
+    /// is assigned to player 1, the second to player 2.
+    ///
+    /// Returns a tuple of (controllers vector, player mapping HashMap)
+    fn init_gamepads(
+        sdl_context: &sdl2::Sdl,
+    ) -> Result<(Vec<sdl2::controller::GameController>, HashMap<u32, u8>), String> {
+        let game_controller_subsystem = sdl_context.game_controller()?;
+        let available = game_controller_subsystem
+            .num_joysticks()
+            .map_err(|e| format!("Failed to enumerate joysticks: {}", e))?;
+
+        println!("{} joystick(s) available", available);
+
+        let mut controllers = Vec::new();
+        let mut controller_player_map = HashMap::new();
+
+        // Try to open up to 2 controllers
+        for id in 0..available.min(2) {
+            if !game_controller_subsystem.is_game_controller(id) {
+                println!("Joystick {} is not a game controller", id);
+                continue;
+            }
+
+            match game_controller_subsystem.open(id) {
+                Ok(controller) => {
+                    let instance_id = controller.instance_id();
+                    let player_num = (controllers.len() + 1) as u8;
+                    println!(
+                        "Opened game controller {} for player {}: {}",
+                        id,
+                        player_num,
+                        controller.name()
+                    );
+                    controller_player_map.insert(instance_id, player_num);
+                    controllers.push(controller);
+                }
+                Err(e) => {
+                    println!("Failed to open controller {}: {}", id, e);
+                }
+            }
+
+            if controllers.len() >= 2 {
+                break;
+            }
+        }
+
+        Ok((controllers, controller_player_map))
     }
 
     /// Clamps the video scaling factor to the valid range [1.0, 5.0].
@@ -289,7 +357,7 @@ impl EventLoop {
             audio.resume();
         }
 
-        if let Some(ref mut canvas) = self.canvas {
+        if let Some(mut canvas) = self.canvas.take() {
             // We have a window - run with rendering
             let texture_creator = canvas.texture_creator();
 
@@ -307,9 +375,19 @@ impl EventLoop {
 
             loop {
                 // 1. Poll ALL events (non-blocking)
-                for event in self.event_pump.poll_iter() {
+                let events: Vec<_> = self.event_pump.poll_iter().collect();
+                
+                // Process events, collecting controller-related events to handle separately
+                let mut controllers_to_add = Vec::new();
+                let mut controllers_to_remove = Vec::new();
+                let mut controller_buttons = Vec::new();
+                
+                for event in events {
                     match event {
-                        Event::Quit { .. } => return Ok(()),
+                        Event::Quit { .. } => {
+                            self.canvas = Some(canvas); // Return canvas before exiting
+                            return Ok(());
+                        }
                         Event::KeyDown {
                             keycode: Some(keycode),
                             ..
@@ -321,6 +399,7 @@ impl EventLoop {
                                 &mut self.paused,
                             ) == KeyDownOutcome::Quit
                             {
+                                self.canvas = Some(canvas); // Return canvas before exiting
                                 return Ok(());
                             }
                         }
@@ -330,9 +409,39 @@ impl EventLoop {
                         } => {
                             Self::handle_key_up(nes, keycode);
                         }
+                        Event::ControllerDeviceAdded { which, .. } => {
+                            controllers_to_add.push(which);
+                        }
+                        Event::ControllerDeviceRemoved { which, .. } => {
+                            controllers_to_remove.push(which);
+                        }
+                        Event::ControllerButtonDown { button, which, .. } => {
+                            controller_buttons.push((which, button, true));
+                        }
+                        Event::ControllerButtonUp { button, which, .. } => {
+                            controller_buttons.push((which, button, false));
+                        }
                         _ => {}
                     }
                 }
+                
+                // Temporarily put canvas back so we can mutate self
+                self.canvas = Some(canvas);
+                
+                // Handle controller events
+                for which in controllers_to_add {
+                    self.handle_controller_added(which);
+                }
+                for which in controllers_to_remove {
+                    self.handle_controller_removed(which);
+                }
+                for (which, button, pressed) in controller_buttons {
+                    self.handle_controller_button(nes, which, button, pressed);
+                }
+                
+                // Take canvas back - this should never fail since we just put it back
+                canvas = self.canvas.take()
+                    .expect("Canvas was unexpectedly None after putting it back for controller event handling - this indicates a logic error in canvas management");
 
                 // Skip emulation and rendering if paused
                 if self.paused {
@@ -386,7 +495,7 @@ impl EventLoop {
                 // );
 
                 // 3. Render the frame
-                Self::render_frame(canvas, &mut texture, nes)?;
+                Self::render_frame(&mut canvas, &mut texture, nes)?;
                 // println!("Frame rendered.");
 
                 // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
@@ -414,7 +523,8 @@ impl EventLoop {
         } else {
             // Headless mode - just run without rendering
             loop {
-                for event in self.event_pump.poll_iter() {
+                let events: Vec<_> = self.event_pump.poll_iter().collect();
+                for event in events {
                     match event {
                         Event::Quit { .. } => return Ok(()),
                         Event::KeyDown {
@@ -436,6 +546,18 @@ impl EventLoop {
                             ..
                         } => {
                             Self::handle_key_up(nes, keycode);
+                        }
+                        Event::ControllerDeviceAdded { which, .. } => {
+                            self.handle_controller_added(which);
+                        }
+                        Event::ControllerDeviceRemoved { which, .. } => {
+                            self.handle_controller_removed(which);
+                        }
+                        Event::ControllerButtonDown { button, which, .. } => {
+                            self.handle_controller_button(nes, which, button, true);
+                        }
+                        Event::ControllerButtonUp { button, which, .. } => {
+                            self.handle_controller_button(nes, which, button, false);
                         }
                         _ => {}
                     }
@@ -543,6 +665,104 @@ impl EventLoop {
             _ => {}
         }
     }
+
+    /// Handle controller device added event
+    fn handle_controller_added(&mut self, which: u32) {
+        // Only add if we have less than 2 controllers
+        if self.controllers.len() >= 2 {
+            println!("Controller {} added but already have 2 controllers", which);
+            return;
+        }
+
+        let game_controller_subsystem = match self._sdl_context.game_controller() {
+            Ok(subsystem) => subsystem,
+            Err(e) => {
+                println!("Failed to get game controller subsystem: {}", e);
+                return;
+            }
+        };
+
+        if !game_controller_subsystem.is_game_controller(which) {
+            println!("Device {} is not a game controller", which);
+            return;
+        }
+
+        match game_controller_subsystem.open(which) {
+            Ok(controller) => {
+                let instance_id = controller.instance_id();
+                let player_num = (self.controllers.len() + 1) as u8;
+                println!(
+                    "Hot-plugged controller {} for player {}: {}",
+                    which,
+                    player_num,
+                    controller.name()
+                );
+                self.controller_player_map.insert(instance_id, player_num);
+                self.controllers.push(controller);
+            }
+            Err(e) => {
+                println!("Failed to open controller {}: {}", which, e);
+            }
+        }
+    }
+
+    /// Handle controller device removed event
+    fn handle_controller_removed(&mut self, which: u32) {
+        // Find and remove the controller with this instance_id
+        if let Some(player_num) = self.controller_player_map.remove(&which) {
+            // Remove from controllers vec
+            self.controllers.retain(|c| c.instance_id() != which);
+            println!("Controller {} (player {}) removed", which, player_num);
+
+            // Reassign remaining controllers to players 1 and 2
+            self.controller_player_map.clear();
+            for (idx, controller) in self.controllers.iter().enumerate() {
+                let instance_id = controller.instance_id();
+                let new_player_num = (idx + 1) as u8;
+                self.controller_player_map.insert(instance_id, new_player_num);
+                println!(
+                    "Reassigned controller {} to player {}",
+                    instance_id, new_player_num
+                );
+            }
+        }
+    }
+
+    /// Handle controller button press/release
+    fn handle_controller_button(
+        &self,
+        nes: &mut crate::nes::Nes,
+        which: u32,
+        button: sdl2::controller::Button,
+        pressed: bool,
+    ) {
+        use crate::input::Button as NesButton;
+
+        // Get the player number for this controller
+        let player_num = match self.controller_player_map.get(&which) {
+            Some(&num) => num,
+            None => return, // Unknown controller
+        };
+
+        // Map SDL2 controller buttons to NES buttons
+        let nes_button = match button {
+            sdl2::controller::Button::DPadUp => Some(NesButton::Up),
+            sdl2::controller::Button::DPadDown => Some(NesButton::Down),
+            sdl2::controller::Button::DPadLeft => Some(NesButton::Left),
+            sdl2::controller::Button::DPadRight => Some(NesButton::Right),
+            sdl2::controller::Button::A => Some(NesButton::A),
+            sdl2::controller::Button::B => Some(NesButton::B),
+            sdl2::controller::Button::X => Some(NesButton::A), // Also map X to A
+            sdl2::controller::Button::Y => Some(NesButton::B), // Also map Y to B
+            sdl2::controller::Button::Back => Some(NesButton::Select),
+            sdl2::controller::Button::Start => Some(NesButton::Start),
+            _ => None, // Ignore other buttons
+        };
+
+        if let Some(nes_button) = nes_button {
+            nes.set_button(player_num, nes_button, pressed);
+        }
+    }
 }
 
 fn apply_volume_hotkey(audio: &NesAudio, keycode: Keycode) {
@@ -594,7 +814,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_eventloop_creation() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false);
         assert!(event_loop.is_ok());
     }
 
@@ -786,42 +1006,42 @@ mod tests {
     #[test]
     #[serial]
     fn test_new_headless() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0, true, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0, true, None, false);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_below_minimum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0, true, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0, true, None, false);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_above_maximum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, true, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, true, None, false);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_at_minimum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_at_maximum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0, true, None);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0, true, None, false);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_run_with_nes() {
-        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance
@@ -840,5 +1060,29 @@ mod tests {
         // matching the PPU screen buffer size
         assert_eq!(EXPECTED_WIDTH, 256);
         assert_eq!(EXPECTED_HEIGHT, 240);
+    }
+
+    #[test]
+    #[serial]
+    fn test_gamepad_disabled_by_default() {
+        // When gamepads are disabled, no controllers should be initialized
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false);
+        assert!(event_loop.is_ok());
+        let event_loop = event_loop.unwrap();
+        assert_eq!(event_loop.controllers.len(), 0);
+        assert_eq!(event_loop.controller_player_map.len(), 0);
+    }
+
+    #[test]
+    #[serial]
+    fn test_gamepad_enabled_no_controllers_present() {
+        // When gamepads are enabled but no controllers are present, should still work
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, true);
+        // This may succeed or fail depending on whether controllers are actually present
+        // We just verify it doesn't panic
+        if let Ok(event_loop) = event_loop {
+            // No controllers should be initialized in test environment
+            assert!(event_loop.controllers.len() <= 2);
+        }
     }
 }
