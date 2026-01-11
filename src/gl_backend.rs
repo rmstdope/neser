@@ -25,6 +25,7 @@ impl GlBackend {
         tv_system: TvSystem,
         scale: f32,
         vsync_enabled: bool,
+        fullscreen: bool,
     ) -> Result<Self, String> {
         let video_subsystem = sdl_context.video()?;
 
@@ -43,13 +44,18 @@ impl GlBackend {
         let scaled_width = (base_width as f32 * scale) as u32;
         let scaled_height = (base_height as f32 * scale) as u32;
 
-        let window = video_subsystem
-            .window("NES Emulator in Rust", scaled_width, scaled_height)
-            .position_centered()
-            .opengl()
-            .resizable()
-            .build()
-            .map_err(|e| e.to_string())?;
+        let mut window_builder =
+            video_subsystem.window("NES Emulator in Rust", scaled_width, scaled_height);
+        window_builder.opengl();
+
+        if fullscreen {
+            window_builder.fullscreen_desktop();
+        } else {
+            window_builder.position_centered();
+            window_builder.resizable();
+        }
+
+        let window = window_builder.build().map_err(|e| e.to_string())?;
 
         let gl_context = window.gl_create_context().map_err(|e| e.to_string())?;
         window
@@ -65,7 +71,8 @@ impl GlBackend {
         unsafe {
             gl::Disable(gl::DEPTH_TEST);
             gl::Disable(gl::CULL_FACE);
-            gl::Viewport(0, 0, scaled_width as i32, scaled_height as i32);
+            let (drawable_w, drawable_h) = window.drawable_size();
+            gl::Viewport(0, 0, drawable_w as i32, drawable_h as i32);
             gl::ClearColor(0.0, 0.0, 0.0, 1.0);
         }
 
@@ -209,6 +216,12 @@ impl GlBackend {
 
         let (win_w, win_h) = self.window.size();
         let (drawable_w, drawable_h) = self.window.drawable_size();
+
+        // Keep the GL viewport in sync with the current drawable size.
+        unsafe {
+            gl::Viewport(0, 0, drawable_w as i32, drawable_h as i32);
+        }
+
         let scale_x = if win_w == 0 {
             1.0
         } else {
@@ -228,7 +241,7 @@ impl GlBackend {
 
         // Update NES texture (keep the PPU borrow short-lived so we can snapshot later).
         {
-            let mut screen_buffer = nes.get_screen_buffer();
+            let screen_buffer = nes.get_screen_buffer();
             screen_buffer.copy_buffer(&mut self.framebuffer);
         }
 
@@ -253,13 +266,29 @@ impl GlBackend {
         {
             let ui = self.imgui.frame();
 
-            // Draw NES frame as a background image (stretch to window).
+            // Draw NES frame as a background image, preserving aspect ratio with letterboxing.
+            let win_w = win_w as f32;
+            let win_h = win_h as f32;
+            let nes_aspect = 256.0 / 240.0;
+            let win_aspect = if win_h == 0.0 {
+                nes_aspect
+            } else {
+                win_w / win_h
+            };
+
+            let (draw_w, draw_h) = if win_aspect > nes_aspect {
+                // Window is wider than NES: fit height.
+                (win_h * nes_aspect, win_h)
+            } else {
+                // Window is taller than NES: fit width.
+                (win_w, win_w / nes_aspect)
+            };
+
+            let x0 = (win_w - draw_w) * 0.5;
+            let y0 = (win_h - draw_h) * 0.5;
+
             ui.get_background_draw_list()
-                .add_image(
-                    self.nes_texture_id,
-                    [0.0, 0.0],
-                    [win_w as f32, win_h as f32],
-                )
+                .add_image(self.nes_texture_id, [x0, y0], [x0 + draw_w, y0 + draw_h])
                 .build();
 
             if show_debugger {

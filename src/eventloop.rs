@@ -42,9 +42,6 @@ impl EventLoop {
     const MAX_SCALE: f32 = 5.0;
     const MIN_TIMING_SCALE: f32 = 0.001;
     const MAX_TIMING_SCALE: f32 = 100.0;
-    const CLEAR_COLOR_R: u8 = 0;
-    const CLEAR_COLOR_G: u8 = 0;
-    const CLEAR_COLOR_B: u8 = 0;
 
     /// Creates a new EventLoop instance.
     ///
@@ -65,6 +62,7 @@ impl EventLoop {
     /// * `audio` - Optional audio output system. If provided, audio will be enabled.
     /// * `gamepads_enabled` - If `true`, attempts to initialize and use connected game controllers.
     ///                        Up to 2 controllers will be supported (player 1 and player 2).
+    /// * `fullscreen` - If `true`, runs the emulator in fullscreen mode with letterboxing.
     ///
     /// # Errors
     ///
@@ -78,13 +76,13 @@ impl EventLoop {
     /// use neser::nes::TvSystem;
     ///
     /// // Create a headless EventLoop for testing
-    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false)?;
+    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false)?;
     ///
     /// // Create an EventLoop with an NTSC window at 2x scale
-    /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0, true, None, false)?;
+    /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0, true, None, false, false)?;
     ///
     /// // Create an EventLoop with a PAL window at 3x scale at 2x speed with gamepads
-    /// let pal = EventLoop::new(false, TvSystem::Pal, 3.0, 2.0, true, None, true)?;
+    /// let pal = EventLoop::new(false, TvSystem::Pal, 3.0, 2.0, true, None, true, false)?;
     /// # Ok::<(), String>(())
     /// ```
     pub fn new(
@@ -95,6 +93,7 @@ impl EventLoop {
         vsync_enabled: bool,
         audio: Option<NesAudio>,
         gamepads_enabled: bool,
+        fullscreen: bool,
     ) -> Result<Self, String> {
         let clamped_video_scale = Self::clamp_scale(video_scale);
         let clamped_timing_scale = Self::clamp_timing_scale(timing_scale);
@@ -110,6 +109,7 @@ impl EventLoop {
                 tv_system,
                 clamped_video_scale,
                 vsync_enabled,
+                fullscreen,
             )?)
         };
 
@@ -907,7 +907,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_eventloop_creation() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false);
         assert!(event_loop.is_ok());
     }
 
@@ -1218,7 +1218,7 @@ mod tests {
     #[serial]
     fn test_request_debugger_open_pauses_and_sets_request_flag() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
 
         assert!(!event_loop.paused);
         assert!(!event_loop.debugger_open_requested);
@@ -1363,35 +1363,35 @@ mod tests {
     #[test]
     #[serial]
     fn test_new_headless() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0, true, None, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 2.0, 1.0, true, None, false, false);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_below_minimum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0, true, None, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 0.5, 1.0, true, None, false, false);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_above_maximum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, true, None, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, true, None, false, false);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_at_minimum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_at_maximum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0, true, None, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 5.0, 1.0, true, None, false, false);
         assert!(event_loop.is_ok());
     }
 
@@ -1399,7 +1399,7 @@ mod tests {
     #[serial]
     fn test_run_with_nes() {
         let _event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance
@@ -1424,7 +1424,7 @@ mod tests {
     #[serial]
     fn test_gamepad_disabled_by_default() {
         // When gamepads are disabled, no controllers should be initialized
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false);
         assert!(event_loop.is_ok());
         let event_loop = event_loop.unwrap();
         assert_eq!(event_loop.controllers.len(), 0);
@@ -1435,7 +1435,7 @@ mod tests {
     #[serial]
     fn test_gamepad_enabled_no_controllers_present() {
         // When gamepads are enabled but no controllers are present, should still work
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, true);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, true, false);
         // This may succeed or fail depending on whether controllers are actually present
         // We just verify it doesn't panic
         if let Ok(event_loop) = event_loop {
@@ -1459,7 +1459,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1487,7 +1487,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1544,7 +1544,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1602,7 +1602,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
