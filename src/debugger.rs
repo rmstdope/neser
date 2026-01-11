@@ -1,5 +1,5 @@
-use crate::nes::Nes;
 use crate::cpu;
+use crate::nes::Nes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuRegsSnapshot {
@@ -31,6 +31,11 @@ pub struct DebuggerSnapshot {
     pub apu: String,
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CpuDisasmWindowState {
+    start: Option<u16>,
+}
+
 pub fn snapshot(nes: &Nes) -> DebuggerSnapshot {
     let cpu_cycles = nes.cpu.get_total_cycles();
 
@@ -49,11 +54,18 @@ pub fn snapshot(nes: &Nes) -> DebuggerSnapshot {
     };
 
     let cpu_disasm = {
-        const N_BEFORE: usize = 8;
-        const N_AFTER: usize = 8;
+        // Total window height is N_BEFORE + 1 + N_AFTER.
+        // Previously 8 + 1 + 8 = 17; doubled to 34.
+        const N_BEFORE: usize = 16;
+        const N_AFTER: usize = 17;
 
         let memory = nes.memory.borrow();
-        disassemble_window(|addr| memory.read_cpu_for_debugger(addr), pc, N_BEFORE, N_AFTER)
+        disassemble_window(
+            |addr| memory.read_cpu_for_debugger(addr),
+            pc,
+            N_BEFORE,
+            N_AFTER,
+        )
     };
 
     let cpu_regs = CpuRegsSnapshot {
@@ -114,7 +126,109 @@ apu_cycle: {apu_cycle}  frame_counter_cycle: {frame_counter_cycle}",
     }
 }
 
-fn disassemble_window<F: Fn(u16) -> u8>(read: F, pc: u16, before: usize, after: usize) -> Vec<CpuDisasmLineSnapshot> {
+pub fn snapshot_with_disasm_state(nes: &Nes, state: &mut CpuDisasmWindowState) -> DebuggerSnapshot {
+    let cpu_cycles = nes.cpu.get_total_cycles();
+
+    let pc = nes.cpu.pc;
+
+    let centered = pc & 0xFFF0;
+    let mut prg_hexdump_base = centered.saturating_sub(0x80).max(0x8000);
+    // Ensure base+0xFF stays within u16.
+    prg_hexdump_base = prg_hexdump_base.min(0xFF00);
+
+    let prg_hexdump_bytes = {
+        let memory = nes.memory.borrow();
+        (0u16..=0x00FF)
+            .map(|offset| memory.read_prg_rom_for_debugger(prg_hexdump_base + offset))
+            .collect::<Vec<u8>>()
+    };
+
+    let cpu_disasm = {
+        // Total window height is N_BEFORE + 1 + N_AFTER.
+        // Previously 8 + 1 + 8 = 17; doubled to 34.
+        const N_BEFORE: usize = 16;
+        const N_AFTER: usize = 17;
+        // When stepping forward and the current line reaches the bottom margin,
+        // scroll so it is TOP_MARGIN lines from the top.
+        const TOP_MARGIN: usize = 3;
+        const BOTTOM_MARGIN: usize = 3;
+
+        let memory = nes.memory.borrow();
+        disassemble_window_with_state(
+            |addr| memory.read_cpu_for_debugger(addr),
+            pc,
+            state,
+            N_BEFORE,
+            N_AFTER,
+            TOP_MARGIN,
+            BOTTOM_MARGIN,
+        )
+    };
+
+    let cpu_regs = CpuRegsSnapshot {
+        pc: nes.cpu.pc,
+        a: nes.cpu.a,
+        x: nes.cpu.x,
+        y: nes.cpu.y,
+        sp: nes.cpu.sp,
+        p: nes.cpu.p,
+        cycles: cpu_cycles,
+    };
+
+    let cpu = format!(
+        "CPU\n\
+PC: {pc:04X}  A: {a:02X} X: {x:02X} Y: {y:02X}  SP: {sp:02X}  P: {p:02X}\n\
+CYC: {cycles}",
+        pc = nes.cpu.pc,
+        a = nes.cpu.a,
+        x = nes.cpu.x,
+        y = nes.cpu.y,
+        sp = nes.cpu.sp,
+        p = nes.cpu.p,
+        cycles = cpu_cycles,
+    );
+
+    let (scanline, pixel) = {
+        let ppu = nes.ppu.borrow();
+        (ppu.scanline(), ppu.pixel())
+    };
+
+    let ppu = format!(
+        "PPU\n\
+scanline: {scanline:3}  pixel: {pixel:3}",
+        scanline = scanline,
+        pixel = pixel
+    );
+
+    let (apu_cycle, frame_counter_cycle) = {
+        let apu = nes.apu.borrow();
+        (apu.apu_cycle(), apu.debug_frame_counter_cycle())
+    };
+
+    let apu = format!(
+        "APU\n\
+apu_cycle: {apu_cycle}  frame_counter_cycle: {frame_counter_cycle}",
+        apu_cycle = apu_cycle,
+        frame_counter_cycle = frame_counter_cycle
+    );
+
+    DebuggerSnapshot {
+        cpu_regs,
+        prg_hexdump_base,
+        prg_hexdump_bytes,
+        cpu_disasm,
+        cpu,
+        ppu,
+        apu,
+    }
+}
+
+fn disassemble_window<F: Fn(u16) -> u8>(
+    read: F,
+    pc: u16,
+    before: usize,
+    after: usize,
+) -> Vec<CpuDisasmLineSnapshot> {
     let mut start = pc;
     for _ in 0..before {
         let Some(prev) = prev_instruction_start(&read, start) else {
@@ -129,6 +243,70 @@ fn disassemble_window<F: Fn(u16) -> u8>(read: F, pc: u16, before: usize, after: 
     let mut addr = start;
     for _ in 0..target_lines {
         let line = disassemble_one(&read, addr, pc);
+        let step = (line.bytes.len() as u16).max(1);
+        addr = addr.wrapping_add(step);
+        lines.push(line);
+
+        if addr == 0 {
+            break;
+        }
+    }
+
+    lines
+}
+
+fn disassemble_window_with_state<F: Fn(u16) -> u8>(
+    read: F,
+    pc: u16,
+    state: &mut CpuDisasmWindowState,
+    before: usize,
+    after: usize,
+    top_margin: usize,
+    bottom_margin: usize,
+) -> Vec<CpuDisasmLineSnapshot> {
+    let target_lines = before + 1 + after;
+    let bottom_trigger_index = target_lines.saturating_sub(1 + bottom_margin);
+
+    let mut lines = if let Some(start) = state.start {
+        disassemble_from_start(&read, start, pc, target_lines)
+    } else {
+        disassemble_window(&read, pc, before, after)
+    };
+
+    let current_index = lines.iter().position(|l| l.is_current);
+
+    if let Some(idx) = current_index {
+        if idx >= bottom_trigger_index {
+            let desired_start_idx = idx.saturating_sub(top_margin);
+            if let Some(new_start) = lines.get(desired_start_idx).map(|l| l.addr) {
+                lines = disassemble_from_start(&read, new_start, pc, target_lines);
+                state.start = Some(new_start);
+                return lines;
+            }
+        }
+
+        // Keep the existing start when the current line is safely within the window.
+        state.start = lines.first().map(|l| l.addr);
+        return lines;
+    }
+
+    // PC not found (e.g., jumped). Re-center using the original logic.
+    lines = disassemble_window(&read, pc, before, after);
+    state.start = lines.first().map(|l| l.addr);
+    lines
+}
+
+fn disassemble_from_start<F: Fn(u16) -> u8>(
+    read: &F,
+    start: u16,
+    pc: u16,
+    target_lines: usize,
+) -> Vec<CpuDisasmLineSnapshot> {
+    let mut lines = Vec::with_capacity(target_lines);
+
+    let mut addr = start;
+    for _ in 0..target_lines {
+        let line = disassemble_one(read, addr, pc);
         let step = (line.bytes.len() as u16).max(1);
         addr = addr.wrapping_add(step);
         lines.push(line);
@@ -298,9 +476,59 @@ mod tests {
 
         let snap = snapshot(&nes);
 
-        assert!(snap.cpu_disasm.iter().any(|l| l.addr == 0x8000 && l.text.contains("LDA") && l.text.contains("#$01") && l.is_current));
+        // Disassembly window is expected to be a fixed-size viewport.
+        assert_eq!(snap.cpu_disasm.len(), 34);
+
+        assert!(snap.cpu_disasm.iter().any(|l| l.addr == 0x8000
+            && l.text.contains("LDA")
+            && l.text.contains("#$01")
+            && l.is_current));
         assert!(snap.cpu_disasm.iter().any(|l| l.text.contains("TAX")));
         assert!(snap.cpu_disasm.iter().any(|l| l.text.contains("INX")));
         assert!(snap.cpu_disasm.iter().any(|l| l.text.contains("BRK")));
+    }
+
+    #[test]
+    fn test_disasm_window_scrolls_when_current_reaches_bottom_margin() {
+        // Use a memory model of all NOPs (0xEA = 1 byte) so instruction boundaries are trivial.
+        let read = |_addr: u16| 0xEA;
+
+        const BEFORE: usize = 8;
+        const AFTER: usize = 8;
+        const TOP_MARGIN: usize = 3;
+        const BOTTOM_MARGIN: usize = 3;
+
+        let mut state = CpuDisasmWindowState::default();
+
+        // Initial view is centered around pc (current at index BEFORE).
+        let base_pc = 0xC000;
+        let lines0 = disassemble_window_with_state(
+            read,
+            base_pc,
+            &mut state,
+            BEFORE,
+            AFTER,
+            TOP_MARGIN,
+            BOTTOM_MARGIN,
+        );
+        let idx0 = lines0.iter().position(|l| l.is_current).unwrap();
+        assert_eq!(idx0, BEFORE);
+
+        // Step forward until current is at the bottom trigger index.
+        let target_lines = BEFORE + 1 + AFTER;
+        let bottom_trigger_index = target_lines - 1 - BOTTOM_MARGIN;
+        let pc_at_trigger = base_pc.wrapping_add((bottom_trigger_index - idx0) as u16);
+
+        let lines1 = disassemble_window_with_state(
+            read,
+            pc_at_trigger,
+            &mut state,
+            BEFORE,
+            AFTER,
+            TOP_MARGIN,
+            BOTTOM_MARGIN,
+        );
+        let idx1 = lines1.iter().position(|l| l.is_current).unwrap();
+        assert_eq!(idx1, TOP_MARGIN);
     }
 }
