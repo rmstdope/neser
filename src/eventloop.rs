@@ -589,9 +589,71 @@ impl EventLoop {
         if action.step_cpu {
             nes.run_cpu_tick();
         }
+
+        if action.run_to_next_frame {
+            Self::debugger_run_to_next_frame(nes);
+        }
+        if action.run_to_nmi {
+            Self::debugger_run_to_vector(nes, 0xFFFA);
+        }
+        if action.run_to_irq {
+            Self::debugger_run_to_vector(nes, 0xFFFE);
+        }
+
         if action.continue_run {
             *paused = false;
             *debugger_open_requested = false;
+        }
+    }
+
+    fn debugger_run_to_next_frame(nes: &mut crate::nes::Nes) {
+        const MAX_STEPS: usize = 2_000_000;
+
+        let (start_scanline, start_pixel) = {
+            let ppu = nes.ppu.borrow();
+            (ppu.scanline(), ppu.pixel())
+        };
+        let started_at_frame_start = start_scanline == 0 && start_pixel == 0;
+        let mut has_departed_frame_start = !started_at_frame_start;
+
+        for _step in 0..MAX_STEPS {
+            if nes.cpu.is_halted() {
+                break;
+            }
+
+            nes.run_cpu_tick();
+
+            let (scanline, pixel) = {
+                let ppu = nes.ppu.borrow();
+                (ppu.scanline(), ppu.pixel())
+            };
+
+            if scanline != 0 || pixel != 0 {
+                has_departed_frame_start = true;
+            }
+
+            // Stop once we have crossed the *next* 0,0 (not the current one).
+            if scanline == 0 && pixel == 0 && has_departed_frame_start {
+                break;
+            }
+        }
+    }
+
+    fn debugger_run_to_vector(nes: &mut crate::nes::Nes, vector_addr: u16) {
+        const MAX_STEPS: usize = 2_000_000;
+
+        let target = {
+            let memory = nes.memory.borrow();
+            let lo = memory.read_cpu_for_debugger(vector_addr);
+            let hi = memory.read_cpu_for_debugger(vector_addr.wrapping_add(1));
+            u16::from_le_bytes([lo, hi])
+        };
+
+        for _ in 0..MAX_STEPS {
+            if nes.cpu.pc == target || nes.cpu.is_halted() {
+                break;
+            }
+            nes.run_cpu_tick();
         }
     }
 
@@ -1205,6 +1267,9 @@ mod tests {
             crate::debugger_ui::DebuggerUiAction {
                 continue_run: true,
                 step_cpu: false,
+                run_to_next_frame: false,
+                run_to_nmi: false,
+                run_to_irq: false,
             },
             &mut paused,
             &mut debugger_open_requested,
@@ -1212,6 +1277,109 @@ mod tests {
 
         assert!(!paused, "continue should unpause");
         assert!(!debugger_open_requested, "continue should close debugger");
+    }
+
+    #[test]
+    fn test_run_to_nmi_action_runs_until_nmi_vector_pc() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Minimal cartridge with vectors.
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
+        let reset_vector: u16 = 0x8000;
+        let nmi_vector: u16 = 0x9000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFA] = (nmi_vector & 0x00FF) as u8; // NMI
+        prg_rom[0x7FFB] = (nmi_vector >> 8) as u8;
+        prg_rom[0x7FFE] = 0x00; // IRQ/BRK (unused)
+        prg_rom[0x7FFF] = 0x80;
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Force an NMI edge before running.
+        nes.cpu.set_nmi_pending(true);
+
+        let mut paused = true;
+        let mut debugger_open_requested = true;
+
+        EventLoop::apply_debugger_ui_action(
+            &mut nes,
+            crate::debugger_ui::DebuggerUiAction {
+                continue_run: false,
+                step_cpu: false,
+                run_to_next_frame: false,
+                run_to_nmi: true,
+                run_to_irq: false,
+            },
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+
+        assert!(paused, "run-to actions should keep emulator paused");
+        assert!(
+            debugger_open_requested,
+            "run-to actions should keep debugger open"
+        );
+        assert_eq!(nes.cpu.pc, nmi_vector);
+    }
+
+    #[test]
+    fn test_run_to_irq_action_runs_until_irq_vector_pc() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Minimal cartridge with vectors.
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
+        let reset_vector: u16 = 0x8000;
+        let irq_vector: u16 = 0x9000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFA] = 0x00; // NMI (unused)
+        prg_rom[0x7FFB] = 0x80;
+        prg_rom[0x7FFE] = (irq_vector & 0x00FF) as u8; // IRQ/BRK
+        prg_rom[0x7FFF] = (irq_vector >> 8) as u8;
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Ensure IRQs are unmasked (clear I flag).
+        nes.cpu.p &= !0b0000_0100;
+
+        // Force an IRQ to be pending.
+        nes.cpu.set_irq_pending(true);
+
+        let mut paused = true;
+        let mut debugger_open_requested = true;
+
+        EventLoop::apply_debugger_ui_action(
+            &mut nes,
+            crate::debugger_ui::DebuggerUiAction {
+                continue_run: false,
+                step_cpu: false,
+                run_to_next_frame: false,
+                run_to_nmi: false,
+                run_to_irq: true,
+            },
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+
+        assert!(paused, "run-to actions should keep emulator paused");
+        assert!(
+            debugger_open_requested,
+            "run-to actions should keep debugger open"
+        );
+        assert_eq!(nes.cpu.pc, irq_vector);
     }
 
     #[test]

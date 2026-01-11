@@ -1213,7 +1213,7 @@ impl Cpu {
     /// Set the IRQ pending flag
     /// This should be called by the NES loop when IRQ is detected
     #[cfg(test)]
-    fn set_irq_pending(&mut self, pending: bool) {
+    pub(crate) fn set_irq_pending(&mut self, pending: bool) {
         self.forced_irq_pending = pending;
         // Preserve prior unit-test behavior where `set_irq_pending(true)` makes
         // `should_poll_irq()` immediately reflect an asserted IRQ.

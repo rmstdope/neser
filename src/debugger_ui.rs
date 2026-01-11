@@ -4,6 +4,9 @@ use crate::debugger::DebuggerSnapshot;
 pub struct DebuggerUiAction {
     pub step_cpu: bool,
     pub continue_run: bool,
+    pub run_to_next_frame: bool,
+    pub run_to_nmi: bool,
+    pub run_to_irq: bool,
 }
 
 pub fn layout_models(display_size: [f32; 2]) -> [(&'static str, [f32; 2], [f32; 2]); 3] {
@@ -77,6 +80,18 @@ fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, action: &mut D
     ui.same_line();
     if ui.button("Continue") {
         action.continue_run = true;
+    }
+
+    if ui.button("Run to next frame") {
+        action.run_to_next_frame = true;
+    }
+    ui.same_line();
+    if ui.button("Run to NMI") {
+        action.run_to_nmi = true;
+    }
+    ui.same_line();
+    if ui.button("Run to IRQ") {
+        action.run_to_irq = true;
     }
     ui.separator();
 
