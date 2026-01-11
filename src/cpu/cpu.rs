@@ -504,11 +504,14 @@ impl Cpu {
             return false;
         }
         
+        // Note: The caller (read()) has already called before_cpu_cycle().
+        // We complete that cycle here with the halt read and after_cpu_cycle().
+        
         // If only DMC is pending (no OAM), handle it separately with existing logic
         if !oam_dma_pending && dmc_dma_pending {
             self.start_dmc_dma();
             
-            // Halt cycle: the CPU read is discarded
+            // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
             let _ = self.memory.borrow().read(read_address);
             self.after_cpu_cycle(false);
             self.dmc_dma_need_halt = false;
@@ -520,7 +523,7 @@ impl Cpu {
         }
         
         // OAM DMA is pending (possibly with DMC collision)
-        // The halt cycle is consumed here in the read() function
+        // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
         let _ = self.memory.borrow().read(read_address);
         self.after_cpu_cycle(false);
         
@@ -537,6 +540,9 @@ impl Cpu {
     /// This is the actual OAM DMA loop with DMC collision handling.
     /// 
     /// If `handle_nmi` is true, checks for and handles NMI after DMA completes.
+    /// 
+    /// Note: The caller is responsible for the halt cycle. If DMC is pending at start,
+    /// it shares that halt cycle which the caller has already consumed.
     fn run_oam_dma_internal_impl(&mut self, page: u8, handle_nmi: bool) {
         let source_base = (page as u16) << 8;
 
@@ -555,7 +561,7 @@ impl Cpu {
         const OAM_SIZE: u16 = 256;
 
         // Track DMC DMA progress
-        // If DMC is pending at start, it shares the halt cycle that was just consumed
+        // If DMC is pending at start, it shares the halt cycle that the caller consumed
         let mut dmc_progress: u8 = if dmc_pending_at_start { DMC_HALT_DONE } else { DMC_IDLE };
         let mut sprite_dma_value: Option<u8> = None;
         let mut sprite_offset: u16 = 0;
