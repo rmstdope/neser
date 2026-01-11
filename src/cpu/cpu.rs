@@ -77,7 +77,10 @@ pub struct Cpu {
     /// advanced by bus accesses during normal instruction execution.
     oob_master_clock: MasterClock,
 
-    dmc_dma_in_progress: bool,
+    // DMC DMA state machine (Mesen-style)
+    dmc_dma_running: bool,
+    dmc_dma_need_halt: bool,
+    dmc_dma_need_dummy_read: bool,
 }
 
 // Status register flags
@@ -132,7 +135,10 @@ impl Cpu {
 
             skip_interrupt_latch_this_cycle: false,
 
-            dmc_dma_in_progress: false,
+            // DMC DMA state machine (Mesen-style)
+            dmc_dma_running: false,
+            dmc_dma_need_halt: false,
+            dmc_dma_need_dummy_read: false,
         }
     }
 
@@ -519,31 +525,82 @@ impl Cpu {
         }
     }
 
+    /// Start a DMC DMA transfer (Mesen-style).
+    /// Called when the DMC sample buffer becomes empty and needs refilling.
+    fn start_dmc_dma(&mut self) {
+        self.dmc_dma_running = true;
+        self.dmc_dma_need_halt = true;
+        self.dmc_dma_need_dummy_read = true;
+    }
+
+    /// Process any pending DMC DMA during a CPU read cycle (Mesen-style).
+    /// This is called from `read()` and handles the DMA state machine.
+    ///
+    /// DMC DMA sequence (per NESdev wiki):
+    /// 1. Halt cycle: CPU read is repeated (discarded), consumes _needHalt
+    /// 2. Dummy read cycle: CPU read is repeated (discarded), consumes _needDummyRead
+    /// 3. Optional alignment cycle: if not on a "get" cycle, repeat read
+    /// 4. Get cycle: actual DMC sample byte read
+    fn process_pending_dmc_dma(&mut self, read_address: u16) {
+        // Loop until DMC DMA completes
+        while self.dmc_dma_running {
+            // Check if we're on a get cycle (even cycle count)
+            let on_get_cycle = self.total_cycles % 2 == 0;
+
+            if on_get_cycle && !self.dmc_dma_need_dummy_read {
+                // Ready to perform the actual DMC read
+                let dma_addr = {
+                    let mut apu = self.apu.borrow_mut();
+                    apu.dmc_mut().dma_address()
+                };
+
+                if let Some(addr) = dma_addr {
+                    self.before_cpu_cycle(false);
+                    let value = self.memory.borrow().read(addr);
+                    self.after_cpu_cycle(false);
+                    self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
+                }
+
+                self.dmc_dma_running = false;
+            } else {
+                // Dummy read / alignment cycle
+                self.before_cpu_cycle(false);
+                let _ = self.memory.borrow().read_without_joypad_clock(read_address);
+                self.after_cpu_cycle(false);
+
+                if self.dmc_dma_need_dummy_read {
+                    self.dmc_dma_need_dummy_read = false;
+                }
+            }
+        }
+    }
+
     /// Read a byte from memory at the specified address
     fn read(&mut self, addr: u16) -> u8 {
-        // TODO Process any pending DMA
         self.before_cpu_cycle(false);
-        // If the DMC has a pending DMA read, the CPU will be halted on this *read* cycle.
-        // While halted, the 6502 repeats this read during each no-op DMA cycle, which is
-        // externally visible and can conflict with registers with side effects.
-        let dmc_dma_pending = !self.dmc_dma_in_progress && {
+
+        // Check if DMC has a pending DMA read
+        // The CPU will be halted on this *read* cycle if DMC needs a sample byte.
+        let dmc_dma_pending = !self.dmc_dma_running && {
             let mut apu = self.apu.borrow_mut();
             apu.dmc_mut().dma_pending()
         };
-        if dmc_dma_pending {
-            self.dmc_dma_in_progress = true;
 
-            // Halt cycle: repeat the CPU read (discard value), then perform remaining DMA cycles.
+        if dmc_dma_pending {
+            // Start DMC DMA transfer (Mesen-style state machine)
+            self.start_dmc_dma();
+
+            // Halt cycle: the CPU read is discarded
             let _ = self.memory.borrow().read(addr);
             self.after_cpu_cycle(false);
+            self.dmc_dma_need_halt = false;
 
-            self.run_dmc_dma_sequence(addr);
+            // Process remaining DMA cycles
+            self.process_pending_dmc_dma(addr);
 
             // After DMA completes, the CPU performs the read it attempted when halted.
-            let value = self.read(addr);
-
-            self.dmc_dma_in_progress = false;
-            return value;
+            // Recursive call to handle the actual read (this will call before/after_cpu_cycle)
+            return self.read(addr);
         }
 
         let value = self.memory.borrow().read(addr);
@@ -566,47 +623,6 @@ impl Cpu {
         }
         self.after_cpu_cycle(false);
         value
-    }
-
-    fn run_dmc_dma_sequence(&mut self, halted_read_addr: u16) {
-        // DMC DMA: dummy cycle + optional alignment + get
-        // We approximate the get/put cadence via CPU cycle parity.
-        // During no-op cycles, the CPU repeats the read on which it was halted.
-
-        // Dummy cycle (no-op): repeat the halted read.
-        self.before_cpu_cycle(false);
-        let _ = self
-            .memory
-            .borrow()
-            .read_without_joypad_clock(halted_read_addr);
-        self.after_cpu_cycle(false);
-
-        // Optional alignment cycle if the next cycle is not a "get" cycle.
-        // We model "get" on even CPU cycles.
-        let next_is_get = self.total_cycles % 2 == 0;
-        if !next_is_get {
-            self.before_cpu_cycle(false);
-            let _ = self
-                .memory
-                .borrow()
-                .read_without_joypad_clock(halted_read_addr);
-            self.after_cpu_cycle(false);
-        }
-
-        // Get cycle: perform the actual DMC sample-byte read.
-        let dma_addr = match {
-            let mut apu = self.apu.borrow_mut();
-            apu.dmc_mut().dma_address()
-        } {
-            Some(addr) => addr,
-            None => return,
-        };
-
-        self.before_cpu_cycle(false);
-        let value = self.memory.borrow().read(dma_addr);
-        self.after_cpu_cycle(false);
-
-        self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
     }
 
     /// Dummy read a byte from memory at the specified address
