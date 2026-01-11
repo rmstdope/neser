@@ -2,7 +2,10 @@ mod apu;
 mod audio;
 mod cartridge;
 mod cpu;
+mod debugger;
+mod debugger_ui;
 mod eventloop;
+mod gl_backend;
 mod input;
 mod manual_test_cartridges;
 mod mem_controller;
@@ -77,10 +80,24 @@ const CLI_FLAGS: &[CliFlag] = &[
         flag: "--no-gamepads",
         help: Some("Disable gamepad/joystick support"),
     },
+    CliFlag {
+        flag: "--enable-debugger",
+        help: Some("Open debugger windows (CPU/PPU/APU) on startup"),
+    },
 ];
 
 fn vsync_enabled_from_args(args: &[String]) -> bool {
     !args.iter().any(|a| a == "--no-vsync")
+}
+
+fn debugger_enabled_from_args(args: &[String]) -> bool {
+    args.iter().any(|a| a == "--enable-debugger")
+}
+
+fn apply_debugger_startup_config(event_loop: &mut eventloop::EventLoop, args: &[String]) {
+    if debugger_enabled_from_args(args) {
+        event_loop.request_debugger_open();
+    }
 }
 
 fn validate_no_unknown_args(args: &[String]) -> Result<(), String> {
@@ -227,6 +244,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn test_vsync_enabled_by_default() {
@@ -250,8 +268,45 @@ mod tests {
     }
 
     #[test]
+<<<<<<< HEAD
     fn test_no_gamepads_flag_recognized() {
         let args = vec!["neser".to_string(), "--no-gamepads".to_string()];
         assert!(validate_no_unknown_args(&args).is_ok());
     }
+=======
+    fn test_enable_debugger_flag_is_accepted() {
+        let args = vec!["neser".to_string(), "--enable-debugger".to_string()];
+        assert!(validate_no_unknown_args(&args).is_ok());
+    }
+
+    #[test]
+    fn test_debugger_enabled_from_args() {
+        let args = vec!["neser".to_string(), "--enable-debugger".to_string()];
+        assert!(debugger_enabled_from_args(&args));
+
+        let args = vec!["neser".to_string()];
+        assert!(!debugger_enabled_from_args(&args));
+    }
+
+    #[test]
+    #[serial]
+    fn test_enable_debugger_requests_open_and_pauses_on_start() {
+        let args = vec!["neser".to_string(), "--enable-debugger".to_string()];
+
+        let mut event_loop = crate::eventloop::EventLoop::new(
+            true,
+            crate::nes::TvSystem::Ntsc,
+            1.0,
+            1.0,
+            true,
+            None,
+        )
+        .unwrap();
+
+        apply_debugger_startup_config(&mut event_loop, &args);
+
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
+    }
+>>>>>>> b40b9ba (Initial implementation of debugger)
 }

@@ -18,8 +18,9 @@ In the development process, when appropriate, the application should be built us
 
 It is VERY VERY important to:
 
-- ALWAYS stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
-- ALWAYS stop after the green phase and ask the navigator to review the implementation and approve before moving on to the refactor phase.
+<!-- - ALWAYS stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
+- ALWAYS stop after the green phase and ask the navigator to review the implementation and approve before moving on to the refactor phase. -->
+
 - ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on.
 - ALWAYS use a TDD approach for all kinds of code, feature implementation, bug fixing, feature enhancements.
 - It is NOT NEEDED to use a TDD approach when trying to debug or pinpoint a bug. When the bug is pinpointed, use TDD to write a test that reproduces the bug, then proceed with TDD to fix it.

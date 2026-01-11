@@ -1,11 +1,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-
+use crate::gl_backend::GlBackend;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::pixels::PixelFormatEnum;
-use sdl2::render::Canvas;
-use sdl2::video::Window;
 
 use crate::audio::NesAudio;
 use crate::input::Button;
@@ -16,14 +13,22 @@ use crate::tracing::Tracing;
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
 pub struct EventLoop {
     _sdl_context: sdl2::Sdl,
-    canvas: Option<Canvas<Window>>,
+    gl_backend: Option<GlBackend>,
     event_pump: sdl2::EventPump,
     timing_scale: f32,
     vsync_enabled: bool,
     paused: bool,
+    debugger_open_requested: bool,
+    #[cfg_attr(not(test), allow(dead_code))]
+    debugger_renderer: Option<Box<dyn DebuggerRenderer>>,
     audio: Option<NesAudio>,
     controllers: Vec<sdl2::controller::GameController>,
     controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) trait DebuggerRenderer {
+    fn render(&mut self, snapshot: &crate::debugger::DebuggerSnapshot);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,10 +102,10 @@ impl EventLoop {
         let sdl_context = sdl2::init()?;
         let event_pump = sdl_context.event_pump()?;
 
-        let canvas = if headless {
+        let gl_backend = if headless {
             None
         } else {
-            Some(Self::create_window_and_canvas(
+            Some(GlBackend::new(
                 &sdl_context,
                 tv_system,
                 clamped_video_scale,
@@ -117,11 +122,13 @@ impl EventLoop {
 
         Ok(EventLoop {
             _sdl_context: sdl_context,
-            canvas,
+            gl_backend,
             event_pump,
             timing_scale: clamped_timing_scale,
             vsync_enabled,
             paused: false,
+            debugger_open_requested: false,
+            debugger_renderer: None,
             audio,
             controllers,
             controller_player_map,
@@ -228,44 +235,6 @@ impl EventLoop {
         }
     }
 
-    /// Creates a window with dimensions matching the specified TV system, scaled by the given factor.
-    /// Returns a canvas for rendering.
-    fn create_window_and_canvas(
-        sdl_context: &sdl2::Sdl,
-        tv_system: TvSystem,
-        scale: f32,
-        vsync_enabled: bool,
-    ) -> Result<Canvas<Window>, String> {
-        let base_width = tv_system.screen_width();
-        let base_height = tv_system.screen_height();
-        let scaled_width = (base_width as f32 * scale) as u32;
-        let scaled_height = (base_height as f32 * scale) as u32;
-        let video_subsystem = sdl_context.video()?;
-
-        let window = video_subsystem
-            .window("NES Emulator in Rust", scaled_width, scaled_height)
-            .position_centered()
-            .build()
-            .map_err(|e| e.to_string())?;
-
-        let canvas_builder = window.into_canvas();
-        let canvas_builder = if vsync_enabled {
-            canvas_builder.present_vsync()
-        } else {
-            canvas_builder
-        };
-        let mut canvas = canvas_builder.build().map_err(|e| e.to_string())?;
-        canvas.set_draw_color(sdl2::pixels::Color::RGB(
-            Self::CLEAR_COLOR_R,
-            Self::CLEAR_COLOR_G,
-            Self::CLEAR_COLOR_B,
-        ));
-        canvas.clear();
-        canvas.present();
-
-        Ok(canvas)
-    }
-
     fn should_manual_frame_limit(vsync_enabled: bool) -> bool {
         !vsync_enabled
     }
@@ -285,54 +254,6 @@ impl EventLoop {
     //     }
     //     false
     // }
-
-    /// Renders the current frame from the PPU screen buffer to the screen.
-    fn render_frame(
-        canvas: &mut Canvas<Window>,
-        texture: &mut sdl2::render::Texture,
-        nes: &crate::nes::Nes,
-    ) -> Result<(), String> {
-        // Update texture from PPU screen buffer (256x240 pixels)
-        const TEXTURE_WIDTH: u32 = 256;
-        const TEXTURE_HEIGHT: u32 = 240;
-
-        texture
-            .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                // Get the PPU screen buffer and copy its RGB data to the texture
-                let screen_buffer = nes.get_screen_buffer();
-
-                // Check if we can do a direct copy (pitch == width * 3 bytes per pixel)
-                if pitch == (TEXTURE_WIDTH as usize * 3) {
-                    // Fast path: direct buffer copy
-                    screen_buffer.copy_buffer(buffer);
-                } else {
-                    // Slow path: copy row by row to handle non-standard pitch
-                    for y in 0..TEXTURE_HEIGHT {
-                        for x in 0..TEXTURE_WIDTH {
-                            let (r, g, b) = screen_buffer.get_pixel(x, y);
-                            let offset = (y as usize * pitch) + (x as usize * 3);
-                            buffer[offset] = r;
-                            buffer[offset + 1] = g;
-                            buffer[offset + 2] = b;
-                        }
-                    }
-                }
-            })
-            .map_err(|e| e.to_string())?;
-
-        canvas.set_draw_color(sdl2::pixels::Color::RGB(
-            Self::CLEAR_COLOR_R,
-            Self::CLEAR_COLOR_G,
-            Self::CLEAR_COLOR_B,
-        ));
-        canvas.clear();
-        canvas
-            .copy(texture, None, None)
-            .map_err(|e| e.to_string())?;
-        canvas.present();
-
-        Ok(())
-    }
 
     /// Runs the event loop, processing events until the user presses Escape or closes the window.
     ///
@@ -357,6 +278,7 @@ impl EventLoop {
             audio.resume();
         }
 
+<<<<<<< HEAD
         if let Some(mut canvas) = self.canvas.take() {
             // We have a window - run with rendering
             let texture_creator = canvas.texture_creator();
@@ -369,12 +291,17 @@ impl EventLoop {
                 .create_texture_streaming(PixelFormatEnum::RGB24, TEXTURE_WIDTH, TEXTURE_HEIGHT)
                 .map_err(|e| e.to_string())?;
 
+=======
+        if let Some(ref mut gl_backend) = self.gl_backend {
+            // We have a window - run with OpenGL + ImGui overlay
+>>>>>>> b40b9ba (Initial implementation of debugger)
             let timer = self._sdl_context.timer()?;
             let mut last_frame_time = timer.performance_counter();
             let performance_frequency = timer.performance_frequency() as f64;
 
             loop {
                 // 1. Poll ALL events (non-blocking)
+<<<<<<< HEAD
                 let events: Vec<_> = self.event_pump.poll_iter().collect();
                 
                 // Process events, collecting controller-related events to handle separately
@@ -383,6 +310,10 @@ impl EventLoop {
                 let mut controller_buttons = Vec::new();
                 
                 for event in events {
+=======
+                for event in self.event_pump.poll_iter() {
+                    gl_backend.handle_event(&event);
+>>>>>>> b40b9ba (Initial implementation of debugger)
                     match event {
                         Event::Quit { .. } => {
                             self.canvas = Some(canvas); // Return canvas before exiting
@@ -397,6 +328,7 @@ impl EventLoop {
                                 keycode,
                                 self.audio.as_ref(),
                                 &mut self.paused,
+                                &mut self.debugger_open_requested,
                             ) == KeyDownOutcome::Quit
                             {
                                 self.canvas = Some(canvas); // Return canvas before exiting
@@ -445,6 +377,12 @@ impl EventLoop {
 
                 // Skip emulation and rendering if paused
                 if self.paused {
+                    Self::tick_windowed_paused_for_run(
+                        self.debugger_open_requested,
+                        &mut self.debugger_renderer,
+                        nes,
+                    );
+                    gl_backend.render(nes, self.debugger_open_requested);
                     std::thread::sleep(std::time::Duration::from_millis(16));
                     continue;
                 }
@@ -494,8 +432,13 @@ impl EventLoop {
                 //     nes.ppu.borrow().pixel()
                 // );
 
+<<<<<<< HEAD
                 // 3. Render the frame
                 Self::render_frame(&mut canvas, &mut texture, nes)?;
+=======
+                // 3. Render the frame (always present the NES frame; show debugger if requested)
+                gl_backend.render(nes, self.debugger_open_requested);
+>>>>>>> b40b9ba (Initial implementation of debugger)
                 // println!("Frame rendered.");
 
                 // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
@@ -523,6 +466,7 @@ impl EventLoop {
         } else {
             // Headless mode - just run without rendering
             loop {
+<<<<<<< HEAD
                 let events: Vec<_> = self.event_pump.poll_iter().collect();
                 for event in events {
                     match event {
@@ -561,9 +505,17 @@ impl EventLoop {
                         }
                         _ => {}
                     }
+=======
+                if self.tick_headless_once_for_run(nes) {
+                    return Ok(());
+>>>>>>> b40b9ba (Initial implementation of debugger)
                 }
 
-                nes.run_cpu_tick();
+                // Avoid a busy loop while paused.
+                if self.paused {
+                    std::thread::sleep(std::time::Duration::from_millis(16));
+                    continue;
+                }
 
                 // Poll audio samples from APU and queue them
                 if let Some(ref mut audio) = self.audio {
@@ -597,6 +549,97 @@ impl EventLoop {
         }
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn request_debugger_open(&mut self) {
+        self.paused = true;
+        self.debugger_open_requested = true;
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn set_debugger_renderer(&mut self, renderer: Box<dyn DebuggerRenderer>) {
+        self.debugger_renderer = Some(renderer);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn render_debugger_if_needed(&mut self, nes: &crate::nes::Nes) {
+        if !self.debugger_open_requested {
+            return;
+        }
+
+        let Some(renderer) = self.debugger_renderer.as_mut() else {
+            return;
+        };
+
+        let snapshot = crate::debugger::snapshot(nes);
+        renderer.render(&snapshot);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn debugger_open_requested(&self) -> bool {
+        self.debugger_open_requested
+    }
+
+    fn tick_headless_once_for_run(&mut self, nes: &mut crate::nes::Nes) -> bool {
+        // Returns `true` if the caller should quit the event loop.
+        for event in self.event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. } => return true,
+                Event::KeyDown {
+                    keycode: Some(keycode),
+                    ..
+                } => {
+                    if Self::handle_key_down(
+                        nes,
+                        keycode,
+                        self.audio.as_ref(),
+                        &mut self.paused,
+                        &mut self.debugger_open_requested,
+                    ) == KeyDownOutcome::Quit
+                    {
+                        return true;
+                    }
+                }
+                Event::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } => {
+                    Self::handle_key_up(nes, keycode);
+                }
+                _ => {}
+            }
+        }
+
+        if self.paused {
+            self.render_debugger_if_needed(nes);
+            return false;
+        }
+
+        nes.run_cpu_tick();
+        false
+    }
+
+    fn tick_windowed_paused_for_run(
+        debugger_open_requested: bool,
+        debugger_renderer: &mut Option<Box<dyn DebuggerRenderer>>,
+        nes: &crate::nes::Nes,
+    ) {
+        if !debugger_open_requested {
+            return;
+        }
+
+        let Some(renderer) = debugger_renderer.as_mut() else {
+            return;
+        };
+
+        let snapshot = crate::debugger::snapshot(nes);
+        renderer.render(&snapshot);
+    }
+
     /// Handle keyboard key press events
     ///
     /// Maps keyboard keys to NES controller buttons:
@@ -616,11 +659,17 @@ impl EventLoop {
         keycode: Keycode,
         audio: Option<&NesAudio>,
         paused: &mut bool,
+        debugger_open_requested: &mut bool,
     ) -> KeyDownOutcome {
         match keycode {
             Keycode::Escape => return KeyDownOutcome::Quit,
             Keycode::Space => {
                 *paused = !*paused;
+            }
+            Keycode::F10 => {
+                // Debugger hotkey: opening debugger windows should immediately pause emulation.
+                *paused = true;
+                *debugger_open_requested = true;
             }
             Keycode::F1 => {
                 println!("Resetting NES...");
@@ -650,9 +699,7 @@ impl EventLoop {
         KeyDownOutcome::Continue
     }
 
-    /// Handle keyboard key release events
     fn handle_key_up(nes: &mut crate::nes::Nes, keycode: Keycode) {
-        use crate::input::Button;
         match keycode {
             Keycode::W => nes.set_button(1, Button::Up, false),
             Keycode::S => nes.set_button(1, Button::Down, false),
@@ -783,7 +830,9 @@ mod tests {
     use super::*;
     use crate::nes::{Nes, TvSystem};
     use serial_test::serial;
+    use std::cell::RefCell;
     use std::env;
+    use std::rc::Rc;
 
     fn read_joypad1_buttons(nes: &mut Nes) -> [u8; 8] {
         // Joypad serial order: A, B, Select, Start, Up, Down, Left, Right
@@ -799,6 +848,43 @@ mod tests {
             out[i] = value;
         }
         out
+    }
+
+    fn tick_headless_once(event_loop: &mut EventLoop, nes: &mut Nes) {
+        for event in event_loop.event_pump.poll_iter() {
+            match event {
+                Event::Quit { .. } => {
+                    // In unit tests we don't currently observe quitting; just stop ticking.
+                    return;
+                }
+                Event::KeyDown {
+                    keycode: Some(keycode),
+                    ..
+                } => {
+                    let _ = EventLoop::handle_key_down(
+                        nes,
+                        keycode,
+                        event_loop.audio.as_ref(),
+                        &mut event_loop.paused,
+                        &mut event_loop.debugger_open_requested,
+                    );
+                }
+                Event::KeyUp {
+                    keycode: Some(keycode),
+                    ..
+                } => {
+                    EventLoop::handle_key_up(nes, keycode);
+                }
+                _ => {}
+            }
+        }
+
+        if event_loop.paused {
+            event_loop.render_debugger_if_needed(nes);
+            return;
+        }
+
+        nes.run_cpu_tick();
     }
 
     #[test]
@@ -895,11 +981,24 @@ mod tests {
         let audio = NesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
         let mut nes = Nes::new(TvSystem::Ntsc);
         let mut paused = false;
+        let mut debugger_open_requested = false;
 
         let before = audio.get_volume();
-        EventLoop::handle_key_down(&mut nes, Keycode::F2, Some(&audio), &mut paused);
+        EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F2,
+            Some(&audio),
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert!((audio.get_volume() - (before + 0.1)).abs() < 1e-6);
-        EventLoop::handle_key_down(&mut nes, Keycode::F3, Some(&audio), &mut paused);
+        EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F3,
+            Some(&audio),
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert!((audio.get_volume() - before).abs() < 1e-6);
 
         drop(restore);
@@ -911,8 +1010,15 @@ mod tests {
         // and it indicates that the event loop should exit.
         let mut nes = Nes::new(TvSystem::Ntsc);
         let mut paused = false;
+        let mut debugger_open_requested = false;
 
-        let outcome = EventLoop::handle_key_down(&mut nes, Keycode::Escape, None, &mut paused);
+        let outcome = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::Escape,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert_eq!(outcome, KeyDownOutcome::Quit);
     }
 
@@ -921,11 +1027,55 @@ mod tests {
         // Desired behavior: Space toggles pause state via centralized handle_key_down.
         let mut nes = Nes::new(TvSystem::Ntsc);
         let mut paused = false;
+        let mut debugger_open_requested = false;
 
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::Space, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::Space,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert!(paused);
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::Space, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::Space,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert!(!paused);
+    }
+
+    #[test]
+    fn test_handle_key_down_f10_pauses_emulation() {
+        // Desired behavior: F10 opens debugger windows, which immediately pauses emulation.
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = false;
+        let mut debugger_open_requested = false;
+
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F10,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+        assert!(paused);
+    }
+
+    #[test]
+    #[serial]
+    fn test_request_debugger_open_pauses_and_sets_request_flag() {
+        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+
+        assert!(!event_loop.paused);
+        assert!(!event_loop.debugger_open_requested);
+
+        event_loop.request_debugger_open();
+
+        assert!(event_loop.paused);
+        assert!(event_loop.debugger_open_requested);
     }
 
     #[test]
@@ -933,6 +1083,7 @@ mod tests {
         // Desired behavior: F1 triggers a reset through centralized handle_key_down.
         let mut nes = Nes::new(TvSystem::Ntsc);
         let mut paused = false;
+        let mut debugger_open_requested = false;
 
         // Reset reads the reset vector from $FFFC-$FFFD. Inserting a minimal cartridge
         // avoids panicking on unmapped reads.
@@ -948,7 +1099,13 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         nes.cpu.pc = 0x1234;
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::F1, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F1,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert_eq!(nes.cpu.pc, reset_vector);
     }
 
@@ -961,45 +1118,94 @@ mod tests {
         // - A:      F
         // - B:      G
         let mut paused = false;
+        let mut debugger_open_requested = false;
 
         // W => Up
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::W, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::W,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 1, 0, 0, 0]);
 
         // S => Down
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::S, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::S,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 1, 0, 0]);
 
         // A => Left
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::A, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::A,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 1, 0]);
 
         // D => Right
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::D, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::D,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 0, 1]);
 
         // R => Select
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::R, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::R,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 1, 0, 0, 0, 0, 0]);
 
         // T => Start
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::T, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::T,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 1, 0, 0, 0, 0]);
 
         // F => A
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::F, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert_eq!(read_joypad1_buttons(&mut nes), [1, 0, 0, 0, 0, 0, 0, 0]);
 
         // G => B
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(&mut nes, Keycode::G, None, &mut paused);
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::G,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 1, 0, 0, 0, 0, 0, 0]);
     }
 
@@ -1064,6 +1270,7 @@ mod tests {
 
     #[test]
     #[serial]
+<<<<<<< HEAD
     fn test_gamepad_disabled_by_default() {
         // When gamepads are disabled, no controllers should be initialized
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false);
@@ -1084,5 +1291,174 @@ mod tests {
             // No controllers should be initialized in test environment
             assert!(event_loop.controllers.len() <= 2);
         }
+=======
+    fn test_render_debugger_if_needed_invokes_renderer() {
+        struct Spy {
+            calls: Rc<RefCell<usize>>,
+        }
+
+        impl DebuggerRenderer for Spy {
+            fn render(&mut self, _snapshot: &crate::debugger::DebuggerSnapshot) {
+                *self.calls.borrow_mut() += 1;
+            }
+        }
+
+        let calls = Rc::new(RefCell::new(0usize));
+        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+        event_loop.set_debugger_renderer(Box::new(Spy {
+            calls: calls.clone(),
+        }));
+
+        let nes = Nes::new(TvSystem::Ntsc);
+
+        event_loop.request_debugger_open();
+        event_loop.render_debugger_if_needed(&nes);
+
+        assert_eq!(*calls.borrow(), 1);
+    }
+
+    #[test]
+    #[serial]
+    fn test_tick_headless_once_renders_debugger_when_paused_and_requested() {
+        struct Spy {
+            calls: Rc<RefCell<usize>>,
+        }
+
+        impl DebuggerRenderer for Spy {
+            fn render(&mut self, _snapshot: &crate::debugger::DebuggerSnapshot) {
+                *self.calls.borrow_mut() += 1;
+            }
+        }
+
+        let calls = Rc::new(RefCell::new(0usize));
+        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+        event_loop.set_debugger_renderer(Box::new(Spy {
+            calls: calls.clone(),
+        }));
+        event_loop.request_debugger_open();
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Provide a minimal cartridge so `run_cpu_tick()` won't panic on unmapped vector reads.
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
+        let reset_vector: u16 = 0x8000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFA] = (reset_vector & 0x00FF) as u8; // NMI
+        prg_rom[0x7FFB] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFE] = (reset_vector & 0x00FF) as u8; // IRQ/BRK
+        prg_rom[0x7FFF] = (reset_vector >> 8) as u8;
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        let cpu_cycles_before = nes.cpu.get_total_cycles();
+
+        tick_headless_once(&mut event_loop, &mut nes);
+
+        assert_eq!(
+            cpu_cycles_before,
+            nes.cpu.get_total_cycles(),
+            "when paused, one tick should not advance CPU cycles"
+        );
+        assert_eq!(
+            *calls.borrow(),
+            1,
+            "expected one tick to render debugger when requested"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_tick_headless_once_for_run_renders_debugger_when_paused_and_requested() {
+        struct Spy {
+            calls: Rc<RefCell<usize>>,
+        }
+
+        impl DebuggerRenderer for Spy {
+            fn render(&mut self, _snapshot: &crate::debugger::DebuggerSnapshot) {
+                *self.calls.borrow_mut() += 1;
+            }
+        }
+
+        let calls = Rc::new(RefCell::new(0usize));
+        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+        event_loop.set_debugger_renderer(Box::new(Spy {
+            calls: calls.clone(),
+        }));
+        event_loop.request_debugger_open();
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Provide a minimal cartridge so `run_cpu_tick()` won't panic on unmapped vector reads.
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
+        let reset_vector: u16 = 0x8000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFA] = (reset_vector & 0x00FF) as u8; // NMI
+        prg_rom[0x7FFB] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFE] = (reset_vector & 0x00FF) as u8; // IRQ/BRK
+        prg_rom[0x7FFF] = (reset_vector >> 8) as u8;
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        let cpu_cycles_before = nes.cpu.get_total_cycles();
+
+        let should_quit = event_loop.tick_headless_once_for_run(&mut nes);
+        assert!(!should_quit);
+
+        assert_eq!(
+            cpu_cycles_before,
+            nes.cpu.get_total_cycles(),
+            "when paused, one tick should not advance CPU cycles"
+        );
+        assert_eq!(
+            *calls.borrow(),
+            1,
+            "expected one tick to render debugger when requested"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_tick_windowed_paused_for_run_renders_debugger_when_paused_and_requested() {
+        struct Spy {
+            calls: Rc<RefCell<usize>>,
+        }
+
+        impl DebuggerRenderer for Spy {
+            fn render(&mut self, _snapshot: &crate::debugger::DebuggerSnapshot) {
+                *self.calls.borrow_mut() += 1;
+            }
+        }
+
+        let calls = Rc::new(RefCell::new(0usize));
+        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+        event_loop.set_debugger_renderer(Box::new(Spy {
+            calls: calls.clone(),
+        }));
+
+        let nes = Nes::new(TvSystem::Ntsc);
+
+        event_loop.request_debugger_open();
+        EventLoop::tick_windowed_paused_for_run(
+            event_loop.debugger_open_requested,
+            &mut event_loop.debugger_renderer,
+            &nes,
+        );
+
+        assert_eq!(*calls.borrow(), 1);
+>>>>>>> b40b9ba (Initial implementation of debugger)
     }
 }
