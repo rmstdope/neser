@@ -595,6 +595,35 @@ impl EventLoop {
         }
     }
 
+    fn debugger_step_over(nes: &mut crate::nes::Nes) {
+        const JSR_OPCODE: u8 = 0x20;
+
+        let pc = nes.cpu.pc;
+        let opcode = {
+            let memory = nes.memory.borrow();
+            memory.read_cpu_for_debugger(pc)
+        };
+
+        if opcode == JSR_OPCODE {
+            let next_pc = pc.wrapping_add(3);
+
+            // Execute the JSR itself (enter subroutine).
+            nes.run_cpu_tick();
+
+            // Run until we return to the instruction after the original JSR.
+            const MAX_STEPS: usize = 1_000_000;
+            for _ in 0..MAX_STEPS {
+                if nes.cpu.pc == next_pc || nes.cpu.is_halted() {
+                    break;
+                }
+                nes.run_cpu_tick();
+            }
+        } else {
+            // Non-JSR: step one instruction.
+            nes.run_cpu_tick();
+        }
+    }
+
     /// Handle keyboard key press events
     ///
     /// Maps keyboard keys to NES controller buttons:
@@ -608,6 +637,9 @@ impl EventLoop {
     /// - Escape: Quit
     /// - Space: Toggle pause
     /// - F1: Reset
+    /// - F5: Open debugger (when closed) / Continue (when debugger open)
+    /// - F10: Debugger step-over (JSR runs until RTS)
+    /// - F11: Debugger step-into (single CPU tick)
     /// - F2/F3: Volume up/down (when audio is enabled)
     fn handle_key_down(
         nes: &mut crate::nes::Nes,
@@ -621,14 +653,26 @@ impl EventLoop {
             Keycode::Space => {
                 *paused = !*paused;
             }
+            Keycode::F5 => {
+                // Debugger toggle/continue:
+                // - If debugger is closed: open it and pause.
+                // - If debugger is open: continue running and close it.
+                if *debugger_open_requested {
+                    *paused = false;
+                    *debugger_open_requested = false;
+                } else {
+                    *paused = true;
+                    *debugger_open_requested = true;
+                }
+            }
             Keycode::F10 => {
-                // Debugger hotkey: opening debugger windows should immediately pause emulation.
+                // Debugger step-over.
                 *paused = true;
                 *debugger_open_requested = true;
+                Self::debugger_step_over(nes);
             }
             Keycode::F11 => {
-                // Debugger single-step: execute one CPU tick and remain paused.
-                // Ensure debugger stays open while stepping.
+                // Debugger step-into: execute one CPU tick and remain paused.
                 *paused = true;
                 *debugger_open_requested = true;
                 nes.run_cpu_tick();
@@ -1009,12 +1053,94 @@ mod tests {
         assert!(!paused);
     }
 
+    fn nes_with_jsr_program() -> Nes {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Program at $8000:
+        //   JSR $8006
+        //   LDA #$01
+        //   BRK
+        // Subroutine at $8006:
+        //   INX
+        //   RTS
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP fill
+        let reset_vector: u16 = 0x8000;
+
+        // Vectors live at $FFFA-$FFFF -> end of PRG ROM.
+        prg_rom[0x7FFA] = (reset_vector & 0x00FF) as u8; // NMI
+        prg_rom[0x7FFB] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFE] = (reset_vector & 0x00FF) as u8; // IRQ/BRK
+        prg_rom[0x7FFF] = (reset_vector >> 8) as u8;
+
+        // $8000: JSR $8006
+        prg_rom[0x0000] = 0x20;
+        prg_rom[0x0001] = 0x06;
+        prg_rom[0x0002] = 0x80;
+        // $8003: LDA #$01
+        prg_rom[0x0003] = 0xA9;
+        prg_rom[0x0004] = 0x01;
+        // $8005: BRK
+        prg_rom[0x0005] = 0x00;
+        // $8006: INX
+        prg_rom[0x0006] = 0xE8;
+        // $8007: RTS
+        prg_rom[0x0007] = 0x60;
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        nes
+    }
+
     #[test]
-    fn test_handle_key_down_f10_pauses_emulation() {
-        // Desired behavior: F10 opens debugger windows, which immediately pauses emulation.
+    fn test_handle_key_down_f5_pauses_emulation() {
+        // Desired behavior: F5 opens debugger windows, which immediately pauses emulation.
         let mut nes = Nes::new(TvSystem::Ntsc);
         let mut paused = false;
         let mut debugger_open_requested = false;
+
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F5,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+        assert!(paused);
+        assert!(debugger_open_requested);
+    }
+
+    #[test]
+    fn test_handle_key_down_f5_when_debugger_open_continues_and_closes_debugger() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut paused = true;
+        let mut debugger_open_requested = true;
+
+        let _ = EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F5,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+
+        assert!(!paused);
+        assert!(!debugger_open_requested);
+    }
+
+    #[test]
+    fn test_handle_key_down_f10_step_over_jsr_runs_until_return() {
+        let mut nes = nes_with_jsr_program();
+        nes.cpu.x = 0;
+
+        let mut paused = true;
+        let mut debugger_open_requested = true;
 
         let _ = EventLoop::handle_key_down(
             &mut nes,
@@ -1023,34 +1149,21 @@ mod tests {
             &mut paused,
             &mut debugger_open_requested,
         );
-        assert!(paused);
+
+        assert!(paused, "step-over should keep emulator paused");
+        assert!(debugger_open_requested, "step-over should keep debugger open");
+        assert_eq!(nes.cpu.pc, 0x8003, "expected step-over to stop at next instruction");
+        assert_eq!(nes.cpu.x, 1, "expected subroutine to have executed (INX) before returning");
     }
 
     #[test]
-    fn test_handle_key_down_f11_steps_one_instruction_while_paused() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
-
-        // Provide a minimal cartridge so opcode fetches/vectors are valid.
-        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOPs
-        let reset_vector: u16 = 0x8000;
-        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
-        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
-        prg_rom[0x7FFA] = (reset_vector & 0x00FF) as u8; // NMI
-        prg_rom[0x7FFB] = (reset_vector >> 8) as u8;
-        prg_rom[0x7FFE] = (reset_vector & 0x00FF) as u8; // IRQ/BRK
-        prg_rom[0x7FFF] = (reset_vector >> 8) as u8;
-        let cartridge = crate::cartridge::Cartridge::from_parts(
-            prg_rom,
-            vec![],
-            crate::cartridge::MirroringMode::Horizontal,
-        );
-        nes.insert_cartridge(cartridge);
-        nes.reset(false);
+    fn test_handle_key_down_f11_step_into_jsr_enters_subroutine() {
+        let mut nes = nes_with_jsr_program();
+        nes.cpu.x = 0;
 
         let mut paused = true;
         let mut debugger_open_requested = true;
 
-        let cycles_before = nes.cpu.get_total_cycles();
         let _ = EventLoop::handle_key_down(
             &mut nes,
             Keycode::F11,
@@ -1058,14 +1171,11 @@ mod tests {
             &mut paused,
             &mut debugger_open_requested,
         );
-        let cycles_after = nes.cpu.get_total_cycles();
 
-        assert!(paused, "step should keep emulator paused");
-        assert!(debugger_open_requested, "step should keep debugger open");
-        assert!(
-            cycles_after > cycles_before,
-            "expected step to advance CPU cycles"
-        );
+        assert!(paused, "step-into should keep emulator paused");
+        assert!(debugger_open_requested, "step-into should keep debugger open");
+        assert_eq!(nes.cpu.pc, 0x8006, "expected step-into to enter subroutine");
+        assert_eq!(nes.cpu.x, 0, "expected to not execute INX when stepping into JSR");
     }
 
     #[test]
