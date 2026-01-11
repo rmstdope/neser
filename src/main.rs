@@ -268,12 +268,12 @@ mod tests {
     }
 
     #[test]
-<<<<<<< HEAD
     fn test_no_gamepads_flag_recognized() {
         let args = vec!["neser".to_string(), "--no-gamepads".to_string()];
         assert!(validate_no_unknown_args(&args).is_ok());
     }
-=======
+
+    #[test]
     fn test_enable_debugger_flag_is_accepted() {
         let args = vec!["neser".to_string(), "--enable-debugger".to_string()];
         assert!(validate_no_unknown_args(&args).is_ok());
@@ -300,6 +300,7 @@ mod tests {
             1.0,
             true,
             None,
+            false,
         )
         .unwrap();
 
@@ -308,5 +309,4 @@ mod tests {
         assert!(event_loop.is_paused());
         assert!(event_loop.debugger_open_requested());
     }
->>>>>>> b40b9ba (Initial implementation of debugger)
 }

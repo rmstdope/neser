@@ -7,4 +7,5 @@ pub use cpu::Cpu;
 pub use dma::{DmaAction, DmaController, DmcDmaState, OamDmaState};
 #[cfg(test)]
 pub use master_clock::MasterClock;
+pub use opcode::OpCode;
 pub use opcode::lookup;

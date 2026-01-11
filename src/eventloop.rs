@@ -278,45 +278,27 @@ impl EventLoop {
             audio.resume();
         }
 
-<<<<<<< HEAD
-        if let Some(mut canvas) = self.canvas.take() {
-            // We have a window - run with rendering
-            let texture_creator = canvas.texture_creator();
-
-            // Create a 256x240 texture matching the PPU screen buffer dimensions
-            const TEXTURE_WIDTH: u32 = 256;
-            const TEXTURE_HEIGHT: u32 = 240;
-
-            let mut texture = texture_creator
-                .create_texture_streaming(PixelFormatEnum::RGB24, TEXTURE_WIDTH, TEXTURE_HEIGHT)
-                .map_err(|e| e.to_string())?;
-
-=======
-        if let Some(ref mut gl_backend) = self.gl_backend {
+        if let Some(mut gl_backend) = self.gl_backend.take() {
             // We have a window - run with OpenGL + ImGui overlay
->>>>>>> b40b9ba (Initial implementation of debugger)
             let timer = self._sdl_context.timer()?;
             let mut last_frame_time = timer.performance_counter();
             let performance_frequency = timer.performance_frequency() as f64;
 
             loop {
                 // 1. Poll ALL events (non-blocking)
-<<<<<<< HEAD
                 let events: Vec<_> = self.event_pump.poll_iter().collect();
-                
-                // Process events, collecting controller-related events to handle separately
+
+                // Process events, collecting controller-related events to handle separately.
+                // This avoids needing a mutable borrow of `self` while also holding `gl_backend`.
                 let mut controllers_to_add = Vec::new();
                 let mut controllers_to_remove = Vec::new();
                 let mut controller_buttons = Vec::new();
-                
+
                 for event in events {
-=======
-                for event in self.event_pump.poll_iter() {
                     gl_backend.handle_event(&event);
->>>>>>> b40b9ba (Initial implementation of debugger)
                     match event {
                         Event::Quit { .. } => {
-                            self.canvas = Some(canvas); // Return canvas before exiting
+                            self.gl_backend = Some(gl_backend);
                             return Ok(());
                         }
                         Event::KeyDown {
@@ -331,7 +313,7 @@ impl EventLoop {
                                 &mut self.debugger_open_requested,
                             ) == KeyDownOutcome::Quit
                             {
-                                self.canvas = Some(canvas); // Return canvas before exiting
+                                self.gl_backend = Some(gl_backend);
                                 return Ok(());
                             }
                         }
@@ -356,10 +338,7 @@ impl EventLoop {
                         _ => {}
                     }
                 }
-                
-                // Temporarily put canvas back so we can mutate self
-                self.canvas = Some(canvas);
-                
+
                 // Handle controller events
                 for which in controllers_to_add {
                     self.handle_controller_added(which);
@@ -370,10 +349,6 @@ impl EventLoop {
                 for (which, button, pressed) in controller_buttons {
                     self.handle_controller_button(nes, which, button, pressed);
                 }
-                
-                // Take canvas back - this should never fail since we just put it back
-                canvas = self.canvas.take()
-                    .expect("Canvas was unexpectedly None after putting it back for controller event handling - this indicates a logic error in canvas management");
 
                 // Skip emulation and rendering if paused
                 if self.paused {
@@ -432,13 +407,8 @@ impl EventLoop {
                 //     nes.ppu.borrow().pixel()
                 // );
 
-<<<<<<< HEAD
-                // 3. Render the frame
-                Self::render_frame(&mut canvas, &mut texture, nes)?;
-=======
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
                 gl_backend.render(nes, self.debugger_open_requested);
->>>>>>> b40b9ba (Initial implementation of debugger)
                 // println!("Frame rendered.");
 
                 // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
@@ -466,49 +436,8 @@ impl EventLoop {
         } else {
             // Headless mode - just run without rendering
             loop {
-<<<<<<< HEAD
-                let events: Vec<_> = self.event_pump.poll_iter().collect();
-                for event in events {
-                    match event {
-                        Event::Quit { .. } => return Ok(()),
-                        Event::KeyDown {
-                            keycode: Some(keycode),
-                            ..
-                        } => {
-                            if Self::handle_key_down(
-                                nes,
-                                keycode,
-                                self.audio.as_ref(),
-                                &mut self.paused,
-                            ) == KeyDownOutcome::Quit
-                            {
-                                return Ok(());
-                            }
-                        }
-                        Event::KeyUp {
-                            keycode: Some(keycode),
-                            ..
-                        } => {
-                            Self::handle_key_up(nes, keycode);
-                        }
-                        Event::ControllerDeviceAdded { which, .. } => {
-                            self.handle_controller_added(which);
-                        }
-                        Event::ControllerDeviceRemoved { which, .. } => {
-                            self.handle_controller_removed(which);
-                        }
-                        Event::ControllerButtonDown { button, which, .. } => {
-                            self.handle_controller_button(nes, which, button, true);
-                        }
-                        Event::ControllerButtonUp { button, which, .. } => {
-                            self.handle_controller_button(nes, which, button, false);
-                        }
-                        _ => {}
-                    }
-=======
                 if self.tick_headless_once_for_run(nes) {
                     return Ok(());
->>>>>>> b40b9ba (Initial implementation of debugger)
                 }
 
                 // Avoid a busy loop while paused.
@@ -1270,7 +1199,6 @@ mod tests {
 
     #[test]
     #[serial]
-<<<<<<< HEAD
     fn test_gamepad_disabled_by_default() {
         // When gamepads are disabled, no controllers should be initialized
         let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false);
@@ -1291,7 +1219,10 @@ mod tests {
             // No controllers should be initialized in test environment
             assert!(event_loop.controllers.len() <= 2);
         }
-=======
+    }
+
+    #[test]
+    #[serial]
     fn test_render_debugger_if_needed_invokes_renderer() {
         struct Spy {
             calls: Rc<RefCell<usize>>,
@@ -1304,7 +1235,8 @@ mod tests {
         }
 
         let calls = Rc::new(RefCell::new(0usize));
-        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false)
+            .unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1331,7 +1263,8 @@ mod tests {
         }
 
         let calls = Rc::new(RefCell::new(0usize));
-        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false)
+            .unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1387,7 +1320,8 @@ mod tests {
         }
 
         let calls = Rc::new(RefCell::new(0usize));
-        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false)
+            .unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1444,7 +1378,8 @@ mod tests {
         }
 
         let calls = Rc::new(RefCell::new(0usize));
-        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None).unwrap();
+        let mut event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false)
+            .unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1459,6 +1394,5 @@ mod tests {
         );
 
         assert_eq!(*calls.borrow(), 1);
->>>>>>> b40b9ba (Initial implementation of debugger)
     }
 }
