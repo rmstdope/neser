@@ -1,10 +1,11 @@
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::Canvas;
 use sdl2::video::Window;
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
 
 use crate::audio::NesAudio;
 use crate::input::Button;
@@ -440,7 +441,7 @@ impl EventLoop {
                 
                 // Take canvas back - this should never fail since we just put it back
                 canvas = self.canvas.take()
-                    .expect("Canvas should be present after controller event handling");
+                    .expect("Canvas was unexpectedly None after putting it back for controller event handling - this indicates a logic error in canvas management");
 
                 // Skip emulation and rendering if paused
                 if self.paused {
