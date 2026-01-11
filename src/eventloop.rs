@@ -206,6 +206,7 @@ use std::time::{Duration, Instant};
     //     }
     //     false
     // }
+
     /// Runs the event loop, processing events until the user presses Escape or closes the window.
     ///
     /// Continuously runs CPU opcodes on the provided NES instance according to the CPU clock
