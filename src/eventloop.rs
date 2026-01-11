@@ -3,6 +3,54 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
+
+use crate::audio::NesAudio;
+use crate::input::Button;
+use crate::nes::TvSystem;
+use crate::tracing::Tracing;
+
+/// EventLoop manages the SDL2 event loop for the application.
+/// It handles user input and window events, exiting when Escape is pressed or the window is closed.
+pub struct EventLoop {
+    _sdl_context: sdl2::Sdl,
+    gl_backend: Option<GlBackend>,
+    event_pump: sdl2::EventPump,
+    timing_scale: f32,
+    vsync_enabled: bool,
+    paused: bool,
+    debugger_open_requested: bool,
+    #[cfg_attr(not(test), allow(dead_code))]
+    debugger_renderer: Option<Box<dyn DebuggerRenderer>>,
+    audio: Option<NesAudio>,
+    controllers: Vec<sdl2::controller::GameController>,
+    controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub(crate) trait DebuggerRenderer {
+    fn render(&mut self, snapshot: &crate::debugger::DebuggerSnapshot);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyDownOutcome {
+    Continue,
+    Quit,
+}
+
+impl EventLoop {
+    const MIN_SCALE: f32 = 1.0;
+    const MAX_SCALE: f32 = 5.0;
+    const MIN_TIMING_SCALE: f32 = 0.001;
+    const MAX_TIMING_SCALE: f32 = 100.0;
+
+    /// Creates a new EventLoop instance.
+    ///
+    /// This is the preferred way to create an EventLoop.
+    ///
+    /// # Arguments
+    ///
+    /// * `headless` - If `true`, creates an EventLoop without a window (useful for testing).
+    ///                If `false`, creates a window sized for the specified TV system.
     /// * `tv_system` - The TV system (NTSC or PAL) which determines the window size.
     ///                 NTSC and PAL both use 256x240 resolution.
     /// * `video_scale` - Window scaling factor. Values are clamped to the range [1.0, 5.0].
@@ -78,7 +126,6 @@ use std::time::{Duration, Instant};
             event_pump,
             timing_scale: clamped_timing_scale,
             vsync_enabled,
-            fullscreen,
             paused: false,
             debugger_open_requested: false,
             debugger_renderer: None,
@@ -1171,7 +1218,7 @@ mod tests {
     #[serial]
     fn test_request_debugger_open_pauses_and_sets_request_flag() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
 
         assert!(!event_loop.paused);
         assert!(!event_loop.debugger_open_requested);
@@ -1351,8 +1398,8 @@ mod tests {
     #[test]
     #[serial]
     fn test_run_with_nes() {
-        let _event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false)
-            .unwrap();
+        let _event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance
@@ -1412,7 +1459,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1440,7 +1487,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1497,7 +1544,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -1555,7 +1602,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));

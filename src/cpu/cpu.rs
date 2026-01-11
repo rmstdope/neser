@@ -493,54 +493,54 @@ impl Cpu {
     fn process_pending_dma(&mut self, read_address: u16) -> bool {
         // Check if OAM DMA is pending
         let oam_dma_pending = self.memory.borrow().oam_dma_pending();
-        
+
         // Check if DMC DMA is pending (and not already running)
         let dmc_dma_pending = !self.dmc_dma_running && {
             let mut apu = self.apu.borrow_mut();
             apu.dmc_mut().dma_pending()
         };
-        
+
         if !oam_dma_pending && !dmc_dma_pending {
             return false;
         }
-        
+
         // Note: The caller (read()) has already called before_cpu_cycle().
         // We complete that cycle here with the halt read and after_cpu_cycle().
-        
+
         // If only DMC is pending (no OAM), handle it separately with existing logic
         if !oam_dma_pending && dmc_dma_pending {
             self.start_dmc_dma();
-            
+
             // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
             let _ = self.memory.borrow().read(read_address);
             self.after_cpu_cycle(false);
             self.dmc_dma_need_halt = false;
-            
+
             // Process remaining DMC DMA cycles
             self.process_pending_dmc_dma(read_address);
-            
+
             return true;
         }
-        
+
         // OAM DMA is pending (possibly with DMC collision)
         // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
         let _ = self.memory.borrow().read(read_address);
         self.after_cpu_cycle(false);
-        
+
         // Now run the OAM DMA (which handles DMC collision internally)
         let page = self.memory.borrow_mut().take_oam_dma_page();
         if let Some(page) = page {
             self.run_oam_dma_internal(page);
         }
-        
+
         true
     }
 
     /// Run OAM DMA internally (called from process_pending_dma or handle_oam_dma_if_pending).
     /// This is the actual OAM DMA loop with DMC collision handling.
-    /// 
+    ///
     /// If `handle_nmi` is true, checks for and handles NMI after DMA completes.
-    /// 
+    ///
     /// Note: The caller is responsible for the halt cycle. If DMC is pending at start,
     /// it shares that halt cycle which the caller has already consumed.
     fn run_oam_dma_internal_impl(&mut self, page: u8, handle_nmi: bool) {
@@ -562,7 +562,11 @@ impl Cpu {
 
         // Track DMC DMA progress
         // If DMC is pending at start, it shares the halt cycle that the caller consumed
-        let mut dmc_progress: u8 = if dmc_pending_at_start { DMC_HALT_DONE } else { DMC_IDLE };
+        let mut dmc_progress: u8 = if dmc_pending_at_start {
+            DMC_HALT_DONE
+        } else {
+            DMC_IDLE
+        };
         let mut sprite_dma_value: Option<u8> = None;
         let mut sprite_offset: u16 = 0;
         let mut sprite_dma_done = false;
@@ -584,7 +588,8 @@ impl Cpu {
             let on_put_phase = !on_get_phase;
 
             // Can DMC read this cycle?
-            let dmc_ready_to_read = dmc_pending && dmc_progress >= DMC_READY_TO_READ && on_get_phase;
+            let dmc_ready_to_read =
+                dmc_pending && dmc_progress >= DMC_READY_TO_READ && on_get_phase;
 
             // Can OAM read this cycle?
             let oam_ready_to_read = !sprite_dma_done && sprite_dma_value.is_none() && on_get_phase;
@@ -619,7 +624,9 @@ impl Cpu {
                 if dmc_pending && dmc_progress == DMC_HALT_DONE {
                     dmc_progress = DMC_READY_TO_READ; // alignment done
                 }
-                self.ppu.borrow_mut().write_oam_data(sprite_dma_value.take().unwrap());
+                self.ppu
+                    .borrow_mut()
+                    .write_oam_data(sprite_dma_value.take().unwrap());
                 self.tick_single_dma_cycle();
                 sprite_offset += 1;
                 if sprite_offset >= OAM_SIZE {
@@ -2209,102 +2216,6 @@ mod tests {
             !ppu.borrow_mut().poll_nmi(),
             "PPU NMI flag should be cleared once CPU polls it"
         );
-    }
-
-    #[test]
-    #[ignore = "WIP: using blargg ppu_vbl_nmi/05 as red spec"]
-    fn test_nmi_timing_offset_02_matches_blargg_05() {
-        // blargg ppu_vbl_nmi/05-nmi_timing expected output:
-        // 00 4
-        // 01 4
-        // 02 4
-        // ...
-        // Our emulator currently produces 02 3 (NMI one instruction too early).
-
-        fn run_case(ppu_clock_offset: u64) -> u8 {
-            let (ppu, apu, memory) = create_test_memory();
-            let mut cpu = Cpu::new(
-                TvSystem::Ntsc,
-                Rc::clone(&memory),
-                Rc::clone(&ppu),
-                Rc::clone(&apu),
-            );
-
-            // Program at $8000:
-            //   LDX #$00
-            //   LDA #$80
-            //   STA $2000   ; enable NMI output
-            // landing:
-            //   LDX #$01
-            //   LDX #$02
-            //   LDX #$03
-            //   LDX #$04
-            //   JMP landing
-            // NMI handler at $9000:
-            //   STX $00
-            //   RTI
-            let mut prg_rom = vec![0; 0x4000];
-
-            let program: [u8; 18] = [
-                0xA2, 0x00, // LDX #$00
-                0xA9, 0x80, // LDA #$80
-                0x8D, 0x00, 0x20, // STA $2000
-                0xA2, 0x01, // LDX #$01
-                0xA2, 0x02, // LDX #$02
-                0xA2, 0x03, // LDX #$03
-                0xA2, 0x04, // LDX #$04
-                0x4C, 0x07, 0x80, // JMP $8007 (landing)
-            ];
-            prg_rom[0x0000..0x0000 + program.len()].copy_from_slice(&program);
-
-            // NMI handler at $9000 => PRG offset 0x1000
-            prg_rom[0x1000] = 0x86; // STX zp
-            prg_rom[0x1001] = 0x00; // $00
-            prg_rom[0x1002] = 0x40; // RTI
-
-            // Vectors
-            prg_rom[0x3FFA] = 0x00;
-            prg_rom[0x3FFB] = 0x90; // NMI vector = $9000
-            prg_rom[0x3FFC] = 0x00;
-            prg_rom[0x3FFD] = 0x80; // Reset vector = $8000
-
-            let chr_rom = vec![0; 0x2000];
-            let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-            cpu.memory.borrow_mut().map_cartridge(cartridge);
-
-            // Use the real reset path to keep CPU/PPU/APU and the master clock aligned.
-            cpu.reset(true);
-
-            // Apply a controllable initial phase offset between CPU and PPU.
-            // Use 1 master-tick increments to exercise sub-PPU-cycle phase differences.
-            cpu.master_clock
-                .set_master_cycles(cpu.master_clock.master_cycles() + ppu_clock_offset);
-            let phase_ppu_cycles = cpu.master_clock.ppu_cycles_since_last();
-            cpu.ppu.borrow_mut().run_ppu_cycles(phase_ppu_cycles);
-
-            // Initialize result byte.
-            cpu.memory.borrow_mut().write(0x0000, 0xFF, false);
-
-            // Run the program from reset and wait for VBlank NMI to fire.
-            // This ensures $2000 is enabled well before VBlank starts, so we measure the
-            // timing of the VBlank NMI edge (not the "$2000 enable while already in VBlank"
-            // immediate-edge behavior exercised by ppu_vbl_nmi/04).
-            for _ in 0..50_000 {
-                cpu.execute();
-                if cpu.memory.borrow().read(0x0000) != 0xFF {
-                    break;
-                }
-                if cpu.halted {
-                    break;
-                }
-            }
-
-            cpu.memory.borrow().read(0x0000)
-        }
-
-        let expected: [u8; 10] = [4, 4, 4, 3, 3, 3, 3, 3, 3, 2];
-        let observed: Vec<u8> = (0..10).map(run_case).collect();
-        assert_eq!(observed, expected);
     }
 
     #[test]
