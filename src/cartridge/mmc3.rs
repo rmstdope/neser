@@ -525,6 +525,38 @@ mod tests {
         assert_eq!(mapper.read_chr(0x0800), 6);
         assert_eq!(mapper.read_chr(0x0C00), 7);
     }
+
+    #[test]
+    fn test_mmc3_two_bank_prg_rom() {
+        // Test MMC3 with only 2 x 8KB PRG banks (like the Blargg MMC3 test ROMs)
+        // This is the minimum configuration and should work correctly.
+        
+        let mut prg_rom = vec![0u8; 16 * 1024]; // 16KB = 2 x 8KB banks
+        // Fill bank 0 with 0xAA
+        prg_rom[0..8192].fill(0xAA);
+        // Fill bank 1 with 0xBB
+        prg_rom[8192..16384].fill(0xBB);
+        
+        let chr_rom = vec![];  // No CHR-ROM (uses CHR-RAM)
+        
+        let mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC3 (mapper 4) should be implemented");
+        
+        // With 2 banks and default configuration (PRG mode 0):
+        // $8000-$9FFF: R6 (bank 0) = 0xAA
+        // $A000-$BFFF: R7 (bank 0) = 0xAA  
+        // $C000-$DFFF: fixed second-to-last (bank 0) = 0xAA
+        // $E000-$FFFF: fixed last (bank 1) = 0xBB
+        
+        assert_eq!(mapper.read_prg(0x8000), 0xAA);
+        assert_eq!(mapper.read_prg(0xA000), 0xAA);
+        assert_eq!(mapper.read_prg(0xC000), 0xAA);
+        assert_eq!(mapper.read_prg(0xE000), 0xBB);
+        
+        // The reset vector at $FFFC-$FFFD should be readable from bank 1
+        assert_eq!(mapper.read_prg(0xFFFC), 0xBB);
+        assert_eq!(mapper.read_prg(0xFFFD), 0xBB);
+    }
 }
 
 impl Mapper for MMC3Mapper {
