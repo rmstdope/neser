@@ -1,6 +1,8 @@
 use crate::cpu;
 use crate::nes::Nes;
 
+pub mod ui;
+
 // Disassembly window size:
 // Total window height is N_BEFORE + 1 + N_AFTER.
 // Previously 8 + 1 + 8 = 17; doubled to 34.

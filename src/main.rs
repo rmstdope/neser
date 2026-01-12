@@ -3,7 +3,6 @@ mod audio;
 mod cartridge;
 mod cpu;
 mod debugger;
-mod debugger_ui;
 mod eventloop;
 mod gl_backend;
 mod input;

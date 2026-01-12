@@ -760,7 +760,7 @@ impl EventLoop {
     fn apply_debugger_ui_action(
         &mut self,
         nes: &mut crate::nes::Nes,
-        action: crate::debugger_ui::DebuggerUiAction,
+        action: crate::debugger::ui::DebuggerUiAction,
     ) {
         if !self.debugger_open_requested {
             return;
@@ -829,7 +829,7 @@ impl EventLoop {
         if keycode == Keycode::F5 && self.debugger_open_requested {
             self.apply_debugger_ui_action(
                 nes,
-                crate::debugger_ui::DebuggerUiAction {
+                crate::debugger::ui::DebuggerUiAction {
                     continue_run: true,
                     step_over: false,
                     step_into: false,
@@ -1612,7 +1612,7 @@ mod tests {
 
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger_ui::DebuggerUiAction {
+            crate::debugger::ui::DebuggerUiAction {
                 continue_run: true,
                 step_over: false,
                 step_into: false,
@@ -1651,7 +1651,7 @@ mod tests {
         // Continue should unpause and not instantly re-break at the same PC.
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger_ui::DebuggerUiAction {
+            crate::debugger::ui::DebuggerUiAction {
                 continue_run: true,
                 step_over: false,
                 step_into: false,
@@ -1732,7 +1732,7 @@ mod tests {
         event_loop.request_debugger_open();
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger_ui::DebuggerUiAction {
+            crate::debugger::ui::DebuggerUiAction {
                 continue_run: false,
                 step_over: false,
                 step_into: false,
@@ -1804,7 +1804,7 @@ mod tests {
         event_loop.request_debugger_open();
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger_ui::DebuggerUiAction {
+            crate::debugger::ui::DebuggerUiAction {
                 continue_run: false,
                 step_over: false,
                 step_into: false,
@@ -1876,7 +1876,7 @@ mod tests {
         event_loop.request_debugger_open();
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger_ui::DebuggerUiAction {
+            crate::debugger::ui::DebuggerUiAction {
                 continue_run: false,
                 step_over: false,
                 step_into: false,
@@ -1972,7 +1972,7 @@ mod tests {
         event_loop.request_debugger_open();
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger_ui::DebuggerUiAction {
+            crate::debugger::ui::DebuggerUiAction {
                 continue_run: false,
                 step_over: false,
                 step_into: false,
@@ -2075,7 +2075,7 @@ mod tests {
         event_loop.request_debugger_open();
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger_ui::DebuggerUiAction {
+            crate::debugger::ui::DebuggerUiAction {
                 continue_run: false,
                 step_over: false,
                 step_into: false,
@@ -2134,7 +2134,7 @@ mod tests {
 
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger_ui::DebuggerUiAction {
+            crate::debugger::ui::DebuggerUiAction {
                 step_into: true,
                 step_over: false,
                 continue_run: false,
@@ -2180,7 +2180,7 @@ mod tests {
 
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger_ui::DebuggerUiAction {
+            crate::debugger::ui::DebuggerUiAction {
                 step_over: true,
                 step_into: false,
                 continue_run: false,

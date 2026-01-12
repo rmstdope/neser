@@ -1,4 +1,4 @@
-use crate::debugger::DebuggerSnapshot;
+use super::DebuggerSnapshot;
 
 const DEBUGGER_OUTER_MARGIN: f32 = 10.0;
 const DEBUGGER_OUTER_GAP: f32 = 10.0;
@@ -145,42 +145,40 @@ fn render_cpu_controls(ui: &imgui::Ui, action: &mut DebuggerUiAction) {
 }
 
 fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32; 2]) {
-    ui.child_window("cpu_code").size(size).border(true).build(|| {
-        ui.text("Code");
-        ui.separator();
+    ui.child_window("cpu_code")
+        .size(size)
+        .border(true)
+        .build(|| {
+            ui.text("Code");
+            ui.separator();
 
-        for line in &snapshot.cpu_disasm {
-            let bytes = format_disasm_bytes(&line.bytes);
-            let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
-            if line.is_current {
-                let cursor = ui.cursor_screen_pos();
-                let draw_w = ui.content_region_avail()[0];
-                let draw_h = ui.text_line_height();
+            for line in &snapshot.cpu_disasm {
+                let bytes = format_disasm_bytes(&line.bytes);
+                let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
+                if line.is_current {
+                    let cursor = ui.cursor_screen_pos();
+                    let draw_w = ui.content_region_avail()[0];
+                    let draw_h = ui.text_line_height();
 
-                ui.get_window_draw_list()
-                    .add_rect(
-                        cursor,
-                        [cursor[0] + draw_w, cursor[1] + draw_h],
-                        [1.0, 1.0, 1.0, 1.0],
-                    )
-                    .filled(true)
-                    .build();
+                    ui.get_window_draw_list()
+                        .add_rect(
+                            cursor,
+                            [cursor[0] + draw_w, cursor[1] + draw_h],
+                            [1.0, 1.0, 1.0, 1.0],
+                        )
+                        .filled(true)
+                        .build();
 
-                let _text = ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 0.0, 1.0]);
-                ui.text(text);
-            } else {
-                ui.text(text);
+                    let _text = ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 0.0, 1.0]);
+                    ui.text(text);
+                } else {
+                    ui.text(text);
+                }
             }
-        }
-    });
+        });
 }
 
-fn render_cpu_right_panel(
-    ui: &imgui::Ui,
-    snapshot: &DebuggerSnapshot,
-    size: [f32; 2],
-    gap: f32,
-) {
+fn render_cpu_right_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32; 2], gap: f32) {
     ui.child_window("cpu_right")
         .size(size)
         .border(false)

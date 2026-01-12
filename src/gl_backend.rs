@@ -4,7 +4,7 @@ use sdl2::mouse::MouseButton;
 use sdl2::video::{GLContext, GLProfile, Window};
 
 use crate::debugger;
-use crate::debugger_ui;
+use crate::debugger::ui as debugger_ui;
 use crate::nes::TvSystem;
 use std::time::Instant;
 
@@ -207,8 +207,8 @@ impl GlBackend {
         &mut self,
         nes: &crate::nes::Nes,
         show_debugger: bool,
-    ) -> crate::debugger_ui::DebuggerUiAction {
-        let mut action = crate::debugger_ui::DebuggerUiAction::default();
+    ) -> crate::debugger::ui::DebuggerUiAction {
+        let mut action = crate::debugger::ui::DebuggerUiAction::default();
 
         // Per-frame IO updates
         let now = Instant::now();

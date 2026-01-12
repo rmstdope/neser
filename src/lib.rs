@@ -6,7 +6,6 @@ pub mod blargg_tests;
 pub mod cartridge;
 pub mod cpu;
 pub mod debugger;
-pub mod debugger_ui;
 pub mod input;
 pub mod manual_test_cartridges;
 pub mod mem_controller;
