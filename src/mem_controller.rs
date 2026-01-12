@@ -219,6 +219,15 @@ impl MemController {
             .unwrap_or(false)
     }
 
+    /// Tick the active mapper for one CPU cycle.
+    ///
+    /// Some mappers implement CPU-cycle-driven IRQ systems (e.g., Konami VRC IRQ).
+    pub fn mapper_cpu_cycle(&mut self) {
+        if let Some(ref cartridge) = self.cartridge {
+            cartridge.borrow_mut().mapper_mut().cpu_cycle();
+        }
+    }
+
     #[cfg(test)]
     pub fn read_for_testing(&self, addr: u16) -> u8 {
         let old_open_bus = *self.open_bus.borrow_mut();

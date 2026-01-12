@@ -450,6 +450,10 @@ impl Cpu {
         self.master_clock.after_cpu_cycle(is_write);
         let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
+
+        // Some mappers (e.g., Konami VRC) use CPU-cycle-driven IRQ counters.
+        self.memory.borrow_mut().mapper_cpu_cycle();
+
         // Mirror Mesen EndCpuCycle() behavior: latch interrupt lines at the end of each CPU cycle.
         // Some edge cases require skipping latching for a single cycle.
         if self.skip_interrupt_latch_this_cycle {
