@@ -561,8 +561,9 @@ impl EventLoop {
                         let (received, dropped, underrun) = audio.take_and_reset_stats();
                         let now_cycles = nes.cpu.get_total_cycles();
                         let elapsed = last_perf_instant.elapsed().as_secs_f64();
+                        let cycle_delta = now_cycles.saturating_sub(last_cpu_cycles);
                         let cycles_per_sec = if elapsed > 0.0 {
-                            (now_cycles - last_cpu_cycles) as f64 / elapsed
+                            cycle_delta as f64 / elapsed
                         } else {
                             0.0
                         };
