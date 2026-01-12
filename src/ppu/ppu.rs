@@ -585,8 +585,26 @@ impl Ppu {
 
     /// Write to address register ($2006)
     pub fn write_address(&mut self, value: u8, is_dummy_write: bool) {
+        let old_v = self.registers.v();
         self.registers.write_address(value, is_dummy_write);
         self.registers.set_io_bus(value); // Update I/O bus
+        
+        // Notify mapper if v register changed (happens on second write to $2006)
+        // This is needed for MMC3 A12 detection when manually toggling address
+        let new_v = self.registers.v();
+        if old_v != new_v {
+            if let Some(ref cartridge) = self.cartridge {
+                // When manually changing the PPU address via $2006, we need to ensure
+                // the MMC3 A12 filter has enough "cycles" to detect the change properly.
+                // We simulate this by calling ppu_address_changed with the old address
+                // multiple times before notifying about the new address.
+                let mapper = &mut *cartridge.borrow_mut();
+                for _ in 0..8 {
+                    mapper.mapper_mut().ppu_address_changed(old_v);
+                }
+                mapper.mapper_mut().ppu_address_changed(new_v);
+            }
+        }
     }
 
     /// Read from data register ($2007)
@@ -623,10 +641,25 @@ impl Ppu {
         };
 
         // Use rendering glitch during active rendering
+        let old_addr = self.registers.v();
         if self.should_use_rendering_glitch() {
             self.registers.inc_address_with_rendering_glitch();
         } else {
             self.registers.increment_vram_address();
+        }
+        
+        // Notify mapper of address change after increment (for MMC3 A12 detection)
+        let new_addr = self.registers.v();
+        if old_addr != new_addr {
+            if let Some(ref cartridge) = self.cartridge {
+                // For PPUDATA reads/writes, we need to prime the A12 filter similar
+                // to PPUADDR writes, as these are also manual address changes
+                let mapper = &mut *cartridge.borrow_mut();
+                for _ in 0..8 {
+                    mapper.mapper_mut().ppu_address_changed(old_addr);
+                }
+                mapper.mapper_mut().ppu_address_changed(new_addr);
+            }
         }
 
         // Update I/O bus with value read
@@ -659,10 +692,25 @@ impl Ppu {
         }
 
         // Use rendering glitch during active rendering
+        let old_addr = self.registers.v();
         if self.should_use_rendering_glitch() {
             self.registers.inc_address_with_rendering_glitch();
         } else {
             self.registers.increment_vram_address();
+        }
+        
+        // Notify mapper of address change after increment (for MMC3 A12 detection)
+        let new_addr = self.registers.v();
+        if old_addr != new_addr {
+            if let Some(ref cartridge) = self.cartridge {
+                // For PPUDATA reads/writes, we need to prime the A12 filter similar
+                // to PPUADDR writes, as these are also manual address changes
+                let mapper = &mut *cartridge.borrow_mut();
+                for _ in 0..8 {
+                    mapper.mapper_mut().ppu_address_changed(old_addr);
+                }
+                mapper.mapper_mut().ppu_address_changed(new_addr);
+            }
         }
     }
 

@@ -95,12 +95,16 @@ mod tests {
             // println!("Running Blargg-based test ROM: {} ... ", self.rom_path);
 
             let mut running = false;
+            let mut first_nonzero_status = None;
             // Run frames and check for results
-            for _frame in 1..=self.max_frames {
+            for frame in 1..=self.max_frames {
                 // Run one frame (roughly 29780 CPU cycles for NTSC)
                 let mut current_status = nes.memory.borrow().read_for_testing(0x6000);
                 if current_status == 0x80 {
                     running = true;
+                }
+                if current_status != 0 && first_nonzero_status.is_none() {
+                    first_nonzero_status = Some((frame, current_status));
                 }
                 const STATUS_POLL_INTERVAL: u32 = 256;
                 for cpu_cycle in 0..29780 {
@@ -617,5 +621,52 @@ mod tests {
         test_mmc5_v2,
         "roms/blargg/mmc5test_v2/mmc5test.nes",
         60 * 10
+    // MMC3 IRQ counter tests
+    blargg_test!(
+        test_mmc3_irq_1_clocking,
+        "roms/blargg/mmc3_irq_tests/1.Clocking.nes",
+        60 * 10 // Increased timeout for initial debugging
+    );
+    blargg_test!(
+        test_mmc3_irq_2_details,
+        "roms/blargg/mmc3_irq_tests/2.Details.nes"
+    );
+    blargg_test!(
+        test_mmc3_irq_3_a12_clocking,
+        "roms/blargg/mmc3_irq_tests/3.A12_clocking.nes"
+    );
+    blargg_test!(
+        test_mmc3_irq_4_scanline_timing,
+        "roms/blargg/mmc3_irq_tests/4.Scanline_timing.nes",
+        60 * 5 // May need time for frame rendering
+    );
+    // Note: Tests 5 and 6 test different MMC3 revisions (A and B)
+    // We'll implement Rev B (most common) as default
+    blargg_test!(
+        test_mmc3_irq_6_rev_b,
+        "roms/blargg/mmc3_irq_tests/6.MMC3_rev_B.nes"
+    );
+
+    // MMC3 test suite (alternative test format)
+    blargg_test!(
+        test_mmc3_test_1_clocking,
+        "roms/blargg/mmc3_test/1-clocking.nes"
+    );
+    blargg_test!(
+        test_mmc3_test_2_details,
+        "roms/blargg/mmc3_test/2-details.nes"
+    );
+    blargg_test!(
+        test_mmc3_test_3_a12_clocking,
+        "roms/blargg/mmc3_test/3-A12_clocking.nes"
+    );
+    blargg_test!(
+        test_mmc3_test_4_scanline_timing,
+        "roms/blargg/mmc3_test/4-scanline_timing.nes",
+        60 * 5
+    );
+    blargg_test!(
+        test_mmc3_test_5_mmc3,
+        "roms/blargg/mmc3_test/5-MMC3.nes"
     );
 }
