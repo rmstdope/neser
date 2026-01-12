@@ -7,12 +7,47 @@ pub struct MMC5Mapper {
     prg_ram: Vec<u8>,
     mirroring: MirroringMode,
 
+    // PRG banking
     prg_mode: u8,
     prg_bank_5113: u8,
     prg_bank_5114: u8,
     prg_bank_5115: u8,
     prg_bank_5116: u8,
     prg_bank_5117: u8,
+
+    // PRG-RAM write protection
+    prg_ram_protect_1: u8,
+    prg_ram_protect_2: u8,
+
+    // CHR banking
+    chr_mode: u8,
+    chr_bank_a: [u8; 8],   // $5120-$5127 for BG
+    chr_bank_b: [u8; 4],   // $5128-$512B for sprites
+
+    // Nametable control
+    nametable_mapping: u8, // $5105
+    fill_tile: u8,         // $5106
+    fill_attr: u8,         // $5107
+
+    // ExRAM
+    ex_ram: Vec<u8>,       // 1KB ExRAM at $5C00-$5FFF
+    ex_ram_mode: u8,       // $5104
+
+    // Split screen (not fully implemented yet)
+    split_mode: u8,        // $5200
+    split_scroll: u8,      // $5201
+    split_bank: u8,        // $5202
+
+    // Scanline IRQ
+    irq_scanline_compare: u8, // $5203
+    irq_enabled: bool,     // $5204 bit 7
+    irq_pending: bool,     // IRQ pending flag
+    in_frame: bool,        // Track if PPU is in frame
+    scanline_counter: u16, // Current scanline counter
+
+    // Hardware multiplier
+    multiplicand: u8,      // $5205
+    multiplier: u8,        // $5206
 }
 
 enum Chr {
@@ -47,12 +82,47 @@ impl MMC5Mapper {
             prg_ram,
             mirroring,
 
+            // PRG banking
             prg_mode: 3,
             prg_bank_5113: 0,
             prg_bank_5114: 0x80,
             prg_bank_5115: 0x80,
             prg_bank_5116: 0x80,
             prg_bank_5117: prg_rom_bank_count_8k.saturating_sub(1) as u8,
+
+            // PRG-RAM write protection (default: writable - $02 and $01)
+            prg_ram_protect_1: 0x02,
+            prg_ram_protect_2: 0x01,
+
+            // CHR banking
+            chr_mode: 0,
+            chr_bank_a: [0; 8],
+            chr_bank_b: [0; 4],
+
+            // Nametable control
+            nametable_mapping: 0,
+            fill_tile: 0,
+            fill_attr: 0,
+
+            // ExRAM
+            ex_ram: vec![0u8; 1024],
+            ex_ram_mode: 0,
+
+            // Split screen
+            split_mode: 0,
+            split_scroll: 0,
+            split_bank: 0,
+
+            // Scanline IRQ
+            irq_scanline_compare: 0,
+            irq_enabled: false,
+            irq_pending: false,
+            in_frame: false,
+            scanline_counter: 0,
+
+            // Hardware multiplier
+            multiplicand: 0,
+            multiplier: 0,
         }
     }
 
@@ -84,12 +154,22 @@ impl MMC5Mapper {
     }
 
     fn write_prg_ram_8k(&mut self, bank: u8, addr: u16, base: u16, value: u8) {
+        // Check if PRG-RAM writes are protected
+        if !self.is_prg_ram_writable() {
+            return;
+        }
         let bank_index = Self::prg_ram_bank_index_8k(bank);
         let offset = (addr - base) as usize;
         let index = bank_index * Self::PRG_RAM_BANK_SIZE + offset;
         if let Some(slot) = self.prg_ram.get_mut(index) {
             *slot = value;
         }
+    }
+
+    fn is_prg_ram_writable(&self) -> bool {
+        // PRG-RAM is writable when both protect registers are set to the magic values
+        // $5102 = %xxxx_xx10 and $5103 = %xxxx_xx01
+        (self.prg_ram_protect_1 & 0x03) == 0x02 && (self.prg_ram_protect_2 & 0x03) == 0x01
     }
 
     fn read_window_8k(&self, reg: u8, addr: u16, base: u16) -> u8 {
@@ -135,16 +215,164 @@ impl MMC5Mapper {
             self.write_prg_ram_8k(reg, addr, 0x8000, value);
         }
     }
+
+    fn read_window_32k_mode0(&self, reg: u8, addr: u16) -> u8 {
+        // Mode 0: Single 32KB bank at $8000-$FFFF
+        // Use $5117 with bits 1-0 ignored (align to 32KB)
+        let bank_base = (reg & 0x7F) & !3; // Align to 32KB boundary (4 x 8KB banks)
+        let offset_8k = ((addr >> 13) & 0x03) as u8; // Which 8KB within the 32KB
+        let base_addr = addr & 0xE000; // Start of the current 8KB segment
+        self.read_prg_rom_8k(bank_base.wrapping_add(offset_8k), addr, base_addr)
+    }
+
+    fn read_window_16k_mode1(&self, reg: u8, addr: u16, is_high: bool) -> u8 {
+        // Mode 1: Two 16KB banks
+        // $8000-$BFFF uses $5115 (bit 0 ignored)
+        // $C000-$FFFF uses $5117 (bit 0 ignored)
+        let bank_base = (reg & 0x7F) & !1; // Align to 16KB boundary (2 x 8KB banks)
+        let offset_8k = if is_high {
+            if addr >= 0xE000 { 1u8 } else { 0u8 }
+        } else {
+            if addr >= 0xA000 { 1u8 } else { 0u8 }
+        };
+        let base_addr = if is_high {
+            if addr >= 0xE000 { 0xE000 } else { 0xC000 }
+        } else {
+            if addr >= 0xA000 { 0xA000 } else { 0x8000 }
+        };
+        self.read_prg_rom_8k(bank_base.wrapping_add(offset_8k), addr, base_addr)
+    }
+
+    fn get_chr_bank(&self, addr: u16) -> u8 {
+        // MMC5 CHR banking supports 4 modes:
+        // Mode 0: 8KB (single bank)
+        // Mode 1: 4KB (two banks)
+        // Mode 2: 2KB (four banks)
+        // Mode 3: 1KB (eight banks, with separate BG/sprite banks)
+        
+        // Without proper BG/sprite detection, use A registers for all fetches
+        let chr_mode = self.chr_mode & 0x03;
+        match chr_mode {
+            0 => {
+                // 8KB mode: use $5127
+                self.chr_bank_a[7]
+            }
+            1 => {
+                // 4KB mode: use $5123 (low) or $5127 (high)
+                let high = addr >= 0x1000;
+                self.chr_bank_a[if high { 7 } else { 3 }]
+            }
+            2 => {
+                // 2KB mode: use $5121, $5123, $5125, $5127
+                let bank_idx = (addr >> 11) & 0x03;
+                self.chr_bank_a[(bank_idx * 2 + 1) as usize]
+            }
+            3 => {
+                // 1KB mode: use $5120-$5127
+                let bank_idx = (addr >> 10) & 0x07;
+                self.chr_bank_a[bank_idx as usize]
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn read_chr_banked(&self, bank: u8, addr: u16) -> u8 {
+        // Calculate the actual address in CHR ROM/RAM
+        let bank_size = match self.chr_mode {
+            0 => 8 * 1024,  // 8KB
+            1 => 4 * 1024,  // 4KB
+            2 => 2 * 1024,  // 2KB
+            3 => 1 * 1024,  // 1KB
+            _ => 1 * 1024,
+        };
+        
+        let offset = (addr as usize) % bank_size;
+        let chr_addr = (bank as usize) * bank_size + offset;
+        
+        match &self.chr {
+            Chr::Rom(data) => {
+                if data.is_empty() {
+                    0
+                } else {
+                    data.get(chr_addr % data.len()).copied().unwrap_or(0)
+                }
+            }
+            Chr::Ram(data) => data.get(chr_addr % data.len()).copied().unwrap_or(0),
+        }
+    }
+
+    fn write_chr_banked(&mut self, bank: u8, addr: u16, value: u8) {
+        // Calculate the actual address in CHR RAM
+        let bank_size = match self.chr_mode {
+            0 => 8 * 1024,  // 8KB
+            1 => 4 * 1024,  // 4KB
+            2 => 2 * 1024,  // 2KB
+            3 => 1 * 1024,  // 1KB
+            _ => 1 * 1024,
+        };
+        
+        let offset = (addr as usize) % bank_size;
+        let chr_addr = (bank as usize) * bank_size + offset;
+        
+        if let Chr::Ram(data) = &mut self.chr {
+            let data_len = data.len();
+            if let Some(slot) = data.get_mut(chr_addr % data_len) {
+                *slot = value;
+            }
+        }
+    }
 }
+
 
 impl Mapper for MMC5Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
+            // Hardware multiplier output (read-only)
+            0x5205 => {
+                let result = (self.multiplicand as u16) * (self.multiplier as u16);
+                (result & 0xFF) as u8
+            }
+            0x5206 => {
+                let result = (self.multiplicand as u16) * (self.multiplier as u16);
+                ((result >> 8) & 0xFF) as u8
+            }
+
+            // IRQ status (read clears pending flag)
+            0x5204 => {
+                let result = if self.irq_pending { 0x80 } else { 0x00 }
+                    | if self.in_frame { 0x40 } else { 0x00 };
+                result
+            }
+
+            // ExRAM
+            0x5C00..=0x5FFF => {
+                let index = (addr - 0x5C00) as usize;
+                self.ex_ram.get(index).copied().unwrap_or(0)
+            }
+
             0x6000..=0x7FFF => self.read_prg_ram_8k(self.prg_bank_5113, addr, 0x6000),
 
             0x8000..=0xFFFF => {
                 let prg_mode = self.prg_mode & 0x03;
                 match prg_mode {
+                    0 => {
+                        // Mode 0: 32KB bank at $8000-$FFFF via $5117
+                        self.read_window_32k_mode0(self.prg_bank_5117, addr)
+                    }
+
+                    1 => match addr {
+                        // Mode 1: Two 16KB banks
+                        // $8000-$BFFF: 16KB bank via $5115 (bit 0 ignored)
+                        0x8000..=0xBFFF => {
+                            self.read_window_16k_mode1(self.prg_bank_5115, addr, false)
+                        }
+                        // $C000-$FFFF: 16KB bank via $5117 (bit 0 ignored)
+                        0xC000..=0xFFFF => {
+                            self.read_window_16k_mode1(self.prg_bank_5117, addr, true)
+                        }
+                        _ => 0,
+                    },
+
                     2 => match addr {
                         // $8000-$BFFF: 16KB bank via $5115 (bit 0 ignored)
                         0x8000..=0xBFFF => self.read_window_16k_mode2(self.prg_bank_5115, addr),
@@ -172,11 +400,7 @@ impl Mapper for MMC5Mapper {
                         _ => 0,
                     },
 
-                    // Modes 0/1 not implemented yet; provide a safe-ish fixed-last-bank fallback.
-                    _ => {
-                        let fixed_bank = (self.prg_rom_bank_count_8k().saturating_sub(1)) as u8;
-                        self.read_prg_rom_8k(fixed_bank, addr, addr & 0xE000)
-                    }
+                    _ => unreachable!(),
                 }
             }
 
@@ -190,12 +414,92 @@ impl Mapper for MMC5Mapper {
                 self.prg_mode = value & 0x03;
             }
 
-            // PRG bankswitch registers.
+            0x5101 => {
+                self.chr_mode = value & 0x03;
+            }
+
+            // PRG-RAM write protection
+            0x5102 => {
+                self.prg_ram_protect_1 = value;
+            }
+            0x5103 => {
+                self.prg_ram_protect_2 = value;
+            }
+
+            // ExRAM mode
+            0x5104 => {
+                self.ex_ram_mode = value & 0x03;
+            }
+
+            // Nametable mapping
+            0x5105 => {
+                self.nametable_mapping = value;
+            }
+
+            // Fill mode tile
+            0x5106 => {
+                self.fill_tile = value;
+            }
+
+            // Fill mode attribute
+            0x5107 => {
+                self.fill_attr = value & 0x03;
+            }
+
+            // PRG bankswitch registers
             0x5113 => self.prg_bank_5113 = value,
             0x5114 => self.prg_bank_5114 = value,
             0x5115 => self.prg_bank_5115 = value,
             0x5116 => self.prg_bank_5116 = value,
             0x5117 => self.prg_bank_5117 = value,
+
+            // CHR bank registers
+            0x5120..=0x5127 => {
+                let index = (addr - 0x5120) as usize;
+                self.chr_bank_a[index] = value;
+            }
+            0x5128..=0x512B => {
+                let index = (addr - 0x5128) as usize;
+                self.chr_bank_b[index] = value;
+            }
+
+            // Split screen
+            0x5200 => {
+                self.split_mode = value;
+            }
+            0x5201 => {
+                self.split_scroll = value;
+            }
+            0x5202 => {
+                self.split_bank = value;
+            }
+
+            // IRQ
+            0x5203 => {
+                self.irq_scanline_compare = value;
+            }
+            0x5204 => {
+                self.irq_enabled = (value & 0x80) != 0;
+                if !self.irq_enabled {
+                    self.irq_pending = false;
+                }
+            }
+
+            // Hardware multiplier
+            0x5205 => {
+                self.multiplicand = value;
+            }
+            0x5206 => {
+                self.multiplier = value;
+            }
+
+            // ExRAM
+            0x5C00..=0x5FFF => {
+                let index = (addr - 0x5C00) as usize;
+                if let Some(slot) = self.ex_ram.get_mut(index) {
+                    *slot = value;
+                }
+            }
 
             0x6000..=0x7FFF => {
                 self.write_prg_ram_8k(self.prg_bank_5113, addr, 0x6000, value);
@@ -232,31 +536,55 @@ impl Mapper for MMC5Mapper {
                 }
             }
 
-            // Minimal: ignore other MMC5 registers for now (CHR banking, mirroring, IRQ, etc.).
             _ => {}
         }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        let addr = (addr & 0x1FFF) as usize;
-        match &self.chr {
-            Chr::Rom(data) => data.get(addr % data.len()).copied().unwrap_or(0),
-            Chr::Ram(data) => data.get(addr).copied().unwrap_or(0),
-        }
+        let bank = self.get_chr_bank(addr);
+        self.read_chr_banked(bank, addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let addr = (addr & 0x1FFF) as usize;
-        if let Chr::Ram(data) = &mut self.chr {
-            if let Some(slot) = data.get_mut(addr) {
-                *slot = value;
-            }
-        }
+        let bank = self.get_chr_bank(addr);
+        self.write_chr_banked(bank, addr, value);
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {}
+    fn ppu_address_changed(&mut self, addr: u16) {
+        // MMC5 scanline IRQ: increment counter on A12 rising edge during rendering
+        // Simplified: we'll rely on in_frame tracking instead of full A12 detection
+        // The IRQ system will be updated in cpu_cycle and via external scanline notification
+        let _ = addr; // Suppress unused warning for now
+    }
+
+    fn irq_pending(&self) -> bool {
+        self.irq_pending
+    }
 
     fn get_mirroring(&self) -> MirroringMode {
+        // MMC5's $5105 register controls nametable mapping
+        // Each 2 bits control one quadrant (bits 1-0: $2000, 3-2: $2400, 5-4: $2800, 7-6: $2C00)
+        // Values: 0 = $2000 (A), 1 = $2400 (B), 2 = ExRAM, 3 = fill mode
+        
+        // For basic compatibility, map common patterns to standard mirroring modes
+        let mapping = self.nametable_mapping;
+        
+        // Check for standard patterns
+        if mapping == 0b00_00_00_00 {
+            // All to A -> Single screen
+            return MirroringMode::SingleScreen;
+        } else if mapping == 0b01_01_01_01 {
+            // All to B -> Single screen
+            return MirroringMode::SingleScreen;
+        } else if mapping == 0b00_00_01_01 {
+            // Vertical mirroring (A|A, B|B)
+            return MirroringMode::Vertical;
+        } else if mapping == 0b01_00_01_00 {
+            // Horizontal mirroring (A|B, A|B)
+            return MirroringMode::Horizontal;
+        }
+        
+        // Default to the original iNES mirroring for other cases
         self.mirroring
     }
 }
@@ -375,5 +703,132 @@ mod tests {
         assert_eq!(mapper.read_prg(0xA000), 3);
         assert_eq!(mapper.read_prg(0xC000), 5);
         assert_eq!(mapper.read_prg(0xE000), 7);
+    }
+
+    #[test]
+    fn test_mmc5_prg_mode_0_32kb_bank() {
+        // MMC5 PRG mode 0: Single 32KB bank at $8000-$FFFF via $5117
+
+        let prg_rom = banked_data(8 * 1024, 16);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Select PRG mode 0
+        mapper.write_prg(0x5100, 0x00);
+
+        // Select 32KB bank (bits 1-0 ignored, so bank 7 becomes 4)
+        mapper.write_prg(0x5117, 0x87); // ROM bit set, bank 7 -> aligned to 4
+
+        // All 4 x 8KB segments should come from banks 4, 5, 6, 7
+        assert_eq!(mapper.read_prg(0x8000), 4);
+        assert_eq!(mapper.read_prg(0xA000), 5);
+        assert_eq!(mapper.read_prg(0xC000), 6);
+        assert_eq!(mapper.read_prg(0xE000), 7);
+    }
+
+    #[test]
+    fn test_mmc5_prg_mode_1_two_16kb_banks() {
+        // MMC5 PRG mode 1: Two 16KB banks
+
+        let prg_rom = banked_data(8 * 1024, 16);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Select PRG mode 1
+        mapper.write_prg(0x5100, 0x01);
+
+        // Low 16KB bank via $5115 (bit 0 ignored, so 3 -> 2)
+        mapper.write_prg(0x5115, 0x83); // ROM, bank 3 -> aligned to 2
+
+        // High 16KB bank via $5117 (bit 0 ignored, so 7 -> 6)
+        mapper.write_prg(0x5117, 0x87); // ROM, bank 7 -> aligned to 6
+
+        assert_eq!(mapper.read_prg(0x8000), 2);
+        assert_eq!(mapper.read_prg(0xA000), 3);
+        assert_eq!(mapper.read_prg(0xC000), 6);
+        assert_eq!(mapper.read_prg(0xE000), 7);
+    }
+
+    #[test]
+    fn test_mmc5_hardware_multiplier() {
+        // MMC5 has a hardware multiplier at $5205/$5206
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Write multiplicand and multiplier
+        mapper.write_prg(0x5205, 123);
+        mapper.write_prg(0x5206, 45);
+
+        // Result should be 123 * 45 = 5535 = 0x159F
+        assert_eq!(mapper.read_prg(0x5205), 0x9F); // Low byte
+        assert_eq!(mapper.read_prg(0x5206), 0x15); // High byte
+
+        // Test another multiplication
+        mapper.write_prg(0x5205, 255);
+        mapper.write_prg(0x5206, 255);
+
+        // Result should be 255 * 255 = 65025 = 0xFE01
+        assert_eq!(mapper.read_prg(0x5205), 0x01); // Low byte
+        assert_eq!(mapper.read_prg(0x5206), 0xFE); // High byte
+    }
+
+    #[test]
+    fn test_mmc5_exram_access() {
+        // MMC5 has 1KB ExRAM at $5C00-$5FFF
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Write to ExRAM
+        mapper.write_prg(0x5C00, 0xAA);
+        mapper.write_prg(0x5C01, 0xBB);
+        mapper.write_prg(0x5FFF, 0xCC);
+
+        // Read back
+        assert_eq!(mapper.read_prg(0x5C00), 0xAA);
+        assert_eq!(mapper.read_prg(0x5C01), 0xBB);
+        assert_eq!(mapper.read_prg(0x5FFF), 0xCC);
+    }
+
+    #[test]
+    fn test_mmc5_prg_ram_write_protection() {
+        // MMC5 PRG-RAM write protection via $5102/$5103
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // By default, PRG-RAM should be writable (protect registers initialized to 0x02/0x01)
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+
+        // Protect PRG-RAM by writing wrong values
+        mapper.write_prg(0x5102, 0x00);
+        mapper.write_prg(0x5103, 0x00);
+
+        // Now writes should be ignored
+        mapper.write_prg(0x6000, 0xBB);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA); // Still old value
+
+        // Unprotect by writing correct values
+        mapper.write_prg(0x5102, 0x02);
+        mapper.write_prg(0x5103, 0x01);
+
+        // Now writes should work again
+        mapper.write_prg(0x6000, 0xCC);
+        assert_eq!(mapper.read_prg(0x6000), 0xCC);
     }
 }
