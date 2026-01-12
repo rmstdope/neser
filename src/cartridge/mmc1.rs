@@ -64,7 +64,7 @@ impl MMC1Mapper {
             prg_ram: vec![0; PRG_RAM_SIZE],
             chr_memory,
             has_chr_ram,
-            shift_register: 0,
+            shift_register: 0x10, // Power-on state: bit 4 set
             write_count: 0,
             control: MMC1_DEFAULT_CONTROL, // Default: PRG mode 3 (fix last bank), CHR mode 0
             chr_bank_0: 0,
@@ -74,7 +74,7 @@ impl MMC1Mapper {
     }
 
     fn reset_shift_register(&mut self) {
-        self.shift_register = 0;
+        self.shift_register = 0x10; // Reset to power-on state: bit 4 set
         self.write_count = 0;
         self.control |= MMC1_DEFAULT_CONTROL; // Set PRG mode to 3 (fix last bank)
     }
@@ -100,12 +100,12 @@ impl MMC1Mapper {
                 0x8000..=0x9FFF => self.control = register_value & 0x1F,
                 0xA000..=0xBFFF => self.chr_bank_0 = register_value & 0x1F,
                 0xC000..=0xDFFF => self.chr_bank_1 = register_value & 0x1F,
-                0xE000..=0xFFFF => self.prg_bank = register_value & 0x0F,
+                0xE000..=0xFFFF => self.prg_bank = register_value & 0x1F, // Bits 0-3: bank, bit 4: WRAM disable
                 _ => {}
             }
 
             // Reset shift register for next write sequence
-            self.shift_register = 0;
+            self.shift_register = 0x10; // Reset to power-on state
             self.write_count = 0;
         }
     }
@@ -118,9 +118,16 @@ impl MMC1Mapper {
         (self.control >> 4) & 0x01
     }
 
+    fn is_wram_enabled(&self) -> bool {
+        // Bit 4 of prg_bank register controls WRAM
+        // 0 = enabled, 1 = disabled
+        (self.prg_bank & 0x10) == 0
+    }
+
     fn get_mirroring_mode(&self) -> MirroringMode {
         match self.control & 0x03 {
-            0 | 1 => MirroringMode::SingleScreen, // 0 and 1 are both single-screen modes
+            0 => MirroringMode::SingleScreenLower, // One-screen, lower bank
+            1 => MirroringMode::SingleScreenUpper, // One-screen, upper bank
             2 => MirroringMode::Vertical,
             3 => MirroringMode::Horizontal,
             _ => unreachable!(),
@@ -191,6 +198,10 @@ impl Mapper for MMC1Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => {
+                // Check if WRAM is enabled
+                if !self.is_wram_enabled() {
+                    return 0; // Return 0 when WRAM is disabled (open bus behavior)
+                }
                 let offset = (addr - 0x6000) as usize;
                 self.prg_ram.get(offset).copied().unwrap_or(0)
             }
@@ -213,6 +224,10 @@ impl Mapper for MMC1Mapper {
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {
+                // Only allow writes if WRAM is enabled
+                if !self.is_wram_enabled() {
+                    return; // Ignore writes when WRAM is disabled
+                }
                 let offset = (addr - 0x6000) as usize;
                 if offset < self.prg_ram.len() {
                     self.prg_ram[offset] = value;
@@ -314,11 +329,11 @@ mod tests {
         mapper.write_prg(0x8000, 0b10000000);
 
         // Control register should be reset to default: PRG mode 3 (fix last bank)
-        // Start a new load with value 0b00000 (mirroring mode 0 = one screen)
+        // Start a new load with value 0b00000 (mirroring mode 0 = one screen lower)
         for _ in 0..5 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
     }
 
     #[test]
@@ -333,20 +348,20 @@ mod tests {
         let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("Failed to create MMC1 mapper");
 
-        // Load 0b00000 (mirroring = 0)
+        // Load 0b00000 (mirroring = 0 = SingleScreenLower)
         for _ in 0..5 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
 
-        // Load 0b00001 (mirroring = 1)
+        // Load 0b00001 (mirroring = 1 = SingleScreenUpper)
         mapper.write_prg(0x8000, 0b00000001);
         for _ in 0..4 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenUpper);
 
-        // Load 0b00010 (mirroring = 2)
+        // Load 0b00010 (mirroring = 2 = Vertical)
         mapper.write_prg(0x8000, 0b00000000);
         mapper.write_prg(0x8000, 0b00000001);
         for _ in 0..3 {
@@ -354,7 +369,7 @@ mod tests {
         }
         assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
 
-        // Load 0b00011 (mirroring = 3)
+        // Load 0b00011 (mirroring = 3 = Horizontal)
         mapper.write_prg(0x8000, 0b00000001);
         mapper.write_prg(0x8000, 0b00000001);
         for _ in 0..3 {
@@ -603,5 +618,139 @@ mod tests {
         assert_eq!(mapper.read_chr(0x0000), 0xAA);
         assert_eq!(mapper.read_chr(0x1000), 0xBB);
         assert_eq!(mapper.read_chr(0x1FFF), 0xCC);
+    }
+
+    #[test]
+    fn test_mmc1_shift_register_power_on_state() {
+        // MMC1 hardware shift register should start at 0x10 (bit 4 set)
+        // This means the first write will shift bit 4 right and OR in bit 0
+        // After 5 writes, the shift register should contain the 5-bit value
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Write sequence: 1, 0, 1, 0, 1 should result in value 0b10101
+        // With proper power-on state (0x10), after 5 writes we should see the bit pattern
+        mapper.write_prg(0x8000, 0b00000001); // Write bit 0 = 1
+        mapper.write_prg(0x8000, 0b00000000); // Write bit 0 = 0
+        mapper.write_prg(0x8000, 0b00000001); // Write bit 0 = 1
+        mapper.write_prg(0x8000, 0b00000000); // Write bit 0 = 0
+        mapper.write_prg(0x8000, 0b00000001); // Write bit 0 = 1 (5th write, should load)
+
+        // The control register should now contain 0b10101 (mirroring = 0b01 = SingleScreenUpper)
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenUpper);
+    }
+
+    #[test]
+    fn test_mmc1_shift_register_reset_clears_to_power_on_state() {
+        // After reset, the shift register should go back to 0x10
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Do some writes
+        mapper.write_prg(0x8000, 0b00000001);
+        mapper.write_prg(0x8000, 0b00000001);
+
+        // Reset with bit 7 set
+        mapper.write_prg(0x8000, 0b10000000);
+
+        // Now write a sequence and verify it works correctly
+        // Write 5 ones: should result in 0b11111 after loading
+        for _ in 0..5 {
+            mapper.write_prg(0x8000, 0b00000001);
+        }
+
+        // Control register should be 0b11111 (mirroring = 0b11 = Horizontal)
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+    }
+
+    #[test]
+    fn test_mmc1_wram_enable_disable() {
+        // PRG bank register bit 4 controls WRAM enable/disable
+        // When bit 4 is set (1), WRAM is disabled
+        // When bit 4 is clear (0), WRAM is enabled
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Initially WRAM should be enabled (prg_bank defaults to 0)
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+
+        // Disable WRAM by setting bit 4 of prg_bank register ($E000-$FFFF)
+        // To load 0b10000 into the shift register, write the bit sequence: 0,0,0,0,1
+        // The shift register starts at 0x10, shifts right, and ORs each bit at position 4
+        // After 5 writes, this produces: 0b10000 (bit 4 set = WRAM disabled)
+        mapper.write_prg(0xE000, 0b00000000);
+        mapper.write_prg(0xE000, 0b00000000);
+        mapper.write_prg(0xE000, 0b00000000);
+        mapper.write_prg(0xE000, 0b00000000);
+        mapper.write_prg(0xE000, 0b00000001);
+
+        // With WRAM disabled, reads should return 0 (open bus behavior)
+        assert_eq!(mapper.read_prg(0x6000), 0x00);
+
+        // Writes should be ignored
+        mapper.write_prg(0x6000, 0xBB);
+        assert_eq!(mapper.read_prg(0x6000), 0x00); // Still reads 0, not 0xBB
+
+        // Re-enable WRAM by clearing bit 4
+        // Write 0b00000 to prg_bank register
+        for _ in 0..5 {
+            mapper.write_prg(0xE000, 0b00000000);
+        }
+
+        // With WRAM enabled again, writes should work
+        mapper.write_prg(0x6000, 0xCC);
+        assert_eq!(mapper.read_prg(0x6000), 0xCC);
+
+        // Previous write while disabled should not have affected memory
+        // (we wrote 0xBB at 0x6000 while disabled, but it was ignored)
+        mapper.write_prg(0x6001, 0xDD);
+        assert_eq!(mapper.read_prg(0x6001), 0xDD);
+    }
+
+    #[test]
+    fn test_mmc1_wram_disable_multiple_addresses() {
+        // Verify WRAM disable affects the entire WRAM range ($6000-$7FFF)
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Write to various WRAM addresses while enabled
+        mapper.write_prg(0x6000, 0x11);
+        mapper.write_prg(0x7000, 0x22);
+        mapper.write_prg(0x7FFF, 0x33);
+
+        // Verify writes worked
+        assert_eq!(mapper.read_prg(0x6000), 0x11);
+        assert_eq!(mapper.read_prg(0x7000), 0x22);
+        assert_eq!(mapper.read_prg(0x7FFF), 0x33);
+
+        // Disable WRAM (set bit 4 of prg_bank)
+        // Write sequence: 0,0,0,0,1 to load 0b10000
+        mapper.write_prg(0xE000, 0b00000000);
+        mapper.write_prg(0xE000, 0b00000000);
+        mapper.write_prg(0xE000, 0b00000000);
+        mapper.write_prg(0xE000, 0b00000000);
+        mapper.write_prg(0xE000, 0b00000001); // Loads 0b10000 (bit 4 set)
+
+        // All WRAM reads should return 0
+        assert_eq!(mapper.read_prg(0x6000), 0x00);
+        assert_eq!(mapper.read_prg(0x7000), 0x00);
+        assert_eq!(mapper.read_prg(0x7FFF), 0x00);
+
+        // All WRAM writes should be ignored
+        mapper.write_prg(0x6000, 0x44);
+        mapper.write_prg(0x7000, 0x55);
+        mapper.write_prg(0x7FFF, 0x66);
+        assert_eq!(mapper.read_prg(0x6000), 0x00);
+        assert_eq!(mapper.read_prg(0x7000), 0x00);
+        assert_eq!(mapper.read_prg(0x7FFF), 0x00);
     }
 }
