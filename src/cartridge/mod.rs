@@ -4,6 +4,7 @@ mod cnrom;
 mod colordreams;
 mod gxrom;
 mod mapper;
+mod mmc2;
 mod mmc1;
 mod mmc3;
 mod nrom;

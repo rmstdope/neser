@@ -6,6 +6,7 @@ use super::cnrom::CNROMMapper;
 use super::colordreams::ColorDreamsMapper;
 use super::gxrom::GxROMMapper;
 use super::mmc1::MMC1Mapper;
+use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
 use super::nrom::NROMMapper;
 use super::uxrom::UxROMMapper;
@@ -60,8 +61,11 @@ pub fn create_mapper(
         2 => Ok(Box::new(UxROMMapper::new(prg_rom, chr_rom, mirroring))),
         3 => Ok(Box::new(CNROMMapper::new(prg_rom, chr_rom, mirroring))),
         4 => Ok(Box::new(MMC3Mapper::new(prg_rom, chr_rom, mirroring))),
+        9 => Ok(Box::new(MMC2Mapper::new(prg_rom, chr_rom, mirroring))),
         7 => Ok(Box::new(AxROMMapper::new(prg_rom, chr_rom, mirroring))),
-        11 => Ok(Box::new(ColorDreamsMapper::new(prg_rom, chr_rom, mirroring))),
+        11 => Ok(Box::new(ColorDreamsMapper::new(
+            prg_rom, chr_rom, mirroring,
+        ))),
         66 => Ok(Box::new(GxROMMapper::new(prg_rom, chr_rom, mirroring))),
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,
