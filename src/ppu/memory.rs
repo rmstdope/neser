@@ -126,9 +126,13 @@ impl Memory {
                 };
                 mirrored_table * 0x0400 + offset
             }
-            MirroringMode::SingleScreen => {
-                // SingleScreen mirroring: all nametables map to first 1KB
+            MirroringMode::SingleScreen | MirroringMode::SingleScreenLower => {
+                // SingleScreen/Lower mirroring: all nametables map to first 1KB (lower bank)
                 vram_index % 0x0400
+            }
+            MirroringMode::SingleScreenUpper => {
+                // SingleScreenUpper mirroring: all nametables map to second 1KB (upper bank)
+                0x0400 + (vram_index % 0x0400)
             }
             MirroringMode::FourScreen => {
                 // FourScreen: no mirroring, direct mapping (needs 4KB VRAM)
