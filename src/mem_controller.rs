@@ -373,6 +373,13 @@ impl MemController {
 
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
+                if addr >= 0x6000 && addr <= 0x6010 {
+                    // For debugging, print writes to $6000-$6010 (test output area)
+                    println!(
+                        "Debug: Write to ${:04X} PRG-RAM: {:02X} ({})",
+                        addr, value, value as char
+                    );
+                }
                 if let Some(ref cartridge) = self.cartridge {
                     let old_mirroring = cartridge.borrow().mapper().get_mirroring();
                     cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
