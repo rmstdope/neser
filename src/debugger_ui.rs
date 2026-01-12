@@ -2,7 +2,8 @@ use crate::debugger::DebuggerSnapshot;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DebuggerUiAction {
-    pub step_cpu: bool,
+    pub step_over: bool,
+    pub step_into: bool,
     pub continue_run: bool,
     pub run_to_next_frame: bool,
     pub run_to_nmi: bool,
@@ -74,8 +75,12 @@ pub fn render(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) -> DebuggerUiAction {
 
 fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, action: &mut DebuggerUiAction) {
     // Controls
-    if ui.button("Step") {
-        action.step_cpu = true;
+    if ui.button("Step over") {
+        action.step_over = true;
+    }
+    ui.same_line();
+    if ui.button("Step into") {
+        action.step_into = true;
     }
     ui.same_line();
     if ui.button("Continue") {

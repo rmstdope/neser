@@ -20,11 +20,23 @@ pub struct EventLoop {
     paused: bool,
     debugger_open_requested: bool,
     breakpoints: Vec<u16>,
+    temporary_breakpoint: Option<TemporaryBreakpoint>,
+    arm_temporary_breakpoint_after_next_instruction: bool,
+    breakpoint_ignore_once_at_pc: Option<u16>,
     #[cfg_attr(not(test), allow(dead_code))]
     debugger_renderer: Option<Box<dyn DebuggerRenderer>>,
     audio: Option<NesAudio>,
     controllers: Vec<sdl2::controller::GameController>,
     controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TemporaryBreakpoint {
+    pc: u16,
+    already_present: bool,
+    required_interrupt: Option<crate::cpu::InterruptKind>,
+    has_exited_required_interrupt: bool,
+    ignore_other_breakpoints: bool,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -130,6 +142,9 @@ impl EventLoop {
             paused: false,
             debugger_open_requested: false,
             breakpoints: Vec::new(),
+            temporary_breakpoint: None,
+            arm_temporary_breakpoint_after_next_instruction: false,
+            breakpoint_ignore_once_at_pc: None,
             debugger_renderer: None,
             audio,
             controllers,
@@ -246,8 +261,148 @@ impl EventLoop {
         self.debugger_open_requested = true;
     }
 
-    fn check_breakpoint_hit(&mut self, pc: u16) -> bool {
+    fn read_vector_target(nes: &crate::nes::Nes, vector_addr: u16) -> u16 {
+        let memory = nes.memory.borrow();
+        let lo = memory.read_cpu_for_debugger(vector_addr);
+        let hi = memory.read_cpu_for_debugger(vector_addr.wrapping_add(1));
+        u16::from_le_bytes([lo, hi])
+    }
+
+    fn clear_temporary_breakpoint(&mut self) {
+        if let Some(tb) = self.temporary_breakpoint.take() {
+            if !tb.already_present {
+                self.remove_breakpoint(tb.pc);
+            }
+        }
+    }
+
+    fn set_temporary_breakpoint(&mut self, pc: u16) {
+        self.clear_temporary_breakpoint();
+
+        let already_present = self.breakpoints.contains(&pc);
+        if !already_present {
+            self.add_breakpoint(pc);
+        }
+
+        self.temporary_breakpoint = Some(TemporaryBreakpoint {
+            pc,
+            already_present,
+            required_interrupt: None,
+            has_exited_required_interrupt: true,
+            ignore_other_breakpoints: false,
+        });
+    }
+
+    fn set_temporary_breakpoint_for_interrupt(
+        &mut self,
+        nes: &crate::nes::Nes,
+        pc: u16,
+        required_interrupt: crate::cpu::InterruptKind,
+    ) {
+        self.clear_temporary_breakpoint();
+
+        let already_present = self.breakpoints.contains(&pc);
+        if !already_present {
+            self.add_breakpoint(pc);
+        }
+
+        // If we're already inside this interrupt handler, we want the *next* time we enter it.
+        // So wait until we have exited the interrupt at least once.
+        let currently_in_interrupt = nes.cpu.current_interrupt() == Some(required_interrupt);
+        let has_exited_required_interrupt = !currently_in_interrupt;
+        self.temporary_breakpoint = Some(TemporaryBreakpoint {
+            pc,
+            already_present,
+            required_interrupt: Some(required_interrupt),
+            has_exited_required_interrupt,
+            ignore_other_breakpoints: true,
+        });
+    }
+
+    fn arm_temporary_breakpoint_after_next_instruction(&mut self) {
+        self.arm_temporary_breakpoint_after_next_instruction = true;
+    }
+
+    fn maybe_arm_temporary_breakpoint_after_instruction(&mut self, nes: &crate::nes::Nes) {
+        if !self.arm_temporary_breakpoint_after_next_instruction {
+            return;
+        }
+
+        self.arm_temporary_breakpoint_after_next_instruction = false;
+        self.set_temporary_breakpoint(nes.cpu.pc);
+    }
+
+    fn continue_from_debugger(&mut self, nes: &crate::nes::Nes) {
+        // Prevent immediately re-breaking on the same instruction.
+        if self.breakpoints.contains(&nes.cpu.pc) {
+            self.breakpoint_ignore_once_at_pc = Some(nes.cpu.pc);
+        }
+
+        self.paused = false;
+        self.debugger_open_requested = false;
+    }
+
+    fn check_breakpoint_hit(
+        &mut self,
+        pc: u16,
+        current_interrupt: Option<crate::cpu::InterruptKind>,
+    ) -> bool {
+        if let Some(tb) = self.temporary_breakpoint.as_mut() {
+            if let Some(required_interrupt) = tb.required_interrupt {
+                if !tb.has_exited_required_interrupt
+                    && current_interrupt != Some(required_interrupt)
+                {
+                    tb.has_exited_required_interrupt = true;
+                }
+            }
+        }
+
+        // If we just continued from a breakpoint, allow executing that instruction once.
+        if self.breakpoint_ignore_once_at_pc == Some(pc) {
+            self.breakpoint_ignore_once_at_pc = None;
+            return false;
+        }
+
+        // While a temporary "run to" breakpoint is active, ignore all other breakpoint hits.
+        // This matches the expected debugger UX: run-to should run until the target, not stop
+        // early due to unrelated breakpoints (including ones inside the current interrupt).
+        if let Some(tb) = self.temporary_breakpoint {
+            if tb.ignore_other_breakpoints && self.breakpoints.contains(&pc) && pc != tb.pc {
+                return false;
+            }
+        }
+
         if self.breakpoints.contains(&pc) {
+            if let Some(tb) = self.temporary_breakpoint {
+                if tb.pc == pc {
+                    // This is our one-shot temp breakpoint. Only break when the CPU has actually
+                    // entered the interrupt handler (and, if we were already in it, after we have
+                    // exited it at least once).
+                    if let Some(required_interrupt) = tb.required_interrupt {
+                        if current_interrupt == Some(required_interrupt)
+                            && tb.has_exited_required_interrupt
+                        {
+                            self.temporary_breakpoint = None;
+                            if !tb.already_present {
+                                self.remove_breakpoint(pc);
+                            }
+                        } else {
+                            // Temp breakpoint not armed yet; ignore this breakpoint hit.
+                            return false;
+                        }
+                    } else {
+                        // Plain one-shot breakpoint (used for stepping).
+                        self.temporary_breakpoint = None;
+                        if !tb.already_present {
+                            self.remove_breakpoint(pc);
+                        }
+                    }
+                } else if !tb.ignore_other_breakpoints {
+                    // We hit some other breakpoint while a step is pending; cancel the step.
+                    self.clear_temporary_breakpoint();
+                }
+            }
+
             self.enter_debugger();
             true
         } else {
@@ -321,14 +476,7 @@ impl EventLoop {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            if Self::handle_key_down(
-                                nes,
-                                keycode,
-                                self.audio.as_ref(),
-                                &mut self.paused,
-                                &mut self.debugger_open_requested,
-                            ) == KeyDownOutcome::Quit
-                            {
+                            if self.handle_key_down_for_run(nes, keycode) == KeyDownOutcome::Quit {
                                 self.gl_backend = Some(gl_backend);
                                 return Ok(());
                             }
@@ -375,12 +523,7 @@ impl EventLoop {
                     );
 
                     let action = gl_backend.render(nes, self.debugger_open_requested);
-                    Self::apply_debugger_ui_action(
-                        nes,
-                        action,
-                        &mut self.paused,
-                        &mut self.debugger_open_requested,
-                    );
+                    self.apply_debugger_ui_action(nes, action);
                     std::thread::sleep(std::time::Duration::from_millis(16));
                     continue;
                 }
@@ -390,11 +533,12 @@ impl EventLoop {
                 // automatically runs the correct number of PPU cycles per CPU instruction.
                 // A full frame is 262 scanlines × 341 pixels = 89,342 PPU cycles for NTSC
                 while !nes.is_ready_to_render() && !nes.cpu.is_halted() {
-                    if self.check_breakpoint_hit(nes.cpu.pc) {
+                    if self.check_breakpoint_hit(nes.cpu.pc, nes.cpu.current_interrupt()) {
                         break;
                     }
 
                     nes.run(&tracing);
+                    self.maybe_arm_temporary_breakpoint_after_instruction(nes);
 
                     // Poll audio samples from APU and queue them
                     if let Some(ref mut audio) = self.audio {
@@ -560,21 +704,15 @@ impl EventLoop {
 
     fn tick_headless_once_for_run(&mut self, nes: &mut crate::nes::Nes) -> bool {
         // Returns `true` if the caller should quit the event loop.
-        for event in self.event_pump.poll_iter() {
+        let events: Vec<_> = self.event_pump.poll_iter().collect();
+        for event in events {
             match event {
                 Event::Quit { .. } => return true,
                 Event::KeyDown {
                     keycode: Some(keycode),
                     ..
                 } => {
-                    if Self::handle_key_down(
-                        nes,
-                        keycode,
-                        self.audio.as_ref(),
-                        &mut self.paused,
-                        &mut self.debugger_open_requested,
-                    ) == KeyDownOutcome::Quit
-                    {
+                    if self.handle_key_down_for_run(nes, keycode) == KeyDownOutcome::Quit {
                         return true;
                     }
                 }
@@ -593,11 +731,12 @@ impl EventLoop {
             return false;
         }
 
-        if self.check_breakpoint_hit(nes.cpu.pc) {
+        if self.check_breakpoint_hit(nes.cpu.pc, nes.cpu.current_interrupt()) {
             return false;
         }
 
         nes.run_cpu_tick();
+        self.maybe_arm_temporary_breakpoint_after_instruction(nes);
         false
     }
 
@@ -619,44 +758,105 @@ impl EventLoop {
     }
 
     fn apply_debugger_ui_action(
+        &mut self,
         nes: &mut crate::nes::Nes,
         action: crate::debugger_ui::DebuggerUiAction,
-        paused: &mut bool,
-        debugger_open_requested: &mut bool,
     ) {
-        if !*debugger_open_requested {
+        if !self.debugger_open_requested {
             return;
         }
 
-        if action.step_cpu {
-            nes.run_cpu_tick();
+        let mut should_continue = action.continue_run;
+
+        if action.step_over {
+            let pc = nes.cpu.pc;
+            let opcode = {
+                let memory = nes.memory.borrow();
+                memory.read_cpu_for_debugger(pc)
+            };
+
+            if opcode == 0x20 {
+                // JSR: break at the return address (the instruction after the JSR).
+                let return_pc = pc.wrapping_add(3);
+                self.set_temporary_breakpoint(return_pc);
+            } else {
+                // Non-JSR: step one instruction.
+                self.arm_temporary_breakpoint_after_next_instruction();
+            }
+
+            should_continue = true;
+        }
+
+        if action.step_into {
+            self.arm_temporary_breakpoint_after_next_instruction();
+            should_continue = true;
         }
 
         if action.run_to_next_frame {
             Self::debugger_run_to_next_frame(nes);
         }
         if action.run_to_nmi {
-            Self::debugger_run_to_vector(nes, 0xFFFA, crate::cpu::InterruptKind::Nmi);
+            let target = Self::read_vector_target(nes, 0xFFFA);
+            self.set_temporary_breakpoint_for_interrupt(
+                nes,
+                target,
+                crate::cpu::InterruptKind::Nmi,
+            );
+            should_continue = true;
         }
         if action.run_to_irq {
-            Self::debugger_run_to_vector(nes, 0xFFFE, crate::cpu::InterruptKind::Irq);
+            let target = Self::read_vector_target(nes, 0xFFFE);
+            self.set_temporary_breakpoint_for_interrupt(
+                nes,
+                target,
+                crate::cpu::InterruptKind::Irq,
+            );
+            should_continue = true;
         }
 
-        if action.continue_run {
-            *paused = false;
-            *debugger_open_requested = false;
+        if should_continue {
+            self.continue_from_debugger(nes);
         }
+    }
+
+    fn handle_key_down_for_run(
+        &mut self,
+        nes: &mut crate::nes::Nes,
+        keycode: Keycode,
+    ) -> KeyDownOutcome {
+        // When the debugger is open, make F5 behave exactly like the Continue button.
+        // This ensures breakpoint ignore-once semantics apply equally.
+        if keycode == Keycode::F5 && self.debugger_open_requested {
+            self.apply_debugger_ui_action(
+                nes,
+                crate::debugger_ui::DebuggerUiAction {
+                    continue_run: true,
+                    step_over: false,
+                    step_into: false,
+                    run_to_next_frame: false,
+                    run_to_nmi: false,
+                    run_to_irq: false,
+                },
+            );
+            return KeyDownOutcome::Continue;
+        }
+
+        Self::handle_key_down(
+            nes,
+            keycode,
+            self.audio.as_ref(),
+            &mut self.paused,
+            &mut self.debugger_open_requested,
+        )
     }
 
     fn debugger_run_to_next_frame(nes: &mut crate::nes::Nes) {
         const MAX_STEPS: usize = 2_000_000;
 
-        let (start_scanline, start_pixel) = {
+        let mut previous_scanline = {
             let ppu = nes.ppu.borrow();
-            (ppu.scanline(), ppu.pixel())
+            ppu.scanline()
         };
-        let started_at_frame_start = start_scanline == 0 && start_pixel == 0;
-        let mut has_departed_frame_start = !started_at_frame_start;
 
         for _step in 0..MAX_STEPS {
             if nes.cpu.is_halted() {
@@ -665,47 +865,22 @@ impl EventLoop {
 
             nes.run_cpu_tick();
 
-            let (scanline, pixel) = {
+            let (scanline, _pixel) = {
                 let ppu = nes.ppu.borrow();
                 (ppu.scanline(), ppu.pixel())
             };
 
-            if scanline != 0 || pixel != 0 {
-                has_departed_frame_start = true;
-            }
-
-            // Stop once we have crossed the *next* 0,0 (not the current one).
-            if scanline == 0 && pixel == 0 && has_departed_frame_start {
-                break;
-            }
-        }
-    }
-
-    fn debugger_run_to_vector(
-        nes: &mut crate::nes::Nes,
-        vector_addr: u16,
-        expected_interrupt: crate::cpu::InterruptKind,
-    ) {
-        const MAX_STEPS: usize = 2_000_000;
-
-        let target = {
-            let memory = nes.memory.borrow();
-            let lo = memory.read_cpu_for_debugger(vector_addr);
-            let hi = memory.read_cpu_for_debugger(vector_addr.wrapping_add(1));
-            u16::from_le_bytes([lo, hi])
-        };
-
-        for _ in 0..MAX_STEPS {
-            if nes.cpu.is_halted() {
+            // Stop once we have crossed into the next frame.
+            //
+            // Important: this emulator advances the PPU timing in bulk per executed CPU
+            // instruction, so we may cross the frame boundary *during* an instruction.
+            // Requiring the instruction boundary to land exactly at (0,0) can cause this
+            // command to run far past the frame start.
+            if scanline < previous_scanline {
                 break;
             }
 
-            // Avoid false positives where PC happens to equal the vector target during normal
-            // execution (e.g., IRQ vector points at the main loop).
-            if nes.cpu.current_interrupt() == Some(expected_interrupt) && nes.cpu.pc == target {
-                break;
-            }
-            nes.run_cpu_tick();
+            previous_scanline = scanline;
         }
     }
 
@@ -1085,7 +1260,6 @@ mod tests {
         unsafe {
             env::set_var("SDL_AUDIODRIVER", "dummy");
         }
-
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
         let audio = NesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
 
@@ -1131,7 +1305,6 @@ mod tests {
         unsafe {
             env::set_var("SDL_AUDIODRIVER", "dummy");
         }
-
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
         let audio = NesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
         let mut nes = Nes::new(TvSystem::Ntsc);
@@ -1247,6 +1420,40 @@ mod tests {
         nes
     }
 
+    fn nes_with_nop_loop_program() -> Nes {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Program at $8000:
+        //   NOP
+        //   JMP $8000
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP fill
+        let reset_vector: u16 = 0x8000;
+
+        // Vectors live at $FFFA-$FFFF -> end of PRG ROM.
+        prg_rom[0x7FFA] = (reset_vector & 0x00FF) as u8; // NMI
+        prg_rom[0x7FFB] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFE] = (reset_vector & 0x00FF) as u8; // IRQ/BRK
+        prg_rom[0x7FFF] = (reset_vector >> 8) as u8;
+
+        // $8000: NOP
+        prg_rom[0x0000] = 0xEA;
+        // $8001: JMP $8000
+        prg_rom[0x0001] = 0x4C;
+        prg_rom[0x0002] = 0x00;
+        prg_rom[0x0003] = 0x80;
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        nes
+    }
+
     #[test]
     fn test_handle_key_down_f5_pauses_emulation() {
         // Desired behavior: F5 opens debugger windows, which immediately pauses emulation.
@@ -1281,6 +1488,58 @@ mod tests {
 
         assert!(!paused);
         assert!(!debugger_open_requested);
+    }
+
+    #[test]
+    fn test_run_to_next_frame_stops_after_frame_wrap_even_if_not_at_pixel_0_0() {
+        let mut nes_expected = nes_with_nop_loop_program();
+        let mut nes_actual = nes_with_nop_loop_program();
+
+        // Move both PPUs close to the end of the NTSC pre-render scanline.
+        // We pick a position such that executing exactly one CPU instruction will cross into
+        // the next frame, but the instruction boundary will *not* land on (0,0).
+        for nes in [&mut nes_expected, &mut nes_actual] {
+            let mut ppu = nes.ppu.borrow_mut();
+            while ppu.scanline() != 261 || ppu.pixel() != 338 {
+                ppu.run_ppu_cycles(1);
+            }
+        }
+
+        // Expected behavior: run to next frame should stop at the first instruction boundary
+        // after we have crossed the frame start.
+        nes_expected.run_cpu_tick();
+        let (expected_scanline, expected_pixel) = {
+            let ppu = nes_expected.ppu.borrow();
+            (ppu.scanline(), ppu.pixel())
+        };
+        assert_eq!(
+            expected_scanline, 0,
+            "setup should cross into the next frame"
+        );
+        assert_ne!(
+            expected_pixel, 0,
+            "setup should not land exactly at (0,0) after one instruction"
+        );
+
+        let cpu_cycles_before = nes_actual.cpu.get_total_cycles();
+        EventLoop::debugger_run_to_next_frame(&mut nes_actual);
+        let cpu_cycles_after = nes_actual.cpu.get_total_cycles();
+
+        let (actual_scanline, actual_pixel) = {
+            let ppu = nes_actual.ppu.borrow();
+            (ppu.scanline(), ppu.pixel())
+        };
+
+        assert_eq!(
+            (actual_scanline, actual_pixel),
+            (expected_scanline, expected_pixel),
+            "should stop at the first instruction boundary after frame wrap (not wait for an exact (0,0) boundary)"
+        );
+
+        assert!(
+            cpu_cycles_after - cpu_cycles_before < 1000,
+            "should stop soon after the frame wrap, not spin until an exact (0,0) boundary"
+        );
     }
 
     #[test]
@@ -1343,30 +1602,109 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_continue_action_unpauses_and_closes_debugger() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let mut paused = true;
-        let mut debugger_open_requested = true;
 
-        EventLoop::apply_debugger_ui_action(
+        event_loop.request_debugger_open();
+
+        event_loop.apply_debugger_ui_action(
             &mut nes,
             crate::debugger_ui::DebuggerUiAction {
                 continue_run: true,
-                step_cpu: false,
+                step_over: false,
+                step_into: false,
                 run_to_next_frame: false,
                 run_to_nmi: false,
                 run_to_irq: false,
             },
-            &mut paused,
-            &mut debugger_open_requested,
         );
 
-        assert!(!paused, "continue should unpause");
-        assert!(!debugger_open_requested, "continue should close debugger");
+        assert!(!event_loop.is_paused(), "continue should unpause");
+        assert!(
+            !event_loop.debugger_open_requested(),
+            "continue should close debugger"
+        );
     }
 
     #[test]
+    #[serial]
+    fn test_continue_skips_breakpoint_once_on_same_pc() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        insert_nop_cartridge(&mut nes, 0x8000);
+        nes.reset(false);
+
+        // Break immediately at the first instruction.
+        event_loop.add_breakpoint(0x8000);
+
+        // First tick hits the breakpoint and pauses before executing.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert_eq!(nes.cpu.pc, 0x8000);
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
+
+        // Continue should unpause and not instantly re-break at the same PC.
+        event_loop.apply_debugger_ui_action(
+            &mut nes,
+            crate::debugger_ui::DebuggerUiAction {
+                continue_run: true,
+                step_over: false,
+                step_into: false,
+                run_to_next_frame: false,
+                run_to_nmi: false,
+                run_to_irq: false,
+            },
+        );
+        assert!(!event_loop.is_paused());
+        assert!(!event_loop.debugger_open_requested());
+
+        // Next tick must execute the instruction at $8000 (NOP) and advance.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert_eq!(nes.cpu.pc, 0x8001);
+        assert!(!event_loop.is_paused());
+        assert!(!event_loop.debugger_open_requested());
+    }
+
+    #[test]
+    #[serial]
+    fn test_f5_when_debugger_open_behaves_like_continue_for_breakpoints() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        insert_nop_cartridge(&mut nes, 0x8000);
+        nes.reset(false);
+
+        event_loop.add_breakpoint(0x8000);
+
+        // Hit the breakpoint first.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert_eq!(nes.cpu.pc, 0x8000);
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
+
+        // Pressing F5 while debugger is open should behave like Continue.
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::F5);
+        assert!(!event_loop.is_paused());
+        assert!(!event_loop.debugger_open_requested());
+
+        // Next tick must execute past the breakpoint without immediately re-breaking.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert_eq!(nes.cpu.pc, 0x8001);
+        assert!(!event_loop.is_paused());
+        assert!(!event_loop.debugger_open_requested());
+    }
+
+    #[test]
+    #[serial]
     fn test_run_to_nmi_action_runs_until_nmi_vector_pc() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Minimal cartridge with vectors.
@@ -1391,32 +1729,51 @@ mod tests {
         // Force an NMI edge before running.
         nes.cpu.set_nmi_pending(true);
 
-        let mut paused = true;
-        let mut debugger_open_requested = true;
-
-        EventLoop::apply_debugger_ui_action(
+        event_loop.request_debugger_open();
+        event_loop.apply_debugger_ui_action(
             &mut nes,
             crate::debugger_ui::DebuggerUiAction {
                 continue_run: false,
-                step_cpu: false,
+                step_over: false,
+                step_into: false,
                 run_to_next_frame: false,
                 run_to_nmi: true,
                 run_to_irq: false,
             },
-            &mut paused,
-            &mut debugger_open_requested,
         );
 
-        assert!(paused, "run-to actions should keep emulator paused");
+        assert!(!event_loop.is_paused(), "run-to should continue running");
         assert!(
-            debugger_open_requested,
-            "run-to actions should keep debugger open"
+            !event_loop.debugger_open_requested(),
+            "run-to should close debugger (same as Continue)"
         );
+
+        // Run until the temporary breakpoint hits.
+        for _ in 0..1_000_000 {
+            tick_headless_once(&mut event_loop, &mut nes);
+            if event_loop.is_paused() {
+                break;
+            }
+        }
+
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
         assert_eq!(nes.cpu.pc, nmi_vector);
+        assert!(
+            event_loop.temporary_breakpoint.is_none(),
+            "temporary breakpoint should clear after being hit"
+        );
+        assert!(
+            !event_loop.breakpoints.contains(&nmi_vector),
+            "temporary breakpoint should be removed after being hit"
+        );
     }
 
     #[test]
+    #[serial]
     fn test_run_to_irq_action_runs_until_irq_vector_pc() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Minimal cartridge with vectors.
@@ -1444,32 +1801,51 @@ mod tests {
         // Force an IRQ to be pending.
         nes.cpu.set_irq_pending(true);
 
-        let mut paused = true;
-        let mut debugger_open_requested = true;
-
-        EventLoop::apply_debugger_ui_action(
+        event_loop.request_debugger_open();
+        event_loop.apply_debugger_ui_action(
             &mut nes,
             crate::debugger_ui::DebuggerUiAction {
                 continue_run: false,
-                step_cpu: false,
+                step_over: false,
+                step_into: false,
                 run_to_next_frame: false,
                 run_to_nmi: false,
                 run_to_irq: true,
             },
-            &mut paused,
-            &mut debugger_open_requested,
         );
 
-        assert!(paused, "run-to actions should keep emulator paused");
+        assert!(!event_loop.is_paused(), "run-to should continue running");
         assert!(
-            debugger_open_requested,
-            "run-to actions should keep debugger open"
+            !event_loop.debugger_open_requested(),
+            "run-to should close debugger (same as Continue)"
         );
+
+        // Run until the temporary breakpoint hits.
+        for _ in 0..1_000_000 {
+            tick_headless_once(&mut event_loop, &mut nes);
+            if event_loop.is_paused() {
+                break;
+            }
+        }
+
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
         assert_eq!(nes.cpu.pc, irq_vector);
+        assert!(
+            event_loop.temporary_breakpoint.is_none(),
+            "temporary breakpoint should clear after being hit"
+        );
+        assert!(
+            !event_loop.breakpoints.contains(&irq_vector),
+            "temporary breakpoint should be removed after being hit"
+        );
     }
 
     #[test]
+    #[serial]
     fn test_run_to_irq_requires_actual_irq_entry_not_just_pc_match() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Minimal cartridge where IRQ vector points at the reset entrypoint.
@@ -1497,27 +1873,350 @@ mod tests {
         // Force an IRQ to be pending.
         nes.cpu.set_irq_pending(true);
 
-        let mut paused = true;
-        let mut debugger_open_requested = true;
-
-        EventLoop::apply_debugger_ui_action(
+        event_loop.request_debugger_open();
+        event_loop.apply_debugger_ui_action(
             &mut nes,
             crate::debugger_ui::DebuggerUiAction {
                 continue_run: false,
-                step_cpu: false,
+                step_over: false,
+                step_into: false,
                 run_to_next_frame: false,
                 run_to_nmi: false,
                 run_to_irq: true,
             },
-            &mut paused,
-            &mut debugger_open_requested,
         );
 
+        // The vector points at the current PC, so we must not re-break immediately.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert!(!event_loop.is_paused());
+
+        // Eventually, we should pause once the CPU actually vectors into the IRQ handler.
+        for _ in 0..1_000_000 {
+            tick_headless_once(&mut event_loop, &mut nes);
+            if event_loop.is_paused() {
+                break;
+            }
+        }
+
+        assert!(event_loop.is_paused());
         assert_eq!(nes.cpu.pc, irq_vector);
         assert_eq!(
             nes.cpu.current_interrupt(),
             Some(crate::cpu::InterruptKind::Irq)
         );
+    }
+
+    #[test]
+    #[serial]
+    fn test_run_to_nmi_when_already_in_nmi_waits_for_next_nmi_entry() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Cartridge with RESET=$8000, NMI=$9000.
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
+        let reset_vector: u16 = 0x8000;
+        let nmi_vector: u16 = 0x9000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFA] = (nmi_vector & 0x00FF) as u8; // NMI
+        prg_rom[0x7FFB] = (nmi_vector >> 8) as u8;
+        prg_rom[0x7FFE] = 0x00; // IRQ/BRK (unused)
+        prg_rom[0x7FFF] = 0x80;
+
+        // NMI handler at $9000:
+        //   LDA $00
+        //   BEQ done
+        //   DEC $00
+        //   JMP $9000
+        // done:
+        //   RTI
+        let nmi_offset = (nmi_vector - 0x8000) as usize;
+        let handler = [
+            0xA5, 0x00, // LDA $00
+            0xF0, 0x05, // BEQ +5 (to RTI)
+            0xC6, 0x00, // DEC $00
+            0x4C, 0x00, 0x90, // JMP $9000
+            0x40, // RTI
+        ];
+        prg_rom[nmi_offset..nmi_offset + handler.len()].copy_from_slice(&handler);
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Make the handler loop a bit (revisiting $9000) before RTI.
+        nes.memory.borrow_mut().write_for_testing(0x0000, 3);
+
+        // Enter NMI once, stopping at the vector.
+        nes.cpu.set_nmi_pending(true);
+        for _ in 0..1_000_000 {
+            nes.run_cpu_tick();
+            if nes.cpu.current_interrupt() == Some(crate::cpu::InterruptKind::Nmi)
+                && nes.cpu.pc == nmi_vector
+            {
+                break;
+            }
+        }
+        assert_eq!(
+            nes.cpu.current_interrupt(),
+            Some(crate::cpu::InterruptKind::Nmi)
+        );
+        assert_eq!(nes.cpu.pc, nmi_vector);
+
+        // Now request Run-to-NMI while we're already inside the current NMI handler.
+        event_loop.request_debugger_open();
+        event_loop.apply_debugger_ui_action(
+            &mut nes,
+            crate::debugger_ui::DebuggerUiAction {
+                continue_run: false,
+                step_over: false,
+                step_into: false,
+                run_to_next_frame: false,
+                run_to_nmi: true,
+                run_to_irq: false,
+            },
+        );
+
+        // Must continue running, not immediately break again at $9000.
+        assert!(!event_loop.is_paused());
+        assert!(!event_loop.debugger_open_requested());
+
+        // Run until we exit the current NMI (RTI), without breaking.
+        for _ in 0..1_000_000 {
+            tick_headless_once(&mut event_loop, &mut nes);
+            assert!(
+                !event_loop.is_paused(),
+                "should not break again during the current NMI handler"
+            );
+            if nes.cpu.current_interrupt() != Some(crate::cpu::InterruptKind::Nmi) {
+                break;
+            }
+        }
+        assert_ne!(
+            nes.cpu.current_interrupt(),
+            Some(crate::cpu::InterruptKind::Nmi)
+        );
+
+        // Trigger the *next* NMI and ensure we break at the vector.
+        nes.cpu.set_nmi_pending(true);
+        for _ in 0..1_000_000 {
+            tick_headless_once(&mut event_loop, &mut nes);
+            if event_loop.is_paused() {
+                break;
+            }
+        }
+
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
+        assert_eq!(
+            nes.cpu.current_interrupt(),
+            Some(crate::cpu::InterruptKind::Nmi)
+        );
+        assert_eq!(nes.cpu.pc, nmi_vector);
+    }
+
+    #[test]
+    #[serial]
+    fn test_run_to_nmi_ignores_other_breakpoints_until_next_nmi_entry() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Cartridge with RESET=$8000, NMI=$9000.
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
+        let reset_vector: u16 = 0x8000;
+        let nmi_vector: u16 = 0x9000;
+        prg_rom[0x7FFC] = (reset_vector & 0x00FF) as u8; // RESET
+        prg_rom[0x7FFD] = (reset_vector >> 8) as u8;
+        prg_rom[0x7FFA] = (nmi_vector & 0x00FF) as u8; // NMI
+        prg_rom[0x7FFB] = (nmi_vector >> 8) as u8;
+        prg_rom[0x7FFE] = 0x00; // IRQ/BRK (unused)
+        prg_rom[0x7FFF] = 0x80;
+
+        // NMI handler at $9000: NOP, NOP, RTI.
+        let nmi_offset = (nmi_vector - 0x8000) as usize;
+        prg_rom[nmi_offset..nmi_offset + 3].copy_from_slice(&[0xEA, 0xEA, 0x40]);
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Enter NMI once, stopping at the vector.
+        nes.cpu.set_nmi_pending(true);
+        for _ in 0..1_000_000 {
+            nes.run_cpu_tick();
+            if nes.cpu.current_interrupt() == Some(crate::cpu::InterruptKind::Nmi)
+                && nes.cpu.pc == nmi_vector
+            {
+                break;
+            }
+        }
+        assert_eq!(
+            nes.cpu.current_interrupt(),
+            Some(crate::cpu::InterruptKind::Nmi)
+        );
+        assert_eq!(nes.cpu.pc, nmi_vector);
+
+        // Place a breakpoint inside the current NMI handler to reproduce the user-reported
+        // "Run to NMI just steps one instruction" behavior.
+        let handler_second_instruction = nmi_vector.wrapping_add(1);
+        event_loop.add_breakpoint(handler_second_instruction);
+
+        // Now request Run-to-NMI while we're already inside the current NMI handler.
+        event_loop.request_debugger_open();
+        event_loop.apply_debugger_ui_action(
+            &mut nes,
+            crate::debugger_ui::DebuggerUiAction {
+                continue_run: false,
+                step_over: false,
+                step_into: false,
+                run_to_next_frame: false,
+                run_to_nmi: true,
+                run_to_irq: false,
+            },
+        );
+
+        assert!(!event_loop.is_paused());
+        assert!(!event_loop.debugger_open_requested());
+
+        // Must not stop at the breakpoint inside the current handler.
+        for _ in 0..1_000_000 {
+            tick_headless_once(&mut event_loop, &mut nes);
+            assert!(
+                !event_loop.is_paused(),
+                "run-to should ignore other breakpoints until it reaches the next NMI entry"
+            );
+            if nes.cpu.current_interrupt() != Some(crate::cpu::InterruptKind::Nmi) {
+                break;
+            }
+        }
+
+        // Trigger the *next* NMI and ensure we break at the vector.
+        nes.cpu.set_nmi_pending(true);
+        for _ in 0..1_000_000 {
+            tick_headless_once(&mut event_loop, &mut nes);
+            if event_loop.is_paused() {
+                break;
+            }
+        }
+
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
+        assert_eq!(
+            nes.cpu.current_interrupt(),
+            Some(crate::cpu::InterruptKind::Nmi)
+        );
+        assert_eq!(nes.cpu.pc, nmi_vector);
+    }
+
+    #[test]
+    #[serial]
+    fn test_step_into_action_runs_via_temporary_breakpoint_and_reopens_debugger() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        insert_nop_cartridge(&mut nes, 0x8000);
+        nes.reset(false);
+
+        event_loop.request_debugger_open();
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
+
+        event_loop.apply_debugger_ui_action(
+            &mut nes,
+            crate::debugger_ui::DebuggerUiAction {
+                step_into: true,
+                step_over: false,
+                continue_run: false,
+                run_to_next_frame: false,
+                run_to_nmi: false,
+                run_to_irq: false,
+            },
+        );
+
+        assert!(
+            !event_loop.is_paused(),
+            "step-into should continue running (so the main loop can render frames)"
+        );
+        assert!(
+            !event_loop.debugger_open_requested(),
+            "step-into should close debugger (same as Continue)"
+        );
+
+        // Run until the temporary step completes.
+        for _ in 0..1_000_000 {
+            tick_headless_once(&mut event_loop, &mut nes);
+            if event_loop.is_paused() {
+                break;
+            }
+        }
+
+        assert_eq!(nes.cpu.pc, 0x8001);
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
+    }
+
+    #[test]
+    #[serial]
+    fn test_step_over_action_runs_via_temporary_breakpoint_and_reopens_debugger() {
+        let mut event_loop =
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+        let mut nes = nes_with_jsr_program();
+        nes.cpu.x = 0;
+
+        event_loop.request_debugger_open();
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
+
+        event_loop.apply_debugger_ui_action(
+            &mut nes,
+            crate::debugger_ui::DebuggerUiAction {
+                step_over: true,
+                step_into: false,
+                continue_run: false,
+                run_to_next_frame: false,
+                run_to_nmi: false,
+                run_to_irq: false,
+            },
+        );
+
+        assert!(
+            !event_loop.is_paused(),
+            "step-over should continue running (so the main loop can render frames)"
+        );
+        assert!(
+            !event_loop.debugger_open_requested(),
+            "step-over should close debugger (same as Continue)"
+        );
+
+        // Run until the temporary breakpoint hits (return address).
+        for _ in 0..1_000_000 {
+            tick_headless_once(&mut event_loop, &mut nes);
+            if event_loop.is_paused() {
+                break;
+            }
+        }
+
+        assert_eq!(
+            nes.cpu.pc, 0x8003,
+            "expected step-over to stop at next instruction"
+        );
+        assert_eq!(
+            nes.cpu.x, 1,
+            "expected subroutine to have executed (INX) before returning"
+        );
+        assert!(event_loop.is_paused());
+        assert!(event_loop.debugger_open_requested());
     }
 
     #[test]
