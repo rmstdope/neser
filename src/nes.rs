@@ -139,7 +139,7 @@ impl Nes {
         // Execute exactly one CPU instruction.
         self.cpu.execute();
 
-        // IRQ/NMI are handled by the CPU itself (Mesen-style) at the end of `execute()`.
+        // IRQ/NMI are handled by the CPU itself at the end of `execute()`.
 
         if self.ppu.borrow_mut().poll_frame_complete() {
             self.ready_to_render = true;

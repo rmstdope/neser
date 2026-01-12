@@ -1,6 +1,6 @@
 /// DMA Controller for cycle-accurate OAM DMA and DMC DMA handling.
 ///
-/// This module implements the Mesen-style DMA state machines that allow:
+/// This module implements the DMA state machines that allow:
 /// - OAM DMA to be executed cycle-by-cycle
 /// - DMC DMA to interrupt OAM DMA mid-transfer
 /// - Proper priority handling (DMC has higher priority than OAM)

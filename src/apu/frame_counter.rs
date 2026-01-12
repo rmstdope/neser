@@ -265,8 +265,8 @@ impl FrameCounter {
     }
 
     /// Clock the 5-step sequencer
-    /// Mesen2/NESDev: 5-step mode clocks at cycles 7457, 14913, 22371, 29829, 37281
-    /// Frame types per Mesen2:
+    /// NESDev: 5-step mode clocks at cycles 7457, 14913, 22371, 29829, 37281
+    /// Frame types:
     /// - 7457:  QuarterFrame (envelope only)
     /// - 14913: HalfFrame (envelope + length)
     /// - 22371: QuarterFrame (envelope only)
@@ -403,8 +403,14 @@ mod tests {
 
         // The first clock() after the write should include the immediate clocks
         let (quarter, half) = fc.clock();
-        assert!(quarter, "5-step mode write should generate immediate quarter frame clock");
-        assert!(half, "5-step mode write should generate immediate half frame clock");
+        assert!(
+            quarter,
+            "5-step mode write should generate immediate quarter frame clock"
+        );
+        assert!(
+            half,
+            "5-step mode write should generate immediate half frame clock"
+        );
     }
 
     #[test]
@@ -417,8 +423,14 @@ mod tests {
 
         // The first clock() after the write should NOT have immediate clocks
         let (quarter, half) = fc.clock();
-        assert!(!quarter, "4-step mode write should not generate immediate quarter frame clock");
-        assert!(!half, "4-step mode write should not generate immediate half frame clock");
+        assert!(
+            !quarter,
+            "4-step mode write should not generate immediate quarter frame clock"
+        );
+        assert!(
+            !half,
+            "4-step mode write should not generate immediate half frame clock"
+        );
     }
 
     #[test]
@@ -629,7 +641,10 @@ mod tests {
         // The first clock after setting 5-step mode generates immediate quarter+half
         // (per NESDev: "Writing to $4017 with bit 7 set will immediately generate a clock")
         let (quarter, half) = fc.clock();
-        assert!(quarter, "5-step mode should generate immediate quarter frame");
+        assert!(
+            quarter,
+            "5-step mode should generate immediate quarter frame"
+        );
         assert!(half, "5-step mode should generate immediate half frame");
 
         // After the immediate clock, no more signals until step 1 (7457 cycles)
@@ -688,7 +703,7 @@ mod tests {
             fc.clock();
         }
 
-        // At cycle 29829, NO clocks at all (per Mesen2 - step 4 is "None" type)
+        // At cycle 29829, NO clocks at all
         let (quarter, half) = fc.clock();
         assert!(!quarter);
         assert!(!half);
@@ -704,7 +719,7 @@ mod tests {
             fc.clock();
         }
 
-        // At cycle 37281, BOTH quarter and half frame signals (per Mesen2 - "HalfFrame" type)
+        // At cycle 37281, BOTH quarter and half frame signals
         let (quarter, half) = fc.clock();
         assert!(quarter);
         assert!(half);

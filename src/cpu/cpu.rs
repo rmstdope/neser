@@ -49,7 +49,7 @@ pub struct Cpu {
     /// Checked during BRK execution to determine vector hijacking
     pub nmi_pending: bool,
 
-    // --- Mesen-style interrupt timing (latched at end of CPU cycles) ---
+    // --- Interrupt timing (latched at end of CPU cycles) ---
     prev_need_nmi: bool,
     prev_run_irq: bool,
     run_irq: bool,
@@ -77,7 +77,7 @@ pub struct Cpu {
     /// advanced by bus accesses during normal instruction execution.
     oob_master_clock: MasterClock,
 
-    // DMC DMA state machine (Mesen-style)
+    // DMC DMA state machine
     dmc_dma_running: bool,
     dmc_dma_need_halt: bool,
     dmc_dma_need_dummy_read: bool,
@@ -150,7 +150,7 @@ impl Cpu {
 
             skip_interrupt_latch_this_cycle: false,
 
-            // DMC DMA state machine (Mesen-style)
+            // DMC DMA state machine
             dmc_dma_running: false,
             dmc_dma_need_halt: false,
             dmc_dma_need_dummy_read: false,
@@ -178,7 +178,7 @@ impl Cpu {
     }
 
     fn end_cpu_cycle_latch_interrupt_lines(&mut self) {
-        // Equivalent of Mesen's EndCpuCycle(): capture previous-cycle state, then update
+        // Capture previous-cycle state, then update
         // edge/level detections based on the current end-of-cycle line status.
 
         self.prev_need_nmi = self.nmi_pending;
@@ -200,7 +200,7 @@ impl Cpu {
     }
 
     fn service_irq_or_nmi_sequence(&mut self) {
-        // Mesen-style shared interrupt sequence used after an instruction completes.
+        // Shared interrupt sequence used after an instruction completes.
         // Two dummy reads with suppressed PC increment, then push PC, push PS, set I, vector.
         // PAL DMA nuances omitted for now.
         // NMI can interrupt IRQ vectoring, but only if it becomes pending early enough.
@@ -389,7 +389,6 @@ impl Cpu {
     ///
     /// - `soft_reset`: true for a reset-button style reset, false for power-on.
     ///
-    /// Mesen-style intent:
     /// - On soft reset: preserve A/X/Y, decrement SP by 3, set I.
     /// - On hard reset: restore power-on register defaults, then run the reset sequence.
     /// - Takes 7 CPU cycles (5 internal + 2 vector reads)
@@ -463,7 +462,7 @@ impl Cpu {
         // Some mappers (e.g., Konami VRC) use CPU-cycle-driven IRQ counters.
         self.memory.borrow_mut().mapper_cpu_cycle();
 
-        // Mirror Mesen EndCpuCycle() behavior: latch interrupt lines at the end of each CPU cycle.
+        // Latch interrupt lines at the end of each CPU cycle.
         // Some edge cases require skipping latching for a single cycle.
         if self.skip_interrupt_latch_this_cycle {
             self.skip_interrupt_latch_this_cycle = false;
@@ -472,7 +471,7 @@ impl Cpu {
         }
     }
 
-    /// Start a DMC DMA transfer (Mesen-style).
+    /// Start a DMC DMA transfer.
     /// Called when the DMC sample buffer becomes empty and needs refilling.
     fn start_dmc_dma(&mut self) {
         self.dmc_dma_running = true;
@@ -480,7 +479,7 @@ impl Cpu {
         self.dmc_dma_need_dummy_read = true;
     }
 
-    /// Process any pending DMC DMA during a CPU read cycle (Mesen-style).
+    /// Process any pending DMC DMA during a CPU read cycle.
     /// This is called from `read()` and handles the DMA state machine.
     ///
     /// DMC DMA sequence (per NESdev wiki):
@@ -523,7 +522,6 @@ impl Cpu {
     }
 
     /// Process any pending DMA (OAM and/or DMC) during a CPU read cycle.
-    /// This is the Mesen-style unified DMA handler called at the start of every read.
     /// Returns true if DMA was processed and the read should be retried.
     fn process_pending_dma(&mut self, read_address: u16) -> bool {
         // Check if OAM DMA is pending
@@ -702,7 +700,7 @@ impl Cpu {
         loop {
             self.before_cpu_cycle(false);
 
-            // Process any pending DMA (OAM and/or DMC) - Mesen-style
+            // Process any pending DMA (OAM and/or DMC)
             if self.process_pending_dma(addr) {
                 // DMA was processed; retry the read from the beginning
                 continue;
@@ -1357,7 +1355,7 @@ impl Cpu {
         let operand = self.get_operand(*op);
         match op.mnemonic.as_ref() {
             "BRK" => {
-                // Mesen behavior: BRK pushes (PC + 1), which corresponds to BRK+2 overall.
+                // BRK pushes (PC + 1), which corresponds to BRK+2 overall.
                 // At this point, PC points to the padding byte, so add 1.
                 self.push_word(self.pc.wrapping_add(1));
 
@@ -1926,7 +1924,7 @@ impl Cpu {
             self.delayed_i_flag = new_delayed_i_flag;
         }
 
-        // Mesen-style: IRQ/NMI are taken after the instruction completes.
+        // IRQ/NMI are taken after the instruction completes.
         //
         // Special case: when the delayed-I state just expired (e.g., the instruction after CLI),
         // IRQ recognition must reflect the *new* I state immediately at this boundary.
@@ -2140,7 +2138,7 @@ mod tests {
         cpu.sp = 0x80;
         cpu.p = 0x00; // I flag cleared
 
-        // Act: soft reset (reset button behavior, Mesen-style).
+        // Act: soft reset (reset button behavior).
         cpu.reset(true);
 
         // Assert: A/X/Y preserved, SP adjusted by 3, and I flag set.
@@ -2170,7 +2168,7 @@ mod tests {
         cpu.sp = 0x10;
         cpu.p = 0x00;
 
-        // Act: hard reset (power-cycle behavior, Mesen-style).
+        // Act: hard reset (power-cycle behavior).
         cpu.reset(false);
 
         // Assert: power-on defaults restored (as per Cpu::new()) and reset sequence applied.

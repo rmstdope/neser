@@ -204,21 +204,14 @@ impl Apu {
             return;
         }
 
-        // Coordinated reset timing (similar to Mesen2):
+        // Coordinated reset timing:
         // "APU acts as if $4017 were written with $00 from 9 to 12 clocks before first instruction"
         //
-        // Mesen2's approach:
-        // - Queue delayed write with 3-4 cycle delay (based on CPU cycle parity)
-        // - The frame counter ticks during the delay
-        // - After delay cycles, the write takes effect
-        //
-        // Our approach:
         // - Queue the delayed write FIRST with appropriate delay
         // - Then clock the frame counter which will process the write after the delay
         // - Additional clocking to reach the 9-12 cycle range
 
         // Delay based on CPU cycle parity: even = 4, odd = 3
-        // This matches Mesen2's behavior
         let write_delay = if (cpu_cycle % 2) == 0 { 4 } else { 3 };
 
         // Queue the delayed write (rewrite last value written to $4017)

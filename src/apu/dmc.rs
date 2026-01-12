@@ -46,7 +46,6 @@ pub struct Dmc {
     interrupt_flag: bool,
 
     // Transfer start delay (2-3 cycles after enabling DMC via $4015)
-    // This matches Mesen2 behavior for accurate timing
     transfer_start_delay: u8,
 }
 
@@ -253,7 +252,6 @@ impl Dmc {
             if self.bytes_remaining == 0 {
                 self.restart_sample();
                 // Delay DMA request by 1-2 cycles based on odd/even CPU cycle
-                // Testing: reduced from Mesen2's 2-3 to see if it improves timing
                 if cpu_cycle % 2 == 0 {
                     self.transfer_start_delay = 1;
                 } else {
