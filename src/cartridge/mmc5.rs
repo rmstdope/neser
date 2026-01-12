@@ -23,7 +23,6 @@ pub struct MMC5Mapper {
     chr_mode: u8,
     chr_bank_a: [u8; 8],   // $5120-$5127 for BG
     chr_bank_b: [u8; 4],   // $5128-$512B for sprites
-    last_chr_write: u8,     // Track last CHR register written
 
     // Nametable control
     nametable_mapping: u8, // $5105
@@ -99,7 +98,6 @@ impl MMC5Mapper {
             chr_mode: 0,
             chr_bank_a: [0; 8],
             chr_bank_b: [0; 4],
-            last_chr_write: 0,
 
             // Nametable control
             nametable_mapping: 0,
@@ -252,52 +250,27 @@ impl MMC5Mapper {
         // Mode 2: 2KB (four banks)
         // Mode 3: 1KB (eight banks, with separate BG/sprite banks)
         
+        // Without proper BG/sprite detection, use A registers for all fetches
         let chr_mode = self.chr_mode & 0x03;
         match chr_mode {
             0 => {
-                // 8KB mode: use last CHR register written
-                if self.last_chr_write == 0 {
-                    self.chr_bank_a[7]
-                } else {
-                    self.chr_bank_b[3]
-                }
+                // 8KB mode: use $5127
+                self.chr_bank_a[7]
             }
             1 => {
-                // 4KB mode
+                // 4KB mode: use $5123 (low) or $5127 (high)
                 let high = addr >= 0x1000;
-                if self.last_chr_write == 0 {
-                    self.chr_bank_a[if high { 7 } else { 3 }]
-                } else {
-                    self.chr_bank_b[if high { 3 } else { 1 }]
-                }
+                self.chr_bank_a[if high { 7 } else { 3 }]
             }
             2 => {
-                // 2KB mode
+                // 2KB mode: use $5121, $5123, $5125, $5127
                 let bank_idx = (addr >> 11) & 0x03;
-                if self.last_chr_write == 0 {
-                    self.chr_bank_a[(bank_idx * 2 + 1) as usize]
-                } else {
-                    if bank_idx < 2 {
-                        self.chr_bank_b[(bank_idx) as usize]
-                    } else {
-                        self.chr_bank_b[(bank_idx - 2 + 2) as usize]
-                    }
-                }
+                self.chr_bank_a[(bank_idx * 2 + 1) as usize]
             }
             3 => {
-                // 1KB mode: 8 separate banks
+                // 1KB mode: use $5120-$5127
                 let bank_idx = (addr >> 10) & 0x07;
-                if self.last_chr_write == 0 {
-                    self.chr_bank_a[bank_idx as usize]
-                } else {
-                    // In 1KB mode, sprites use chr_bank_b registers
-                    // Map to appropriate register
-                    if bank_idx < 4 {
-                        self.chr_bank_b[bank_idx as usize]
-                    } else {
-                        self.chr_bank_a[bank_idx as usize]
-                    }
-                }
+                self.chr_bank_a[bank_idx as usize]
             }
             _ => unreachable!(),
         }
@@ -484,12 +457,10 @@ impl Mapper for MMC5Mapper {
             0x5120..=0x5127 => {
                 let index = (addr - 0x5120) as usize;
                 self.chr_bank_a[index] = value;
-                self.last_chr_write = 0; // A register
             }
             0x5128..=0x512B => {
                 let index = (addr - 0x5128) as usize;
                 self.chr_bank_b[index] = value;
-                self.last_chr_write = 1; // B register
             }
 
             // Split screen
@@ -732,5 +703,132 @@ mod tests {
         assert_eq!(mapper.read_prg(0xA000), 3);
         assert_eq!(mapper.read_prg(0xC000), 5);
         assert_eq!(mapper.read_prg(0xE000), 7);
+    }
+
+    #[test]
+    fn test_mmc5_prg_mode_0_32kb_bank() {
+        // MMC5 PRG mode 0: Single 32KB bank at $8000-$FFFF via $5117
+
+        let prg_rom = banked_data(8 * 1024, 16);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Select PRG mode 0
+        mapper.write_prg(0x5100, 0x00);
+
+        // Select 32KB bank (bits 1-0 ignored, so bank 7 becomes 4)
+        mapper.write_prg(0x5117, 0x87); // ROM bit set, bank 7 -> aligned to 4
+
+        // All 4 x 8KB segments should come from banks 4, 5, 6, 7
+        assert_eq!(mapper.read_prg(0x8000), 4);
+        assert_eq!(mapper.read_prg(0xA000), 5);
+        assert_eq!(mapper.read_prg(0xC000), 6);
+        assert_eq!(mapper.read_prg(0xE000), 7);
+    }
+
+    #[test]
+    fn test_mmc5_prg_mode_1_two_16kb_banks() {
+        // MMC5 PRG mode 1: Two 16KB banks
+
+        let prg_rom = banked_data(8 * 1024, 16);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Select PRG mode 1
+        mapper.write_prg(0x5100, 0x01);
+
+        // Low 16KB bank via $5115 (bit 0 ignored, so 3 -> 2)
+        mapper.write_prg(0x5115, 0x83); // ROM, bank 3 -> aligned to 2
+
+        // High 16KB bank via $5117 (bit 0 ignored, so 7 -> 6)
+        mapper.write_prg(0x5117, 0x87); // ROM, bank 7 -> aligned to 6
+
+        assert_eq!(mapper.read_prg(0x8000), 2);
+        assert_eq!(mapper.read_prg(0xA000), 3);
+        assert_eq!(mapper.read_prg(0xC000), 6);
+        assert_eq!(mapper.read_prg(0xE000), 7);
+    }
+
+    #[test]
+    fn test_mmc5_hardware_multiplier() {
+        // MMC5 has a hardware multiplier at $5205/$5206
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Write multiplicand and multiplier
+        mapper.write_prg(0x5205, 123);
+        mapper.write_prg(0x5206, 45);
+
+        // Result should be 123 * 45 = 5535 = 0x159F
+        assert_eq!(mapper.read_prg(0x5205), 0x9F); // Low byte
+        assert_eq!(mapper.read_prg(0x5206), 0x15); // High byte
+
+        // Test another multiplication
+        mapper.write_prg(0x5205, 255);
+        mapper.write_prg(0x5206, 255);
+
+        // Result should be 255 * 255 = 65025 = 0xFE01
+        assert_eq!(mapper.read_prg(0x5205), 0x01); // Low byte
+        assert_eq!(mapper.read_prg(0x5206), 0xFE); // High byte
+    }
+
+    #[test]
+    fn test_mmc5_exram_access() {
+        // MMC5 has 1KB ExRAM at $5C00-$5FFF
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Write to ExRAM
+        mapper.write_prg(0x5C00, 0xAA);
+        mapper.write_prg(0x5C01, 0xBB);
+        mapper.write_prg(0x5FFF, 0xCC);
+
+        // Read back
+        assert_eq!(mapper.read_prg(0x5C00), 0xAA);
+        assert_eq!(mapper.read_prg(0x5C01), 0xBB);
+        assert_eq!(mapper.read_prg(0x5FFF), 0xCC);
+    }
+
+    #[test]
+    fn test_mmc5_prg_ram_write_protection() {
+        // MMC5 PRG-RAM write protection via $5102/$5103
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // By default, PRG-RAM should be writable (protect registers initialized to 0x02/0x01)
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+
+        // Protect PRG-RAM by writing wrong values
+        mapper.write_prg(0x5102, 0x00);
+        mapper.write_prg(0x5103, 0x00);
+
+        // Now writes should be ignored
+        mapper.write_prg(0x6000, 0xBB);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA); // Still old value
+
+        // Unprotect by writing correct values
+        mapper.write_prg(0x5102, 0x02);
+        mapper.write_prg(0x5103, 0x01);
+
+        // Now writes should work again
+        mapper.write_prg(0x6000, 0xCC);
+        assert_eq!(mapper.read_prg(0x6000), 0xCC);
     }
 }
