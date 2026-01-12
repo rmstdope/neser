@@ -215,7 +215,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_path = "roms/games/donkey kong.nes";
-    let rom_path = "roms/games/zelda.nes";
+    // let rom_path = "roms/games/zelda.nes";
+    let rom_path = "roms/games/punchout.nes";
 
     // Manual testing of Blargg
     // let rom_path = "roms/blargg/dmc_tests/buffer_retained.nes";
