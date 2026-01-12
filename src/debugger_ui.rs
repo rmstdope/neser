@@ -1,5 +1,8 @@
 use crate::debugger::DebuggerSnapshot;
 
+const DEBUGGER_OUTER_MARGIN: f32 = 10.0;
+const DEBUGGER_OUTER_GAP: f32 = 10.0;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DebuggerUiAction {
     pub step_over: bool,
@@ -13,8 +16,8 @@ pub struct DebuggerUiAction {
 pub fn layout_models(display_size: [f32; 2]) -> [(&'static str, [f32; 2], [f32; 2]); 3] {
     let [display_w, display_h] = display_size;
 
-    let margin = 10.0;
-    let gap = 10.0;
+    let margin = DEBUGGER_OUTER_MARGIN;
+    let gap = DEBUGGER_OUTER_GAP;
 
     let available_h = (display_h - 2.0 * margin - gap).max(0.0);
     let bottom_h = available_h * 0.20;
@@ -73,8 +76,49 @@ pub fn render(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) -> DebuggerUiAction {
     action
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CpuWindowLayout {
+    left_w: f32,
+    right_w: f32,
+    gap: f32,
+    left_pos: [f32; 2],
+    right_pos: [f32; 2],
+}
+
+fn cpu_window_layout(avail: [f32; 2], cursor: [f32; 2]) -> CpuWindowLayout {
+    // Layout: left code view, right column split into registers (top) + PRG hexdump (bottom)
+    let gap = 8.0;
+    // Prefer more space for the right column so the hexdump can fit.
+    let left_w = (avail[0] * 0.40).max(0.0);
+    let right_w = (avail[0] - left_w - gap).max(0.0);
+
+    let left_pos = cursor;
+    let right_pos = [cursor[0] + left_w + gap, cursor[1]];
+
+    CpuWindowLayout {
+        left_w,
+        right_w,
+        gap,
+        left_pos,
+        right_pos,
+    }
+}
+
 fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, action: &mut DebuggerUiAction) {
-    // Controls
+    render_cpu_controls(ui, action);
+    ui.separator();
+
+    let avail = ui.content_region_avail();
+    let layout = cpu_window_layout(avail, ui.cursor_pos());
+
+    ui.set_cursor_pos(layout.left_pos);
+    render_cpu_code_panel(ui, snapshot, [layout.left_w, avail[1]]);
+
+    ui.set_cursor_pos(layout.right_pos);
+    render_cpu_right_panel(ui, snapshot, [layout.right_w, avail[1]], layout.gap);
+}
+
+fn render_cpu_controls(ui: &imgui::Ui, action: &mut DebuggerUiAction) {
     if ui.button("Step over") {
         action.step_over = true;
     }
@@ -98,60 +142,51 @@ fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, action: &mut D
     if ui.button("Run to IRQ") {
         action.run_to_irq = true;
     }
-    ui.separator();
+}
 
-    // Layout: left code view, right column split into registers (top) + PRG hexdump (bottom)
-    let avail = ui.content_region_avail();
-    let gap = 8.0;
-    // Prefer more space for the right column so the hexdump can fit.
-    let left_w = (avail[0] * 0.40).max(0.0);
-    let right_w = (avail[0] - left_w - gap).max(0.0);
+fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32; 2]) {
+    ui.child_window("cpu_code").size(size).border(true).build(|| {
+        ui.text("Code");
+        ui.separator();
 
-    let cursor = ui.cursor_pos();
-    let left_pos = cursor;
-    let right_pos = [cursor[0] + left_w + gap, cursor[1]];
+        for line in &snapshot.cpu_disasm {
+            let bytes = format_disasm_bytes(&line.bytes);
+            let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
+            if line.is_current {
+                let cursor = ui.cursor_screen_pos();
+                let draw_w = ui.content_region_avail()[0];
+                let draw_h = ui.text_line_height();
 
-    ui.set_cursor_pos(left_pos);
-    ui.child_window("cpu_code")
-        .size([left_w, avail[1]])
-        .border(true)
-        .build(|| {
-            ui.text("Code");
-            ui.separator();
+                ui.get_window_draw_list()
+                    .add_rect(
+                        cursor,
+                        [cursor[0] + draw_w, cursor[1] + draw_h],
+                        [1.0, 1.0, 1.0, 1.0],
+                    )
+                    .filled(true)
+                    .build();
 
-            for line in &snapshot.cpu_disasm {
-                let bytes = format_disasm_bytes(&line.bytes);
-                let text = format!("{:04X}: {:<8} {}", line.addr, bytes, line.text);
-                if line.is_current {
-                    let cursor = ui.cursor_screen_pos();
-                    let draw_w = ui.content_region_avail()[0];
-                    let draw_h = ui.text_line_height();
-
-                    ui.get_window_draw_list()
-                        .add_rect(
-                            cursor,
-                            [cursor[0] + draw_w, cursor[1] + draw_h],
-                            [1.0, 1.0, 1.0, 1.0],
-                        )
-                        .filled(true)
-                        .build();
-
-                    let _text = ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 0.0, 1.0]);
-                    ui.text(text);
-                } else {
-                    ui.text(text);
-                }
+                let _text = ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 0.0, 1.0]);
+                ui.text(text);
+            } else {
+                ui.text(text);
             }
-        });
+        }
+    });
+}
 
-    ui.set_cursor_pos(right_pos);
+fn render_cpu_right_panel(
+    ui: &imgui::Ui,
+    snapshot: &DebuggerSnapshot,
+    size: [f32; 2],
+    gap: f32,
+) {
     ui.child_window("cpu_right")
-        .size([right_w, avail[1]])
+        .size(size)
         .border(false)
         .build(|| {
             let right_avail = ui.content_region_avail();
-            let regs_h = right_avail[1] * 0.35;
-            let hex_h = (right_avail[1] - regs_h - gap).max(0.0);
+            let (regs_h, hex_h) = cpu_right_panel_split(right_avail, gap);
 
             ui.child_window("cpu_regs")
                 .size([right_avail[0], regs_h])
@@ -179,6 +214,12 @@ fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, action: &mut D
                     }
                 });
         });
+}
+
+fn cpu_right_panel_split(avail: [f32; 2], gap: f32) -> (f32, f32) {
+    let regs_h = avail[1] * 0.35;
+    let hex_h = (avail[1] - regs_h - gap).max(0.0);
+    (regs_h, hex_h)
 }
 
 fn format_disasm_bytes(bytes: &[u8]) -> String {
@@ -371,5 +412,22 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("00 01 02 03")));
         assert!(lines.iter().any(|l| l.contains("8010:")));
         assert!(lines.iter().any(|l| l.contains("10 11 12 13")));
+    }
+
+    #[test]
+    fn test_cpu_window_layout_splits_left_and_right_columns() {
+        let cursor = [5.0, 7.0];
+        let avail = [100.0, 50.0];
+        let layout = cpu_window_layout(avail, cursor);
+
+        // 40% left column width and a fixed gap of 8.0.
+        assert_close(layout.left_w, 40.0);
+        assert_close(layout.gap, 8.0);
+        assert_close(layout.right_w, 52.0);
+
+        assert_close(layout.left_pos[0], 5.0);
+        assert_close(layout.left_pos[1], 7.0);
+        assert_close(layout.right_pos[0], 5.0 + 40.0 + 8.0);
+        assert_close(layout.right_pos[1], 7.0);
     }
 }

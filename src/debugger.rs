@@ -1,6 +1,17 @@
 use crate::cpu;
 use crate::nes::Nes;
 
+// Disassembly window size:
+// Total window height is N_BEFORE + 1 + N_AFTER.
+// Previously 8 + 1 + 8 = 17; doubled to 34.
+const DISASM_N_BEFORE: usize = 16;
+const DISASM_N_AFTER: usize = 17;
+
+// When stepping forward and the current line reaches the bottom margin,
+// scroll so it is TOP_MARGIN lines from the top.
+const DISASM_TOP_MARGIN: usize = 3;
+const DISASM_BOTTOM_MARGIN: usize = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CpuRegsSnapshot {
     pub pc: u16,
@@ -39,15 +50,29 @@ pub struct CpuDisasmWindowState {
     start: Option<u16>,
 }
 
-pub fn snapshot(nes: &Nes) -> DebuggerSnapshot {
-    let cpu_cycles = nes.cpu.get_total_cycles();
-
-    let pc = nes.cpu.pc;
-
+fn prg_hexdump_base_from_pc(pc: u16) -> u16 {
     let centered = pc & 0xFFF0;
     let mut prg_hexdump_base = centered.saturating_sub(0x80).max(0x8000);
     // Ensure base+0xFF stays within u16.
     prg_hexdump_base = prg_hexdump_base.min(0xFF00);
+    prg_hexdump_base
+}
+
+fn read_vectors_for_snapshot(nes: &Nes) -> (u16, u16) {
+    let memory = nes.memory.borrow();
+    let nmi_lo = memory.read_cpu_for_debugger(0xFFFA) as u16;
+    let nmi_hi = memory.read_cpu_for_debugger(0xFFFB) as u16;
+    let irq_lo = memory.read_cpu_for_debugger(0xFFFE) as u16;
+    let irq_hi = memory.read_cpu_for_debugger(0xFFFF) as u16;
+    ((nmi_hi << 8) | nmi_lo, (irq_hi << 8) | irq_lo)
+}
+
+fn build_snapshot(nes: &Nes, cpu_disasm: Vec<CpuDisasmLineSnapshot>) -> DebuggerSnapshot {
+    let cpu_cycles = nes.cpu.get_total_cycles();
+
+    let pc = nes.cpu.pc;
+
+    let prg_hexdump_base = prg_hexdump_base_from_pc(pc);
 
     let prg_hexdump_bytes = {
         let memory = nes.memory.borrow();
@@ -56,29 +81,7 @@ pub fn snapshot(nes: &Nes) -> DebuggerSnapshot {
             .collect::<Vec<u8>>()
     };
 
-    let cpu_disasm = {
-        // Total window height is N_BEFORE + 1 + N_AFTER.
-        // Previously 8 + 1 + 8 = 17; doubled to 34.
-        const N_BEFORE: usize = 16;
-        const N_AFTER: usize = 17;
-
-        let memory = nes.memory.borrow();
-        disassemble_window(
-            |addr| memory.read_cpu_for_debugger(addr),
-            pc,
-            N_BEFORE,
-            N_AFTER,
-        )
-    };
-
-    let (nmi_vector, irq_vector) = {
-        let memory = nes.memory.borrow();
-        let nmi_lo = memory.read_cpu_for_debugger(0xFFFA) as u16;
-        let nmi_hi = memory.read_cpu_for_debugger(0xFFFB) as u16;
-        let irq_lo = memory.read_cpu_for_debugger(0xFFFE) as u16;
-        let irq_hi = memory.read_cpu_for_debugger(0xFFFF) as u16;
-        ((nmi_hi << 8) | nmi_lo, (irq_hi << 8) | irq_lo)
-    };
+    let (nmi_vector, irq_vector) = read_vectors_for_snapshot(nes);
 
     let cpu_regs = CpuRegsSnapshot {
         pc: nes.cpu.pc,
@@ -141,113 +144,33 @@ apu_cycle: {apu_cycle}  frame_counter_cycle: {frame_counter_cycle}",
     }
 }
 
-pub fn snapshot_with_disasm_state(nes: &Nes, state: &mut CpuDisasmWindowState) -> DebuggerSnapshot {
-    let cpu_cycles = nes.cpu.get_total_cycles();
-
-    let pc = nes.cpu.pc;
-
-    let centered = pc & 0xFFF0;
-    let mut prg_hexdump_base = centered.saturating_sub(0x80).max(0x8000);
-    // Ensure base+0xFF stays within u16.
-    prg_hexdump_base = prg_hexdump_base.min(0xFF00);
-
-    let prg_hexdump_bytes = {
-        let memory = nes.memory.borrow();
-        (0u16..=0x00FF)
-            .map(|offset| memory.read_prg_rom_for_debugger(prg_hexdump_base + offset))
-            .collect::<Vec<u8>>()
-    };
-
+pub fn snapshot(nes: &Nes) -> DebuggerSnapshot {
     let cpu_disasm = {
-        // Total window height is N_BEFORE + 1 + N_AFTER.
-        // Previously 8 + 1 + 8 = 17; doubled to 34.
-        const N_BEFORE: usize = 16;
-        const N_AFTER: usize = 17;
-        // When stepping forward and the current line reaches the bottom margin,
-        // scroll so it is TOP_MARGIN lines from the top.
-        const TOP_MARGIN: usize = 3;
-        const BOTTOM_MARGIN: usize = 3;
+        let memory = nes.memory.borrow();
+        disassemble_window(
+            |addr| memory.read_cpu_for_debugger(addr),
+            nes.cpu.pc,
+            DISASM_N_BEFORE,
+            DISASM_N_AFTER,
+        )
+    };
+    build_snapshot(nes, cpu_disasm)
+}
 
+pub fn snapshot_with_disasm_state(nes: &Nes, state: &mut CpuDisasmWindowState) -> DebuggerSnapshot {
+    let cpu_disasm = {
         let memory = nes.memory.borrow();
         disassemble_window_with_state(
             |addr| memory.read_cpu_for_debugger(addr),
-            pc,
+            nes.cpu.pc,
             state,
-            N_BEFORE,
-            N_AFTER,
-            TOP_MARGIN,
-            BOTTOM_MARGIN,
+            DISASM_N_BEFORE,
+            DISASM_N_AFTER,
+            DISASM_TOP_MARGIN,
+            DISASM_BOTTOM_MARGIN,
         )
     };
-
-    let (nmi_vector, irq_vector) = {
-        let memory = nes.memory.borrow();
-        let nmi_lo = memory.read_cpu_for_debugger(0xFFFA) as u16;
-        let nmi_hi = memory.read_cpu_for_debugger(0xFFFB) as u16;
-        let irq_lo = memory.read_cpu_for_debugger(0xFFFE) as u16;
-        let irq_hi = memory.read_cpu_for_debugger(0xFFFF) as u16;
-        ((nmi_hi << 8) | nmi_lo, (irq_hi << 8) | irq_lo)
-    };
-
-    let cpu_regs = CpuRegsSnapshot {
-        pc: nes.cpu.pc,
-        a: nes.cpu.a,
-        x: nes.cpu.x,
-        y: nes.cpu.y,
-        sp: nes.cpu.sp,
-        p: nes.cpu.p,
-        cycles: cpu_cycles,
-        interrupt: nes.cpu.current_interrupt(),
-        nmi_vector,
-        irq_vector,
-    };
-
-    let cpu = format!(
-        "CPU\n\
-PC: {pc:04X}  A: {a:02X} X: {x:02X} Y: {y:02X}  SP: {sp:02X}  P: {p:02X}\n\
-CYC: {cycles}",
-        pc = nes.cpu.pc,
-        a = nes.cpu.a,
-        x = nes.cpu.x,
-        y = nes.cpu.y,
-        sp = nes.cpu.sp,
-        p = nes.cpu.p,
-        cycles = cpu_cycles,
-    );
-
-    let (scanline, pixel) = {
-        let ppu = nes.ppu.borrow();
-        (ppu.scanline(), ppu.pixel())
-    };
-
-    let ppu = format!(
-        "PPU\n\
-scanline: {scanline:3}  pixel: {pixel:3}",
-        scanline = scanline,
-        pixel = pixel
-    );
-
-    let (apu_cycle, frame_counter_cycle) = {
-        let apu = nes.apu.borrow();
-        (apu.apu_cycle(), apu.debug_frame_counter_cycle())
-    };
-
-    let apu = format!(
-        "APU\n\
-apu_cycle: {apu_cycle}  frame_counter_cycle: {frame_counter_cycle}",
-        apu_cycle = apu_cycle,
-        frame_counter_cycle = frame_counter_cycle
-    );
-
-    DebuggerSnapshot {
-        cpu_regs,
-        prg_hexdump_base,
-        prg_hexdump_bytes,
-        cpu_disasm,
-        cpu,
-        ppu,
-        apu,
-    }
+    build_snapshot(nes, cpu_disasm)
 }
 
 fn disassemble_window<F: Fn(u16) -> u8>(
@@ -265,21 +188,7 @@ fn disassemble_window<F: Fn(u16) -> u8>(
     }
 
     let target_lines = before + 1 + after;
-    let mut lines = Vec::with_capacity(target_lines);
-
-    let mut addr = start;
-    for _ in 0..target_lines {
-        let line = disassemble_one(&read, addr, pc);
-        let step = (line.bytes.len() as u16).max(1);
-        addr = addr.wrapping_add(step);
-        lines.push(line);
-
-        if addr == 0 {
-            break;
-        }
-    }
-
-    lines
+    disassemble_from_start(&read, start, pc, target_lines)
 }
 
 fn disassemble_window_with_state<F: Fn(u16) -> u8>(
