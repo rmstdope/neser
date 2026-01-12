@@ -252,12 +252,12 @@ impl Dmc {
             // If bytes_remaining is 0, restart the sample
             if self.bytes_remaining == 0 {
                 self.restart_sample();
-                // Delay DMA request by 2-3 cycles based on odd/even CPU cycle
-                // This matches Mesen2's behavior for accurate DMC/OAM DMA collision timing
+                // Delay DMA request by 1-2 cycles based on odd/even CPU cycle
+                // Testing: reduced from Mesen2's 2-3 to see if it improves timing
                 if cpu_cycle % 2 == 0 {
-                    self.transfer_start_delay = 2;
+                    self.transfer_start_delay = 1;
                 } else {
-                    self.transfer_start_delay = 3;
+                    self.transfer_start_delay = 2;
                 }
             }
         } else {
