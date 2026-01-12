@@ -76,6 +76,7 @@ impl ScreenBuffer {
     /// # Returns
     ///
     /// A tuple containing the (r, g, b) color components
+    #[cfg(test)]
     pub fn get_pixel(&self, x: u32, y: u32) -> (u8, u8, u8) {
         let offset = self.pixel_offset(x, y);
         let result = (

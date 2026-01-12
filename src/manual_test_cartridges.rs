@@ -6,6 +6,7 @@
 /// - loops forever
 ///
 /// Intended for manual/emulator debugging, not automated correctness.
+#[allow(dead_code)]
 pub fn triangle_only_nrom_128() -> Vec<u8> {
     // iNES header (16 bytes)
     // - NROM-128 (16KB PRG)
@@ -81,6 +82,7 @@ pub fn triangle_only_nrom_128() -> Vec<u8> {
 /// - enables pulse 1 only
 /// - sets a steady audible square wave tone
 /// - loops forever
+#[allow(dead_code)]
 pub fn pulse1_only_nrom_128() -> Vec<u8> {
     // iNES header (16 bytes)
     let mut rom = Vec::with_capacity(16 + 16 * 1024);
@@ -140,6 +142,7 @@ pub fn pulse1_only_nrom_128() -> Vec<u8> {
 /// - enables pulse 2 only
 /// - sets a steady audible square wave tone
 /// - loops forever
+#[allow(dead_code)]
 pub fn pulse2_only_nrom_128() -> Vec<u8> {
     // iNES header (16 bytes)
     let mut rom = Vec::with_capacity(16 + 16 * 1024);
@@ -192,6 +195,7 @@ pub fn pulse2_only_nrom_128() -> Vec<u8> {
 /// - enables noise only
 /// - sets a steady audible noise output
 /// - loops forever
+#[allow(dead_code)]
 pub fn noise_only_nrom_128() -> Vec<u8> {
     // iNES header (16 bytes)
     let mut rom = Vec::with_capacity(16 + 16 * 1024);

@@ -14,14 +14,6 @@ impl DebuggerViewState {
     pub fn snapshot(&mut self, nes: &Nes) -> DebuggerSnapshot {
         snapshot_with_disasm_state(nes, &mut self.cpu_disasm)
     }
-
-    pub fn cpu_disasm_state(&self) -> CpuDisasmWindowState {
-        self.cpu_disasm
-    }
-
-    pub fn cpu_disasm_state_mut(&mut self) -> &mut CpuDisasmWindowState {
-        &mut self.cpu_disasm
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,10 +30,6 @@ impl Default for Debugger {
 }
 
 impl Debugger {
-    pub fn new(disasm: DisasmWindowConfig) -> Self {
-        Self { disasm }
-    }
-
     pub fn snapshot(&self, nes: &Nes) -> DebuggerSnapshot {
         snapshot_impl(nes, None, self.disasm)
     }

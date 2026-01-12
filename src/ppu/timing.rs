@@ -149,19 +149,7 @@ impl Timing {
         self.scanline < 240 && self.pixel >= 1 && self.pixel <= 256
     }
 
-    /// Get the current fetch step (0-7) within the 8-cycle pattern
-    /// Returns which of the 8 fetch operations should occur this cycle
-    #[cfg(test)]
-    pub fn get_fetch_step(&self) -> u8 {
-        ((self.pixel - 1) % 8) as u8
-    }
 
-    /// Check if shift registers should be loaded this cycle
-    /// This occurs every 8 cycles during rendering (after pattern fetch completes)
-    #[cfg(test)]
-    pub fn should_load_shift_registers(&self) -> bool {
-        self.pixel > 0 && (self.pixel % 8) == 0
-    }
 }
 
 #[cfg(test)]

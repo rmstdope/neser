@@ -428,6 +428,7 @@ impl MemController {
 
     /// Execute an OAM DMA transfer from the specified page to OAM
     /// Returns the number of bytes transferred (always 256)
+    #[cfg(test)]
     pub fn execute_oam_dma(&mut self, page: u8) {
         let source_page = (page as u16) << 8;
         for i in 0..256u16 {

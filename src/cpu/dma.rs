@@ -317,4 +317,49 @@ mod tests {
         );
         assert!(dma.dmc_dma_active());
     }
+
+    #[test]
+    fn test_set_oam_read_value_updates_writing_state() {
+        let mut dma = DmaController::new();
+
+        dma.start_oam_dma(0x02, false);
+        let action = dma.step(0);
+        assert!(matches!(action, DmaAction::DummyRead(_)));
+
+        let action = dma.step(1);
+        assert!(matches!(action, DmaAction::OamRead(0x0200)));
+
+        dma.set_oam_read_value(0xAB);
+        match dma.oam_state {
+            OamDmaState::Writing { value, .. } => assert_eq!(value, 0xAB),
+            _ => panic!("expected OAM DMA to be in Writing state"),
+        }
+    }
+
+    #[test]
+    fn test_take_cycles_consumed_returns_and_resets_counter() {
+        let mut dma = DmaController::new();
+
+        dma.start_oam_dma(0x02, false);
+        let _ = dma.step(0);
+        let _ = dma.step(1);
+
+        let cycles = dma.take_cycles_consumed();
+        assert!(cycles >= 2);
+        assert_eq!(dma.take_cycles_consumed(), 0);
+    }
+
+    #[test]
+    fn test_reset_clears_state_and_counters() {
+        let mut dma = DmaController::new();
+        dma.start_oam_dma(0x02, true);
+        dma.start_dmc_dma(0x8000);
+        let _ = dma.step(0);
+
+        dma.reset();
+        assert_eq!(dma.oam_state, OamDmaState::Idle);
+        assert_eq!(dma.dmc_state, DmcDmaState::Idle);
+        assert_eq!(dma.cycles_consumed, 0);
+        assert!(!dma.is_active());
+    }
 }
