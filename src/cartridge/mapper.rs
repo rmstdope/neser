@@ -50,6 +50,17 @@ pub trait Mapper {
         false
     }
 
+    /// Current expansion-audio output sample contributed by the mapper.
+    ///
+    /// Some mappers provide additional sound channels (e.g., Konami VRC6).
+    /// The returned value should be a linear sample intended to be added to the
+    /// base APU mix (typically in a small range like 0.0..~0.5).
+    ///
+    /// Default implementation returns 0.0 for mappers without expansion audio.
+    fn expansion_audio_sample(&self) -> f32 {
+        0.0
+    }
+
     /// Get the current nametable mirroring mode
     /// Some mappers can change mirroring dynamically
     fn get_mirroring(&self) -> MirroringMode;

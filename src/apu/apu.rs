@@ -358,6 +358,14 @@ impl Apu {
     /// Clock the APU by one CPU cycle
     /// This advances the frame counter and triggers channel clocking when needed
     pub fn clock(&mut self) {
+        self.clock_with_expansion(0.0);
+    }
+
+    /// Tick the APU by one CPU cycle, optionally adding mapper-provided expansion audio.
+    ///
+    /// `expansion_audio` is expected to be a small linear contribution (e.g. 0.0..~0.5)
+    /// that will be added to the base APU mix when a sample is generated.
+    pub fn clock_with_expansion(&mut self, expansion_audio: f32) {
         let (quarter_frame, half_frame) = self.frame_counter.clock();
 
         // Quarter frame: clock envelopes and linear counter
@@ -398,7 +406,8 @@ impl Apu {
         self.sample_accumulator += 1.0;
         if self.sample_accumulator >= self.cycles_per_sample {
             self.sample_accumulator -= self.cycles_per_sample;
-            self.pending_samples.push_back(self.mix());
+            self.pending_samples
+                .push_back(self.mix() + expansion_audio.max(0.0));
 
             if self.pending_samples.len() > MAX_PENDING_SAMPLES {
                 self.pending_samples.pop_front();
@@ -615,6 +624,23 @@ impl Default for Apu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_clock_with_expansion_adds_to_mix() {
+        let mut apu = Apu::new_for_testing();
+
+        // Advance until a sample is generated, feeding a constant expansion contribution.
+        // With all internal channels silent, the produced sample should be ~expansion.
+        for _ in 0..128 {
+            apu.clock_with_expansion(0.1);
+            if apu.sample_ready() {
+                break;
+            }
+        }
+
+        let sample = apu.get_sample().expect("expected a sample");
+        assert!((sample - 0.1).abs() < 0.0001, "sample was {sample}");
+    }
 
     #[test]
     fn test_4017_write_takes_effect_after_3_cycles_when_during_apu_cycle() {

@@ -294,7 +294,11 @@ impl Cpu {
         let ppu_cycles = self.oob_master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
-        self.apu.borrow_mut().clock();
+        let expansion = self.memory.borrow().mapper_expansion_audio_sample();
+        self.apu.borrow_mut().clock_with_expansion(expansion);
+
+        // Synthetic cycles (DMA stalls) still advance mapper IRQ counters and expansion audio.
+        self.memory.borrow_mut().mapper_cpu_cycle();
         self.end_cpu_cycle_latch_irq_line_only();
 
         // Increment internal cycle counter for get/put cycle tracking
@@ -324,7 +328,11 @@ impl Cpu {
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
         for _ in 0..cpu_cycles {
-            self.apu.borrow_mut().clock();
+            let expansion = self.memory.borrow().mapper_expansion_audio_sample();
+            self.apu.borrow_mut().clock_with_expansion(expansion);
+
+            // Synthetic cycles still advance mapper IRQ counters and expansion audio.
+            self.memory.borrow_mut().mapper_cpu_cycle();
             self.end_cpu_cycle_latch_irq_line_only();
         }
     }
@@ -443,7 +451,8 @@ impl Cpu {
         self.total_cycles += 1;
         let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
-        self.apu.borrow_mut().clock();
+        let expansion = self.memory.borrow().mapper_expansion_audio_sample();
+        self.apu.borrow_mut().clock_with_expansion(expansion);
     }
 
     fn after_cpu_cycle(&mut self, is_write: bool) {
@@ -2390,6 +2399,46 @@ mod tests {
                 i
             );
         }
+    }
+
+    #[test]
+    fn test_oam_dma_ticks_mapper_expansion_audio() {
+        // During OAM DMA, the CPU core is stalled but M2 keeps running; cartridge hardware
+        // (mapper IRQ counters + expansion audio) continues advancing.
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::clone(&memory), ppu, apu);
+
+        // Map a minimal iNES ROM with mapper 24 (VRC6).
+        let mut rom = vec![
+            b'N', b'E', b'S', 0x1A,
+            2,    // 32KB PRG
+            1,    // 8KB CHR
+            0x80, // flags6: mapper low nibble=8 (0x8<<4)
+            0x10, // flags7: mapper high nibble=1 (0x1<<4)
+            0, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        rom.extend(vec![0u8; 2 * 16 * 1024]);
+        rom.extend(vec![0u8; 1 * 8 * 1024]);
+
+        let cart = crate::cartridge::Cartridge::new(&rom).expect("cartridge should parse");
+        memory.borrow_mut().map_cartridge(cart);
+
+        // Configure VRC6 saw: rate=8, period=0, enable.
+        // Output starts at 0 and becomes non-zero after a couple of mapper CPU cycles.
+        memory.borrow_mut().write(0xB000, 0b0000_1000, false);
+        memory.borrow_mut().write(0xB001, 0x00, false);
+        memory.borrow_mut().write(0xB002, 0b1000_0000, false);
+
+        let before = memory.borrow().mapper_expansion_audio_sample();
+        assert_eq!(before, 0.0);
+
+        // Trigger and run OAM DMA.
+        memory.borrow_mut().write(0x4014, 0x02, false);
+        cpu.handle_oam_dma_if_pending()
+            .expect("DMA should be pending");
+
+        let after = memory.borrow().mapper_expansion_audio_sample();
+        assert!(after > 0.0, "expected expansion audio to advance during DMA");
     }
 
     #[test]

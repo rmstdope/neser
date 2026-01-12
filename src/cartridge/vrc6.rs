@@ -6,10 +6,229 @@ enum Vrc6Variant {
     Mapper26,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct Vrc6Pulse {
+    enabled: bool,
+    mode_ignore_duty: bool,
+    duty: u8,
+    volume: u8,
+    period: u16,
+    divider: u16,
+    duty_step: u8,
+}
+
+impl Default for Vrc6Pulse {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode_ignore_duty: false,
+            duty: 0,
+            volume: 0,
+            period: 0,
+            divider: 0,
+            duty_step: 15,
+        }
+    }
+}
+
+impl Vrc6Pulse {
+    fn write_control(&mut self, value: u8) {
+        self.volume = value & 0x0F;
+        self.duty = (value >> 4) & 0x07;
+        self.mode_ignore_duty = (value & 0x80) != 0;
+    }
+
+    fn write_period_low(&mut self, value: u8) {
+        self.period = (self.period & 0x0F00) | (value as u16);
+    }
+
+    fn write_period_high_and_enable(&mut self, value: u8) {
+        let enabled = (value & 0x80) != 0;
+        self.period = (self.period & 0x00FF) | (((value & 0x0F) as u16) << 8);
+
+        if self.enabled && !enabled {
+            // Disabling forces output to 0 and resets/halts duty.
+            self.duty_step = 15;
+        }
+        if !self.enabled && enabled {
+            // Enabling resumes from the beginning.
+            self.duty_step = 15;
+        }
+
+        self.enabled = enabled;
+    }
+
+    fn clock(&mut self, effective_period: u16) {
+        if !self.enabled {
+            return;
+        }
+
+        if self.divider == 0 {
+            self.divider = effective_period;
+            self.duty_step = (self.duty_step.wrapping_sub(1)) & 0x0F;
+        } else {
+            self.divider = self.divider.wrapping_sub(1);
+        }
+    }
+
+    fn output(&self) -> u8 {
+        if !self.enabled {
+            return 0;
+        }
+
+        if self.mode_ignore_duty {
+            return self.volume;
+        }
+
+        // Duty generator counts down 15..0. Output is V when step <= duty, else 0.
+        if self.duty_step <= self.duty {
+            self.volume
+        } else {
+            0
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Vrc6Saw {
+    enabled: bool,
+    rate: u8,
+    period: u16,
+    divider: u16,
+    accumulator: u8,
+    step: u8,
+}
+
+impl Default for Vrc6Saw {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            rate: 0,
+            period: 0,
+            divider: 0,
+            accumulator: 0,
+            step: 0,
+        }
+    }
+}
+
+impl Vrc6Saw {
+    fn write_rate(&mut self, value: u8) {
+        self.rate = value & 0x3F;
+    }
+
+    fn write_period_low(&mut self, value: u8) {
+        self.period = (self.period & 0x0F00) | (value as u16);
+    }
+
+    fn write_period_high_and_enable(&mut self, value: u8) {
+        let enabled = (value & 0x80) != 0;
+        self.period = (self.period & 0x00FF) | (((value & 0x0F) as u16) << 8);
+
+        if self.enabled && !enabled {
+            // Accumulator forced to zero while disabled.
+            self.accumulator = 0;
+            self.step = 0;
+        }
+        if !self.enabled && enabled {
+            // Re-enabling resumes from a mostly reset phase.
+            self.accumulator = 0;
+            self.step = 0;
+        }
+
+        self.enabled = enabled;
+    }
+
+    fn clock(&mut self, effective_period: u16) {
+        // Divider still runs even if the channel is disabled (per nesdev), but output is forced 0.
+        if self.divider == 0 {
+            self.divider = effective_period;
+
+            if self.enabled {
+                self.step = (self.step + 1) % 14;
+                if self.step == 0 {
+                    self.accumulator = 0;
+                } else if (self.step % 2) == 0 {
+                    self.accumulator = self.accumulator.wrapping_add(self.rate);
+                }
+            }
+        } else {
+            self.divider = self.divider.wrapping_sub(1);
+        }
+    }
+
+    fn output(&self) -> u8 {
+        if !self.enabled {
+            return 0;
+        }
+        // High 5 bits of accumulator.
+        self.accumulator >> 3
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct Vrc6Audio {
+    global_halt: bool,
+    global_shift: u8,
+    pulse1: Vrc6Pulse,
+    pulse2: Vrc6Pulse,
+    saw: Vrc6Saw,
+}
+
+impl Vrc6Audio {
+    // Conservative gain: keep expansion audio from dominating the base APU mix.
+    const MIX_GAIN: f32 = 0.35;
+
+    fn write_freq_control(&mut self, value: u8) {
+        let halt = (value & 0b0000_0001) != 0;
+        self.global_halt = halt;
+
+        // 256x overrides 16x.
+        self.global_shift = if (value & 0b0000_0100) != 0 {
+            8
+        } else if (value & 0b0000_0010) != 0 {
+            4
+        } else {
+            0
+        };
+    }
+
+    fn effective_period(&self, period: u16) -> u16 {
+        let shift = self.global_shift.min(8);
+        period >> shift
+    }
+
+    fn cpu_cycle(&mut self) {
+        if self.global_halt {
+            return;
+        }
+
+        let p1 = self.effective_period(self.pulse1.period);
+        let p2 = self.effective_period(self.pulse2.period);
+        let saw = self.effective_period(self.saw.period);
+
+        self.pulse1.clock(p1);
+        self.pulse2.clock(p2);
+        self.saw.clock(saw);
+    }
+
+    fn raw_output(&self) -> u8 {
+        let p1 = self.pulse1.output();
+        let p2 = self.pulse2.output();
+        let saw = self.saw.output();
+        p1.saturating_add(p2).saturating_add(saw)
+    }
+
+    fn sample(&self) -> f32 {
+        // VRC6 audio DAC is linear; the chip sums 2x4-bit pulse + 5-bit saw (max 61).
+        (self.raw_output() as f32 / 61.0) * Self::MIX_GAIN
+    }
+}
+
 /// Konami VRC6 mapper (iNES Mapper 24/26).
 ///
-/// This implementation currently focuses on PRG/CHR banking + mirroring control.
-/// VRC6 audio expansion is handled elsewhere.
+/// This implementation supports PRG/CHR banking + mirroring control, VRC IRQ,
+/// and VRC6 expansion audio (2 pulse + 1 saw).
 pub struct VRC6Mapper {
     variant: Vrc6Variant,
 
@@ -33,6 +252,9 @@ pub struct VRC6Mapper {
     irq_enable_after_ack: bool,
     irq_asserted: bool,
     irq_prescaler: i32,
+
+    // --- VRC6 expansion audio ---
+    audio: Vrc6Audio,
 }
 
 impl VRC6Mapper {
@@ -78,6 +300,8 @@ impl VRC6Mapper {
             irq_enable_after_ack: false,
             irq_asserted: false,
             irq_prescaler: 0,
+
+            audio: Vrc6Audio::default(),
         }
     }
 
@@ -242,6 +466,16 @@ impl Mapper for VRC6Mapper {
                 let reg = self.normalize_reg_addr(addr);
                 match reg {
                     0x8000..=0x8003 => self.prg_bank_16k = value & 0x0F,
+                    0x9000 => self.audio.pulse1.write_control(value),
+                    0x9001 => self.audio.pulse1.write_period_low(value),
+                    0x9002 => self.audio.pulse1.write_period_high_and_enable(value),
+                    0x9003 => self.audio.write_freq_control(value),
+                    0xA000 => self.audio.pulse2.write_control(value),
+                    0xA001 => self.audio.pulse2.write_period_low(value),
+                    0xA002 => self.audio.pulse2.write_period_high_and_enable(value),
+                    0xB000 => self.audio.saw.write_rate(value),
+                    0xB001 => self.audio.saw.write_period_low(value),
+                    0xB002 => self.audio.saw.write_period_high_and_enable(value),
                     0xC000..=0xC003 => self.prg_bank_8k = value & 0x1F,
                     0xB003 => {
                         self.b003 = value;
@@ -284,7 +518,7 @@ impl Mapper for VRC6Mapper {
                         let idx = 4 + (reg & 0x0003) as usize;
                         self.chr_banks_1k[idx] = value;
                     }
-                    // IRQ and audio registers are not yet modeled.
+                    // Other VRC6 registers not currently modeled.
                     _ => {}
                 }
             }
@@ -316,11 +550,16 @@ impl Mapper for VRC6Mapper {
     }
 
     fn cpu_cycle(&mut self) {
+        self.audio.cpu_cycle();
         self.tick_vrc_irq();
     }
 
     fn irq_pending(&self) -> bool {
         self.irq_asserted
+    }
+
+    fn expansion_audio_sample(&self) -> f32 {
+        self.audio.sample()
     }
 
     fn get_mirroring(&self) -> MirroringMode {
@@ -341,6 +580,48 @@ mod tests {
             data[start..end].fill(bank as u8);
         }
         data
+    }
+
+    #[test]
+    fn test_vrc6_audio_pulse_mode_ignores_duty_outputs_volume_when_enabled() {
+        // Red-phase test: VRC6 expansion audio should produce non-zero output when configured.
+        // Pulse control: MDDD VVVV (M=1 => ignore duty)
+        // Freq high: E... FFFF (E=1 enables channel)
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("VRC6 (mapper 24) should be implemented");
+
+        // Pulse 1: mode=1, duty doesn't matter, volume=15
+        mapper.write_prg(0x9000, 0b1000_1111);
+        mapper.write_prg(0x9001, 0x00);
+        mapper.write_prg(0x9002, 0b1000_0000); // enable, period high = 0
+
+        // With mode set, we expect an audible non-zero contribution.
+        assert!(mapper.expansion_audio_sample() > 0.0);
+    }
+
+    #[test]
+    fn test_vrc6_audio_saw_outputs_non_zero_when_enabled_with_rate() {
+        // Red-phase test: Saw should output non-zero when enabled and clocked.
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("VRC6 (mapper 24) should be implemented");
+
+        // Saw: rate=8, period=0, enable
+        mapper.write_prg(0xB000, 0b0000_1000);
+        mapper.write_prg(0xB001, 0x00);
+        mapper.write_prg(0xB002, 0b1000_0000);
+
+        // Clock a few CPU cycles so the accumulator advances.
+        for _ in 0..8 {
+            mapper.cpu_cycle();
+        }
+
+        assert!(mapper.expansion_audio_sample() > 0.0);
     }
 
     #[test]
@@ -446,8 +727,13 @@ mod tests {
         let chr_rom = banked_data(1 * 1024, 32);
 
         // Mapper 24: write R1 at $D001 to bank 7 -> $0400-$07FF reads bank 7.
-        let mut m24 = create_mapper(24, prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
-            .expect("VRC6 (mapper 24) should be implemented");
+        let mut m24 = create_mapper(
+            24,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            MirroringMode::Horizontal,
+        )
+        .expect("VRC6 (mapper 24) should be implemented");
         m24.write_prg(0xD001, 7);
         assert_eq!(m24.read_chr(0x0400), 7);
 

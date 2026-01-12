@@ -219,6 +219,14 @@ impl MemController {
             .unwrap_or(false)
     }
 
+    /// Sample the mapper-provided expansion-audio output.
+    pub fn mapper_expansion_audio_sample(&self) -> f32 {
+        self.cartridge
+            .as_ref()
+            .map(|cart| cart.borrow().mapper().expansion_audio_sample())
+            .unwrap_or(0.0)
+    }
+
     /// Tick the active mapper for one CPU cycle.
     ///
     /// Some mappers implement CPU-cycle-driven IRQ systems (e.g., Konami VRC IRQ).
