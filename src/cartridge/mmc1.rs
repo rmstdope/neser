@@ -120,7 +120,8 @@ impl MMC1Mapper {
 
     fn get_mirroring_mode(&self) -> MirroringMode {
         match self.control & 0x03 {
-            0 | 1 => MirroringMode::SingleScreen, // 0 and 1 are both single-screen modes
+            0 => MirroringMode::SingleScreenLower, // One-screen, lower bank
+            1 => MirroringMode::SingleScreenUpper, // One-screen, upper bank
             2 => MirroringMode::Vertical,
             3 => MirroringMode::Horizontal,
             _ => unreachable!(),
@@ -314,11 +315,11 @@ mod tests {
         mapper.write_prg(0x8000, 0b10000000);
 
         // Control register should be reset to default: PRG mode 3 (fix last bank)
-        // Start a new load with value 0b00000 (mirroring mode 0 = one screen)
+        // Start a new load with value 0b00000 (mirroring mode 0 = one screen lower)
         for _ in 0..5 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
     }
 
     #[test]
@@ -333,20 +334,20 @@ mod tests {
         let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("Failed to create MMC1 mapper");
 
-        // Load 0b00000 (mirroring = 0)
+        // Load 0b00000 (mirroring = 0 = SingleScreenLower)
         for _ in 0..5 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
 
-        // Load 0b00001 (mirroring = 1)
+        // Load 0b00001 (mirroring = 1 = SingleScreenUpper)
         mapper.write_prg(0x8000, 0b00000001);
         for _ in 0..4 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenUpper);
 
-        // Load 0b00010 (mirroring = 2)
+        // Load 0b00010 (mirroring = 2 = Vertical)
         mapper.write_prg(0x8000, 0b00000000);
         mapper.write_prg(0x8000, 0b00000001);
         for _ in 0..3 {
@@ -354,7 +355,7 @@ mod tests {
         }
         assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
 
-        // Load 0b00011 (mirroring = 3)
+        // Load 0b00011 (mirroring = 3 = Horizontal)
         mapper.write_prg(0x8000, 0b00000001);
         mapper.write_prg(0x8000, 0b00000001);
         for _ in 0..3 {
