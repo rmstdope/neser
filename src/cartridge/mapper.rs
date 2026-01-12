@@ -8,6 +8,7 @@ use super::gxrom::GxROMMapper;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
+use super::mmc5::MMC5Mapper;
 use super::nrom::NROMMapper;
 use super::uxrom::UxROMMapper;
 use super::vrc6::VRC6Mapper;
@@ -79,13 +80,14 @@ pub fn create_mapper(
         2 => Ok(Box::new(UxROMMapper::new(prg_rom, chr_rom, mirroring))),
         3 => Ok(Box::new(CNROMMapper::new(prg_rom, chr_rom, mirroring))),
         4 => Ok(Box::new(MMC3Mapper::new(prg_rom, chr_rom, mirroring))),
-        9 => Ok(Box::new(MMC2Mapper::new(prg_rom, chr_rom, mirroring))),
-        24 => Ok(Box::new(VRC6Mapper::new(24, prg_rom, chr_rom, mirroring))),
-        26 => Ok(Box::new(VRC6Mapper::new(26, prg_rom, chr_rom, mirroring))),
+        5 => Ok(Box::new(MMC5Mapper::new(prg_rom, chr_rom, mirroring))),
         7 => Ok(Box::new(AxROMMapper::new(prg_rom, chr_rom, mirroring))),
+        9 => Ok(Box::new(MMC2Mapper::new(prg_rom, chr_rom, mirroring))),
         11 => Ok(Box::new(ColorDreamsMapper::new(
             prg_rom, chr_rom, mirroring,
         ))),
+        24 => Ok(Box::new(VRC6Mapper::new(24, prg_rom, chr_rom, mirroring))),
+        26 => Ok(Box::new(VRC6Mapper::new(26, prg_rom, chr_rom, mirroring))),
         66 => Ok(Box::new(GxROMMapper::new(prg_rom, chr_rom, mirroring))),
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,
