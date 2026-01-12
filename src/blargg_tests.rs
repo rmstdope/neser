@@ -79,10 +79,7 @@ mod tests {
             };
 
             let cartridge = match Cartridge::new(&rom_data) {
-                Ok(cart) => {
-                    eprintln!("ROM loaded successfully: {}", self.rom_path);
-                    cart
-                }
+                Ok(cart) => cart,
                 Err(e) => {
                     eprintln!("Failed to parse ROM {}: {}", self.rom_path, e);
                     return BlarggTestResult::Fail(0x81 as u8);
@@ -220,22 +217,6 @@ mod tests {
             }
 
             // No result found within timeout
-            if let Some((frame, status)) = first_nonzero_status {
-                eprintln!(
-                    "Test timed out. First non-zero status: 0x{:02X} at frame {}",
-                    status, frame
-                );
-            } else {
-                eprintln!("Test timed out. Status byte never changed from 0x00");
-                // Check for the signature bytes
-                let sig1 = nes.memory.borrow().read_for_testing(0x6001);
-                let sig2 = nes.memory.borrow().read_for_testing(0x6002);
-                let sig3 = nes.memory.borrow().read_for_testing(0x6003);
-                eprintln!(
-                    "Signature bytes at $6001-$6003: {:02X} {:02X} {:02X} (expected: DE B0 G1)",
-                    sig1, sig2, sig3
-                );
-            }
             BlarggTestResult::Timeout
         }
     }
