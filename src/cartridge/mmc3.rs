@@ -53,7 +53,7 @@ impl MMC3Mapper {
             chr_ram,
             prg_ram: vec![0; Self::PRG_RAM_SIZE],
             mirroring,
-            prg_ram_enabled: false,
+            prg_ram_enabled: true, // PRG-RAM enabled by default on power-on
             prg_ram_write_protected: false,
             bank_select: 0,
             regs: [0; 8],
@@ -384,7 +384,7 @@ mod tests {
         // MMC3 PRG-RAM control ($A001, odd address):
         // - bit 7: PRG-RAM enable (0 = disabled)
         // - bit 6: PRG-RAM write protect (1 = write-protected)
-        // For this emulator, when PRG-RAM is disabled we expect reads to return 0 and writes to be ignored.
+        // PRG-RAM is enabled by default on power-on (hardware behavior).
 
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 16);
@@ -392,19 +392,24 @@ mod tests {
         let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC3 (mapper 4) should be implemented");
 
-        // Default: PRG-RAM disabled
+        // Default: PRG-RAM enabled (can read and write)
         mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+
+        // Disable PRG-RAM: reads return 0, writes are ignored
+        mapper.write_prg(0xA001, 0b0000_0000);
+        mapper.write_prg(0x6000, 0xBB);
         assert_eq!(mapper.read_prg(0x6000), 0x00);
 
         // Enable PRG-RAM and allow writes
         mapper.write_prg(0xA001, 0b1000_0000);
-        mapper.write_prg(0x6000, 0xBB);
-        assert_eq!(mapper.read_prg(0x6000), 0xBB);
+        mapper.write_prg(0x6000, 0xCC);
+        assert_eq!(mapper.read_prg(0x6000), 0xCC);
 
         // Enable + write-protect (writes ignored, reads still work)
         mapper.write_prg(0xA001, 0b1100_0000);
-        mapper.write_prg(0x6000, 0xCC);
-        assert_eq!(mapper.read_prg(0x6000), 0xBB);
+        mapper.write_prg(0x6000, 0xDD);
+        assert_eq!(mapper.read_prg(0x6000), 0xCC);
     }
 
     #[test]
