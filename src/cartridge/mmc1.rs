@@ -64,7 +64,7 @@ impl MMC1Mapper {
             prg_ram: vec![0; PRG_RAM_SIZE],
             chr_memory,
             has_chr_ram,
-            shift_register: 0,
+            shift_register: 0x10, // Power-on state: bit 4 set
             write_count: 0,
             control: MMC1_DEFAULT_CONTROL, // Default: PRG mode 3 (fix last bank), CHR mode 0
             chr_bank_0: 0,
@@ -74,7 +74,7 @@ impl MMC1Mapper {
     }
 
     fn reset_shift_register(&mut self) {
-        self.shift_register = 0;
+        self.shift_register = 0x10; // Reset to power-on state: bit 4 set
         self.write_count = 0;
         self.control |= MMC1_DEFAULT_CONTROL; // Set PRG mode to 3 (fix last bank)
     }
@@ -105,7 +105,7 @@ impl MMC1Mapper {
             }
 
             // Reset shift register for next write sequence
-            self.shift_register = 0;
+            self.shift_register = 0x10; // Reset to power-on state
             self.write_count = 0;
         }
     }
@@ -604,5 +604,52 @@ mod tests {
         assert_eq!(mapper.read_chr(0x0000), 0xAA);
         assert_eq!(mapper.read_chr(0x1000), 0xBB);
         assert_eq!(mapper.read_chr(0x1FFF), 0xCC);
+    }
+
+    #[test]
+    fn test_mmc1_shift_register_power_on_state() {
+        // MMC1 hardware shift register should start at 0x10 (bit 4 set)
+        // This means the first write will shift bit 4 right and OR in bit 0
+        // After 5 writes, the shift register should contain the 5-bit value
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Write sequence: 1, 0, 1, 0, 1 should result in value 0b10101
+        // With proper power-on state (0x10), after 5 writes we should see the bit pattern
+        mapper.write_prg(0x8000, 0b00000001); // Write bit 0 = 1
+        mapper.write_prg(0x8000, 0b00000000); // Write bit 0 = 0
+        mapper.write_prg(0x8000, 0b00000001); // Write bit 0 = 1
+        mapper.write_prg(0x8000, 0b00000000); // Write bit 0 = 0
+        mapper.write_prg(0x8000, 0b00000001); // Write bit 0 = 1 (5th write, should load)
+
+        // The control register should now contain 0b10101 (mirroring = 0b01 = SingleScreenUpper)
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenUpper);
+    }
+
+    #[test]
+    fn test_mmc1_shift_register_reset_clears_to_power_on_state() {
+        // After reset, the shift register should go back to 0x10
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Failed to create MMC1 mapper");
+
+        // Do some writes
+        mapper.write_prg(0x8000, 0b00000001);
+        mapper.write_prg(0x8000, 0b00000001);
+
+        // Reset with bit 7 set
+        mapper.write_prg(0x8000, 0b10000000);
+
+        // Now write a sequence and verify it works correctly
+        // Write 5 ones: should result in 0b11111 after loading
+        for _ in 0..5 {
+            mapper.write_prg(0x8000, 0b00000001);
+        }
+
+        // Control register should be 0b11111 (mirroring = 0b11 = Horizontal)
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
     }
 }
