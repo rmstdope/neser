@@ -24,11 +24,19 @@ pub struct VRC6Mapper {
 
     b003: u8,
     mirroring: MirroringMode,
+
+    // --- VRC IRQ (used by VRC6) ---
+    irq_latch: u8,
+    irq_counter: u8,
+    irq_enabled: bool,
+    irq_mode_cycle: bool,
+    irq_enable_after_ack: bool,
+    irq_asserted: bool,
+    irq_prescaler: i32,
 }
 
 impl VRC6Mapper {
     const PRG_BANK_SIZE_8K: usize = 0x2000;
-    const PRG_BANK_SIZE_16K: usize = 0x4000;
     const CHR_BANK_SIZE_1K: usize = 0x0400;
     const PRG_RAM_SIZE: usize = 0x2000;
     const DEFAULT_CHR_RAM_SIZE: usize = 0x2000;
@@ -62,6 +70,14 @@ impl VRC6Mapper {
             chr_banks_1k: [0; 8],
             b003: 0,
             mirroring,
+
+            irq_latch: 0,
+            irq_counter: 0,
+            irq_enabled: false,
+            irq_mode_cycle: false,
+            irq_enable_after_ack: false,
+            irq_asserted: false,
+            irq_prescaler: 0,
         }
     }
 
@@ -142,6 +158,45 @@ impl VRC6Mapper {
             self.chr_rom.get(addr).copied().unwrap_or(0)
         }
     }
+
+    fn reset_irq_prescaler(&mut self) {
+        // VRC IRQ scanline-mode prescaler (nesdev): 341 master ticks / 3 per CPU cycle.
+        // Using the simple model: start at 341 and subtract 3 each CPU cycle; when <= 0,
+        // add 341 and clock the IRQ counter. This makes the first clock after 114 cycles.
+        self.irq_prescaler = 341;
+    }
+
+    fn acknowledge_irq(&mut self) {
+        self.irq_asserted = false;
+    }
+
+    fn clock_vrc_irq_counter(&mut self) {
+        // VRC IRQ (nesdev):
+        // If counter is $FF, reload from latch and trip IRQ; otherwise increment.
+        if self.irq_counter == 0xFF {
+            self.irq_counter = self.irq_latch;
+            self.irq_asserted = true;
+        } else {
+            self.irq_counter = self.irq_counter.wrapping_add(1);
+        }
+    }
+
+    fn tick_vrc_irq(&mut self) {
+        if !self.irq_enabled {
+            return;
+        }
+
+        if self.irq_mode_cycle {
+            self.clock_vrc_irq_counter();
+            return;
+        }
+
+        self.irq_prescaler -= 3;
+        if self.irq_prescaler <= 0 {
+            self.irq_prescaler += 341;
+            self.clock_vrc_irq_counter();
+        }
+    }
 }
 
 impl Mapper for VRC6Mapper {
@@ -192,6 +247,35 @@ impl Mapper for VRC6Mapper {
                         self.b003 = value;
                         self.update_mirroring_from_b003();
                     }
+                    0xF000 => {
+                        // IRQ Latch
+                        self.irq_latch = value;
+                    }
+                    0xF001 => {
+                        // IRQ Control (.... .MEA)
+                        // M: mode (1=cycle, 0=scanline)
+                        // E: enable (1=enabled)
+                        // A: enable after acknowledgement (copied to E on $F002 writes)
+                        self.acknowledge_irq();
+                        self.reset_irq_prescaler();
+
+                        self.irq_mode_cycle = (value & 0b0000_0100) != 0;
+                        let enable = (value & 0b0000_0010) != 0;
+                        self.irq_enable_after_ack = (value & 0b0000_0001) != 0;
+
+                        if enable {
+                            self.irq_enabled = true;
+                            self.irq_counter = self.irq_latch;
+                        } else {
+                            self.irq_enabled = false;
+                        }
+                    }
+                    0xF002 => {
+                        // IRQ Acknowledge
+                        // Any write acknowledges pending IRQ and copies A->E.
+                        self.acknowledge_irq();
+                        self.irq_enabled = self.irq_enable_after_ack;
+                    }
                     0xD000..=0xD003 => {
                         let idx = (reg & 0x0003) as usize;
                         self.chr_banks_1k[idx] = value;
@@ -231,6 +315,14 @@ impl Mapper for VRC6Mapper {
         // VRC6 does not use A12 edge IRQs (VRC IRQ is CPU-cycle based).
     }
 
+    fn cpu_cycle(&mut self) {
+        self.tick_vrc_irq();
+    }
+
+    fn irq_pending(&self) -> bool {
+        self.irq_asserted
+    }
+
     fn get_mirroring(&self) -> MirroringMode {
         self.mirroring
     }
@@ -249,6 +341,72 @@ mod tests {
             data[start..end].fill(bank as u8);
         }
         data
+    }
+
+    #[test]
+    fn test_vrc6_irq_cycle_mode_trips_and_ack_clears_and_disables_when_a_is_0() {
+        // VRC IRQ (nesdev):
+        // - $F000: latch
+        // - $F001: control (M=mode, E=enable, A=enable-after-ack)
+        // - Any write to $F001 acknowledges pending IRQ and resets prescaler.
+        // - If writing $F001 with E set, counter reloads from latch.
+        // - In cycle mode (M=1), counter clocks every CPU cycle.
+        // - When clocked: if counter == $FF => reload from latch and trip IRQ; else counter += 1.
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("VRC6 (mapper 24) should be implemented");
+
+        mapper.write_prg(0xF000, 0xFE);
+        // M=1, E=1, A=0
+        mapper.write_prg(0xF001, 0b0000_0110);
+
+        // After enable, counter reloaded to 0xFE.
+        // Cycle 1: 0xFE -> 0xFF (no IRQ)
+        mapper.cpu_cycle();
+        assert_eq!(mapper.irq_pending(), false);
+        // Cycle 2: counter == 0xFF -> trip IRQ
+        mapper.cpu_cycle();
+        assert_eq!(mapper.irq_pending(), true);
+
+        // Ack should clear IRQ and, since A=0, leave IRQ disabled.
+        mapper.write_prg(0xF002, 0);
+        assert_eq!(mapper.irq_pending(), false);
+
+        // Many more cycles should not re-assert since IRQ is disabled after ack.
+        for _ in 0..1000 {
+            mapper.cpu_cycle();
+        }
+        assert_eq!(mapper.irq_pending(), false);
+    }
+
+    #[test]
+    fn test_vrc6_irq_scanline_mode_prescaler_trips_after_114_cycles() {
+        // In scanline mode (M=0), the prescaler divides CPU cycles by ~113 2/3.
+        // A common emulation approach uses a prescaler starting at 341 and subtracting 3
+        // each CPU cycle; when it drops <= 0, add 341 and clock the IRQ counter.
+        // This means the first clock happens after 114 CPU cycles.
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("VRC6 (mapper 24) should be implemented");
+
+        // Force immediate trip on first counter clock by starting at 0xFF.
+        mapper.write_prg(0xF000, 0xFF);
+        // M=0, E=1, A=0
+        mapper.write_prg(0xF001, 0b0000_0010);
+
+        for _ in 0..113 {
+            mapper.cpu_cycle();
+        }
+        assert_eq!(mapper.irq_pending(), false);
+
+        mapper.cpu_cycle();
+        assert_eq!(mapper.irq_pending(), true);
     }
 
     #[test]

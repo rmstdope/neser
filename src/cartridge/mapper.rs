@@ -36,6 +36,12 @@ pub trait Mapper {
     /// Used for detecting A12 rising edges (for MMC3 IRQ)
     fn ppu_address_changed(&mut self, addr: u16);
 
+    /// Notify mapper that a CPU cycle has elapsed.
+    ///
+    /// Some mappers implement CPU-cycle-driven IRQ systems (e.g., Konami VRC IRQ).
+    /// Default implementation is a no-op.
+    fn cpu_cycle(&mut self) {}
+
     /// Whether the mapper is currently asserting IRQ.
     ///
     /// This is used to model mapper-generated IRQs (e.g., MMC3 scanline IRQ).
