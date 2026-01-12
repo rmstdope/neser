@@ -17,7 +17,7 @@ pub(crate) struct GlBackend {
     nes_texture_id: imgui::TextureId,
     framebuffer: Vec<u8>,
     last_frame: Instant,
-    disasm_state: debugger::CpuDisasmWindowState,
+    debugger_view_state: debugger::DebuggerViewState,
 }
 
 impl GlBackend {
@@ -120,7 +120,7 @@ impl GlBackend {
             nes_texture_id,
             framebuffer: vec![0u8; 256 * 240 * 3],
             last_frame: Instant::now(),
-            disasm_state: debugger::CpuDisasmWindowState::default(),
+            debugger_view_state: debugger::DebuggerViewState::default(),
         })
     }
 
@@ -294,7 +294,7 @@ impl GlBackend {
                 .build();
 
             if show_debugger {
-                let snapshot = debugger::snapshot_with_disasm_state(nes, &mut self.disasm_state);
+                let snapshot = self.debugger_view_state.snapshot(nes);
                 action = debugger_ui::render(&ui, &snapshot);
             }
         }
