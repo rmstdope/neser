@@ -682,12 +682,14 @@ mod tests {
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
 
         // Disable WRAM by setting bit 4 of prg_bank register ($E000-$FFFF)
-        // Write 0b10000 (16 = bit 4 set) to prg_bank register
+        // To load 0b10000 into the shift register, write the bit sequence: 0,0,0,0,1
+        // The shift register starts at 0x10, shifts right, and ORs each bit at position 4
+        // After 5 writes, this produces: 0b10000 (bit 4 set = WRAM disabled)
         mapper.write_prg(0xE000, 0b00000000);
         mapper.write_prg(0xE000, 0b00000000);
         mapper.write_prg(0xE000, 0b00000000);
         mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000001); // Load 0b10000 (after shifting)
+        mapper.write_prg(0xE000, 0b00000001);
 
         // With WRAM disabled, reads should return 0 (open bus behavior)
         assert_eq!(mapper.read_prg(0x6000), 0x00);
@@ -731,11 +733,12 @@ mod tests {
         assert_eq!(mapper.read_prg(0x7FFF), 0x33);
 
         // Disable WRAM (set bit 4 of prg_bank)
+        // Write sequence: 0,0,0,0,1 to load 0b10000
         mapper.write_prg(0xE000, 0b00000000);
         mapper.write_prg(0xE000, 0b00000000);
         mapper.write_prg(0xE000, 0b00000000);
         mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000001); // Loads 0b10000
+        mapper.write_prg(0xE000, 0b00000001); // Loads 0b10000 (bit 4 set)
 
         // All WRAM reads should return 0
         assert_eq!(mapper.read_prg(0x6000), 0x00);
