@@ -10,6 +10,7 @@ use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
 use super::nrom::NROMMapper;
 use super::uxrom::UxROMMapper;
+use super::vrc6::VRC6Mapper;
 
 pub trait Mapper {
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
@@ -62,6 +63,8 @@ pub fn create_mapper(
         3 => Ok(Box::new(CNROMMapper::new(prg_rom, chr_rom, mirroring))),
         4 => Ok(Box::new(MMC3Mapper::new(prg_rom, chr_rom, mirroring))),
         9 => Ok(Box::new(MMC2Mapper::new(prg_rom, chr_rom, mirroring))),
+        24 => Ok(Box::new(VRC6Mapper::new(24, prg_rom, chr_rom, mirroring))),
+        26 => Ok(Box::new(VRC6Mapper::new(26, prg_rom, chr_rom, mirroring))),
         7 => Ok(Box::new(AxROMMapper::new(prg_rom, chr_rom, mirroring))),
         11 => Ok(Box::new(ColorDreamsMapper::new(
             prg_rom, chr_rom, mirroring,
