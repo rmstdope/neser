@@ -200,7 +200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     // Temporary hard-coded breakpoint for debugger development.
-    event_loop.add_breakpoint(0xE486);
+    // event_loop.add_breakpoint(0xE486);
 
     // Palette display requiring only scanline-based palette changes,
     // intended to demonstrate the full palette even on less advanced emulators
@@ -215,11 +215,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_path = "roms/games/donkey kong.nes";
-    // let rom_path = "roms/games/zelda.nes";
+    let rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
     // let rom_path = "roms/games/punchout.nes";
 
     // Manual testing of Blargg
-    let rom_path = "roms/nestest.nes";
+    // let rom_path = "roms/nestest.nes";
 
     // let rom_data = manual_test_cartridges::triangle_only_nrom_128();
     // let rom_data = manual_test_cartridges::pulse1_only_nrom_128();
