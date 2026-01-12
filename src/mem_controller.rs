@@ -171,6 +171,16 @@ impl MemController {
             // Unallocated I/O space ($4018-$40FF) returns open bus
             0x4018..=0x40FF => *self.open_bus.borrow(),
 
+            // Mapper expansion area ($5000-$5FFF)
+            // Used by advanced mappers like MMC5 for extra features
+            0x5000..=0x5FFF => {
+                if let Some(ref cartridge) = self.cartridge {
+                    cartridge.borrow().mapper().read_prg(addr)
+                } else {
+                    *self.open_bus.borrow()
+                }
+            }
+
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
                 if let Some(ref cartridge) = self.cartridge {
@@ -369,6 +379,24 @@ impl MemController {
             // Writes are ignored (no side effects)
             0x4018..=0x40FF => {
                 // Silently ignore writes to unallocated I/O space
+            }
+
+            // Mapper expansion area ($5000-$5FFF)
+            // Used by advanced mappers like MMC5 for extra features
+            0x5000..=0x5FFF => {
+                if let Some(ref cartridge) = self.cartridge {
+                    let old_mirroring = cartridge.borrow().mapper().get_mirroring();
+                    cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
+                    let new_mirroring = cartridge.borrow().mapper().get_mirroring();
+                    if new_mirroring != old_mirroring {
+                        self.sync_ppu_mirroring_from_mapper(new_mirroring);
+                    }
+                } else {
+                    eprintln!(
+                        "Warning: Write to mapper expansion area {:04X} without cartridge, ignored",
+                        addr
+                    );
+                }
             }
 
             // PRG-RAM ($6000-$7FFF)

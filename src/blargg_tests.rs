@@ -610,4 +610,12 @@ mod tests {
         "roms/blargg/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes",
         60 * 15
     );
+
+    // MMC5 tests
+    blargg_test!(test_mmc5, "roms/blargg/mmc5test/mmc5test.nes", 60 * 10);
+    blargg_test!(
+        test_mmc5_v2,
+        "roms/blargg/mmc5test_v2/mmc5test.nes",
+        60 * 10
+    );
 }
