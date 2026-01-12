@@ -641,10 +641,25 @@ impl Ppu {
         };
 
         // Use rendering glitch during active rendering
+        let old_addr = self.registers.v();
         if self.should_use_rendering_glitch() {
             self.registers.inc_address_with_rendering_glitch();
         } else {
             self.registers.increment_vram_address();
+        }
+        
+        // Notify mapper of address change after increment (for MMC3 A12 detection)
+        let new_addr = self.registers.v();
+        if old_addr != new_addr {
+            if let Some(ref cartridge) = self.cartridge {
+                // For PPUDATA reads/writes, we need to prime the A12 filter similar
+                // to PPUADDR writes, as these are also manual address changes
+                let mapper = &mut *cartridge.borrow_mut();
+                for _ in 0..8 {
+                    mapper.mapper_mut().ppu_address_changed(old_addr);
+                }
+                mapper.mapper_mut().ppu_address_changed(new_addr);
+            }
         }
 
         // Update I/O bus with value read
@@ -677,10 +692,25 @@ impl Ppu {
         }
 
         // Use rendering glitch during active rendering
+        let old_addr = self.registers.v();
         if self.should_use_rendering_glitch() {
             self.registers.inc_address_with_rendering_glitch();
         } else {
             self.registers.increment_vram_address();
+        }
+        
+        // Notify mapper of address change after increment (for MMC3 A12 detection)
+        let new_addr = self.registers.v();
+        if old_addr != new_addr {
+            if let Some(ref cartridge) = self.cartridge {
+                // For PPUDATA reads/writes, we need to prime the A12 filter similar
+                // to PPUADDR writes, as these are also manual address changes
+                let mapper = &mut *cartridge.borrow_mut();
+                for _ in 0..8 {
+                    mapper.mapper_mut().ppu_address_changed(old_addr);
+                }
+                mapper.mapper_mut().ppu_address_changed(new_addr);
+            }
         }
     }
 
