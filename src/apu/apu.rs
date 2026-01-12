@@ -93,6 +93,8 @@ pub struct Apu {
     dmc_enabled: bool,
     // APU cycle counter for timer clocking
     apu_cycle: u32,
+    // CPU cycle counter (tracked by APU for DMC timing)
+    cpu_cycle: u64,
     // Power-on/reset state
     last_4017_write: u8,
 }
@@ -118,6 +120,7 @@ impl Apu {
             noise_enabled: true,
             dmc_enabled: true,
             apu_cycle: 0,
+            cpu_cycle: 0,
             last_4017_write: 0x00,
         };
 
@@ -153,6 +156,7 @@ impl Apu {
             noise_enabled: true,
             dmc_enabled: true,
             apu_cycle: 0,
+            cpu_cycle: 0,
             last_4017_write: 0x00,
         };
 
@@ -391,6 +395,12 @@ impl Apu {
         // Increment APU cycle counter
         self.apu_cycle = self.apu_cycle.wrapping_add(1);
 
+        // Increment CPU cycle counter (used for DMC timing)
+        self.cpu_cycle = self.cpu_cycle.wrapping_add(1);
+
+        // Process DMC delays and timing - must be called every CPU cycle
+        self.dmc.process_clock();
+        
         // DMC timer runs every CPU cycle (independent of frame counter)
         self.dmc.clock_timer();
 
@@ -517,8 +527,8 @@ impl Apu {
         }
         self.noise.set_length_counter_enabled(noise_enabled);
 
-        // DMC
-        self.dmc.set_enabled(value & STATUS_DMC != 0);
+        // DMC - pass current CPU cycle for accurate delay timing
+        self.dmc.set_enabled(value & STATUS_DMC != 0, self.cpu_cycle);
 
         // Side effect: Clear DMC interrupt flag
         self.dmc.clear_irq_flag();

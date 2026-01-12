@@ -44,6 +44,10 @@ pub struct Dmc {
 
     // IRQ
     interrupt_flag: bool,
+
+    // Transfer start delay (2-3 cycles after enabling DMC via $4015)
+    // This matches Mesen2 behavior for accurate timing
+    transfer_start_delay: u8,
 }
 
 impl Dmc {
@@ -64,6 +68,7 @@ impl Dmc {
             bytes_remaining: 0,
             dma_pending: false,
             interrupt_flag: false,
+            transfer_start_delay: 0,
         }
     }
 
@@ -133,7 +138,10 @@ impl Dmc {
         // Memory reader runs independently and keeps the one-byte sample buffer filled.
         // If the buffer is empty and there are bytes remaining, the DMC will fetch a byte.
         // Blargg's `apu_test/7-dmc_basics` depends on this happening immediately when empty.
-        self.fill_sample_buffer_if_needed();
+        // However, we skip this if transfer_start_delay is active (just enabled via $4015)
+        if self.transfer_start_delay == 0 {
+            self.fill_sample_buffer_if_needed();
+        }
 
         // The DMC rate table values are expressed in CPU cycles per output-unit clock.
         // To achieve an exact period of `timer_period`, we reload to `timer_period - 1`
@@ -238,17 +246,37 @@ impl Dmc {
     }
 
     /// Enable or disable the channel (called from $4015 status register)
-    pub fn set_enabled(&mut self, enabled: bool) {
+    /// cpu_cycle is the current CPU cycle count for accurate delay timing
+    pub fn set_enabled(&mut self, enabled: bool, cpu_cycle: u64) {
         if enabled {
             // If bytes_remaining is 0, restart the sample
             if self.bytes_remaining == 0 {
                 self.restart_sample();
+                // Delay DMA request by 2-3 cycles based on odd/even CPU cycle
+                // This matches Mesen2's behavior for accurate DMC/OAM DMA collision timing
+                if cpu_cycle % 2 == 0 {
+                    self.transfer_start_delay = 2;
+                } else {
+                    self.transfer_start_delay = 3;
+                }
             }
         } else {
             // Disable: clear bytes remaining
             self.bytes_remaining = 0;
             self.sample_buffer = None;
             self.silence_flag = true;
+        }
+    }
+
+    /// Process one CPU clock cycle - handles transfer start delays
+    /// Must be called once per CPU cycle to properly time DMC DMA requests
+    pub fn process_clock(&mut self) {
+        if self.transfer_start_delay > 0 {
+            self.transfer_start_delay -= 1;
+            if self.transfer_start_delay == 0 {
+                // Delay expired, now trigger DMA if buffer is still empty
+                self.fill_sample_buffer_if_needed();
+            }
         }
     }
 
@@ -506,8 +534,8 @@ mod sample_tests {
         dmc.write_sample_length(0x01); // 17 bytes
         dmc.bytes_remaining = 0; // Sample finished
 
-        // Enable channel (called from $4015)
-        dmc.set_enabled(true);
+        // Enable channel (called from $4015) - use even cycle for 2-cycle delay
+        dmc.set_enabled(true, 0);
 
         assert_eq!(dmc.current_address, 0xC800);
         assert_eq!(dmc.bytes_remaining, 17);
@@ -518,7 +546,7 @@ mod sample_tests {
         let mut dmc = Dmc::new();
         dmc.bytes_remaining = 100;
 
-        dmc.set_enabled(false);
+        dmc.set_enabled(false, 0);
 
         assert_eq!(dmc.bytes_remaining, 0);
     }
