@@ -22,3 +22,6 @@ pub mod eventloop;
 
 #[cfg(feature = "sdl")]
 pub(crate) mod gl_backend;
+
+#[cfg(feature = "sdl")]
+pub(crate) mod shader_manager;

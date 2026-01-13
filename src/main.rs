@@ -11,6 +11,8 @@ mod mem_controller;
 mod nes;
 mod ppu;
 mod screen_buffer;
+#[cfg(feature = "sdl")]
+mod shader_manager;
 mod tracing;
 
 struct CliFlag {
@@ -87,10 +89,23 @@ const CLI_FLAGS: &[CliFlag] = &[
         flag: "--fullscreen",
         help: Some("Run emulator in fullscreen mode"),
     },
+    CliFlag {
+        flag: "--shader",
+        help: Some("Specify shader preset path (e.g., shaders/crt-simple.slangp)"),
+    },
 ];
 
 fn vsync_enabled_from_args(args: &[String]) -> bool {
     !args.iter().any(|a| a == "--no-vsync")
+}
+
+fn shader_path_from_args(args: &[String]) -> Option<String> {
+    for i in 0..args.len() {
+        if args[i] == "--shader" && i + 1 < args.len() {
+            return Some(args[i + 1].clone());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -107,8 +122,16 @@ fn apply_debugger_startup_config(event_loop: &mut eventloop::EventLoop, args: &[
 
 fn validate_no_unknown_args(args: &[String]) -> Result<(), String> {
     // args[0] is the program name
-    for arg in args.iter().skip(1) {
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
+        
         if CLI_FLAGS.iter().any(|f| f.flag == arg) {
+            // If this is --shader, skip the next argument (the value)
+            if arg == "--shader" {
+                i += 1; // Skip the shader path value
+            }
+            i += 1;
             continue;
         }
 
@@ -163,6 +186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vsync_enabled = vsync_enabled_from_args(&args);
     let gamepads_enabled = !args.contains(&"--no-gamepads".to_string());
     let fullscreen = args.contains(&"--fullscreen".to_string());
+    let shader_path = shader_path_from_args(&args);
     let tracing = tracing::Tracing::from_args(&args);
 
     // Channel enable/disable flags (default: all enabled)
@@ -197,6 +221,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         audio,
         gamepads_enabled,
         fullscreen,
+        shader_path,
     )?;
 
     // Temporary hard-coded breakpoint for debugger development.
@@ -313,6 +338,7 @@ mod tests {
             None,
             false,
             false,
+            None,
         )
         .unwrap();
 

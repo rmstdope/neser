@@ -6,11 +6,13 @@ use sdl2::video::{GLContext, GLProfile, Window};
 use crate::debugger;
 use crate::debugger::ui as debugger_ui;
 use crate::nes::TvSystem;
+use crate::shader_manager::ShaderManager;
 use std::time::Instant;
 
 pub(crate) struct GlBackend {
     window: Window,
     gl_context: GLContext,
+    glow_context: std::sync::Arc<glow::Context>,
     imgui: imgui::Context,
     renderer: imgui_opengl_renderer::Renderer,
     nes_texture: gl::types::GLuint,
@@ -18,6 +20,7 @@ pub(crate) struct GlBackend {
     framebuffer: Vec<u8>,
     last_frame: Instant,
     debugger_view_state: debugger::DebuggerViewState,
+    shader_manager: ShaderManager,
 }
 
 impl GlBackend {
@@ -27,6 +30,7 @@ impl GlBackend {
         scale: f32,
         vsync_enabled: bool,
         fullscreen: bool,
+        shader_path: Option<&str>,
     ) -> Result<Self, String> {
         let video_subsystem = sdl_context.video()?;
 
@@ -111,9 +115,26 @@ impl GlBackend {
             (tex, id)
         };
 
+        // Create glow context for librashader
+        let glow_context = unsafe {
+            std::sync::Arc::new(glow::Context::from_loader_function(|s| {
+                video_subsystem.gl_get_proc_address(s) as *const _
+            }))
+        };
+
+        let mut shader_manager = ShaderManager::new();
+        
+        // Load shader preset if specified
+        if let Some(path) = shader_path {
+            if let Err(e) = shader_manager.load_preset(std::path::Path::new(path), glow_context.clone()) {
+                eprintln!("Warning: Failed to load shader preset '{}': {}", path, e);
+            }
+        }
+
         Ok(Self {
             window,
             gl_context,
+            glow_context,
             imgui,
             renderer,
             nes_texture,
@@ -121,6 +142,7 @@ impl GlBackend {
             framebuffer: vec![0u8; 256 * 240 * 3],
             last_frame: Instant::now(),
             debugger_view_state: debugger::DebuggerViewState::default(),
+            shader_manager,
         })
     }
 
@@ -304,6 +326,14 @@ impl GlBackend {
         self.window.gl_swap_window();
 
         action
+    }
+
+    pub(crate) fn cycle_shader(&mut self) {
+        if let Err(e) = self.shader_manager.cycle_shader(self.glow_context.clone()) {
+            eprintln!("Error cycling shader: {}", e);
+        } else if let Some(name) = self.shader_manager.current_preset_name() {
+            println!("Switched to shader: {}", name);
+        }
     }
 }
 
