@@ -631,27 +631,27 @@ mod tests {
     // );
 
     // MMC3 IRQ counter tests
-    blargg_test!(
+    blargg_console_test!(
         test_mmc3_irq_1_clocking,
         "roms/blargg/mmc3_irq_tests/1.Clocking.nes",
         60 * 10 // Increased timeout for initial debugging
     );
-    blargg_test!(
+    blargg_console_test!(
         test_mmc3_irq_2_details,
         "roms/blargg/mmc3_irq_tests/2.Details.nes"
     );
-    blargg_test!(
+    blargg_console_test!(
         test_mmc3_irq_3_a12_clocking,
         "roms/blargg/mmc3_irq_tests/3.A12_clocking.nes"
     );
-    blargg_test!(
+    blargg_console_test!(
         test_mmc3_irq_4_scanline_timing,
         "roms/blargg/mmc3_irq_tests/4.Scanline_timing.nes",
         60 * 5 // May need time for frame rendering
     );
     // Note: Tests 5 and 6 test different MMC3 revisions (A and B)
     // We'll implement Rev B (most common) as default
-    blargg_test!(
+    blargg_console_test!(
         test_mmc3_irq_6_rev_b,
         "roms/blargg/mmc3_irq_tests/6.MMC3_rev_B.nes"
     );
