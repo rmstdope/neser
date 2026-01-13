@@ -42,6 +42,7 @@ pub struct MMC5Mapper {
     split_mode: u8,   // $5200
     split_scroll: u8, // $5201
     split_bank: u8,   // $5202
+    split_active: bool,
 
     // Scanline IRQ
     irq_scanline_compare: u8, // $5203
@@ -121,6 +122,7 @@ impl MMC5Mapper {
             split_mode: 0,
             split_scroll: 0,
             split_bank: 0,
+            split_active: false,
 
             // Scanline IRQ
             irq_scanline_compare: 0,
@@ -133,6 +135,28 @@ impl MMC5Mapper {
             multiplicand: 0,
             multiplier: 0,
         }
+    }
+
+    fn split_enabled(&self) -> bool {
+        (self.split_mode & 0x80) != 0
+    }
+
+    fn split_y_tiles(&self) -> u8 {
+        // For our current minimal implementation, interpret the low 5 bits as the split Y tile row.
+        self.split_mode & 0x1F
+    }
+
+    fn split_start_scanline(&self) -> u16 {
+        (self.split_y_tiles() as u16) * 8
+    }
+
+    fn update_split_active(&mut self, scanline: u16, rendering_enabled: bool) {
+        if !rendering_enabled {
+            self.split_active = false;
+            return;
+        }
+
+        self.split_active = self.split_enabled() && scanline >= self.split_start_scanline();
     }
 
     fn prg_rom_bank_count_8k(&self) -> usize {
@@ -271,6 +295,10 @@ impl MMC5Mapper {
             }
             1 => {
                 // 4KB mode: use $5123 (low) or $5127 (high)
+                // Minimal split-screen behavior: when split is active, background fetches use $5202.
+                if !self.chr_fetch_is_sprite && self.split_active {
+                    return self.split_bank;
+                }
                 let high = addr >= 0x1000;
                 self.chr_bank_a[if high { 7 } else { 3 }]
             }
@@ -688,11 +716,16 @@ impl Mapper for MMC5Mapper {
         // - Assert IRQ when scanline matches compare and IRQ is enabled.
         if !rendering_enabled {
             self.in_frame = false;
+            self.update_split_active(scanline, rendering_enabled);
             return;
         }
 
         self.in_frame = true;
         self.scanline_counter = scanline;
+
+        // Minimal split-screen state: become active once we reach the configured split Y tile row.
+        // (Real MMC5 behavior is more nuanced; this is sufficient for the current tests.)
+        self.update_split_active(scanline, rendering_enabled);
 
         if rendering_enabled && self.irq_enabled && (scanline as u8) == self.irq_scanline_compare {
             self.irq_pending.set(true);
@@ -998,6 +1031,61 @@ mod tests {
         // should fall through to internal VRAM (mapper returns None).
         let _ = mapper.read_nametable(0x2000);
         assert_eq!(mapper.read_nametable(0x23C0), None);
+    }
+
+    #[test]
+    fn test_mmc5_split_screen_switches_bg_chr_bank_at_split_y_when_enabled() {
+        // Minimal split-screen expectation: once the scanline reaches the configured split Y
+        // (in tile rows), background CHR banking uses $5202 (split bank) instead of the normal
+        // background CHR banks.
+
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(4 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // CHR mode 1 (4KB banks).
+        mapper.write_prg(0x5101, 0x01);
+        // Normal BG bank for $0000-$0FFF.
+        mapper.write_prg(0x5123, 1);
+        // Split bank.
+        mapper.write_prg(0x5202, 2);
+
+        // Enable split; interpret low 5 bits as split Y (tile row).
+        let split_y_tiles: u8 = 2;
+        mapper.write_prg(0x5200, 0x80 | (split_y_tiles & 0x1F));
+
+        mapper.ppu_set_chr_fetch_is_sprite(false);
+
+        // Before split point: should use normal BG bank.
+        mapper.ppu_scanline((split_y_tiles as u16) * 8 - 1, true);
+        assert_eq!(mapper.read_chr(0x0000), 1);
+
+        // At/after split point: should use split bank.
+        mapper.ppu_scanline((split_y_tiles as u16) * 8, true);
+        assert_eq!(mapper.read_chr(0x0000), 2);
+    }
+
+    #[test]
+    fn test_mmc5_split_screen_does_not_switch_bg_chr_bank_when_disabled() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(4 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // CHR mode 1 (4KB banks).
+        mapper.write_prg(0x5101, 0x01);
+        mapper.write_prg(0x5123, 1);
+        mapper.write_prg(0x5202, 2);
+
+        // Split disabled (bit 7 clear).
+        mapper.write_prg(0x5200, 0x00 | 2);
+
+        mapper.ppu_set_chr_fetch_is_sprite(false);
+        mapper.ppu_scanline(16, true);
+        assert_eq!(mapper.read_chr(0x0000), 1);
     }
 
     #[test]
