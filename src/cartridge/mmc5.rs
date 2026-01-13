@@ -35,6 +35,9 @@ pub struct MMC5Mapper {
     ex_ram: Vec<u8>, // 1KB ExRAM at $5C00-$5FFF
     ex_ram_mode: u8, // $5104
 
+    // Extended attribute mode bookkeeping
+    last_bg_tile_index: usize,
+
     // Split screen (not fully implemented yet)
     split_mode: u8,   // $5200
     split_scroll: u8, // $5201
@@ -110,6 +113,9 @@ impl MMC5Mapper {
             // ExRAM
             ex_ram: vec![0u8; 1024],
             ex_ram_mode: 0,
+
+            // Extended attribute mode bookkeeping
+            last_bg_tile_index: 0,
 
             // Split screen
             split_mode: 0,
@@ -350,7 +356,11 @@ impl MMC5Mapper {
 
     fn fill_attribute_byte(&self) -> u8 {
         // $5107 stores a 2-bit attribute value that is replicated across an attribute byte.
-        let a = self.fill_attr & 0x03;
+        Self::replicate_2bit_attribute(self.fill_attr)
+    }
+
+    fn replicate_2bit_attribute(value: u8) -> u8 {
+        let a = value & 0x03;
         a | (a << 2) | (a << 4) | (a << 6)
     }
 }
@@ -598,22 +608,43 @@ impl Mapper for MMC5Mapper {
             return None;
         }
 
+        // Record the most recent background tile fetch address (within the 1KB nametable page).
+        // The PPU fetches a tile byte ($2000-$23BF) and then an attribute byte ($23C0-$23FF).
+        // MMC5 extended attribute mode uses the tile position to select a palette from ExRAM.
+        let page_offset = (addr & 0x03FF) as usize;
+        if page_offset < 0x03C0 {
+            self.last_bg_tile_index = page_offset;
+        }
+
+        // $5105 nametable mapping overrides always take precedence.
         match self.nametable_mapping_for_addr(addr) {
             2 => {
                 // ExRAM (1KB). Multiple quadrants mapped to ExRAM will alias.
-                let index = (addr & 0x03FF) as usize;
-                Some(self.ex_ram.get(index).copied().unwrap_or(0))
+                return Some(self.ex_ram.get(page_offset).copied().unwrap_or(0));
             }
             3 => {
                 // Fill mode: tile area returns $5106, attribute area returns replicated $5107.
-                if (addr & 0x03FF) < 0x03C0 {
-                    Some(self.fill_tile)
+                return Some(if page_offset < 0x03C0 {
+                    self.fill_tile
                 } else {
-                    Some(self.fill_attribute_byte())
-                }
+                    self.fill_attribute_byte()
+                });
             }
-            _ => None,
+            _ => {}
         }
+
+        // Extended attribute mode ($5104=1): override attribute-table reads with per-tile
+        // palette bits from ExRAM.
+        if (self.ex_ram_mode & 0x03) == 0x01 && page_offset >= 0x03C0 {
+            let ex = self
+                .ex_ram
+                .get(self.last_bg_tile_index)
+                .copied()
+                .unwrap_or(0);
+            return Some(Self::replicate_2bit_attribute(ex));
+        }
+
+        None
     }
 
     fn write_nametable(&mut self, addr: u16, value: u8) -> bool {
@@ -908,6 +939,65 @@ mod tests {
 
         assert_eq!(mapper.read_nametable(0x2000), None);
         assert!(!mapper.write_nametable(0x2000, 0xAB));
+    }
+
+    #[test]
+    fn test_mmc5_extended_attribute_mode_overrides_attribute_reads_per_tile() {
+        // MMC5 extended attribute mode ($5104=1) uses ExRAM (at $5C00-$5FFF) to provide
+        // per-tile palette selection for background rendering.
+        //
+        // Crucially, this must work even though the PPU fetches the same attribute-table address
+        // for a whole 4x4 tile region: different tiles in that region can still select different
+        // palettes, so the returned attribute byte must be derived from the *current tile*.
+
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Enable extended attribute mode.
+        mapper.write_prg(0x5104, 0x01);
+
+        // Program ExRAM per-tile palette values.
+        // We model palette selection as the low 2 bits, replicated to all quadrants in the
+        // returned attribute byte (so the PPU's normal attribute decoding works unchanged).
+        mapper.write_prg(0x5C00, 0x01);
+        mapper.write_prg(0x5C01, 0x02);
+
+        // Simulate the PPU fetching tile ($2000) then attribute ($23C0).
+        // Tile 0 uses palette 1 -> replicated attribute byte 0x55.
+        let _ = mapper.read_nametable(0x2000);
+        let attr0 = mapper
+            .read_nametable(0x23C0)
+            .expect("extended attribute mode should override attribute reads");
+        assert_eq!(attr0, 0x55);
+
+        // Next tile in the same attribute-table region ($2001) uses palette 2 -> 0xAA,
+        // even though the attribute-table address remains $23C0.
+        let _ = mapper.read_nametable(0x2001);
+        let attr1 = mapper
+            .read_nametable(0x23C0)
+            .expect("extended attribute mode should override attribute reads");
+        assert_eq!(attr1, 0xAA);
+    }
+
+    #[test]
+    fn test_mmc5_extended_attribute_mode_disabled_does_not_override_attribute_reads() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Explicitly disable extended attribute mode.
+        mapper.write_prg(0x5104, 0x00);
+        mapper.write_prg(0x5C00, 0x03);
+
+        // Without extended attributes (and without $5105 mapping ExRAM/fill), attribute reads
+        // should fall through to internal VRAM (mapper returns None).
+        let _ = mapper.read_nametable(0x2000);
+        assert_eq!(mapper.read_nametable(0x23C0), None);
     }
 
     #[test]
