@@ -64,6 +64,20 @@ impl ShaderManager {
         Ok(())
     }
 
+    /// Apply the loaded shader to transform input texture to output framebuffer.
+    /// 
+    /// TODO: Implement proper shader application using librashader FilterChain.
+    /// The challenge is correctly setting up:
+    /// 1. GLImage with the input_texture (NES output) 
+    /// 2. Viewport with correct output framebuffer and dimensions
+    /// 3. Calling FilterChain::frame() with proper lifetime management
+    /// 
+    /// The librashader 0.5 API uses:
+    /// - GLImage { handle: NativeTexture, format, size }
+    /// - Viewport { x, y, size, output: NativeFramebuffer, mvp }
+    /// - FilterChain::frame(&image, &viewport, frame_count, options)
+    /// 
+    /// For now, returns Ok() so the rest of the system can function.
     pub fn apply_shader(
         &mut self,
         _input_texture: gl::types::GLuint,

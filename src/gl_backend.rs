@@ -286,6 +286,24 @@ impl GlBackend {
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
 
+        // TODO: SHADER RENDERING PIPELINE
+        // To complete shader support, modify this section to:
+        // 
+        // 1. Create an intermediate framebuffer (FBO) if shader is loaded
+        // 2. Render self.nes_texture to the intermediate FBO
+        // 3. Apply shader_manager.apply_shader(intermediate_texture, screen_fbo, width, height)
+        // 4. The shader output becomes the new texture to display
+        //
+        // Pseudo-code:
+        // if self.shader_manager.has_shader() {
+        //     // Bind intermediate FBO
+        //     // Render nes_texture to intermediate FBO
+        //     // Apply shader from intermediate to screen
+        //     // Use shader output texture for ImGui display
+        // } else {
+        //     // Current path: display nes_texture directly
+        // }
+
         // Start ImGui frame
         {
             let ui = self.imgui.frame();
