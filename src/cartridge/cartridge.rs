@@ -39,6 +39,9 @@ impl Cartridge {
         let chr_rom_size = data[5] as usize * 8192; // 8 KB units
         let flags6 = data[6];
         let flags7 = data[7];
+        // iNES v1 header byte 8 encodes PRG-RAM size in 8KB units.
+        // A value of 0 commonly means 8KB.
+        let prg_ram_banks_8k = data[8].max(1);
 
         // Battery-backed PRG-RAM present (iNES v1): bit 1 of flags6.
         let battery_backed_prg_ram = (flags6 & 0x02) != 0;
@@ -82,8 +85,13 @@ impl Cartridge {
         let chr_rom = data[chr_rom_start..chr_rom_end].to_vec();
 
         // Create mapper instance
-        let mapper =
-            crate::cartridge::mapper::create_mapper(mapper_number, prg_rom, chr_rom, mirroring)?;
+        let mapper = crate::cartridge::mapper::create_mapper_with_prg_ram_size(
+            mapper_number,
+            prg_rom,
+            chr_rom,
+            mirroring,
+            prg_ram_banks_8k,
+        )?;
 
         Ok(Self {
             mapper,
