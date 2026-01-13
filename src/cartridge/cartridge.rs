@@ -180,6 +180,15 @@ impl Cartridge {
             battery_backed_prg_ram: false,
         }
     }
+
+    #[cfg(test)]
+    pub fn from_mapper_for_test(mapper: Box<dyn Mapper>) -> Self {
+        Self {
+            mapper,
+            save_path: None,
+            battery_backed_prg_ram: false,
+        }
+    }
 }
 
 #[cfg(test)]
