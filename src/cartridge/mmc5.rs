@@ -1,5 +1,6 @@
 use crate::cartridge::cartridge::MirroringMode;
 use crate::cartridge::mapper::Mapper;
+use std::cell::Cell;
 
 pub struct MMC5Mapper {
     prg_rom: Vec<u8>,
@@ -21,8 +22,8 @@ pub struct MMC5Mapper {
 
     // CHR banking
     chr_mode: u8,
-    chr_bank_a: [u8; 8],   // $5120-$5127 for BG
-    chr_bank_b: [u8; 4],   // $5128-$512B for sprites
+    chr_bank_a: [u8; 8], // $5120-$5127 for BG
+    chr_bank_b: [u8; 4], // $5128-$512B for sprites
 
     // Nametable control
     nametable_mapping: u8, // $5105
@@ -30,24 +31,24 @@ pub struct MMC5Mapper {
     fill_attr: u8,         // $5107
 
     // ExRAM
-    ex_ram: Vec<u8>,       // 1KB ExRAM at $5C00-$5FFF
-    ex_ram_mode: u8,       // $5104
+    ex_ram: Vec<u8>, // 1KB ExRAM at $5C00-$5FFF
+    ex_ram_mode: u8, // $5104
 
     // Split screen (not fully implemented yet)
-    split_mode: u8,        // $5200
-    split_scroll: u8,      // $5201
-    split_bank: u8,        // $5202
+    split_mode: u8,   // $5200
+    split_scroll: u8, // $5201
+    split_bank: u8,   // $5202
 
     // Scanline IRQ
     irq_scanline_compare: u8, // $5203
-    irq_enabled: bool,     // $5204 bit 7
-    irq_pending: bool,     // IRQ pending flag
-    in_frame: bool,        // Track if PPU is in frame
-    scanline_counter: u16, // Current scanline counter
+    irq_enabled: bool,        // $5204 bit 7
+    irq_pending: Cell<bool>,  // IRQ pending flag (cleared on read of $5204)
+    in_frame: bool,           // Track if PPU is in frame
+    scanline_counter: u16,    // Current scanline counter
 
     // Hardware multiplier
-    multiplicand: u8,      // $5205
-    multiplier: u8,        // $5206
+    multiplicand: u8, // $5205
+    multiplier: u8,   // $5206
 }
 
 enum Chr {
@@ -116,7 +117,7 @@ impl MMC5Mapper {
             // Scanline IRQ
             irq_scanline_compare: 0,
             irq_enabled: false,
-            irq_pending: false,
+            irq_pending: Cell::new(false),
             in_frame: false,
             scanline_counter: 0,
 
@@ -249,7 +250,7 @@ impl MMC5Mapper {
         // Mode 1: 4KB (two banks)
         // Mode 2: 2KB (four banks)
         // Mode 3: 1KB (eight banks, with separate BG/sprite banks)
-        
+
         // Without proper BG/sprite detection, use A registers for all fetches
         let chr_mode = self.chr_mode & 0x03;
         match chr_mode {
@@ -279,16 +280,16 @@ impl MMC5Mapper {
     fn read_chr_banked(&self, bank: u8, addr: u16) -> u8 {
         // Calculate the actual address in CHR ROM/RAM
         let bank_size = match self.chr_mode {
-            0 => 8 * 1024,  // 8KB
-            1 => 4 * 1024,  // 4KB
-            2 => 2 * 1024,  // 2KB
-            3 => 1 * 1024,  // 1KB
+            0 => 8 * 1024, // 8KB
+            1 => 4 * 1024, // 4KB
+            2 => 2 * 1024, // 2KB
+            3 => 1 * 1024, // 1KB
             _ => 1 * 1024,
         };
-        
+
         let offset = (addr as usize) % bank_size;
         let chr_addr = (bank as usize) * bank_size + offset;
-        
+
         match &self.chr {
             Chr::Rom(data) => {
                 if data.is_empty() {
@@ -304,16 +305,16 @@ impl MMC5Mapper {
     fn write_chr_banked(&mut self, bank: u8, addr: u16, value: u8) {
         // Calculate the actual address in CHR RAM
         let bank_size = match self.chr_mode {
-            0 => 8 * 1024,  // 8KB
-            1 => 4 * 1024,  // 4KB
-            2 => 2 * 1024,  // 2KB
-            3 => 1 * 1024,  // 1KB
+            0 => 8 * 1024, // 8KB
+            1 => 4 * 1024, // 4KB
+            2 => 2 * 1024, // 2KB
+            3 => 1 * 1024, // 1KB
             _ => 1 * 1024,
         };
-        
+
         let offset = (addr as usize) % bank_size;
         let chr_addr = (bank as usize) * bank_size + offset;
-        
+
         if let Chr::Ram(data) = &mut self.chr {
             let data_len = data.len();
             if let Some(slot) = data.get_mut(chr_addr % data_len) {
@@ -322,7 +323,6 @@ impl MMC5Mapper {
         }
     }
 }
-
 
 impl Mapper for MMC5Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
@@ -339,8 +339,15 @@ impl Mapper for MMC5Mapper {
 
             // IRQ status (read clears pending flag)
             0x5204 => {
-                let result = if self.irq_pending { 0x80 } else { 0x00 }
-                    | if self.in_frame { 0x40 } else { 0x00 };
+                const IRQ_PENDING_BIT: u8 = 0x80;
+                const IN_FRAME_BIT: u8 = 0x40;
+
+                let result = (if self.irq_pending.get() {
+                    IRQ_PENDING_BIT
+                } else {
+                    0x00
+                }) | (if self.in_frame { IN_FRAME_BIT } else { 0x00 });
+                self.irq_pending.set(false);
                 result
             }
 
@@ -481,7 +488,7 @@ impl Mapper for MMC5Mapper {
             0x5204 => {
                 self.irq_enabled = (value & 0x80) != 0;
                 if !self.irq_enabled {
-                    self.irq_pending = false;
+                    self.irq_pending.set(false);
                 }
             }
 
@@ -558,17 +565,40 @@ impl Mapper for MMC5Mapper {
     }
 
     fn irq_pending(&self) -> bool {
-        self.irq_pending
+        self.irq_pending.get()
+    }
+
+    fn ppu_scanline(&mut self, scanline: u16, rendering_enabled: bool) {
+        // MMC5 scanline IRQ behavior (current scope: scanline-notify based):
+        // - Only active during rendering.
+        // - Track in-frame while rendering is enabled.
+        // - Assert IRQ when scanline matches compare and IRQ is enabled.
+        if !rendering_enabled {
+            self.in_frame = false;
+            return;
+        }
+
+        self.in_frame = true;
+        self.scanline_counter = scanline;
+
+        if rendering_enabled && self.irq_enabled && (scanline as u8) == self.irq_scanline_compare {
+            self.irq_pending.set(true);
+        }
+    }
+
+    fn ppu_end_frame(&mut self) {
+        // End-of-frame bookkeeping; does not clear irq_pending (that is read-to-clear via $5204).
+        self.in_frame = false;
     }
 
     fn get_mirroring(&self) -> MirroringMode {
         // MMC5's $5105 register controls nametable mapping
         // Each 2 bits control one quadrant (bits 1-0: $2000, 3-2: $2400, 5-4: $2800, 7-6: $2C00)
         // Values: 0 = $2000 (A), 1 = $2400 (B), 2 = ExRAM, 3 = fill mode
-        
+
         // For basic compatibility, map common patterns to standard mirroring modes
         let mapping = self.nametable_mapping;
-        
+
         // Check for standard patterns
         if mapping == 0b00_00_00_00 {
             // All to A -> Single screen
@@ -583,7 +613,7 @@ impl Mapper for MMC5Mapper {
             // Horizontal mirroring (A|B, A|B)
             return MirroringMode::Horizontal;
         }
-        
+
         // Default to the original iNES mirroring for other cases
         self.mirroring
     }
@@ -592,7 +622,10 @@ impl Mapper for MMC5Mapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
+    use crate::cartridge::mapper::Mapper;
     use crate::cartridge::mapper::create_mapper;
+
+    use super::MMC5Mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
         let mut data = vec![0u8; bank_size * num_banks];
@@ -602,6 +635,63 @@ mod tests {
             data[start..end].fill(bank as u8);
         }
         data
+    }
+
+    fn new_mmc5_for_irq_test() -> MMC5Mapper {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+        MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal)
+    }
+
+    #[test]
+    fn test_mmc5_irq_triggers_when_scanline_matches_compare_and_enabled() {
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        // $5203: scanline compare
+        mmc5.write_prg(0x5203, 5);
+        // $5204: enable IRQ (bit 7)
+        mmc5.write_prg(0x5204, 0x80);
+
+        // No rendering => should not trigger.
+        mmc5.ppu_scanline(5, false);
+        assert!(!mmc5.irq_pending());
+
+        // Rendering enabled: should trigger when scanline == compare.
+        mmc5.ppu_scanline(4, true);
+        assert!(!mmc5.irq_pending());
+        mmc5.ppu_scanline(5, true);
+        assert!(mmc5.irq_pending());
+    }
+
+    #[test]
+    fn test_mmc5_irq_status_register_reports_pending_and_in_frame() {
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        // Start of visible frame (rendering enabled) should set the in-frame flag (bit 6).
+        mmc5.ppu_scanline(0, true);
+        let status = mmc5.read_prg(0x5204);
+        assert_eq!(status & 0x40, 0x40);
+
+        // Pending flag (bit 7) becomes set when the IRQ condition triggers.
+        mmc5.write_prg(0x5203, 2);
+        mmc5.write_prg(0x5204, 0x80);
+        mmc5.ppu_scanline(2, true);
+        let status = mmc5.read_prg(0x5204);
+        assert_eq!(status & 0x80, 0x80);
+    }
+
+    #[test]
+    fn test_mmc5_irq_pending_clears_on_read_of_5204() {
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        mmc5.write_prg(0x5203, 1);
+        mmc5.write_prg(0x5204, 0x80);
+        mmc5.ppu_scanline(1, true);
+        assert!(mmc5.irq_pending());
+
+        // Reading $5204 should clear the pending flag.
+        let _ = mmc5.read_prg(0x5204);
+        assert!(!mmc5.irq_pending());
     }
 
     #[test]
