@@ -37,6 +37,35 @@ pub trait Mapper {
     /// Used for detecting A12 rising edges (for MMC3 IRQ)
     fn ppu_address_changed(&mut self, addr: u16);
 
+    /// Set the current PPU CHR fetch kind.
+    ///
+    /// Some mappers (e.g., MMC5) need to distinguish between background and sprite CHR fetches.
+    /// Default implementation is a no-op.
+    fn ppu_set_chr_fetch_is_sprite(&mut self, _is_sprite: bool) {}
+
+    /// Notify mapper about the current scanline (during rendering) for PPU-driven IRQ systems.
+    /// Default implementation is a no-op.
+    fn ppu_scanline(&mut self, _scanline: u16, _rendering_enabled: bool) {}
+
+    /// Notify mapper that a frame has ended.
+    /// Default implementation is a no-op.
+    fn ppu_end_frame(&mut self) {}
+
+    /// Optional mapper override for PPU nametable reads ($2000-$3EFF).
+    ///
+    /// If the mapper wishes to supply the byte (e.g., MMC5 ExRAM/fill), return `Some(value)`.
+    /// Return `None` to fall back to the PPU's internal nametable VRAM.
+    fn read_nametable(&mut self, _addr: u16) -> Option<u8> {
+        None
+    }
+
+    /// Optional mapper override for PPU nametable writes ($2000-$3EFF).
+    ///
+    /// Return `true` if the mapper handled the write, `false` to fall back to internal VRAM.
+    fn write_nametable(&mut self, _addr: u16, _value: u8) -> bool {
+        false
+    }
+
     /// Notify mapper that a CPU cycle has elapsed.
     ///
     /// Some mappers implement CPU-cycle-driven IRQ systems (e.g., Konami VRC IRQ).

@@ -42,6 +42,25 @@ pub struct Ppu {
 }
 
 impl Ppu {
+    fn with_mapper_mut<F>(&mut self, f: F)
+    where
+        F: FnOnce(&mut dyn crate::cartridge::Mapper),
+    {
+        if let Some(ref cartridge) = self.cartridge {
+            let mut cartridge = cartridge.borrow_mut();
+            f(cartridge.mapper_mut());
+        }
+    }
+
+    fn notify_chr_fetch_kind(cartridge: &Option<Rc<RefCell<Cartridge>>>, is_sprite: bool) {
+        if let Some(cartridge) = cartridge {
+            cartridge
+                .borrow_mut()
+                .mapper_mut()
+                .ppu_set_chr_fetch_is_sprite(is_sprite);
+        }
+    }
+
     fn set_vblank_for_nmi(&mut self) {
         self.vblank_for_nmi = true;
     }
@@ -89,8 +108,34 @@ impl Ppu {
 
     /// Process a single PPU cycle
     fn tick(&mut self) {
+        let is_rendering_enabled = self.registers.is_rendering_enabled();
+
+        let prerender_scanline = match self.timing.tv_system() {
+            TvSystem::Ntsc => 261,
+            TvSystem::Pal => 311,
+        };
+
+        let scanline_before_tick = self.timing.scanline();
+        let pixel_before_tick = self.timing.pixel();
+
         // Advance timing
-        let _skipped = self.timing.tick(self.registers.is_rendering_enabled());
+        let skipped = self.timing.tick(is_rendering_enabled);
+
+        // New frame begins when the pre-render scanline wraps back to scanline 0.
+        // This also includes the NTSC odd-frame skip path.
+        let frame_wrapped =
+            skipped || (scanline_before_tick == prerender_scanline && pixel_before_tick == 340);
+
+        if frame_wrapped {
+            self.with_mapper_mut(|mapper| mapper.ppu_end_frame());
+        }
+
+        // Notify mapper at scanline boundaries (start of scanline: pixel == 0).
+        // This is a PPU-driven hook for mappers with scanline counters (e.g., MMC5).
+        if self.timing.pixel() == 0 {
+            let scanline = self.timing.scanline();
+            self.with_mapper_mut(|mapper| mapper.ppu_scanline(scanline, is_rendering_enabled));
+        }
 
         // Tick the registers for decay timing
         self.registers.tick();
@@ -118,10 +163,6 @@ impl Ppu {
         }
 
         // Exit VBlank at the pre-render scanline, pixel 1.
-        let prerender_scanline = match self.timing.tv_system() {
-            TvSystem::Ntsc => 261,
-            TvSystem::Pal => 311,
-        };
         if self.timing.scanline() == prerender_scanline && self.timing.pixel() == 1 {
             self.status.exit_vblank();
         }
@@ -173,14 +214,16 @@ impl Ppu {
                     0 => {
                         // Fetch nametable byte
                         let v = self.registers.v();
-                        self.background
-                            .fetch_nametable(v, |addr| self.memory.read_nametable(addr));
+                        self.background.fetch_nametable(v, |addr| {
+                            self.memory.read_nametable_mapped(addr, &self.cartridge)
+                        });
                     }
                     1 => {
                         // Fetch attribute byte
                         let v = self.registers.v();
-                        self.background
-                            .fetch_attribute(v, |addr| self.memory.read_nametable(addr));
+                        self.background.fetch_attribute(v, |addr| {
+                            self.memory.read_nametable_mapped(addr, &self.cartridge)
+                        });
                     }
                     2 => {
                         // Fetch pattern table low byte
@@ -189,6 +232,7 @@ impl Ppu {
                         let cartridge = &self.cartridge;
                         self.background
                             .fetch_pattern_lo(bg_pattern_table, v, |addr| {
+                                Self::notify_chr_fetch_kind(cartridge, false);
                                 self.memory.read_chr(addr, cartridge)
                             });
                     }
@@ -199,6 +243,7 @@ impl Ppu {
                         let cartridge = &self.cartridge;
                         self.background
                             .fetch_pattern_hi(bg_pattern_table, v, |addr| {
+                                Self::notify_chr_fetch_kind(cartridge, false);
                                 self.memory.read_chr(addr, cartridge)
                             });
                     }
@@ -230,8 +275,9 @@ impl Ppu {
                 // Two dummy nametable fetches at pixels 337 and 339
                 // (The NES PPU does these but they're not used)
                 let v = self.registers.v();
-                self.background
-                    .fetch_nametable(v, |addr| self.memory.read_nametable(addr));
+                self.background.fetch_nametable(v, |addr| {
+                    self.memory.read_nametable_mapped(addr, &self.cartridge)
+                });
             }
 
             // Handle scroll register updates during visible pixels
@@ -311,7 +357,10 @@ impl Ppu {
                     scanline,
                     sprite_height,
                     sprite_pattern_table,
-                    |addr| self.memory.read_chr(addr, cartridge),
+                    |addr| {
+                        Self::notify_chr_fetch_kind(cartridge, true);
+                        self.memory.read_chr(addr, cartridge)
+                    },
                 );
             } else if pixel == 321 {
                 // Swap sprite buffers for rendering
@@ -588,7 +637,7 @@ impl Ppu {
         let old_v = self.registers.v();
         self.registers.write_address(value, is_dummy_write);
         self.registers.set_io_bus(value); // Update I/O bus
-        
+
         // Notify mapper if v register changed (happens on second write to $2006)
         // This is needed for MMC3 A12 detection when manually toggling address
         let new_v = self.registers.v();
@@ -622,7 +671,7 @@ impl Ppu {
                 // Nametable: buffered read
                 let buffered = self.registers.data_buffer();
                 self.registers
-                    .set_data_buffer(self.memory.read_nametable(addr));
+                    .set_data_buffer(self.memory.read_nametable_mapped(addr, &self.cartridge));
                 buffered
             }
             0x3F00..=0x3FFF => {
@@ -631,8 +680,10 @@ impl Ppu {
                 let palette_data = self.memory.read_palette(addr);
                 // Update buffer with nametable data underneath
                 let mirrored_addr = addr & 0x2FFF;
-                self.registers
-                    .set_data_buffer(self.memory.read_nametable(mirrored_addr));
+                self.registers.set_data_buffer(
+                    self.memory
+                        .read_nametable_mapped(mirrored_addr, &self.cartridge),
+                );
                 // Combine palette data (bits 5-0) with open bus (bits 7-6)
                 let io_bus = self.registers.io_bus();
                 (io_bus & 0xC0) | (palette_data & 0x3F)
@@ -647,7 +698,7 @@ impl Ppu {
         } else {
             self.registers.increment_vram_address();
         }
-        
+
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
         if old_addr != new_addr {
@@ -683,7 +734,8 @@ impl Ppu {
                 self.memory.write_chr(addr, value, &self.cartridge);
             }
             0x2000..=0x3EFF => {
-                self.memory.write_nametable(addr, value);
+                self.memory
+                    .write_nametable_mapped(addr, value, &self.cartridge);
             }
             0x3F00..=0x3FFF => {
                 self.memory.write_palette(addr, value);
@@ -698,7 +750,7 @@ impl Ppu {
         } else {
             self.registers.increment_vram_address();
         }
-        
+
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
         if old_addr != new_addr {
@@ -844,7 +896,7 @@ impl Ppu {
     /// Read nametable for debugging/testing (doesn't affect PPU state)
     #[cfg(test)]
     pub fn read_nametable_for_debug(&self, addr: u16) -> u8 {
-        self.memory.read_nametable(addr)
+        self.memory.read_nametable_mapped(addr, &self.cartridge)
     }
 
     /// Get base nametable address from PPUCTRL (for testing)
@@ -893,11 +945,226 @@ impl Ppu {
 mod tests {
     use super::*;
 
+    struct ScanlineSpyMapper {
+        calls: Rc<RefCell<Vec<(u16, bool)>>>,
+    }
+
+    impl crate::cartridge::Mapper for ScanlineSpyMapper {
+        fn read_prg(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_prg(&mut self, _addr: u16, _value: u8) {}
+
+        fn read_chr(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_chr(&mut self, _addr: u16, _value: u8) {}
+
+        fn ppu_address_changed(&mut self, _addr: u16) {}
+
+        fn ppu_scanline(&mut self, scanline: u16, rendering_enabled: bool) {
+            self.calls.borrow_mut().push((scanline, rendering_enabled));
+        }
+
+        fn get_mirroring(&self) -> MirroringMode {
+            MirroringMode::Horizontal
+        }
+    }
+
     #[test]
     fn test_ppu_new() {
         let ppu = Ppu::new(TvSystem::Ntsc);
         assert_eq!(ppu.scanline(), 0);
         assert_eq!(ppu.pixel(), 0);
+    }
+
+    #[test]
+    fn test_mapper_ppu_scanline_is_called_on_scanline_boundaries() {
+        let calls: Rc<RefCell<Vec<(u16, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            ScanlineSpyMapper {
+                calls: calls.clone(),
+            },
+        ))));
+
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+        ppu.set_cartridge(cart);
+
+        // Enable rendering so the mapper sees rendering_enabled = true.
+        ppu.write_mask(0x18);
+
+        // Run one full scanline worth of cycles; expect a scanline callback at the boundary.
+        ppu.run_ppu_cycles(341);
+
+        let calls = calls.borrow();
+        assert!(!calls.is_empty());
+        assert_eq!(calls.last().copied(), Some((1, true)));
+    }
+
+    #[test]
+    fn test_mapper_ppu_scanline_sees_rendering_disabled() {
+        let calls: Rc<RefCell<Vec<(u16, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            ScanlineSpyMapper {
+                calls: calls.clone(),
+            },
+        ))));
+
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+        ppu.set_cartridge(cart);
+
+        // Rendering disabled by default.
+        ppu.run_ppu_cycles(341);
+
+        let calls = calls.borrow();
+        assert!(!calls.is_empty());
+        assert_eq!(calls.last().copied(), Some((1, false)));
+    }
+
+    struct EndFrameSpyMapper {
+        calls: Rc<RefCell<u32>>,
+    }
+
+    impl crate::cartridge::Mapper for EndFrameSpyMapper {
+        fn read_prg(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_prg(&mut self, _addr: u16, _value: u8) {}
+
+        fn read_chr(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_chr(&mut self, _addr: u16, _value: u8) {}
+
+        fn ppu_address_changed(&mut self, _addr: u16) {}
+
+        fn ppu_end_frame(&mut self) {
+            *self.calls.borrow_mut() += 1;
+        }
+
+        fn get_mirroring(&self) -> MirroringMode {
+            MirroringMode::Horizontal
+        }
+    }
+
+    #[test]
+    fn test_mapper_ppu_end_frame_is_called_when_frame_wraps() {
+        let calls = Rc::new(RefCell::new(0u32));
+
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            EndFrameSpyMapper {
+                calls: calls.clone(),
+            },
+        ))));
+
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+        ppu.set_cartridge(cart);
+
+        // Keep rendering disabled for deterministic timing (no odd-frame skip).
+        ppu.run_ppu_cycles(262 * 341);
+
+        // This should fail until PPU::tick forwards frame-wrap to the mapper.
+        assert_eq!(*calls.borrow(), 1);
+    }
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    enum ChrFetchEvent {
+        SetIsSprite(bool),
+        ReadChr(u16),
+    }
+
+    struct ChrFetchKindSpyMapper {
+        events: Rc<RefCell<Vec<ChrFetchEvent>>>,
+    }
+
+    impl crate::cartridge::Mapper for ChrFetchKindSpyMapper {
+        fn read_prg(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_prg(&mut self, _addr: u16, _value: u8) {}
+
+        fn read_chr(&self, addr: u16) -> u8 {
+            self.events.borrow_mut().push(ChrFetchEvent::ReadChr(addr));
+
+            0
+        }
+
+        fn write_chr(&mut self, _addr: u16, _value: u8) {}
+
+        fn ppu_address_changed(&mut self, _addr: u16) {}
+
+        fn ppu_set_chr_fetch_is_sprite(&mut self, is_sprite: bool) {
+            self.events
+                .borrow_mut()
+                .push(ChrFetchEvent::SetIsSprite(is_sprite));
+        }
+
+        fn get_mirroring(&self) -> MirroringMode {
+            MirroringMode::Horizontal
+        }
+    }
+
+    #[test]
+    fn test_mapper_ppu_set_chr_fetch_is_sprite_is_applied_to_rendering_fetches() {
+        let events: Rc<RefCell<Vec<ChrFetchEvent>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            ChrFetchKindSpyMapper {
+                events: events.clone(),
+            },
+        ))));
+
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+        ppu.set_cartridge(cart);
+
+        // Force BG fetches from $0000 and sprite fetches from $1000 so the test can
+        // distinguish the two types of CHR reads.
+        ppu.write_control(0x08);
+
+        // Place sprite 0 at Y=0 so it will be in range for scanline 1.
+        ppu.write_oam_address(0);
+        ppu.write_oam_data(0); // Y
+        ppu.write_oam_data(0); // tile
+        ppu.write_oam_data(0); // attr
+        ppu.write_oam_data(0); // X
+
+        // Enable background + sprites.
+        ppu.write_mask(0x18);
+
+        // Run into the sprite-pattern-fetch window (pixel 257-320), while also
+        // covering the first background pattern fetches earlier in the scanline.
+        ppu.run_ppu_cycles(264);
+
+        let events = events.borrow();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ChrFetchEvent::ReadChr(addr) if *addr < 0x1000))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ChrFetchEvent::ReadChr(addr) if *addr >= 0x1000))
+        );
+
+        for (idx, event) in events.iter().copied().enumerate() {
+            if let ChrFetchEvent::ReadChr(addr) = event {
+                assert!(idx > 0, "ReadChr must be preceded by SetIsSprite");
+                let expected = if addr < 0x1000 {
+                    ChrFetchEvent::SetIsSprite(false)
+                } else {
+                    ChrFetchEvent::SetIsSprite(true)
+                };
+                assert_eq!(events[idx - 1], expected);
+            }
+        }
     }
 
     #[test]

@@ -81,10 +81,55 @@ impl Memory {
         self.ppu_ram[mirrored as usize]
     }
 
+    /// Read from nametable, allowing the cartridge mapper to override the value.
+    ///
+    /// This is needed for mappers that provide alternative nametable sources (e.g., MMC5 ExRAM/fill).
+    ///
+    pub fn read_nametable_mapped(
+        &self,
+        addr: u16,
+        cartridge: &Option<Rc<RefCell<Cartridge>>>,
+    ) -> u8 {
+        let masked_addr = addr & 0x2FFF;
+        debug_assert!(masked_addr >= 0x2000, "nametable reads must be in $2000-$2FFF after mirroring");
+
+        if let Some(cart) = cartridge {
+            let mut cart = cart.borrow_mut();
+            let mapper = cart.mapper_mut();
+            if let Some(value) = mapper.read_nametable(masked_addr) {
+                return value;
+            }
+        }
+
+        self.read_nametable(masked_addr)
+    }
+
     /// Write to nametable at the specified address (with mirroring)
     pub fn write_nametable(&mut self, addr: u16, value: u8) {
         let mirrored = self.mirror_vram_address(addr);
         self.ppu_ram[mirrored as usize] = value;
+    }
+
+    /// Write to nametable, allowing the cartridge mapper to handle the write.
+    ///
+    pub fn write_nametable_mapped(
+        &mut self,
+        addr: u16,
+        value: u8,
+        cartridge: &Option<Rc<RefCell<Cartridge>>>,
+    ) {
+        let masked_addr = addr & 0x2FFF;
+        debug_assert!(masked_addr >= 0x2000, "nametable writes must be in $2000-$2FFF after mirroring");
+
+        if let Some(cart) = cartridge {
+            let mut cart = cart.borrow_mut();
+            let mapper = cart.mapper_mut();
+            if mapper.write_nametable(masked_addr, value) {
+                return;
+            }
+        }
+
+        self.write_nametable(masked_addr, value);
     }
 
     /// Read from palette at the specified address (with mirroring)
@@ -164,11 +209,53 @@ mod tests {
     use super::*;
     use crate::cartridge::Cartridge;
 
+    struct TestNametableOverrideMapper;
+
+    impl crate::cartridge::Mapper for TestNametableOverrideMapper {
+        fn read_prg(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_prg(&mut self, _addr: u16, _value: u8) {}
+
+        fn read_chr(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_chr(&mut self, _addr: u16, _value: u8) {}
+
+        fn ppu_address_changed(&mut self, _addr: u16) {}
+
+        fn read_nametable(&mut self, addr: u16) -> Option<u8> {
+            if addr == 0x2000 {
+                return Some(0xAB);
+            }
+            None
+        }
+
+        fn get_mirroring(&self) -> MirroringMode {
+            MirroringMode::Horizontal
+        }
+    }
+
     #[test]
     fn test_memory_new() {
         let mem = Memory::new();
         assert_eq!(mem.read_chr(0, &None), 0);
         assert_eq!(mem.read_palette(0x3F00), 0);
+    }
+
+    #[test]
+    fn test_mapper_can_override_nametable_reads() {
+        let mem = Memory::new();
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            TestNametableOverrideMapper,
+        ))));
+        let cartridge = Some(cart);
+
+        // Expect mapper override to win.
+        // This should fail until Memory starts consulting the mapper.
+        assert_eq!(mem.read_nametable_mapped(0x2000, &cartridge), 0xAB);
     }
 
     fn create_mmc3_ines_rom() -> Vec<u8> {
