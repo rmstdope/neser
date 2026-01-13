@@ -334,6 +334,25 @@ impl MMC5Mapper {
             }
         }
     }
+
+    fn nametable_mapping_for_addr(&self, addr: u16) -> u8 {
+        const NAMETABLE_MASK: u16 = 0x2FFF;
+        const NAMETABLE_BASE: u16 = 0x2000;
+        // $5105: 2 bits per nametable quadrant:
+        // bits 1-0: $2000, 3-2: $2400, 5-4: $2800, 7-6: $2C00
+        // values: 0 = VRAM A, 1 = VRAM B, 2 = ExRAM, 3 = fill mode
+        let addr = addr & NAMETABLE_MASK;
+        debug_assert!(addr >= NAMETABLE_BASE && addr <= NAMETABLE_MASK);
+
+        let quadrant = ((addr - NAMETABLE_BASE) >> 10) & 0x03;
+        (self.nametable_mapping >> (quadrant * 2)) & 0x03
+    }
+
+    fn fill_attribute_byte(&self) -> u8 {
+        // $5107 stores a 2-bit attribute value that is replicated across an attribute byte.
+        let a = self.fill_attr & 0x03;
+        a | (a << 2) | (a << 4) | (a << 6)
+    }
 }
 
 impl Mapper for MMC5Mapper {
@@ -573,6 +592,53 @@ impl Mapper for MMC5Mapper {
         self.chr_fetch_is_sprite = is_sprite;
     }
 
+    fn read_nametable(&mut self, addr: u16) -> Option<u8> {
+        let addr = addr & 0x2FFF;
+        if !(0x2000..=0x2FFF).contains(&addr) {
+            return None;
+        }
+
+        match self.nametable_mapping_for_addr(addr) {
+            2 => {
+                // ExRAM (1KB). Multiple quadrants mapped to ExRAM will alias.
+                let index = (addr & 0x03FF) as usize;
+                Some(self.ex_ram.get(index).copied().unwrap_or(0))
+            }
+            3 => {
+                // Fill mode: tile area returns $5106, attribute area returns replicated $5107.
+                if (addr & 0x03FF) < 0x03C0 {
+                    Some(self.fill_tile)
+                } else {
+                    Some(self.fill_attribute_byte())
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn write_nametable(&mut self, addr: u16, value: u8) -> bool {
+        let addr = addr & 0x2FFF;
+        if !(0x2000..=0x2FFF).contains(&addr) {
+            return false;
+        }
+
+        match self.nametable_mapping_for_addr(addr) {
+            2 => {
+                let index = (addr & 0x03FF) as usize;
+                if let Some(slot) = self.ex_ram.get_mut(index) {
+                    *slot = value;
+                }
+                true
+            }
+            3 => {
+                // Fill mode is not backed by RAM.
+                let _ = value;
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn ppu_address_changed(&mut self, addr: u16) {
         // MMC5 scanline IRQ: increment counter on A12 rising edge during rendering
         // Simplified: we'll rely on in_frame tracking instead of full A12 detection
@@ -784,6 +850,64 @@ mod tests {
         assert_eq!(mapper.read_chr(0x0000), 8);
         assert_eq!(mapper.read_chr(0x0400), 9);
         assert_eq!(mapper.read_chr(0x1000), 8);
+    }
+
+    #[test]
+    fn test_mmc5_nametable_mapping_exram_routes_reads_and_writes() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Map $2000 quadrant to ExRAM (value 2 in bits 1-0).
+        mapper.write_prg(0x5105, 0b00_00_00_10);
+
+        // Mapper should own nametable access when mapped to ExRAM.
+        assert!(mapper.write_nametable(0x2000, 0xAB));
+        assert_eq!(mapper.read_nametable(0x2000), Some(0xAB));
+    }
+
+    #[test]
+    fn test_mmc5_nametable_mapping_fill_mode_returns_fill_tile_and_attr() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Map $2000 quadrant to fill mode (value 3 in bits 1-0).
+        mapper.write_prg(0x5105, 0b00_00_00_11);
+        mapper.write_prg(0x5106, 0x55);
+        mapper.write_prg(0x5107, 0x02);
+
+        // Tile fetches return fill tile.
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x55));
+
+        // Attribute fetches return a byte derived from $5107 (2-bit value).
+        // For now, require that at least the low 2 bits match.
+        let attr = mapper
+            .read_nametable(0x23C0)
+            .expect("fill-mode attribute read should be overridden");
+        assert_eq!(attr & 0x03, 0x02);
+
+        // Writes to fill-mode nametable should not fall through to internal VRAM.
+        assert!(mapper.write_nametable(0x2000, 0x99));
+    }
+
+    #[test]
+    fn test_mmc5_nametable_mapping_internal_vram_passthrough() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Map $2000 quadrant to internal VRAM (value 0 in bits 1-0).
+        mapper.write_prg(0x5105, 0b00_00_00_00);
+
+        assert_eq!(mapper.read_nametable(0x2000), None);
+        assert!(!mapper.write_nametable(0x2000, 0xAB));
     }
 
     #[test]
