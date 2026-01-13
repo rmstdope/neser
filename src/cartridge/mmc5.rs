@@ -24,6 +24,7 @@ pub struct MMC5Mapper {
     chr_mode: u8,
     chr_bank_a: [u8; 8], // $5120-$5127 for BG
     chr_bank_b: [u8; 4], // $5128-$512B for sprites
+    chr_fetch_is_sprite: bool,
 
     // Nametable control
     nametable_mapping: u8, // $5105
@@ -99,6 +100,7 @@ impl MMC5Mapper {
             chr_mode: 0,
             chr_bank_a: [0; 8],
             chr_bank_b: [0; 4],
+            chr_fetch_is_sprite: false,
 
             // Nametable control
             nametable_mapping: 0,
@@ -245,13 +247,16 @@ impl MMC5Mapper {
     }
 
     fn get_chr_bank(&self, addr: u16) -> u8 {
+        fn bank_idx_1k(addr: u16) -> u8 {
+            ((addr >> 10) & 0x07) as u8
+        }
+
         // MMC5 CHR banking supports 4 modes:
         // Mode 0: 8KB (single bank)
         // Mode 1: 4KB (two banks)
         // Mode 2: 2KB (four banks)
         // Mode 3: 1KB (eight banks, with separate BG/sprite banks)
 
-        // Without proper BG/sprite detection, use A registers for all fetches
         let chr_mode = self.chr_mode & 0x03;
         match chr_mode {
             0 => {
@@ -269,9 +274,16 @@ impl MMC5Mapper {
                 self.chr_bank_a[(bank_idx * 2 + 1) as usize]
             }
             3 => {
-                // 1KB mode: use $5120-$5127
-                let bank_idx = (addr >> 10) & 0x07;
-                self.chr_bank_a[bank_idx as usize]
+                // 1KB mode:
+                // - BG fetches use $5120-$5127 (A, 8 x 1KB)
+                // - Sprite fetches use $5128-$512B (B, 4 x 1KB)
+                let bank_idx = bank_idx_1k(addr);
+                if self.chr_fetch_is_sprite {
+                    // Sprite pattern table is 4KB wide, so select within 4 banks.
+                    self.chr_bank_b[(bank_idx & 0x03) as usize]
+                } else {
+                    self.chr_bank_a[bank_idx as usize]
+                }
             }
             _ => unreachable!(),
         }
@@ -557,6 +569,10 @@ impl Mapper for MMC5Mapper {
         self.write_chr_banked(bank, addr, value);
     }
 
+    fn ppu_set_chr_fetch_is_sprite(&mut self, is_sprite: bool) {
+        self.chr_fetch_is_sprite = is_sprite;
+    }
+
     fn ppu_address_changed(&mut self, addr: u16) {
         // MMC5 scanline IRQ: increment counter on A12 rising edge during rendering
         // Simplified: we'll rely on in_frame tracking instead of full A12 detection
@@ -732,6 +748,42 @@ mod tests {
         assert_eq!(mapper.read_prg(0xA000), 3);
         assert_eq!(mapper.read_prg(0xC000), 4);
         assert_eq!(mapper.read_prg(0xE000), 7);
+    }
+
+    #[test]
+    fn test_mmc5_chr_mode3_uses_bank_a_for_bg_and_bank_b_for_sprites() {
+        // In MMC5 CHR mode 3 (1KB), background uses bank A regs ($5120-$5127)
+        // while sprite fetches use bank B regs ($5128-$512B).
+
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 16);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // CHR mode 3 (1KB).
+        mapper.write_prg(0x5101, 0x03);
+
+        // Program A banks to 0..7.
+        for i in 0..8u8 {
+            mapper.write_prg(0x5120 + (i as u16), i);
+        }
+        // Program B banks to 8..11.
+        for i in 0..4u8 {
+            mapper.write_prg(0x5128 + (i as u16), 8 + i);
+        }
+
+        // Background fetches should use A banks.
+        mapper.ppu_set_chr_fetch_is_sprite(false);
+        assert_eq!(mapper.read_chr(0x0000), 0);
+        assert_eq!(mapper.read_chr(0x0400), 1);
+        assert_eq!(mapper.read_chr(0x1000), 4);
+
+        // Sprite fetches should use B banks (indexed within the 4KB region).
+        mapper.ppu_set_chr_fetch_is_sprite(true);
+        assert_eq!(mapper.read_chr(0x0000), 8);
+        assert_eq!(mapper.read_chr(0x0400), 9);
+        assert_eq!(mapper.read_chr(0x1000), 8);
     }
 
     #[test]
