@@ -147,10 +147,24 @@ enum Chr {
 
 impl MMC5Mapper {
     const PRG_RAM_BANK_SIZE: usize = 8 * 1024;
-    const PRG_RAM_BANK_COUNT: usize = 8;
+    const PRG_RAM_BANK_COUNT_MAX: usize = 8;
     const PRG_ROM_BANK_SIZE: usize = 8 * 1024;
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        Self::new_with_prg_ram_size(
+            prg_rom,
+            chr_rom,
+            mirroring,
+            Self::PRG_RAM_BANK_COUNT_MAX as u8,
+        )
+    }
+
+    pub fn new_with_prg_ram_size(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+        prg_ram_banks_8k: u8,
+    ) -> Self {
         let prg_rom_bank_count_8k = prg_rom.len() / Self::PRG_ROM_BANK_SIZE;
 
         let chr = if chr_rom.is_empty() {
@@ -159,9 +173,10 @@ impl MMC5Mapper {
             Chr::Rom(chr_rom)
         };
 
-        // A compatible superset (see nesdev): emulate 64KB PRG-RAM as 8 x 8KB banks.
-        // Games that have less won't generally notice.
-        let prg_ram = vec![0u8; Self::PRG_RAM_BANK_COUNT * Self::PRG_RAM_BANK_SIZE];
+        // MMC5 PRG-RAM can be up to 64KB (8 x 8KB banks), but many cartridges have less.
+        // Allocate based on cartridge metadata, clamped to the hardware maximum.
+        let prg_ram_bank_count = (prg_ram_banks_8k.max(1) as usize).min(Self::PRG_RAM_BANK_COUNT_MAX);
+        let prg_ram = vec![0u8; prg_ram_bank_count * Self::PRG_RAM_BANK_SIZE];
 
         // MMC5 PRG mode defaults to 3 at power-on.
         // $5117 defaults to $FF on real hardware; for our bank-indexed model, we map it to the
@@ -253,6 +268,11 @@ impl MMC5Mapper {
         self.prg_rom.len() / Self::PRG_ROM_BANK_SIZE
     }
 
+    fn prg_ram_bank_count_8k(&self) -> usize {
+        let count = self.prg_ram.len() / Self::PRG_RAM_BANK_SIZE;
+        count.max(1)
+    }
+
     fn read_prg_rom_8k(&self, bank: u8, addr: u16, base: u16) -> u8 {
         let num_banks = self.prg_rom_bank_count_8k();
         if num_banks == 0 {
@@ -264,13 +284,14 @@ impl MMC5Mapper {
         self.prg_rom[bank_index * Self::PRG_ROM_BANK_SIZE + offset]
     }
 
-    fn prg_ram_bank_index_8k(bank: u8) -> usize {
+    fn prg_ram_bank_index_8k(&self, bank: u8) -> usize {
         // $5113 ignores bits 7..4; for $5114-$5116, bit 7 selects ROM/RAM.
-        ((bank & 0x07) as usize) % Self::PRG_RAM_BANK_COUNT
+        let num_banks = self.prg_ram_bank_count_8k();
+        ((bank & 0x07) as usize) % num_banks
     }
 
     fn read_prg_ram_8k(&self, bank: u8, addr: u16, base: u16) -> u8 {
-        let bank_index = Self::prg_ram_bank_index_8k(bank);
+        let bank_index = self.prg_ram_bank_index_8k(bank);
         let offset = (addr - base) as usize;
         let index = bank_index * Self::PRG_RAM_BANK_SIZE + offset;
         self.prg_ram.get(index).copied().unwrap_or(0)
@@ -281,7 +302,7 @@ impl MMC5Mapper {
         if !self.is_prg_ram_writable() {
             return;
         }
-        let bank_index = Self::prg_ram_bank_index_8k(bank);
+        let bank_index = self.prg_ram_bank_index_8k(bank);
         let offset = (addr - base) as usize;
         let index = bank_index * Self::PRG_RAM_BANK_SIZE + offset;
         if let Some(slot) = self.prg_ram.get_mut(index) {
@@ -899,6 +920,7 @@ impl Mapper for MMC5Mapper {
 
 #[cfg(test)]
 mod tests {
+    use crate::cartridge::cartridge::Cartridge;
     use crate::cartridge::cartridge::MirroringMode;
     use crate::cartridge::mapper::Mapper;
     use crate::cartridge::mapper::create_mapper;
@@ -919,6 +941,33 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
         MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal)
+    }
+
+    fn make_mmc5_ines_rom_with_prg_ram_banks(prg_ram_banks_8k: u8) -> Vec<u8> {
+        // iNES v1 header: byte 8 encodes PRG-RAM size in 8KB units.
+        // Mapper 5: upper nibble of flags6 set to 5.
+        let mut rom = vec![
+            b'N',
+            b'E',
+            b'S',
+            0x1A,             // iNES header
+            1,                // PRG ROM size (16KB units)
+            0,                // CHR ROM size (8KB units) => CHR-RAM
+            0x50,             // Flags 6: mapper low nibble=5, horizontal mirroring
+            0x00,             // Flags 7
+            prg_ram_banks_8k, // Flags 8: PRG-RAM size (8KB units)
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+
+        // PRG ROM: 16KB.
+        rom.extend(vec![0u8; 16 * 1024]);
+        rom
     }
 
     #[test]
@@ -1314,6 +1363,50 @@ mod tests {
         // Switch back to bank 0; original value should be visible again.
         mapper.write_prg(0x5113, 0);
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
+    }
+
+    #[test]
+    fn test_mmc5_prg_ram_size_8k_from_ines_header_wraps_banks() {
+        // Sub-issue (194) #208: MMC5 PRG-RAM should be sized from cartridge metadata.
+        // With 8KB PRG-RAM, bank selection must wrap so bank 1 aliases bank 0.
+
+        let rom = make_mmc5_ines_rom_with_prg_ram_banks(1);
+        let mut cart = Cartridge::new(&rom).expect("ROM should parse");
+        let mapper = cart.mapper_mut();
+
+        mapper.write_prg(0x5113, 0);
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+
+        mapper.write_prg(0x5113, 1);
+        mapper.write_prg(0x6000, 0xBB);
+
+        mapper.write_prg(0x5113, 0);
+        assert_eq!(mapper.read_prg(0x6000), 0xBB);
+    }
+
+    #[test]
+    fn test_mmc5_prg_ram_size_16k_from_ines_header_wraps_banks() {
+        // With 16KB PRG-RAM (2 x 8KB), bank 2 must wrap back to bank 0.
+
+        let rom = make_mmc5_ines_rom_with_prg_ram_banks(2);
+        let mut cart = Cartridge::new(&rom).expect("ROM should parse");
+        let mapper = cart.mapper_mut();
+
+        mapper.write_prg(0x5113, 0);
+        mapper.write_prg(0x6000, 0x11);
+
+        mapper.write_prg(0x5113, 1);
+        mapper.write_prg(0x6000, 0x22);
+
+        mapper.write_prg(0x5113, 2);
+        mapper.write_prg(0x6000, 0x33);
+
+        mapper.write_prg(0x5113, 0);
+        assert_eq!(mapper.read_prg(0x6000), 0x33);
+
+        mapper.write_prg(0x5113, 1);
+        assert_eq!(mapper.read_prg(0x6000), 0x22);
     }
 
     #[test]

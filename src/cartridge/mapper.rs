@@ -124,3 +124,26 @@ pub fn create_mapper(
         )),
     }
 }
+
+/// Create a mapper instance using cartridge metadata.
+///
+/// `prg_ram_banks_8k` is PRG-RAM size in 8KB units (iNES v1 header byte 8).
+///
+/// Currently only MMC5 uses PRG-RAM sizing metadata.
+pub fn create_mapper_with_prg_ram_size(
+    mapper_number: u8,
+    prg_rom: Vec<u8>,
+    chr_rom: Vec<u8>,
+    mirroring: MirroringMode,
+    prg_ram_banks_8k: u8,
+) -> io::Result<Box<dyn Mapper>> {
+    match mapper_number {
+        5 => Ok(Box::new(MMC5Mapper::new_with_prg_ram_size(
+            prg_rom,
+            chr_rom,
+            mirroring,
+            prg_ram_banks_8k,
+        ))),
+        _ => create_mapper(mapper_number, prg_rom, chr_rom, mirroring),
+    }
+}
