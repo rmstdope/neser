@@ -13,25 +13,21 @@ This directory contains curated shader presets from the libretro slang-shaders p
 
 Use the `--shader` flag to specify a shader:
 ```bash
-neser --shader shaders/crt-simple.slangp
+neser rom.nes --shader shaders/crt-simple.slangp
 ```
 
 Or cycle through shaders at runtime with F6.
 
-## Current Status
+## Implementation Status
 
-The shader infrastructure is in place:
+✅ **COMPLETE** - Shader infrastructure is fully functional:
 - Shader preset loading via librashader ✓
 - CLI flag and runtime cycling ✓
-- Shader application in rendering pipeline (IN PROGRESS)
+- Shader application in rendering pipeline ✓
+- FilterChain::frame() properly integrated ✓
+- ImGui debugger renders correctly on top ✓
 
-The actual shader rendering is currently stubbed out in `shader_manager::apply_shader()`.
-To complete the implementation, we need to:
-
-1. Modify gl_backend.rs to render NES output to an intermediate framebuffer
-2. Apply shader filter chain to that framebuffer
-3. Render the filtered result to the screen
-4. Ensure ImGui debugger renders on top of the shader output
+The shader system is production-ready. All shaders render to the screen with hardware acceleration, and the ImGui debugger overlay continues to work correctly.
 
 ## Source
 
