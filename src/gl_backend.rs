@@ -123,10 +123,12 @@ impl GlBackend {
         };
 
         let mut shader_manager = ShaderManager::new();
-        
+
         // Load shader preset if specified
         if let Some(path) = shader_path {
-            if let Err(e) = shader_manager.load_preset(std::path::Path::new(path), glow_context.clone()) {
+            if let Err(e) =
+                shader_manager.load_preset(std::path::Path::new(path), glow_context.clone())
+            {
                 eprintln!("Warning: Failed to load shader preset '{}': {}", path, e);
             }
         }
@@ -283,18 +285,50 @@ impl GlBackend {
                 gl::UNSIGNED_BYTE,
                 self.framebuffer.as_ptr() as *const _,
             );
+            // librashader's OpenGL runtime uses sampler objects whose MIN_FILTER always
+            // includes a mipmap variant (e.g. LINEAR_MIPMAP_LINEAR). Ensure the NES texture
+            // is mipmap-complete, otherwise some drivers (notably macOS) will treat it as
+            // unloadable and sample black.
+            gl::GenerateMipmap(gl::TEXTURE_2D);
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
 
         // Apply shader post-processing if a shader is loaded
         // The shader will render the NES texture to the screen with filtering applied
+        // Note: librashader's OpenGL runtime renders into a texture-backed output, not
+        // directly into the default framebuffer. We therefore render into an output texture
+        // and draw that texture as the background.
+        let mut shader_output_texture_id: Option<imgui::TextureId> = None;
         if self.shader_manager.has_shader() {
-            if let Err(e) = self.shader_manager.apply_shader(
-                self.nes_texture,
-                drawable_w,
-                drawable_h,
-            ) {
+            // Compute a drawable-space letterbox size for the shader output.
+            let drawable_w_f = drawable_w as f32;
+            let drawable_h_f = drawable_h as f32;
+            let nes_aspect = 256.0 / 240.0;
+            let drawable_aspect = if drawable_h_f == 0.0 {
+                nes_aspect
+            } else {
+                drawable_w_f / drawable_h_f
+            };
+
+            let (shader_out_w, shader_out_h) = if drawable_aspect > nes_aspect {
+                (
+                    ((drawable_h_f * nes_aspect) as u32).max(1),
+                    drawable_h.max(1),
+                )
+            } else {
+                (
+                    drawable_w.max(1),
+                    ((drawable_w_f / nes_aspect) as u32).max(1),
+                )
+            };
+
+            if let Err(e) =
+                self.shader_manager
+                    .apply_shader(self.nes_texture, shader_out_w, shader_out_h)
+            {
                 eprintln!("Shader application error: {}", e);
+            } else if let Some(tex) = self.shader_manager.output_texture() {
+                shader_output_texture_id = Some((tex as usize).into());
             }
         }
 
@@ -323,9 +357,18 @@ impl GlBackend {
             let x0 = (win_w - draw_w) * 0.5;
             let y0 = (win_h - draw_h) * 0.5;
 
-            // Only draw the NES texture as a background if no shader is active
-            // When a shader is active, it has already rendered to the screen
-            if !self.shader_manager.has_shader() {
+            // Only draw the NES texture as a background if no shader is active.
+            // When a shader is active, we draw the shader output texture.
+            //
+            // Note: imgui 0.11 may produce draw_data with CmdLists=null when nothing is drawn.
+            // imgui-opengl-renderer iterates draw_lists() unconditionally, which will panic
+            // on a null pointer even when the count is 0. Ensure we always emit at least one
+            // (invisible) draw command so the draw list pointer is non-null.
+            if let Some(shader_tex_id) = shader_output_texture_id {
+                ui.get_background_draw_list()
+                    .add_image(shader_tex_id, [x0, y0], [x0 + draw_w, y0 + draw_h])
+                    .build();
+            } else {
                 ui.get_background_draw_list()
                     .add_image(self.nes_texture_id, [x0, y0], [x0 + draw_w, y0 + draw_h])
                     .build();
