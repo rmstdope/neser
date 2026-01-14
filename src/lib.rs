@@ -18,6 +18,9 @@ pub mod tracing;
 #[cfg(feature = "sdl")]
 pub mod audio;
 
+#[cfg(test)]
+pub mod golden_screenshots;
+
 #[cfg(feature = "sdl")]
 pub mod eventloop;
 

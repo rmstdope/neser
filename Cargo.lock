@@ -1895,6 +1895,7 @@ dependencies = [
  "imgui-opengl-renderer",
  "librashader",
  "pixels",
+ "png 0.17.16",
  "rand",
  "sdl2",
  "serial_test",
