@@ -4,6 +4,7 @@
 pub mod apu;
 pub mod blargg_tests;
 pub mod cartridge;
+pub mod config;
 pub mod cpu;
 pub mod debugger;
 pub mod input;

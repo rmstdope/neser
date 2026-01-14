@@ -1,6 +1,7 @@
 mod apu;
 mod audio;
 mod cartridge;
+mod config;
 mod cpu;
 mod debugger;
 mod eventloop;
@@ -112,25 +113,7 @@ fn shader_path_from_args(args: &[String]) -> Option<String> {
     None
 }
 
-fn fullscreen_display_from_args(args: &[String]) -> Result<Option<i32>, String> {
-    for i in 0..args.len() {
-        if args[i] == "--display" {
-            if i + 1 >= args.len() {
-                return Err("Missing value for --display".to_string());
-            }
-            let value = &args[i + 1];
-            let parsed: i32 = value
-                .parse()
-                .map_err(|_| format!("Invalid --display value: {value}"))?;
-            if parsed < 0 {
-                return Err("--display must be >= 0".to_string());
-            }
-            return Ok(Some(parsed));
-        }
-    }
 
-    Ok(None)
-}
 
 #[cfg(test)]
 fn debugger_enabled_from_args(args: &[String]) -> bool {
@@ -215,12 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let no_audio = args.contains(&"--no-audio".to_string());
     let vsync_enabled = vsync_enabled_from_args(&args);
     let gamepads_enabled = !args.contains(&"--no-gamepads".to_string());
-    let fullscreen = args.contains(&"--fullscreen".to_string());
-    let fullscreen_display = if fullscreen {
-        fullscreen_display_from_args(&args)?
-    } else {
-        None
-    };
+    let config = config::Config::from_args(&args)?;
     let shader_path = shader_path_from_args(&args);
     let tracing = tracing::Tracing::from_args(&args);
 
@@ -255,8 +233,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         vsync_enabled,
         audio,
         gamepads_enabled,
-        fullscreen,
-        fullscreen_display,
+        &config,
         shader_path,
     )?;
 
@@ -365,6 +342,7 @@ mod tests {
     fn test_enable_debugger_requests_open_and_pauses_on_start() {
         let args = vec!["neser".to_string(), "--enable-debugger".to_string()];
 
+        let config = config::Config::new();
         let mut event_loop = crate::eventloop::EventLoop::new(
             true,
             crate::nes::TvSystem::Ntsc,
@@ -373,8 +351,7 @@ mod tests {
             true,
             None,
             false,
-            false,
-            None,
+            &config,
             None,
         )
         .unwrap();
@@ -411,19 +388,21 @@ mod tests {
     fn test_display_flag_parses_integer() {
         let args = vec![
             "neser".to_string(),
+            "--fullscreen".to_string(),
             "--display".to_string(),
             "2".to_string(),
         ];
-        assert_eq!(fullscreen_display_from_args(&args).unwrap(), Some(2));
+        assert_eq!(config::Config::from_args(&args).unwrap().fullscreen_display, Some(2));
     }
 
     #[test]
     fn test_display_flag_rejects_negative() {
         let args = vec![
             "neser".to_string(),
+            "--fullscreen".to_string(),
             "--display".to_string(),
             "-1".to_string(),
         ];
-        assert!(fullscreen_display_from_args(&args).is_err());
+        assert!(config::Config::from_args(&args).is_err());
     }
 }

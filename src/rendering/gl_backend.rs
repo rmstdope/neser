@@ -3,6 +3,7 @@ use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
 use sdl2::video::{FullscreenType, GLContext, GLProfile, Window, WindowPos};
 
+use crate::config::Config;
 use crate::debugger;
 use crate::debugger::ui as debugger_ui;
 use crate::nes::TvSystem;
@@ -29,8 +30,7 @@ impl GlBackend {
         tv_system: TvSystem,
         scale: f32,
         vsync_enabled: bool,
-        fullscreen: bool,
-        fullscreen_display: Option<i32>,
+        config: &Config,
         shader_path: Option<&str>,
     ) -> Result<Self, String> {
         let video_subsystem = sdl_context.video()?;
@@ -55,15 +55,15 @@ impl GlBackend {
         window_builder.opengl();
 
         window_builder.position_centered();
-        if !fullscreen {
+        if !config.fullscreen {
             window_builder.resizable();
         }
 
         let mut window = window_builder.build().map_err(|e| e.to_string())?;
 
-        if fullscreen {
+        if config.fullscreen {
             let display_count = video_subsystem.num_video_displays().unwrap_or(1);
-            let target_display = match fullscreen_display {
+            let target_display = match config.fullscreen_display {
                 Some(display) => display,
                 None => {
                     if display_count >= 2 {
