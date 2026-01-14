@@ -6,7 +6,7 @@ use sdl2::video::{FullscreenType, GLContext, GLProfile, Window, WindowPos};
 use crate::debugger;
 use crate::debugger::ui as debugger_ui;
 use crate::nes::TvSystem;
-use crate::shader_manager::ShaderManager;
+use crate::rendering::shader_manager::ShaderManager;
 use std::time::Instant;
 
 pub(crate) struct GlBackend {

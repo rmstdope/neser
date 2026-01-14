@@ -4,7 +4,7 @@ mod cartridge;
 mod cpu;
 mod debugger;
 mod eventloop;
-mod gl_backend;
+mod rendering;
 mod input;
 // #[path = "game_verification/manual_test_cartridges.rs"]
 // mod manual_test_cartridges;
@@ -13,8 +13,6 @@ mod mem_controller;
 mod nes;
 mod ppu;
 mod screen_buffer;
-#[cfg(feature = "sdl")]
-mod shader_manager;
 mod tracing;
 
 struct CliFlag {

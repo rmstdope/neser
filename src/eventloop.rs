@@ -1,4 +1,4 @@
-use crate::gl_backend::GlBackend;
+use crate::rendering::GlBackend;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;

@@ -23,7 +23,5 @@ pub mod game_verification;
 pub mod eventloop;
 
 #[cfg(feature = "sdl")]
-pub(crate) mod gl_backend;
+pub(crate) mod rendering;
 
-#[cfg(feature = "sdl")]
-pub(crate) mod shader_manager;
