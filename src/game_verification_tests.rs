@@ -4,8 +4,8 @@ mod tests {
 
     use crate::cartridge::Cartridge;
     use crate::golden_screenshots::{
-        assert_matches_golden_screenshot_byte_exact, ensure_golden_screenshot,
-        golden_screenshot_path_for_rom, GoldenScreenshotPolicy,
+        GoldenScreenshotPolicy, assert_matches_golden_screenshot_byte_exact,
+        ensure_golden_screenshot, golden_screenshot_path_for_rom,
     };
     use crate::manual_test_cartridges;
     use crate::nes::{Nes, TvSystem};
@@ -61,12 +61,19 @@ mod tests {
     fn collect_game_roms(games_dir: &Path) -> Result<Vec<PathBuf>, String> {
         let mut roms = Vec::new();
 
-        let entries = std::fs::read_dir(games_dir)
-            .map_err(|e| format!("Failed to read games directory {}: {e}", games_dir.display()))?;
+        let entries = std::fs::read_dir(games_dir).map_err(|e| {
+            format!(
+                "Failed to read games directory {}: {e}",
+                games_dir.display()
+            )
+        })?;
 
         for entry in entries {
             let entry = entry.map_err(|e| {
-                format!("Failed to read directory entry in {}: {e}", games_dir.display())
+                format!(
+                    "Failed to read directory entry in {}: {e}",
+                    games_dir.display()
+                )
             })?;
             let path = entry.path();
 
@@ -103,7 +110,11 @@ mod tests {
         nes.reset(false);
 
         let rgb = run_nes_for_frames(&mut nes, frames);
-        Ok((rgb, TvSystem::Ntsc.screen_width(), TvSystem::Ntsc.screen_height()))
+        Ok((
+            rgb,
+            TvSystem::Ntsc.screen_width(),
+            TvSystem::Ntsc.screen_height(),
+        ))
     }
 
     #[test]
@@ -165,11 +176,7 @@ mod tests {
     fn test_verify_games_golden_screenshots() {
         let games_dir = Path::new("roms/games");
         let roms = collect_game_roms(games_dir).expect("collect roms");
-        assert!(
-            !roms.is_empty(),
-            "No ROMs found in {}",
-            games_dir.display()
-        );
+        assert!(!roms.is_empty(), "No ROMs found in {}", games_dir.display());
 
         let policy = golden_policy_from_env();
 
@@ -187,12 +194,12 @@ mod tests {
             let golden_path = golden_screenshot_path_for_rom(&rom_path);
 
             if golden_path.exists() {
-                println!(
-                    "[game verification] comparing against {}",
-                    golden_path.display()
-                );
                 assert_matches_golden_screenshot_byte_exact(&rom_path, &rgb, width, height)
                     .unwrap_or_else(|e| panic!("{}: {e}", rom_path.display()));
+                println!(
+                    "[game verification] PASS - Screenshot matched saved file: {}",
+                    golden_path.display()
+                );
             } else if policy == GoldenScreenshotPolicy::AutoAccept {
                 println!(
                     "[game verification] writing golden to {}",

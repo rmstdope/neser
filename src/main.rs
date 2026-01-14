@@ -125,7 +125,7 @@ fn validate_no_unknown_args(args: &[String]) -> Result<(), String> {
     let mut i = 1;
     while i < args.len() {
         let arg = &args[i];
-        
+
         if CLI_FLAGS.iter().any(|f| f.flag == arg) {
             // If this is --shader, skip the next argument (the value)
             if arg == "--shader" {
@@ -240,8 +240,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_path = "roms/games/donkey kong.nes";
-    let rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
-    // let rom_path = "roms/games/punchout.nes";
+    // let rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
+    let rom_path = "roms/games/Mike Tyson's Punch-Out!! (Japan, USA) (Rev 1).nes";
 
     // Manual testing of Blargg
     // let rom_path = "roms/nestest.nes";

@@ -112,6 +112,25 @@ impl ScreenBuffer {
     ///
     /// * `dest` - Destination buffer slice to copy to. Must be at least as large as the source buffer.
     pub fn copy_buffer(&self, dest: &mut [u8]) {
+        assert!(
+            dest.len() >= self.buffer.len(),
+            "Destination buffer is too small: need {}, got {}",
+            self.buffer.len(),
+            dest.len()
+        );
+
+        let len = self.buffer.len();
+        dest[..len].copy_from_slice(&self.buffer);
+
+        // Set pixels at y = 3, x = [0..7] to yellow (255, 255, 0) in the destination buffer.
+        for x in 0usize..8 {
+            let offset = ((3 * Self::WIDTH as usize) + x) * Self::BYTES_PER_PIXEL;
+            dest[offset] = 0xFF;
+            dest[offset + 1] = 0xFF;
+            dest[offset + 2] = 0x00;
+        }
+
+        return;
         dest[..self.buffer.len()].copy_from_slice(&self.buffer);
     }
 }
