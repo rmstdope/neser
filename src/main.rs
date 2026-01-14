@@ -90,6 +90,10 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Run emulator in fullscreen mode"),
     },
     CliFlag {
+        flag: "--display",
+        help: Some("Select display index for fullscreen (e.g., --display 1)"),
+    },
+    CliFlag {
         flag: "--shader",
         help: Some("Specify shader preset path (e.g., shaders/crt-simple.slangp)"),
     },
@@ -106,6 +110,26 @@ fn shader_path_from_args(args: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+fn fullscreen_display_from_args(args: &[String]) -> Result<Option<i32>, String> {
+    for i in 0..args.len() {
+        if args[i] == "--display" {
+            if i + 1 >= args.len() {
+                return Err("Missing value for --display".to_string());
+            }
+            let value = &args[i + 1];
+            let parsed: i32 = value
+                .parse()
+                .map_err(|_| format!("Invalid --display value: {value}"))?;
+            if parsed < 0 {
+                return Err("--display must be >= 0".to_string());
+            }
+            return Ok(Some(parsed));
+        }
+    }
+
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -127,8 +151,14 @@ fn validate_no_unknown_args(args: &[String]) -> Result<(), String> {
         let arg = &args[i];
 
         if CLI_FLAGS.iter().any(|f| f.flag == arg) {
-            // If this is --shader, skip the next argument (the value)
-            if arg == "--shader" {
+            // If this flag expects a value, skip the next argument.
+            if arg == "--shader" || arg == "--display" {
+                if i + 1 >= args.len() {
+                    return Err(format!(
+                        "Missing value for {arg}\nTry --help for usage.",
+                        arg = arg
+                    ));
+                }
                 i += 1; // Skip the shader path value
             }
             i += 1;
@@ -186,6 +216,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vsync_enabled = vsync_enabled_from_args(&args);
     let gamepads_enabled = !args.contains(&"--no-gamepads".to_string());
     let fullscreen = args.contains(&"--fullscreen".to_string());
+    let fullscreen_display = if fullscreen {
+        fullscreen_display_from_args(&args)?
+    } else {
+        None
+    };
     let shader_path = shader_path_from_args(&args);
     let tracing = tracing::Tracing::from_args(&args);
 
@@ -221,6 +256,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         audio,
         gamepads_enabled,
         fullscreen,
+        fullscreen_display,
         shader_path,
     )?;
 
@@ -240,8 +276,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let rom_path = "roms/games/donkey kong.nes";
-    // let rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
-    let rom_path = "roms/games/Mike Tyson's Punch-Out!! (Japan, USA) (Rev 1).nes";
+    let rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
+    // let rom_path = "roms/games/Mike Tyson's Punch-Out!! (Japan, USA) (Rev 1).nes";
 
     // Manual testing of Blargg
     // let rom_path = "roms/nestest.nes";
@@ -339,6 +375,7 @@ mod tests {
             false,
             false,
             None,
+            None,
         )
         .unwrap();
 
@@ -352,5 +389,29 @@ mod tests {
     fn test_fullscreen_flag_recognized() {
         let args = vec!["neser".to_string(), "--fullscreen".to_string()];
         assert!(validate_no_unknown_args(&args).is_ok());
+    }
+
+    #[test]
+    fn test_display_flag_recognized_with_value() {
+        let args = vec!["neser".to_string(), "--display".to_string(), "1".to_string()];
+        assert!(validate_no_unknown_args(&args).is_ok());
+    }
+
+    #[test]
+    fn test_display_flag_missing_value_causes_error() {
+        let args = vec!["neser".to_string(), "--display".to_string()];
+        assert!(validate_no_unknown_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_display_flag_parses_integer() {
+        let args = vec!["neser".to_string(), "--display".to_string(), "2".to_string()];
+        assert_eq!(fullscreen_display_from_args(&args).unwrap(), Some(2));
+    }
+
+    #[test]
+    fn test_display_flag_rejects_negative() {
+        let args = vec!["neser".to_string(), "--display".to_string(), "-1".to_string()];
+        assert!(fullscreen_display_from_args(&args).is_err());
     }
 }

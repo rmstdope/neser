@@ -1,7 +1,7 @@
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
-use sdl2::video::{GLContext, GLProfile, Window};
+use sdl2::video::{FullscreenType, GLContext, GLProfile, Window, WindowPos};
 
 use crate::debugger;
 use crate::debugger::ui as debugger_ui;
@@ -30,6 +30,7 @@ impl GlBackend {
         scale: f32,
         vsync_enabled: bool,
         fullscreen: bool,
+        fullscreen_display: Option<i32>,
         shader_path: Option<&str>,
     ) -> Result<Self, String> {
         let video_subsystem = sdl_context.video()?;
@@ -53,14 +54,43 @@ impl GlBackend {
             video_subsystem.window("NES Emulator in Rust", scaled_width, scaled_height);
         window_builder.opengl();
 
-        if fullscreen {
-            window_builder.fullscreen_desktop();
-        } else {
-            window_builder.position_centered();
+        window_builder.position_centered();
+        if !fullscreen {
             window_builder.resizable();
         }
 
-        let window = window_builder.build().map_err(|e| e.to_string())?;
+        let mut window = window_builder.build().map_err(|e| e.to_string())?;
+
+        if fullscreen {
+            let display_count = video_subsystem.num_video_displays().unwrap_or(1);
+            let target_display = match fullscreen_display {
+                Some(display) => display,
+                None => {
+                    if display_count >= 2 {
+                        1
+                    } else {
+                        0
+                    }
+                }
+            };
+
+            if target_display < 0 || target_display >= display_count {
+                return Err(format!(
+                    "Invalid --display {target_display}. Available displays: 0..{}",
+                    display_count.saturating_sub(1)
+                ));
+            }
+
+            if let Ok(bounds) = video_subsystem.display_bounds(target_display) {
+                let x = bounds.x() + (bounds.width() as i32 - scaled_width as i32) / 2;
+                let y = bounds.y() + (bounds.height() as i32 - scaled_height as i32) / 2;
+                window.set_position(WindowPos::Positioned(x), WindowPos::Positioned(y));
+            }
+
+            window
+                .set_fullscreen(FullscreenType::Desktop)
+                .map_err(|e| e.to_string())?;
+        }
 
         let gl_context = window.gl_create_context().map_err(|e| e.to_string())?;
         window
