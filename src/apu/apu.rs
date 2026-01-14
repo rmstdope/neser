@@ -354,6 +354,7 @@ impl Apu {
 
     /// Clock the APU by one CPU cycle
     /// This advances the frame counter and triggers channel clocking when needed
+    #[cfg(test)]
     pub fn clock(&mut self) {
         self.clock_with_expansion(0.0);
     }
@@ -401,7 +402,7 @@ impl Apu {
 
         // Process DMC delays and timing - must be called every CPU cycle
         self.dmc.process_clock();
-        
+
         // DMC timer runs every CPU cycle (independent of frame counter)
         self.dmc.clock_timer();
 
@@ -530,7 +531,8 @@ impl Apu {
         self.noise.set_length_counter_enabled(noise_enabled);
 
         // DMC - pass current CPU cycle for accurate delay timing
-        self.dmc.set_enabled(value & STATUS_DMC != 0, self.cpu_cycle);
+        self.dmc
+            .set_enabled(value & STATUS_DMC != 0, self.cpu_cycle);
 
         // Side effect: Clear DMC interrupt flag
         self.dmc.clear_irq_flag();

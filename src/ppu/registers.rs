@@ -371,6 +371,7 @@ impl Registers {
     /// Get base nametable address from control register bits 0-1
     /// Returns: 0x2000, 0x2400, 0x2800, or 0x2C00
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn base_nametable_addr(&self) -> u16 {
         let nametable_select = (self.control_register & BASE_NAMETABLE_ADDR) as u16;
         0x2000 | (nametable_select << 10)

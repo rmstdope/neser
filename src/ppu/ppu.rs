@@ -901,20 +901,9 @@ impl Ppu {
 
     /// Get base nametable address from PPUCTRL (for testing)
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn base_nametable_addr(&self) -> u16 {
         self.registers.base_nametable_addr()
-    }
-
-    /// Get t register (for testing)
-    #[cfg(test)]
-    pub fn t_register(&self) -> u16 {
-        self.registers.t()
-    }
-
-    /// Get x register (for testing)
-    #[cfg(test)]
-    pub fn x_register(&self) -> u8 {
-        self.registers.x()
     }
 
     /// Get w register (for testing)

@@ -518,6 +518,7 @@ impl Nes {
 
     /// Get base nametable address from PPUCTRL (for testing)
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn base_nametable_addr(&self) -> u16 {
         self.ppu.borrow().base_nametable_addr()
     }
@@ -534,6 +535,7 @@ impl Nes {
     /// # Returns
     /// String containing the decoded text
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn read_nametable_text(&self, nametable_addr: u16, length: usize) -> String {
         let ppu = self.ppu.borrow();
         let mut text = String::new();

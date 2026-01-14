@@ -247,6 +247,7 @@ impl MemController {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn read_for_testing(&self, addr: u16) -> u8 {
         let old_open_bus = *self.open_bus.borrow_mut();
         let value = self.read(addr);
@@ -474,6 +475,7 @@ impl MemController {
     /// Execute an OAM DMA transfer from the specified page to OAM
     /// Returns the number of bytes transferred (always 256)
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn execute_oam_dma(&mut self, page: u8) {
         let source_page = (page as u16) << 8;
         for i in 0..256u16 {
