@@ -31,6 +31,7 @@ required-features = ["sdl"]
 
 [dev-dependencies]
 serial_test = "3.2"
+png = "0.17"
 
 # Improve runtime performance in debug builds (helps reduce audio underruns) while
 # keeping debuggability. This is a common setup for emulator-style workloads.

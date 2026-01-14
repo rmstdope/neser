@@ -7,6 +7,7 @@ pub mod cartridge;
 pub mod cpu;
 pub mod debugger;
 pub mod input;
+pub mod golden_screenshots;
 pub mod manual_test_cartridges;
 pub mod mem_controller;
 pub mod nes;
