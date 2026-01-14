@@ -16,16 +16,14 @@ In the development process, when appropriate, the application should be built us
 2. **Green**: Write the minimum amount of code necessary to make the test pass.
 3. **Refactor**: Clean up the code while ensuring that all tests still pass. This approach helps to ensure that the code is reliable, maintainable, and meets the specified requirements from the outset.
 
-It is VERY VERY important to:
+It is important to:
 
-<!-- - ALWAYS stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
-- ALWAYS stop after the green phase and ask the navigator to review the implementation and approve before moving on to the refactor phase. -->
-
+- When appropriate, stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
+- ALWAYS stop after the green phase and ask the navigator to review the implementation and approve before moving on to the refactor phase.
 - ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on.
 - ALWAYS use a TDD approach for all kinds of code, feature implementation, bug fixing, feature enhancements.
 - It is NOT NEEDED to use a TDD approach when trying to debug or pinpoint a bug. When the bug is pinpointed, use TDD to write a test that reproduces the bug, then proceed with TDD to fix it.
-
-You are NEVER ALLOWED to do more then one phase before pausing and asking for feedback from the navigator.
+- When running as a GitHub Copilot coding agent, follow the TDD approach strictly, but don't wait for approval from the navigator. Instead, proceed to the next phase automatically. If is of course ok to ask for clarification from the navigator if needed or for design decisions.
 
 ### Collaboration
 
@@ -50,6 +48,7 @@ When working on a sub-issue, this is important:
 
 - ALWAYS assign the main issue and the sub-issue to the developer working on it.
 - ALWAYS create a new branch from main named after the sub-issue number and a short description of the work to be done, e.g., `42-add-user-authentication`. Once the work is completed and reviewed, merge the branch back into main using a pull request. This approach helps to keep the main codebase stable and allows for isolated development of features or fixes.
+- ALWAYS merge a sub-issue branch back into main before starting to work on another sub-issue branch for the same main issue. This ensures that the latest changes are always incorporated and reduces the risk of merge conflicts.
 
 When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized.
 
