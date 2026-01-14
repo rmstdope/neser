@@ -23,7 +23,7 @@ It is important to:
 - ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on.
 - ALWAYS use a TDD approach for all kinds of code, feature implementation, bug fixing, feature enhancements.
 - It is NOT NEEDED to use a TDD approach when trying to debug or pinpoint a bug. When the bug is pinpointed, use TDD to write a test that reproduces the bug, then proceed with TDD to fix it.
-- When running as a GitHub Copilot coding agent, follow the TDD approach strictly, but don't wait for approval from the navigator. Instead, proceed to the next phase automatically. If is of course ok to ask for clarification from the navigator if needed or for design decisions.
+<!-- - When running as a GitHub Copilot coding agent, follow the TDD approach strictly, but don't wait for approval from the navigator. Instead, proceed to the next phase automatically. If is of course ok to ask for clarification from the navigator if needed or for design decisions. -->
 
 ### Collaboration
 
