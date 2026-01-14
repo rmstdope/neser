@@ -18,6 +18,39 @@ fn expected_rgb_len(width: u32, height: u32) -> Result<usize, String> {
         .ok_or_else(|| "Invalid image dimensions".to_string())
 }
 
+fn decode_png_to_rgb8(png_bytes: &[u8], width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(png_bytes));
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("Failed to decode PNG header: {e}"))?;
+
+    let info = reader.info();
+    if info.width != width || info.height != height {
+        return Err(format!(
+            "PNG size mismatch: got {}x{}, expected {}x{}",
+            info.width, info.height, width, height
+        ));
+    }
+
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let output = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("Failed to decode PNG pixels: {e}"))?;
+    let bytes = &buf[..output.buffer_size()];
+
+    match output.color_type {
+        png::ColorType::Rgb => Ok(bytes.to_vec()),
+        png::ColorType::Rgba => Ok(bytes
+            .chunks_exact(4)
+            .flat_map(|px| [px[0], px[1], px[2]])
+            .collect()),
+        other => Err(format!(
+            "Unsupported PNG color type: {:?}",
+            other
+        )),
+    }
+}
+
 pub fn golden_screenshot_path_for_rom(rom_path: &Path) -> PathBuf {
     let parent = rom_path.parent().unwrap_or_else(|| Path::new("."));
     let stem = rom_path.file_stem().unwrap_or_default();
@@ -85,6 +118,65 @@ pub fn ensure_golden_screenshot(
     }
 }
 
+pub fn assert_matches_golden_screenshot_byte_exact(
+    rom_path: &Path,
+    rgb: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    let expected_len = expected_rgb_len(width, height)?;
+    if rgb.len() != expected_len {
+        return Err(format!(
+            "RGB buffer length mismatch: got {}, expected {}",
+            rgb.len(),
+            expected_len
+        ));
+    }
+
+    let golden_path = golden_screenshot_path_for_rom(rom_path);
+    let golden_data = std::fs::read(&golden_path)
+        .map_err(|e| format!("Failed to read golden screenshot {}: {e}", golden_path.display()))?;
+
+    let golden_rgb = decode_png_to_rgb8(&golden_data, width, height)
+        .map_err(|e| format!("Failed to decode golden screenshot PNG: {e}"))?;
+
+    if golden_rgb.len() != expected_len {
+        return Err(format!(
+            "Decoded golden RGB length mismatch: got {}, expected {}",
+            golden_rgb.len(),
+            expected_len
+        ));
+    }
+
+    if golden_rgb == rgb {
+        return Ok(());
+    }
+
+    if let Some((idx, (a, b))) = golden_rgb
+        .iter()
+        .copied()
+        .zip(rgb.iter().copied())
+        .enumerate()
+        .find(|(_, (a, b))| a != b)
+    {
+        let pixel = idx / 3;
+        let channel = idx % 3;
+        let x = (pixel as u32) % width;
+        let y = (pixel as u32) / width;
+        let channel_name = match channel {
+            0 => "R",
+            1 => "G",
+            _ => "B",
+        };
+        return Err(format!(
+            "Golden screenshot mismatch at ({}, {}) channel {}: golden=0x{:02X} actual=0x{:02X}",
+            x, y, channel_name, a, b
+        ));
+    }
+
+    Err("Golden screenshot mismatch".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +229,67 @@ mod tests {
         let data = fs::read(&golden_path).expect("golden file should exist");
         assert!(data.len() > 8);
         assert_eq!(&data[..8], b"\x89PNG\r\n\x1a\n");
+    }
+
+    #[test]
+    fn test_byte_exact_compare_ok_when_pixels_match() {
+        let root = unique_temp_dir();
+        let games_dir = root.join("roms").join("games");
+        fs::create_dir_all(&games_dir).expect("create games dir");
+
+        let rom_path = games_dir.join("demo.nes");
+        fs::write(&rom_path, b"not a real rom").expect("write dummy rom");
+
+        let width = 256;
+        let height = 240;
+        let rgb = vec![0x12u8; (width * height * 3) as usize];
+
+        // Create golden
+        ensure_golden_screenshot(
+            &rom_path,
+            &rgb,
+            width,
+            height,
+            GoldenScreenshotPolicy::AutoAccept,
+        )
+        .expect("should save golden when missing");
+
+        // Compare should succeed
+        assert_matches_golden_screenshot_byte_exact(&rom_path, &rgb, width, height)
+            .expect("expected golden to match");
+    }
+
+    #[test]
+    fn test_byte_exact_compare_fails_when_pixels_differ() {
+        let root = unique_temp_dir();
+        let games_dir = root.join("roms").join("games");
+        fs::create_dir_all(&games_dir).expect("create games dir");
+
+        let rom_path = games_dir.join("demo.nes");
+        fs::write(&rom_path, b"not a real rom").expect("write dummy rom");
+
+        let width = 256;
+        let height = 240;
+        let rgb = vec![0x12u8; (width * height * 3) as usize];
+
+        // Create golden
+        ensure_golden_screenshot(
+            &rom_path,
+            &rgb,
+            width,
+            height,
+            GoldenScreenshotPolicy::AutoAccept,
+        )
+        .expect("should save golden when missing");
+
+        // Mutate one pixel
+        let mut different = rgb.clone();
+        different[0] ^= 0xFF;
+
+        // Compare should fail
+        assert!(
+            assert_matches_golden_screenshot_byte_exact(&rom_path, &different, width, height)
+                .is_err()
+        );
     }
 }
