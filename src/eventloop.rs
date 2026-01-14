@@ -89,7 +89,7 @@ impl EventLoop {
     /// use neser::nes::TvSystem;
     ///
     /// // Create a headless EventLoop for testing
-    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false)?;
+    /// let headless = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None)?;
     ///
     /// // Create an EventLoop with an NTSC window at 2x scale
     /// let ntsc = EventLoop::new(false, TvSystem::Ntsc, 2.0, 1.0, true, None, false, false)?;
@@ -107,6 +107,7 @@ impl EventLoop {
         audio: Option<NesAudio>,
         gamepads_enabled: bool,
         fullscreen: bool,
+        shader_path: Option<String>,
     ) -> Result<Self, String> {
         let clamped_video_scale = Self::clamp_scale(video_scale);
         let clamped_timing_scale = Self::clamp_timing_scale(timing_scale);
@@ -123,6 +124,7 @@ impl EventLoop {
                 clamped_video_scale,
                 vsync_enabled,
                 fullscreen,
+                shader_path.as_deref(),
             )?)
         };
 
@@ -476,7 +478,10 @@ impl EventLoop {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            if self.handle_key_down_for_run(nes, keycode) == KeyDownOutcome::Quit {
+                            // Handle F6 for shader cycling
+                            if keycode == Keycode::F6 {
+                                gl_backend.cycle_shader();
+                            } else if self.handle_key_down_for_run(nes, keycode) == KeyDownOutcome::Quit {
                                 self.gl_backend = Some(gl_backend);
                                 return Ok(());
                             }
@@ -1175,7 +1180,7 @@ mod tests {
     #[serial]
     fn test_breakpoint_hit_pauses_and_opens_debugger() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
@@ -1202,7 +1207,7 @@ mod tests {
     #[serial]
     fn test_remove_breakpoint_allows_execution_to_continue() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
@@ -1231,7 +1236,7 @@ mod tests {
     #[test]
     #[serial]
     fn test_eventloop_creation() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None);
         assert!(event_loop.is_ok());
     }
 
@@ -1606,7 +1611,7 @@ mod tests {
     #[serial]
     fn test_continue_action_unpauses_and_closes_debugger() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         event_loop.request_debugger_open();
@@ -1634,7 +1639,7 @@ mod tests {
     #[serial]
     fn test_continue_skips_breakpoint_once_on_same_pc() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
@@ -1675,7 +1680,7 @@ mod tests {
     #[serial]
     fn test_f5_when_debugger_open_behaves_like_continue_for_breakpoints() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
@@ -1705,7 +1710,7 @@ mod tests {
     #[serial]
     fn test_run_to_nmi_action_runs_until_nmi_vector_pc() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Minimal cartridge with vectors.
@@ -1774,7 +1779,7 @@ mod tests {
     #[serial]
     fn test_run_to_irq_action_runs_until_irq_vector_pc() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Minimal cartridge with vectors.
@@ -1846,7 +1851,7 @@ mod tests {
     #[serial]
     fn test_run_to_irq_requires_actual_irq_entry_not_just_pc_match() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Minimal cartridge where IRQ vector points at the reset entrypoint.
@@ -1911,7 +1916,7 @@ mod tests {
     #[serial]
     fn test_run_to_nmi_when_already_in_nmi_waits_for_next_nmi_entry() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Cartridge with RESET=$8000, NMI=$9000.
@@ -2025,7 +2030,7 @@ mod tests {
     #[serial]
     fn test_run_to_nmi_ignores_other_breakpoints_until_next_nmi_entry() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Cartridge with RESET=$8000, NMI=$9000.
@@ -2123,7 +2128,7 @@ mod tests {
     #[serial]
     fn test_step_into_action_runs_via_temporary_breakpoint_and_reopens_debugger() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
@@ -2171,7 +2176,7 @@ mod tests {
     #[serial]
     fn test_step_over_action_runs_via_temporary_breakpoint_and_reopens_debugger() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = nes_with_jsr_program();
         nes.cpu.x = 0;
 
@@ -2224,7 +2229,7 @@ mod tests {
     #[serial]
     fn test_request_debugger_open_pauses_and_sets_request_flag() {
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
 
         assert!(!event_loop.paused);
         assert!(!event_loop.debugger_open_requested);
@@ -2383,14 +2388,14 @@ mod tests {
     #[test]
     #[serial]
     fn test_scaling_above_maximum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, true, None, false, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 6.0, 1.0, true, None, false, false, None);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
     fn test_scaling_at_minimum() {
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None);
         assert!(event_loop.is_ok());
     }
 
@@ -2405,7 +2410,7 @@ mod tests {
     #[serial]
     fn test_run_with_nes() {
         let _event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance
@@ -2430,7 +2435,7 @@ mod tests {
     #[serial]
     fn test_gamepad_disabled_by_default() {
         // When gamepads are disabled, no controllers should be initialized
-        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false);
+        let event_loop = EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None);
         assert!(event_loop.is_ok());
         let event_loop = event_loop.unwrap();
         assert_eq!(event_loop.controllers.len(), 0);
@@ -2465,7 +2470,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -2493,7 +2498,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -2550,7 +2555,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -2608,7 +2613,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let mut event_loop =
-            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false).unwrap();
+            EventLoop::new(true, TvSystem::Ntsc, 1.0, 1.0, true, None, false, false, None).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));

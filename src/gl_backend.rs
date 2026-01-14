@@ -6,11 +6,13 @@ use sdl2::video::{GLContext, GLProfile, Window};
 use crate::debugger;
 use crate::debugger::ui as debugger_ui;
 use crate::nes::TvSystem;
+use crate::shader_manager::ShaderManager;
 use std::time::Instant;
 
 pub(crate) struct GlBackend {
     window: Window,
     gl_context: GLContext,
+    glow_context: std::sync::Arc<glow::Context>,
     imgui: imgui::Context,
     renderer: imgui_opengl_renderer::Renderer,
     nes_texture: gl::types::GLuint,
@@ -18,6 +20,7 @@ pub(crate) struct GlBackend {
     framebuffer: Vec<u8>,
     last_frame: Instant,
     debugger_view_state: debugger::DebuggerViewState,
+    shader_manager: ShaderManager,
 }
 
 impl GlBackend {
@@ -27,6 +30,7 @@ impl GlBackend {
         scale: f32,
         vsync_enabled: bool,
         fullscreen: bool,
+        shader_path: Option<&str>,
     ) -> Result<Self, String> {
         let video_subsystem = sdl_context.video()?;
 
@@ -111,9 +115,28 @@ impl GlBackend {
             (tex, id)
         };
 
+        // Create glow context for librashader
+        let glow_context = unsafe {
+            std::sync::Arc::new(glow::Context::from_loader_function(|s| {
+                video_subsystem.gl_get_proc_address(s) as *const _
+            }))
+        };
+
+        let mut shader_manager = ShaderManager::new();
+
+        // Load shader preset if specified
+        if let Some(path) = shader_path {
+            if let Err(e) =
+                shader_manager.load_preset(std::path::Path::new(path), glow_context.clone())
+            {
+                eprintln!("Warning: Failed to load shader preset '{}': {}", path, e);
+            }
+        }
+
         Ok(Self {
             window,
             gl_context,
+            glow_context,
             imgui,
             renderer,
             nes_texture,
@@ -121,6 +144,7 @@ impl GlBackend {
             framebuffer: vec![0u8; 256 * 240 * 3],
             last_frame: Instant::now(),
             debugger_view_state: debugger::DebuggerViewState::default(),
+            shader_manager,
         })
     }
 
@@ -261,7 +285,51 @@ impl GlBackend {
                 gl::UNSIGNED_BYTE,
                 self.framebuffer.as_ptr() as *const _,
             );
+            // librashader's OpenGL runtime uses sampler objects whose MIN_FILTER always
+            // includes a mipmap variant (e.g. LINEAR_MIPMAP_LINEAR). Ensure the NES texture
+            // is mipmap-complete, otherwise some drivers (notably macOS) will treat it as
+            // unloadable and sample black.
+            gl::GenerateMipmap(gl::TEXTURE_2D);
             gl::Clear(gl::COLOR_BUFFER_BIT);
+        }
+
+        // Apply shader post-processing if a shader is loaded
+        // The shader will render the NES texture to the screen with filtering applied
+        // Note: librashader's OpenGL runtime renders into a texture-backed output, not
+        // directly into the default framebuffer. We therefore render into an output texture
+        // and draw that texture as the background.
+        let mut shader_output_texture_id: Option<imgui::TextureId> = None;
+        if self.shader_manager.has_shader() {
+            // Compute a drawable-space letterbox size for the shader output.
+            let drawable_w_f = drawable_w as f32;
+            let drawable_h_f = drawable_h as f32;
+            let nes_aspect = 256.0 / 240.0;
+            let drawable_aspect = if drawable_h_f == 0.0 {
+                nes_aspect
+            } else {
+                drawable_w_f / drawable_h_f
+            };
+
+            let (shader_out_w, shader_out_h) = if drawable_aspect > nes_aspect {
+                (
+                    ((drawable_h_f * nes_aspect) as u32).max(1),
+                    drawable_h.max(1),
+                )
+            } else {
+                (
+                    drawable_w.max(1),
+                    ((drawable_w_f / nes_aspect) as u32).max(1),
+                )
+            };
+
+            if let Err(e) =
+                self.shader_manager
+                    .apply_shader(self.nes_texture, shader_out_w, shader_out_h)
+            {
+                eprintln!("Shader application error: {}", e);
+            } else if let Some(tex) = self.shader_manager.output_texture() {
+                shader_output_texture_id = Some((tex as usize).into());
+            }
         }
 
         // Start ImGui frame
@@ -289,9 +357,22 @@ impl GlBackend {
             let x0 = (win_w - draw_w) * 0.5;
             let y0 = (win_h - draw_h) * 0.5;
 
-            ui.get_background_draw_list()
-                .add_image(self.nes_texture_id, [x0, y0], [x0 + draw_w, y0 + draw_h])
-                .build();
+            // Only draw the NES texture as a background if no shader is active.
+            // When a shader is active, we draw the shader output texture.
+            //
+            // Note: imgui 0.11 may produce draw_data with CmdLists=null when nothing is drawn.
+            // imgui-opengl-renderer iterates draw_lists() unconditionally, which will panic
+            // on a null pointer even when the count is 0. Ensure we always emit at least one
+            // (invisible) draw command so the draw list pointer is non-null.
+            if let Some(shader_tex_id) = shader_output_texture_id {
+                ui.get_background_draw_list()
+                    .add_image(shader_tex_id, [x0, y0], [x0 + draw_w, y0 + draw_h])
+                    .build();
+            } else {
+                ui.get_background_draw_list()
+                    .add_image(self.nes_texture_id, [x0, y0], [x0 + draw_w, y0 + draw_h])
+                    .build();
+            }
 
             if show_debugger {
                 let snapshot = self.debugger_view_state.snapshot(nes);
@@ -304,6 +385,14 @@ impl GlBackend {
         self.window.gl_swap_window();
 
         action
+    }
+
+    pub(crate) fn cycle_shader(&mut self) {
+        if let Err(e) = self.shader_manager.cycle_shader(self.glow_context.clone()) {
+            eprintln!("Error cycling shader: {}", e);
+        } else if let Some(name) = self.shader_manager.current_preset_name() {
+            println!("Switched to shader: {}", name);
+        }
     }
 }
 

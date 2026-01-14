@@ -11,13 +11,17 @@ winit = "0.28"
 imgui = "0.11"
 gl = { version = "0.14", optional = true }
 imgui-opengl-renderer = { version = "0.12.1", optional = true }
+glow = { version = "0.14", optional = true }
+librashader = { version = "0.5", optional = true, default-features = false, features = ["runtime-gl", "presets", "stable"] }
 
 [features]
 default = []
 sdl = [
 	"dep:sdl2",
 	"dep:gl",
+	"dep:glow",
 	"dep:imgui-opengl-renderer",
+	"dep:librashader",
 ]
 
 [[bin]]
