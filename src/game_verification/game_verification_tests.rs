@@ -3,14 +3,14 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::cartridge::Cartridge;
-    use crate::golden_screenshots::{
+    use crate::game_verification::golden_screenshots::{
         GoldenScreenshotPolicy, assert_matches_golden_screenshot_byte_exact,
         ensure_golden_screenshot, golden_screenshot_path_for_rom,
     };
-    use crate::manual_test_cartridges;
+    use crate::game_verification::manual_test_cartridges;
     use crate::nes::{Nes, TvSystem};
 
-    const FRAMES_TO_RUN: u32 = 60 * 10;
+    const FRAMES_TO_RUN: u32 = 60 * 5;
 
     fn snapshot_screen_buffer_rgb(nes: &Nes) -> Vec<u8> {
         let screen_buffer = nes.get_screen_buffer();
@@ -172,7 +172,6 @@ mod tests {
     /// - If a golden PNG exists in `roms/games/golden_screenshots`, compares byte-exact
     /// - If missing, fails unless `NESER_GOLDEN=accept` is set, in which case it writes the golden
     #[test]
-    #[ignore]
     fn test_verify_games_golden_screenshots() {
         let games_dir = Path::new("roms/games");
         let roms = collect_game_roms(games_dir).expect("collect roms");

@@ -7,7 +7,6 @@ pub mod cartridge;
 pub mod cpu;
 pub mod debugger;
 pub mod input;
-pub mod manual_test_cartridges;
 pub mod mem_controller;
 pub mod nes;
 pub mod ppu; // Modular PPU structure
@@ -18,10 +17,7 @@ pub mod tracing;
 pub mod audio;
 
 #[cfg(test)]
-pub mod golden_screenshots;
-
-#[cfg(test)]
-pub mod game_verification_tests;
+pub mod game_verification;
 
 #[cfg(feature = "sdl")]
 pub mod eventloop;

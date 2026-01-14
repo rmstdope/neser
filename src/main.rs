@@ -6,7 +6,9 @@ mod debugger;
 mod eventloop;
 mod gl_backend;
 mod input;
-mod manual_test_cartridges;
+// #[path = "game_verification/manual_test_cartridges.rs"]
+// mod manual_test_cartridges;
+
 mod mem_controller;
 mod nes;
 mod ppu;
@@ -393,7 +395,11 @@ mod tests {
 
     #[test]
     fn test_display_flag_recognized_with_value() {
-        let args = vec!["neser".to_string(), "--display".to_string(), "1".to_string()];
+        let args = vec![
+            "neser".to_string(),
+            "--display".to_string(),
+            "1".to_string(),
+        ];
         assert!(validate_no_unknown_args(&args).is_ok());
     }
 
@@ -405,13 +411,21 @@ mod tests {
 
     #[test]
     fn test_display_flag_parses_integer() {
-        let args = vec!["neser".to_string(), "--display".to_string(), "2".to_string()];
+        let args = vec![
+            "neser".to_string(),
+            "--display".to_string(),
+            "2".to_string(),
+        ];
         assert_eq!(fullscreen_display_from_args(&args).unwrap(), Some(2));
     }
 
     #[test]
     fn test_display_flag_rejects_negative() {
-        let args = vec!["neser".to_string(), "--display".to_string(), "-1".to_string()];
+        let args = vec![
+            "neser".to_string(),
+            "--display".to_string(),
+            "-1".to_string(),
+        ];
         assert!(fullscreen_display_from_args(&args).is_err());
     }
 }
