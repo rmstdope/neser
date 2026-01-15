@@ -1,11 +1,9 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
+use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
-const CHR_RAM_SIZE: usize = 8192; // 8KB
-const PRG_RAM_SIZE: usize = 8192; // 8KB
 const PRG_BANK_SIZE_32K: usize = 0x8000; // 32KB (for AxROM)
-const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 
 /// AxROM mapper (Mapper 7)
 ///
@@ -25,8 +23,8 @@ const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 /// Used in games like Battletoads, Marble Madness, Wizards & Warriors.
 pub struct AxROMMapper {
     prg_rom: Vec<u8>,
-    prg_ram: Vec<u8>,
-    chr_ram: Vec<u8>,
+    prg_ram: PrgRam,
+    chr_memory: ChrMemory,
     bank_select: u8, // Stores the full register value (bits 0-2 for bank, bit 4 for mirroring)
 }
 
@@ -35,8 +33,8 @@ impl AxROMMapper {
         // AxROM uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
         Self {
             prg_rom,
-            prg_ram: vec![0; PRG_RAM_SIZE],
-            chr_ram: vec![0; CHR_RAM_SIZE],
+            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
+            chr_memory: ChrMemory::new_ram(8192),
             bank_select: 0, // Default to bank 0, lower nametable
         }
     }
@@ -52,13 +50,13 @@ impl AxROMMapper {
 
 impl Mapper for AxROMMapper {
     fn read_prg(&self, addr: u16) -> u8 {
+        // PRG-RAM at $6000-$7FFF
+        if let Some(value) = self.prg_ram.try_read(addr) {
+            return value;
+        }
+
+        // PRG ROM at $8000-$FFFF (32KB switchable bank)
         match addr {
-            // PRG-RAM at $6000-$7FFF (8KB)
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                self.prg_ram.get(offset).copied().unwrap_or(0)
-            }
-            // PRG ROM at $8000-$FFFF (32KB switchable bank)
             0x8000..=0xFFFF => {
                 let bank_offset = self.get_prg_bank_offset();
                 let offset = (addr - 0x8000) as usize;
@@ -70,34 +68,25 @@ impl Mapper for AxROMMapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            // PRG-RAM at $6000-$7FFF (8KB)
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                if offset < self.prg_ram.len() {
-                    self.prg_ram[offset] = value;
-                }
-            }
-            // Register at $8000-$FFFF
-            // Bits 0-2: PRG bank select
-            // Bit 4: One-screen mirroring (0 = lower, 1 = upper)
-            0x8000..=0xFFFF => {
-                self.bank_select = value;
-            }
-            _ => {}
+        // PRG-RAM at $6000-$7FFF
+        if self.prg_ram.try_write(addr, value) {
+            return;
+        }
+
+        // Register at $8000-$FFFF
+        // Bits 0-2: PRG bank select
+        // Bit 4: One-screen mirroring (0 = lower, 1 = upper)
+        if (0x8000..=0xFFFF).contains(&addr) {
+            self.bank_select = value;
         }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        let index = (addr & CHR_MASK) as usize;
-        self.chr_ram.get(index).copied().unwrap_or(0)
+        self.chr_memory.read(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let index = (addr & CHR_MASK) as usize;
-        if index < self.chr_ram.len() {
-            self.chr_ram[index] = value;
-        }
+        self.chr_memory.write(addr, value);
     }
 
     fn ppu_address_changed(&mut self, _addr: u16) {
@@ -112,16 +101,15 @@ impl Mapper for AxROMMapper {
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.len()
+        self.prg_ram.size()
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.clone()
+        self.prg_ram.snapshot()
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.prg_ram.len());
-        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.prg_ram.load_snapshot(data);
     }
 }
 

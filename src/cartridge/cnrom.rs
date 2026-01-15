@@ -1,9 +1,9 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
+use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
-const CHR_RAM_SIZE: usize = 8192; // 8KB
-const PRG_RAM_SIZE: usize = 8192; // 8KB
+const CHR_BANK_SIZE: usize = 8192; // 8KB
 const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 
 /// CNROM mapper (Mapper 3)
@@ -19,7 +19,7 @@ const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 /// Used in many early NES games.
 pub struct CNROMMapper {
     prg_rom: Vec<u8>,
-    prg_ram: Vec<u8>,
+    prg_ram: PrgRam,
     chr_rom: Vec<u8>,
     mirroring: MirroringMode,
     chr_bank_select: u8,
@@ -29,7 +29,7 @@ impl CNROMMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         Self {
             prg_rom,
-            prg_ram: vec![0; PRG_RAM_SIZE],
+            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_rom,
             mirroring,
             chr_bank_select: 0,
@@ -37,21 +37,21 @@ impl CNROMMapper {
     }
 
     fn get_chr_bank_offset(&self) -> usize {
-        let num_banks = (self.chr_rom.len() / CHR_RAM_SIZE).max(1);
+        let num_banks = (self.chr_rom.len() / CHR_BANK_SIZE).max(1);
         let bank = (self.chr_bank_select as usize) % num_banks;
-        bank * CHR_RAM_SIZE
+        bank * CHR_BANK_SIZE
     }
 }
 
 impl Mapper for CNROMMapper {
     fn read_prg(&self, addr: u16) -> u8 {
+        // PRG-RAM at $6000-$7FFF
+        if let Some(value) = self.prg_ram.try_read(addr) {
+            return value;
+        }
+
+        // PRG ROM is fixed at $8000-$FFFF (32KB or 16KB)
         match addr {
-            // PRG-RAM at $6000-$7FFF (8KB)
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                self.prg_ram.get(offset).copied().unwrap_or(0)
-            }
-            // PRG ROM is fixed at $8000-$FFFF (32KB or 16KB)
             0x8000..=0xFFFF => {
                 let offset = (addr - 0x8000) as usize;
                 let index = offset % self.prg_rom.len();
@@ -62,19 +62,14 @@ impl Mapper for CNROMMapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            // PRG-RAM at $6000-$7FFF (8KB)
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                if offset < self.prg_ram.len() {
-                    self.prg_ram[offset] = value;
-                }
-            }
-            // Any write to $8000-$FFFF sets the CHR bank select
-            0x8000..=0xFFFF => {
-                self.chr_bank_select = value;
-            }
-            _ => {}
+        // PRG-RAM at $6000-$7FFF
+        if self.prg_ram.try_write(addr, value) {
+            return;
+        }
+
+        // Any write to $8000-$FFFF sets the CHR bank select
+        if (0x8000..=0xFFFF).contains(&addr) {
+            self.chr_bank_select = value;
         }
     }
 
@@ -97,16 +92,15 @@ impl Mapper for CNROMMapper {
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.len()
+        self.prg_ram.size()
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.clone()
+        self.prg_ram.snapshot()
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.prg_ram.len());
-        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.prg_ram.load_snapshot(data);
     }
 }
 

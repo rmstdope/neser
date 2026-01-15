@@ -1,11 +1,9 @@
+use crate::cartridge::common::{ChrMemory, PrgRam, DEFAULT_PRG_RAM_SIZE};
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
 
 // Memory size constants
-const CHR_RAM_SIZE: usize = 8192; // 8KB
-const PRG_RAM_SIZE: usize = 8192; // 8KB
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
-const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 
 /// NROM mapper (Mapper 0)
 ///
@@ -19,49 +17,39 @@ const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 /// This is the baseline mapper implementation that all other mappers build upon.
 pub struct NROMMapper {
     prg_rom: Vec<u8>,
-    prg_ram: Vec<u8>,
-    chr_memory: Vec<u8>,
+    prg_ram: PrgRam,
+    chr_memory: ChrMemory,
     mirroring: MirroringMode,
-    has_chr_ram: bool,
 }
 
 impl NROMMapper {
     /// Create a new NROM mapper
     /// If chr_rom is empty, 8KB of CHR-RAM is allocated
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        let has_chr_ram = chr_rom.is_empty();
-        let chr_memory = if has_chr_ram {
-            vec![0; CHR_RAM_SIZE]
-        } else {
-            chr_rom
-        };
-
         Self {
             prg_rom,
-            prg_ram: vec![0; PRG_RAM_SIZE], // 8KB PRG-RAM initialized to 0
-            chr_memory,
+            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
+            chr_memory: ChrMemory::new(chr_rom),
             mirroring,
-            has_chr_ram,
         }
     }
 }
 
 impl Mapper for NROMMapper {
     fn read_prg(&self, addr: u16) -> u8 {
+        // PRG-RAM at $6000-$7FFF
+        if let Some(value) = self.prg_ram.try_read(addr) {
+            return value;
+        }
+
+        // PRG ROM at $8000-$FFFF
         match addr {
-            // PRG-RAM at $6000-$7FFF (8KB)
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                self.prg_ram.get(offset).copied().unwrap_or(0)
-            }
-            // PRG ROM at $8000-$FFFF
             0x8000..=0xFFFF => {
                 let offset = (addr - 0x8000) as usize;
 
                 // Handle 16KB vs 32KB PRG ROM
                 if self.prg_rom.len() == PRG_BANK_SIZE {
                     // 16KB ROM: mirror at $C000
-                    // $8000-$BFFF maps to ROM, $C000-$FFFF mirrors to same ROM
                     let index = offset % PRG_BANK_SIZE;
                     self.prg_rom.get(index).copied().unwrap_or(0)
                 } else {
@@ -75,34 +63,20 @@ impl Mapper for NROMMapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            // PRG-RAM at $6000-$7FFF (8KB)
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                if offset < self.prg_ram.len() {
-                    self.prg_ram[offset] = value;
-                }
-            }
-            // Writes to PRG ROM are ignored (no mapper registers in NROM)
-            0x8000..=0xFFFF => {}
-            _ => {}
+        // PRG-RAM at $6000-$7FFF
+        if self.prg_ram.try_write(addr, value) {
+            return;
         }
+
+        // Writes to PRG ROM are ignored (no mapper registers in NROM)
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        // CHR memory is mapped to $0000-$1FFF (8KB)
-        let index = (addr & CHR_MASK) as usize;
-        self.chr_memory.get(index).copied().unwrap_or(0)
+        self.chr_memory.read(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        // Only write to CHR-RAM, CHR-ROM is read-only
-        if self.has_chr_ram {
-            let index = (addr & CHR_MASK) as usize;
-            if index < self.chr_memory.len() {
-                self.chr_memory[index] = value;
-            }
-        }
+        self.chr_memory.write(addr, value);
     }
 
     fn ppu_address_changed(&mut self, _addr: u16) {
@@ -114,16 +88,15 @@ impl Mapper for NROMMapper {
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.len()
+        self.prg_ram.size()
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.clone()
+        self.prg_ram.snapshot()
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.prg_ram.len());
-        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.prg_ram.load_snapshot(data);
     }
 }
 

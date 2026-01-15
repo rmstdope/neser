@@ -1,3 +1,4 @@
+use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
 /// MMC2 mapper (iNES Mapper 9)
@@ -12,7 +13,7 @@ use crate::cartridge::{Mapper, MirroringMode};
 /// - Mirroring: horizontal/vertical control via register write
 pub struct MMC2Mapper {
     prg_rom: Vec<u8>,
-    prg_ram: Vec<u8>,
+    prg_ram: PrgRam,
 
     chr_rom: Vec<u8>,
     chr_ram: Vec<u8>,
@@ -34,7 +35,6 @@ pub struct MMC2Mapper {
 }
 
 impl MMC2Mapper {
-    const PRG_RAM_SIZE: usize = 0x2000; // 8KB
     const PRG_BANK_SIZE: usize = 0x2000; // 8KB
     const CHR_BANK_SIZE: usize = 0x1000; // 4KB
 
@@ -48,7 +48,7 @@ impl MMC2Mapper {
 
         Self {
             prg_rom,
-            prg_ram: vec![0u8; Self::PRG_RAM_SIZE],
+            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_rom,
             chr_ram,
             has_chr_ram,
@@ -136,11 +136,12 @@ impl MMC2Mapper {
 
 impl Mapper for MMC2Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
+        // PRG-RAM at $6000-$7FFF
+        if let Some(value) = self.prg_ram.try_read(addr) {
+            return value;
+        }
+
         match addr {
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                self.prg_ram.get(offset).copied().unwrap_or(0)
-            }
             0x8000..=0x9FFF => {
                 let bank = self.clamp_prg_bank_8k(self.prg_bank_8k);
                 let offset = (addr - 0x8000) as usize;
@@ -169,14 +170,12 @@ impl Mapper for MMC2Mapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                if let Some(byte) = self.prg_ram.get_mut(offset) {
-                    *byte = value;
-                }
-            }
+        // PRG-RAM at $6000-$7FFF
+        if self.prg_ram.try_write(addr, value) {
+            return;
+        }
 
+        match addr {
             // PRG bank select ($A000-$AFFF)
             0xA000..=0xAFFF => {
                 self.prg_bank_8k = value & 0x0F;
@@ -237,16 +236,15 @@ impl Mapper for MMC2Mapper {
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.len()
+        self.prg_ram.size()
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.clone()
+        self.prg_ram.snapshot()
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.prg_ram.len());
-        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.prg_ram.load_snapshot(data);
     }
 }
 

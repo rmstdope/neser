@@ -1,3 +1,4 @@
+use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,7 +236,7 @@ pub struct VRC6Mapper {
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
     chr_ram: Vec<u8>,
-    prg_ram: Vec<u8>,
+    prg_ram: PrgRam,
 
     prg_bank_16k: u8,
     prg_bank_8k: u8,
@@ -260,7 +261,6 @@ pub struct VRC6Mapper {
 impl VRC6Mapper {
     const PRG_BANK_SIZE_8K: usize = 0x2000;
     const CHR_BANK_SIZE_1K: usize = 0x0400;
-    const PRG_RAM_SIZE: usize = 0x2000;
     const DEFAULT_CHR_RAM_SIZE: usize = 0x2000;
 
     pub fn new(
@@ -286,7 +286,7 @@ impl VRC6Mapper {
             prg_rom,
             chr_rom,
             chr_ram,
-            prg_ram: vec![0; Self::PRG_RAM_SIZE],
+            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             prg_bank_16k: 0,
             prg_bank_8k: 0,
             chr_banks_1k: [0; 8],
@@ -425,11 +425,12 @@ impl VRC6Mapper {
 
 impl Mapper for VRC6Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
+        // PRG-RAM at $6000-$7FFF
+        if let Some(value) = self.prg_ram.try_read(addr) {
+            return value;
+        }
+
         match addr {
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                self.prg_ram.get(offset).copied().unwrap_or(0)
-            }
             0x8000..=0xBFFF => {
                 let offset = (addr - 0x8000) as usize;
 
@@ -455,74 +456,70 @@ impl Mapper for VRC6Mapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                if offset < self.prg_ram.len() {
-                    self.prg_ram[offset] = value;
-                }
-            }
-            0x8000..=0xFFFF => {
-                let reg = self.normalize_reg_addr(addr);
-                match reg {
-                    0x8000..=0x8003 => self.prg_bank_16k = value & 0x0F,
-                    0x9000 => self.audio.pulse1.write_control(value),
-                    0x9001 => self.audio.pulse1.write_period_low(value),
-                    0x9002 => self.audio.pulse1.write_period_high_and_enable(value),
-                    0x9003 => self.audio.write_freq_control(value),
-                    0xA000 => self.audio.pulse2.write_control(value),
-                    0xA001 => self.audio.pulse2.write_period_low(value),
-                    0xA002 => self.audio.pulse2.write_period_high_and_enable(value),
-                    0xB000 => self.audio.saw.write_rate(value),
-                    0xB001 => self.audio.saw.write_period_low(value),
-                    0xB002 => self.audio.saw.write_period_high_and_enable(value),
-                    0xC000..=0xC003 => self.prg_bank_8k = value & 0x1F,
-                    0xB003 => {
-                        self.b003 = value;
-                        self.update_mirroring_from_b003();
-                    }
-                    0xF000 => {
-                        // IRQ Latch
-                        self.irq_latch = value;
-                    }
-                    0xF001 => {
-                        // IRQ Control (.... .MEA)
-                        // M: mode (1=cycle, 0=scanline)
-                        // E: enable (1=enabled)
-                        // A: enable after acknowledgement (copied to E on $F002 writes)
-                        self.acknowledge_irq();
-                        self.reset_irq_prescaler();
+        // PRG-RAM at $6000-$7FFF
+        if self.prg_ram.try_write(addr, value) {
+            return;
+        }
 
-                        self.irq_mode_cycle = (value & 0b0000_0100) != 0;
-                        let enable = (value & 0b0000_0010) != 0;
-                        self.irq_enable_after_ack = (value & 0b0000_0001) != 0;
-
-                        if enable {
-                            self.irq_enabled = true;
-                            self.irq_counter = self.irq_latch;
-                        } else {
-                            self.irq_enabled = false;
-                        }
-                    }
-                    0xF002 => {
-                        // IRQ Acknowledge
-                        // Any write acknowledges pending IRQ and copies A->E.
-                        self.acknowledge_irq();
-                        self.irq_enabled = self.irq_enable_after_ack;
-                    }
-                    0xD000..=0xD003 => {
-                        let idx = (reg & 0x0003) as usize;
-                        self.chr_banks_1k[idx] = value;
-                    }
-                    0xE000..=0xE003 => {
-                        let idx = 4 + (reg & 0x0003) as usize;
-                        self.chr_banks_1k[idx] = value;
-                    }
-                    // Other VRC6 registers not currently modeled.
-                    _ => {}
+        if (0x8000..=0xFFFF).contains(&addr) {
+            let reg = self.normalize_reg_addr(addr);
+            match reg {
+                0x8000..=0x8003 => self.prg_bank_16k = value & 0x0F,
+                0x9000 => self.audio.pulse1.write_control(value),
+                0x9001 => self.audio.pulse1.write_period_low(value),
+                0x9002 => self.audio.pulse1.write_period_high_and_enable(value),
+                0x9003 => self.audio.write_freq_control(value),
+                0xA000 => self.audio.pulse2.write_control(value),
+                0xA001 => self.audio.pulse2.write_period_low(value),
+                0xA002 => self.audio.pulse2.write_period_high_and_enable(value),
+                0xB000 => self.audio.saw.write_rate(value),
+                0xB001 => self.audio.saw.write_period_low(value),
+                0xB002 => self.audio.saw.write_period_high_and_enable(value),
+                0xC000..=0xC003 => self.prg_bank_8k = value & 0x1F,
+                0xB003 => {
+                    self.b003 = value;
+                    self.update_mirroring_from_b003();
                 }
+                0xF000 => {
+                    // IRQ Latch
+                    self.irq_latch = value;
+                }
+                0xF001 => {
+                    // IRQ Control (.... .MEA)
+                    // M: mode (1=cycle, 0=scanline)
+                    // E: enable (1=enabled)
+                    // A: enable after acknowledgement (copied to E on $F002 writes)
+                    self.acknowledge_irq();
+                    self.reset_irq_prescaler();
+
+                    self.irq_mode_cycle = (value & 0b0000_0100) != 0;
+                    let enable = (value & 0b0000_0010) != 0;
+                    self.irq_enable_after_ack = (value & 0b0000_0001) != 0;
+
+                    if enable {
+                        self.irq_enabled = true;
+                        self.irq_counter = self.irq_latch;
+                    } else {
+                        self.irq_enabled = false;
+                    }
+                }
+                0xF002 => {
+                    // IRQ Acknowledge
+                    // Any write acknowledges pending IRQ and copies A->E.
+                    self.acknowledge_irq();
+                    self.irq_enabled = self.irq_enable_after_ack;
+                }
+                0xD000..=0xD003 => {
+                    let idx = (reg & 0x0003) as usize;
+                    self.chr_banks_1k[idx] = value;
+                }
+                0xE000..=0xE003 => {
+                    let idx = 4 + (reg & 0x0003) as usize;
+                    self.chr_banks_1k[idx] = value;
+                }
+                // Other VRC6 registers not currently modeled.
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -567,16 +564,15 @@ impl Mapper for VRC6Mapper {
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.len()
+        self.prg_ram.size()
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.clone()
+        self.prg_ram.snapshot()
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.prg_ram.len());
-        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.prg_ram.load_snapshot(data);
     }
 }
 

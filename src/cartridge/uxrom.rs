@@ -1,11 +1,9 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
+use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
-const CHR_RAM_SIZE: usize = 8192; // 8KB
-const PRG_RAM_SIZE: usize = 8192; // 8KB
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
-const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 
 /// UxROM mapper (Mapper 2)
 ///
@@ -20,8 +18,8 @@ const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 /// Common in games like Mega Man, Castlevania, Contra, Duck Tales, Metal Gear.
 pub struct UxROMMapper {
     prg_rom: Vec<u8>,
-    prg_ram: Vec<u8>,
-    chr_ram: Vec<u8>,
+    prg_ram: PrgRam,
+    chr_memory: ChrMemory,
     mirroring: MirroringMode,
     bank_select: u8,
 }
@@ -31,8 +29,8 @@ impl UxROMMapper {
         // UxROM uses CHR-RAM, ignore chr_rom parameter
         Self {
             prg_rom,
-            prg_ram: vec![0; PRG_RAM_SIZE],
-            chr_ram: vec![0; CHR_RAM_SIZE],
+            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
+            chr_memory: ChrMemory::new_ram(8192),
             mirroring,
             bank_select: 0,
         }
@@ -45,59 +43,49 @@ impl UxROMMapper {
 
 impl Mapper for UxROMMapper {
     fn read_prg(&self, addr: u16) -> u8 {
-        match addr {
-            // PRG-RAM at $6000-$7FFF (8KB)
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                self.prg_ram.get(offset).copied().unwrap_or(0)
-            }
-            // PRG ROM at $8000-$FFFF
-            0x8000..=0xFFFF => {
-                let offset = (addr - 0x8000) as usize;
+        // PRG-RAM at $6000-$7FFF
+        if let Some(value) = self.prg_ram.try_read(addr) {
+            return value;
+        }
 
-                if addr < 0xC000 {
-                    // $8000-$BFFF: Switchable 16KB bank
-                    let bank_offset = (self.bank_select as usize) * PRG_BANK_SIZE;
-                    let index = bank_offset + offset;
-                    self.prg_rom.get(index).copied().unwrap_or(0)
-                } else {
-                    // $C000-$FFFF: Fixed to last 16KB bank
-                    let last_bank_offset = self.get_last_bank_offset();
-                    let index = last_bank_offset + (offset - PRG_BANK_SIZE);
-                    self.prg_rom.get(index).copied().unwrap_or(0)
-                }
+        // PRG ROM at $8000-$FFFF
+        match addr {
+            0x8000..=0xBFFF => {
+                // Switchable 16KB bank
+                let offset = (addr - 0x8000) as usize;
+                let bank_offset = (self.bank_select as usize) * PRG_BANK_SIZE;
+                let index = bank_offset + offset;
+                self.prg_rom.get(index).copied().unwrap_or(0)
+            }
+            0xC000..=0xFFFF => {
+                // Fixed to last 16KB bank
+                let offset = (addr - 0xC000) as usize;
+                let last_bank_offset = self.get_last_bank_offset();
+                let index = last_bank_offset + offset;
+                self.prg_rom.get(index).copied().unwrap_or(0)
             }
             _ => 0,
         }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            // PRG-RAM at $6000-$7FFF (8KB)
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                if offset < self.prg_ram.len() {
-                    self.prg_ram[offset] = value;
-                }
-            }
-            // Any write to $8000-$FFFF sets the bank register
-            0x8000..=0xFFFF => {
-                self.bank_select = value;
-            }
-            _ => {}
+        // PRG-RAM at $6000-$7FFF
+        if self.prg_ram.try_write(addr, value) {
+            return;
+        }
+
+        // Any write to $8000-$FFFF sets the bank register
+        if (0x8000..=0xFFFF).contains(&addr) {
+            self.bank_select = value;
         }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        let index = (addr & CHR_MASK) as usize;
-        self.chr_ram.get(index).copied().unwrap_or(0)
+        self.chr_memory.read(addr)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        let index = (addr & CHR_MASK) as usize;
-        if index < self.chr_ram.len() {
-            self.chr_ram[index] = value;
-        }
+        self.chr_memory.write(addr, value);
     }
 
     fn ppu_address_changed(&mut self, _addr: u16) {
@@ -109,16 +97,15 @@ impl Mapper for UxROMMapper {
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.len()
+        self.prg_ram.size()
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.clone()
+        self.prg_ram.snapshot()
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.prg_ram.len());
-        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.prg_ram.load_snapshot(data);
     }
 }
 

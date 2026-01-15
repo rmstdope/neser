@@ -1,7 +1,7 @@
+use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
 // Memory size constants
-const PRG_RAM_SIZE: usize = 8192; // 8KB
 const PRG_BANK_SIZE: usize = 32 * 1024; // 32KB
 const CHR_BANK_SIZE: usize = 8 * 1024; // 8KB
 const CHR_MASK: u16 = 0x1FFF; // 8KB mask
@@ -17,7 +17,7 @@ const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 /// Used in unlicensed games like Crystal Mines, Bible Adventures, etc.
 pub struct ColorDreamsMapper {
     prg_rom: Vec<u8>,
-    prg_ram: Vec<u8>,
+    prg_ram: PrgRam,
     chr_rom: Vec<u8>,
     mirroring: MirroringMode,
     prg_bank_select: u8,
@@ -29,7 +29,7 @@ impl ColorDreamsMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         Self {
             prg_rom,
-            prg_ram: vec![0; PRG_RAM_SIZE],
+            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_rom,
             mirroring,
             prg_bank_select: 0,
@@ -52,11 +52,12 @@ impl ColorDreamsMapper {
 
 impl Mapper for ColorDreamsMapper {
     fn read_prg(&self, addr: u16) -> u8 {
+        // PRG-RAM at $6000-$7FFF
+        if let Some(value) = self.prg_ram.try_read(addr) {
+            return value;
+        }
+
         match addr {
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                self.prg_ram.get(offset).copied().unwrap_or(0)
-            }
             0x8000..=0xFFFF => {
                 let bank_offset = self.prg_bank_offset();
                 let offset = (addr - 0x8000) as usize;
@@ -68,21 +69,17 @@ impl Mapper for ColorDreamsMapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            0x6000..=0x7FFF => {
-                let offset = (addr - 0x6000) as usize;
-                if offset < self.prg_ram.len() {
-                    self.prg_ram[offset] = value;
-                }
-            }
-            0x8000..=0xFFFF => {
-                // Register format:
-                // - Bits 0-1: CHR bank
-                // - Bits 4-7: PRG bank
-                self.chr_bank_select = value & 0b0000_0011;
-                self.prg_bank_select = (value >> 4) & 0b0000_1111;
-            }
-            _ => {}
+        // PRG-RAM at $6000-$7FFF
+        if self.prg_ram.try_write(addr, value) {
+            return;
+        }
+
+        if (0x8000..=0xFFFF).contains(&addr) {
+            // Register format:
+            // - Bits 0-1: CHR bank
+            // - Bits 4-7: PRG bank
+            self.chr_bank_select = value & 0b0000_0011;
+            self.prg_bank_select = (value >> 4) & 0b0000_1111;
         }
     }
 
@@ -105,23 +102,22 @@ impl Mapper for ColorDreamsMapper {
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.len()
+        self.prg_ram.size()
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.clone()
+        self.prg_ram.snapshot()
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.prg_ram.len());
-        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.prg_ram.load_snapshot(data);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::mapper::create_mapper;
     use crate::cartridge::MirroringMode;
+    use crate::cartridge::mapper::create_mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
         let mut data = vec![0u8; bank_size * num_banks];
