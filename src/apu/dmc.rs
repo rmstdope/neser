@@ -169,6 +169,12 @@ impl Dmc {
     }
 
     fn advance_reader_after_fetch(&mut self) {
+        // Guard against underflow - this can happen if DMA completes after
+        // bytes_remaining was cleared (e.g., by disabling the channel)
+        if self.bytes_remaining == 0 {
+            return;
+        }
+
         // Advance to next byte
         self.current_address = self.current_address.wrapping_add(1);
         // Wrap address at $FFFF to $8000
