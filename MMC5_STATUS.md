@@ -16,7 +16,7 @@ MMC5 is a complex mapper with many advanced features. This document tracks what 
 - ✅ ROM/RAM window selection (bit 7 of bank registers)
 - ✅ Proper bank alignment for each mode
 
-### CHR Banking (Partial)
+### CHR Banking (Mostly Complete)
 - ✅ CHR mode control register ($5101) with 4 modes:
   - Mode 0: Single 8KB bank
   - Mode 1: Two 4KB banks
@@ -24,9 +24,11 @@ MMC5 is a complex mapper with many advanced features. This document tracks what 
   - Mode 3: Eight 1KB banks
 - ✅ CHR bank registers $5120-$5127 (A registers for background)
 - ✅ CHR bank registers $5128-$512B (B registers for sprites)
-- ❌ BG/sprite banking split not functional (uses A registers for all fetches)
-  - **Reason**: Requires PPU to signal whether it's fetching background or sprite data
-  - **Impact**: CHR-intensive games may display incorrect graphics
+- ✅ BG/sprite banking split in CHR mode 3 (1KB banks)
+  - PPU signals fetch type via `ppu_set_chr_fetch_is_sprite()`
+  - Background fetches use A registers, sprite fetches use B registers
+- ✅ Extended attribute mode CHR bank extension
+  - Upper 6 bits of ExRAM extend CHR bank for per-tile selection
 
 ### Hardware Features
 - ✅ Hardware multiplier ($5205/$5206)
@@ -77,19 +79,12 @@ MMC5 is a complex mapper with many advanced features. This document tracks what 
 **Impact**: Games that use MMC5's scanline IRQ for split-screen effects won't work
 
 ### 2. CHR BG/Sprite Banking Split
-**Status**: Registers exist, but always uses A registers
+**Status**: ✅ Implemented
 
-**What's needed**:
-- PPU must signal to mapper whether current CHR fetch is for background or sprite
-- In CHR mode 3 (1KB), use A registers for background, B registers for sprites
-- This affects $0000-$0FFF range (8 × 1KB banks)
-
-**Required changes**:
-- Add parameter to `read_chr()` indicating fetch type, OR
-- Add separate methods `read_chr_bg()` and `read_chr_sprite()`, OR
-- Have PPU call a method before each fetch type to set mode
-
-**Impact**: Games with detailed graphics using 1KB CHR mode may display wrong tiles
+The PPU now signals to the mapper whether current CHR fetch is for background or sprite
+via the `ppu_set_chr_fetch_is_sprite()` callback. In CHR mode 3 (1KB banks):
+- Background fetches use A registers ($5120-$5127)
+- Sprite fetches use B registers ($5128-$512B)
 
 ### 3. ExRAM as Nametable Memory
 **Status**: ExRAM exists as CPU-accessible memory only
@@ -107,19 +102,22 @@ MMC5 is a complex mapper with many advanced features. This document tracks what 
 **Impact**: Games using ExRAM for extra nametable space won't render correctly
 
 ### 4. Extended Attribute Mode
-**Status**: Not implemented
+**Status**: Partially implemented
 
-**What's needed**:
-- When $5104 = extended attribute mode
-- Each ExRAM byte encodes attribute for a single 8×8 tile (instead of 16×16 block)
-- Provides per-tile palette control instead of per-16×16-block
+**Implemented**:
+- ✅ Per-tile palette selection from ExRAM lower 2 bits (bits 0-1)
+- ✅ CHR bank extension from ExRAM upper 6 bits (bits 2-7)
+  - When enabled, background tile CHR fetches use the upper 6 bits of the corresponding
+    ExRAM byte to extend the CHR bank selection, allowing each tile to select from
+    a much larger CHR address space (up to 256KB with 1KB banks)
 
-**Required changes**:
-- PPU attribute fetch must check if ExRAM extended attributes are enabled
-- Read attribute from ExRAM corresponding to current tile
-- Apply correct palette to that specific tile
+**What's still needed**:
+- ❌ PPU attribute fetch hook to properly integrate per-tile attributes
+  - Current implementation overrides attribute table reads via `read_nametable()`
+  - May need more precise integration with PPU attribute decoding
 
-**Impact**: Games using per-tile color control won't display correctly
+**Impact**: Games like Castlevania III that use extended attribute mode for detailed
+background graphics should now render with correct CHR tile selection.
 
 ### 5. Fill Mode
 **Status**: Registers exist but not functional

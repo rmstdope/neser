@@ -399,7 +399,7 @@ impl MMC5Mapper {
         // Mode 3: 1KB (eight banks, with separate BG/sprite banks)
 
         let chr_mode = self.chr_mode & 0x03;
-        match chr_mode {
+        let base_bank = match chr_mode {
             0 => {
                 // 8KB mode: use $5127
                 self.chr_bank_a[7]
@@ -431,7 +431,23 @@ impl MMC5Mapper {
                 }
             }
             _ => unreachable!(),
+        };
+
+        // Extended attribute mode ($5104=1): for background tile fetches,
+        // the upper 6 bits of ExRAM override the upper bits of the CHR bank number.
+        // This allows each tile to select from a much larger CHR address space.
+        if (self.ex_ram_mode & 0x03) == 0x01 && !self.chr_fetch_is_sprite {
+            let ex = self
+                .ex_ram
+                .get(self.last_bg_tile_index)
+                .copied()
+                .unwrap_or(0);
+            // Upper 6 bits of ExRAM (bits 2-7) form the upper bank bits.
+            let ex_bank_extension = ex >> 2;
+            return ex_bank_extension;
         }
+
+        base_bank
     }
 
     fn read_chr_banked(&self, bank: u8, addr: u16) -> u8 {
@@ -1194,6 +1210,67 @@ mod tests {
             .read_nametable(0x23C0)
             .expect("extended attribute mode should override attribute reads");
         assert_eq!(attr1, 0xAA);
+    }
+
+    #[test]
+    fn test_mmc5_extended_attribute_mode_extends_chr_bank_for_bg_tiles() {
+        // In MMC5 extended attribute mode ($5104=1), the ExRAM byte for each tile has:
+        // - Bits 0-1: Palette select (per-tile attributes)
+        // - Bits 2-7: CHR bank extension (upper 6 bits for 1KB CHR bank selection)
+        //
+        // The upper 6 bits from ExRAM should replace the upper bits of the CHR bank
+        // register value, allowing each tile to select from a much larger CHR space.
+        //
+        // This test verifies that BG tile CHR fetches use the extended bank from ExRAM.
+
+        // Create CHR ROM with 64 x 1KB banks (64KB total).
+        // Each bank is filled with its bank number as a marker.
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 64);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Set CHR mode 3 (1KB banks) - required for extended attribute mode CHR banking.
+        mapper.write_prg(0x5101, 0x03);
+
+        // Enable extended attribute mode.
+        mapper.write_prg(0x5104, 0x01);
+
+        // Program CHR bank A register $5120 to bank 0 (base bank).
+        mapper.write_prg(0x5120, 0x00);
+
+        // Program ExRAM at tile index 0 ($5C00):
+        // - Bits 0-1 = palette (2)
+        // - Bits 2-7 = CHR bank extension (16 << 2 = 0x40)
+        // This means tile 0 should fetch from CHR bank 16.
+        mapper.write_prg(0x5C00, 0x02 | (16 << 2));
+
+        // Simulate the PPU fetching the tile index from nametable.
+        // This sets last_bg_tile_index to 0.
+        mapper.ppu_set_chr_fetch_is_sprite(false);
+        let _ = mapper.read_nametable(0x2000);
+
+        // Now reading CHR for BG should use bank 16 (from ExRAM extension).
+        // The CHR ROM bank 16 is filled with the value 16.
+        let chr_value = mapper.read_chr(0x0000);
+        assert_eq!(
+            chr_value, 16,
+            "Extended attribute mode should extend CHR bank from ExRAM upper bits"
+        );
+
+        // Program ExRAM at tile index 1 ($5C01) to use bank 32.
+        mapper.write_prg(0x5C01, 0x01 | (32 << 2));
+
+        // Fetch tile 1.
+        let _ = mapper.read_nametable(0x2001);
+
+        // CHR fetch should now use bank 32.
+        let chr_value = mapper.read_chr(0x0000);
+        assert_eq!(
+            chr_value, 32,
+            "Extended attribute mode should update CHR bank per tile"
+        );
     }
 
     #[test]
