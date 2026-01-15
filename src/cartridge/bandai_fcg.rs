@@ -299,6 +299,21 @@ impl Mapper for BandaiFcgMapper {
     fn get_mirroring(&self) -> MirroringMode {
         self.mirroring
     }
+
+    fn wram_size(&self) -> usize {
+        // Mapper 16 does not have traditional PRG-RAM.
+        // Save data is stored in EEPROM (not yet implemented).
+        0
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        // No WRAM to snapshot - EEPROM save data is separate
+        Vec::new()
+    }
+
+    fn load_wram_snapshot(&mut self, _data: &[u8]) {
+        // No WRAM to restore - EEPROM save data is separate
+    }
 }
 
 #[cfg(test)]
