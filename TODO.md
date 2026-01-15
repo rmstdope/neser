@@ -4,11 +4,6 @@
 
 ### Pending
 
-- [ ] Implement MMC5 next-tier features (mirroring/ExRAM/IRQ/CHR banking).
-  - What: Implement MMC5 in a deliberate order: mirroring via `$5105`, ExRAM mapping at `$5C00-$5FFF` (including mode behaviors), scanline IRQ via `$5203/$5204`, then CHR banking and split-screen behavior.
-  - Why: MMC5 enables a bunch of real games/demos and is a common source of subtle PPU/memory interactions.
-  - Done when: `roms/blargg/mmc5test*` (and any existing MMC5 test ROMs in this repo) pass the relevant sections and a small MMC5 commercial ROM boots/rendering is plausible.
-
 - [ ] Improve mapper correctness for common commercial titles.
   - What: Focus on high-impact mapper behaviors that affect many ROMs: MMC1 shift-register quirks and reset behavior, MMC3 IRQ/A12 filtering details, and PRG-RAM persistence/enable semantics.
   - Why: Mapper edge cases are a top source of “boots but glitches/crashes later” failures in real games.
@@ -24,3 +19,4 @@
 - [x] Add an automated `nestest.nes` “golden trace” test (CPU regs + PC + flags per instruction) to catch subtle CPU regressions.
 - [x] Expand Blargg PPU coverage by wiring in more ROMs from `blargg_ppu_tests_2005.09.15b/` and additional `ppu_vbl_nmi` variants.
 - [x] Create a compatibility matrix for `roms/games/*` and add one smoke test per game (boot to title + basic input sanity), logging a short failure signature.
+- [x] Implement MMC5 next-tier features (mirroring/ExRAM/IRQ/CHR banking).
