@@ -76,9 +76,9 @@ impl EventLoop {
     /// use neser::config::Config;
     /// use neser::eventloop::EventLoop;
     ///
-    /// let config = Config::with_defaults();
+    /// let config = Config::default();
     /// // Create a headless EventLoop for testing
-    /// let headless = EventLoop::new(true, None, &config)?;;
+    /// let headless = EventLoop::new(true, None, &config)?;
     ///
     /// // Create an EventLoop with a window
     /// let windowed = EventLoop::new(false, None, &config)?;
