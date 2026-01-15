@@ -1350,16 +1350,62 @@ impl Cpu {
         let mut new_delayed_i_flag: Option<bool> = None;
 
         // Trace CPU tick before reading opcode (so PC is correct for the instruction)
-        trace_cpu!(
-            "tick PC={:04X} A={:02X} X={:02X} Y={:02X} P={:02X} SP={:02X} cyc={}",
-            self.pc,
-            self.a,
-            self.x,
-            self.y,
-            self.p,
-            self.sp,
-            self.total_cycles
-        );
+        // Read instruction bytes for tracing without advancing PC
+        #[cfg(debug_assertions)]
+        {
+            let pc = self.pc;
+            let opcode_byte = self.memory.borrow().read(pc);
+            if let Some(op) = super::opcode::lookup(opcode_byte) {
+                let byte1 = if op.bytes() > 1 {
+                    self.memory.borrow().read(pc.wrapping_add(1))
+                } else {
+                    0
+                };
+                let byte2 = if op.bytes() > 2 {
+                    self.memory.borrow().read(pc.wrapping_add(2))
+                } else {
+                    0
+                };
+                let hex_dump = match op.bytes() {
+                    1 => format!("{:02X}", opcode_byte),
+                    2 => format!("{:02X} {:02X}", opcode_byte, byte1),
+                    3 => format!("{:02X} {:02X} {:02X}", opcode_byte, byte1, byte2),
+                    _ => format!("{:02X}", opcode_byte),
+                };
+                let asm = match op.mode {
+                    "IMP" => format!("{}", op.mnemonic),
+                    "ACC" => format!("{} A", op.mnemonic),
+                    "IMM" => format!("{} #${:02X}", op.mnemonic, byte1),
+                    "ZP" => format!("{} ${:02X}", op.mnemonic, byte1),
+                    "ZPX" => format!("{} ${:02X},X", op.mnemonic, byte1),
+                    "ZPY" => format!("{} ${:02X},Y", op.mnemonic, byte1),
+                    "ABS" => format!("{} ${:04X}", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
+                    "ABSX" | "ABSXW" => format!("{} ${:04X},X", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
+                    "ABSY" | "ABSYW" => format!("{} ${:04X},Y", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
+                    "IND" => format!("{} (${:04X})", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
+                    "INDX" => format!("{} (${:02X},X)", op.mnemonic, byte1),
+                    "INDY" | "INDYW" => format!("{} (${:02X}),Y", op.mnemonic, byte1),
+                    "REL" => {
+                        let offset = byte1 as i8;
+                        let target = pc.wrapping_add(2).wrapping_add(offset as u16);
+                        format!("{} ${:04X}", op.mnemonic, target)
+                    }
+                    _ => format!("{}", op.mnemonic),
+                };
+                trace_cpu!(
+                    "tick PC={:04X} {} {:14} A={:02X} X={:02X} Y={:02X} P={:02X} SP={:02X} cyc={}",
+                    pc,
+                    hex_dump,
+                    asm,
+                    self.a,
+                    self.x,
+                    self.y,
+                    self.p,
+                    self.sp,
+                    self.total_cycles
+                );
+            }
+        }
 
         let opcode = self.read_byte_from_pc();
         let Some(op) = super::opcode::lookup(opcode) else {
