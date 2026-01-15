@@ -74,7 +74,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let rom_path = "roms/games/Castlevania III - Dracula's Curse (USA).nes";
 
     // Manual testing of Blargg
-    // let rom_path = "roms/nestest.nes";
+    // let rom_path = "roms/manual_testing/mmc5test_v2/mmc5test.nes";
+    // let rom_path = "roms/manual_testing/exram/mmc5exram.nes";
 
     // let rom_data = manual_test_cartridges::triangle_only_nrom_128();
     // let rom_data = manual_test_cartridges::pulse1_only_nrom_128();
