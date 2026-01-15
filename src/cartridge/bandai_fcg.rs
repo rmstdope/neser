@@ -6,13 +6,19 @@
 //! - PRG: 16KB switchable at $8000-$BFFF, fixed last bank at $C000-$FFFF
 //! - CHR: 8 × 1KB switchable banks
 //!
-//! ## Registers (submapper 5 / LZ93D50, $8000-$800F range)
-//! - $8000-$8007: CHR bank select (1KB each)
-//! - $8008: PRG bank select (16KB at $8000-$BFFF)
-//! - $8009: Mirroring (0=V, 1=H, 2=1A, 3=1B)
-//! - $800A: IRQ control (bit 0 = enable, write copies latch to counter)
-//! - $800B: IRQ latch low byte
-//! - $800C: IRQ latch high byte
+//! ## Submappers
+//! - **Submapper 4 (FCG-1/2)**: Registers at $6000-$7FFF, direct IRQ counter writes
+//! - **Submapper 5 (LZ93D50)**: Registers at $8000-$800F, latched IRQ counter
+//!
+//! ## Registers
+//! - $x000-$x007: CHR bank select (1KB each)
+//! - $x008: PRG bank select (16KB at $8000-$BFFF)
+//! - $x009: Mirroring (0=V, 1=H, 2=1A, 3=1B)
+//! - $x00A: IRQ control (bit 0 = enable)
+//! - $x00B: IRQ counter/latch low byte
+//! - $x00C: IRQ counter/latch high byte
+//!
+//! Where x = 6 for submapper 4, x = 8 for submapper 5.
 //!
 //! ## References
 //! - <https://www.nesdev.org/wiki/INES_Mapper_016>
@@ -20,11 +26,23 @@
 use crate::cartridge::cartridge::MirroringMode;
 use crate::cartridge::mapper::Mapper;
 
+/// Submapper variants for Bandai FCG
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BandaiFcgVariant {
+    /// Submapper 0: Unspecified - respond to both $6000-$7FFF and $8000-$FFFF
+    Both,
+    /// Submapper 4: FCG-1/2 ASIC - registers at $6000-$7FFF, direct counter writes
+    Fcg1_2,
+    /// Submapper 5: LZ93D50 ASIC - registers at $8000-$800F, latched counter
+    Lz93d50,
+}
+
 pub struct BandaiFcgMapper {
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
     chr_ram: Vec<u8>,
     mirroring: MirroringMode,
+    variant: BandaiFcgVariant,
 
     // PRG banking
     prg_bank: u8, // 16KB bank at $8000-$BFFF
@@ -35,7 +53,7 @@ pub struct BandaiFcgMapper {
     // IRQ
     irq_enabled: bool,
     irq_counter: u16,
-    irq_latch: u16,
+    irq_latch: u16, // Only used by LZ93D50
     irq_pending: bool,
 }
 
@@ -44,6 +62,16 @@ impl BandaiFcgMapper {
     const CHR_BANK_SIZE: usize = 1024; // 1KB
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        // Default to Both variant for submapper 0 (unspecified) compatibility
+        Self::new_with_variant(prg_rom, chr_rom, mirroring, BandaiFcgVariant::Both)
+    }
+
+    pub fn new_with_variant(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+        variant: BandaiFcgVariant,
+    ) -> Self {
         let chr_ram = if chr_rom.is_empty() {
             vec![0u8; 8 * 1024]
         } else {
@@ -55,6 +83,7 @@ impl BandaiFcgMapper {
             chr_rom,
             chr_ram,
             mirroring,
+            variant,
             prg_bank: 0,
             chr_banks: [0; 8],
             irq_enabled: false,
@@ -140,7 +169,27 @@ impl Mapper for BandaiFcgMapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // Submapper 5 (LZ93D50): registers at $8000-$800F
+        // Determine which address range this write falls into and if it's valid
+        let is_6000_range = (0x6000..=0x7FFF).contains(&addr);
+        let is_8000_range = (0x8000..=0xFFFF).contains(&addr);
+
+        let in_range = match self.variant {
+            BandaiFcgVariant::Both => is_6000_range || is_8000_range,
+            BandaiFcgVariant::Fcg1_2 => is_6000_range,
+            BandaiFcgVariant::Lz93d50 => is_8000_range,
+        };
+
+        if !in_range {
+            return;
+        }
+
+        // For "Both" variant, use FCG-1/2 behavior for $6000 range, LZ93D50 for $8000 range
+        let use_latch_behavior = match self.variant {
+            BandaiFcgVariant::Both => is_8000_range,
+            BandaiFcgVariant::Fcg1_2 => false,
+            BandaiFcgVariant::Lz93d50 => true,
+        };
+
         let reg = addr & 0x000F;
         match reg {
             0x00..=0x07 => {
@@ -165,8 +214,13 @@ impl Mapper for BandaiFcgMapper {
                 // IRQ control
                 // Writing acknowledges pending IRQ
                 self.irq_pending = false;
-                // Copy latch to counter (LZ93D50 behavior)
-                self.irq_counter = self.irq_latch;
+
+                if use_latch_behavior {
+                    // LZ93D50 behavior: copy latch to counter
+                    self.irq_counter = self.irq_latch;
+                }
+                // FCG-1/2: counter was written directly, no latch copy
+
                 // Enable/disable
                 self.irq_enabled = (value & 0x01) != 0;
                 // If enabled while counter is 0, trigger immediately
@@ -175,12 +229,22 @@ impl Mapper for BandaiFcgMapper {
                 }
             }
             0x0B => {
-                // IRQ latch low byte
-                self.irq_latch = (self.irq_latch & 0xFF00) | (value as u16);
+                // IRQ counter/latch low byte
+                if use_latch_behavior {
+                    self.irq_latch = (self.irq_latch & 0xFF00) | (value as u16);
+                } else {
+                    // Direct counter write
+                    self.irq_counter = (self.irq_counter & 0xFF00) | (value as u16);
+                }
             }
             0x0C => {
-                // IRQ latch high byte
-                self.irq_latch = (self.irq_latch & 0x00FF) | ((value as u16) << 8);
+                // IRQ counter/latch high byte
+                if use_latch_behavior {
+                    self.irq_latch = (self.irq_latch & 0x00FF) | ((value as u16) << 8);
+                } else {
+                    // Direct counter write
+                    self.irq_counter = (self.irq_counter & 0x00FF) | ((value as u16) << 8);
+                }
             }
             0x0D => {
                 // EEPROM control (not implemented yet)
@@ -376,5 +440,185 @@ mod tests {
             mapper.irq_pending(),
             "IRQ should trigger immediately when enabled with 0 counter"
         );
+    }
+
+    // =====================================================
+    // Submapper 4 (FCG-1/2) tests
+    // =====================================================
+
+    #[test]
+    fn test_fcg1_2_registers_at_6000() {
+        let prg_rom = banked_data(16 * 1024, 4);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = BandaiFcgMapper::new_with_variant(
+            prg_rom,
+            chr_rom,
+            MirroringMode::Horizontal,
+            BandaiFcgVariant::Fcg1_2,
+        );
+
+        // PRG bank switch via $6008
+        mapper.write_prg(0x6008, 2);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            2,
+            "PRG bank should switch via $6008"
+        );
+
+        // CHR bank switch via $6000-$6007
+        mapper.write_prg(0x6000, 5);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            5,
+            "CHR bank 0 should switch via $6000"
+        );
+
+        // Mirroring via $6009
+        mapper.write_prg(0x6009, 0);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+    }
+
+    #[test]
+    fn test_fcg1_2_ignores_8000_writes() {
+        let prg_rom = banked_data(16 * 1024, 4);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = BandaiFcgMapper::new_with_variant(
+            prg_rom,
+            chr_rom,
+            MirroringMode::Horizontal,
+            BandaiFcgVariant::Fcg1_2,
+        );
+
+        // Writing to $8000 should have no effect on FCG-1/2
+        mapper.write_prg(0x8008, 2);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "FCG-1/2 should ignore writes to $8000 range"
+        );
+    }
+
+    #[test]
+    fn test_fcg1_2_direct_irq_counter() {
+        let prg_rom = banked_data(16 * 1024, 2);
+        let chr_rom = banked_data(1024, 8);
+
+        let mut mapper = BandaiFcgMapper::new_with_variant(
+            prg_rom,
+            chr_rom,
+            MirroringMode::Horizontal,
+            BandaiFcgVariant::Fcg1_2,
+        );
+
+        // FCG-1/2 writes directly to counter (not latch)
+        mapper.write_prg(0x600B, 3); // Counter low byte = 3
+        mapper.write_prg(0x600C, 0); // Counter high byte = 0
+
+        // Enable IRQ - does NOT copy latch to counter on FCG-1/2
+        mapper.write_prg(0x600A, 1);
+        assert!(!mapper.irq_pending(), "IRQ should not be pending yet");
+
+        // Counter should already be 3 from direct writes
+        // Clock 3 cycles - counter goes 3 -> 2 -> 1 -> 0
+        mapper.cpu_cycle();
+        assert!(!mapper.irq_pending());
+        mapper.cpu_cycle();
+        assert!(!mapper.irq_pending());
+        mapper.cpu_cycle();
+        assert!(
+            mapper.irq_pending(),
+            "IRQ should trigger when counter reaches 0"
+        );
+    }
+
+    #[test]
+    fn test_lz93d50_ignores_6000_writes() {
+        let prg_rom = banked_data(16 * 1024, 4);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = BandaiFcgMapper::new_with_variant(
+            prg_rom,
+            chr_rom,
+            MirroringMode::Horizontal,
+            BandaiFcgVariant::Lz93d50,
+        );
+
+        // Writing to $6000 should have no effect on LZ93D50
+        mapper.write_prg(0x6008, 2);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "LZ93D50 should ignore writes to $6000 range"
+        );
+
+        // But $8000 should work
+        mapper.write_prg(0x8008, 2);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            2,
+            "LZ93D50 should accept $8000 writes"
+        );
+    }
+
+    // =====================================================
+    // Submapper 0 (Both) tests - responds to both ranges
+    // =====================================================
+
+    #[test]
+    fn test_both_variant_accepts_6000_and_8000_writes() {
+        let prg_rom = banked_data(16 * 1024, 4);
+        let chr_rom = banked_data(1024, 16);
+
+        // Default constructor uses Both variant
+        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+
+        // $6000 range should work
+        mapper.write_prg(0x6008, 1);
+        assert_eq!(mapper.read_prg(0x8000), 1, "Both should accept $6000 writes");
+
+        // $8000 range should also work
+        mapper.write_prg(0x8008, 2);
+        assert_eq!(mapper.read_prg(0x8000), 2, "Both should accept $8000 writes");
+    }
+
+    #[test]
+    fn test_both_variant_uses_correct_irq_behavior_per_range() {
+        let prg_rom = banked_data(16 * 1024, 2);
+        let chr_rom = banked_data(1024, 8);
+
+        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+
+        // $6000 range uses FCG-1/2 behavior (direct counter writes)
+        mapper.write_prg(0x600B, 5); // Direct counter low = 5
+        mapper.write_prg(0x600C, 0); // Direct counter high = 0
+        mapper.write_prg(0x600A, 1); // Enable - no latch copy
+
+        // Counter should be 5, tick down
+        for _ in 0..4 {
+            assert!(!mapper.irq_pending());
+            mapper.cpu_cycle();
+        }
+        mapper.cpu_cycle(); // 5th cycle should trigger IRQ
+        assert!(mapper.irq_pending(), "IRQ should trigger after 5 cycles");
+
+        // Acknowledge IRQ
+        mapper.write_prg(0x600A, 0);
+        assert!(!mapper.irq_pending());
+
+        // Now test $8000 range uses LZ93D50 behavior (latched counter)
+        mapper.write_prg(0x800B, 3); // Latch low = 3
+        mapper.write_prg(0x800C, 0); // Latch high = 0
+        // Counter is currently 0 from previous test
+        mapper.write_prg(0x800A, 1); // Enable - copies latch to counter
+
+        // Counter should now be 3 (copied from latch)
+        for _ in 0..2 {
+            assert!(!mapper.irq_pending());
+            mapper.cpu_cycle();
+        }
+        mapper.cpu_cycle(); // 3rd cycle should trigger IRQ
+        assert!(mapper.irq_pending(), "IRQ should trigger after 3 cycles (latch behavior)");
     }
 }

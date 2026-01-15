@@ -92,6 +92,20 @@ impl Cartridge {
             mirroring,
             prg_ram_banks_8k,
         )?;
+        if cfg!(debug_assertions) {
+            eprintln!(
+            "Loaded iNES ROM: prg_rom_banks={} ({} bytes), chr_rom_banks={} ({} bytes), prg_ram_banks_8k={}, mapper={}, mirroring={:?}, trainer={}, battery_backed_prg_ram={}",
+            data[4],
+            prg_rom_size,
+            data[5],
+            chr_rom_size,
+            prg_ram_banks_8k,
+            mapper_number,
+            mirroring,
+            has_trainer,
+            battery_backed_prg_ram,
+            );
+        }
 
         Ok(Self {
             mapper,
