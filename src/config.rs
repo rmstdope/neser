@@ -120,6 +120,17 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Specify config file path (default: ./neser.conf or ~/.neser/neser.conf)"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--video-scale",
+        help: Some("Window scaling factor, windowed mode only (e.g., --video-scale 4.0)"),
+        has_value: true,
+    },
+    // NOTE: --timing-scale is disabled as it doesn't work with the current eventloop design
+    // CliFlag {
+    //     flag: "--timing-scale",
+    //     help: Some("Emulation speed multiplier (e.g., --timing-scale 2.0)"),
+    //     has_value: true,
+    // },
 ];
 
 /// Result of parsing command-line arguments.
@@ -158,7 +169,7 @@ pub struct Config {
     pub triangle_enabled: bool,
     pub noise_enabled: bool,
     pub dmc_enabled: bool,
-    /// Window scaling factor (1.0 to 5.0).
+    /// Window scaling factor (1.0 to 5.0). Only applies in windowed mode.
     pub video_scale: f32,
     /// Emulation speed multiplier.
     pub timing_scale: f32,
@@ -307,6 +318,16 @@ impl Config {
             self.dmc_enabled = false;
         }
 
+        // Video scale
+        if let Some(scale) = Self::parse_float_arg(args, "--video-scale")? {
+            self.video_scale = scale;
+        }
+
+        // NOTE: timing_scale is disabled as it doesn't work with the current eventloop design
+        // if let Some(scale) = Self::parse_float_arg(args, "--timing-scale")? {
+        //     self.timing_scale = scale;
+        // }
+
         Ok(())
     }
 
@@ -393,6 +414,20 @@ impl Config {
             }
         }
         None
+    }
+
+    /// Parse a float argument from command-line args.
+    fn parse_float_arg(args: &[String], flag: &str) -> Result<Option<f32>, String> {
+        for i in 0..args.len() {
+            if args[i] == flag && i + 1 < args.len() {
+                let value = &args[i + 1];
+                let parsed: f32 = value
+                    .parse()
+                    .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
+                return Ok(Some(parsed));
+            }
+        }
+        Ok(None)
     }
 
     /// Default config file name.
@@ -527,11 +562,12 @@ impl Config {
                     self.video_scale = s;
                 }
             }
-            "timing_scale" => {
-                if let Ok(s) = value.parse::<f32>() {
-                    self.timing_scale = s;
-                }
-            }
+            // NOTE: timing_scale is disabled as it doesn't work with the current eventloop design
+            // "timing_scale" => {
+            //     if let Ok(s) = value.parse::<f32>() {
+            //         self.timing_scale = s;
+            //     }
+            // }
             _ => {} // Unknown keys are silently ignored
         }
     }
@@ -831,6 +867,51 @@ mod tests {
         assert!(!config.noise_enabled);
     }
 
+    #[test]
+    fn test_config_video_scale() {
+        let args = vec![
+            "neser".to_string(),
+            "--video-scale".to_string(),
+            "2.5".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!((config.video_scale - 2.5).abs() < 0.001);
+    }
+
+    // NOTE: timing_scale tests disabled as the feature doesn't work with current eventloop design
+    // #[test]
+    // fn test_config_timing_scale() {
+    //     let args = vec![
+    //         "neser".to_string(),
+    //         "--timing-scale".to_string(),
+    //         "2.0".to_string(),
+    //     ];
+    //     let config = parse_config(args);
+    //     assert!((config.timing_scale - 2.0).abs() < 0.001);
+    // }
+
+    #[test]
+    fn test_config_video_scale_invalid_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--video-scale".to_string(),
+            "not_a_number".to_string(),
+        ];
+        let result = Config::new(&args);
+        assert!(result.is_err());
+    }
+
+    // #[test]
+    // fn test_config_timing_scale_invalid_errors() {
+    //     let args = vec![
+    //         "neser".to_string(),
+    //         "--timing-scale".to_string(),
+    //         "abc".to_string(),
+    //     ];
+    //     let result = Config::new(&args);
+    //     assert!(result.is_err());
+    // }
+
     // Config file tests
 
     #[test]
@@ -959,12 +1040,12 @@ mod tests {
         assert!((config.video_scale - 2.5).abs() < 0.001);
     }
 
-    #[test]
-    fn test_config_file_timing_scale() {
-        let mut config = Config::default();
-        config.apply_config_value("timing_scale", "1.5");
-        assert!((config.timing_scale - 1.5).abs() < 0.001);
-    }
+    // #[test]
+    // fn test_config_file_timing_scale() {
+    //     let mut config = Config::default();
+    //     config.apply_config_value("timing_scale", "1.5");
+    //     assert!((config.timing_scale - 1.5).abs() < 0.001);
+    // }
 
     #[test]
     fn test_config_file_bool_formats() {
