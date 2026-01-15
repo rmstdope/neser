@@ -27,8 +27,7 @@
 /// In tests we use thread-local storage to avoid cross-test interference.
 /// In non-test debug builds, this is a single shared global.
 #[cfg(all(debug_assertions, not(test)))]
-pub static TRACING: std::sync::OnceLock<std::sync::RwLock<Tracing>> =
-    std::sync::OnceLock::new();
+pub static TRACING: std::sync::OnceLock<std::sync::RwLock<Tracing>> = std::sync::OnceLock::new();
 
 #[cfg(all(debug_assertions, test))]
 thread_local! {
