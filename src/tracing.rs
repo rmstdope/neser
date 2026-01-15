@@ -14,10 +14,10 @@
 //! Use the trace macros to emit debug output:
 //!
 //! ```ignore
-//! trace_cpu!(tracing, "PC={:04X} opcode={:02X}", pc, opcode);
-//! trace_ppu!(tracing, "scanline={} pixel={}", scanline, pixel);
-//! trace_apu!(tracing, "frame_counter={}", cycle);
-//! trace_mapper!(tracing, "bank switch to {}", bank);
+//! trace_cpu!("PC={:04X} opcode={:02X}", pc, opcode);
+//! trace_ppu!("scanline={} pixel={}", scanline, pixel);
+//! trace_apu!("frame_counter={}", cycle);
+//! trace_mapper!("bank switch to {}", bank);
 //! ```
 //!
 //! In release builds, these macros expand to nothing.
