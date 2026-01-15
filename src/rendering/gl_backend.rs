@@ -6,7 +6,6 @@ use sdl2::video::{FullscreenType, GLContext, GLProfile, Window, WindowPos};
 use crate::config::Config;
 use crate::debugger;
 use crate::debugger::ui as debugger_ui;
-use crate::nes::TvSystem;
 use crate::rendering::shader_manager::ShaderManager;
 use std::time::Instant;
 
@@ -25,14 +24,15 @@ pub(crate) struct GlBackend {
 }
 
 impl GlBackend {
-    pub(crate) fn new(
-        sdl_context: &sdl2::Sdl,
-        tv_system: TvSystem,
-        scale: f32,
-        vsync_enabled: bool,
-        config: &Config,
-        shader_path: Option<&str>,
-    ) -> Result<Self, String> {
+    const MIN_SCALE: f32 = 1.0;
+    const MAX_SCALE: f32 = 5.0;
+
+    pub(crate) fn new(sdl_context: &sdl2::Sdl, config: &Config) -> Result<Self, String> {
+        let tv_system = config.tv_system;
+        let scale = Self::clamp_scale(config.video_scale);
+        let vsync_enabled = config.vsync_enabled;
+        let shader_path = config.shader_path.as_deref();
+
         let video_subsystem = sdl_context.video()?;
 
         {
@@ -176,6 +176,30 @@ impl GlBackend {
             debugger_view_state: debugger::DebuggerViewState::default(),
             shader_manager,
         })
+    }
+
+    /// Clamps the video scaling factor to the valid range [1.0, 5.0].
+    /// Prints a warning to stderr if clamping occurs.
+    fn clamp_scale(scale: f32) -> f32 {
+        if scale < Self::MIN_SCALE {
+            eprintln!(
+                "Warning: Video scaling factor {} is below minimum {}. Clamping to {}.",
+                scale,
+                Self::MIN_SCALE,
+                Self::MIN_SCALE
+            );
+            Self::MIN_SCALE
+        } else if scale > Self::MAX_SCALE {
+            eprintln!(
+                "Warning: Video scaling factor {} is above maximum {}. Clamping to {}.",
+                scale,
+                Self::MAX_SCALE,
+                Self::MAX_SCALE
+            );
+            Self::MAX_SCALE
+        } else {
+            scale
+        }
     }
 
     pub(crate) fn handle_event(&mut self, event: &Event) {
