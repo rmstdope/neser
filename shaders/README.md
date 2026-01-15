@@ -12,6 +12,7 @@ This directory contains curated shader presets from the libretro slang-shaders p
 ## Usage
 
 Use the `--filter` flag to specify a shader:
+
 ```bash
 neser rom.nes --filter shaders/crt-lottes.slangp
 ```
@@ -21,6 +22,7 @@ Or cycle through shaders at runtime with F6.
 ## Implementation Status
 
 ✅ **COMPLETE** - Shader infrastructure is fully functional:
+
 - Shader preset loading via librashader ✓
 - CLI flag and runtime cycling ✓
 - Shader application in rendering pipeline ✓
@@ -31,4 +33,4 @@ The shader system is production-ready. All shaders render to the screen with har
 
 ## Source
 
-Shaders sourced from: https://github.com/libretro/slang-shaders
+Shaders sourced from: <https://github.com/libretro/slang-shaders>
