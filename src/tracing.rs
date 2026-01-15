@@ -27,12 +27,24 @@
 /// This static is only present in debug builds and is used by the trace macros
 /// to check if tracing is enabled without passing the Tracing struct everywhere.
 #[cfg(debug_assertions)]
-pub static TRACING: std::sync::OnceLock<Tracing> = std::sync::OnceLock::new();
+pub static TRACING: std::sync::OnceLock<std::sync::RwLock<Tracing>> = std::sync::OnceLock::new();
 
 /// Initialize the global tracing state. Call this once at startup.
 #[cfg(debug_assertions)]
 pub fn init_tracing(tracing: Tracing) {
-    let _ = TRACING.set(tracing);
+    if let Some(lock) = TRACING.get() {
+        let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());
+        *guard = tracing;
+        return;
+    }
+
+    let lock = std::sync::RwLock::new(tracing);
+    if TRACING.set(lock).is_err() {
+        if let Some(lock) = TRACING.get() {
+            let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());
+            *guard = tracing;
+        }
+    }
 }
 
 /// Initialize the global tracing state. No-op in release builds.
@@ -41,14 +53,18 @@ pub fn init_tracing(_tracing: Tracing) {}
 
 /// Get the current tracing configuration.
 #[cfg(debug_assertions)]
-pub fn get_tracing() -> Option<&'static Tracing> {
-    TRACING.get()
+pub fn get_tracing() -> Option<Tracing> {
+    TRACING
+        .get()
+        .map(|lock| *lock.read().unwrap_or_else(|e| e.into_inner()))
 }
 
 /// Check if CPU tracing is enabled. Returns false if tracing is not initialized.
 #[cfg(debug_assertions)]
 pub fn is_cpu_tracing_enabled() -> bool {
-    TRACING.get().is_some_and(|t| t.cpu)
+    TRACING
+        .get()
+        .is_some_and(|lock| lock.read().unwrap_or_else(|e| e.into_inner()).cpu)
 }
 
 /// Check if CPU tracing is enabled. Always returns false in release builds.
@@ -320,5 +336,28 @@ mod tests {
         let retrieved = retrieved.unwrap();
         assert!(retrieved.enabled);
         assert!(retrieved.cpu);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn init_tracing_overwrites_existing_state() {
+        let tracing_on = Tracing {
+            enabled: true,
+            cpu: true,
+            ppu: false,
+            apu: false,
+            mapper: false,
+            nestest: false,
+        };
+        init_tracing(tracing_on);
+
+        let tracing_off = Tracing::default();
+        init_tracing(tracing_off);
+
+        let retrieved = get_tracing();
+        assert!(retrieved.is_some());
+        let retrieved = retrieved.unwrap();
+        assert!(!retrieved.enabled);
+        assert!(!retrieved.cpu);
     }
 }

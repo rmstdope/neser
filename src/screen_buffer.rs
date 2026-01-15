@@ -84,25 +84,6 @@ impl ScreenBuffer {
             self.buffer[offset + 1],
             self.buffer[offset + 2],
         );
-        // Debug: Log first few reads on scanline 0
-        if y == 0 && x >= 7 && x < 12 {
-            static mut GET_LOG_COUNT: u32 = 0;
-            unsafe {
-                if GET_LOG_COUNT < 5 {
-                    println!(
-                        "get_pixel: x={}, y={}, offset={}, rgb={:?}, buffer[offset]={:02X} {:02X} {:02X}",
-                        x,
-                        y,
-                        offset,
-                        result,
-                        self.buffer[offset],
-                        self.buffer[offset + 1],
-                        self.buffer[offset + 2]
-                    );
-                    GET_LOG_COUNT += 1;
-                }
-            }
-        }
         result
     }
 

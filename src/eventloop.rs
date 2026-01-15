@@ -140,8 +140,6 @@ impl EventLoop {
             .num_joysticks()
             .map_err(|e| format!("Failed to enumerate joysticks: {}", e))?;
 
-        println!("{} joystick(s) available", available);
-
         let mut controllers = Vec::new();
         let mut controller_player_map = HashMap::new();
 

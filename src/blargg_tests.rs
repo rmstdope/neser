@@ -108,7 +108,6 @@ mod tests {
                 }
                 const STATUS_POLL_INTERVAL: u32 = 256;
                 for cpu_cycle in 0..29780 {
-                    // println!("{}", nes.trace(&crate::tracing::Tracing::default()));
                     nes.run_cpu_tick();
 
                     if cpu_cycle != 0 && cpu_cycle % STATUS_POLL_INTERVAL == 0 {
@@ -631,11 +630,11 @@ mod tests {
     // );
 
     // MMC3 IRQ counter tests
-    // blargg_test!(
-    //     test_mmc3_irq_1_clocking,
-    //     "roms/blargg/mmc3_irq_tests/1.Clocking.nes",
-    //     60 * 10 // Increased timeout for initial debugging
-    // );
+    blargg_test!(
+        test_mmc3_irq_1_clocking,
+        "roms/blargg/mmc3_irq_tests/1.Clocking.nes",
+        60 * 10 // Increased timeout for initial debugging
+    );
     // blargg_test!(
     //     test_mmc3_irq_2_details,
     //     "roms/blargg/mmc3_irq_tests/2.Details.nes"
@@ -649,8 +648,8 @@ mod tests {
     //     "roms/blargg/mmc3_irq_tests/4.Scanline_timing.nes",
     //     60 * 5 // May need time for frame rendering
     // );
-    // // Note: Tests 5 and 6 test different MMC3 revisions (A and B)
-    // // We'll implement Rev B (most common) as default
+    // Note: Tests 5 and 6 test different MMC3 revisions (A and B)
+    // We'll implement Rev B (most common) as default
     // blargg_test!(
     //     test_mmc3_irq_6_rev_b,
     //     "roms/blargg/mmc3_irq_tests/6.MMC3_rev_B.nes"
