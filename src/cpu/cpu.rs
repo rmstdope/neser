@@ -1351,19 +1351,21 @@ impl Cpu {
 
         // Trace CPU tick before reading opcode (so PC is correct for the instruction)
         // Read instruction bytes for tracing without advancing PC
+        // Use read_for_testing to avoid affecting the open bus state
+        // Only execute this code when CPU tracing is actually enabled
         #[cfg(debug_assertions)]
-        {
+        if crate::tracing::is_cpu_tracing_enabled() {
             let pc = self.pc;
             let memory = self.memory.borrow();
-            let opcode_byte = memory.read(pc);
+            let opcode_byte = memory.read_for_testing(pc);
             if let Some(op) = super::opcode::lookup(opcode_byte) {
                 let byte1 = if op.bytes() > 1 {
-                    memory.read(pc.wrapping_add(1))
+                    memory.read_for_testing(pc.wrapping_add(1))
                 } else {
                     0
                 };
                 let byte2 = if op.bytes() > 2 {
-                    memory.read(pc.wrapping_add(2))
+                    memory.read_for_testing(pc.wrapping_add(2))
                 } else {
                     0
                 };

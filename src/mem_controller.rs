@@ -246,7 +246,7 @@ impl MemController {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, debug_assertions))]
     #[allow(dead_code)]
     pub fn read_for_testing(&self, addr: u16) -> u8 {
         let old_open_bus = *self.open_bus.borrow_mut();
