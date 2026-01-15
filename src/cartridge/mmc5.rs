@@ -1,3 +1,62 @@
+//! # MMC5 (Mapper 5) Implementation
+//!
+//! The MMC5 is the most complex mapper ASIC Nintendo made for the NES/Famicom.
+//! This module implements MMC5 for games like Castlevania III: Dracula's Curse.
+//!
+//! ## Implemented Features ✅
+//!
+//! ### PRG Banking (Complete)
+//! - All 4 PRG modes (0-3): 32KB, 16KB×2, 16KB+8KB×2, 8KB×4
+//! - PRG-RAM banking via $5113 (8KB window at $6000-$7FFF)
+//! - PRG-RAM write protection via $5102/$5103
+//! - ROM/RAM window selection (bit 7 of bank registers)
+//!
+//! ### CHR Banking (Complete)
+//! - All 4 CHR modes: 8KB, 4KB×2, 2KB×4, 1KB×8
+//! - BG/sprite banking split in 1KB mode with 8x16 sprites
+//! - Extended attribute mode CHR bank extension
+//!
+//! ### Scanline IRQ (Complete)
+//! - $5203 scanline compare, $5204 enable/status
+//! - IRQ triggers when scanline matches compare value
+//! - Special case: $5203=0 never triggers IRQ
+//! - In-frame flag (bit 6 of $5204)
+//!
+//! ### Nametable Control (Complete)
+//! - $5105 nametable mapping (VRAM A/B, ExRAM, fill mode)
+//! - Fill mode via $5106/$5107
+//! - ExRAM as nametable (modes 0/1 return data, modes 2/3 return $00)
+//!
+//! ### Extended Attribute Mode (Complete)
+//! - Per-tile palette from ExRAM bits 7-6
+//! - Per-tile CHR bank from ExRAM bits 5-0 + $5130 upper bits
+//!
+//! ### Hardware Features (Complete)
+//! - Hardware multiplier ($5205/$5206)
+//! - ExRAM storage at $5C00-$5FFF (1KB)
+//! - Expansion audio (2 pulse channels + PCM)
+//!
+//! ## Known Limitations ⚠️
+//!
+//! ### Split-Screen ($5200-$5202) - Simplified
+//! Real MMC5 split-screen is a **horizontal** split based on tile fetch count
+//! per scanline (0-33 tiles). Our implementation uses a simplified **vertical**
+//! interpretation where bits 0-4 of $5200 specify a Y tile row threshold.
+//!
+//! **Games using split-screen** (will NOT work correctly):
+//! - Uchuu Keibitai SDF (intro sequence)
+//! - Bandit Kings of Ancient China (ending sequence)
+//!
+//! **Castlevania III does NOT use split-screen.**
+//!
+//! ### Scanline IRQ - Minor gaps
+//! - Reading $FFFA/$FFFB should reset in-frame flag (not implemented)
+//! - Writing to $4014 (OAMDMA) should reset scanline counter (not implemented)
+//! - PPU-cycle-accurate detection not implemented (uses scanline callbacks)
+//!
+//! ## References
+//! - NESdev Wiki: <https://www.nesdev.org/wiki/MMC5>
+
 use crate::cartridge::cartridge::MirroringMode;
 use crate::cartridge::mapper::Mapper;
 use std::cell::Cell;
@@ -42,7 +101,7 @@ pub struct MMC5Mapper {
     // Extended attribute mode bookkeeping
     last_bg_tile_index: usize,
 
-    // Split screen (not fully implemented yet)
+    // Split screen (simplified vertical implementation - see module docs for limitations)
     split_mode: u8,   // $5200
     split_scroll: u8, // $5201
     split_bank: u8,   // $5202
