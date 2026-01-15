@@ -1,5 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
+use crate::trace_mapper;
 
 // Memory size constants
 const CHR_RAM_SIZE: usize = 8192; // 8KB
@@ -97,10 +98,27 @@ impl MMC1Mapper {
 
             // Determine which register to load based on address
             match addr {
-                0x8000..=0x9FFF => self.control = register_value & 0x1F,
-                0xA000..=0xBFFF => self.chr_bank_0 = register_value & 0x1F,
-                0xC000..=0xDFFF => self.chr_bank_1 = register_value & 0x1F,
-                0xE000..=0xFFFF => self.prg_bank = register_value & 0x1F, // Bits 0-3: bank, bit 4: WRAM disable
+                0x8000..=0x9FFF => {
+                    trace_mapper!("MMC1 control=${:02X} (mirroring={}, PRG_mode={}, CHR_mode={})",
+                        register_value & 0x1F,
+                        register_value & 0x03,
+                        (register_value >> 2) & 0x03,
+                        (register_value >> 4) & 0x01
+                    );
+                    self.control = register_value & 0x1F;
+                }
+                0xA000..=0xBFFF => {
+                    trace_mapper!("MMC1 CHR_bank_0=${:02X}", register_value & 0x1F);
+                    self.chr_bank_0 = register_value & 0x1F;
+                }
+                0xC000..=0xDFFF => {
+                    trace_mapper!("MMC1 CHR_bank_1=${:02X}", register_value & 0x1F);
+                    self.chr_bank_1 = register_value & 0x1F;
+                }
+                0xE000..=0xFFFF => {
+                    trace_mapper!("MMC1 PRG_bank=${:02X}", register_value & 0x1F);
+                    self.prg_bank = register_value & 0x1F;
+                }
                 _ => {}
             }
 

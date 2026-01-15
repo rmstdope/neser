@@ -4,6 +4,7 @@ use crate::apu::Apu;
 use crate::mem_controller::MemController;
 use crate::nes::TvSystem;
 use crate::ppu::Ppu;
+use crate::trace_cpu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -1347,6 +1348,18 @@ impl Cpu {
         // when set, `should_poll_irq()` uses the old I value for one instruction.
         let had_delayed_i_flag = self.delayed_i_flag.is_some();
         let mut new_delayed_i_flag: Option<bool> = None;
+
+        // Trace CPU tick before reading opcode (so PC is correct for the instruction)
+        trace_cpu!(
+            "tick PC={:04X} A={:02X} X={:02X} Y={:02X} P={:02X} SP={:02X} cyc={}",
+            self.pc,
+            self.a,
+            self.x,
+            self.y,
+            self.p,
+            self.sp,
+            self.total_cycles
+        );
 
         let opcode = self.read_byte_from_pc();
         let Some(op) = super::opcode::lookup(opcode) else {

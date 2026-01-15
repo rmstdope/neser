@@ -3,6 +3,7 @@ use super::frame_counter::FrameCounter;
 use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
+use crate::trace_apu;
 use std::collections::VecDeque;
 
 // CPU clock frequency (NTSC)
@@ -364,6 +365,13 @@ impl Apu {
     /// `expansion_audio` is expected to be a small linear contribution (e.g. 0.0..~0.5)
     /// that will be added to the base APU mix when a sample is generated.
     pub fn clock_with_expansion(&mut self, expansion_audio: f32) {
+        // Trace APU tick with cycle and frame counter state
+        trace_apu!(
+            "tick apu_cycle={} frame_counter_cycle={}",
+            self.apu_cycle,
+            self.frame_counter.get_cycle_counter()
+        );
+
         let (quarter_frame, half_frame) = self.frame_counter.clock();
 
         // Quarter frame: clock envelopes and linear counter

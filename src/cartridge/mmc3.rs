@@ -1,4 +1,5 @@
 use crate::cartridge::{Mapper, MirroringMode};
+use crate::trace_mapper;
 
 /// MMC3 mapper (Mapper 4)
 ///
@@ -624,10 +625,12 @@ impl Mapper for MMC3Mapper {
             0x8000..=0x9FFF => {
                 if (addr & 1) == 0 {
                     // Bank select
+                    trace_mapper!("MMC3 bank_select=${:02X}", value);
                     self.bank_select = value;
                 } else {
                     // Bank data
                     let reg = self.selected_reg();
+                    trace_mapper!("MMC3 reg[{}]=${:02X}", reg, value);
                     self.regs[reg] = value;
                 }
             }
@@ -635,11 +638,13 @@ impl Mapper for MMC3Mapper {
                 if (addr & 1) == 0 {
                     // Mirroring
                     // MMC3: bit0 selects mirroring.
-                    self.mirroring = if (value & 1) == 0 {
+                    let new_mirroring = if (value & 1) == 0 {
                         MirroringMode::Vertical
                     } else {
                         MirroringMode::Horizontal
                     };
+                    trace_mapper!("MMC3 mirroring={:?}", new_mirroring);
+                    self.mirroring = new_mirroring;
                 } else {
                     // PRG RAM protect
                     // - bit 7: PRG-RAM enable
@@ -650,19 +655,23 @@ impl Mapper for MMC3Mapper {
             0xC000..=0xDFFF => {
                 if (addr & 1) == 0 {
                     // IRQ latch
+                    trace_mapper!("MMC3 IRQ_latch=${:02X}", value);
                     self.irq_latch = value;
                 } else {
                     // IRQ reload
+                    trace_mapper!("MMC3 IRQ_reload");
                     self.irq_reload = true;
                 }
             }
             0xE000..=0xFFFF => {
                 if (addr & 1) == 0 {
                     // IRQ disable + acknowledge
+                    trace_mapper!("MMC3 IRQ_disable");
                     self.irq_enabled = false;
                     self.irq_asserted = false;
                 } else {
                     // IRQ enable
+                    trace_mapper!("MMC3 IRQ_enable");
                     self.irq_enabled = true;
                 }
             }
