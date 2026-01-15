@@ -7,6 +7,7 @@
 //! - CHR: 8 × 1KB switchable banks
 //!
 //! ## Submappers
+//! - **Submapper 0 (Both)**: Responds to $6000-$7FFF and $8000-$FFFF (default)
 //! - **Submapper 4 (FCG-1/2)**: Registers at $6000-$7FFF, direct IRQ counter writes
 //! - **Submapper 5 (LZ93D50)**: Registers at $8000-$800F, latched IRQ counter
 //!
@@ -19,6 +20,12 @@
 //! - $x00C: IRQ counter/latch high byte
 //!
 //! Where x = 6 for submapper 4, x = 8 for submapper 5.
+//!
+//! ## Limitations
+//!
+//! - **EEPROM not implemented**: The 24C02 EEPROM (register $800D) used by some
+//!   games (Dragon Ball Z II/III, SD Gundam Gaiden series) for save data is not
+//!   supported. Games requiring EEPROM will not be able to save progress.
 //!
 //! ## References
 //! - <https://www.nesdev.org/wiki/INES_Mapper_016>
