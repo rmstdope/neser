@@ -27,6 +27,10 @@
 //!   games (Dragon Ball Z II/III, SD Gundam Gaiden series) for save data is not
 //!   supported. Games requiring EEPROM will not be able to save progress.
 //!
+//! - **Not tested with real games**: Implementation is based on NESDev wiki
+//!   documentation and unit tests only. Testing with actual mapper 16 ROMs
+//!   (Dragon Ball, SD Gundam, etc.) is needed to verify correctness.
+//!
 //! ## References
 //! - <https://www.nesdev.org/wiki/INES_Mapper_016>
 
