@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
     let args: Vec<String> = std::env::args().collect();
 
-    let config = match Config::from_args(&args)? {
+    let config = match Config::new(&args)? {
         ParseResult::Help => {
             Config::print_help();
             return Ok(());
@@ -116,7 +116,7 @@ mod tests {
     fn test_enable_debugger_requests_open_and_pauses_on_start() {
         let args = vec!["neser".to_string(), "--start-in-debugger".to_string()];
 
-        let config = match Config::from_args(&args).unwrap() {
+        let config = match Config::new(&args).unwrap() {
             ParseResult::Config(c) => c,
             ParseResult::Help => panic!("Expected Config"),
         };

@@ -115,9 +115,15 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Specify shader preset path (e.g., shaders/crt-simple.slangp)"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--config",
+        help: Some("Specify config file path (default: ./neser.conf or ~/.neser/neser.conf)"),
+        has_value: true,
+    },
 ];
 
 /// Result of parsing command-line arguments.
+#[derive(Debug)]
 pub enum ParseResult {
     /// User requested help - print and exit.
     Help,
@@ -182,18 +188,22 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Create a new Config with default values.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub fn new() -> Self {
+    /// Create a new Config with only default values (no config files or args).
+    #[cfg(test)]
+    pub fn with_defaults() -> Self {
         Self::default()
     }
 
-    /// Parse configuration from command-line arguments.
+    /// Create a new Config from command-line arguments.
     ///
     /// Configuration is loaded in the following order (later overrides earlier):
     /// 1. Default values
-    /// 2. Config file (neser.conf) if it exists
-    /// 3. Command-line arguments
+    /// 2. ~/.neser/neser.conf (user-wide config, if it exists)
+    /// 3. ./neser.conf (project-specific config, if it exists)
+    /// 4. --config <file> (explicit config file, if specified)
+    /// 5. Command-line arguments
+    ///
+    /// If --config is specified with a non-existent file, an error is returned.
     ///
     /// # Arguments
     /// * `args` - Command-line arguments (including program name at index 0).
@@ -202,7 +212,7 @@ impl Config {
     /// - `Ok(ParseResult::Help)` if --help or -h was specified
     /// - `Ok(ParseResult::Config(config))` on successful parse
     /// - `Err(message)` on validation error
-    pub fn from_args(args: &[String]) -> Result<ParseResult, String> {
+    pub fn new(args: &[String]) -> Result<ParseResult, String> {
         // Check for help first
         if args.iter().any(|a| a == "--help" || a == "-h") {
             return Ok(ParseResult::Help);
@@ -214,8 +224,25 @@ impl Config {
         // Step 1: Start with defaults
         let mut config = Self::default();
 
-        // Step 2: Load from config file if it exists
-        config.load_from_file(Path::new(Self::CONFIG_FILE_NAME));
+        // Step 2: Load config files in priority order
+        // Check if --config was specified
+        if let Some(config_path) = Self::parse_config_arg(args) {
+            // Explicit config file - must exist
+            let path = Path::new(&config_path);
+            if !path.exists() {
+                return Err(format!("Config file not found: {}", config_path));
+            }
+            config.load_from_file(path);
+        } else {
+            // Load from default locations (later overrides earlier)
+            // First: ~/.neser/neser.conf
+            if let Some(home) = std::env::var_os("HOME") {
+                let home_config = Path::new(&home).join(".neser").join(Self::CONFIG_FILE_NAME);
+                config.load_from_file(&home_config);
+            }
+            // Second: ./neser.conf (overrides user config)
+            config.load_from_file(Path::new(Self::CONFIG_FILE_NAME));
+        }
 
         // Step 3: Apply command-line arguments (override config file and defaults)
         config.apply_args(args)?;
@@ -352,6 +379,16 @@ impl Config {
     fn parse_shader_arg(args: &[String]) -> Option<String> {
         for i in 0..args.len() {
             if args[i] == "--filter" && i + 1 < args.len() {
+                return Some(args[i + 1].clone());
+            }
+        }
+        None
+    }
+
+    /// Parse the --config argument from command-line args.
+    fn parse_config_arg(args: &[String]) -> Option<String> {
+        for i in 0..args.len() {
+            if args[i] == "--config" && i + 1 < args.len() {
                 return Some(args[i + 1].clone());
             }
         }
@@ -520,7 +557,7 @@ mod tests {
     use super::*;
 
     fn parse_config(args: Vec<String>) -> Config {
-        match Config::from_args(&args).unwrap() {
+        match Config::new(&args).unwrap() {
             ParseResult::Config(c) => c,
             ParseResult::Help => panic!("Expected Config, got Help"),
         }
@@ -528,7 +565,7 @@ mod tests {
 
     #[test]
     fn test_config_default_values() {
-        let config = Config::new();
+        let config = Config::with_defaults();
         assert_eq!(config.tv_system, TvSystem::Ntsc);
         assert!(config.audio_enabled);
         assert!(config.vsync_enabled);
@@ -545,7 +582,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_from_args_defaults() {
+    fn test_config_new_defaults() {
         let args = vec!["neser".to_string()];
         let config = parse_config(args);
         assert_eq!(config.tv_system, TvSystem::Ntsc);
@@ -558,7 +595,7 @@ mod tests {
     #[test]
     fn test_config_help_flag() {
         let args = vec!["neser".to_string(), "--help".to_string()];
-        match Config::from_args(&args).unwrap() {
+        match Config::new(&args).unwrap() {
             ParseResult::Help => {}
             ParseResult::Config(_) => panic!("Expected Help"),
         }
@@ -567,7 +604,7 @@ mod tests {
     #[test]
     fn test_config_help_flag_short() {
         let args = vec!["neser".to_string(), "-h".to_string()];
-        match Config::from_args(&args).unwrap() {
+        match Config::new(&args).unwrap() {
             ParseResult::Help => {}
             ParseResult::Config(_) => panic!("Expected Help"),
         }
@@ -641,7 +678,7 @@ mod tests {
             "--fullscreen".to_string(),
             "--display".to_string(),
         ];
-        let result = Config::from_args(&args);
+        let result = Config::new(&args);
         assert!(result.is_err());
     }
 
@@ -653,7 +690,7 @@ mod tests {
             "--display".to_string(),
             "abc".to_string(),
         ];
-        let result = Config::from_args(&args);
+        let result = Config::new(&args);
         assert!(result.is_err());
     }
 
@@ -665,7 +702,7 @@ mod tests {
             "--display".to_string(),
             "-1".to_string(),
         ];
-        let result = Config::from_args(&args);
+        let result = Config::new(&args);
         assert!(result.is_err());
     }
 
@@ -730,14 +767,14 @@ mod tests {
             "neser".to_string(),
             "--definitely-not-a-real-flag".to_string(),
         ];
-        let result = Config::from_args(&args);
+        let result = Config::new(&args);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_config_positional_argument_errors() {
         let args = vec!["neser".to_string(), "somefile.nes".to_string()];
-        let result = Config::from_args(&args);
+        let result = Config::new(&args);
         assert!(result.is_err());
     }
 
@@ -1025,5 +1062,82 @@ audio=false
         // Should not panic, config should remain default
         assert_eq!(config.tv_system, TvSystem::Ntsc);
         assert!(config.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_flag_loads_specified_file() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let content = "tv_system=pal\naudio=false\n";
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+
+        let args = vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_str().unwrap().to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert!(!config.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_flag_invalid_file_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            "/nonexistent/path/config.conf".to_string(),
+        ];
+        let result = Config::new(&args);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("/nonexistent/path/config.conf"));
+    }
+
+    #[test]
+    fn test_config_flag_missing_value_errors() {
+        let args = vec!["neser".to_string(), "--config".to_string()];
+        let result = Config::new(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_flag_overrides_default_locations() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Create a config file with --config that sets PAL
+        let content = "tv_system=pal\n";
+        let mut explicit_file = NamedTempFile::new().unwrap();
+        explicit_file.write_all(content.as_bytes()).unwrap();
+
+        // The --config file should be used
+        let args = vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            explicit_file.path().to_str().unwrap().to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.tv_system, TvSystem::Pal);
+    }
+
+    #[test]
+    fn test_parse_config_arg() {
+        let args = vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            "my_config.conf".to_string(),
+        ];
+        let result = Config::parse_config_arg(&args);
+        assert_eq!(result, Some("my_config.conf".to_string()));
+    }
+
+    #[test]
+    fn test_parse_config_arg_not_present() {
+        let args = vec!["neser".to_string()];
+        let result = Config::parse_config_arg(&args);
+        assert_eq!(result, None);
     }
 }

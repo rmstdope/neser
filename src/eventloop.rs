@@ -76,9 +76,9 @@ impl EventLoop {
     /// use neser::config::Config;
     /// use neser::eventloop::EventLoop;
     ///
-    /// let config = Config::new();
+    /// let config = Config::with_defaults();
     /// // Create a headless EventLoop for testing
-    /// let headless = EventLoop::new(true, None, &config)?;
+    /// let headless = EventLoop::new(true, None, &config)?;;
     ///
     /// // Create an EventLoop with a window
     /// let windowed = EventLoop::new(false, None, &config)?;
@@ -1088,17 +1088,17 @@ mod tests {
     use std::rc::Rc;
 
     fn default_config() -> Config {
-        Config::new()
+        Config::with_defaults()
     }
 
     fn config_with_video_scale(scale: f32) -> Config {
-        let mut config = Config::new();
+        let mut config = Config::with_defaults();
         config.video_scale = scale;
         config
     }
 
     fn config_with_gamepads(enabled: bool) -> Config {
-        let mut config = Config::new();
+        let mut config = Config::with_defaults();
         config.gamepads_enabled = enabled;
         config
     }
