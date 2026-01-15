@@ -39,10 +39,10 @@ All shader post-processing functionality has been fully implemented and is ready
 
 ```bash
 # Start with a shader
-neser rom.nes --shader shaders/crt-simple.slangp
+neser rom.nes --filter shaders/crt-lottes.slangp
 
 # Cycle through shaders at runtime with F6
-# Order: stock → crt-simple → ntsc-256px-composite → xbrz-freescale
+# Order: stock → crt-lottes → ntsc-256px-composite → xbrz-freescale
 ```
 
 ## Build Status

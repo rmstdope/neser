@@ -7,14 +7,13 @@ This directory contains curated shader presets from the libretro slang-shaders p
 - **stock.slangp**: Nearest neighbor (no filtering) - default
 - **xbrz-freescale.slangp**: xBRZ pixel art upscaler
 - **crt-lottes.slangp**: CRT simulation by Timothy Lottes (accurate scanlines, shadow mask, bloom)
-- **crt-simple.slangp**: Simple CRT simulation with various effects (noise, flicker, vignette)
 - **ntsc-256px-composite.slangp**: NTSC composite video simulation
 
 ## Usage
 
-Use the `--shader` flag to specify a shader:
+Use the `--filter` flag to specify a shader:
 ```bash
-neser rom.nes --shader shaders/crt-simple.slangp
+neser rom.nes --filter shaders/crt-lottes.slangp
 ```
 
 Or cycle through shaders at runtime with F6.

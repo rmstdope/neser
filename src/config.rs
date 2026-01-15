@@ -112,7 +112,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--filter",
-        help: Some("Specify shader preset path (e.g., shaders/crt-simple.slangp)"),
+        help: Some("Specify shader preset path (e.g., shaders/crt-lottes.slangp)"),
         has_value: true,
     },
     CliFlag {
@@ -453,7 +453,7 @@ impl Config {
     /// display=0
     ///
     /// # Shader/filter path
-    /// filter=shaders/crt-simple.slangp
+    /// filter=shaders/crt-lottes.slangp
     ///
     /// # APU channel toggles
     /// pulse1=true

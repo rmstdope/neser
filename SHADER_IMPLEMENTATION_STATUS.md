@@ -13,7 +13,7 @@ All work is complete. The shader post-processing system is fully functional and 
 - ✅ Bundled curated shader presets from libretro/slang-shaders:
   - `stock.slangp` - Nearest neighbor (no filtering, default)
   - `xbrz-freescale.slangp` - xBRZ pixel art upscaler
-  - `crt-simple.slangp` - Simple CRT simulation with scanlines
+  - `crt-lottes.slangp` - CRT simulation by Timothy Lottes (scanlines, shadow mask, bloom)
   - `ntsc-256px-composite.slangp` - NTSC composite video simulation
 - ✅ All required .slang shader files included in `shaders/shaders/` subdirectories
 - ✅ README documentation for shader usage
@@ -156,16 +156,16 @@ if !self.shader_manager.has_shader() {
 
 ```bash
 # Start with CRT shader
-neser rom.nes --shader shaders/crt-simple.slangp
+neser rom.nes --filter shaders/crt-lottes.slangp
 
 # Start with NTSC shader  
-neser rom.nes --shader shaders/ntsc-256px-composite.slangp
+neser rom.nes --filter shaders/ntsc-256px-composite.slangp
 
 # Start with xBRZ upscaler
-neser rom.nes --shader shaders/xbrz-freescale.slangp
+neser rom.nes --filter shaders/xbrz-freescale.slangp
 
 # Cycle through shaders at runtime with F6
-# Order: stock → crt-simple → ntsc-256px-composite → xbrz-freescale → (repeat)
+# Order: stock → crt-lottes → ntsc-256px-composite → xbrz-freescale → (repeat)
 ```
 
 ## References

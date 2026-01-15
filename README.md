@@ -77,16 +77,16 @@ Options:
 NESER supports shader presets for visual effects:
 
 - `shaders/stock.slangp` - No effect (raw pixels)
-- `shaders/crt-simple.slangp` - CRT scanline simulation
+- `shaders/crt-lottes.slangp` - CRT simulation (scanlines, shadow mask, bloom)
 - `shaders/xbrz-freescale.slangp` - Smooth pixel upscaling
 - `shaders/ntsc-256px-composite.slangp` - NTSC composite video simulation
 
 Example:
 ```bash
-neser --filter shaders/crt-simple.slangp
+neser --filter shaders/crt-lottes.slangp
 ```
 
 Or in config file:
 ```
-filter=shaders/crt-simple.slangp
+filter=shaders/crt-lottes.slangp
 ```

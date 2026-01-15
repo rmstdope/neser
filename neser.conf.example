@@ -68,11 +68,11 @@ display=0
 # Applies visual effects like CRT simulation or pixel scaling.
 # Available presets in the shaders/ directory:
 #   - shaders/stock.slangp              (no effect, raw pixels)
-#   - shaders/crt-simple.slangp         (CRT scanline simulation)
+#   - shaders/crt-lottes.slangp         (CRT simulation with scanlines, shadow mask, bloom)
 #   - shaders/xbrz-freescale.slangp     (smooth pixel upscaling)
 #   - shaders/ntsc-256px-composite.slangp (NTSC composite video simulation)
 # Leave empty or comment out for no shader.
-#filter=shaders/crt-simple.slangp
+#filter=shaders/crt-lottes.slangp
 
 # -----------------------------------------------------------------------------
 # Input Settings
