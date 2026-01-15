@@ -576,11 +576,19 @@ mod tests {
 
         // $6000 range should work
         mapper.write_prg(0x6008, 1);
-        assert_eq!(mapper.read_prg(0x8000), 1, "Both should accept $6000 writes");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            1,
+            "Both should accept $6000 writes"
+        );
 
         // $8000 range should also work
         mapper.write_prg(0x8008, 2);
-        assert_eq!(mapper.read_prg(0x8000), 2, "Both should accept $8000 writes");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            2,
+            "Both should accept $8000 writes"
+        );
     }
 
     #[test]
@@ -619,6 +627,9 @@ mod tests {
             mapper.cpu_cycle();
         }
         mapper.cpu_cycle(); // 3rd cycle should trigger IRQ
-        assert!(mapper.irq_pending(), "IRQ should trigger after 3 cycles (latch behavior)");
+        assert!(
+            mapper.irq_pending(),
+            "IRQ should trigger after 3 cycles (latch behavior)"
+        );
     }
 }
