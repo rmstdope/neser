@@ -1,6 +1,7 @@
 use crate::cartridge::{Cartridge, MirroringMode};
 use crate::nes::TvSystem;
 use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
+use crate::trace_ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -117,6 +118,13 @@ impl Ppu {
 
     /// Process a single PPU cycle
     fn tick(&mut self) {
+        // Trace PPU tick with scanline and pixel position
+        trace_ppu!(
+            "tick scanline={} pixel={}",
+            self.timing.scanline(),
+            self.timing.pixel()
+        );
+
         let is_rendering_enabled = self.registers.is_rendering_enabled();
 
         let prerender_scanline = match self.timing.tv_system() {

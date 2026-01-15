@@ -4,6 +4,7 @@ use crate::apu::Apu;
 use crate::mem_controller::MemController;
 use crate::nes::TvSystem;
 use crate::ppu::Ppu;
+use crate::trace_cpu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -1347,6 +1348,67 @@ impl Cpu {
         // when set, `should_poll_irq()` uses the old I value for one instruction.
         let had_delayed_i_flag = self.delayed_i_flag.is_some();
         let mut new_delayed_i_flag: Option<bool> = None;
+
+        // Trace CPU tick before reading opcode (so PC is correct for the instruction)
+        // Read instruction bytes for tracing without advancing PC
+        // Use read_for_testing to avoid affecting the open bus state
+        // Only execute this code when CPU tracing is actually enabled
+        #[cfg(debug_assertions)]
+        if crate::tracing::is_cpu_tracing_enabled() {
+            let pc = self.pc;
+            let memory = self.memory.borrow();
+            let opcode_byte = memory.read_for_testing(pc);
+            if let Some(op) = super::opcode::lookup(opcode_byte) {
+                let byte1 = if op.bytes() > 1 {
+                    memory.read_for_testing(pc.wrapping_add(1))
+                } else {
+                    0
+                };
+                let byte2 = if op.bytes() > 2 {
+                    memory.read_for_testing(pc.wrapping_add(2))
+                } else {
+                    0
+                };
+                drop(memory); // Release borrow before trace macro may do other operations
+                let hex_dump = match op.bytes() {
+                    1 => format!("{:02X}", opcode_byte),
+                    2 => format!("{:02X} {:02X}", opcode_byte, byte1),
+                    _ => format!("{:02X} {:02X} {:02X}", opcode_byte, byte1, byte2),
+                };
+                let asm = match op.mode {
+                    "IMP" => format!("{}", op.mnemonic),
+                    "ACC" => format!("{} A", op.mnemonic),
+                    "IMM" => format!("{} #${:02X}", op.mnemonic, byte1),
+                    "ZP" => format!("{} ${:02X}", op.mnemonic, byte1),
+                    "ZPX" => format!("{} ${:02X},X", op.mnemonic, byte1),
+                    "ZPY" => format!("{} ${:02X},Y", op.mnemonic, byte1),
+                    "ABS" => format!("{} ${:04X}", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
+                    "ABSX" | "ABSXW" => format!("{} ${:04X},X", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
+                    "ABSY" | "ABSYW" => format!("{} ${:04X},Y", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
+                    "IND" => format!("{} (${:04X})", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
+                    "INDX" => format!("{} (${:02X},X)", op.mnemonic, byte1),
+                    "INDY" | "INDYW" => format!("{} (${:02X}),Y", op.mnemonic, byte1),
+                    "REL" => {
+                        let offset = byte1 as i8;
+                        let target = pc.wrapping_add(2).wrapping_add(offset as u16);
+                        format!("{} ${:04X}", op.mnemonic, target)
+                    }
+                    _ => format!("{}", op.mnemonic),
+                };
+                trace_cpu!(
+                    "tick PC={:04X} {} {:14} A={:02X} X={:02X} Y={:02X} P={:02X} SP={:02X} cyc={}",
+                    pc,
+                    hex_dump,
+                    asm,
+                    self.a,
+                    self.x,
+                    self.y,
+                    self.p,
+                    self.sp,
+                    self.total_cycles
+                );
+            }
+        }
 
         let opcode = self.read_byte_from_pc();
         let Some(op) = super::opcode::lookup(opcode) else {

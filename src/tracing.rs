@@ -45,6 +45,18 @@ pub fn get_tracing() -> Option<&'static Tracing> {
     TRACING.get()
 }
 
+/// Check if CPU tracing is enabled. Returns false if tracing is not initialized.
+#[cfg(debug_assertions)]
+pub fn is_cpu_tracing_enabled() -> bool {
+    TRACING.get().is_some_and(|t| t.cpu)
+}
+
+/// Check if CPU tracing is enabled. Always returns false in release builds.
+#[cfg(not(debug_assertions))]
+pub fn is_cpu_tracing_enabled() -> bool {
+    false
+}
+
 /// Trace CPU operations. Only active in debug builds when CPU tracing is enabled.
 ///
 /// # Example
