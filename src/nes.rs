@@ -596,8 +596,10 @@ mod tests {
             let expected = line.to_string();
             let actual = nes.trace(&Tracing {
                 enabled: true,
+                cpu: false,
                 ppu: false,
                 apu: false,
+                mapper: false,
                 nestest: true,
             });
 
