@@ -902,6 +902,11 @@ impl Mapper for MMC5Mapper {
         match self.nametable_mapping_for_addr(addr) {
             2 => {
                 // ExRAM (1KB). Multiple quadrants mapped to ExRAM will alias.
+                // When $5104 is set to mode 2 or 3, nametable reads return 0 instead of ExRAM data.
+                let mode = self.ex_ram_mode & 0x03;
+                if mode >= 2 {
+                    return Some(0);
+                }
                 return Some(self.ex_ram.get(page_offset).copied().unwrap_or(0));
             }
             3 => {
@@ -1307,6 +1312,55 @@ mod tests {
         // Mapper should own nametable access when mapped to ExRAM.
         assert!(mapper.write_nametable(0x2000, 0xAB));
         assert_eq!(mapper.read_nametable(0x2000), Some(0xAB));
+    }
+
+    #[test]
+    fn test_mmc5_nametable_exram_returns_zero_in_mode_2_or_3() {
+        // According to NESDev wiki: "When $5104 is set to mode %10 or %11, the
+        // nametable will read as all zeros" when mapped to ExRAM via $5105.
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Map $2000 quadrant to ExRAM (value 2).
+        mapper.write_prg(0x5105, 0b00_00_00_10);
+
+        // Write data to ExRAM via CPU ($5C00-$5FFF)
+        mapper.write_prg(0x5C00, 0x42);
+
+        // Mode 0: ExRAM should be readable as nametable
+        mapper.write_prg(0x5104, 0x00);
+        assert_eq!(
+            mapper.read_nametable(0x2000),
+            Some(0x42),
+            "mode 0: should read ExRAM data"
+        );
+
+        // Mode 1: ExRAM should be readable as nametable
+        mapper.write_prg(0x5104, 0x01);
+        assert_eq!(
+            mapper.read_nametable(0x2000),
+            Some(0x42),
+            "mode 1: should read ExRAM data"
+        );
+
+        // Mode 2: nametable reads should return 0
+        mapper.write_prg(0x5104, 0x02);
+        assert_eq!(
+            mapper.read_nametable(0x2000),
+            Some(0x00),
+            "mode 2: should return 0 instead of ExRAM data"
+        );
+
+        // Mode 3: nametable reads should return 0
+        mapper.write_prg(0x5104, 0x03);
+        assert_eq!(
+            mapper.read_nametable(0x2000),
+            Some(0x00),
+            "mode 3: should return 0 instead of ExRAM data"
+        );
     }
 
     #[test]
