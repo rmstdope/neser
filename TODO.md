@@ -14,6 +14,7 @@
   - Why: Faster debugging (bisect issues), reproducible bug reports, and enables automated “resume from known point” tests.
   - Done when: Loading a state returns to identical execution (deterministic within the same build), state format is versioned, and at least one regression test uses save-states to validate a previously flaky scenario.
 
+
 ### Completed
 
 - [x] Add an automated `nestest.nes` “golden trace” test (CPU regs + PC + flags per instruction) to catch subtle CPU regressions.

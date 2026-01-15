@@ -1,4 +1,5 @@
 mod axrom;
+mod bandai_fcg;
 mod cartridge;
 mod cnrom;
 mod colordreams;

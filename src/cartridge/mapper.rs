@@ -2,6 +2,7 @@ use crate::cartridge::MirroringMode;
 use std::io;
 
 use super::axrom::AxROMMapper;
+use super::bandai_fcg::BandaiFcgMapper;
 use super::cnrom::CNROMMapper;
 use super::colordreams::ColorDreamsMapper;
 use super::gxrom::GxROMMapper;
@@ -133,6 +134,7 @@ pub fn create_mapper(
         11 => Ok(Box::new(ColorDreamsMapper::new(
             prg_rom, chr_rom, mirroring,
         ))),
+        16 => Ok(Box::new(BandaiFcgMapper::new(prg_rom, chr_rom, mirroring))),
         24 => Ok(Box::new(VRC6Mapper::new(24, prg_rom, chr_rom, mirroring))),
         26 => Ok(Box::new(VRC6Mapper::new(26, prg_rom, chr_rom, mirroring))),
         66 => Ok(Box::new(GxROMMapper::new(prg_rom, chr_rom, mirroring))),
