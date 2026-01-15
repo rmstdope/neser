@@ -61,6 +61,15 @@ impl Ppu {
         }
     }
 
+    fn notify_chr_fetch_is_ppudata(cartridge: &Option<Rc<RefCell<Cartridge>>>) {
+        if let Some(cartridge) = cartridge {
+            cartridge
+                .borrow_mut()
+                .mapper_mut()
+                .ppu_set_chr_fetch_is_ppudata();
+        }
+    }
+
     fn set_vblank_for_nmi(&mut self) {
         self.vblank_for_nmi = true;
     }
@@ -662,6 +671,9 @@ impl Ppu {
         let result = match addr {
             0x0000..=0x1FFF => {
                 // CHR ROM: buffered read
+                // Notify mapper this is a PPUDATA read, not a rendering fetch
+                // (MMC5 extended attribute mode should NOT apply here)
+                Self::notify_chr_fetch_is_ppudata(&self.cartridge);
                 let buffered = self.registers.data_buffer();
                 self.registers
                     .set_data_buffer(self.memory.read_chr(addr, &self.cartridge));

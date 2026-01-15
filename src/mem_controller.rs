@@ -287,8 +287,20 @@ impl MemController {
 
             // PPU registers ($2000-$3FFF) with mirroring every 8 bytes
             0x2000..=0x3FFF => match addr & 0x2007 {
-                0x2000 => self.ppu.borrow_mut().write_control(value),
-                0x2001 => self.ppu.borrow_mut().write_mask(value),
+                0x2000 => {
+                    self.ppu.borrow_mut().write_control(value);
+                    // Notify mapper of PPUCTRL write (MMC5 monitors this for 8x16 sprite mode)
+                    if let Some(ref cartridge) = self.cartridge {
+                        cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
+                    }
+                }
+                0x2001 => {
+                    self.ppu.borrow_mut().write_mask(value);
+                    // Notify mapper of PPUMASK write (MMC5 monitors this for rendering enable)
+                    if let Some(ref cartridge) = self.cartridge {
+                        cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
+                    }
+                }
                 0x2002 => {
                     // PPUSTATUS is read-only, but writes still update the I/O bus!
                     self.ppu.borrow_mut().registers.set_io_bus(value);
@@ -402,13 +414,13 @@ impl MemController {
 
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
-                // if addr >= 0x6000 && addr <= 0x6010 {
-                //     // For debugging, print writes to $6000-$6010 (test output area)
-                //     println!(
-                //         "Debug: Write to ${:04X} PRG-RAM: {:02X} ({})",
-                //         addr, value, value as char
-                //     );
-                // }
+                if addr >= 0x6000 && addr <= 0x6010 {
+                    // For debugging, print writes to $6000-$6010 (test output area)
+                    println!(
+                        "Debug: Write to ${:04X} PRG-RAM: {:02X} ({})",
+                        addr, value, value as char
+                    );
+                }
                 if let Some(ref cartridge) = self.cartridge {
                     let old_mirroring = cartridge.borrow().mapper().get_mirroring();
                     cartridge.borrow_mut().mapper_mut().write_prg(addr, value);

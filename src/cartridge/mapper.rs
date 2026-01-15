@@ -43,6 +43,24 @@ pub trait Mapper {
     /// Default implementation is a no-op.
     fn ppu_set_chr_fetch_is_sprite(&mut self, _is_sprite: bool) {}
 
+    /// Notify mapper that PPUDATA ($2007) is about to read from CHR.
+    ///
+    /// Some mappers (e.g., MMC5) need to distinguish rendering fetches from PPUDATA reads.
+    /// Default implementation is a no-op.
+    fn ppu_set_chr_fetch_is_ppudata(&mut self) {}
+
+    /// Notify mapper of a write to PPUCTRL ($2000).
+    ///
+    /// The MMC5 monitors this to detect 8x16 sprite mode (bit 5).
+    /// Default implementation is a no-op.
+    fn ppu_write_ctrl(&mut self, _value: u8) {}
+
+    /// Notify mapper of a write to PPUMASK ($2001).
+    ///
+    /// The MMC5 monitors this to detect rendering enable (bits 3-4).
+    /// Default implementation is a no-op.
+    fn ppu_write_mask(&mut self, _value: u8) {}
+
     /// Notify mapper about the current scanline (during rendering) for PPU-driven IRQ systems.
     /// Default implementation is a no-op.
     fn ppu_scanline(&mut self, _scanline: u16, _rendering_enabled: bool) {}

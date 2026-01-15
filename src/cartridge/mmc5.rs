@@ -24,7 +24,11 @@ pub struct MMC5Mapper {
     chr_mode: u8,
     chr_bank_a: [u8; 8], // $5120-$5127 for BG
     chr_bank_b: [u8; 4], // $5128-$512B for sprites
+    chr_bank_upper: u8,  // $5130 - upper 2 bits for extended attribute mode
     chr_fetch_is_sprite: bool,
+    chr_last_set_written: bool, // false = A regs ($5120-$5127), true = B regs ($5128-$512B)
+    chr_is_rendering_fetch: bool, // true when PPU is rendering, false for PPUDATA reads
+    sprite_8x16_mode: bool,       // true when PPUCTRL bit 5 is set (8x16 sprites)
 
     // Nametable control
     nametable_mapping: u8, // $5105
@@ -175,7 +179,8 @@ impl MMC5Mapper {
 
         // MMC5 PRG-RAM can be up to 64KB (8 x 8KB banks), but many cartridges have less.
         // Allocate based on cartridge metadata, clamped to the hardware maximum.
-        let prg_ram_bank_count = (prg_ram_banks_8k.max(1) as usize).min(Self::PRG_RAM_BANK_COUNT_MAX);
+        let prg_ram_bank_count =
+            (prg_ram_banks_8k.max(1) as usize).min(Self::PRG_RAM_BANK_COUNT_MAX);
         let prg_ram = vec![0u8; prg_ram_bank_count * Self::PRG_RAM_BANK_SIZE];
 
         // MMC5 PRG mode defaults to 3 at power-on.
@@ -203,7 +208,11 @@ impl MMC5Mapper {
             chr_mode: 0,
             chr_bank_a: [0; 8],
             chr_bank_b: [0; 4],
+            chr_bank_upper: 0,
             chr_fetch_is_sprite: false,
+            chr_last_set_written: false,
+            chr_is_rendering_fetch: false,
+            sprite_8x16_mode: false,
 
             // Nametable control
             nametable_mapping: 0,
@@ -392,72 +401,131 @@ impl MMC5Mapper {
             ((addr >> 10) & 0x07) as u8
         }
 
+        // Extended attribute mode ($5104=1): for background tile fetches during rendering,
+        // CHR banking works completely differently:
+        // - CHR mode register is IGNORED - always 4KB banks
+        // - CHR bank registers $5120-$512B are IGNORED
+        // - ExRAM bits 5-0 select a 4KB CHR bank per tile
+        // - $5130 bits 1-0 provide the global upper CHR bank bits (6-7)
+        //
+        // IMPORTANT: This only applies to rendering fetches, NOT PPUDATA reads!
+        // PPUDATA reads use normal banking via chr_last_set_written to select A or B regs.
+        //
+        // ExRAM format: AACC CCCC
+        //   AA (bits 7-6) = palette select
+        //   CC CCCC (bits 5-0) = 4KB CHR bank
+        if (self.ex_ram_mode & 0x03) == 0x01
+            && !self.chr_fetch_is_sprite
+            && self.chr_is_rendering_fetch
+        {
+            let ex = self
+                .ex_ram
+                .get(self.last_bg_tile_index)
+                .copied()
+                .unwrap_or(0);
+            // Lower 6 bits of ExRAM select the 4KB CHR bank
+            let ex_bank = ex & 0x3F;
+            // $5130 provides the upper 2 bits (bits 6-7 of the bank number)
+            let upper_bits = self.chr_bank_upper & 0x03;
+            // Combine: upper_bits are bits 7-6, ex_bank is bits 5-0
+            return (upper_bits << 6) | ex_bank;
+        }
+
+        // Normal CHR banking (extended attribute mode disabled, sprite fetch, or PPUDATA read)
         // MMC5 CHR banking supports 4 modes:
-        // Mode 0: 8KB (single bank)
-        // Mode 1: 4KB (two banks)
-        // Mode 2: 2KB (four banks)
-        // Mode 3: 1KB (eight banks, with separate BG/sprite banks)
+        // Mode 0: 8KB (single bank) - only A registers used
+        // Mode 1: 4KB (two banks) - only A registers used
+        // Mode 2: 2KB (four banks) - only A registers used
+        // Mode 3: 1KB (eight banks) - separate BG/sprite banks with 8x16 sprites
+        //
+        // IMPORTANT: The A/B sprite/BG distinction ONLY applies in 1KB mode with 8x16 sprites:
+        // - $5120-$5127 (A registers) = SPRITES (8 x 1KB)
+        // - $5128-$512B (B registers) = BACKGROUND (4 x 1KB, mirrored for full 8KB)
+        //
+        // In other modes, B registers are either ignored or alias A registers.
+        //
+        // For PPUDATA reads (when !chr_is_rendering_fetch), we use chr_last_set_written
+        // to determine which register set to use (A or B).
 
         let chr_mode = self.chr_mode & 0x03;
-        let base_bank = match chr_mode {
+
+        match chr_mode {
             0 => {
-                // 8KB mode: use $5127
-                self.chr_bank_a[7]
+                // 8KB mode: always use $5127 (or $512B if last written for PPUDATA)
+                if !self.chr_is_rendering_fetch && self.chr_last_set_written {
+                    self.chr_bank_b[3] // $512B for PPUDATA when B was last written
+                } else {
+                    self.chr_bank_a[7] // $5127
+                }
             }
             1 => {
                 // 4KB mode: use $5123 (low) or $5127 (high)
                 // Minimal split-screen behavior: when split is active, background fetches use $5202.
-                if !self.chr_fetch_is_sprite && self.split_active {
+                if self.chr_is_rendering_fetch && !self.chr_fetch_is_sprite && self.split_active {
                     return self.split_bank;
                 }
-                let high = addr >= 0x1000;
-                self.chr_bank_a[if high { 7 } else { 3 }]
+                // For PPUDATA, use last set written; for rendering, always use A
+                if !self.chr_is_rendering_fetch && self.chr_last_set_written {
+                    self.chr_bank_b[3] // $512B for PPUDATA
+                } else {
+                    let high = addr >= 0x1000;
+                    self.chr_bank_a[if high { 7 } else { 3 }]
+                }
             }
             2 => {
-                // 2KB mode: use $5121, $5123, $5125, $5127
+                // 2KB mode: use $5121, $5123, $5125, $5127 (A registers)
                 let bank_idx = (addr >> 11) & 0x03;
-                self.chr_bank_a[(bank_idx * 2 + 1) as usize]
+                if !self.chr_is_rendering_fetch && self.chr_last_set_written {
+                    // B registers: $5129, $512B cover 2KB banks for PPUDATA
+                    self.chr_bank_b[((bank_idx & 0x01) * 2 + 1) as usize]
+                } else {
+                    self.chr_bank_a[(bank_idx * 2 + 1) as usize]
+                }
             }
             3 => {
                 // 1KB mode:
-                // - BG fetches use $5120-$5127 (A, 8 x 1KB)
-                // - Sprite fetches use $5128-$512B (B, 4 x 1KB)
+                // - With 8x16 sprites: Sprites use A ($5120-$5127), BG uses B ($5128-$512B)
+                // - With 8x8 sprites: Only A registers are used; B registers are ignored
+                // - During PPUDATA: use last set written
                 let bank_idx = bank_idx_1k(addr);
-                if self.chr_fetch_is_sprite {
-                    // Sprite pattern table is 4KB wide, so select within 4 banks.
+
+                let use_b_registers = if self.chr_is_rendering_fetch {
+                    // B registers only used for BG when in 8x16 sprite mode
+                    self.sprite_8x16_mode && !self.chr_fetch_is_sprite
+                } else {
+                    self.chr_last_set_written // PPUDATA uses last written set
+                };
+
+                if use_b_registers {
+                    // B registers: 4 x 1KB banks, wrap index for full 8KB
                     self.chr_bank_b[(bank_idx & 0x03) as usize]
                 } else {
                     self.chr_bank_a[bank_idx as usize]
                 }
             }
             _ => unreachable!(),
-        };
-
-        // Extended attribute mode ($5104=1): for background tile fetches,
-        // the upper 6 bits of ExRAM override the upper bits of the CHR bank number.
-        // This allows each tile to select from a much larger CHR address space.
-        if (self.ex_ram_mode & 0x03) == 0x01 && !self.chr_fetch_is_sprite {
-            let ex = self
-                .ex_ram
-                .get(self.last_bg_tile_index)
-                .copied()
-                .unwrap_or(0);
-            // Upper 6 bits of ExRAM (bits 2-7) form the upper bank bits.
-            let ex_bank_extension = ex >> 2;
-            return ex_bank_extension;
         }
+    }
 
-        base_bank
+    /// Check if extended attribute mode is active for CHR banking (rendering only)
+    fn is_extended_attribute_mode_chr_active(&self) -> bool {
+        (self.ex_ram_mode & 0x03) == 0x01
+            && !self.chr_fetch_is_sprite
+            && self.chr_is_rendering_fetch
     }
 
     fn read_chr_banked(&self, bank: u8, addr: u16) -> u8 {
-        // Calculate the actual address in CHR ROM/RAM
-        let bank_size = match self.chr_mode {
-            0 => 8 * 1024, // 8KB
-            1 => 4 * 1024, // 4KB
-            2 => 2 * 1024, // 2KB
-            3 => 1 * 1024, // 1KB
-            _ => 1 * 1024,
+        // In extended attribute mode, CHR banks are always 4KB regardless of chr_mode
+        let bank_size = if self.is_extended_attribute_mode_chr_active() {
+            4 * 1024 // Extended attribute mode always uses 4KB banks
+        } else {
+            match self.chr_mode {
+                0 => 8 * 1024, // 8KB
+                1 => 4 * 1024, // 4KB
+                2 => 2 * 1024, // 2KB
+                3 => 1 * 1024, // 1KB
+                _ => 1 * 1024,
+            }
         };
 
         let offset = (addr as usize) % bank_size;
@@ -681,10 +749,16 @@ impl Mapper for MMC5Mapper {
             0x5120..=0x5127 => {
                 let index = (addr - 0x5120) as usize;
                 self.chr_bank_a[index] = value;
+                self.chr_last_set_written = false; // A registers
             }
             0x5128..=0x512B => {
                 let index = (addr - 0x5128) as usize;
                 self.chr_bank_b[index] = value;
+                self.chr_last_set_written = true; // B registers
+            }
+            0x5130 => {
+                // Upper CHR bank bits for extended attribute mode
+                self.chr_bank_upper = value & 0x03;
             }
 
             // Split screen
@@ -776,6 +850,28 @@ impl Mapper for MMC5Mapper {
 
     fn ppu_set_chr_fetch_is_sprite(&mut self, is_sprite: bool) {
         self.chr_fetch_is_sprite = is_sprite;
+        // When PPU explicitly sets sprite/BG mode, we're in a rendering context
+        self.chr_is_rendering_fetch = true;
+    }
+
+    fn ppu_set_chr_fetch_is_ppudata(&mut self) {
+        // PPUDATA reads should NOT use extended attribute mode
+        self.chr_is_rendering_fetch = false;
+    }
+
+    fn ppu_write_ctrl(&mut self, value: u8) {
+        // The MMC5 monitors writes to PPUCTRL ($2000) to detect 8x16 sprite mode.
+        // Bit 5: Sprite size (0: 8x8, 1: 8x16)
+        // When using 8x8 sprites, only registers $5120-$5127 are used.
+        // Registers $5128-$512B are completely ignored.
+        const SPRITE_SIZE_BIT: u8 = 0b0010_0000;
+        self.sprite_8x16_mode = (value & SPRITE_SIZE_BIT) != 0;
+    }
+
+    fn ppu_write_mask(&mut self, _value: u8) {
+        // The MMC5 monitors writes to PPUMASK ($2001) to detect rendering enable.
+        // Currently we track this via ppu_scanline's rendering_enabled parameter.
+        // This callback is reserved for future refinement if needed.
     }
 
     fn read_nametable(&mut self, addr: u16) -> Option<u8> {
@@ -811,13 +907,15 @@ impl Mapper for MMC5Mapper {
 
         // Extended attribute mode ($5104=1): override attribute-table reads with per-tile
         // palette bits from ExRAM.
+        // ExRAM format: AACC CCCC where AA (bits 7-6) is the palette select
         if (self.ex_ram_mode & 0x03) == 0x01 && page_offset >= 0x03C0 {
             let ex = self
                 .ex_ram
                 .get(self.last_bg_tile_index)
                 .copied()
                 .unwrap_or(0);
-            return Some(Self::replicate_2bit_attribute(ex));
+            // Palette is in upper 2 bits (7-6), shift to get the 2-bit value
+            return Some(Self::replicate_2bit_attribute(ex >> 6));
         }
 
         None
@@ -1079,8 +1177,12 @@ mod tests {
 
     #[test]
     fn test_mmc5_chr_mode3_uses_bank_a_for_bg_and_bank_b_for_sprites() {
-        // In MMC5 CHR mode 3 (1KB), background uses bank A regs ($5120-$5127)
-        // while sprite fetches use bank B regs ($5128-$512B).
+        // In MMC5 CHR mode 3 (1KB) with 8x16 sprites:
+        // - Sprite fetches use bank A regs ($5120-$5127) - 8 x 1KB banks
+        // - Background fetches use bank B regs ($5128-$512B) - 4 x 1KB banks, mirrored
+        //
+        // IMPORTANT: The A/B distinction only applies when 8x16 sprites are enabled!
+        // With 8x8 sprites, only A registers are used for both sprites and background.
 
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 16);
@@ -1091,26 +1193,69 @@ mod tests {
         // CHR mode 3 (1KB).
         mapper.write_prg(0x5101, 0x03);
 
-        // Program A banks to 0..7.
+        // Enable 8x16 sprite mode via PPUCTRL ($2000) bit 5
+        const SPRITE_SIZE_8X16: u8 = 0b0010_0000;
+        mapper.ppu_write_ctrl(SPRITE_SIZE_8X16);
+
+        // Program A banks (for sprites) to 0..7.
         for i in 0..8u8 {
             mapper.write_prg(0x5120 + (i as u16), i);
         }
-        // Program B banks to 8..11.
+        // Program B banks (for background) to 8..11.
         for i in 0..4u8 {
             mapper.write_prg(0x5128 + (i as u16), 8 + i);
         }
 
-        // Background fetches should use A banks.
-        mapper.ppu_set_chr_fetch_is_sprite(false);
+        // Sprite fetches should use A banks.
+        mapper.ppu_set_chr_fetch_is_sprite(true);
         assert_eq!(mapper.read_chr(0x0000), 0);
         assert_eq!(mapper.read_chr(0x0400), 1);
         assert_eq!(mapper.read_chr(0x1000), 4);
 
-        // Sprite fetches should use B banks (indexed within the 4KB region).
-        mapper.ppu_set_chr_fetch_is_sprite(true);
+        // Background fetches should use B banks (indexed within the 4KB region, then mirrored).
+        mapper.ppu_set_chr_fetch_is_sprite(false);
         assert_eq!(mapper.read_chr(0x0000), 8);
         assert_eq!(mapper.read_chr(0x0400), 9);
-        assert_eq!(mapper.read_chr(0x1000), 8);
+        assert_eq!(mapper.read_chr(0x1000), 8); // Mirrored: bank_idx 4 & 0x03 = 0 -> bank 8
+    }
+
+    #[test]
+    fn test_mmc5_chr_mode3_with_8x8_sprites_uses_only_a_regs() {
+        // When using 8x8 sprites (not 8x16), only A registers ($5120-$5127) are used.
+        // B registers ($5128-$512B) are completely ignored during rendering.
+
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 16);
+
+        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // CHR mode 3 (1KB).
+        mapper.write_prg(0x5101, 0x03);
+
+        // Keep 8x8 sprite mode (PPUCTRL bit 5 = 0, which is the default)
+        mapper.ppu_write_ctrl(0);
+
+        // Program A banks to 0..7.
+        for i in 0..8u8 {
+            mapper.write_prg(0x5120 + (i as u16), i);
+        }
+        // Program B banks to 8..11 (should be ignored with 8x8 sprites).
+        for i in 0..4u8 {
+            mapper.write_prg(0x5128 + (i as u16), 8 + i);
+        }
+
+        // Sprite fetches should use A banks.
+        mapper.ppu_set_chr_fetch_is_sprite(true);
+        assert_eq!(mapper.read_chr(0x0000), 0);
+        assert_eq!(mapper.read_chr(0x0400), 1);
+        assert_eq!(mapper.read_chr(0x1000), 4);
+
+        // Background fetches should ALSO use A banks (B is ignored with 8x8 sprites).
+        mapper.ppu_set_chr_fetch_is_sprite(false);
+        assert_eq!(mapper.read_chr(0x0000), 0); // A[0] = 0, not B[0] = 8
+        assert_eq!(mapper.read_chr(0x0400), 1); // A[1] = 1, not B[1] = 9
+        assert_eq!(mapper.read_chr(0x1000), 4); // A[4] = 4, not B[0] = 8
     }
 
     #[test]
@@ -1190,10 +1335,11 @@ mod tests {
         mapper.write_prg(0x5104, 0x01);
 
         // Program ExRAM per-tile palette values.
-        // We model palette selection as the low 2 bits, replicated to all quadrants in the
-        // returned attribute byte (so the PPU's normal attribute decoding works unchanged).
-        mapper.write_prg(0x5C00, 0x01);
-        mapper.write_prg(0x5C01, 0x02);
+        // ExRAM format: AACC CCCC where AA (bits 7-6) is palette, CC CCCC (bits 5-0) is CHR bank
+        // Palette 1 in upper 2 bits: 0x40 (01 << 6)
+        // Palette 2 in upper 2 bits: 0x80 (10 << 6)
+        mapper.write_prg(0x5C00, 0x40); // Palette 1
+        mapper.write_prg(0x5C01, 0x80); // Palette 2
 
         // Simulate the PPU fetching tile ($2000) then attribute ($23C0).
         // Tile 0 uses palette 1 -> replicated attribute byte 0x55.
@@ -1215,52 +1361,55 @@ mod tests {
     #[test]
     fn test_mmc5_extended_attribute_mode_extends_chr_bank_for_bg_tiles() {
         // In MMC5 extended attribute mode ($5104=1), the ExRAM byte for each tile has:
-        // - Bits 0-1: Palette select (per-tile attributes)
-        // - Bits 2-7: CHR bank extension (upper 6 bits for 1KB CHR bank selection)
+        // - Bits 7-6: Palette select (per-tile attributes)
+        // - Bits 5-0: 4KB CHR bank selection
         //
-        // The upper 6 bits from ExRAM should replace the upper bits of the CHR bank
-        // register value, allowing each tile to select from a much larger CHR space.
+        // CHR mode is IGNORED in extended attribute mode - always 4KB banks.
+        // CHR bank registers $5120-$512B are also IGNORED.
+        // $5130 provides upper CHR bank bits 7-6.
         //
-        // This test verifies that BG tile CHR fetches use the extended bank from ExRAM.
+        // This test verifies that BG tile CHR fetches use the bank from ExRAM.
 
-        // Create CHR ROM with 64 x 1KB banks (64KB total).
-        // Each bank is filled with its bank number as a marker.
+        // Create CHR ROM with 64 x 4KB banks (256KB total).
+        // Each 4KB bank is filled with its bank number as a marker.
         let prg_rom = banked_data(8 * 1024, 2);
-        let chr_rom = banked_data(1 * 1024, 64);
+        let chr_rom = banked_data(4 * 1024, 64);
 
         let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
-        // Set CHR mode 3 (1KB banks) - required for extended attribute mode CHR banking.
+        // Note: CHR mode is ignored in extended attribute mode, but set it anyway
         mapper.write_prg(0x5101, 0x03);
 
         // Enable extended attribute mode.
         mapper.write_prg(0x5104, 0x01);
 
-        // Program CHR bank A register $5120 to bank 0 (base bank).
+        // CHR bank registers are ignored in extended attribute mode
         mapper.write_prg(0x5120, 0x00);
 
         // Program ExRAM at tile index 0 ($5C00):
-        // - Bits 0-1 = palette (2)
-        // - Bits 2-7 = CHR bank extension (16 << 2 = 0x40)
-        // This means tile 0 should fetch from CHR bank 16.
-        mapper.write_prg(0x5C00, 0x02 | (16 << 2));
+        // ExRAM format: AACC CCCC
+        // - AA (bits 7-6) = palette
+        // - CC CCCC (bits 5-0) = 4KB CHR bank
+        // We want CHR bank 16: 0b00_010000 = 0x10 (palette 0, bank 16)
+        mapper.write_prg(0x5C00, 16);
 
         // Simulate the PPU fetching the tile index from nametable.
         // This sets last_bg_tile_index to 0.
         mapper.ppu_set_chr_fetch_is_sprite(false);
         let _ = mapper.read_nametable(0x2000);
 
-        // Now reading CHR for BG should use bank 16 (from ExRAM extension).
-        // The CHR ROM bank 16 is filled with the value 16.
+        // Now reading CHR for BG should use 4KB bank 16 (from ExRAM).
+        // The CHR ROM 4KB bank 16 is filled with the value 16.
         let chr_value = mapper.read_chr(0x0000);
         assert_eq!(
             chr_value, 16,
-            "Extended attribute mode should extend CHR bank from ExRAM upper bits"
+            "Extended attribute mode should use 4KB bank from ExRAM lower 6 bits"
         );
 
         // Program ExRAM at tile index 1 ($5C01) to use bank 32.
-        mapper.write_prg(0x5C01, 0x01 | (32 << 2));
+        // ExRAM format: palette 1 (upper bits) + bank 32 = 0x40 | 32 = 0x60
+        mapper.write_prg(0x5C01, 0x40 | 32);
 
         // Fetch tile 1.
         let _ = mapper.read_nametable(0x2001);
