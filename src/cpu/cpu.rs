@@ -1354,23 +1354,24 @@ impl Cpu {
         #[cfg(debug_assertions)]
         {
             let pc = self.pc;
-            let opcode_byte = self.memory.borrow().read(pc);
+            let memory = self.memory.borrow();
+            let opcode_byte = memory.read(pc);
             if let Some(op) = super::opcode::lookup(opcode_byte) {
                 let byte1 = if op.bytes() > 1 {
-                    self.memory.borrow().read(pc.wrapping_add(1))
+                    memory.read(pc.wrapping_add(1))
                 } else {
                     0
                 };
                 let byte2 = if op.bytes() > 2 {
-                    self.memory.borrow().read(pc.wrapping_add(2))
+                    memory.read(pc.wrapping_add(2))
                 } else {
                     0
                 };
+                drop(memory); // Release borrow before trace macro may do other operations
                 let hex_dump = match op.bytes() {
                     1 => format!("{:02X}", opcode_byte),
                     2 => format!("{:02X} {:02X}", opcode_byte, byte1),
-                    3 => format!("{:02X} {:02X} {:02X}", opcode_byte, byte1, byte2),
-                    _ => format!("{:02X}", opcode_byte),
+                    _ => format!("{:02X} {:02X} {:02X}", opcode_byte, byte1, byte2),
                 };
                 let asm = match op.mode {
                     "IMP" => format!("{}", op.mnemonic),
