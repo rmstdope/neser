@@ -58,7 +58,7 @@ MMC5 is a complex mapper with many advanced features. This document tracks what 
 
 ### Infrastructure
 - ✅ Memory controller routes $5000-$5FFF to mapper
-- ✅ Split-screen registers ($5200-$5202) accept writes (functionality not implemented)
+- ⚠️ Split-screen registers ($5200-$5202) - simplified vertical implementation (see below)
 
 ## Missing Features ❌
 
@@ -124,21 +124,38 @@ background graphics should now render with correct CHR tile selection.
 - ✅ Writes to fill-mode nametable addresses are handled (no-op, not backed by RAM)
 
 ### 6. Split-Screen Support
-**Status**: Registers exist, no functionality
+**Status**: ⚠️ Simplified vertical implementation (not accurate)
 
-**What's needed**:
-- $5200: Split mode and scroll control
-- $5201: Split Y coordinate (scanline to split at)
-- $5202: CHR bank for split region
-- During rendering, switch CHR banking at specified scanline
-- Can also affect scroll position for split region
+**Implemented**:
+- ✅ Split mode registers ($5200, $5201, $5202) accept writes
+- ✅ Basic CHR bank switching in mode 1 when split_active is set
+- ✅ Simplified vertical threshold based on scanline position
 
-**Required changes**:
-- PPU must query mapper for CHR bank on each scanline
-- Mapper returns different CHR banks before/after split point
-- Complex interaction with normal CHR banking
+**Hardware behavior (NOT fully implemented)**:
+Real MMC5 split-screen is a **horizontal** split based on tile fetch count per
+scanline (0-33 tiles), not a vertical/scanline-based split:
+- **Left split** (bit 6=0): Tiles 0 to T-1 use split region, T+ use normal
+- **Right split** (bit 6=1): Tiles 0 to T-1 use normal, T+ use split region
 
-**Impact**: Games using split-screen effects won't work
+When in split region:
+- Nametable data always comes from ExRAM (regardless of $5105 mapping)
+- CHR bank uses $5202 (4KB bank) for all CHR modes
+- Vertical scroll uses $5201 value
+- Split is disabled when ExRAM mode ($5104) is 2 or 3
+
+**Games using split-screen**:
+Only 2 games are documented to use this feature:
+- **Uchuu Keibitai SDF** - during intro sequence
+- **Bandit Kings of Ancient China** - during ending sequence
+
+**Castlevania III does NOT use split-screen.**
+
+**Current limitation**:
+Our simplified implementation interprets bits 0-4 of $5200 as a Y tile row
+(vertical threshold) rather than an X tile count (horizontal threshold).
+This allows basic testing but won't work correctly for the two games above.
+
+**Impact**: Low - only affects 2 obscure games, not Castlevania III
 
 ### 7. Expansion Audio
 **Status**: Not implemented

@@ -251,19 +251,50 @@ impl MMC5Mapper {
         }
     }
 
+    /// Check if split-screen mode is enabled (bit 7 of $5200).
+    ///
+    /// # Hardware behavior (NOT fully implemented)
+    /// Real MMC5 split-screen is a **horizontal** split based on tile fetch count per
+    /// scanline (0-33), not a vertical/scanline-based split. The threshold in bits 0-4
+    /// specifies which tile column triggers the split:
+    /// - Left split (bit 6=0): Tiles 0 to T-1 use split region, T+ use normal
+    /// - Right split (bit 6=1): Tiles 0 to T-1 use normal, T+ use split region
+    ///
+    /// When in split region:
+    /// - Nametable data comes from ExRAM (regardless of $5105)
+    /// - CHR bank uses $5202 (4KB bank) for all CHR modes
+    /// - Vertical scroll uses $5201
+    ///
+    /// Split mode is disabled when ExRAM mode ($5104) is 2 or 3.
+    ///
+    /// # Games using split-screen
+    /// Only two games are documented to use this feature:
+    /// - Uchuu Keibitai SDF (during intro)
+    /// - Bandit Kings of Ancient China (during ending sequence)
+    ///
+    /// Castlevania III does NOT use split-screen.
+    ///
+    /// # Current implementation
+    /// We use a simplified **vertical** interpretation where bits 0-4 specify a Y tile
+    /// row, and split activates for all scanlines at or below that row. This is
+    /// sufficient for basic testing but not accurate for the games listed above.
     fn split_enabled(&self) -> bool {
         (self.split_mode & 0x80) != 0
     }
 
+    /// Get the split threshold interpreted as a Y tile row (simplified implementation).
+    /// Real hardware interprets this as X tile count per scanline.
     fn split_y_tiles(&self) -> u8 {
-        // For our current minimal implementation, interpret the low 5 bits as the split Y tile row.
         self.split_mode & 0x1F
     }
 
+    /// Convert Y tile row to scanline number (simplified implementation).
     fn split_start_scanline(&self) -> u16 {
         (self.split_y_tiles() as u16) * 8
     }
 
+    /// Update split_active state based on current scanline (simplified implementation).
+    /// Real hardware tracks horizontal tile fetch position, not scanline.
     fn update_split_active(&mut self, scanline: u16, rendering_enabled: bool) {
         if !rendering_enabled {
             self.split_active = false;
