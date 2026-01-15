@@ -6,7 +6,8 @@ This directory contains curated shader presets from the libretro slang-shaders p
 
 - **stock.slangp**: Nearest neighbor (no filtering) - default
 - **xbrz-freescale.slangp**: xBRZ pixel art upscaler
-- **crt-simple.slangp**: Simple CRT simulation with scanlines
+- **crt-lottes.slangp**: CRT simulation by Timothy Lottes (accurate scanlines, shadow mask, bloom)
+- **crt-simple.slangp**: Simple CRT simulation with various effects (noise, flicker, vignette)
 - **ntsc-256px-composite.slangp**: NTSC composite video simulation
 
 ## Usage
