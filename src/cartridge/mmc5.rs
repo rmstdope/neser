@@ -1004,7 +1004,13 @@ impl Mapper for MMC5Mapper {
         // (Real MMC5 behavior is more nuanced; this is sufficient for the current tests.)
         self.update_split_active(scanline, rendering_enabled);
 
-        if rendering_enabled && self.irq_enabled && (scanline as u8) == self.irq_scanline_compare {
+        // MMC5 scanline IRQ: trigger when scanline matches compare value.
+        // Special case: $5203 = $00 never produces IRQ pending conditions.
+        if rendering_enabled
+            && self.irq_enabled
+            && self.irq_scanline_compare != 0
+            && (scanline as u8) == self.irq_scanline_compare
+        {
             self.irq_pending.set(true);
         }
     }
@@ -1143,6 +1149,25 @@ mod tests {
         // Reading $5204 should clear the pending flag.
         let _ = mmc5.read_prg(0x5204);
         assert!(!mmc5.irq_pending());
+    }
+
+    #[test]
+    fn test_mmc5_irq_scanline_compare_zero_never_triggers() {
+        // According to NESDev wiki: "Value $00 is a special case that will not
+        // produce IRQ pending conditions"
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        // $5203: scanline compare = 0 (special case)
+        mmc5.write_prg(0x5203, 0);
+        // $5204: enable IRQ (bit 7)
+        mmc5.write_prg(0x5204, 0x80);
+
+        // Rendering enabled on scanline 0 should NOT trigger IRQ
+        mmc5.ppu_scanline(0, true);
+        assert!(
+            !mmc5.irq_pending(),
+            "scanline compare of $00 should never trigger IRQ"
+        );
     }
 
     #[test]

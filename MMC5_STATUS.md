@@ -63,20 +63,20 @@ MMC5 is a complex mapper with many advanced features. This document tracks what 
 ## Missing Features ❌
 
 ### 1. Scanline IRQ Tracking
-**Status**: Registers exist but no scanline counting
+**Status**: ✅ Basic implementation complete
 
-**What's needed**:
-- PPU must notify mapper when rendering starts (in_frame flag)
-- PPU must notify mapper on each rendered scanline
-- Mapper must increment counter and trigger IRQ when counter matches $5203
-- IRQ must be cleared when rendering ends or when $5204 is written
+The scanline IRQ is now implemented:
+- ✅ $5203 scanline compare register
+- ✅ $5204 IRQ enable/status register
+- ✅ IRQ triggers when scanline matches compare value
+- ✅ IRQ pending flag clears on read of $5204
+- ✅ Special case: $5203=0 never triggers IRQ
+- ✅ In-frame flag (bit 6 of $5204) set during visible scanlines
 
-**Required changes**:
-- Extend Mapper trait or add new callback for scanline notifications
-- PPU must call this during rendering at appropriate times
-- Track in_frame state based on rendering enabled/disabled
-
-**Impact**: Games that use MMC5's scanline IRQ for split-screen effects won't work
+**Not yet implemented**:
+- Reading $FFFA/$FFFB should reset in-frame flag and counter
+- Writing to $4014 (OAMDMA) should reset scanline counter
+- Fine-grained PPU-cycle-accurate scanline detection (using consecutive nametable reads)
 
 ### 2. CHR BG/Sprite Banking Split
 **Status**: ✅ Implemented
