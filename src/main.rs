@@ -30,6 +30,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ParseResult::Config(c) => c,
     };
 
+    // Initialize global tracing state (only active in debug builds)
+    tracing::init_tracing(config.tracing);
+
     // Initialize SDL2
     let sdl_context = sdl2::init()?;
     let mut nes_instance = nes::Nes::new(config.tv_system);

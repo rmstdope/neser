@@ -51,6 +51,11 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
+        flag: "--trace-cpu",
+        help: Some("Enable CPU trace output"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--trace-ppu",
         help: Some("Enable PPU trace output"),
         has_value: false,
@@ -58,6 +63,11 @@ const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--trace-apu",
         help: Some("Enable APU trace output"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--trace-mapper",
+        help: Some("Enable mapper trace output"),
         has_value: false,
     },
     CliFlag {
@@ -819,6 +829,7 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace".to_string()];
         let config = parse_config(args);
         assert!(config.tracing.enabled);
+        assert!(config.tracing.cpu); // --trace enables CPU tracing
     }
 
     #[test]
@@ -827,6 +838,14 @@ mod tests {
         let config = parse_config(args);
         assert!(config.tracing.enabled);
         assert!(config.tracing.nestest);
+    }
+
+    #[test]
+    fn test_config_tracing_cpu() {
+        let args = vec!["neser".to_string(), "--trace-cpu".to_string()];
+        let config = parse_config(args);
+        assert!(config.tracing.enabled);
+        assert!(config.tracing.cpu);
     }
 
     #[test]
@@ -843,6 +862,14 @@ mod tests {
         let config = parse_config(args);
         assert!(config.tracing.enabled);
         assert!(config.tracing.apu);
+    }
+
+    #[test]
+    fn test_config_tracing_mapper() {
+        let args = vec!["neser".to_string(), "--trace-mapper".to_string()];
+        let config = parse_config(args);
+        assert!(config.tracing.enabled);
+        assert!(config.tracing.mapper);
     }
 
     #[test]
