@@ -87,27 +87,22 @@ via the `ppu_set_chr_fetch_is_sprite()` callback. In CHR mode 3 (1KB banks):
 - Sprite fetches use B registers ($5128-$512B)
 
 ### 3. ExRAM as Nametable Memory
-**Status**: ExRAM exists as CPU-accessible memory only
+**Status**: ✅ Implemented
 
-**What's needed**:
-- When $5105 maps a nametable quadrant to ExRAM (value 2)
-- PPU must read nametable data from mapper's ExRAM instead of its own VRAM
-- Requires $5104 mode to be set appropriately
-
-**Required changes**:
-- PPU nametable read logic must check if current quadrant is mapped to ExRAM
-- Call mapper method to read from ExRAM for that quadrant
-- Respect $5104 mode settings (nametable, extended attributes)
-
-**Impact**: Games using ExRAM for extra nametable space won't render correctly
+**Implemented**:
+- ✅ When $5105 maps a nametable quadrant to ExRAM (value 2), PPU reads return ExRAM data
+- ✅ $5104 mode settings are respected:
+  - Mode 0/1: ExRAM is accessible as nametable
+  - Mode 2/3: Nametable reads return $00 instead of ExRAM data
+- ✅ Writes to ExRAM-mapped nametable addresses write to ExRAM
 
 ### 4. Extended Attribute Mode
 **Status**: Partially implemented
 
 **Implemented**:
-- ✅ Per-tile palette selection from ExRAM lower 2 bits (bits 0-1)
-- ✅ CHR bank extension from ExRAM upper 6 bits (bits 2-7)
-  - When enabled, background tile CHR fetches use the upper 6 bits of the corresponding
+- ✅ Per-tile palette selection from ExRAM upper 2 bits (bits 7-6)
+- ✅ CHR bank extension from ExRAM lower 6 bits (bits 5-0)
+  - When enabled, background tile CHR fetches use the lower 6 bits of the corresponding
     ExRAM byte to extend the CHR bank selection, allowing each tile to select from
     a much larger CHR address space (up to 256KB with 1KB banks)
 
@@ -120,19 +115,13 @@ via the `ppu_set_chr_fetch_is_sprite()` callback. In CHR mode 3 (1KB banks):
 background graphics should now render with correct CHR tile selection.
 
 ### 5. Fill Mode
-**Status**: Registers exist but not functional
+**Status**: ✅ Implemented
 
-**What's needed**:
-- When $5105 maps nametable quadrant to fill mode (value 3)
-- That quadrant displays a single repeating tile ($5106) with single attribute ($5107)
-- Useful for solid color areas or simple backgrounds
-
-**Required changes**:
-- PPU nametable fetch must detect fill mode for quadrant
-- Return $5106 for all tile fetches in that quadrant
-- Return $5107 for all attribute fetches in that quadrant
-
-**Impact**: Games using fill mode for optimization won't render those areas
+**Implemented**:
+- ✅ When $5105 maps nametable quadrant to fill mode (value 3):
+  - Tile fetches return $5106 (fill tile)
+  - Attribute fetches return $5107 replicated across all 4 sub-tiles
+- ✅ Writes to fill-mode nametable addresses are handled (no-op, not backed by RAM)
 
 ### 6. Split-Screen Support
 **Status**: Registers exist, no functionality
