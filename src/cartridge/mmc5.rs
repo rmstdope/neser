@@ -28,7 +28,7 @@ pub struct MMC5Mapper {
     chr_fetch_is_sprite: bool,
     chr_last_set_written: bool, // false = A regs ($5120-$5127), true = B regs ($5128-$512B)
     chr_is_rendering_fetch: bool, // true when PPU is rendering, false for PPUDATA reads
-    sprite_8x16_mode: bool,       // true when PPUCTRL bit 5 is set (8x16 sprites)
+    sprite_8x16_mode: bool,     // true when PPUCTRL bit 5 is set (8x16 sprites)
 
     // Nametable control
     nametable_mapping: u8, // $5105
@@ -868,10 +868,20 @@ impl Mapper for MMC5Mapper {
         self.sprite_8x16_mode = (value & SPRITE_SIZE_BIT) != 0;
     }
 
-    fn ppu_write_mask(&mut self, _value: u8) {
+    fn ppu_write_mask(&mut self, value: u8) {
         // The MMC5 monitors writes to PPUMASK ($2001) to detect rendering enable.
-        // Currently we track this via ppu_scanline's rendering_enabled parameter.
-        // This callback is reserved for future refinement if needed.
+        // When both E bits (bits 3 and 4: show bg, show sprites) are cleared,
+        // it disables: independent bank 8x16 sprite mode, extended attribute mode,
+        // and vertical split mode.
+        //
+        // For now, we track this to potentially disable A/B CHR bank distinction.
+        // Note: The full behavior involves more complex state transitions that
+        // affect scanline counting and other features.
+        const SHOW_BG: u8 = 0b0000_1000;
+        const SHOW_SPRITES: u8 = 0b0001_0000;
+        let _rendering_enabled = (value & (SHOW_BG | SHOW_SPRITES)) != 0;
+        // Currently we rely on ppu_scanline's rendering_enabled parameter for this.
+        // This is here for potential future refinement.
     }
 
     fn read_nametable(&mut self, addr: u16) -> Option<u8> {
