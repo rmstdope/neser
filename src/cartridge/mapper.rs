@@ -129,11 +129,12 @@ pub trait Mapper {
     /// - Current bank mapping (for mappers with banked WRAM like MMC5)
     ///
     /// Returns a Vec containing the complete WRAM contents.
-    /// Default implementation reads via read_prg at $6000-$7FFF.
+    /// Default implementation reads via read_prg at $6000-$7FFF (8KB window).
+    /// **Mappers with >8KB WRAM MUST override this method to capture all banks.**
     fn wram_snapshot(&self) -> Vec<u8> {
-        let size = self.wram_size();
+        let size = self.wram_size().min(0x2000);
         let mut snapshot = Vec::with_capacity(size);
-        for i in 0..size.min(0x2000) {
+        for i in 0..size {
             snapshot.push(self.read_prg(0x6000 + i as u16));
         }
         snapshot
@@ -147,9 +148,10 @@ pub trait Mapper {
     /// - Current bank mapping (for mappers with banked WRAM like MMC5)
     ///
     /// The data slice should contain the complete WRAM contents to restore.
-    /// Default implementation writes via write_prg at $6000-$7FFF.
+    /// Default implementation writes via write_prg at $6000-$7FFF (8KB window).
+    /// **Mappers with >8KB WRAM MUST override this method to restore all banks.**
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(0x2000);
+        let to_copy = data.len().min(0x2000).min(self.wram_size());
         for (i, &byte) in data.iter().take(to_copy).enumerate() {
             self.write_prg(0x6000 + i as u16, byte);
         }
