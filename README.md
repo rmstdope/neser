@@ -1,4 +1,5 @@
 # neser
+
 NESER - NES Emulator in Rust
 
 ## Building
@@ -49,7 +50,7 @@ cp neser.conf.example neser.conf
 
 ### Command-Line Options
 
-```
+```text
 Options:
   --pal               Use PAL TV system (default: NTSC)
   --no-audio          Disable audio output
@@ -82,11 +83,13 @@ NESER supports shader presets for visual effects:
 - `shaders/ntsc-256px-composite.slangp` - NTSC composite video simulation
 
 Example:
+
 ```bash
 neser --filter shaders/crt-lottes.slangp
 ```
 
 Or in config file:
-```
+
+```text
 filter=shaders/crt-lottes.slangp
 ```

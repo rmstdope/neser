@@ -5,11 +5,13 @@
 All work is complete. The shader post-processing system is fully functional and production-ready.
 
 ### Dependencies and Infrastructure
+
 - ✅ Added `librashader` 0.5 with OpenGL runtime and preset support
 - ✅ Added `glow` 0.14 for OpenGL context (required by librashader)
 - ✅ Dependencies properly configured with "stable" feature for stable Rust support
 
 ### Shader Assets
+
 - ✅ Bundled curated shader presets from libretro/slang-shaders:
   - `stock.slangp` - Nearest neighbor (no filtering, default)
   - `xbrz-freescale.slangp` - xBRZ pixel art upscaler
@@ -19,6 +21,7 @@ All work is complete. The shader post-processing system is fully functional and 
 - ✅ README documentation for shader usage
 
 ### Shader Manager Module
+
 - ✅ Created `src/shader_manager.rs` with:
   - Shader preset discovery (scans `shaders/` directory)
   - Preset loading via librashader's ShaderPreset and FilterChain
@@ -29,6 +32,7 @@ All work is complete. The shader post-processing system is fully functional and 
 - ✅ Integrated with glow::Context for librashader compatibility
 
 ### GL Backend Integration
+
 - ✅ Added glow context creation in `gl_backend.rs`
 - ✅ Integrated ShaderManager into GlBackend struct
 - ✅ Optional shader loading on startup via constructor parameter
@@ -37,17 +41,20 @@ All work is complete. The shader post-processing system is fully functional and 
 - ✅ **Conditional ImGui background draw (skipped when shader active)**
 
 ### User Interface
+
 - ✅ `--shader <path>` CLI flag for specifying shader preset on startup
 - ✅ F6 keyboard shortcut for cycling through available shaders at runtime
 - ✅ Command-line argument validation updated for shader parameter
 - ✅ Help text updated with shader options
 
 ### Event Loop Updates
+
 - ✅ EventLoop::new() accepts optional shader_path parameter
 - ✅ F6 key handled in event loop to trigger shader cycling
 - ✅ All test calls to EventLoop::new() updated with None for shader_path
 
 ### Code Quality
+
 - ✅ Proper feature gating with `#[cfg(feature = "sdl")]`
 - ✅ Library builds successfully
 - ✅ All modules properly declared in lib.rs and main.rs
@@ -55,6 +62,7 @@ All work is complete. The shader post-processing system is fully functional and 
 ## Implementation Complete ✅
 
 ### Shader Application (COMPLETE)
+
 - ✅ `shader_manager::apply_shader()` fully implemented
   - Constructs GLImage from input NES texture (256x240 RGB8)
   - Creates Viewport with output dimensions
@@ -63,6 +71,7 @@ All work is complete. The shader post-processing system is fully functional and 
   - Returns descriptive errors
 
 ### Rendering Pipeline (COMPLETE)
+
 - ✅ Modified `gl_backend::render()` to apply shaders:
   1. Updates NES texture with PPU output
   2. Applies shader filter chain if shader is loaded
@@ -71,11 +80,13 @@ All work is complete. The shader post-processing system is fully functional and 
   5. ImGui debugger renders correctly on top
 
 ### Testing
+
 - ✅ Library compiles successfully
 - ⚠️ Binary linking fails in CI (expected - missing SDL2 system library)
 - ⚠️ Shader rendering requires local development environment for visual testing
 
 ### Documentation
+
 - ✅ Updated shaders/README.md with completion status
 - ✅ This status document reflects 100% completion
 - ✅ Code comments updated to remove TODOs
@@ -83,7 +94,8 @@ All work is complete. The shader post-processing system is fully functional and 
 ## Technical Implementation
 
 ### Data Flow (Complete)
-```
+
+```text
 NES PPU Output (256x240 RGB)
     ↓
 CPU Buffer (framebuffer: Vec<u8>)
@@ -105,7 +117,8 @@ OpenGL Texture (nes_texture)
 
 ### Key Implementation Details
 
-**shader_manager::apply_shader()**
+#### shader_manager::apply_shader()
+
 ```rust
 pub fn apply_shader(
     &mut self,
@@ -114,13 +127,15 @@ pub fn apply_shader(
     viewport_height: u32,
 ) -> Result<(), String>
 ```
+
 - Creates `GLImage` with `Some(NativeTexture(NonZero<u32>))` handle
 - Sets format to `gl::RGB8 as u32`, size to `Size::new(256, 240)`
 - Constructs `Viewport` with image reference for type parameter
 - Calls unsafe `filter_chain.frame(&image, &viewport, frame_count, None)`
 - Increments frame counter with wrapping for long-running sessions
 
-**gl_backend::render()**
+#### gl_backend::render()
+
 ```rust
 // After updating NES texture
 if self.shader_manager.has_shader() {
