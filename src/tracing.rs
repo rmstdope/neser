@@ -24,13 +24,19 @@
 
 /// Global tracing state for debug builds.
 ///
-/// This static is only present in debug builds and is used by the trace macros
-/// to check if tracing is enabled without passing the Tracing struct everywhere.
-#[cfg(debug_assertions)]
-pub static TRACING: std::sync::OnceLock<std::sync::RwLock<Tracing>> = std::sync::OnceLock::new();
+/// In tests we use thread-local storage to avoid cross-test interference.
+/// In non-test debug builds, this is a single shared global.
+#[cfg(all(debug_assertions, not(test)))]
+pub static TRACING: std::sync::OnceLock<std::sync::RwLock<Tracing>> =
+    std::sync::OnceLock::new();
+
+#[cfg(all(debug_assertions, test))]
+thread_local! {
+    static TRACING: std::cell::RefCell<Tracing> = std::cell::RefCell::new(Tracing::default());
+}
 
 /// Initialize the global tracing state. Call this once at startup.
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, not(test)))]
 pub fn init_tracing(tracing: Tracing) {
     if let Some(lock) = TRACING.get() {
         let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());
@@ -47,26 +53,41 @@ pub fn init_tracing(tracing: Tracing) {
     }
 }
 
+#[cfg(all(debug_assertions, test))]
+pub fn init_tracing(tracing: Tracing) {
+    TRACING.with(|cell| {
+        *cell.borrow_mut() = tracing;
+    });
+}
+
 /// Initialize the global tracing state. No-op in release builds.
 #[cfg(not(debug_assertions))]
 pub fn init_tracing(_tracing: Tracing) {}
 
 /// Get the current tracing configuration.
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, not(test)))]
 pub fn get_tracing() -> Option<Tracing> {
     TRACING
         .get()
         .map(|lock| *lock.read().unwrap_or_else(|e| e.into_inner()))
 }
 
+#[cfg(all(debug_assertions, test))]
+pub fn get_tracing() -> Option<Tracing> {
+    Some(TRACING.with(|cell| *cell.borrow()))
+}
 /// Check if CPU tracing is enabled. Returns false if tracing is not initialized.
-#[cfg(debug_assertions)]
+#[cfg(all(debug_assertions, not(test)))]
 pub fn is_cpu_tracing_enabled() -> bool {
     TRACING
         .get()
         .is_some_and(|lock| lock.read().unwrap_or_else(|e| e.into_inner()).cpu)
 }
 
+#[cfg(all(debug_assertions, test))]
+pub fn is_cpu_tracing_enabled() -> bool {
+    TRACING.with(|cell| cell.borrow().cpu)
+}
 /// Check if CPU tracing is enabled. Always returns false in release builds.
 #[cfg(not(debug_assertions))]
 pub fn is_cpu_tracing_enabled() -> bool {
@@ -359,5 +380,43 @@ mod tests {
         let retrieved = retrieved.unwrap();
         assert!(!retrieved.enabled);
         assert!(!retrieved.cpu);
+    }
+
+    #[cfg(all(debug_assertions, test))]
+    #[test]
+    fn tracing_is_thread_local_in_tests() {
+        init_tracing(Tracing {
+            enabled: true,
+            cpu: true,
+            ppu: false,
+            apu: false,
+            mapper: false,
+            nestest: false,
+        });
+
+        let main_tracing = get_tracing().unwrap();
+        assert!(main_tracing.cpu);
+
+        let handle = std::thread::spawn(|| {
+            let other_tracing = get_tracing().unwrap();
+            assert!(!other_tracing.cpu);
+
+            init_tracing(Tracing {
+                enabled: true,
+                cpu: true,
+                ppu: false,
+                apu: false,
+                mapper: false,
+                nestest: false,
+            });
+
+            let updated = get_tracing().unwrap();
+            assert!(updated.cpu);
+        });
+
+        handle.join().unwrap();
+
+        let main_after = get_tracing().unwrap();
+        assert!(main_after.cpu);
     }
 }
