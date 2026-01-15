@@ -139,10 +139,8 @@ impl Cartridge {
             fs::create_dir_all(parent)?;
         }
 
-        let mut prg_ram = vec![0u8; 0x2000];
-        for (i, byte) in prg_ram.iter_mut().enumerate() {
-            *byte = self.mapper().read_prg(0x6000 + i as u16);
-        }
+        // Use mapper's wram_snapshot to capture all WRAM, bypassing enable/protect and banking
+        let prg_ram = self.mapper().wram_snapshot();
 
         let mut tmp_path = save_path.to_path_buf();
         tmp_path.set_extension(format!("sav.tmp.{}", std::process::id()));
@@ -173,10 +171,8 @@ impl Cartridge {
         }
 
         let sav = fs::read(save_path)?;
-        let to_copy = sav.len().min(0x2000);
-        for (i, byte) in sav.iter().take(to_copy).enumerate() {
-            self.mapper_mut().write_prg(0x6000 + i as u16, *byte);
-        }
+        // Use mapper's load_wram_snapshot to restore all WRAM, bypassing enable/protect and banking
+        self.mapper_mut().load_wram_snapshot(&sav);
 
         Ok(())
     }
@@ -247,6 +243,50 @@ mod tests {
         if include_trainer {
             rom.extend(vec![0x00; 512]);
         }
+
+        // Add PRG ROM data
+        let prg_size = prg_rom_banks as usize * 16384;
+        rom.extend(vec![0xAA; prg_size]);
+
+        // Add CHR ROM data
+        let chr_size = chr_rom_banks as usize * 8192;
+        rom.extend(vec![0xBB; chr_size]);
+
+        rom
+    }
+
+    fn create_test_rom_with_mapper(
+        prg_rom_banks: u8,
+        chr_rom_banks: u8,
+        mapper_number: u8,
+        battery_backed: bool,
+        prg_ram_banks_8k: u8,
+    ) -> Vec<u8> {
+        // Mapper number is split: lower nibble in flags6 bits 4-7, upper nibble in flags7 bits 4-7
+        let mut flags6 = (mapper_number & 0x0F) << 4;
+        if battery_backed {
+            flags6 |= 0x02; // Bit 1 = battery-backed PRG-RAM
+        }
+        let flags7 = mapper_number & 0xF0;
+
+        let mut rom = vec![
+            b'N',
+            b'E',
+            b'S',
+            0x1A,          // iNES header
+            prg_rom_banks, // PRG ROM size (16KB units)
+            chr_rom_banks, // CHR ROM size (8KB units)
+            flags6,        // Flags 6
+            flags7,        // Flags 7
+            prg_ram_banks_8k, // Flags 8 (PRG RAM size in 8KB units)
+            0,             // Flags 9
+            0,             // Flags 10
+            0,
+            0,
+            0,
+            0,
+            0, // Reserved (unused)
+        ];
 
         // Add PRG ROM data
         let prg_size = prg_rom_banks as usize * 16384;
@@ -486,5 +526,188 @@ mod tests {
             cartridge.mapper().get_mirroring(),
             MirroringMode::Vertical
         ));
+    }
+
+    #[test]
+    fn test_mmc3_load_save_ram_with_prg_ram_disabled() {
+        // Test that loading save RAM works even when MMC3 has PRG-RAM disabled.
+        // This validates the snapshot API bypasses mapper enable/protect state.
+
+        // Create an MMC3 ROM (mapper 4) with battery-backed PRG-RAM
+        let rom_data = create_test_rom_with_mapper(2, 2, 4, true, 1);
+
+        let rom_path = unique_temp_path("mmc3_disabled_ram_test.nes");
+        std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
+
+        // Create a save file with known data
+        let sav_path = rom_path.with_extension("sav");
+        let mut sav = vec![0u8; 0x2000]; // 8KB PRG-RAM
+        sav[0] = 0x42;
+        sav[0x1FFF] = 0x99;
+        std::fs::write(&sav_path, &sav).expect("writing temp SAV should succeed");
+
+        // Load the cartridge
+        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+
+        // Disable PRG-RAM via MMC3 control register
+        cart.mapper_mut().write_prg(0xA001, 0b0000_0000); // bit 7 = 0 disables PRG-RAM
+
+        // Verify that reads through normal path return 0 (disabled)
+        assert_eq!(cart.mapper().read_prg(0x6000), 0x00);
+        assert_eq!(cart.mapper().read_prg(0x7FFF), 0x00);
+
+        // But snapshot API should still capture the loaded data
+        let snapshot = cart.mapper().wram_snapshot();
+        assert_eq!(snapshot[0], 0x42);
+        assert_eq!(snapshot[0x1FFF], 0x99);
+
+        let _ = std::fs::remove_file(&rom_path);
+        let _ = std::fs::remove_file(&sav_path);
+    }
+
+    #[test]
+    fn test_mmc3_save_ram_with_prg_ram_disabled() {
+        // Test that saving RAM works even when MMC3 has PRG-RAM disabled.
+        // This validates the snapshot API bypasses mapper enable/protect state.
+
+        // Create an MMC3 ROM (mapper 4) with battery-backed PRG-RAM
+        let rom_data = create_test_rom_with_mapper(2, 2, 4, true, 1);
+
+        let rom_path = unique_temp_path("mmc3_disabled_save_test.nes");
+        std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
+
+        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+
+        // Write some data while PRG-RAM is enabled
+        cart.mapper_mut().write_prg(0x6000, 0xAB);
+        cart.mapper_mut().write_prg(0x7FFF, 0xCD);
+
+        // Disable PRG-RAM
+        cart.mapper_mut().write_prg(0xA001, 0b0000_0000);
+
+        // Verify reads return 0 (disabled)
+        assert_eq!(cart.mapper().read_prg(0x6000), 0x00);
+
+        // Save should still capture the underlying data
+        cart.save_ram().expect("save_ram should succeed");
+
+        let sav_path = rom_path.with_extension("sav");
+        let sav = std::fs::read(&sav_path).expect("SAV should be written");
+        assert_eq!(sav.len(), 0x2000);
+        assert_eq!(sav[0], 0xAB);
+        assert_eq!(sav[0x1FFF], 0xCD);
+
+        let _ = std::fs::remove_file(&rom_path);
+        let _ = std::fs::remove_file(&sav_path);
+    }
+
+    #[test]
+    fn test_mmc3_save_ram_with_write_protect() {
+        // Test that saving RAM works even when MMC3 has PRG-RAM write-protected.
+
+        let rom_data = create_test_rom_with_mapper(2, 2, 4, true, 1);
+
+        let rom_path = unique_temp_path("mmc3_write_protect_test.nes");
+        std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
+
+        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+
+        // Write some data while PRG-RAM is writable
+        cart.mapper_mut().write_prg(0x6000, 0xAB);
+
+        // Enable write-protect (bit 7 = enable, bit 6 = write-protect)
+        cart.mapper_mut().write_prg(0xA001, 0b1100_0000);
+
+        // Verify writes are ignored (still reads old value)
+        cart.mapper_mut().write_prg(0x6000, 0xDD);
+        assert_eq!(cart.mapper().read_prg(0x6000), 0xAB);
+
+        // Save should still work and capture the data
+        cart.save_ram().expect("save_ram should succeed");
+
+        let sav_path = rom_path.with_extension("sav");
+        let sav = std::fs::read(&sav_path).expect("SAV should be written");
+        assert_eq!(sav[0], 0xAB);
+
+        let _ = std::fs::remove_file(&rom_path);
+        let _ = std::fs::remove_file(&sav_path);
+    }
+
+    #[test]
+    fn test_mmc5_save_ram_with_banked_wram() {
+        // Test that MMC5 with >8KB of WRAM saves all banks correctly.
+        // MMC5 can have up to 64KB of banked WRAM.
+
+        // Create an MMC5 ROM (mapper 5) with battery-backed PRG-RAM and 16KB WRAM (2 banks)
+        let rom_data = create_test_rom_with_mapper(2, 2, 5, true, 2);
+
+        let rom_path = unique_temp_path("mmc5_banked_wram_test.nes");
+        std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
+
+        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+
+        // Write to bank 0 at $6000-$7FFF
+        cart.mapper_mut().write_prg(0x5113, 0); // Select bank 0
+        cart.mapper_mut().write_prg(0x6000, 0xAA);
+        cart.mapper_mut().write_prg(0x7FFF, 0xBB);
+
+        // Write to bank 1 at $6000-$7FFF
+        cart.mapper_mut().write_prg(0x5113, 1); // Select bank 1
+        cart.mapper_mut().write_prg(0x6000, 0xCC);
+        cart.mapper_mut().write_prg(0x7FFF, 0xDD);
+
+        // Save should capture both banks
+        cart.save_ram().expect("save_ram should succeed");
+
+        let sav_path = rom_path.with_extension("sav");
+        let sav = std::fs::read(&sav_path).expect("SAV should be written");
+        
+        // Verify we saved 16KB (2 banks)
+        assert_eq!(sav.len(), 0x4000);
+        
+        // Verify bank 0 data
+        assert_eq!(sav[0x0000], 0xAA);
+        assert_eq!(sav[0x1FFF], 0xBB);
+        
+        // Verify bank 1 data
+        assert_eq!(sav[0x2000], 0xCC);
+        assert_eq!(sav[0x3FFF], 0xDD);
+
+        let _ = std::fs::remove_file(&rom_path);
+        let _ = std::fs::remove_file(&sav_path);
+    }
+
+    #[test]
+    fn test_mmc5_load_save_ram_with_banked_wram() {
+        // Test that MMC5 with >8KB of WRAM loads all banks correctly.
+
+        let rom_data = create_test_rom_with_mapper(2, 2, 5, true, 2);
+
+        let rom_path = unique_temp_path("mmc5_load_banked_wram_test.nes");
+        std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
+
+        // Create a 16KB save file with known data in both banks
+        let sav_path = rom_path.with_extension("sav");
+        let mut sav = vec![0u8; 0x4000]; // 16KB
+        sav[0x0000] = 0xAA; // Bank 0 start
+        sav[0x1FFF] = 0xBB; // Bank 0 end
+        sav[0x2000] = 0xCC; // Bank 1 start
+        sav[0x3FFF] = 0xDD; // Bank 1 end
+        std::fs::write(&sav_path, &sav).expect("writing temp SAV should succeed");
+
+        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+
+        // Verify bank 0 data
+        cart.mapper_mut().write_prg(0x5113, 0); // Select bank 0
+        assert_eq!(cart.mapper().read_prg(0x6000), 0xAA);
+        assert_eq!(cart.mapper().read_prg(0x7FFF), 0xBB);
+
+        // Verify bank 1 data
+        cart.mapper_mut().write_prg(0x5113, 1); // Select bank 1
+        assert_eq!(cart.mapper().read_prg(0x6000), 0xCC);
+        assert_eq!(cart.mapper().read_prg(0x7FFF), 0xDD);
+
+        let _ = std::fs::remove_file(&rom_path);
+        let _ = std::fs::remove_file(&sav_path);
     }
 }

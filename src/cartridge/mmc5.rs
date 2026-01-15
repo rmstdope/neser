@@ -1141,6 +1141,22 @@ impl Mapper for MMC5Mapper {
         // Default to the original iNES mirroring for other cases
         self.mirroring
     }
+
+    fn wram_size(&self) -> usize {
+        self.prg_ram.len()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        // MMC5 can have up to 64KB of banked PRG-RAM.
+        // Return a complete snapshot bypassing banking and write-protect state.
+        self.prg_ram.clone()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        // MMC5: Write directly to all PRG-RAM banks, bypassing banking and write-protect state.
+        let to_copy = data.len().min(self.prg_ram.len());
+        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
 }
 
 #[cfg(test)]

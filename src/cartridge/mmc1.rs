@@ -279,6 +279,19 @@ impl Mapper for MMC1Mapper {
     fn get_mirroring(&self) -> MirroringMode {
         self.get_mirroring_mode()
     }
+
+    fn wram_size(&self) -> usize {
+        self.prg_ram.len()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.prg_ram.clone()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(self.prg_ram.len());
+        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
 }
 
 #[cfg(test)]

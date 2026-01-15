@@ -113,6 +113,50 @@ pub trait Mapper {
     /// Get the current nametable mirroring mode
     /// Some mappers can change mirroring dynamically
     fn get_mirroring(&self) -> MirroringMode;
+
+    /// Get the size of cartridge WRAM (PRG-RAM) in bytes.
+    ///
+    /// Returns the total size of battery-backed PRG-RAM that should be persisted to disk.
+    /// Default implementation returns 8KB (0x2000 bytes), the standard PRG-RAM size.
+    fn wram_size(&self) -> usize {
+        0x2000
+    }
+
+    /// Create a snapshot of all cartridge WRAM (PRG-RAM) for persistence.
+    ///
+    /// This reads the raw WRAM independent of:
+    /// - Enable/disable state (e.g., MMC3 PRG-RAM enable)
+    /// - Write-protect state
+    /// - Current bank mapping (for mappers with banked WRAM like MMC5)
+    ///
+    /// Returns a Vec containing the complete WRAM contents.
+    /// Default implementation reads via read_prg at $6000-$7FFF (8KB window).
+    /// **Mappers with >8KB WRAM MUST override this method to capture all banks.**
+    fn wram_snapshot(&self) -> Vec<u8> {
+        let size = self.wram_size().min(0x2000);
+        let mut snapshot = Vec::with_capacity(size);
+        for i in 0..size {
+            snapshot.push(self.read_prg(0x6000 + i as u16));
+        }
+        snapshot
+    }
+
+    /// Load a WRAM snapshot from persistence.
+    ///
+    /// This writes the raw WRAM independent of:
+    /// - Enable/disable state (e.g., MMC3 PRG-RAM enable)
+    /// - Write-protect state
+    /// - Current bank mapping (for mappers with banked WRAM like MMC5)
+    ///
+    /// The data slice should contain the complete WRAM contents to restore.
+    /// Default implementation writes via write_prg at $6000-$7FFF (8KB window).
+    /// **Mappers with >8KB WRAM MUST override this method to restore all banks.**
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(0x2000).min(self.wram_size());
+        for (i, &byte) in data.iter().take(to_copy).enumerate() {
+            self.write_prg(0x6000 + i as u16, byte);
+        }
+    }
 }
 
 /// Create a mapper instance based on mapper number
