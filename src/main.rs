@@ -1,11 +1,12 @@
 mod apu;
 mod audio;
 mod cartridge;
+mod config;
 mod cpu;
 mod debugger;
 mod eventloop;
-mod rendering;
 mod input;
+mod rendering;
 // #[path = "game_verification/manual_test_cartridges.rs"]
 // mod manual_test_cartridges;
 
@@ -15,230 +16,28 @@ mod ppu;
 mod screen_buffer;
 mod tracing;
 
-struct CliFlag {
-    flag: &'static str,
-    help: Option<&'static str>,
-}
-
-const CLI_FLAGS: &[CliFlag] = &[
-    CliFlag {
-        flag: "--help",
-        help: None,
-    },
-    CliFlag {
-        flag: "-h",
-        help: None,
-    },
-    CliFlag {
-        flag: "--pal",
-        help: Some("Use PAL TV system (default: NTSC)"),
-    },
-    CliFlag {
-        flag: "--no-audio",
-        help: Some("Disable audio output"),
-    },
-    CliFlag {
-        flag: "--trace",
-        help: Some("Enable CPU trace output"),
-    },
-    CliFlag {
-        flag: "--trace-nestest",
-        help: Some("Enable CPU trace output (nestest.log format)"),
-    },
-    CliFlag {
-        flag: "--trace-ppu",
-        help: Some("Enable PPU trace output"),
-    },
-    CliFlag {
-        flag: "--trace-apu",
-        help: Some("Enable APU trace output"),
-    },
-    CliFlag {
-        flag: "--disable-pulse1",
-        help: Some("Mute pulse 1 channel"),
-    },
-    CliFlag {
-        flag: "--disable-pulse2",
-        help: Some("Mute pulse 2 channel"),
-    },
-    CliFlag {
-        flag: "--disable-triangle",
-        help: Some("Mute triangle channel"),
-    },
-    CliFlag {
-        flag: "--disable-noise",
-        help: Some("Mute noise channel"),
-    },
-    CliFlag {
-        flag: "--disable-dmc",
-        help: Some("Mute DMC channel"),
-    },
-    CliFlag {
-        flag: "--no-vsync",
-        help: Some("Disable VSync (default: enabled)"),
-    },
-    CliFlag {
-        flag: "--no-gamepads",
-        help: Some("Disable gamepad/joystick support"),
-    },
-    CliFlag {
-        flag: "--enable-debugger",
-        help: Some("Open debugger windows (CPU/PPU/APU) on startup"),
-    },
-    CliFlag {
-        flag: "--fullscreen",
-        help: Some("Run emulator in fullscreen mode"),
-    },
-    CliFlag {
-        flag: "--display",
-        help: Some("Select display index for fullscreen (e.g., --display 1)"),
-    },
-    CliFlag {
-        flag: "--shader",
-        help: Some("Specify shader preset path (e.g., shaders/crt-simple.slangp)"),
-    },
-];
-
-fn vsync_enabled_from_args(args: &[String]) -> bool {
-    !args.iter().any(|a| a == "--no-vsync")
-}
-
-fn shader_path_from_args(args: &[String]) -> Option<String> {
-    for i in 0..args.len() {
-        if args[i] == "--shader" && i + 1 < args.len() {
-            return Some(args[i + 1].clone());
-        }
-    }
-    None
-}
-
-fn fullscreen_display_from_args(args: &[String]) -> Result<Option<i32>, String> {
-    for i in 0..args.len() {
-        if args[i] == "--display" {
-            if i + 1 >= args.len() {
-                return Err("Missing value for --display".to_string());
-            }
-            let value = &args[i + 1];
-            let parsed: i32 = value
-                .parse()
-                .map_err(|_| format!("Invalid --display value: {value}"))?;
-            if parsed < 0 {
-                return Err("--display must be >= 0".to_string());
-            }
-            return Ok(Some(parsed));
-        }
-    }
-
-    Ok(None)
-}
-
-#[cfg(test)]
-fn debugger_enabled_from_args(args: &[String]) -> bool {
-    args.iter().any(|a| a == "--enable-debugger")
-}
-
-#[cfg(test)]
-fn apply_debugger_startup_config(event_loop: &mut eventloop::EventLoop, args: &[String]) {
-    if debugger_enabled_from_args(args) {
-        event_loop.request_debugger_open();
-    }
-}
-
-fn validate_no_unknown_args(args: &[String]) -> Result<(), String> {
-    // args[0] is the program name
-    let mut i = 1;
-    while i < args.len() {
-        let arg = &args[i];
-
-        if CLI_FLAGS.iter().any(|f| f.flag == arg) {
-            // If this flag expects a value, skip the next argument.
-            if arg == "--shader" || arg == "--display" {
-                if i + 1 >= args.len() {
-                    return Err(format!(
-                        "Missing value for {arg}\nTry --help for usage.",
-                        arg = arg
-                    ));
-                }
-                i += 1; // Skip the shader path value
-            }
-            i += 1;
-            continue;
-        }
-
-        if arg.starts_with('-') {
-            return Err(format!(
-                "Unknown argument: {arg}\nTry --help for usage.",
-                arg = arg
-            ));
-        }
-
-        return Err(format!(
-            "Unexpected positional argument: {arg}\nTry --help for usage.",
-            arg = arg
-        ));
-    }
-
-    Ok(())
-}
+use config::{Config, ParseResult};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
     let args: Vec<String> = std::env::args().collect();
 
-    // Show help if requested
-    if args.contains(&"--help".to_string()) || args.contains(&"-h".to_string()) {
-        println!("NES Emulator");
-        println!("\nUsage: neser [OPTIONS]");
-        println!("\nOptions:");
-
-        for flag in CLI_FLAGS {
-            if let Some(help) = flag.help {
-                println!("  {:<19} {}", flag.flag, help);
-            }
+    let config = match Config::new(&args)? {
+        ParseResult::Help => {
+            Config::print_help();
+            return Ok(());
         }
-
-        println!("\nExample:");
-        println!("  neser --disable-pulse2 --disable-triangle    # Only pulse1, noise, and DMC");
-        return Ok(());
-    }
-
-    if let Err(message) = validate_no_unknown_args(&args) {
-        eprintln!("{message}");
-        return Err(message.into());
-    }
-
-    let tv_system = if args.contains(&"--pal".to_string()) {
-        nes::TvSystem::Pal
-    } else {
-        nes::TvSystem::Ntsc
+        ParseResult::Config(c) => c,
     };
-    let no_audio = args.contains(&"--no-audio".to_string());
-    let vsync_enabled = vsync_enabled_from_args(&args);
-    let gamepads_enabled = !args.contains(&"--no-gamepads".to_string());
-    let fullscreen = args.contains(&"--fullscreen".to_string());
-    let fullscreen_display = if fullscreen {
-        fullscreen_display_from_args(&args)?
-    } else {
-        None
-    };
-    let shader_path = shader_path_from_args(&args);
-    let tracing = tracing::Tracing::from_args(&args);
-
-    // Channel enable/disable flags (default: all enabled)
-    let pulse1_enabled = !args.contains(&"--disable-pulse1".to_string());
-    let pulse2_enabled = !args.contains(&"--disable-pulse2".to_string());
-    let triangle_enabled = !args.contains(&"--disable-triangle".to_string());
-    let noise_enabled = !args.contains(&"--disable-noise".to_string());
-    let dmc_enabled = !args.contains(&"--disable-dmc".to_string());
 
     // Initialize SDL2
     let sdl_context = sdl2::init()?;
-    let mut nes_instance = nes::Nes::new(tv_system);
+    let mut nes_instance = nes::Nes::new(config.tv_system);
 
     // Create audio output (request 44.1 kHz) unless disabled.
     // SDL may open the device at a different rate; always sync the APU to the actual rate
     // to avoid steady underruns.
-    let audio = if no_audio {
+    let audio = if !config.audio_enabled {
         None
     } else {
         let audio = audio::NesAudio::new(&sdl_context, 44100)?;
@@ -247,18 +46,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(audio)
     };
 
-    let mut event_loop = eventloop::EventLoop::new(
-        false,
-        tv_system,
-        4.0,
-        1.0,
-        vsync_enabled,
-        audio,
-        gamepads_enabled,
-        fullscreen,
-        fullscreen_display,
-        shader_path,
-    )?;
+    let mut event_loop = eventloop::EventLoop::new(false, audio, &config)?;
+
+    // Request debugger open if enabled via CLI
+    if config.debugger_enabled {
+        event_loop.request_debugger_open();
+    }
 
     // Temporary hard-coded breakpoint for debugger development.
     // event_loop.add_breakpoint(0xE486);
@@ -295,14 +88,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Apply channel enable/disable settings
     {
         let mut apu = nes_instance.apu.borrow_mut();
-        apu.set_pulse1_enabled(pulse1_enabled);
-        apu.set_pulse2_enabled(pulse2_enabled);
-        apu.set_triangle_enabled(triangle_enabled);
-        apu.set_noise_enabled(noise_enabled);
-        apu.set_dmc_enabled(dmc_enabled);
+        apu.set_pulse1_enabled(config.pulse1_enabled);
+        apu.set_pulse2_enabled(config.pulse2_enabled);
+        apu.set_triangle_enabled(config.triangle_enabled);
+        apu.set_noise_enabled(config.noise_enabled);
+        apu.set_dmc_enabled(config.dmc_enabled);
     }
 
-    let run_result = event_loop.run(&mut nes_instance, tracing);
+    let run_result = event_loop.run(&mut nes_instance, config.tracing);
     // Best-effort save on clean shutdown (Escape/Quit).
     if run_result.is_ok() {
         if let Err(e) = nes_instance.memory.borrow().save_ram() {
@@ -319,111 +112,22 @@ mod tests {
     use serial_test::serial;
 
     #[test]
-    fn test_vsync_enabled_by_default() {
-        let args = vec!["neser".to_string()];
-        assert!(vsync_enabled_from_args(&args));
-    }
-
-    #[test]
-    fn test_no_vsync_flag_disables_vsync() {
-        let args = vec!["neser".to_string(), "--no-vsync".to_string()];
-        assert!(!vsync_enabled_from_args(&args));
-    }
-
-    #[test]
-    fn test_unknown_argument_causes_error() {
-        let args = vec![
-            "neser".to_string(),
-            "--definitely-not-a-real-flag".to_string(),
-        ];
-        assert!(validate_no_unknown_args(&args).is_err());
-    }
-
-    #[test]
-    fn test_no_gamepads_flag_recognized() {
-        let args = vec!["neser".to_string(), "--no-gamepads".to_string()];
-        assert!(validate_no_unknown_args(&args).is_ok());
-    }
-
-    #[test]
-    fn test_enable_debugger_flag_is_accepted() {
-        let args = vec!["neser".to_string(), "--enable-debugger".to_string()];
-        assert!(validate_no_unknown_args(&args).is_ok());
-    }
-
-    // #[test]
-    // fn test_debugger_enabled_from_args() {
-    //     let args = vec!["neser".to_string(), "--enable-debugger".to_string()];
-    //     assert!(debugger_enabled_from_args(&args));
-
-    //     let args = vec!["neser".to_string()];
-    //     assert!(!debugger_enabled_from_args(&args));
-    // }
-
-    #[test]
     #[serial]
     fn test_enable_debugger_requests_open_and_pauses_on_start() {
-        let args = vec!["neser".to_string(), "--enable-debugger".to_string()];
+        let args = vec!["neser".to_string(), "--start-in-debugger".to_string()];
 
-        let mut event_loop = crate::eventloop::EventLoop::new(
-            true,
-            crate::nes::TvSystem::Ntsc,
-            1.0,
-            1.0,
-            true,
-            None,
-            false,
-            false,
-            None,
-            None,
-        )
-        .unwrap();
+        let config = match Config::new(&args).unwrap() {
+            ParseResult::Config(c) => c,
+            ParseResult::Help => panic!("Expected Config"),
+        };
 
-        apply_debugger_startup_config(&mut event_loop, &args);
+        let mut event_loop = crate::eventloop::EventLoop::new(true, None, &config).unwrap();
+
+        if config.debugger_enabled {
+            event_loop.request_debugger_open();
+        }
 
         assert!(event_loop.is_paused());
         assert!(event_loop.debugger_open_requested());
-    }
-
-    #[test]
-    fn test_fullscreen_flag_recognized() {
-        let args = vec!["neser".to_string(), "--fullscreen".to_string()];
-        assert!(validate_no_unknown_args(&args).is_ok());
-    }
-
-    #[test]
-    fn test_display_flag_recognized_with_value() {
-        let args = vec![
-            "neser".to_string(),
-            "--display".to_string(),
-            "1".to_string(),
-        ];
-        assert!(validate_no_unknown_args(&args).is_ok());
-    }
-
-    #[test]
-    fn test_display_flag_missing_value_causes_error() {
-        let args = vec!["neser".to_string(), "--display".to_string()];
-        assert!(validate_no_unknown_args(&args).is_err());
-    }
-
-    #[test]
-    fn test_display_flag_parses_integer() {
-        let args = vec![
-            "neser".to_string(),
-            "--display".to_string(),
-            "2".to_string(),
-        ];
-        assert_eq!(fullscreen_display_from_args(&args).unwrap(), Some(2));
-    }
-
-    #[test]
-    fn test_display_flag_rejects_negative() {
-        let args = vec![
-            "neser".to_string(),
-            "--display".to_string(),
-            "-1".to_string(),
-        ];
-        assert!(fullscreen_display_from_args(&args).is_err());
     }
 }

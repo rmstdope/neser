@@ -32,5 +32,9 @@ roms/games
 *.log
 .romsource
 
-# macOS
+# Miscellaneous
 .DS_Store
+*~
+
+# NESER config
+neser.conf

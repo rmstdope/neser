@@ -1,0 +1,96 @@
+# =============================================================================
+# NESER Configuration File Example
+# =============================================================================
+#
+# This file shows all available configuration options with their default values.
+# Copy this file to one of the following locations:
+#
+#   ~/.neser/neser.conf    (user-wide settings)
+#   ./neser.conf           (project/directory-specific settings)
+#
+# Or specify a custom path with: neser --config /path/to/config.conf
+#
+# Configuration priority (later overrides earlier):
+#   1. Default values (built-in)
+#   2. ~/.neser/neser.conf (if it exists)
+#   3. ./neser.conf (if it exists)
+#   4. --config <file> (if specified, replaces steps 2 and 3)
+#   5. Command-line arguments (highest priority)
+#
+# Format: key=value (one per line)
+# Comments start with #
+# Boolean values: true/false, yes/no, 1/0 (case-insensitive)
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# TV System
+# -----------------------------------------------------------------------------
+# Set to "ntsc" or "pal". NTSC runs at ~60 FPS, PAL at ~50 FPS.
+# NTSC is the standard for North American and Japanese games.
+# PAL is used for European games.
+tv_system=ntsc
+
+# -----------------------------------------------------------------------------
+# Audio Settings
+# -----------------------------------------------------------------------------
+# Enable or disable audio output entirely.
+audio=true
+
+# Individual APU channel toggles.
+# Useful for isolating specific sounds or debugging audio issues.
+pulse1=true
+pulse2=true
+triangle=true
+noise=true
+dmc=true
+
+# -----------------------------------------------------------------------------
+# Video Settings
+# -----------------------------------------------------------------------------
+# Enable vertical sync to prevent screen tearing.
+# Disabling may reduce input latency but can cause visual artifacts.
+vsync=true
+
+# Window scaling factor (1.0 to 5.0).
+# The NES outputs 256x240 pixels. This multiplies the window size.
+# Example: 4.0 = 1024x960 window
+# Note: Only applies in windowed mode, ignored in fullscreen.
+video_scale=4.0
+
+# Run in fullscreen mode.
+fullscreen=false
+
+# Display index for fullscreen mode (0 = primary display).
+# Only used when fullscreen=true.
+display=0
+
+# Shader/filter preset path.
+# Applies visual effects like CRT simulation or pixel scaling.
+# Available presets in the shaders/ directory:
+#   - shaders/stock.slangp              (no effect, raw pixels)
+#   - shaders/crt-simple.slangp         (CRT scanline simulation)
+#   - shaders/xbrz-freescale.slangp     (smooth pixel upscaling)
+#   - shaders/ntsc-256px-composite.slangp (NTSC composite video simulation)
+# Leave empty or comment out for no shader.
+#filter=shaders/crt-simple.slangp
+
+# -----------------------------------------------------------------------------
+# Input Settings
+# -----------------------------------------------------------------------------
+# Enable gamepad/joystick support.
+# Set to false to use keyboard only.
+gamepads=true
+
+# -----------------------------------------------------------------------------
+# Debugging
+# -----------------------------------------------------------------------------
+# Open debugger windows (CPU/PPU/APU) on startup.
+# The emulator will start paused when this is enabled.
+debugger=false
+
+# -----------------------------------------------------------------------------
+# Emulation Speed (DISABLED - not supported with current eventloop design)
+# -----------------------------------------------------------------------------
+# Emulation speed multiplier (1.0 = normal speed).
+# Values < 1.0 slow down, > 1.0 speed up.
+# Example: 0.5 = half speed, 2.0 = double speed
