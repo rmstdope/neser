@@ -151,10 +151,10 @@ impl MMC3Mapper {
         let rising_edge = self.a12_rising_edge(current_a12);
         let low_cycles_met = self.a12_low_cycles >= Self::A12_LOW_CYCLES_REQUIRED;
         let should_clock = rising_edge && low_cycles_met;
-        
+
         trace_mapper!(3; "MMC3 A12 check: addr=${:04X}, a12={}, rising_edge={}, low_cycles={}, should_clock={}", 
             addr, current_a12, rising_edge, self.a12_low_cycles, should_clock);
-        
+
         self.track_a12_low_cycles(current_a12);
         should_clock
     }
@@ -167,7 +167,7 @@ impl MMC3Mapper {
         // - If counter becomes 0 and IRQ is enabled: assert IRQ.
         let old_counter = self.irq_counter;
         let was_reload = self.irq_reload;
-        
+
         if self.irq_counter == 0 || self.irq_reload {
             self.irq_counter = self.irq_latch;
             self.irq_reload = false;
@@ -543,29 +543,29 @@ mod tests {
     fn test_mmc3_two_bank_prg_rom() {
         // Test MMC3 with only 2 x 8KB PRG banks (like the Blargg MMC3 test ROMs)
         // This is the minimum configuration and should work correctly.
-        
+
         let mut prg_rom = vec![0u8; 16 * 1024]; // 16KB = 2 x 8KB banks
         // Fill bank 0 with 0xAA
         prg_rom[0..8192].fill(0xAA);
         // Fill bank 1 with 0xBB
         prg_rom[8192..16384].fill(0xBB);
-        
-        let chr_rom = vec![];  // No CHR-ROM (uses CHR-RAM)
-        
+
+        let chr_rom = vec![]; // No CHR-ROM (uses CHR-RAM)
+
         let mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC3 (mapper 4) should be implemented");
-        
+
         // With 2 banks and default configuration (PRG mode 0):
         // $8000-$9FFF: R6 (bank 0) = 0xAA
-        // $A000-$BFFF: R7 (bank 0) = 0xAA  
+        // $A000-$BFFF: R7 (bank 0) = 0xAA
         // $C000-$DFFF: fixed second-to-last (bank 0) = 0xAA
         // $E000-$FFFF: fixed last (bank 1) = 0xBB
-        
+
         assert_eq!(mapper.read_prg(0x8000), 0xAA);
         assert_eq!(mapper.read_prg(0xA000), 0xAA);
         assert_eq!(mapper.read_prg(0xC000), 0xAA);
         assert_eq!(mapper.read_prg(0xE000), 0xBB);
-        
+
         // The reset vector at $FFFC-$FFFD should be readable from bank 1
         assert_eq!(mapper.read_prg(0xFFFC), 0xBB);
         assert_eq!(mapper.read_prg(0xFFFD), 0xBB);
