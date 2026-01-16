@@ -263,6 +263,12 @@ impl Sprites {
     }
 
     /// Fetch sprite pattern data
+    /// 
+    /// IMPORTANT: The PPU hardware ALWAYS fetches 8 sprites worth of pattern data during
+    /// pixels 257-320, regardless of how many sprites were found during evaluation.
+    /// For sprites not found (sprite_index >= sprites_found), the PPU fetches using
+    /// tile $FF at Y coordinate $FF. This is critical for MMC3 IRQ timing as the
+    /// A12 transitions must happen consistently even when no sprites are on screen.
     pub fn fetch_sprite_pattern<F>(
         &mut self,
         pixel: u16,
@@ -277,11 +283,32 @@ impl Sprites {
         let sprite_index = (cycle_offset / 8) as usize;
         let fetch_step = cycle_offset % 8;
 
-        if fetch_step == 7 && sprite_index < self.sprites_found as usize {
-            let sec_oam_offset = sprite_index * 4;
-            let sprite_y = self.secondary_oam[sec_oam_offset];
-            let tile_index = self.secondary_oam[sec_oam_offset + 1];
-            let attributes = self.secondary_oam[sec_oam_offset + 2];
+        // Always perform the CHR read on the appropriate cycle for all 8 sprite slots
+        // This is critical for MMC3 IRQ timing - the A12 transitions must happen
+        // 241 times per frame (once per visible scanline + once on pre-render)
+        if fetch_step == 7 && sprite_index < 8 {
+            // On pre-render scanline (261), sprite evaluation doesn't happen, so
+            // secondary_oam contains stale data from scanline 239's evaluation.
+            // Those sprites were evaluated for scanline 240, not scanline 0.
+            // We must treat all sprites as "dummy" on pre-render to avoid using
+            // stale data that would cause calculation errors.
+            let is_prerender = scanline == 261;
+            
+            // Determine if this is a real sprite or a "dummy" fetch
+            let is_real_sprite = !is_prerender && sprite_index < self.sprites_found as usize;
+            
+            let (tile_index, attributes, sprite_y) = if is_real_sprite {
+                let sec_oam_offset = sprite_index * 4;
+                (
+                    self.secondary_oam[sec_oam_offset + 1],
+                    self.secondary_oam[sec_oam_offset + 2],
+                    self.secondary_oam[sec_oam_offset],
+                )
+            } else {
+                // For dummy fetches, use tile $FF at Y=$FF
+                // The NES hardware reads these even though no sprite is visible
+                (0xFF, 0, 0xFF)
+            };
 
             let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
             // Adjust Y position: add 1 to sprite_y to move sprites 2 pixels down
@@ -320,19 +347,24 @@ impl Sprites {
 
             let addr = pattern_table_base | tile_offset | (tile_row as u16);
 
+            // Always read CHR to trigger A12 transitions for MMC3
             let pattern_lo = read_chr(addr);
             let pattern_hi = read_chr(addr + 8);
 
-            let (final_lo, final_hi) = if (attributes & 0x40) != 0 {
-                (pattern_lo.reverse_bits(), pattern_hi.reverse_bits())
-            } else {
-                (pattern_lo, pattern_hi)
-            };
+            // Only store pattern data for real sprites
+            if is_real_sprite {
+                let (final_lo, final_hi) = if (attributes & 0x40) != 0 {
+                    (pattern_lo.reverse_bits(), pattern_hi.reverse_bits())
+                } else {
+                    (pattern_lo, pattern_hi)
+                };
 
-            self.next_sprite_pattern_shift_lo[sprite_index] = final_lo;
-            self.next_sprite_pattern_shift_hi[sprite_index] = final_hi;
-            self.next_sprite_attributes[sprite_index] = attributes;
-            self.next_sprite_x_positions[sprite_index] = self.secondary_oam[sec_oam_offset + 3];
+                self.next_sprite_pattern_shift_lo[sprite_index] = final_lo;
+                self.next_sprite_pattern_shift_hi[sprite_index] = final_hi;
+                self.next_sprite_attributes[sprite_index] = attributes;
+                let sec_oam_offset = sprite_index * 4;
+                self.next_sprite_x_positions[sprite_index] = self.secondary_oam[sec_oam_offset + 3];
+            }
         }
     }
 

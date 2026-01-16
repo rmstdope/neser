@@ -148,8 +148,13 @@ impl MMC3Mapper {
         // MMC3 A12 low-pass filter: A12 must be low for at least 8 PPU cycles
         // before a rising edge is allowed to clock the IRQ counter.
         let current_a12 = (addr & 0x1000) != 0;
-        let should_clock = self.a12_rising_edge(current_a12)
-            && self.a12_low_cycles >= Self::A12_LOW_CYCLES_REQUIRED;
+        let rising_edge = self.a12_rising_edge(current_a12);
+        let low_cycles_met = self.a12_low_cycles >= Self::A12_LOW_CYCLES_REQUIRED;
+        let should_clock = rising_edge && low_cycles_met;
+        
+        trace_mapper!(3; "MMC3 A12 check: addr=${:04X}, a12={}, rising_edge={}, low_cycles={}, should_clock={}", 
+            addr, current_a12, rising_edge, self.a12_low_cycles, should_clock);
+        
         self.track_a12_low_cycles(current_a12);
         should_clock
     }
@@ -160,6 +165,9 @@ impl MMC3Mapper {
         // - If counter==0 or reload requested: load counter from latch.
         // - Else: decrement counter.
         // - If counter becomes 0 and IRQ is enabled: assert IRQ.
+        let old_counter = self.irq_counter;
+        let was_reload = self.irq_reload;
+        
         if self.irq_counter == 0 || self.irq_reload {
             self.irq_counter = self.irq_latch;
             self.irq_reload = false;
@@ -167,7 +175,11 @@ impl MMC3Mapper {
             self.irq_counter = self.irq_counter.wrapping_sub(1);
         }
 
+        trace_mapper!(2; "MMC3 IRQ clock: old_counter={}, reload_flag={}, latch={}, new_counter={}, enabled={}", 
+            old_counter, was_reload, self.irq_latch, self.irq_counter, self.irq_enabled);
+
         if self.irq_counter == 0 && self.irq_enabled {
+            trace_mapper!(1; "MMC3 IRQ ASSERTED!");
             self.irq_asserted = true;
         }
     }

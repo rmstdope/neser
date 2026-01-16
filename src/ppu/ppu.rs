@@ -377,26 +377,32 @@ impl Ppu {
                     // Finalize evaluation
                     self.sprites.finalize_evaluation();
                 }
-            } else if pixel >= 257 && pixel <= 320 {
-                // Fetch sprite patterns for next scanline
-                let sprite_height = self.registers.sprite_height();
-                let sprite_pattern_table = self.registers.sprite_pattern_table_addr();
-                let cartridge = &self.cartridge;
-                self.sprites.fetch_sprite_pattern(
-                    pixel,
-                    scanline,
-                    sprite_height,
-                    sprite_pattern_table,
-                    |addr| {
-                        Self::notify_chr_fetch_kind(cartridge, true);
-                        self.memory.read_chr(addr, cartridge)
-                    },
-                );
             } else if pixel == 321 {
                 // Swap sprite buffers for rendering
                 self.sprites.swap_buffers();
                 self.sprites.mark_buffers_ready();
             }
+        }
+
+        // Sprite pattern fetching happens on ALL rendering scanlines (including pre-render)
+        // This is critical for MMC3 IRQ timing - the A12 transition from BG ($0xxx) to
+        // sprite ($1xxx) pattern fetches must happen 241 times per frame.
+        // Note: The PPU fetches 8 sprite patterns even on pre-render, using tile $FF
+        // for any sprites not found (since evaluation doesn't happen on pre-render).
+        if is_rendering_enabled && is_rendering_scanline && pixel >= 257 && pixel <= 320 {
+            let sprite_height = self.registers.sprite_height();
+            let sprite_pattern_table = self.registers.sprite_pattern_table_addr();
+            let cartridge = &self.cartridge;
+            self.sprites.fetch_sprite_pattern(
+                pixel,
+                scanline,
+                sprite_height,
+                sprite_pattern_table,
+                |addr| {
+                    Self::notify_chr_fetch_kind(cartridge, true);
+                    self.memory.read_chr(addr, cartridge)
+                },
+            );
         }
 
         // Render pixels to screen buffer during visible scanlines and pixels

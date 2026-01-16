@@ -635,10 +635,10 @@ mod tests {
         "roms/blargg/mmc3_irq_tests/1.Clocking.nes",
         60 * 10 // Increased timeout for initial debugging
     );
-    // blargg_console_test!(
-    //     test_mmc3_irq_2_details,
-    //     "roms/blargg/mmc3_irq_tests/2.Details.nes"
-    // );
+    blargg_console_test!(
+        test_mmc3_irq_2_details,
+        "roms/blargg/mmc3_irq_tests/2.Details.nes"
+    );
     blargg_console_test!(
         test_mmc3_irq_3_a12_clocking,
         "roms/blargg/mmc3_irq_tests/3.A12_clocking.nes"
