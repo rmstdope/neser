@@ -648,8 +648,10 @@ mod tests {
         "roms/blargg/mmc3_irq_tests/4.Scanline_timing.nes",
         60 * 5 // May need time for frame rendering
     );
-    // Note: Tests 5 and 6 test different MMC3 revisions (A and B)
-    // We'll implement Rev B (most common) as default
+    blargg_console_test!(
+        test_mmc3_irq_5_rev_a,
+        "roms/blargg/mmc3_irq_tests/5.MMC3_rev_A.nes"
+    );
     blargg_console_test!(
         test_mmc3_irq_6_rev_b,
         "roms/blargg/mmc3_irq_tests/6.MMC3_rev_B.nes"

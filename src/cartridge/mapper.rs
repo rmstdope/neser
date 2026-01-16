@@ -193,6 +193,7 @@ pub fn calculate_rom_crc32(prg_rom: &[u8], chr_rom: &[u8]) -> u32 {
 /// CRC32 values for ROMs that require alternate (NEC) MMC3 IRQ behavior.
 const MMC3_ALTERNATE_IRQ_CRCS: &[u32] = &[
     0x633AFE6F, // 6-MMC3_alt.nes (blargg mmc3_test_2)
+    0xF312D1DE, // 5.MMC3_rev_A.nes (blargg mmc3_irq_tests)
 ];
 
 /// Check if a ROM CRC requires alternate MMC3 IRQ behavior.
