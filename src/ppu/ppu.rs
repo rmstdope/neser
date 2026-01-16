@@ -311,10 +311,7 @@ impl Ppu {
             // Pixels 330-336: continue shifting (shifts 2-8/8)
             // Pixel 337: load second tile
             // This applies to ALL rendering scanlines, not just pre-render!
-            if is_rendering_enabled
-                && is_rendering_scanline
-                && (329..=336).contains(&pixel)
-            {
+            if is_rendering_enabled && is_rendering_scanline && (329..=336).contains(&pixel) {
                 self.background.shift_registers();
             }
 
@@ -351,11 +348,7 @@ impl Ppu {
         // OAM corruption bug: If OAMADDR >= 8 when sprite tile loading starts,
         // copy 8 bytes from (OAMADDR & 0xF8) to OAM[0..7]
         // This happens at pixel 257 of the pre-render scanline
-        if is_rendering_enabled
-            && is_prerender
-            && pixel == 257
-            && self.registers.oam_address >= 8
-        {
+        if is_rendering_enabled && is_prerender && pixel == 257 && self.registers.oam_address >= 8 {
             let source_addr = (self.registers.oam_address & 0xF8) as usize;
             // Copy 8 bytes from source to OAM[0..7]
             for i in 0..8 {
@@ -694,7 +687,9 @@ impl Ppu {
         // Notify mapper if v register changed (happens on second write to $2006)
         // This is needed for MMC3 A12 detection when manually toggling address
         let new_v = self.registers.v();
-        if old_v != new_v && let Some(ref cartridge) = self.cartridge {
+        if old_v != new_v
+            && let Some(ref cartridge) = self.cartridge
+        {
             // When manually changing the PPU address via $2006, we need to ensure
             // the MMC3 A12 filter has enough "cycles" to detect the change properly.
             // We simulate this by calling ppu_address_changed with the old address
@@ -755,7 +750,9 @@ impl Ppu {
 
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
-        if old_addr != new_addr && let Some(ref cartridge) = self.cartridge {
+        if old_addr != new_addr
+            && let Some(ref cartridge) = self.cartridge
+        {
             // For PPUDATA reads/writes, we need to prime the A12 filter similar
             // to PPUADDR writes, as these are also manual address changes
             let mapper = &mut *cartridge.borrow_mut();
@@ -805,7 +802,9 @@ impl Ppu {
 
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
-        if old_addr != new_addr && let Some(ref cartridge) = self.cartridge {
+        if old_addr != new_addr
+            && let Some(ref cartridge) = self.cartridge
+        {
             // For PPUDATA reads/writes, we need to prime the A12 filter similar
             // to PPUADDR writes, as these are also manual address changes
             let mapper = &mut *cartridge.borrow_mut();

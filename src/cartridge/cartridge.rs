@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::{error, fmt};
 
 use crate::cartridge::Mapper;
 
@@ -14,6 +15,47 @@ pub enum MirroringMode {
     SingleScreenLower,
     SingleScreenUpper,
 }
+
+#[derive(Debug)]
+pub enum CartridgeError {
+    InvalidHeader,
+    FileTooSmall { expected: usize, actual: usize },
+    UnsupportedMapper(u8),
+    Io(io::Error),
+}
+
+impl fmt::Display for CartridgeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidHeader => {
+                write!(f, "Invalid iNES header: expected 'NES\\x1A' magic bytes")
+            }
+            Self::FileTooSmall { expected, actual } => {
+                write!(
+                    f,
+                    "File too small: expected at least {expected} bytes, got {actual}"
+                )
+            }
+            Self::UnsupportedMapper(mapper) => write!(f, "Unsupported mapper: {mapper}"),
+            Self::Io(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl error::Error for CartridgeError {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self {
+            Self::Io(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<io::Error> for CartridgeError {
+    fn from(err: io::Error) -> Self {
+        Self::Io(err)
+    }
+}
 /// Represents an NES cartridge containing PRG ROM and CHR ROM
 pub struct Cartridge {
     /// Mapper instance that handles banking and memory access
@@ -25,13 +67,17 @@ pub struct Cartridge {
 
 impl Cartridge {
     /// Create a new cartridge by parsing iNES v1 file data
-    pub fn new(data: &[u8]) -> io::Result<Self> {
+    pub fn new(data: &[u8]) -> Result<Self, CartridgeError> {
+        if data.len() < 16 {
+            return Err(CartridgeError::FileTooSmall {
+                expected: 16,
+                actual: data.len(),
+            });
+        }
+
         // Validate iNES header (first 4 bytes should be "NES\x1A")
-        if data.len() < 16 || &data[0..4] != b"NES\x1A" {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Invalid iNES file format",
-            ));
+        if &data[0..4] != b"NES\x1A" {
+            return Err(CartridgeError::InvalidHeader);
         }
 
         // Parse iNES header
@@ -74,10 +120,10 @@ impl Cartridge {
 
         // Validate buffer size
         if data.len() < chr_rom_end {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "File too small for specified ROM sizes",
-            ));
+            return Err(CartridgeError::FileTooSmall {
+                expected: chr_rom_end,
+                actual: data.len(),
+            });
         }
 
         // Extract PRG ROM and CHR ROM
@@ -91,7 +137,14 @@ impl Cartridge {
             chr_rom,
             mirroring,
             prg_ram_banks_8k,
-        )?;
+        )
+        .map_err(|err| {
+            if err.kind() == io::ErrorKind::Unsupported {
+                CartridgeError::UnsupportedMapper(mapper_number)
+            } else {
+                CartridgeError::Io(err)
+            }
+        })?;
         // if cfg!(debug_assertions) {
         //     eprintln!(
         //     "Loaded iNES ROM: prg_rom_banks={} ({} bytes), chr_rom_banks={} ({} bytes), prg_ram_banks_8k={}, mapper={}, mirroring={:?}, trainer={}, battery_backed_prg_ram={}",
@@ -115,7 +168,7 @@ impl Cartridge {
     }
 
     /// Create a new cartridge by loading an iNES ROM from disk.
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, CartridgeError> {
         let rom_path = path.as_ref().to_path_buf();
         let data = fs::read(&rom_path)?;
         let mut cart = Self::new(&data)?;
@@ -421,7 +474,7 @@ mod tests {
         rom_data.extend(vec![0; 12]); // Rest of header
 
         let result = Cartridge::new(&rom_data);
-        assert!(result.is_err());
+        assert!(matches!(result, Err(CartridgeError::InvalidHeader)));
     }
 
     #[test]
@@ -430,13 +483,34 @@ mod tests {
         let truncated = &rom_data[0..100]; // Truncate to only 100 bytes
 
         let result = Cartridge::new(truncated);
-        assert!(result.is_err());
+        if let Err(CartridgeError::FileTooSmall { expected, actual }) = result {
+            assert_eq!(expected, 40_976);
+            assert_eq!(actual, 100);
+        } else {
+            panic!("Expected FileTooSmall error");
+        }
     }
 
     #[test]
     fn test_empty_data() {
         let result = Cartridge::new(&[]);
-        assert!(result.is_err());
+        if let Err(CartridgeError::FileTooSmall { expected, actual }) = result {
+            assert_eq!(expected, 16);
+            assert_eq!(actual, 0);
+        } else {
+            panic!("Expected FileTooSmall error");
+        }
+    }
+
+    #[test]
+    fn test_unsupported_mapper() {
+        let rom_data = create_test_rom_with_mapper(1, 1, 0xFF, false, 1);
+
+        let result = Cartridge::new(&rom_data);
+        assert!(matches!(
+            result,
+            Err(CartridgeError::UnsupportedMapper(0xFF))
+        ));
     }
 
     #[test]

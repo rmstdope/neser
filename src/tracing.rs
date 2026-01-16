@@ -44,7 +44,9 @@ pub fn init_tracing(tracing: Tracing) {
     }
 
     let lock = std::sync::RwLock::new(tracing);
-    if TRACING.set(lock).is_err() && let Some(lock) = TRACING.get() {
+    if TRACING.set(lock).is_err()
+        && let Some(lock) = TRACING.get()
+    {
         let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());
         *guard = tracing;
     }

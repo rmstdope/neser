@@ -2927,7 +2927,11 @@ mod tests {
         assert_eq!(apu_after - apu_before, dma_cycles as u32 + 7);
     }
 
-    type TestMemory = (Rc<RefCell<Ppu>>, Rc<RefCell<Apu>>, Rc<RefCell<MemController>>);
+    type TestMemory = (
+        Rc<RefCell<Ppu>>,
+        Rc<RefCell<Apu>>,
+        Rc<RefCell<MemController>>,
+    );
 
     // Test helper function to create a Memory instance with a PPU/APU for testing
     fn create_test_memory() -> TestMemory {

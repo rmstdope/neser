@@ -213,7 +213,9 @@ impl EventLoop {
     }
 
     fn clear_temporary_breakpoint(&mut self) {
-        if let Some(tb) = self.temporary_breakpoint.take() && !tb.already_present {
+        if let Some(tb) = self.temporary_breakpoint.take()
+            && !tb.already_present
+        {
             self.remove_breakpoint(tb.pc);
         }
     }

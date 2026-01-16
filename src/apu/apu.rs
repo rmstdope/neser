@@ -311,7 +311,11 @@ impl Apu {
         // In our timing model, timers clock on even apu_cycle values, so we treat:
         // - even apu_cycle: during APU cycle => 3-cycle delay
         // - odd apu_cycle: between APU cycles => 4-cycle delay
-        let write_delay = if self.apu_cycle.is_multiple_of(2) { 3 } else { 4 };
+        let write_delay = if self.apu_cycle.is_multiple_of(2) {
+            3
+        } else {
+            4
+        };
 
         // Jitter: writing $4017 on an odd CPU cycle delays the reset by 1 CPU cycle.
         let write_on_odd_cpu_cycle = !self.apu_cycle.is_multiple_of(2);
@@ -1556,7 +1560,9 @@ mod tests {
         let mut non_zero_found = false;
         for _ in 0..200 {
             apu.clock();
-            if let Some(sample) = apu.get_sample() && sample > 0.0 {
+            if let Some(sample) = apu.get_sample()
+                && sample > 0.0
+            {
                 non_zero_found = true;
                 assert!(sample <= 1.0);
             }
