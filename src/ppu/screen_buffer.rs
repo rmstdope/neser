@@ -232,6 +232,9 @@ mod tests {
         source.copy_buffer(&mut dest_buffer);
 
         let after = source.get_pixel(0, 148);
-        assert_eq!(after, before, "copy_buffer must not mutate the source buffer");
+        assert_eq!(
+            after, before,
+            "copy_buffer must not mutate the source buffer"
+        );
     }
 }

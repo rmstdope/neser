@@ -70,7 +70,6 @@ pub fn get_tracing() -> Option<Tracing> {
         .get()
         .map(|lock| *lock.read().unwrap_or_else(|e| e.into_inner()))
 }
-
 #[cfg(all(debug_assertions, test))]
 pub fn get_tracing() -> Option<Tracing> {
     Some(TRACING.with(|cell| *cell.borrow()))
@@ -319,6 +318,7 @@ impl Tracing {
     /// - `--trace-apu`, `--trace-apu=N` → APU levels
     /// - `--trace-mapper`, `--trace-mapper=N` → mapper levels
     /// - `--trace-nestest` → nestest format (boolean)
+    #[cfg(test)]
     pub fn from_args(args: &[String]) -> Self {
         let mut tracing = Tracing::default();
         tracing.apply_args(args);

@@ -84,11 +84,7 @@ impl EventLoop {
     /// let windowed = EventLoop::new(false, None, &config)?;
     /// # Ok::<(), String>(())
     /// ```
-    pub fn new(
-        headless: bool,
-        audio: Option<NesAudio>,
-        config: &Config,
-    ) -> Result<Self, String> {
+    pub fn new(headless: bool, audio: Option<NesAudio>, config: &Config) -> Result<Self, String> {
         let clamped_timing_scale = Self::clamp_timing_scale(config.timing_scale);
 
         let sdl_context = sdl2::init()?;

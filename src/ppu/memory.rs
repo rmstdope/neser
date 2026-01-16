@@ -91,7 +91,10 @@ impl Memory {
         cartridge: &Option<Rc<RefCell<Cartridge>>>,
     ) -> u8 {
         let masked_addr = addr & 0x2FFF;
-        debug_assert!(masked_addr >= 0x2000, "nametable reads must be in $2000-$2FFF after mirroring");
+        debug_assert!(
+            masked_addr >= 0x2000,
+            "nametable reads must be in $2000-$2FFF after mirroring"
+        );
 
         if let Some(cart) = cartridge {
             let mut cart = cart.borrow_mut();
@@ -119,7 +122,10 @@ impl Memory {
         cartridge: &Option<Rc<RefCell<Cartridge>>>,
     ) {
         let masked_addr = addr & 0x2FFF;
-        debug_assert!(masked_addr >= 0x2000, "nametable writes must be in $2000-$2FFF after mirroring");
+        debug_assert!(
+            masked_addr >= 0x2000,
+            "nametable writes must be in $2000-$2FFF after mirroring"
+        );
 
         if let Some(cart) = cartridge {
             let mut cart = cart.borrow_mut();

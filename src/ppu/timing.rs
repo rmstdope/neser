@@ -146,8 +146,6 @@ impl Timing {
     pub fn is_visible_pixel(&self) -> bool {
         self.scanline < 240 && self.pixel >= 1 && self.pixel <= 256
     }
-
-
 }
 
 #[cfg(test)]

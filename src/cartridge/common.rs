@@ -151,12 +151,14 @@ impl ChrMemory {
 
     /// Check if this is CHR-RAM (writable) vs CHR-ROM (read-only).
     #[inline]
+    #[cfg(test)]
     pub fn is_ram(&self) -> bool {
         self.is_ram
     }
 
     /// Get the total size of CHR memory.
     #[inline]
+    #[cfg(test)]
     pub fn size(&self) -> usize {
         self.data.len()
     }

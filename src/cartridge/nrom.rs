@@ -1,6 +1,6 @@
-use crate::cartridge::common::{ChrMemory, PrgRam, DEFAULT_PRG_RAM_SIZE};
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
+use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB

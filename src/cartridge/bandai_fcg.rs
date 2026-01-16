@@ -40,6 +40,7 @@ use crate::cartridge::cartridge::MirroringMode;
 use crate::cartridge::mapper::Mapper;
 
 /// Submapper variants for Bandai FCG
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BandaiFcgVariant {
     /// Submapper 0: Unspecified - respond to both $6000-$7FFF and $8000-$FFFF
