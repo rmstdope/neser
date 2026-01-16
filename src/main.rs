@@ -10,7 +10,8 @@ mod rendering;
 // #[path = "game_verification/manual_test_cartridges.rs"]
 // mod manual_test_cartridges;
 
-mod mem_controller;
+mod bus;
+pub use bus::bus::Bus;
 mod nes;
 mod ppu;
 mod tracing;

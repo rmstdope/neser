@@ -1,7 +1,7 @@
 use super::master_clock::MasterClock;
 use super::opcode::*;
 use crate::apu::Apu;
-use crate::mem_controller::MemController;
+use crate::bus::bus::Bus;
 use crate::nes::TvSystem;
 use crate::ppu::Ppu;
 use crate::trace_cpu;
@@ -31,7 +31,7 @@ pub struct Cpu {
     /// Bit 0: C (Carry)
     p: u8,
     /// Memory
-    memory: Rc<RefCell<MemController>>,
+    memory: Rc<RefCell<Bus>>,
     /// PPU
     ppu: Rc<RefCell<Ppu>>,
     /// APU
@@ -140,7 +140,7 @@ impl Cpu {
     /// Create a new CPU with default register values at power-on
     pub fn new(
         tv_system: TvSystem,
-        memory: Rc<RefCell<MemController>>,
+        memory: Rc<RefCell<Bus>>,
         ppu: Rc<RefCell<Ppu>>,
         apu: Rc<RefCell<Apu>>,
     ) -> Self {
@@ -2556,10 +2556,7 @@ mod tests {
             crate::nes::TvSystem::Ntsc,
         )));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let memory = Rc::new(RefCell::new(MemController::new(
-            Rc::clone(&ppu),
-            Rc::clone(&apu),
-        )));
+        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu))));
 
         let cpu = Cpu::new(TvSystem::Ntsc, memory, Rc::clone(&ppu), Rc::clone(&apu));
 
@@ -3037,11 +3034,7 @@ mod tests {
         assert_eq!(apu_after - apu_before, dma_cycles as u32 + 7);
     }
 
-    type TestMemory = (
-        Rc<RefCell<Ppu>>,
-        Rc<RefCell<Apu>>,
-        Rc<RefCell<MemController>>,
-    );
+    type TestMemory = (Rc<RefCell<Ppu>>, Rc<RefCell<Apu>>, Rc<RefCell<Bus>>);
 
     // Test helper function to create a Memory instance with a PPU/APU for testing
     fn create_test_memory() -> TestMemory {
@@ -3049,20 +3042,14 @@ mod tests {
             crate::nes::TvSystem::Ntsc,
         )));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let memory = Rc::new(RefCell::new(MemController::new(
-            Rc::clone(&ppu),
-            Rc::clone(&apu),
-        )));
+        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu))));
         (ppu, apu, memory)
     }
 
     fn create_test_memory_for(tv_system: TvSystem) -> TestMemory {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(tv_system)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let memory = Rc::new(RefCell::new(MemController::new(
-            Rc::clone(&ppu),
-            Rc::clone(&apu),
-        )));
+        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu))));
         (ppu, apu, memory)
     }
 

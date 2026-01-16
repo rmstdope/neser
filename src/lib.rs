@@ -3,12 +3,13 @@
 
 pub mod apu;
 pub mod blargg_tests;
+pub mod bus;
 pub mod cartridge;
 pub mod config;
 pub mod cpu;
 pub mod debugger;
 pub mod input;
-pub mod mem_controller;
+pub use bus::bus::Bus;
 pub mod nes;
 pub mod ppu; // Modular PPU structure
 pub mod tracing;

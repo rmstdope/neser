@@ -1,7 +1,7 @@
 use crate::apu;
+use crate::bus::bus::Bus;
 use crate::cartridge::Cartridge;
 use crate::cpu;
-use crate::mem_controller;
 use crate::ppu;
 use crate::tracing::Tracing;
 use std::cell::RefCell;
@@ -56,7 +56,7 @@ impl TvSystem {
 pub struct Nes {
     pub ppu: Rc<RefCell<ppu::Ppu>>,
     pub apu: Rc<RefCell<apu::Apu>>,
-    pub memory: Rc<RefCell<mem_controller::MemController>>,
+    pub memory: Rc<RefCell<Bus>>,
     pub cpu: cpu::Cpu,
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
@@ -66,10 +66,7 @@ impl Nes {
     pub fn new(tv_system: TvSystem) -> Self {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new(tv_system)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        let memory = Rc::new(RefCell::new(mem_controller::MemController::new(
-            ppu.clone(),
-            apu.clone(),
-        )));
+        let memory = Rc::new(RefCell::new(Bus::new(ppu.clone(), apu.clone())));
         let cpu = cpu::Cpu::new(tv_system, memory.clone(), ppu.clone(), apu.clone());
 
         // Initialize PPU 1 cycle ahead for proper sprite 0 hit timing
