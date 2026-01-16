@@ -1,5 +1,6 @@
 mod axrom;
 mod bandai_fcg;
+#[allow(clippy::module_inception)]
 mod cartridge;
 mod cnrom;
 mod colordreams;

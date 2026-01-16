@@ -6,6 +6,12 @@ pub struct Rendering {
     screen_buffer: ScreenBuffer,
 }
 
+impl Default for Rendering {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Rendering {
     /// Create a new Rendering instance
     pub fn new() -> Self {
@@ -27,6 +33,7 @@ impl Rendering {
 
     /// Compose and render a pixel to the screen buffer
     #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub fn render_pixel(
         &mut self,
         screen_x: u32,

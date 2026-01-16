@@ -476,14 +476,16 @@ impl MMC5Mapper {
         // $C000-$FFFF uses $5117 (bit 0 ignored)
         let bank_base = (reg & 0x7F) & !1; // Align to 16KB boundary (2 x 8KB banks)
         let offset_8k = if is_high {
-            if addr >= 0xE000 { 1u8 } else { 0u8 }
+            u8::from(addr >= 0xE000)
         } else {
-            if addr >= 0xA000 { 1u8 } else { 0u8 }
+            u8::from(addr >= 0xA000)
         };
         let base_addr = if is_high {
             if addr >= 0xE000 { 0xE000 } else { 0xC000 }
+        } else if addr >= 0xA000 {
+            0xA000
         } else {
-            if addr >= 0xA000 { 0xA000 } else { 0x8000 }
+            0x8000
         };
         self.read_prg_rom_8k(bank_base.wrapping_add(offset_8k), addr, base_addr)
     }
@@ -615,8 +617,8 @@ impl MMC5Mapper {
                 0 => 8 * 1024, // 8KB
                 1 => 4 * 1024, // 4KB
                 2 => 2 * 1024, // 2KB
-                3 => 1 * 1024, // 1KB
-                _ => 1 * 1024,
+                3 => 1024, // 1KB
+                _ => 1024,
             }
         };
 
@@ -641,8 +643,8 @@ impl MMC5Mapper {
             0 => 8 * 1024, // 8KB
             1 => 4 * 1024, // 4KB
             2 => 2 * 1024, // 2KB
-            3 => 1 * 1024, // 1KB
-            _ => 1 * 1024,
+            3 => 1024, // 1KB
+            _ => 1024,
         };
 
         let offset = (addr as usize) % bank_size;
@@ -663,7 +665,7 @@ impl MMC5Mapper {
         // bits 1-0: $2000, 3-2: $2400, 5-4: $2800, 7-6: $2C00
         // values: 0 = VRAM A, 1 = VRAM B, 2 = ExRAM, 3 = fill mode
         let addr = addr & NAMETABLE_MASK;
-        debug_assert!(addr >= NAMETABLE_BASE && addr <= NAMETABLE_MASK);
+        debug_assert!((NAMETABLE_BASE..=NAMETABLE_MASK).contains(&addr));
 
         let quadrant = ((addr - NAMETABLE_BASE) >> 10) & 0x03;
         (self.nametable_mapping >> (quadrant * 2)) & 0x03
@@ -1190,6 +1192,7 @@ impl Mapper for MMC5Mapper {
 }
 
 #[cfg(test)]
+#[allow(clippy::identity_op)]
 mod tests {
     use crate::cartridge::cartridge::Cartridge;
     use crate::cartridge::cartridge::MirroringMode;

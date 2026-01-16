@@ -309,10 +309,10 @@ impl Cpu {
         self.total_cycles += 1;
     }
 
-    /// Apply an external stall for the given number of CPU cycles.
-    ///
-    /// This is used for synthetic cycles where the CPU does not execute instructions
-    /// but the PPU/APU must continue to advance (e.g., DMA stalls).
+    // Apply an external stall for the given number of CPU cycles.
+    //
+    // This is used for synthetic cycles where the CPU does not execute instructions
+    // but the PPU/APU must continue to advance (e.g., DMA stalls).
     // pub fn apply_external_stall(&mut self, cpu_cycles: u16) {
     //     if cpu_cycles == 0 {
     //         return;
@@ -506,7 +506,7 @@ impl Cpu {
         // Loop until DMC DMA completes
         while self.dmc_dma_running {
             // Check if we're on a get cycle (even cycle count)
-            let on_get_cycle = self.total_cycles % 2 == 0;
+            let on_get_cycle = self.total_cycles.is_multiple_of(2);
 
             if on_get_cycle && !self.dmc_dma_need_dummy_read {
                 // Ready to perform the actual DMC read
@@ -632,7 +632,7 @@ impl Cpu {
             }
 
             // Helper: are we on a get or put phase?
-            let on_get_phase = self.total_cycles % 2 == 0;
+            let on_get_phase = self.total_cycles.is_multiple_of(2);
             let on_put_phase = !on_get_phase;
 
             // Can DMC read this cycle?
@@ -1273,7 +1273,7 @@ impl Cpu {
     /// If there's a delayed I flag value, use that; otherwise use the current I flag
     fn get_effective_i_flag(&self) -> bool {
         self.delayed_i_flag
-            .unwrap_or_else(|| (self.p & FLAG_INTERRUPT) != 0)
+            .unwrap_or((self.p & FLAG_INTERRUPT) != 0)
     }
 
     /// Check if IRQ should be allowed to trigger
@@ -1422,7 +1422,7 @@ impl Cpu {
                     _ => format!("{:02X} {:02X} {:02X}", opcode_byte, byte1, byte2),
                 };
                 let asm = match op.mode {
-                    "IMP" => format!("{}", op.mnemonic),
+                    "IMP" => op.mnemonic.to_string(),
                     "ACC" => format!("{} A", op.mnemonic),
                     "IMM" => format!("{} #${:02X}", op.mnemonic, byte1),
                     "ZP" => format!("{} ${:02X}", op.mnemonic, byte1),
@@ -1455,7 +1455,7 @@ impl Cpu {
                         let target = pc.wrapping_add(2).wrapping_add(offset as u16);
                         format!("{} ${:04X}", op.mnemonic, target)
                     }
-                    _ => format!("{}", op.mnemonic),
+                    _ => op.mnemonic.to_string(),
                 };
                 // Set up tick tracking for this instruction
                 self.current_tick_info = Some((1, op.cycles));
@@ -1480,7 +1480,7 @@ impl Cpu {
         };
         let operand = self.get_operand(*op);
 
-        match op.mnemonic.as_ref() {
+        match op.mnemonic {
             "BRK" => {
                 // BRK pushes (PC + 1), which corresponds to BRK+2 overall.
                 // At this point, PC points to the padding byte, so add 1.
@@ -1503,7 +1503,7 @@ impl Cpu {
                 self.prev_need_nmi = false;
             }
             "ORA" => {
-                let value = self.get_operand_value(&op, operand) as u8;
+                let value = self.get_operand_value(op, operand);
                 self.ora(value);
             }
             "HLT" | "KIL" => {
@@ -1514,7 +1514,7 @@ impl Cpu {
             }
             "NOP" | "*NOP" => {
                 // Consume one cycle
-                self.get_operand_value(&op, operand);
+                self.get_operand_value(op, operand);
             }
             "ASL" => {
                 match op.mode {
@@ -1536,7 +1536,7 @@ impl Cpu {
             }
             "*AAC" => {
                 // Undocumented: AND with accumulator, then copy bit 7 to carry
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.a &= value;
                 self.update_zero_and_negative_flags(self.a);
                 // Copy bit 7 to carry flag (same pattern as ASL)
@@ -1587,7 +1587,7 @@ impl Cpu {
                 self.pc = operand;
             }
             "AND" => {
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.and(value);
             }
             "*RLA" => {
@@ -1666,7 +1666,7 @@ impl Cpu {
                 let _ = self.interrupt_stack.pop();
             }
             "EOR" => {
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.eor(value);
             }
             "*SRE" => {
@@ -1691,7 +1691,7 @@ impl Cpu {
             }
             "*ASR" => {
                 // ASR/ALR (undocumented): AND with immediate, then LSR
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.a &= value;
                 self.a = self.lsr(self.a);
             }
@@ -1737,7 +1737,7 @@ impl Cpu {
                 self.dummy_read(self.pc);
             }
             "ADC" => {
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.adc(value);
             }
             "*RRA" => {
@@ -1768,7 +1768,7 @@ impl Cpu {
                 self.update_zero_and_negative_flags(self.a);
             }
             "*ARR" => {
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.exec_arr_illegal(value);
             }
             "BVS" => {
@@ -1819,7 +1819,7 @@ impl Cpu {
             "ANE" | "*XAA" => {
                 // *XAA (undocumented) - Transfer X to A, then AND with immediate
                 self.a = self.x;
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.a &= value;
                 self.update_zero_and_negative_flags(self.a);
             }
@@ -1874,20 +1874,20 @@ impl Cpu {
                 self.write(operand, value, false);
             }
             "LDY" => {
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.ldy(value);
             }
             "LDA" => {
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.lda(value);
             }
             "LDX" => {
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.ldx(value);
             }
             "*LAX" => {
                 // LAX (undocumented): Load A and X with the same value
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.lda(value);
                 self.ldx(value);
             }
@@ -1902,7 +1902,7 @@ impl Cpu {
             "*ATX" => {
                 // *ATX (undocumented): Load A and X with immediate value
                 // Also known as *LAX immediate or *OAL
-                let value = self.get_operand_value(&op, operand);
+                let value = self.get_operand_value(op, operand);
                 self.a = value;
                 self.x = value;
                 self.update_zero_and_negative_flags(self.a);
@@ -1934,15 +1934,15 @@ impl Cpu {
             }
             "*LAR" => {
                 // Undocumented: AND memory with stack pointer, store in A, X, and SP
-                let value = self.get_operand_value(&op, operand) as u8;
+                let value = self.get_operand_value(op, operand);
                 self.lar(value);
             }
             "CPY" => {
-                let value = self.get_operand_value(&op, operand) as u8;
+                let value = self.get_operand_value(op, operand);
                 self.cpy(value);
             }
             "CMP" => {
-                let value = self.get_operand_value(&op, operand) as u8;
+                let value = self.get_operand_value(op, operand);
                 self.cmp(value);
             }
             "*DCP" => {
@@ -1958,7 +1958,7 @@ impl Cpu {
             }
             "*AXS" => {
                 // *AXS (undocumented): (A & X) - immediate -> X
-                let value = self.get_operand_value(&op, operand) as u8;
+                let value = self.get_operand_value(op, operand);
                 self.axs(value);
             }
             "BNE" => {
@@ -1983,12 +1983,12 @@ impl Cpu {
             }
             "CPX" => {
                 // Compare X with memory
-                let value = self.get_operand_value(&op, operand) as u8;
+                let value = self.get_operand_value(op, operand);
                 self.cpx(value);
             }
             "SBC" | "*SBC" => {
                 // Subtract with Carry
-                let value = self.get_operand_value(&op, operand) as u8;
+                let value = self.get_operand_value(op, operand);
                 self.sbc(value);
             }
             "*ISB" => {
@@ -2463,7 +2463,10 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::clone(&memory), ppu, apu);
 
         cpu.set_total_cycles(8);
-        assert_eq!(cpu.get_total_cycles() % 2, 0, "Should start on even cycle");
+        assert!(
+            cpu.get_total_cycles().is_multiple_of(2),
+            "Should start on even cycle"
+        );
 
         memory.borrow_mut().write(0x4014, 0x02, false);
 
@@ -2482,7 +2485,10 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, Rc::clone(&memory), ppu, apu);
 
         cpu.set_total_cycles(7);
-        assert_eq!(cpu.get_total_cycles() % 2, 1, "Should start on odd cycle");
+        assert!(
+            !cpu.get_total_cycles().is_multiple_of(2),
+            "Should start on odd cycle"
+        );
 
         memory.borrow_mut().write(0x4014, 0x02, false);
 
@@ -2545,7 +2551,7 @@ mod tests {
             0, 0, 0, 0, 0, 0, 0, 0,
         ];
         rom.extend(vec![0u8; 2 * 16 * 1024]);
-        rom.extend(vec![0u8; 1 * 8 * 1024]);
+        rom.extend(vec![0u8; 8 * 1024]);
 
         let cart = crate::cartridge::Cartridge::new(&rom).expect("cartridge should parse");
         memory.borrow_mut().map_cartridge(cart);
@@ -2921,12 +2927,10 @@ mod tests {
         assert_eq!(apu_after - apu_before, dma_cycles as u32 + 7);
     }
 
+    type TestMemory = (Rc<RefCell<Ppu>>, Rc<RefCell<Apu>>, Rc<RefCell<MemController>>);
+
     // Test helper function to create a Memory instance with a PPU/APU for testing
-    fn create_test_memory() -> (
-        Rc<RefCell<Ppu>>,
-        Rc<RefCell<Apu>>,
-        Rc<RefCell<MemController>>,
-    ) {
+    fn create_test_memory() -> TestMemory {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(
             crate::nes::TvSystem::Ntsc,
         )));
@@ -2938,13 +2942,7 @@ mod tests {
         (ppu, apu, memory)
     }
 
-    fn create_test_memory_for(
-        tv_system: TvSystem,
-    ) -> (
-        Rc<RefCell<Ppu>>,
-        Rc<RefCell<Apu>>,
-        Rc<RefCell<MemController>>,
-    ) {
+    fn create_test_memory_for(tv_system: TvSystem) -> TestMemory {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(tv_system)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let memory = Rc::new(RefCell::new(MemController::new(
@@ -4416,7 +4414,7 @@ mod tests {
     fn test_jmp_absolute() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        fake_cartridge(&mut cpu, &vec![]);
+        fake_cartridge(&mut cpu, &[]);
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x0600, JMP_ABS, false);
         cpu.memory.borrow_mut().write(0x0601, 0x34, false);
@@ -4431,7 +4429,7 @@ mod tests {
     fn test_jmp_indirect() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        fake_cartridge(&mut cpu, &vec![]);
+        fake_cartridge(&mut cpu, &[]);
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x0600, JMP_IND, false);
         cpu.memory.borrow_mut().write(0x0601, 0x20, false);
@@ -4451,7 +4449,7 @@ mod tests {
         // Instead of reading from 0x1100, it wraps around to 0x1000
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        fake_cartridge(&mut cpu, &vec![]);
+        fake_cartridge(&mut cpu, &[]);
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x0600, JMP_IND, false);
         cpu.memory.borrow_mut().write(0x0601, 0xFF, false);
@@ -4468,7 +4466,7 @@ mod tests {
     fn test_jsr() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        fake_cartridge(&mut cpu, &vec![]);
+        fake_cartridge(&mut cpu, &[]);
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x0600, JSR, false);
         cpu.memory.borrow_mut().write(0x0601, 0x34, false);
@@ -14605,7 +14603,7 @@ mod tests {
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
-        let expected = 0xFF & 0x42;
+        let expected = 0x42;
         assert_eq!(cpu.a, expected, "A should be SP & memory");
         assert_eq!(cpu.x, expected, "X should be SP & memory");
         assert_eq!(cpu.sp, expected, "SP should be SP & memory");

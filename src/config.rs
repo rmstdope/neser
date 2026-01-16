@@ -233,6 +233,7 @@ impl Config {
     /// - `Ok(ParseResult::Help)` if --help or -h was specified
     /// - `Ok(ParseResult::Config(config))` on successful parse
     /// - `Err(message)` on validation error
+    #[allow(clippy::new_ret_no_self)]
     pub fn new(args: &[String]) -> Result<ParseResult, String> {
         // Check for help first
         if args.iter().any(|a| a == "--help" || a == "-h") {
@@ -297,10 +298,8 @@ impl Config {
         }
 
         // Display argument (only applies if fullscreen is set)
-        if self.fullscreen {
-            if let Some(display) = Self::parse_display_arg(args)? {
-                self.fullscreen_display = Some(display);
-            }
+        if self.fullscreen && let Some(display) = Self::parse_display_arg(args)? {
+            self.fullscreen_display = Some(display);
         }
 
         // Shader path
@@ -376,11 +375,11 @@ impl Config {
             }
 
             // Check for --flag=value syntax (e.g., --trace-cpu=2)
-            if let Some((flag_part, _)) = arg.split_once('=') {
-                if CLI_FLAGS.iter().any(|f| f.flag == flag_part) {
-                    i += 1;
-                    continue;
-                }
+            if let Some((flag_part, _)) = arg.split_once('=')
+                && CLI_FLAGS.iter().any(|f| f.flag == flag_part)
+            {
+                i += 1;
+                continue;
             }
 
             if arg.starts_with('-') {
@@ -535,10 +534,8 @@ impl Config {
                 }
             }
             "display" => {
-                if let Ok(d) = value.parse::<i32>() {
-                    if d >= 0 {
-                        self.fullscreen_display = Some(d);
-                    }
+                if let Ok(d) = value.parse::<i32>() && d >= 0 {
+                    self.fullscreen_display = Some(d);
                 }
             }
             "filter" => {
@@ -1047,8 +1044,10 @@ mod tests {
 
     #[test]
     fn test_config_file_tv_system_ntsc() {
-        let mut config = Config::default();
-        config.tv_system = TvSystem::Pal; // Set to PAL first
+        let mut config = Config {
+            tv_system: TvSystem::Pal,
+            ..Default::default()
+        };
         config.apply_config_value("tv_system", "ntsc");
         assert_eq!(config.tv_system, TvSystem::Ntsc);
     }

@@ -157,7 +157,7 @@ impl ShaderManager {
             handle: Some(glow::NativeTexture(
                 std::num::NonZero::new(input_texture).ok_or("Invalid texture ID")?,
             )),
-            format: gl::RGB8 as u32,
+            format: gl::RGB8,
             size: Size::new(256, 240),
         };
 
@@ -166,7 +166,7 @@ impl ShaderManager {
             handle: Some(glow::NativeTexture(
                 std::num::NonZero::new(output_texture).ok_or("Invalid output texture ID")?,
             )),
-            format: gl::RGB8 as u32,
+            format: gl::RGB8,
             size: Size::new(viewport_width, viewport_height),
         };
 

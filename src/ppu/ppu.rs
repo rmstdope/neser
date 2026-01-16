@@ -218,13 +218,13 @@ impl Ppu {
         let is_visible_scanline = scanline < 240;
         let is_prerender = scanline == prerender_scanline;
         let is_rendering_scanline = is_visible_scanline || is_prerender;
-        let is_rendering_pixel = pixel >= 1 && pixel <= 256;
+        let is_rendering_pixel = (1..=256).contains(&pixel);
 
         // Background rendering pipeline during rendering cycles
         // Fetches happen during pixels 1-256 (visible) and 321-336 (pre-fetch for next scanline)
         // Also during pixels 337-340 (two single nametable byte fetches)
         if is_rendering_enabled && is_rendering_scanline {
-            let should_fetch = (pixel >= 1 && pixel <= 256) || (pixel >= 321 && pixel <= 336);
+            let should_fetch = (1..=256).contains(&pixel) || (321..=336).contains(&pixel);
 
             // Debug: Log v register at start of pre-fetch and during pre-fetch fetches
             // if is_prerender && pixel == 321 {
@@ -311,7 +311,10 @@ impl Ppu {
             // Pixels 330-336: continue shifting (shifts 2-8/8)
             // Pixel 337: load second tile
             // This applies to ALL rendering scanlines, not just pre-render!
-            if is_rendering_enabled && is_rendering_scanline && pixel >= 329 && pixel <= 336 {
+            if is_rendering_enabled
+                && is_rendering_scanline
+                && (329..=336).contains(&pixel)
+            {
                 self.background.shift_registers();
             }
 
@@ -339,7 +342,7 @@ impl Ppu {
             if pixel == 257 {
                 // Copy horizontal bits from t to v at pixel 257
                 self.registers.copy_horizontal_bits();
-            } else if pixel >= 280 && pixel <= 304 {
+            } else if (280..=304).contains(&pixel) {
                 // Copy vertical bits from t to v during pixels 280-304
                 self.registers.copy_vertical_bits();
             }
@@ -348,20 +351,22 @@ impl Ppu {
         // OAM corruption bug: If OAMADDR >= 8 when sprite tile loading starts,
         // copy 8 bytes from (OAMADDR & 0xF8) to OAM[0..7]
         // This happens at pixel 257 of the pre-render scanline
-        if is_rendering_enabled && is_prerender && pixel == 257 {
-            if self.registers.oam_address >= 8 {
-                let source_addr = (self.registers.oam_address & 0xF8) as usize;
-                // Copy 8 bytes from source to OAM[0..7]
-                for i in 0..8 {
-                    let value = self.sprites.read_oam((source_addr + i) as u8);
-                    self.sprites.write_oam(i as u8, value);
-                }
+        if is_rendering_enabled
+            && is_prerender
+            && pixel == 257
+            && self.registers.oam_address >= 8
+        {
+            let source_addr = (self.registers.oam_address & 0xF8) as usize;
+            // Copy 8 bytes from source to OAM[0..7]
+            for i in 0..8 {
+                let value = self.sprites.read_oam((source_addr + i) as u8);
+                self.sprites.write_oam(i as u8, value);
             }
         }
 
         // Clear OAMADDR during sprite tile loading (pixels 257-320) on visible and pre-render scanlines
         // This is critical NES PPU hardware behavior
-        if is_rendering_enabled && is_rendering_scanline && pixel >= 257 && pixel <= 320 {
+        if is_rendering_enabled && is_rendering_scanline && (257..=320).contains(&pixel) {
             self.registers.oam_address = 0;
         }
 
@@ -372,10 +377,10 @@ impl Ppu {
             if pixel == 0 {
                 // Reset sprite evaluation at start of scanline
                 self.sprites.reset_evaluation();
-            } else if pixel >= 1 && pixel <= 64 {
+            } else if (1..=64).contains(&pixel) {
                 // Initialize secondary OAM
                 self.sprites.initialize_secondary_oam_byte(pixel);
-            } else if pixel >= 65 && pixel <= 256 {
+            } else if (65..=256).contains(&pixel) {
                 // Evaluate sprites for next scanline
                 let sprite_height = self.registers.sprite_height();
                 let overflow = self
@@ -403,7 +408,7 @@ impl Ppu {
         // sprite ($1xxx) pattern fetches must happen 241 times per frame.
         // Note: The PPU fetches 8 sprite patterns even on pre-render, using tile $FF
         // for any sprites not found (since evaluation doesn't happen on pre-render).
-        if is_rendering_enabled && is_rendering_scanline && pixel >= 257 && pixel <= 320 {
+        if is_rendering_enabled && is_rendering_scanline && (257..=320).contains(&pixel) {
             let sprite_height = self.registers.sprite_height();
             let sprite_pattern_table = self.registers.sprite_pattern_table_addr();
             let cartridge = &self.cartridge;
@@ -459,10 +464,8 @@ impl Ppu {
                 // Determine final palette index
                 let palette_index =
                     if let Some((sprite_palette_idx, _sprite_idx, is_foreground)) = sprite_pixel {
-                        if bg_pixel == 0 {
-                            sprite_palette_idx // Background transparent, show sprite
-                        } else if is_foreground {
-                            sprite_palette_idx // Sprite in foreground
+                        if bg_pixel == 0 || is_foreground {
+                            sprite_palette_idx // Background transparent or sprite in foreground
                         } else {
                             bg_pixel // Sprite in background
                         }
@@ -691,18 +694,16 @@ impl Ppu {
         // Notify mapper if v register changed (happens on second write to $2006)
         // This is needed for MMC3 A12 detection when manually toggling address
         let new_v = self.registers.v();
-        if old_v != new_v {
-            if let Some(ref cartridge) = self.cartridge {
-                // When manually changing the PPU address via $2006, we need to ensure
-                // the MMC3 A12 filter has enough "cycles" to detect the change properly.
-                // We simulate this by calling ppu_address_changed with the old address
-                // multiple times before notifying about the new address.
-                let mapper = &mut *cartridge.borrow_mut();
-                for _ in 0..8 {
-                    mapper.mapper_mut().ppu_address_changed(old_v);
-                }
-                mapper.mapper_mut().ppu_address_changed(new_v);
+        if old_v != new_v && let Some(ref cartridge) = self.cartridge {
+            // When manually changing the PPU address via $2006, we need to ensure
+            // the MMC3 A12 filter has enough "cycles" to detect the change properly.
+            // We simulate this by calling ppu_address_changed with the old address
+            // multiple times before notifying about the new address.
+            let mapper = &mut *cartridge.borrow_mut();
+            for _ in 0..8 {
+                mapper.mapper_mut().ppu_address_changed(old_v);
             }
+            mapper.mapper_mut().ppu_address_changed(new_v);
         }
     }
 
@@ -754,16 +755,14 @@ impl Ppu {
 
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
-        if old_addr != new_addr {
-            if let Some(ref cartridge) = self.cartridge {
-                // For PPUDATA reads/writes, we need to prime the A12 filter similar
-                // to PPUADDR writes, as these are also manual address changes
-                let mapper = &mut *cartridge.borrow_mut();
-                for _ in 0..8 {
-                    mapper.mapper_mut().ppu_address_changed(old_addr);
-                }
-                mapper.mapper_mut().ppu_address_changed(new_addr);
+        if old_addr != new_addr && let Some(ref cartridge) = self.cartridge {
+            // For PPUDATA reads/writes, we need to prime the A12 filter similar
+            // to PPUADDR writes, as these are also manual address changes
+            let mapper = &mut *cartridge.borrow_mut();
+            for _ in 0..8 {
+                mapper.mapper_mut().ppu_address_changed(old_addr);
             }
+            mapper.mapper_mut().ppu_address_changed(new_addr);
         }
 
         // Update I/O bus with value read
@@ -806,16 +805,14 @@ impl Ppu {
 
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
-        if old_addr != new_addr {
-            if let Some(ref cartridge) = self.cartridge {
-                // For PPUDATA reads/writes, we need to prime the A12 filter similar
-                // to PPUADDR writes, as these are also manual address changes
-                let mapper = &mut *cartridge.borrow_mut();
-                for _ in 0..8 {
-                    mapper.mapper_mut().ppu_address_changed(old_addr);
-                }
-                mapper.mapper_mut().ppu_address_changed(new_addr);
+        if old_addr != new_addr && let Some(ref cartridge) = self.cartridge {
+            // For PPUDATA reads/writes, we need to prime the A12 filter similar
+            // to PPUADDR writes, as these are also manual address changes
+            let mapper = &mut *cartridge.borrow_mut();
+            for _ in 0..8 {
+                mapper.mapper_mut().ppu_address_changed(old_addr);
             }
+            mapper.mapper_mut().ppu_address_changed(new_addr);
         }
     }
 
@@ -1553,7 +1550,7 @@ mod tests {
         ppu.write_oam_address(0x00);
         for i in 0..8 {
             let value = ppu.read_oam_data();
-            ppu.write_oam_address((i + 1) as u8); // Re-set address since read doesn't increment
+            ppu.write_oam_address(i + 1); // Re-set address since read doesn't increment
             let expected = if (i & 0x03) == 2 {
                 // Attribute byte: 0x82 with masking = 0x82 & 0xE3 = 0x82
                 (0x80 + i) & 0xE3
@@ -1594,7 +1591,7 @@ mod tests {
         ppu.write_oam_address(0x00);
         for i in 0..8 {
             let value = ppu.read_oam_data();
-            ppu.write_oam_address((i + 1) as u8);
+            ppu.write_oam_address(i + 1);
             let expected = if (i & 0x03) == 2 {
                 (0x40 + i) & 0xE3 // Attribute byte masking
             } else {
@@ -2050,25 +2047,25 @@ mod tests {
         // Initially prev_a12 should be false
 
         // Access $0000 (A12=0) - no rising edge
-        assert_eq!(ppu.check_a12_rising_edge(0x0000), false);
+        assert!(!ppu.check_a12_rising_edge(0x0000));
 
         // Access $0FFF (A12=0) - no rising edge
-        assert_eq!(ppu.check_a12_rising_edge(0x0FFF), false);
+        assert!(!ppu.check_a12_rising_edge(0x0FFF));
 
         // Access $1000 (A12=1) - rising edge!
-        assert_eq!(ppu.check_a12_rising_edge(0x1000), true);
+        assert!(ppu.check_a12_rising_edge(0x1000));
 
         // Access $1FFF (A12=1) - no rising edge (already high)
-        assert_eq!(ppu.check_a12_rising_edge(0x1FFF), false);
+        assert!(!ppu.check_a12_rising_edge(0x1FFF));
 
         // Access $0000 (A12=0) - no rising edge (falling edge)
-        assert_eq!(ppu.check_a12_rising_edge(0x0000), false);
+        assert!(!ppu.check_a12_rising_edge(0x0000));
 
         // Access $1800 (A12=1) - rising edge!
-        assert_eq!(ppu.check_a12_rising_edge(0x1800), true);
+        assert!(ppu.check_a12_rising_edge(0x1800));
 
         // Access $1000 (A12=1) - no rising edge
-        assert_eq!(ppu.check_a12_rising_edge(0x1000), false);
+        assert!(!ppu.check_a12_rising_edge(0x1000));
     }
 
     #[test]
@@ -2242,9 +2239,9 @@ mod tests {
                         // Rest: tile 0 (black/empty)
                         if x <= 7 {
                             (blue_r, blue_g, blue_b) // Tile 1 from nametable position 0
-                        } else if x >= 8 && x <= 15 {
+                        } else if (8..=15).contains(&x) {
                             (red_r, red_g, red_b) // Tile 2 from nametable position 1
-                        } else if x >= 16 && x <= 23 {
+                        } else if (16..=23).contains(&x) {
                             (green_r, green_g, green_b) // Tile 3 from nametable position 2
                         } else {
                             (black_r, black_g, black_b) // Empty tiles (positions 3+)
@@ -2388,14 +2385,14 @@ mod tests {
         for y in 0..240 {
             for x in 0..256 {
                 let (r, g, b) = screen_buffer.get_pixel(x, y);
-                let expected_color = if y >= 17 && y <= 24 {
+                let expected_color = if (17..=24).contains(&y) {
                     // Scanlines where sprites are visible (Y position 16 + 1, for 8 rows)
                     // Using CORRECT X coordinates per hardware specification
-                    if x >= 16 && x <= 23 {
+                    if (16..=23).contains(&x) {
                         (magenta_r, magenta_g, magenta_b) // Sprite 0 (correct position)
-                    } else if x >= 32 && x <= 39 {
+                    } else if (32..=39).contains(&x) {
                         (yellow_r, yellow_g, yellow_b) // Sprite 1 (correct position)
-                    } else if x >= 48 && x <= 55 {
+                    } else if (48..=55).contains(&x) {
                         (cyan_r, cyan_g, cyan_b) // Sprite 2 (correct position)
                     } else {
                         (black_r, black_g, black_b) // Backdrop

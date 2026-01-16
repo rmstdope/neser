@@ -61,7 +61,7 @@ impl EventLoop {
     /// # Arguments
     ///
     /// * `headless` - If `true`, creates an EventLoop without a window (useful for testing).
-    ///                If `false`, creates a window sized for the specified TV system.
+    ///   If `false`, creates a window sized for the specified TV system.
     /// * `audio` - Optional audio output system. If provided, audio will be enabled.
     /// * `config` - Configuration struct containing all emulator settings.
     ///
@@ -213,10 +213,8 @@ impl EventLoop {
     }
 
     fn clear_temporary_breakpoint(&mut self) {
-        if let Some(tb) = self.temporary_breakpoint.take() {
-            if !tb.already_present {
-                self.remove_breakpoint(tb.pc);
-            }
+        if let Some(tb) = self.temporary_breakpoint.take() && !tb.already_present {
+            self.remove_breakpoint(tb.pc);
         }
     }
 
@@ -291,14 +289,12 @@ impl EventLoop {
         pc: u16,
         current_interrupt: Option<crate::cpu::InterruptKind>,
     ) -> bool {
-        if let Some(tb) = self.temporary_breakpoint.as_mut() {
-            if let Some(required_interrupt) = tb.required_interrupt {
-                if !tb.has_exited_required_interrupt
-                    && current_interrupt != Some(required_interrupt)
-                {
-                    tb.has_exited_required_interrupt = true;
-                }
-            }
+        if let Some(tb) = self.temporary_breakpoint.as_mut()
+            && let Some(required_interrupt) = tb.required_interrupt
+            && !tb.has_exited_required_interrupt
+            && current_interrupt != Some(required_interrupt)
+        {
+            tb.has_exited_required_interrupt = true;
         }
 
         // If we just continued from a breakpoint, allow executing that instruction once.
@@ -310,10 +306,12 @@ impl EventLoop {
         // While a temporary "run to" breakpoint is active, ignore all other breakpoint hits.
         // This matches the expected debugger UX: run-to should run until the target, not stop
         // early due to unrelated breakpoints (including ones inside the current interrupt).
-        if let Some(tb) = self.temporary_breakpoint {
-            if tb.ignore_other_breakpoints && self.breakpoints.contains(&pc) && pc != tb.pc {
-                return false;
-            }
+        if let Some(tb) = self.temporary_breakpoint
+            && tb.ignore_other_breakpoints
+            && self.breakpoints.contains(&pc)
+            && pc != tb.pc
+        {
+            return false;
         }
 
         if self.breakpoints.contains(&pc) {
@@ -354,8 +352,8 @@ impl EventLoop {
         }
     }
 
-    /// Checks if the user has requested to quit via Escape key or window close.
-    /// Returns `true` if quit was requested, `false` otherwise.
+    // Checks if the user has requested to quit via Escape key or window close.
+    // Returns `true` if quit was requested, `false` otherwise.
     // fn should_quit(event_pump: &mut sdl2::EventPump) -> bool {
     //     for event in event_pump.poll_iter() {
     //         match event {
@@ -505,27 +503,27 @@ impl EventLoop {
                     continue;
                 }
 
-                if let Some(ref audio) = self.audio {
-                    if last_audio_stats_print.elapsed() >= Duration::from_secs(1) {
-                        let (received, dropped, underrun) = audio.take_and_reset_stats();
-                        let now_cycles = nes.cpu.get_total_cycles();
-                        let elapsed = last_perf_instant.elapsed().as_secs_f64();
-                        let cycle_delta = now_cycles.saturating_sub(last_cpu_cycles);
-                        let cycles_per_sec = if elapsed > 0.0 {
-                            cycle_delta as f64 / elapsed
-                        } else {
-                            0.0
-                        };
-                        if dropped != 0 || underrun != 0 {
-                            eprintln!(
-                                "Audio stats (last ~1s): received={}, dropped={}, underrun={}, cpu_cycles_per_sec≈{:.0}",
-                                received, dropped, underrun, cycles_per_sec
-                            );
-                        }
-                        last_cpu_cycles = now_cycles;
-                        last_perf_instant = Instant::now();
-                        last_audio_stats_print = Instant::now();
+                if let Some(ref audio) = self.audio
+                    && last_audio_stats_print.elapsed() >= Duration::from_secs(1)
+                {
+                    let (received, dropped, underrun) = audio.take_and_reset_stats();
+                    let now_cycles = nes.cpu.get_total_cycles();
+                    let elapsed = last_perf_instant.elapsed().as_secs_f64();
+                    let cycle_delta = now_cycles.saturating_sub(last_cpu_cycles);
+                    let cycles_per_sec = if elapsed > 0.0 {
+                        cycle_delta as f64 / elapsed
+                    } else {
+                        0.0
+                    };
+                    if dropped != 0 || underrun != 0 {
+                        eprintln!(
+                            "Audio stats (last ~1s): received={}, dropped={}, underrun={}, cpu_cycles_per_sec≈{:.0}",
+                            received, dropped, underrun, cycles_per_sec
+                        );
                     }
+                    last_cpu_cycles = now_cycles;
+                    last_perf_instant = Instant::now();
+                    last_audio_stats_print = Instant::now();
                 }
                 nes.clear_ready_to_render();
                 // println!(
@@ -1126,9 +1124,9 @@ mod tests {
         }
 
         let mut out = [0u8; 8];
-        for i in 0..8 {
+        for slot in &mut out {
             let value = nes.memory.borrow_mut().read(0x4016) & 0x01;
-            out[i] = value;
+            *slot = value;
         }
         out
     }

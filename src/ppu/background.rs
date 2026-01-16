@@ -18,6 +18,12 @@ pub struct Background {
     pattern_hi_latch: u8,
 }
 
+impl Default for Background {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Background {
     /// Create a new Background instance
     pub fn new() -> Self {
@@ -45,7 +51,7 @@ impl Background {
         self.pattern_hi_latch = 0;
     }
 
-    /// Debug: Get shift register state
+    // Debug: Get shift register state
     // pub fn debug_shift_registers(&self) -> (u16, u16) {
     //     (self.bg_pattern_shift_lo, self.bg_pattern_shift_hi)
     // }

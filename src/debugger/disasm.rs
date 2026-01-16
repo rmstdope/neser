@@ -130,7 +130,7 @@ fn disassemble_one<F: Fn(u16) -> u8>(read: &F, addr: u16, pc: u16) -> CpuDisasmL
     let text = if let Some(meta) = meta {
         format_instruction(meta, addr, &bytes)
     } else {
-        format!("???")
+        "???".to_string()
     };
 
     CpuDisasmLineSnapshot {

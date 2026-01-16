@@ -284,6 +284,7 @@ impl Pulse {
 }
 
 #[cfg(test)]
+#[allow(clippy::unusual_byte_groupings)]
 mod tests {
     use super::*;
 
@@ -331,8 +332,10 @@ mod tests {
 
     #[test]
     fn test_sequencer_counts_down() {
-        let mut pulse = Pulse::default();
-        pulse.timer_period = 0;
+        let mut pulse = Pulse {
+            timer_period: 0,
+            ..Default::default()
+        };
 
         // Initial position is 0, clock should move to 7
         pulse.clock_timer();
@@ -1069,8 +1072,8 @@ mod tests {
         }
 
         // Should see mix of 8s and 0s (50% duty)
-        let has_volume = outputs.iter().any(|&v| v == 8);
-        let has_silence = outputs.iter().any(|&v| v == 0);
+        let has_volume = outputs.contains(&8);
+        let has_silence = outputs.contains(&0);
         assert!(has_volume && has_silence);
     }
 

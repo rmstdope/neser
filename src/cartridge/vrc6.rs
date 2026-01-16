@@ -91,7 +91,7 @@ impl Vrc6Pulse {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 struct Vrc6Saw {
     enabled: bool,
     rate: u8,
@@ -99,19 +99,6 @@ struct Vrc6Saw {
     divider: u16,
     accumulator: u8,
     step: u8,
-}
-
-impl Default for Vrc6Saw {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            rate: 0,
-            period: 0,
-            divider: 0,
-            accumulator: 0,
-            step: 0,
-        }
-    }
 }
 
 impl Vrc6Saw {
@@ -150,7 +137,7 @@ impl Vrc6Saw {
                 self.step = (self.step + 1) % 14;
                 if self.step == 0 {
                     self.accumulator = 0;
-                } else if (self.step % 2) == 0 {
+                } else if self.step.is_multiple_of(2) {
                     self.accumulator = self.accumulator.wrapping_add(self.rate);
                 }
             }
@@ -600,7 +587,7 @@ mod tests {
         // Pulse control: MDDD VVVV (M=1 => ignore duty)
         // Freq high: E... FFFF (E=1 enables channel)
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
 
         let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
@@ -618,7 +605,7 @@ mod tests {
     fn test_vrc6_audio_saw_outputs_non_zero_when_enabled_with_rate() {
         // Red-phase test: Saw should output non-zero when enabled and clocked.
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
 
         let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
@@ -647,7 +634,7 @@ mod tests {
         // - When clocked: if counter == $FF => reload from latch and trip IRQ; else counter += 1.
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
 
         let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
@@ -659,20 +646,20 @@ mod tests {
         // After enable, counter reloaded to 0xFE.
         // Cycle 1: 0xFE -> 0xFF (no IRQ)
         mapper.cpu_cycle();
-        assert_eq!(mapper.irq_pending(), false);
+        assert!(!mapper.irq_pending());
         // Cycle 2: counter == 0xFF -> trip IRQ
         mapper.cpu_cycle();
-        assert_eq!(mapper.irq_pending(), true);
+        assert!(mapper.irq_pending());
 
         // Ack should clear IRQ and, since A=0, leave IRQ disabled.
         mapper.write_prg(0xF002, 0);
-        assert_eq!(mapper.irq_pending(), false);
+        assert!(!mapper.irq_pending());
 
         // Many more cycles should not re-assert since IRQ is disabled after ack.
         for _ in 0..1000 {
             mapper.cpu_cycle();
         }
-        assert_eq!(mapper.irq_pending(), false);
+        assert!(!mapper.irq_pending());
     }
 
     #[test]
@@ -683,7 +670,7 @@ mod tests {
         // This means the first clock happens after 114 CPU cycles.
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
 
         let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
@@ -696,10 +683,10 @@ mod tests {
         for _ in 0..113 {
             mapper.cpu_cycle();
         }
-        assert_eq!(mapper.irq_pending(), false);
+        assert!(!mapper.irq_pending());
 
         mapper.cpu_cycle();
-        assert_eq!(mapper.irq_pending(), true);
+        assert!(mapper.irq_pending());
     }
 
     #[test]
@@ -711,7 +698,7 @@ mod tests {
         // This test uses PRG ROM filled with one byte value per 8KB bank.
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
 
         let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
@@ -736,7 +723,7 @@ mod tests {
         // This should swap the meaning of writes to $D001 and $D002 (R1 and R2).
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 32);
+        let chr_rom = banked_data(1024, 32);
 
         // Mapper 24: write R1 at $D001 to bank 7 -> $0400-$07FF reads bank 7.
         let mut m24 = create_mapper(

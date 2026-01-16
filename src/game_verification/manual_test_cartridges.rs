@@ -65,7 +65,7 @@ pub fn triangle_only_nrom_128() -> Vec<u8> {
     // of PRG ROM for NROM-128.
     let vector_base = prg.len() - 6;
     // NMI
-    prg[vector_base + 0] = 0x00;
+    prg[vector_base] = 0x00;
     prg[vector_base + 1] = 0xC0;
     // RESET
     prg[vector_base + 2] = 0x00;
@@ -125,7 +125,7 @@ pub fn pulse1_only_nrom_128() -> Vec<u8> {
 
     let vector_base = prg.len() - 6;
     // NMI
-    prg[vector_base + 0] = 0x00;
+    prg[vector_base] = 0x00;
     prg[vector_base + 1] = 0xC0;
     // RESET
     prg[vector_base + 2] = 0x00;
@@ -178,7 +178,7 @@ pub fn pulse2_only_nrom_128() -> Vec<u8> {
 
     let vector_base = prg.len() - 6;
     // NMI
-    prg[vector_base + 0] = 0x00;
+    prg[vector_base] = 0x00;
     prg[vector_base + 1] = 0xC0;
     // RESET
     prg[vector_base + 2] = 0x00;
@@ -232,7 +232,7 @@ pub fn noise_only_nrom_128() -> Vec<u8> {
 
     let vector_base = prg.len() - 6;
     // NMI
-    prg[vector_base + 0] = 0x00;
+    prg[vector_base] = 0x00;
     prg[vector_base + 1] = 0xC0;
     // RESET
     prg[vector_base + 2] = 0x00;

@@ -265,14 +265,14 @@ impl Nes {
 
         // Build the assembly instruction string
         let asm = match instruction.mode {
-            "IMP" => format!("{}", instruction.mnemonic),
+            "IMP" => instruction.mnemonic.to_string(),
             "ACC" => format!("{} A", instruction.mnemonic),
             "IMM" => format!("{} #${:02X}", instruction.mnemonic, byte1),
             "ZP" => {
                 let addr = byte1 as u16;
                 if nestest {
                     let mut value = memory.read(addr);
-                    if addr >= 0x4000 && addr < 0x4100 {
+                    if (0x4000..0x4100).contains(&addr) {
                         value = 0xFF;
                     }
                     format!("{} ${:02X} = {:02X}", instruction.mnemonic, byte1, value)
@@ -284,7 +284,7 @@ impl Nes {
                 let addr = byte1.wrapping_add(self.cpu.get_state().x) as u16;
                 if nestest {
                     let mut value = memory.read(addr);
-                    if addr >= 0x4000 && addr < 0x4100 {
+                    if (0x4000..0x4100).contains(&addr) {
                         value = 0xFF;
                     }
                     format!(
@@ -299,7 +299,7 @@ impl Nes {
                 let addr = byte1.wrapping_add(self.cpu.get_state().y) as u16;
                 if nestest {
                     let mut value = memory.read(addr);
-                    if addr >= 0x4000 && addr < 0x4100 {
+                    if (0x4000..0x4100).contains(&addr) {
                         value = 0xFF;
                     }
                     format!(
@@ -317,7 +317,7 @@ impl Nes {
                     format!("{} ${:04X}", instruction.mnemonic, addr)
                 } else if nestest {
                     let mut value = memory.read(addr);
-                    if addr >= 0x4000 && addr < 0x4100 {
+                    if (0x4000..0x4100).contains(&addr) {
                         value = 0xFF;
                     }
                     format!("{} ${:04X} = {:02X}", instruction.mnemonic, addr, value)
@@ -547,7 +547,7 @@ impl Nes {
 
             // Decode tile index to character
             // Blargg's branch timing tests store ASCII values directly as tiles
-            let ch = if tile_index >= 0x20 && tile_index <= 0x7E {
+            let ch = if (0x20..=0x7E).contains(&tile_index) {
                 tile_index as char
             } else if tile_index == 0x00 {
                 ' ' // Treat 0x00 as space
@@ -1220,7 +1220,7 @@ mod tests {
 
         // Sample should be in valid range 0.0 to 1.0
         let sample_value = sample.unwrap();
-        assert!(sample_value >= 0.0 && sample_value <= 1.0);
+        assert!((0.0..=1.0).contains(&sample_value));
     }
 
     #[test]

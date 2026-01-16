@@ -12,6 +12,12 @@ pub struct Memory {
     mirroring_mode: MirroringMode,
 }
 
+impl Default for Memory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Memory {
     /// Create a new Memory instance
     pub fn new() -> Self {
@@ -333,12 +339,12 @@ mod tests {
 
         // First valid A12 rising edge
         clock_one_valid_a12_rising_edge_via_chr_reads(&mem, &cartridge_opt);
-        assert_eq!(cartridge_rc.borrow().mapper().irq_pending(), false);
+        assert!(!cartridge_rc.borrow().mapper().irq_pending());
 
         // Second valid A12 rising edge should assert IRQ.
         clock_one_valid_a12_rising_edge_via_chr_reads(&mem, &cartridge_opt);
 
-        assert_eq!(cartridge_rc.borrow().mapper().irq_pending(), true);
+        assert!(cartridge_rc.borrow().mapper().irq_pending());
     }
 
     #[test]

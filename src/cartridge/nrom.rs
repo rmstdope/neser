@@ -39,36 +39,32 @@ impl Mapper for NROMMapper {
     fn read_prg(&self, addr: u16) -> u8 {
         // PRG-RAM at $6000-$7FFF
         if let Some(value) = self.prg_ram.try_read(addr) {
-            return value;
-        }
+            value
+        } else {
+            // PRG ROM at $8000-$FFFF
+            match addr {
+                0x8000..=0xFFFF => {
+                    let offset = (addr - 0x8000) as usize;
 
-        // PRG ROM at $8000-$FFFF
-        match addr {
-            0x8000..=0xFFFF => {
-                let offset = (addr - 0x8000) as usize;
-
-                // Handle 16KB vs 32KB PRG ROM
-                if self.prg_rom.len() == PRG_BANK_SIZE {
-                    // 16KB ROM: mirror at $C000
-                    let index = offset % PRG_BANK_SIZE;
-                    self.prg_rom.get(index).copied().unwrap_or(0)
-                } else {
-                    // 32KB or larger ROM: direct mapping
-                    let index = offset % self.prg_rom.len();
-                    self.prg_rom.get(index).copied().unwrap_or(0)
+                    // Handle 16KB vs 32KB PRG ROM
+                    if self.prg_rom.len() == PRG_BANK_SIZE {
+                        // 16KB ROM: mirror at $C000
+                        let index = offset % PRG_BANK_SIZE;
+                        self.prg_rom.get(index).copied().unwrap_or(0)
+                    } else {
+                        // 32KB or larger ROM: direct mapping
+                        let index = offset % self.prg_rom.len();
+                        self.prg_rom.get(index).copied().unwrap_or(0)
+                    }
                 }
+                _ => 0,
             }
-            _ => 0,
         }
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
-            return;
-        }
-
-        // Writes to PRG ROM are ignored (no mapper registers in NROM)
+        let _ = self.prg_ram.try_write(addr, value);
     }
 
     fn read_chr(&self, addr: u16) -> u8 {

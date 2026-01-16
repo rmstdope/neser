@@ -3,6 +3,12 @@ pub struct ScreenBuffer {
     buffer: Vec<u8>,
 }
 
+impl Default for ScreenBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScreenBuffer {
     const WIDTH: u32 = 256;
     const HEIGHT: u32 = 240;
@@ -79,12 +85,11 @@ impl ScreenBuffer {
     #[cfg(test)]
     pub fn get_pixel(&self, x: u32, y: u32) -> (u8, u8, u8) {
         let offset = self.pixel_offset(x, y);
-        let result = (
+        (
             self.buffer[offset],
             self.buffer[offset + 1],
             self.buffer[offset + 2],
-        );
-        result
+        )
     }
 
     /// Copies the entire buffer to the specified destination buffer.

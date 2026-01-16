@@ -31,6 +31,7 @@ const STATUS_DMC_IRQ: u8 = 1 << 7;
 // Pulse table: 31 entries for pulse1 + pulse2 (0-30)
 // Formula: pulse_table[n] = 95.52 / (8128.0 / n + 100)
 #[rustfmt::skip]
+#[allow(clippy::excessive_precision)]
 const PULSE_TABLE: [f32; 31] = [
     0.0, 0.011609139, 0.022937592, 0.033999473, 0.044808503, 0.055377416, 0.065718144,
     0.075841725, 0.085758299, 0.095477104, 0.105006486, 0.114354908, 0.123530001,
@@ -42,6 +43,7 @@ const PULSE_TABLE: [f32; 31] = [
 // TND table: 203 entries for 3*triangle + 2*noise + dmc (0-202)
 // Formula: tnd_table[n] = 163.67 / (24329.0 / n + 100)
 #[rustfmt::skip]
+#[allow(clippy::excessive_precision)]
 const TND_TABLE: [f32; 203] = [
     0.000000000, 0.006699824, 0.013345020, 0.019936254, 0.026474180, 0.032959443, 0.039392675,
     0.045774502, 0.052105535, 0.058386381, 0.064617632, 0.070799874, 0.076933683, 0.083019626,
@@ -213,7 +215,7 @@ impl Apu {
         // - Additional clocking to reach the 9-12 cycle range
 
         // Delay based on CPU cycle parity: even = 4, odd = 3
-        let write_delay = if (cpu_cycle % 2) == 0 { 4 } else { 3 };
+        let write_delay = if cpu_cycle.is_multiple_of(2) { 4 } else { 3 };
 
         // Queue the delayed write (rewrite last value written to $4017)
         self.frame_counter
@@ -309,10 +311,10 @@ impl Apu {
         // In our timing model, timers clock on even apu_cycle values, so we treat:
         // - even apu_cycle: during APU cycle => 3-cycle delay
         // - odd apu_cycle: between APU cycles => 4-cycle delay
-        let write_delay = if (self.apu_cycle % 2) == 0 { 3 } else { 4 };
+        let write_delay = if self.apu_cycle.is_multiple_of(2) { 3 } else { 4 };
 
         // Jitter: writing $4017 on an odd CPU cycle delays the reset by 1 CPU cycle.
-        let write_on_odd_cpu_cycle = (self.apu_cycle % 2) != 0;
+        let write_on_odd_cpu_cycle = !self.apu_cycle.is_multiple_of(2);
         self.frame_counter.queue_delayed_write_with_jitter(
             value,
             write_delay,
@@ -395,7 +397,7 @@ impl Apu {
         // Clock timers every APU cycle (every 2 CPU cycles)
         // APU runs at half the CPU clock rate
         // Use dedicated apu_cycle counter to ensure consistent timing
-        if self.apu_cycle % 2 == 0 {
+        if self.apu_cycle.is_multiple_of(2) {
             self.pulse1.clock_timer();
             self.pulse2.clock_timer();
             self.triangle.clock_timer();
@@ -635,6 +637,7 @@ impl Default for Apu {
 }
 
 #[cfg(test)]
+#[allow(clippy::unusual_byte_groupings)]
 mod tests {
     use super::*;
 
@@ -1553,11 +1556,9 @@ mod tests {
         let mut non_zero_found = false;
         for _ in 0..200 {
             apu.clock();
-            if let Some(sample) = apu.get_sample() {
-                if sample > 0.0 {
-                    non_zero_found = true;
-                    assert!(sample <= 1.0);
-                }
+            if let Some(sample) = apu.get_sample() && sample > 0.0 {
+                non_zero_found = true;
+                assert!(sample <= 1.0);
             }
         }
         assert!(
@@ -1581,7 +1582,7 @@ mod tests {
         }
 
         // Should generate approximately 44 samples (1789 / 40.56 ≈ 44.08)
-        assert!(sample_count >= 43 && sample_count <= 45);
+        assert!((43..=45).contains(&sample_count));
     }
 
     #[test]
@@ -1602,7 +1603,7 @@ mod tests {
         }
 
         // Should generate approximately 48 samples (1789 / 37.27 ≈ 48)
-        assert!(sample_count >= 47 && sample_count <= 49);
+        assert!((47..=49).contains(&sample_count));
     }
 
     #[test]
@@ -1622,7 +1623,7 @@ mod tests {
         }
 
         // Should still have generated approximately 44 samples.
-        assert!(sample_count >= 43 && sample_count <= 45);
+        assert!((43..=45).contains(&sample_count));
     }
 
     #[test]

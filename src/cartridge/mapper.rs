@@ -18,7 +18,7 @@ pub trait Mapper {
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, battery-backed on some cartridges)
     /// - $8000-$FFFF: PRG-ROM (with bank switching on advanced mappers)
-    /// Returns the byte at the given address after bank translation
+    ///   Returns the byte at the given address after bank translation
     fn read_prg(&self, addr: u16) -> u8;
 
     /// Read a byte from PRG address space (CPU $6000-$FFFF), with open-bus context.

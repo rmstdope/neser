@@ -33,6 +33,12 @@ pub struct Noise {
     length_counter: LengthCounter,
 }
 
+impl Default for Noise {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Noise {
     pub fn new() -> Self {
         Noise {
@@ -157,6 +163,7 @@ impl Noise {
 }
 
 #[cfg(test)]
+#[allow(clippy::unusual_byte_groupings)]
 mod tests {
     use super::*;
 
@@ -164,7 +171,7 @@ mod tests {
     fn test_noise_new() {
         let noise = Noise::new();
         assert_eq!(noise.shift_register, 1);
-        assert_eq!(noise.mode, false);
+        assert!(!noise.mode);
         assert_eq!(noise.timer_period, 4);
     }
 
@@ -285,9 +292,9 @@ mod tests {
         // v = volume/envelope divider period
         noise.write_envelope(0b0001_0101); // halt=0, constant=1, volume=5
 
-        assert_eq!(noise.length_counter.is_halted(), false);
-        assert_eq!(noise.envelope.debug_loop_flag(), false);
-        assert_eq!(noise.envelope.debug_disable_flag(), true);
+        assert!(!noise.length_counter.is_halted());
+        assert!(!noise.envelope.debug_loop_flag());
+        assert!(noise.envelope.debug_disable_flag());
         assert_eq!(noise.envelope.debug_n(), 5);
     }
 
@@ -300,7 +307,7 @@ mod tests {
         // p = period index
         noise.write_period(0b1000_1010); // mode=1, period=10
 
-        assert_eq!(noise.mode, true);
+        assert!(noise.mode);
         assert_eq!(noise.timer_period, NOISE_PERIOD_TABLE[10]);
     }
 
@@ -314,7 +321,7 @@ mod tests {
         noise.write_length(0b10110_000); // load index 22
 
         assert_eq!(noise.get_length_counter(), LengthCounter::lookup(22));
-        assert_eq!(noise.envelope.debug_start_flag(), true); // Should trigger envelope restart
+        assert!(noise.envelope.debug_start_flag()); // Should trigger envelope restart
     }
 
     #[test]

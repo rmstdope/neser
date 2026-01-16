@@ -1,9 +1,9 @@
-/// DMA Controller for cycle-accurate OAM DMA and DMC DMA handling.
-///
-/// This module implements the DMA state machines that allow:
-/// - OAM DMA to be executed cycle-by-cycle
-/// - DMC DMA to interrupt OAM DMA mid-transfer
-/// - Proper priority handling (DMC has higher priority than OAM)
+//! DMA Controller for cycle-accurate OAM DMA and DMC DMA handling.
+//!
+//! This module implements the DMA state machines that allow:
+//! - OAM DMA to be executed cycle-by-cycle
+//! - DMC DMA to interrupt OAM DMA mid-transfer
+//! - Proper priority handling (DMC has higher priority than OAM)
 
 /// OAM DMA state machine states
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,7 +107,7 @@ impl DmaController {
     /// Step the DMA state machine by one CPU cycle
     /// Returns a DmaAction describing what memory access to perform this cycle
     pub fn step(&mut self, total_cpu_cycles: u64) -> DmaAction {
-        self.is_get_cycle = total_cpu_cycles % 2 == 0;
+        self.is_get_cycle = total_cpu_cycles.is_multiple_of(2);
 
         // DMC DMA has priority over OAM DMA
         if self.dmc_state != DmcDmaState::Idle {

@@ -266,6 +266,7 @@ impl MMC3Mapper {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
     use crate::cartridge::mapper::Mapper;
@@ -285,7 +286,7 @@ mod tests {
     #[test]
     fn test_mmc3_new_prg_ram_enabled_by_default() {
         let prg_rom = banked_data(8 * 1024, 2);
-        let chr_rom = banked_data(1 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
 
         let mut mapper = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
         mapper.write_prg(0x6000, 0xAA);
@@ -299,7 +300,7 @@ mod tests {
         // on the second A12 rising edge.
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 16);
+        let chr_rom = banked_data(1024, 16);
 
         let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC3 (mapper 4) should be implemented");
@@ -316,18 +317,18 @@ mod tests {
             mapper.ppu_address_changed(0x0FFF);
         }
         mapper.ppu_address_changed(0x1000);
-        assert_eq!(mapper.irq_pending(), false);
+        assert!(!mapper.irq_pending());
 
         // Second A12 rising edge
         for _ in 0..8 {
             mapper.ppu_address_changed(0x0FFF);
         }
         mapper.ppu_address_changed(0x1000);
-        assert_eq!(mapper.irq_pending(), true);
+        assert!(mapper.irq_pending());
 
         // Acknowledge/disable should clear IRQ
         mapper.write_prg(0xE000, 0);
-        assert_eq!(mapper.irq_pending(), false);
+        assert!(!mapper.irq_pending());
     }
 
     #[test]
@@ -336,7 +337,7 @@ mod tests {
         // the IRQ counter if A12 has been low for at least 8 PPU cycles.
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 16);
+        let chr_rom = banked_data(1024, 16);
 
         let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC3 (mapper 4) should be implemented");
@@ -348,21 +349,21 @@ mod tests {
         // A12 low for 1 PPU cycle, then rising edge: should be ignored.
         mapper.ppu_address_changed(0x0FFF);
         mapper.ppu_address_changed(0x1000);
-        assert_eq!(mapper.irq_pending(), false);
+        assert!(!mapper.irq_pending());
 
         // Now hold A12 low for 8 PPU cycles, then rising edge: this clocks once.
         for _ in 0..8 {
             mapper.ppu_address_changed(0x0FFF);
         }
         mapper.ppu_address_changed(0x1000);
-        assert_eq!(mapper.irq_pending(), false);
+        assert!(!mapper.irq_pending());
 
         // Another valid edge after 8 low cycles: second clock should assert IRQ.
         for _ in 0..8 {
             mapper.ppu_address_changed(0x0FFF);
         }
         mapper.ppu_address_changed(0x1000);
-        assert_eq!(mapper.irq_pending(), true);
+        assert!(mapper.irq_pending());
     }
 
     #[test]
@@ -372,7 +373,7 @@ mod tests {
         // - PRG mode 1: $8000 = fixed second-last, $A000 = R7 (switch), $C000 = R6 (switch), $E000 = fixed last
 
         let prg_rom = banked_data(8 * 1024, 8); // 8 x 8KB banks; last=7, second-last=6
-        let chr_rom = banked_data(1 * 1024, 16); // Enough to satisfy mapper creation; not used in this test
+        let chr_rom = banked_data(1024, 16); // Enough to satisfy mapper creation; not used in this test
 
         let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC3 (mapper 4) should be implemented");
@@ -407,7 +408,7 @@ mod tests {
         // - R2..R5: 1KB banks @ $1000, $1400, $1800, $1C00
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 16); // 16 x 1KB banks
+        let chr_rom = banked_data(1024, 16); // 16 x 1KB banks
 
         let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC3 (mapper 4) should be implemented");
@@ -451,7 +452,7 @@ mod tests {
         // PRG-RAM is enabled by default on power-on (hardware behavior).
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 16);
+        let chr_rom = banked_data(1024, 16);
 
         let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC3 (mapper 4) should be implemented");
@@ -484,13 +485,13 @@ mod tests {
         // - R1: 2KB bank @ $1800 (even-aligned)
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 16); // 16 x 1KB banks
+        let chr_rom = banked_data(1024, 16); // 16 x 1KB banks
 
         let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC3 (mapper 4) should be implemented");
 
         // Enable CHR mode 1 (bit7=1) and program registers.
-        mapper.write_prg(0x8000, 0b1000_0000 | 0); // R0, CHR mode 1
+        mapper.write_prg(0x8000, 0b1000_0000); // R0, CHR mode 1
         mapper.write_prg(0x8001, 5); // R0 -> banks 4+5 at $1000-$17FF
 
         mapper.write_prg(0x8000, 0b1000_0000 | 1); // R1
@@ -523,7 +524,7 @@ mod tests {
     #[test]
     fn test_mmc3_mirroring_control_via_a000() {
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 16);
+        let chr_rom = banked_data(1024, 16);
 
         let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC3 (mapper 4) should be implemented");
@@ -577,7 +578,7 @@ mod tests {
         // In CHR mode 0, R1 maps to $0800-$0FFF (two 1KB banks).
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let chr_rom = banked_data(1 * 1024, 16);
+        let chr_rom = banked_data(1024, 16);
 
         let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC3 (mapper 4) should be implemented");

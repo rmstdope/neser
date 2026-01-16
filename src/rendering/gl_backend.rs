@@ -155,12 +155,11 @@ impl GlBackend {
         let mut shader_manager = ShaderManager::new();
 
         // Load shader preset if specified
-        if let Some(path) = shader_path {
-            if let Err(e) =
+        if let Some(path) = shader_path
+            && let Err(e) =
                 shader_manager.load_preset(std::path::Path::new(path), glow_context.clone())
-            {
-                eprintln!("Warning: Failed to load shader preset '{}': {}", path, e);
-            }
+        {
+            eprintln!("Warning: Failed to load shader preset '{}': {}", path, e);
         }
 
         Ok(Self {
@@ -430,7 +429,7 @@ impl GlBackend {
 
             if show_debugger {
                 let snapshot = self.debugger_view_state.snapshot(nes);
-                action = debugger_ui::render(&ui, &snapshot);
+                action = debugger_ui::render(ui, &snapshot);
             }
         }
 

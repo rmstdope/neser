@@ -1,13 +1,13 @@
-/// NES APU DMC (Delta Modulation Channel)
-///
-/// The DMC plays 1-bit delta-encoded samples from CPU memory.
-/// Components:
-/// - Timer with 16 NTSC rate periods
-/// - Memory reader (reads from CPU memory $C000+)
-/// - Sample buffer (8-bit)
-/// - Output unit (shift register + 7-bit output level 0-127)
-/// - IRQ flag
-/// - Loop flag for sample restart
+//! NES APU DMC (Delta Modulation Channel)
+//!
+//! The DMC plays 1-bit delta-encoded samples from CPU memory.
+//! Components:
+//! - Timer with 16 NTSC rate periods
+//! - Memory reader (reads from CPU memory $C000+)
+//! - Sample buffer (8-bit)
+//! - Output unit (shift register + 7-bit output level 0-127)
+//! - IRQ flag
+//! - Loop flag for sample restart
 
 // NTSC rate periods (in CPU cycles)
 const DMC_RATE_TABLE: [u16; 16] = [
@@ -47,6 +47,12 @@ pub struct Dmc {
 
     // Transfer start delay (2-3 cycles after enabling DMC via $4015)
     transfer_start_delay: u8,
+}
+
+impl Default for Dmc {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Dmc {
@@ -263,7 +269,7 @@ impl Dmc {
             if self.bytes_remaining == 0 {
                 self.restart_sample();
                 // Delay DMA request by 1-2 cycles based on odd/even CPU cycle
-                if cpu_cycle % 2 == 0 {
+                if cpu_cycle.is_multiple_of(2) {
                     self.transfer_start_delay = 1;
                 } else {
                     self.transfer_start_delay = 2;

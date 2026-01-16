@@ -74,7 +74,7 @@ mod tests {
                 Ok(data) => data,
                 Err(e) => {
                     eprintln!("Failed to load ROM {}: {}", self.rom_path, e);
-                    return BlarggTestResult::Fail(0x80 as u8);
+                    return BlarggTestResult::Fail(0x80_u8);
                 }
             };
 
@@ -82,7 +82,7 @@ mod tests {
                 Ok(cart) => cart,
                 Err(e) => {
                     eprintln!("Failed to parse ROM {}: {}", self.rom_path, e);
-                    return BlarggTestResult::Fail(0x81 as u8);
+                    return BlarggTestResult::Fail(0x81_u8);
                 }
             };
 

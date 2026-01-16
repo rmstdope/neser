@@ -43,6 +43,12 @@ pub struct Registers {
     w: bool,
 }
 
+impl Default for Registers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Registers {
     /// Create a new Registers instance
     pub fn new() -> Self {

@@ -658,7 +658,7 @@ mod tests {
     fn test_write_and_read_byte() {
         let mut memory = create_test_memory();
         let dma = memory.write(0x1234, 0x42, false);
-        assert_eq!(dma, false);
+        assert!(!dma);
         assert_eq!(memory.read(0x1234), 0x42);
     }
 
@@ -1252,9 +1252,8 @@ mod tests {
 
         // The effects of a $4017 write occur after a 3-4 CPU cycle delay.
         // So the mode won't necessarily change immediately.
-        assert_eq!(
-            memory.apu.borrow().frame_counter().get_mode(),
-            false,
+        assert!(
+            !memory.apu.borrow().frame_counter().get_mode(),
             "$4017 write should not take effect immediately"
         );
 
@@ -1263,9 +1262,8 @@ mod tests {
             memory.apu.borrow_mut().clock();
         }
 
-        assert_eq!(
+        assert!(
             memory.apu.borrow().frame_counter().get_mode(),
-            true,
             "$4017 write should switch to 5-step mode after the delayed-write window"
         );
     }

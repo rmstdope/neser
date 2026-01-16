@@ -44,11 +44,9 @@ pub fn init_tracing(tracing: Tracing) {
     }
 
     let lock = std::sync::RwLock::new(tracing);
-    if TRACING.set(lock).is_err() {
-        if let Some(lock) = TRACING.get() {
-            let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());
-            *guard = tracing;
-        }
+    if TRACING.set(lock).is_err() && let Some(lock) = TRACING.get() {
+        let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());
+        *guard = tracing;
     }
 }
 
@@ -65,6 +63,7 @@ pub fn init_tracing(_tracing: Tracing) {}
 
 /// Get the current tracing configuration.
 #[cfg(all(debug_assertions, not(test)))]
+#[allow(dead_code)]
 pub fn get_tracing() -> Option<Tracing> {
     TRACING
         .get()

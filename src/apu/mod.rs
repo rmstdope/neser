@@ -1,3 +1,4 @@
+#[allow(clippy::module_inception)]
 mod apu;
 pub mod dmc;
 pub mod envelope;

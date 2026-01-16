@@ -42,6 +42,12 @@ pub struct Sprites {
     next_sprite_attributes: [u8; 8],
 }
 
+impl Default for Sprites {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// OAM attribute byte mask - bits 2-4 are unimplemented and always read as 0
 /// Mask: 11100011 (0xE3) - preserves bits 7-5 (priority/palette) and 1-0 (flip bits)
 const OAM_ATTRIBUTE_MASK: u8 = 0xE3;
@@ -473,12 +479,12 @@ impl Sprites {
             // X coordinate maps directly per NES hardware specification
             let shift = screen_x - sprite_x;
 
-            if shift >= 0 && shift < 8 {
+            if (0..8).contains(&shift) {
                 let bit_pos = 7 - (shift as u8);
                 let pattern_lo_bit =
-                    ((self.sprite_pattern_shift_lo[sprite_idx] >> bit_pos) & 0x01) as u8;
+                    (self.sprite_pattern_shift_lo[sprite_idx] >> bit_pos) & 0x01;
                 let pattern_hi_bit =
-                    ((self.sprite_pattern_shift_hi[sprite_idx] >> bit_pos) & 0x01) as u8;
+                    (self.sprite_pattern_shift_hi[sprite_idx] >> bit_pos) & 0x01;
                 let pattern = (pattern_hi_bit << 1) | pattern_lo_bit;
 
                 if pattern == 0 {
@@ -529,12 +535,12 @@ impl Sprites {
             // X coordinate maps directly per NES hardware specification
             let shift = screen_x - sprite_x;
 
-            if shift >= 0 && shift < 8 {
+            if (0..8).contains(&shift) {
                 let bit_pos = 7 - (shift as u8);
                 let pattern_lo_bit =
-                    ((self.sprite_pattern_shift_lo[sprite_0_idx] >> bit_pos) & 0x01) as u8;
+                    (self.sprite_pattern_shift_lo[sprite_0_idx] >> bit_pos) & 0x01;
                 let pattern_hi_bit =
-                    ((self.sprite_pattern_shift_hi[sprite_0_idx] >> bit_pos) & 0x01) as u8;
+                    (self.sprite_pattern_shift_hi[sprite_0_idx] >> bit_pos) & 0x01;
                 let pattern = (pattern_hi_bit << 1) | pattern_lo_bit;
 
                 return pattern != 0;

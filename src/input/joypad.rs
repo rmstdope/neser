@@ -21,6 +21,12 @@ pub struct Joypad {
     button_states: u8, // Bitfield: [Right, Left, Down, Up, Start, Select, B, A]
 }
 
+impl Default for Joypad {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Joypad {
     pub fn new() -> Self {
         Self {
@@ -93,7 +99,7 @@ mod tests {
     #[test]
     fn test_new_joypad() {
         let joypad = Joypad::new();
-        assert_eq!(joypad.strobe, false);
+        assert!(!joypad.strobe);
         assert_eq!(joypad.button_index, 0);
         assert_eq!(joypad.button_states, 0);
     }

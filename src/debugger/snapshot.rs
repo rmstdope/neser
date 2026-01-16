@@ -16,17 +16,9 @@ impl DebuggerViewState {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Debugger {
     disasm: DisasmWindowConfig,
-}
-
-impl Default for Debugger {
-    fn default() -> Self {
-        Self {
-            disasm: DisasmWindowConfig::default(),
-        }
-    }
 }
 
 impl Debugger {

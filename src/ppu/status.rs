@@ -14,6 +14,12 @@ pub struct Status {
     frame_complete: bool,
 }
 
+impl Default for Status {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Status {
     /// Create a new Status instance
     pub fn new() -> Self {

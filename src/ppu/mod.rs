@@ -1,5 +1,6 @@
 mod background;
 mod memory;
+#[allow(clippy::module_inception)]
 mod ppu;
 mod registers;
 mod rendering;
