@@ -8,7 +8,7 @@ use std::ops::RangeInclusive;
 use std::rc::Rc;
 
 pub trait BusDevice {
-    fn read(&mut self, addr: u16) -> Option<u8>;
+    fn read(&mut self, addr: u16, clock_joypads: bool) -> Option<u8>;
     fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool;
     fn address_range(&self) -> RangeInclusive<u16>;
 }
@@ -24,7 +24,7 @@ impl PpuRegisterDevice {
 }
 
 impl BusDevice for PpuRegisterDevice {
-    fn read(&mut self, addr: u16) -> Option<u8> {
+    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
         if !self.address_range().contains(&addr) {
             return None;
         }
@@ -46,7 +46,14 @@ impl BusDevice for PpuRegisterDevice {
 
         let reg = addr & 0x2007;
         match reg {
-            0x2000 | 0x2001 => false,
+            0x2000 => {
+                self.ppu.borrow_mut().write_control(value);
+                true
+            }
+            0x2001 => {
+                self.ppu.borrow_mut().write_mask(value);
+                true
+            }
             0x2002 => {
                 self.ppu.borrow_mut().set_io_bus(value);
                 true
@@ -80,6 +87,131 @@ impl BusDevice for PpuRegisterDevice {
     }
 }
 
+struct ApuJoypadDevice {
+    apu: Rc<RefCell<apu::Apu>>,
+    joypad1: Rc<RefCell<Joypad>>,
+    joypad2: Rc<RefCell<Joypad>>,
+    open_bus: Rc<RefCell<u8>>,
+}
+
+impl ApuJoypadDevice {
+    fn new(
+        apu: Rc<RefCell<apu::Apu>>,
+        joypad1: Rc<RefCell<Joypad>>,
+        joypad2: Rc<RefCell<Joypad>>,
+        open_bus: Rc<RefCell<u8>>,
+    ) -> Self {
+        Self {
+            apu,
+            joypad1,
+            joypad2,
+            open_bus,
+        }
+    }
+}
+
+impl BusDevice for ApuJoypadDevice {
+    fn read(&mut self, addr: u16, clock_joypads: bool) -> Option<u8> {
+        if !self.address_range().contains(&addr) {
+            return None;
+        }
+
+        let open_bus = *self.open_bus.borrow();
+        match addr {
+            0x4000..=0x4013 => Some(open_bus),
+            0x4014 => Some(open_bus),
+            0x4015 => Some(self.apu.borrow_mut().read_status(open_bus)),
+            0x4016 => {
+                let button_state = if clock_joypads {
+                    self.joypad1.borrow_mut().read()
+                } else {
+                    self.joypad1.borrow().read_no_clock()
+                };
+                Some((open_bus & 0xFE) | button_state)
+            }
+            0x4017 => {
+                let button_state = if clock_joypads {
+                    self.joypad2.borrow_mut().read()
+                } else {
+                    self.joypad2.borrow().read_no_clock()
+                };
+                Some((open_bus & 0xFE) | button_state)
+            }
+            _ => None,
+        }
+    }
+
+    fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
+        if !self.address_range().contains(&addr) {
+            return false;
+        }
+
+        match addr {
+            0x4000 => self.apu.borrow_mut().pulse1_mut().write_control(value),
+            0x4001 => self.apu.borrow_mut().pulse1_mut().write_sweep(value),
+            0x4002 => self.apu.borrow_mut().pulse1_mut().write_timer_low(value),
+            0x4003 => self
+                .apu
+                .borrow_mut()
+                .pulse1_mut()
+                .write_length_counter_timer_high(value),
+
+            0x4004 => self.apu.borrow_mut().pulse2_mut().write_control(value),
+            0x4005 => self.apu.borrow_mut().pulse2_mut().write_sweep(value),
+            0x4006 => self.apu.borrow_mut().pulse2_mut().write_timer_low(value),
+            0x4007 => self
+                .apu
+                .borrow_mut()
+                .pulse2_mut()
+                .write_length_counter_timer_high(value),
+
+            0x4008 => self
+                .apu
+                .borrow_mut()
+                .triangle_mut()
+                .write_linear_counter(value),
+            0x400A => self.apu.borrow_mut().triangle_mut().write_timer_low(value),
+            0x400B => self
+                .apu
+                .borrow_mut()
+                .triangle_mut()
+                .write_length_counter_timer_high(value),
+
+            0x400C => self.apu.borrow_mut().noise_mut().write_envelope(value),
+            0x400E => self.apu.borrow_mut().noise_mut().write_period(value),
+            0x400F => self.apu.borrow_mut().noise_mut().write_length(value),
+
+            0x4010 => self.apu.borrow_mut().dmc_mut().write_flags_and_rate(value),
+            0x4011 => self.apu.borrow_mut().dmc_mut().write_direct_load(value),
+            0x4012 => self.apu.borrow_mut().dmc_mut().write_sample_address(value),
+            0x4013 => self.apu.borrow_mut().dmc_mut().write_sample_length(value),
+
+            0x4014 => return false,
+
+            0x4015 => self.apu.borrow_mut().write_enable(value),
+            0x4016 => {
+                self.joypad1.borrow_mut().write_strobe(value);
+                self.joypad2.borrow_mut().write_strobe(value);
+            }
+            0x4017 => self.apu.borrow_mut().write_frame_counter(value),
+
+            0x4009 | 0x400D => {}
+            _ => {
+                eprintln!(
+                    "Warning: Write to unimplemented APU/IO register {:04X} ignored",
+                    addr
+                );
+            }
+        }
+
+        true
+    }
+
+    fn address_range(&self) -> RangeInclusive<u16> {
+        0x4000..=0x4017
+    }
+}
+
 /// NES Memory (64KB address space)
 pub struct MemController {
     cpu_ram: Vec<u8>,
@@ -87,9 +219,9 @@ pub struct MemController {
     ppu: Rc<RefCell<ppu::Ppu>>,
     apu: Rc<RefCell<apu::Apu>>,
     oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
-    joypad1: RefCell<Joypad>,
-    joypad2: RefCell<Joypad>,
-    open_bus: RefCell<u8>, // Last value on the data bus for open bus behavior
+    joypad1: Rc<RefCell<Joypad>>,
+    joypad2: Rc<RefCell<Joypad>>,
+    open_bus: Rc<RefCell<u8>>, // Last value on the data bus for open bus behavior
     devices: RefCell<Vec<Box<dyn BusDevice>>>,
 }
 
@@ -102,13 +234,19 @@ impl MemController {
             ppu,
             apu,
             oam_dma_page: None,
-            joypad1: RefCell::new(Joypad::new()),
-            joypad2: RefCell::new(Joypad::new()),
-            open_bus: RefCell::new(0xFF), // Initialize to 0xFF (common power-on state)
+            joypad1: Rc::new(RefCell::new(Joypad::new())),
+            joypad2: Rc::new(RefCell::new(Joypad::new())),
+            open_bus: Rc::new(RefCell::new(0xFF)), // Initialize to 0xFF (common power-on state)
             devices: RefCell::new(Vec::new()),
         };
 
         controller.register_device(Box::new(PpuRegisterDevice::new(controller.ppu.clone())));
+        controller.register_device(Box::new(ApuJoypadDevice::new(
+            controller.apu.clone(),
+            controller.joypad1.clone(),
+            controller.joypad2.clone(),
+            controller.open_bus.clone(),
+        )));
 
         controller
     }
@@ -213,7 +351,7 @@ impl MemController {
     }
 
     fn read_internal(&self, addr: u16, clock_joypads: bool) -> u8 {
-        if let Some(value) = self.read_from_devices(addr) {
+        if let Some(value) = self.read_from_devices(addr, clock_joypads) {
             *self.open_bus.borrow_mut() = value;
             return value;
         }
@@ -222,49 +360,7 @@ impl MemController {
             // RAM ($0000-$1FFF) with mirroring
             0x0000..=0x1FFF => self.cpu_ram[(addr & 0x07FF) as usize],
 
-            // PPU registers ($2000-$3FFF) with mirroring every 8 bytes
-            0x2000..=0x3FFF => match addr & 0x2007 {
-                // Write-only registers return the PPU I/O bus latch
-                // The PPU I/O bus is separate from the CPU data bus!
-                0x2000 => self.ppu.borrow().io_bus(),
-                0x2001 => self.ppu.borrow().io_bus(),
-                0x2002 => {
-                    // PPUSTATUS: get_status() already handles updating I/O bus correctly
-                    self.ppu.borrow_mut().get_status()
-                }
-                0x2003 => self.ppu.borrow().io_bus(),
-                0x2004 => self.ppu.borrow_mut().read_oam_data(),
-                0x2005 => self.ppu.borrow().io_bus(),
-                0x2006 => self.ppu.borrow().io_bus(),
-                0x2007 => self.ppu.borrow_mut().read_data(),
-                _ => panic!("Should never happen!"),
-            },
-
-            // APU registers ($4000-$4017)
-            // Most APU registers are write-only and return open bus when read
-            0x4000..=0x4013 => *self.open_bus.borrow(), // APU write-only registers
-            0x4014 => *self.open_bus.borrow(),          // OAM DMA (write-only)
-            0x4015 => self.apu.borrow_mut().read_status(*self.open_bus.borrow()),
-            0x4016 => {
-                // Joypad 1: bit 0 = button state, bits 1-7 = open bus
-                let button_state = if clock_joypads {
-                    self.joypad1.borrow_mut().read()
-                } else {
-                    self.joypad1.borrow().read_no_clock()
-                };
-                let open_bus = *self.open_bus.borrow();
-                (open_bus & 0xFE) | button_state
-            }
-            0x4017 => {
-                // Joypad 2: bit 0 = button state, bits 1-7 = open bus
-                let button_state = if clock_joypads {
-                    self.joypad2.borrow_mut().read()
-                } else {
-                    self.joypad2.borrow().read_no_clock()
-                };
-                let open_bus = *self.open_bus.borrow();
-                (open_bus & 0xFE) | button_state
-            }
+            // PPU/APU/joypad registers are handled by BusDevice dispatch.
 
             // Unallocated I/O space ($4018-$40FF) returns open bus
             0x4018..=0x40FF => *self.open_bus.borrow(),
@@ -329,11 +425,11 @@ impl MemController {
         value
     }
 
-    fn read_from_devices(&self, addr: u16) -> Option<u8> {
+    fn read_from_devices(&self, addr: u16, clock_joypads: bool) -> Option<u8> {
         let mut devices = self.devices.borrow_mut();
         for device in devices.iter_mut() {
             if device.address_range().contains(&addr)
-                && let Some(value) = device.read(addr)
+                && let Some(value) = device.read(addr, clock_joypads)
             {
                 return Some(value);
             }
@@ -409,7 +505,22 @@ impl MemController {
         // Update open bus with the value being written
         *self.open_bus.borrow_mut() = value;
 
+        if addr == 0x4014 {
+            self.oam_dma_page = Some(value);
+            return true;
+        }
+
         if self.write_to_devices(addr, value, is_dummy_write) {
+            if addr == 0x2000 {
+                if let Some(ref cartridge) = self.cartridge {
+                    cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
+                }
+            } else if addr == 0x2001 {
+                if let Some(ref cartridge) = self.cartridge {
+                    cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
+                }
+            }
+
             return false;
         }
 
@@ -420,108 +531,7 @@ impl MemController {
                 self.cpu_ram[(addr & 0x07FF) as usize] = value;
             }
 
-            // PPU registers ($2000-$3FFF) with mirroring every 8 bytes
-            0x2000..=0x3FFF => match addr & 0x2007 {
-                0x2000 => {
-                    self.ppu.borrow_mut().write_control(value);
-                    // Notify mapper of PPUCTRL write (MMC5 monitors this for 8x16 sprite mode)
-                    if let Some(ref cartridge) = self.cartridge {
-                        cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
-                    }
-                }
-                0x2001 => {
-                    self.ppu.borrow_mut().write_mask(value);
-                    // Notify mapper of PPUMASK write (MMC5 monitors this for rendering enable)
-                    if let Some(ref cartridge) = self.cartridge {
-                        cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
-                    }
-                }
-                0x2002 => {
-                    // PPUSTATUS is read-only, but writes still update the I/O bus!
-                    self.ppu.borrow_mut().set_io_bus(value);
-                }
-                0x2003 => self.ppu.borrow_mut().write_oam_address(value),
-                0x2004 => self.ppu.borrow_mut().write_oam_data(value),
-                0x2005 => self.ppu.borrow_mut().write_scroll(value, is_dummy_write),
-                0x2006 => self.ppu.borrow_mut().write_address(value, is_dummy_write),
-                0x2007 => self.ppu.borrow_mut().write_data(value),
-                _ => panic!("Should never happen!"),
-            },
-
-            // APU and I/O registers ($4000-$4017)
-            0x4000..=0x4017 => match addr {
-                // Pulse 1 registers
-                0x4000 => self.apu.borrow_mut().pulse1_mut().write_control(value),
-                0x4001 => self.apu.borrow_mut().pulse1_mut().write_sweep(value),
-                0x4002 => self.apu.borrow_mut().pulse1_mut().write_timer_low(value),
-                0x4003 => self
-                    .apu
-                    .borrow_mut()
-                    .pulse1_mut()
-                    .write_length_counter_timer_high(value),
-
-                // Pulse 2 registers
-                0x4004 => self.apu.borrow_mut().pulse2_mut().write_control(value),
-                0x4005 => self.apu.borrow_mut().pulse2_mut().write_sweep(value),
-                0x4006 => self.apu.borrow_mut().pulse2_mut().write_timer_low(value),
-                0x4007 => self
-                    .apu
-                    .borrow_mut()
-                    .pulse2_mut()
-                    .write_length_counter_timer_high(value),
-
-                // Triangle registers
-                0x4008 => self
-                    .apu
-                    .borrow_mut()
-                    .triangle_mut()
-                    .write_linear_counter(value),
-                0x400A => self.apu.borrow_mut().triangle_mut().write_timer_low(value),
-                0x400B => self
-                    .apu
-                    .borrow_mut()
-                    .triangle_mut()
-                    .write_length_counter_timer_high(value),
-
-                // Noise registers
-                0x400C => self.apu.borrow_mut().noise_mut().write_envelope(value),
-                0x400E => self.apu.borrow_mut().noise_mut().write_period(value),
-                0x400F => self.apu.borrow_mut().noise_mut().write_length(value),
-
-                // DMC registers
-                0x4010 => self.apu.borrow_mut().dmc_mut().write_flags_and_rate(value),
-                0x4011 => self.apu.borrow_mut().dmc_mut().write_direct_load(value),
-                0x4012 => self.apu.borrow_mut().dmc_mut().write_sample_address(value),
-                0x4013 => self.apu.borrow_mut().dmc_mut().write_sample_length(value),
-
-                0x4014 => {
-                    // OAMDMA - Store the page for later DMA execution
-                    self.oam_dma_page = Some(value);
-                    return true; // Signal that OAM DMA should occur
-                }
-
-                // APU Control registers
-                0x4015 => self.apu.borrow_mut().write_enable(value),
-                0x4016 => {
-                    // Controller strobe - write to both controllers
-                    self.joypad1.borrow_mut().write_strobe(value);
-                    self.joypad2.borrow_mut().write_strobe(value);
-                }
-                0x4017 => self.apu.borrow_mut().write_frame_counter(value),
-
-                // Unused APU registers
-                0x4009 | 0x400D => {
-                    // $4009 is unused (triangle register 1)
-                    // $400D is unused (noise register 1)
-                    // Writes to these addresses have no effect
-                }
-                _ => {
-                    eprintln!(
-                        "Warning: Write to unimplemented APU/IO register {:04X} ignored",
-                        addr
-                    );
-                }
-            },
+            // PPU/APU/joypad writes are handled by BusDevice dispatch.
 
             // Unallocated I/O space ($4018-$40FF)
             // Writes are ignored (no side effects)
@@ -682,7 +692,7 @@ mod tests {
     }
 
     impl BusDevice for TestBusDevice {
-        fn read(&mut self, addr: u16) -> Option<u8> {
+        fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
             if self.range.contains(&addr) {
                 return Some(self.read_value);
             }
@@ -768,6 +778,14 @@ mod tests {
         let memory = create_test_memory();
 
         assert!(memory.has_device_for_address(0x2002));
+    }
+
+    #[test]
+    fn test_apu_joypad_device_is_registered() {
+        let memory = create_test_memory();
+
+        assert!(memory.has_device_for_address(0x4015));
+        assert!(memory.has_device_for_address(0x4016));
     }
 
     #[test]
