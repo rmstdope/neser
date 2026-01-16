@@ -15,11 +15,12 @@ pub trait BusDevice {
 
 struct PpuRegisterDevice {
     ppu: Rc<RefCell<ppu::Ppu>>,
+    cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
 }
 
 impl PpuRegisterDevice {
-    fn new(ppu: Rc<RefCell<ppu::Ppu>>) -> Self {
-        Self { ppu }
+    fn new(ppu: Rc<RefCell<ppu::Ppu>>, cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>) -> Self {
+        Self { ppu, cartridge }
     }
 }
 
@@ -48,10 +49,16 @@ impl BusDevice for PpuRegisterDevice {
         match reg {
             0x2000 => {
                 self.ppu.borrow_mut().write_control(value);
+                if let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() {
+                    cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
+                }
                 true
             }
             0x2001 => {
                 self.ppu.borrow_mut().write_mask(value);
+                if let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() {
+                    cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
+                }
                 true
             }
             0x2002 => {
@@ -119,7 +126,6 @@ impl BusDevice for ApuJoypadDevice {
         let open_bus = *self.open_bus.borrow();
         match addr {
             0x4000..=0x4013 => Some(open_bus),
-            0x4014 => Some(open_bus),
             0x4015 => Some(self.apu.borrow_mut().read_status(open_bus)),
             0x4016 => {
                 let button_state = if clock_joypads {
@@ -209,6 +215,50 @@ impl BusDevice for ApuJoypadDevice {
 
     fn address_range(&self) -> RangeInclusive<u16> {
         0x4000..=0x4017
+    }
+}
+
+struct OamDmaDevice {
+    oam_dma_page: Rc<RefCell<Option<u8>>>,
+    dma_triggered: Rc<RefCell<bool>>,
+    open_bus: Rc<RefCell<u8>>,
+}
+
+impl OamDmaDevice {
+    fn new(
+        oam_dma_page: Rc<RefCell<Option<u8>>>,
+        dma_triggered: Rc<RefCell<bool>>,
+        open_bus: Rc<RefCell<u8>>,
+    ) -> Self {
+        Self {
+            oam_dma_page,
+            dma_triggered,
+            open_bus,
+        }
+    }
+}
+
+impl BusDevice for OamDmaDevice {
+    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
+        if !self.address_range().contains(&addr) {
+            return None;
+        }
+
+        Some(*self.open_bus.borrow())
+    }
+
+    fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
+        if !self.address_range().contains(&addr) {
+            return false;
+        }
+
+        *self.oam_dma_page.borrow_mut() = Some(value);
+        *self.dma_triggered.borrow_mut() = true;
+        true
+    }
+
+    fn address_range(&self) -> RangeInclusive<u16> {
+        0x4014..=0x4014
     }
 }
 
@@ -307,7 +357,8 @@ pub struct MemController {
     cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
     ppu: Rc<RefCell<ppu::Ppu>>,
     apu: Rc<RefCell<apu::Apu>>,
-    oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
+    oam_dma_page: Rc<RefCell<Option<u8>>>, // Stores the page for pending OAM DMA
+    dma_triggered: Rc<RefCell<bool>>,
     joypad1: Rc<RefCell<Joypad>>,
     joypad2: Rc<RefCell<Joypad>>,
     open_bus: Rc<RefCell<u8>>, // Last value on the data bus for open bus behavior
@@ -322,18 +373,27 @@ impl MemController {
             cartridge: Rc::new(RefCell::new(None)),
             ppu,
             apu,
-            oam_dma_page: None,
+            oam_dma_page: Rc::new(RefCell::new(None)),
+            dma_triggered: Rc::new(RefCell::new(false)),
             joypad1: Rc::new(RefCell::new(Joypad::new())),
             joypad2: Rc::new(RefCell::new(Joypad::new())),
             open_bus: Rc::new(RefCell::new(0xFF)), // Initialize to 0xFF (common power-on state)
             devices: RefCell::new(Vec::new()),
         };
 
-        controller.register_device(Box::new(PpuRegisterDevice::new(controller.ppu.clone())));
+        controller.register_device(Box::new(PpuRegisterDevice::new(
+            controller.ppu.clone(),
+            controller.cartridge.clone(),
+        )));
         controller.register_device(Box::new(ApuJoypadDevice::new(
             controller.apu.clone(),
             controller.joypad1.clone(),
             controller.joypad2.clone(),
+            controller.open_bus.clone(),
+        )));
+        controller.register_device(Box::new(OamDmaDevice::new(
+            controller.oam_dma_page.clone(),
+            controller.dma_triggered.clone(),
             controller.open_bus.clone(),
         )));
         controller.register_device(Box::new(MapperDevice::new(
@@ -561,27 +621,8 @@ impl MemController {
         // Update open bus with the value being written
         *self.open_bus.borrow_mut() = value;
 
-        if addr == 0x4014 {
-            self.oam_dma_page = Some(value);
-            return true;
-        }
-
         if self.write_to_devices(addr, value, is_dummy_write) {
-            if addr == 0x2000 {
-                let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
-                    return false;
-                };
-
-                cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
-            } else if addr == 0x2001 {
-                let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
-                    return false;
-                };
-
-                cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
-            }
-
-            return false;
+            return self.dma_triggered.replace(false);
         }
 
         // println!("Write to {:04X}: {:02X}", addr, value);
@@ -632,12 +673,12 @@ impl MemController {
 
     /// Check if an OAM DMA is pending (without consuming it)
     pub fn oam_dma_pending(&self) -> bool {
-        self.oam_dma_page.is_some()
+        self.oam_dma_page.borrow().is_some()
     }
 
     /// Check if an OAM DMA is pending and get the page value
     pub fn take_oam_dma_page(&mut self) -> Option<u8> {
-        self.oam_dma_page.take()
+        self.oam_dma_page.borrow_mut().take()
     }
 
     /// Execute an OAM DMA transfer from the specified page to OAM
@@ -795,6 +836,23 @@ mod tests {
         assert!(memory.has_device_for_address(0x5000));
         assert!(memory.has_device_for_address(0x6000));
         assert!(memory.has_device_for_address(0x8000));
+    }
+
+    #[test]
+    fn test_oam_dma_device_is_registered() {
+        let memory = create_test_memory();
+
+        assert!(memory.has_device_for_address(0x4014));
+    }
+
+    #[test]
+    fn test_oam_dma_write_is_dispatched_to_devices() {
+        let mut memory = create_test_memory();
+
+        let dma = memory.write(0x4014, 0x22, false);
+        assert!(dma);
+        assert!(memory.oam_dma_pending());
+        assert_eq!(memory.take_oam_dma_page(), Some(0x22));
     }
 
     #[test]
