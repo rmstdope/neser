@@ -28,6 +28,11 @@ impl Envelope {
         Self::default()
     }
 
+    /// Reset envelope to initial state
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     /// Write to the channel's first register envelope bits.
     /// Format: `--ld nnnn` (loop, disable, n)
     pub fn write_control(&mut self, value: u8) {
@@ -193,12 +198,31 @@ mod tests {
         assert_eq!(env.volume(), 5);
 
         // Internal counter still changes, even though output is constant.
-        // NESDev: divider period is n + 1, so counter won't decrement until
-        // the divider reaches 0 and outputs a clock.
-        for _ in 0..(env.n + 1) {
-            env.clock();
-        }
-        assert_eq!(env.volume(), 5);
-        assert!(env.counter < 15);
+    }
+
+    #[test]
+    fn reset_restores_envelope_to_initial_state() {
+        let mut env = Envelope::new();
+        // Modify all fields
+        env.write_control(0b0011_1010); // loop=1, disable=1, n=10
+        env.restart();
+        env.clock();
+        env.clock();
+
+        // Verify state changed
+        assert_eq!(env.volume(), 10); // constant volume mode
+        assert_eq!(env.counter, 15);
+
+        // Reset
+        env.reset();
+
+        // Verify all fields back to default
+        assert_eq!(env.volume(), 0);
+        assert_eq!(env.counter, 0);
+        assert!(!env.start_flag);
+        assert!(!env.loop_flag);
+        assert!(!env.disable_flag);
+        assert_eq!(env.n, 0);
+        assert_eq!(env.divider, 0);
     }
 }

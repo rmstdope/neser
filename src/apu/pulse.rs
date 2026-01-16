@@ -71,6 +71,22 @@ impl Pulse {
         }
     }
 
+    /// Reset pulse channel to initial state (preserves is_pulse1 identity)
+    pub fn reset(&mut self) {
+        self.timer_period = 0;
+        self.timer_counter = 0;
+        self.duty_mode = 0;
+        self.sequence_position = 0;
+        self.envelope.reset();
+        self.length_counter.reset();
+        self.sweep_enabled = false;
+        self.sweep_divider_period = 0;
+        self.sweep_negate = false;
+        self.sweep_shift = 0;
+        self.sweep_reload = false;
+        self.sweep_divider = 0;
+    }
+
     /// Write to timer low register ($4002 for Pulse 1)
     pub fn write_timer_low(&mut self, value: u8) {
         self.timer_period = (self.timer_period & 0x0700) | (value as u16);
@@ -1135,5 +1151,55 @@ mod tests {
         pulse.write_timer_low(0xFF); // Period = $7FF
         pulse.write_sweep(0b1000_0001); // Causes overflow
         assert_eq!(pulse.output(), 0);
+    }
+
+    #[test]
+    fn reset_restores_pulse_to_initial_state_preserving_identity() {
+        let mut pulse1 = Pulse::new(true);
+        let mut pulse2 = Pulse::new(false);
+
+        // Modify pulse1 state
+        pulse1.write_control(0b1011_1111); // Duty 50%, constant volume=15
+        pulse1.write_timer_low(0x64);
+        pulse1.write_timer_high(0x03);
+        pulse1.write_sweep(0b1000_0001);
+        pulse1.set_length_counter_enabled(true);
+        pulse1.write_length_counter_timer_high(0b00000_000);
+        for _ in 0..100 {
+            pulse1.clock_timer();
+        }
+
+        // Verify state changed
+        assert!(pulse1.get_timer_period() > 0);
+        assert!(pulse1.get_length_counter() > 0);
+
+        // Reset both
+        pulse1.reset();
+        pulse2.reset();
+
+        // Verify pulse1 reset to initial state
+        assert_eq!(pulse1.get_timer_period(), 0);
+        assert_eq!(pulse1.get_length_counter(), 0);
+        assert_eq!(pulse1.output(), 0);
+
+        // Verify identity preserved (is_pulse1 should still be true/false)
+        // This is verified implicitly - if it weren't preserved, sweep would behave differently
+        // We can test by setting up identical sweeps and checking they produce different results
+        pulse1.write_timer_low(0x10);
+        pulse1.write_timer_high(0x00);
+        pulse1.write_sweep(0b1000_1001); // Enable, period=0, negate=1, shift=1
+        pulse2.write_timer_low(0x10);
+        pulse2.write_timer_high(0x00);
+        pulse2.write_sweep(0b1000_1001); // Enable, period=0, negate=1, shift=1
+
+        pulse1.clock_sweep();
+        pulse1.clock_sweep();
+        pulse2.clock_sweep();
+        pulse2.clock_sweep();
+
+        // Pulse1 uses ones' complement: 16 - (16>>1) - 1 = 16 - 8 - 1 = 7
+        // Pulse2 uses two's complement: 16 - (16>>1) = 16 - 8 = 8
+        assert_eq!(pulse1.get_timer_period(), 7);
+        assert_eq!(pulse2.get_timer_period(), 8);
     }
 }

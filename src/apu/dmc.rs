@@ -71,6 +71,11 @@ impl Dmc {
         }
     }
 
+    /// Reset DMC channel to initial state
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
     /// Returns true if the DMC has a pending DMA request for the next sample byte.
     pub fn dma_pending(&self) -> bool {
         self.dma_pending
@@ -672,5 +677,39 @@ mod sample_tests {
             output > 0,
             "expected DMC output to be > 0 after reading sample; got {output}"
         );
+    }
+
+    #[test]
+    fn reset_restores_dmc_to_initial_state() {
+        let mut dmc = Dmc::new();
+        // Modify all fields
+        dmc.write_flags_and_rate(0b1100_1111); // IRQ=1, loop=1, rate=15
+        dmc.write_direct_load(0x40); // output_level=64
+        dmc.write_sample_address(0x40); // address=$C000 + 0x40*64
+        dmc.write_sample_length(0x10); // length=0x10*16+1
+        dmc.interrupt_flag = true;
+        dmc.sample_buffer = Some(0xAB);
+        dmc.shift_register = 0xFF;
+        dmc.bits_remaining = 3;
+        dmc.silence_flag = false;
+        dmc.dma_pending = true;
+        dmc.bytes_remaining = 100;
+        dmc.current_address = 0xD000;
+
+        // Verify state changed
+        assert!(dmc.get_irq_flag());
+        assert_eq!(dmc.output(), 64);
+        assert!(dmc.has_bytes_remaining());
+        assert!(dmc.dma_pending());
+
+        // Reset
+        dmc.reset();
+
+        // Verify all fields back to default
+        assert!(!dmc.get_irq_flag());
+        assert_eq!(dmc.output(), 0);
+        assert!(!dmc.has_bytes_remaining());
+        assert!(!dmc.dma_pending());
+        assert_eq!(dmc.bits_remaining, 8);
     }
 }

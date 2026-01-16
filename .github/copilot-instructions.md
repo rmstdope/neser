@@ -10,19 +10,21 @@ The application shall ALWAYS be developed in very small, manageable increments t
 
 ### Test-driven Development (TDD)
 
-In the development process, when appropriate, the application should be built using Test-driven Development (TDD) principles. This means that tests are written before the actual code is implemented. This should be done for all implementation, not just feature additions. The development cycle follows the "Red-Green-Refactor" approach:
+In the development process, when appropriate, the application should be built using Test-driven Development (TDD) principles. This means that tests are written before the actual code is implemented. This always need be done for all implementation, not just feature additions. The development cycle should always follow the "Red-Green-Refactor" approach:
 
 1. **Red**: Write a failing test that defines a desired improvement or new function.
 2. **Green**: Write the minimum amount of code necessary to make the test pass.
 3. **Refactor**: Clean up the code while ensuring that all tests still pass. This approach helps to ensure that the code is reliable, maintainable, and meets the specified requirements from the outset.
 
-It is important to:
+It is VERY VERY important to:
 
 - For more complex things, stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
 - ALWAYS stop after the green phase and ask the navigator to review the implementation and approve before moving on to the refactor phase.
 - ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on.
 - ALWAYS use a TDD approach for all kinds of code, feature implementation, bug fixing, feature enhancements.
 <!-- - It is NOT NEEDED to use a TDD approach when trying to debug or pinpoint a bug. When the bug is pinpointed, use TDD to write a test that reproduces the bug, then proceed with TDD to fix it. -->
+
+Never stray from the TDD process unless explicitly instructed to do so by the navigator.
 
 ### Collaboration
 

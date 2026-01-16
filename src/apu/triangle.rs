@@ -51,6 +51,14 @@ impl Triangle {
         }
     }
 
+    /// Reset triangle channel to initial state with length counter disabled
+    ///
+    /// Unlike other channels, the triangle channel is mostly preserved across reset,
+    /// but the length counter is disabled.
+    pub fn reset(&mut self) {
+        self.length_counter.set_enabled(false);
+    }
+
     /// Clock the timer (called every APU cycle)
     pub fn clock_timer(&mut self) {
         if self.timer_counter == 0 {
@@ -749,5 +757,35 @@ mod tests {
             triangle.sequence_position, start_pos,
             "Sequencer should not advance when length counter is zero"
         );
+    }
+
+    #[test]
+    fn reset_disables_length_counter_but_preserves_other_state() {
+        let mut triangle = Triangle::new();
+        // Set up triangle with various state
+        triangle.write_linear_counter(0b1000_0111); // control=1, reload=7
+        triangle.write_timer_low(0x50);
+        triangle.write_length_counter_timer_high(0b00001_010); // length index=0, timer high=2
+        triangle.set_length_counter_enabled(true);
+
+        // Clock a bit to build state
+        triangle.linear_counter = 5;
+        triangle.sequence_position = 10;
+        triangle.timer_counter = 20;
+
+        // Verify state is set
+        assert!(triangle.is_length_counter_enabled());
+        assert_eq!(triangle.linear_counter, 5);
+        assert_eq!(triangle.sequence_position, 10);
+
+        // Reset
+        triangle.reset();
+
+        // Verify length counter is disabled
+        assert!(!triangle.is_length_counter_enabled());
+
+        // Verify other state is preserved (triangle is special - mostly preserved across reset)
+        assert_eq!(triangle.linear_counter, 5);
+        assert_eq!(triangle.sequence_position, 10);
     }
 }
