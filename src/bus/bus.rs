@@ -1,4 +1,5 @@
-use super::apu_joypad_device::ApuJoypadDevice;
+use super::apu_device::ApuDevice;
+use super::joypad_device::JoypadDevice;
 use super::mapper_device::MapperDevice;
 use super::oam_dma_device::OamDmaDevice;
 use super::ppu_device::PpuDevice;
@@ -53,8 +54,11 @@ impl Bus {
             controller.ppu.clone(),
             controller.cartridge.clone(),
         )));
-        controller.register_device(Box::new(ApuJoypadDevice::new(
+        controller.register_device(Box::new(ApuDevice::new(
             controller.apu.clone(),
+            controller.open_bus.clone(),
+        )));
+        controller.register_device(Box::new(JoypadDevice::new(
             controller.joypad1.clone(),
             controller.joypad2.clone(),
             controller.open_bus.clone(),
@@ -471,11 +475,19 @@ mod tests {
     }
 
     #[test]
-    fn test_apu_joypad_device_is_registered() {
+    fn test_apu_device_is_registered() {
         let memory = create_test_memory();
 
         assert!(memory.has_device_for_address(0x4015));
+        assert!(memory.has_device_for_address(0x4017));
+    }
+
+    #[test]
+    fn test_joypad_device_is_registered() {
+        let memory = create_test_memory();
+
         assert!(memory.has_device_for_address(0x4016));
+        assert!(memory.has_device_for_address(0x4017));
     }
 
     #[test]

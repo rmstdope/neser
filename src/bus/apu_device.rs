@@ -1,35 +1,22 @@
 use crate::apu;
 use crate::bus::bus::BusDevice;
-use crate::input::Joypad;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
 use std::rc::Rc;
 
-pub(crate) struct ApuJoypadDevice {
+pub(crate) struct ApuDevice {
     apu: Rc<RefCell<apu::Apu>>,
-    joypad1: Rc<RefCell<Joypad>>,
-    joypad2: Rc<RefCell<Joypad>>,
     open_bus: Rc<RefCell<u8>>,
 }
 
-impl ApuJoypadDevice {
-    pub(crate) fn new(
-        apu: Rc<RefCell<apu::Apu>>,
-        joypad1: Rc<RefCell<Joypad>>,
-        joypad2: Rc<RefCell<Joypad>>,
-        open_bus: Rc<RefCell<u8>>,
-    ) -> Self {
-        Self {
-            apu,
-            joypad1,
-            joypad2,
-            open_bus,
-        }
+impl ApuDevice {
+    pub(crate) fn new(apu: Rc<RefCell<apu::Apu>>, open_bus: Rc<RefCell<u8>>) -> Self {
+        Self { apu, open_bus }
     }
 }
 
-impl BusDevice for ApuJoypadDevice {
-    fn read(&mut self, addr: u16, clock_joypads: bool) -> Option<u8> {
+impl BusDevice for ApuDevice {
+    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
         if !self.address_range().contains(&addr) {
             return None;
         }
@@ -38,22 +25,7 @@ impl BusDevice for ApuJoypadDevice {
         match addr {
             0x4000..=0x4013 => Some(open_bus),
             0x4015 => Some(self.apu.borrow_mut().read_status(open_bus)),
-            0x4016 => {
-                let button_state = if clock_joypads {
-                    self.joypad1.borrow_mut().read()
-                } else {
-                    self.joypad1.borrow().read_no_clock()
-                };
-                Some((open_bus & 0xFE) | button_state)
-            }
-            0x4017 => {
-                let button_state = if clock_joypads {
-                    self.joypad2.borrow_mut().read()
-                } else {
-                    self.joypad2.borrow().read_no_clock()
-                };
-                Some((open_bus & 0xFE) | button_state)
-            }
+            0x4016 | 0x4017 => None,
             0x4018..=0x40FF => Some(open_bus),
             _ => None,
         }
@@ -105,12 +77,9 @@ impl BusDevice for ApuJoypadDevice {
             0x4013 => self.apu.borrow_mut().dmc_mut().write_sample_length(value),
 
             0x4014 => return false,
+            0x4016 => return false,
 
             0x4015 => self.apu.borrow_mut().write_enable(value),
-            0x4016 => {
-                self.joypad1.borrow_mut().write_strobe(value);
-                self.joypad2.borrow_mut().write_strobe(value);
-            }
             0x4017 => self.apu.borrow_mut().write_frame_counter(value),
 
             0x4018..=0x40FF => {}
