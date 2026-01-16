@@ -92,20 +92,20 @@ impl Cartridge {
             mirroring,
             prg_ram_banks_8k,
         )?;
-        if cfg!(debug_assertions) {
-            eprintln!(
-            "Loaded iNES ROM: prg_rom_banks={} ({} bytes), chr_rom_banks={} ({} bytes), prg_ram_banks_8k={}, mapper={}, mirroring={:?}, trainer={}, battery_backed_prg_ram={}",
-            data[4],
-            prg_rom_size,
-            data[5],
-            chr_rom_size,
-            prg_ram_banks_8k,
-            mapper_number,
-            mirroring,
-            has_trainer,
-            battery_backed_prg_ram,
-            );
-        }
+        // if cfg!(debug_assertions) {
+        //     eprintln!(
+        //     "Loaded iNES ROM: prg_rom_banks={} ({} bytes), chr_rom_banks={} ({} bytes), prg_ram_banks_8k={}, mapper={}, mirroring={:?}, trainer={}, battery_backed_prg_ram={}",
+        //     data[4],
+        //     prg_rom_size,
+        //     data[5],
+        //     chr_rom_size,
+        //     prg_ram_banks_8k,
+        //     mapper_number,
+        //     mirroring,
+        //     has_trainer,
+        //     battery_backed_prg_ram,
+        //     );
+        // }
 
         Ok(Self {
             mapper,
@@ -185,6 +185,14 @@ impl Cartridge {
     /// Get a mutable reference to the mapper
     pub fn mapper_mut(&mut self) -> &mut dyn Mapper {
         &mut *self.mapper
+    }
+
+    /// Reset the cartridge to its power-on state.
+    ///
+    /// This delegates to the mapper's reset method to reset bank registers,
+    /// IRQ counters, and other mapper-specific state. PRG-RAM is typically preserved.
+    pub fn reset(&mut self) {
+        self.mapper.reset();
     }
 
     /// Create a cartridge directly from components (for testing)
@@ -273,14 +281,14 @@ mod tests {
             b'N',
             b'E',
             b'S',
-            0x1A,          // iNES header
-            prg_rom_banks, // PRG ROM size (16KB units)
-            chr_rom_banks, // CHR ROM size (8KB units)
-            flags6,        // Flags 6
-            flags7,        // Flags 7
+            0x1A,             // iNES header
+            prg_rom_banks,    // PRG ROM size (16KB units)
+            chr_rom_banks,    // CHR ROM size (8KB units)
+            flags6,           // Flags 6
+            flags7,           // Flags 7
             prg_ram_banks_8k, // Flags 8 (PRG RAM size in 8KB units)
-            0,             // Flags 9
-            0,             // Flags 10
+            0,                // Flags 9
+            0,                // Flags 10
             0,
             0,
             0,
@@ -661,14 +669,14 @@ mod tests {
 
         let sav_path = rom_path.with_extension("sav");
         let sav = std::fs::read(&sav_path).expect("SAV should be written");
-        
+
         // Verify we saved 16KB (2 banks)
         assert_eq!(sav.len(), 0x4000);
-        
+
         // Verify bank 0 data
         assert_eq!(sav[0x0000], 0xAA);
         assert_eq!(sav[0x1FFF], 0xBB);
-        
+
         // Verify bank 1 data
         assert_eq!(sav[0x2000], 0xCC);
         assert_eq!(sav[0x3FFF], 0xDD);

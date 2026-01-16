@@ -648,8 +648,10 @@ mod tests {
         "roms/blargg/mmc3_irq_tests/4.Scanline_timing.nes",
         60 * 5 // May need time for frame rendering
     );
-    // Note: Tests 5 and 6 test different MMC3 revisions (A and B)
-    // We'll implement Rev B (most common) as default
+    blargg_console_test!(
+        test_mmc3_irq_5_rev_a,
+        "roms/blargg/mmc3_irq_tests/5.MMC3_rev_A.nes"
+    );
     blargg_console_test!(
         test_mmc3_irq_6_rev_b,
         "roms/blargg/mmc3_irq_tests/6.MMC3_rev_B.nes"
@@ -658,20 +660,21 @@ mod tests {
     // MMC3 test suite (alternative test format)
     blargg_test!(
         test_mmc3_test_1_clocking,
-        "roms/blargg/mmc3_test/1-clocking.nes"
+        "roms/blargg/mmc3_test_2/rom_singles/1-clocking.nes"
     );
     blargg_test!(
         test_mmc3_test_2_details,
-        "roms/blargg/mmc3_test/2-details.nes"
+        "roms/blargg/mmc3_test_2/rom_singles/2-details.nes"
     );
     blargg_test!(
         test_mmc3_test_3_a12_clocking,
-        "roms/blargg/mmc3_test/3-A12_clocking.nes"
+        "roms/blargg/mmc3_test_2/rom_singles/3-A12_clocking.nes"
     );
     blargg_test!(
         test_mmc3_test_4_scanline_timing,
-        "roms/blargg/mmc3_test/4-scanline_timing.nes",
+        "roms/blargg/mmc3_test_2/rom_singles/4-scanline_timing.nes",
         60 * 5
     );
-    blargg_test!(test_mmc3_test_5_mmc3, "roms/blargg/mmc3_test/5-MMC3.nes");
+    blargg_test!(test_mmc3_test_5_mmc3, "roms/blargg/mmc3_test_2/rom_singles/5-MMC3.nes");
+    blargg_test!(test_mmc3_test_6_mmc3_alt, "roms/blargg/mmc3_test_2/rom_singles/6-MMC3_alt.nes");
 }

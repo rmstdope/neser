@@ -45,6 +45,11 @@ impl Noise {
         }
     }
 
+    /// Reset noise channel to initial state
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
     /// Clock the timer. When it reaches zero, clock the shift register and reload.
     pub fn clock_timer(&mut self) {
         if self.timer == 0 {
@@ -376,5 +381,32 @@ mod tests {
 
         noise.set_length_counter_enabled(true);
         assert_eq!(noise.get_length_counter(), 0);
+    }
+
+    #[test]
+    fn reset_restores_noise_to_initial_state() {
+        let mut noise = Noise::new();
+        // Modify all fields
+        noise.write_period(0b1000_1111); // mode=1, period index=15
+        noise.write_envelope(0b0011_1010); // halt=1, constant=1, volume=10
+        noise.set_length_counter_enabled(true);
+        noise.write_length(0b00000_000); // length index=0 (value=10)
+        for _ in 0..1000 {
+            noise.clock_timer();
+        }
+
+        // Verify state changed
+        assert!(noise.mode); // short mode
+        assert_eq!(noise.get_length_counter(), 10);
+        assert_ne!(noise.shift_register, 1);
+
+        // Reset
+        noise.reset();
+
+        // Verify all fields back to default
+        assert_eq!(noise.shift_register, 1); // Power-up state
+        assert!(!noise.mode);
+        assert_eq!(noise.get_length_counter(), 0);
+        assert!(!noise.is_length_counter_enabled());
     }
 }

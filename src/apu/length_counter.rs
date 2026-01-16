@@ -20,6 +20,11 @@ impl LengthCounter {
         Self::default()
     }
 
+    /// Reset length counter to initial state
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
     pub fn lookup(index: u8) -> u8 {
         LENGTH_COUNTER_TABLE[(index & 0x1F) as usize]
     }
@@ -134,6 +139,28 @@ mod tests {
         assert_eq!(lc.value(), 10);
 
         lc.set_enabled(false);
+        assert_eq!(lc.value(), 0);
+    }
+
+    #[test]
+    fn reset_restores_length_counter_to_initial_state() {
+        let mut lc = LengthCounter::new();
+        // Modify all fields
+        lc.set_enabled(true);
+        lc.set_halt(true);
+        lc.load_from_index(1); // 254
+
+        // Verify state changed
+        assert!(lc.is_enabled());
+        assert!(lc.is_halted());
+        assert_eq!(lc.value(), 254);
+
+        // Reset
+        lc.reset();
+
+        // Verify all fields back to default
+        assert!(!lc.is_enabled());
+        assert!(!lc.is_halted());
         assert_eq!(lc.value(), 0);
     }
 }

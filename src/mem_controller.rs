@@ -56,6 +56,15 @@ impl MemController {
         self.cartridge = Some(cartridge_rc);
     }
 
+    /// Reset the cartridge (if present) to its power-on state.
+    ///
+    /// This resets mapper state but typically preserves PRG-RAM contents.
+    pub fn reset_cartridge(&mut self) {
+        if let Some(cartridge) = self.cartridge.as_ref() {
+            cartridge.borrow_mut().reset();
+        }
+    }
+
     pub fn save_ram(&self) -> io::Result<()> {
         let Some(cartridge) = self.cartridge.as_ref() else {
             return Ok(());
@@ -175,7 +184,11 @@ impl MemController {
             // Used by advanced mappers like MMC5 for extra features
             0x5000..=0x5FFF => {
                 if let Some(ref cartridge) = self.cartridge {
-                    cartridge.borrow().mapper().read_prg(addr)
+                    let open_bus = *self.open_bus.borrow();
+                    cartridge
+                        .borrow()
+                        .mapper()
+                        .read_prg_open_bus(addr, open_bus)
                 } else {
                     *self.open_bus.borrow()
                 }
@@ -184,7 +197,11 @@ impl MemController {
             // PRG-RAM ($6000-$7FFF)
             0x6000..=0x7FFF => {
                 if let Some(ref cartridge) = self.cartridge {
-                    cartridge.borrow().mapper().read_prg(addr)
+                    let open_bus = *self.open_bus.borrow();
+                    cartridge
+                        .borrow()
+                        .mapper()
+                        .read_prg_open_bus(addr, open_bus)
                 } else {
                     eprintln!(
                         "Warning: Read from PRG-RAM {:04X} without cartridge, returning 0",
@@ -197,7 +214,11 @@ impl MemController {
             // PRG ROM ($8000-$FFFF)
             0x8000..=0xFFFF => {
                 if let Some(ref cartridge) = self.cartridge {
-                    cartridge.borrow().mapper().read_prg(addr)
+                    let open_bus = *self.open_bus.borrow();
+                    cartridge
+                        .borrow()
+                        .mapper()
+                        .read_prg_open_bus(addr, open_bus)
                 } else {
                     panic!("No cartridge mapped, cannot read from {:04X}", addr);
                 }
@@ -603,6 +624,26 @@ mod tests {
             assert_eq!(ppu.read_nametable_for_debug(0x2000), 0x33);
             assert_eq!(ppu.read_nametable_for_debug(0x2400), 0x33);
         }
+    }
+
+    #[test]
+    fn test_mmc1_wram_disabled_reads_return_open_bus() {
+        let mut mem = create_test_memory();
+
+        let cart = Cartridge::new(&create_mmc1_ines_rom_with_vertical_mirroring())
+            .expect("MMC1 test ROM should load");
+        mem.map_cartridge(cart);
+
+        // Disable WRAM by setting bit 4 of the PRG bank register via 5 writes to $E000.
+        mem.write(0xE000, 0b0000_0000, false);
+        mem.write(0xE000, 0b0000_0000, false);
+        mem.write(0xE000, 0b0000_0000, false);
+        mem.write(0xE000, 0b0000_0000, false);
+        mem.write(0xE000, 0b0000_0001, false);
+
+        // Prime open bus to a known value, then read from disabled WRAM.
+        mem.write(0x0000, 0xAB, false);
+        assert_eq!(mem.read(0x6000), 0xAB);
     }
 
     #[test]

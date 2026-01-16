@@ -177,13 +177,13 @@ impl Apu {
     /// - `cpu_cycle`: The total CPU cycles executed before this reset (for coordinated timing)
     /// - `soft_reset`: true for a reset-button style reset, false for power-on
     pub fn reset(&mut self, cpu_cycle: u64, soft_reset: bool) {
-        self.frame_counter = FrameCounter::new();
-        self.pulse1 = Pulse::new(true);
-        self.pulse2 = Pulse::new(false);
+        self.frame_counter.reset();
+        self.pulse1.reset();
+        self.pulse2.reset();
         // At reset, triangle is preserved, but length counter is disabled
-        self.triangle.set_length_counter_enabled(false);
-        self.noise = Noise::new();
-        self.dmc = Dmc::new();
+        self.triangle.reset();
+        self.noise.reset();
+        self.dmc.reset();
         self.sample_accumulator = 0.0;
         self.pending_samples.clear();
         self.apu_cycle = 0;

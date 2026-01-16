@@ -5,6 +5,10 @@ use crate::trace_mapper;
 ///
 /// This implementation focuses on PRG/CHR banking + mirroring control.
 /// It also includes basic MMC3 scanline IRQ counter support.
+///
+/// Two IRQ behaviors are supported:
+/// - **Normal (Sharp) behavior**: IRQ fires when counter is 0 after clock
+/// - **Alternate (NEC) behavior**: IRQ fires only on 1→0 transition
 pub struct MMC3Mapper {
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,
@@ -28,6 +32,9 @@ pub struct MMC3Mapper {
 
     prev_a12: bool,
     a12_low_cycles: u8,
+
+    /// Use alternate (NEC) IRQ behavior: only fire on 1→0 transition
+    use_alternate_irq: bool,
 }
 
 impl MMC3Mapper {
@@ -42,6 +49,19 @@ impl MMC3Mapper {
     const PRG_RAM_WRITE_PROTECT_MASK: u8 = 0b0100_0000;
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        Self::new_with_irq_mode(prg_rom, chr_rom, mirroring, false)
+    }
+
+    /// Create an MMC3 mapper with explicit IRQ behavior mode.
+    ///
+    /// - `use_alternate_irq = false`: Normal (Sharp) behavior - IRQ when counter is 0
+    /// - `use_alternate_irq = true`: Alternate (NEC) behavior - IRQ only on 1→0 transition
+    pub fn new_with_irq_mode(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+        use_alternate_irq: bool,
+    ) -> Self {
         let chr_ram = if chr_rom.is_empty() {
             vec![0; Self::DEFAULT_CHR_RAM_SIZE]
         } else {
@@ -67,6 +87,7 @@ impl MMC3Mapper {
 
             prev_a12: false,
             a12_low_cycles: 0,
+            use_alternate_irq,
         }
     }
 
@@ -160,11 +181,14 @@ impl MMC3Mapper {
     }
 
     fn clock_irq_counter_on_a12_rising_edge(&mut self) {
-        // MMC3 IRQ counter behavior (minimal):
+        // MMC3 IRQ counter behavior:
         // - On each A12 rising edge, update the counter.
         // - If counter==0 or reload requested: load counter from latch.
         // - Else: decrement counter.
-        // - If counter becomes 0 and IRQ is enabled: assert IRQ.
+        //
+        // IRQ assertion differs by chip variant:
+        // - Normal (Sharp): IRQ when counter IS 0 after update
+        // - Alternate (NEC): IRQ only on 1→0 TRANSITION (decrement or reload-triggered reload)
         let old_counter = self.irq_counter;
         let was_reload = self.irq_reload;
 
@@ -175,10 +199,24 @@ impl MMC3Mapper {
             self.irq_counter = self.irq_counter.wrapping_sub(1);
         }
 
-        trace_mapper!(2; "MMC3 IRQ clock: old_counter={}, reload_flag={}, latch={}, new_counter={}, enabled={}", 
-            old_counter, was_reload, self.irq_latch, self.irq_counter, self.irq_enabled);
+        trace_mapper!(2; "MMC3 IRQ clock: old_counter={}, reload_flag={}, latch={}, new_counter={}, enabled={}, alternate={}", 
+            old_counter, was_reload, self.irq_latch, self.irq_counter, self.irq_enabled, self.use_alternate_irq);
 
-        if self.irq_counter == 0 && self.irq_enabled {
+        // Determine if IRQ should fire
+        let should_fire_irq = if self.use_alternate_irq {
+            // Alternate (NEC) behavior: IRQ only on 1→0 transition.
+            // - Decrementing from 1 to 0: fire
+            // - Reloading to 0 when reload flag was set (via $C001): fire
+            // - Reloading to 0 because counter was already 0 (natural): DON'T fire
+            let decremented_to_zero = old_counter == 1 && self.irq_counter == 0;
+            let reload_triggered_to_zero = was_reload && self.irq_counter == 0;
+            self.irq_counter == 0 && (decremented_to_zero || reload_triggered_to_zero)
+        } else {
+            // Normal (Sharp) behavior: IRQ when counter is 0
+            self.irq_counter == 0
+        };
+
+        if should_fire_irq && self.irq_enabled {
             trace_mapper!(1; "MMC3 IRQ ASSERTED!");
             self.irq_asserted = true;
         }
@@ -229,7 +267,9 @@ impl MMC3Mapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
+    use crate::cartridge::mapper::Mapper;
     use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mmc3::MMC3Mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
         let mut data = vec![0u8; bank_size * num_banks];
@@ -239,6 +279,16 @@ mod tests {
             data[start..end].fill(bank as u8);
         }
         data
+    }
+
+    #[test]
+    fn test_mmc3_new_prg_ram_enabled_by_default() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
     }
 
     #[test]

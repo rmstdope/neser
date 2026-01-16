@@ -1,4 +1,4 @@
-use crate::screen_buffer::ScreenBuffer;
+use super::screen_buffer::ScreenBuffer;
 
 /// Manages final pixel composition, color effects, and screen output
 pub struct Rendering {

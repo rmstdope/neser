@@ -221,6 +221,7 @@ mod tests {
         let mut chr = ChrMemory::new(vec![]); // Empty = CHR-RAM
 
         assert!(chr.is_ram());
+        assert_eq!(chr.size(), DEFAULT_CHR_RAM_SIZE);
         assert_eq!(chr.read(0x0000), 0x00);
 
         // Writes to RAM succeed
@@ -231,6 +232,7 @@ mod tests {
     #[test]
     fn test_chr_memory_address_masking() {
         let mut chr = ChrMemory::new_ram(8192);
+        assert_eq!(chr.size(), 8192);
         chr.write(0x0100, 0x42);
 
         // Address should be masked to 8KB range

@@ -21,6 +21,14 @@ pub trait Mapper {
     /// Returns the byte at the given address after bank translation
     fn read_prg(&self, addr: u16) -> u8;
 
+    /// Read a byte from PRG address space (CPU $6000-$FFFF), with open-bus context.
+    ///
+    /// Mappers that return open bus for disabled regions can override this method
+    /// to return `open_bus` when appropriate. Default falls back to `read_prg`.
+    fn read_prg_open_bus(&self, addr: u16, _open_bus: u8) -> u8 {
+        self.read_prg(addr)
+    }
+
     /// Write a byte to PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, writable)
     /// - $8000-$FFFF: Mapper control registers (PRG-ROM is read-only)
@@ -91,6 +99,13 @@ pub trait Mapper {
     /// Default implementation is a no-op.
     fn cpu_cycle(&mut self) {}
 
+    /// Reset the mapper to its power-on state.
+    ///
+    /// This is called when the NES is reset. Mappers should reset their internal
+    /// state (bank registers, IRQ counters, etc.) but typically preserve PRG-RAM contents.
+    /// Default implementation is a no-op for simple mappers.
+    fn reset(&mut self) {}
+
     /// Whether the mapper is currently asserting IRQ.
     ///
     /// This is used to model mapper-generated IRQs (e.g., MMC3 scanline IRQ).
@@ -159,6 +174,48 @@ pub trait Mapper {
     }
 }
 
+/// Calculate CRC32 of ROM data (PRG + CHR combined).
+/// Uses the standard CRC-32 (ISO 3309) polynomial.
+pub fn calculate_rom_crc32(prg_rom: &[u8], chr_rom: &[u8]) -> u32 {
+    const CRC32_TABLE: [u32; 256] = {
+        let mut table = [0u32; 256];
+        let mut i = 0;
+        while i < 256 {
+            let mut crc = i as u32;
+            let mut j = 0;
+            while j < 8 {
+                if crc & 1 != 0 {
+                    crc = (crc >> 1) ^ 0xEDB88320;
+                } else {
+                    crc >>= 1;
+                }
+                j += 1;
+            }
+            table[i] = crc;
+            i += 1;
+        }
+        table
+    };
+
+    let mut crc = 0xFFFFFFFFu32;
+    for &byte in prg_rom.iter().chain(chr_rom.iter()) {
+        let index = ((crc ^ byte as u32) & 0xFF) as usize;
+        crc = (crc >> 8) ^ CRC32_TABLE[index];
+    }
+    !crc
+}
+
+/// CRC32 values for ROMs that require alternate (NEC) MMC3 IRQ behavior.
+const MMC3_ALTERNATE_IRQ_CRCS: &[u32] = &[
+    0x633AFE6F, // 6-MMC3_alt.nes (blargg mmc3_test_2)
+    0xF312D1DE, // 5.MMC3_rev_A.nes (blargg mmc3_irq_tests)
+];
+
+/// Check if a ROM CRC requires alternate MMC3 IRQ behavior.
+fn requires_mmc3_alternate_irq(crc: u32) -> bool {
+    MMC3_ALTERNATE_IRQ_CRCS.contains(&crc)
+}
+
 /// Create a mapper instance based on mapper number
 pub fn create_mapper(
     mapper_number: u8,
@@ -166,12 +223,39 @@ pub fn create_mapper(
     chr_rom: Vec<u8>,
     mirroring: MirroringMode,
 ) -> io::Result<Box<dyn Mapper>> {
+    // Calculate CRC for ROM-specific behavior detection
+    let crc = calculate_rom_crc32(&prg_rom, &chr_rom);
+    create_mapper_with_crc(mapper_number, prg_rom, chr_rom, mirroring, crc)
+}
+
+/// Create a mapper instance with explicit CRC for ROM-specific behavior.
+pub fn create_mapper_with_crc(
+    mapper_number: u8,
+    prg_rom: Vec<u8>,
+    chr_rom: Vec<u8>,
+    mirroring: MirroringMode,
+    crc: u32,
+) -> io::Result<Box<dyn Mapper>> {
     match mapper_number {
         0 => Ok(Box::new(NROMMapper::new(prg_rom, chr_rom, mirroring))),
         1 => Ok(Box::new(MMC1Mapper::new(prg_rom, chr_rom, mirroring))),
         2 => Ok(Box::new(UxROMMapper::new(prg_rom, chr_rom, mirroring))),
         3 => Ok(Box::new(CNROMMapper::new(prg_rom, chr_rom, mirroring))),
-        4 => Ok(Box::new(MMC3Mapper::new(prg_rom, chr_rom, mirroring))),
+        4 => {
+            let use_alternate_irq = requires_mmc3_alternate_irq(crc);
+            if use_alternate_irq {
+                eprintln!(
+                    "MMC3: Using alternate (NEC) IRQ behavior for CRC 0x{:08X}",
+                    crc
+                );
+            }
+            Ok(Box::new(MMC3Mapper::new_with_irq_mode(
+                prg_rom,
+                chr_rom,
+                mirroring,
+                use_alternate_irq,
+            )))
+        }
         5 => Ok(Box::new(MMC5Mapper::new(prg_rom, chr_rom, mirroring))),
         7 => Ok(Box::new(AxROMMapper::new(prg_rom, chr_rom, mirroring))),
         9 => Ok(Box::new(MMC2Mapper::new(prg_rom, chr_rom, mirroring))),

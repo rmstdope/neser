@@ -10,20 +10,21 @@ The application shall ALWAYS be developed in very small, manageable increments t
 
 ### Test-driven Development (TDD)
 
-In the development process, when appropriate, the application should be built using Test-driven Development (TDD) principles. This means that tests are written before the actual code is implemented. This should be done for all implementation, not just feature additions. The development cycle follows the "Red-Green-Refactor" approach:
+In the development process, when appropriate, the application should be built using Test-driven Development (TDD) principles. This means that tests are written before the actual code is implemented. This always need be done for all implementation, not just feature additions. The development cycle should always follow the "Red-Green-Refactor" approach:
 
 1. **Red**: Write a failing test that defines a desired improvement or new function.
 2. **Green**: Write the minimum amount of code necessary to make the test pass.
 3. **Refactor**: Clean up the code while ensuring that all tests still pass. This approach helps to ensure that the code is reliable, maintainable, and meets the specified requirements from the outset.
 
-It is important to:
+It is VERY VERY important to:
 
-- When appropriate, stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
+- For more complex things, stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
 - ALWAYS stop after the green phase and ask the navigator to review the implementation and approve before moving on to the refactor phase.
 - ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on.
 - ALWAYS use a TDD approach for all kinds of code, feature implementation, bug fixing, feature enhancements.
-- It is NOT NEEDED to use a TDD approach when trying to debug or pinpoint a bug. When the bug is pinpointed, use TDD to write a test that reproduces the bug, then proceed with TDD to fix it.
-<!-- - When running as a GitHub Copilot coding agent, follow the TDD approach strictly, but don't wait for approval from the navigator. Instead, proceed to the next phase automatically. If is of course ok to ask for clarification from the navigator if needed or for design decisions. -->
+<!-- - It is NOT NEEDED to use a TDD approach when trying to debug or pinpoint a bug. When the bug is pinpointed, use TDD to write a test that reproduces the bug, then proceed with TDD to fix it. -->
+
+Never stray from the TDD process unless explicitly instructed to do so by the navigator.
 
 ### Collaboration
 
@@ -48,11 +49,19 @@ When working on a sub-issue, this is important:
 
 - ALWAYS assign the main issue and the sub-issue to the developer working on it.
 - ALWAYS create a new branch from main named after the sub-issue number and a short description of the work to be done, e.g., `42-add-user-authentication`. Once the work is completed and reviewed, merge the branch back into main using a pull request. This approach helps to keep the main codebase stable and allows for isolated development of features or fixes.
-- ALWAYS merge a sub-issue branch back into main before starting to work on another sub-issue branch for the same main issue. This ensures that the latest changes are always incorporated and reduces the risk of merge conflicts.
+- ALWAYS merge a sub-issue branch back into main before starting to work on another issue. This ensures that the latest changes are always incorporated and reduces the risk of merge conflicts.
 
-When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized.
+When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the sub-issue is part of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
 
 Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh.
+
+### Merging to main
+Before merging to main, the following checkpoint shall pass:
+- Run `cargo check --all-targets --all-features` and fix all warnings.
+<!-- - Run `cargo clippy --all-targets --all-features -- -D warnings` and fix all warnings. -->
+<!-- - Run `cargo fmt -- --check` and fix all warnings. -->
+- Run `cargo test --all-features` and ensure all tests pass.
+
 
 ### Fixing Bugs
 
@@ -69,11 +78,3 @@ Take all architectural decisions in a collaborative way with the navigator. Docu
 ## Framework decisions
 
 Where appropriate, use established crates to streamline development and leverage existing solutions. However, ensure that the chosen crates align with the project's requirements and do not introduce unnecessary complexity. Regularly evaluate the suitability of crates as the project evolves. Take all crate decisions in a collaborative way with the navigator.
-
-## Emulating CPU
-
-For CPU emulation, the two references to be used are the [NesDev CPU Reference](https://www.nesdev.org/obelisk-6502-guide/reference.html) and the [6502.org page](http://www.6502.org/tutorials/6502opcodes.html).
-
-### Testing CPU Emulation
-
-When writing unit test for the CPU emulation, consider if all adressing mode need to have full testing depending on how much code that is shared between the different modes. Note that each addressing mode for every instruction needs to have at least one test.

@@ -239,6 +239,18 @@ impl Mapper for MMC1Mapper {
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => {
+                if !self.is_wram_enabled() {
+                    return open_bus;
+                }
+                self.read_prg(addr)
+            }
+            _ => self.read_prg(addr),
+        }
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x6000..=0x7FFF => {

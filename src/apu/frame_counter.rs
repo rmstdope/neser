@@ -43,6 +43,11 @@ impl FrameCounter {
         }
     }
 
+    /// Reset frame counter to initial state
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+
     /// Write to frame counter register ($4017) immediately (for internal/test use only)
     ///
     /// **Note**: For CPU writes to $4017, use `Apu::write_frame_counter()` instead.
@@ -901,5 +906,32 @@ mod tests {
             fc.clock();
         }
         assert!(fc.get_irq_flag());
+    }
+
+    #[test]
+    fn reset_restores_frame_counter_to_initial_state() {
+        let mut fc = FrameCounter::new();
+        // Modify state: set 5-step mode with IRQ inhibit
+        fc.write_register(0b1100_0000);
+        // Clock to build up state
+        for _ in 0..1000 {
+            fc.clock();
+        }
+        // Queue a delayed write
+        fc.queue_delayed_write(0x80, 3);
+
+        // Verify state changed
+        assert!(fc.get_mode()); // 5-step mode
+        assert!(fc.is_irq_inhibited());
+        assert!(fc.get_cycle_counter() > 0);
+
+        // Reset
+        fc.reset();
+
+        // Verify all fields back to default
+        assert!(!fc.get_mode()); // 4-step mode
+        assert!(!fc.is_irq_inhibited());
+        assert_eq!(fc.get_cycle_counter(), 0);
+        assert!(!fc.get_irq_flag());
     }
 }
