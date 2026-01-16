@@ -1,6 +1,6 @@
-use crate::trace_cpu;
 use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
+use crate::trace_cpu;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Vrc6Variant {
