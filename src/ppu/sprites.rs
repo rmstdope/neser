@@ -286,17 +286,17 @@ impl Sprites {
         // Always perform the CHR read on the appropriate cycle for all 8 sprite slots
         // This is critical for MMC3 IRQ timing - the A12 transitions must happen
         // 241 times per frame (once per visible scanline + once on pre-render)
-        if fetch_step == 7 && sprite_index < 8 {
+        if (fetch_step == 5 || fetch_step == 7) && sprite_index < 8 {
             // On pre-render scanline (261), sprite evaluation doesn't happen, so
             // secondary_oam contains stale data from scanline 239's evaluation.
             // Those sprites were evaluated for scanline 240, not scanline 0.
             // We must treat all sprites as "dummy" on pre-render to avoid using
             // stale data that would cause calculation errors.
             let is_prerender = scanline == 261;
-            
+
             // Determine if this is a real sprite or a "dummy" fetch
             let is_real_sprite = !is_prerender && sprite_index < self.sprites_found as usize;
-            
+
             let (tile_index, attributes, sprite_y) = if is_real_sprite {
                 let sec_oam_offset = sprite_index * 4;
                 (
@@ -347,23 +347,29 @@ impl Sprites {
 
             let addr = pattern_table_base | tile_offset | (tile_row as u16);
 
-            // Always read CHR to trigger A12 transitions for MMC3
-            let pattern_lo = read_chr(addr);
-            let pattern_hi = read_chr(addr + 8);
+            if fetch_step == 5 {
+                // Always read CHR to trigger A12 transitions for MMC3
+                let pattern_lo = read_chr(addr);
+                if is_real_sprite {
+                    self.next_sprite_pattern_shift_lo[sprite_index] = pattern_lo;
+                }
+            } else {
+                // Always read CHR to trigger A12 transitions for MMC3
+                let mut pattern_hi = read_chr(addr + 8);
+                if is_real_sprite {
+                    let mut pattern_lo = self.next_sprite_pattern_shift_lo[sprite_index];
+                    if (attributes & 0x40) != 0 {
+                        pattern_lo = pattern_lo.reverse_bits();
+                        pattern_hi = pattern_hi.reverse_bits();
+                    }
 
-            // Only store pattern data for real sprites
-            if is_real_sprite {
-                let (final_lo, final_hi) = if (attributes & 0x40) != 0 {
-                    (pattern_lo.reverse_bits(), pattern_hi.reverse_bits())
-                } else {
-                    (pattern_lo, pattern_hi)
-                };
-
-                self.next_sprite_pattern_shift_lo[sprite_index] = final_lo;
-                self.next_sprite_pattern_shift_hi[sprite_index] = final_hi;
-                self.next_sprite_attributes[sprite_index] = attributes;
-                let sec_oam_offset = sprite_index * 4;
-                self.next_sprite_x_positions[sprite_index] = self.secondary_oam[sec_oam_offset + 3];
+                    self.next_sprite_pattern_shift_lo[sprite_index] = pattern_lo;
+                    self.next_sprite_pattern_shift_hi[sprite_index] = pattern_hi;
+                    self.next_sprite_attributes[sprite_index] = attributes;
+                    let sec_oam_offset = sprite_index * 4;
+                    self.next_sprite_x_positions[sprite_index] =
+                        self.secondary_oam[sec_oam_offset + 3];
+                }
             }
         }
     }
