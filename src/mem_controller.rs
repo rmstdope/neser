@@ -9,8 +9,75 @@ use std::rc::Rc;
 
 pub trait BusDevice {
     fn read(&mut self, addr: u16) -> Option<u8>;
-    fn write(&mut self, addr: u16, value: u8) -> bool;
+    fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool;
     fn address_range(&self) -> RangeInclusive<u16>;
+}
+
+struct PpuRegisterDevice {
+    ppu: Rc<RefCell<ppu::Ppu>>,
+}
+
+impl PpuRegisterDevice {
+    fn new(ppu: Rc<RefCell<ppu::Ppu>>) -> Self {
+        Self { ppu }
+    }
+}
+
+impl BusDevice for PpuRegisterDevice {
+    fn read(&mut self, addr: u16) -> Option<u8> {
+        if !self.address_range().contains(&addr) {
+            return None;
+        }
+
+        let reg = addr & 0x2007;
+        match reg {
+            0x2000 | 0x2001 | 0x2003 | 0x2005 | 0x2006 => Some(self.ppu.borrow().io_bus()),
+            0x2002 => Some(self.ppu.borrow_mut().get_status()),
+            0x2004 => Some(self.ppu.borrow_mut().read_oam_data()),
+            0x2007 => Some(self.ppu.borrow_mut().read_data()),
+            _ => None,
+        }
+    }
+
+    fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool {
+        if !self.address_range().contains(&addr) {
+            return false;
+        }
+
+        let reg = addr & 0x2007;
+        match reg {
+            0x2000 | 0x2001 => false,
+            0x2002 => {
+                self.ppu.borrow_mut().set_io_bus(value);
+                true
+            }
+            0x2003 => {
+                self.ppu.borrow_mut().write_oam_address(value);
+                true
+            }
+            0x2004 => {
+                self.ppu.borrow_mut().write_oam_data(value);
+                true
+            }
+            0x2005 => {
+                self.ppu.borrow_mut().write_scroll(value, is_dummy_write);
+                true
+            }
+            0x2006 => {
+                self.ppu.borrow_mut().write_address(value, is_dummy_write);
+                true
+            }
+            0x2007 => {
+                self.ppu.borrow_mut().write_data(value);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn address_range(&self) -> RangeInclusive<u16> {
+        0x2000..=0x3FFF
+    }
 }
 
 /// NES Memory (64KB address space)
@@ -29,7 +96,7 @@ pub struct MemController {
 impl MemController {
     /// Create a new memory instance with 64KB of RAM initialized to 0
     pub fn new(ppu: Rc<RefCell<ppu::Ppu>>, apu: Rc<RefCell<apu::Apu>>) -> Self {
-        Self {
+        let mut controller = Self {
             cpu_ram: vec![0; 0x10000],
             cartridge: None,
             ppu,
@@ -39,10 +106,13 @@ impl MemController {
             joypad2: RefCell::new(Joypad::new()),
             open_bus: RefCell::new(0xFF), // Initialize to 0xFF (common power-on state)
             devices: RefCell::new(Vec::new()),
-        }
+        };
+
+        controller.register_device(Box::new(PpuRegisterDevice::new(controller.ppu.clone())));
+
+        controller
     }
 
-    #[allow(dead_code)]
     pub fn register_device(&mut self, device: Box<dyn BusDevice>) {
         self.devices.get_mut().push(device);
     }
@@ -299,6 +369,14 @@ impl MemController {
         }
     }
 
+    #[cfg(test)]
+    fn has_device_for_address(&self, addr: u16) -> bool {
+        self.devices
+            .borrow()
+            .iter()
+            .any(|device| device.address_range().contains(&addr))
+    }
+
     #[cfg(any(test, debug_assertions))]
     #[allow(dead_code)]
     pub fn read_for_testing(&self, addr: u16) -> u8 {
@@ -331,7 +409,7 @@ impl MemController {
         // Update open bus with the value being written
         *self.open_bus.borrow_mut() = value;
 
-        if self.write_to_devices(addr, value) {
+        if self.write_to_devices(addr, value, is_dummy_write) {
             return false;
         }
 
@@ -522,10 +600,10 @@ impl MemController {
         false // No DMA triggered
     }
 
-    fn write_to_devices(&mut self, addr: u16, value: u8) -> bool {
+    fn write_to_devices(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool {
         let devices = self.devices.get_mut();
         for device in devices.iter_mut() {
-            if device.address_range().contains(&addr) && device.write(addr, value) {
+            if device.address_range().contains(&addr) && device.write(addr, value, is_dummy_write) {
                 return true;
             }
         }
@@ -612,7 +690,7 @@ mod tests {
             None
         }
 
-        fn write(&mut self, addr: u16, value: u8) -> bool {
+        fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
             if self.range.contains(&addr) {
                 *self.last_write.borrow_mut() = Some((addr, value));
                 return true;
@@ -683,6 +761,13 @@ mod tests {
         let dma = memory.write(0x4021, 0x55, false);
         assert!(!dma);
         assert_eq!(*last_write.borrow(), Some((0x4021, 0x55)));
+    }
+
+    #[test]
+    fn test_ppu_register_device_is_registered() {
+        let memory = create_test_memory();
+
+        assert!(memory.has_device_for_address(0x2002));
     }
 
     #[test]
