@@ -102,6 +102,7 @@ impl Nes {
         // Reset PPU/APU first: CPU reset advances the master clock and ticks both.
         self.ppu.borrow_mut().reset();
         self.apu.borrow_mut().reset(cpu_cycle, soft_reset);
+        self.memory.borrow_mut().reset_cartridge();
         self.cpu.reset(soft_reset);
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
@@ -1277,5 +1278,27 @@ mod tests {
         rom.extend_from_slice(&[0x00; 8192]);
 
         rom
+    }
+
+    #[test]
+    fn test_nes_reset_resets_cartridge() {
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Write to PRG-RAM (would be affected by a mapper that has reset state)
+        nes.memory.borrow_mut().write(0x6000, 0xAB, false);
+        assert_eq!(nes.memory.borrow().read(0x6000), 0xAB);
+
+        // Soft reset should call cartridge reset
+        // For NROM this doesn't change much, but the call chain should work
+        nes.reset(true);
+
+        // PRG-RAM should still have the value (NROM doesn't clear RAM on reset)
+        // This test verifies the reset call chain works without crashing
+        assert_eq!(nes.memory.borrow().read(0x6000), 0xAB);
     }
 }

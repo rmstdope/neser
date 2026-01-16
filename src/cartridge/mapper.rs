@@ -91,6 +91,13 @@ pub trait Mapper {
     /// Default implementation is a no-op.
     fn cpu_cycle(&mut self) {}
 
+    /// Reset the mapper to its power-on state.
+    ///
+    /// This is called when the NES is reset. Mappers should reset their internal
+    /// state (bank registers, IRQ counters, etc.) but typically preserve PRG-RAM contents.
+    /// Default implementation is a no-op for simple mappers.
+    fn reset(&mut self) {}
+
     /// Whether the mapper is currently asserting IRQ.
     ///
     /// This is used to model mapper-generated IRQs (e.g., MMC3 scanline IRQ).

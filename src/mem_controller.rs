@@ -56,6 +56,15 @@ impl MemController {
         self.cartridge = Some(cartridge_rc);
     }
 
+    /// Reset the cartridge (if present) to its power-on state.
+    ///
+    /// This resets mapper state but typically preserves PRG-RAM contents.
+    pub fn reset_cartridge(&mut self) {
+        if let Some(cartridge) = self.cartridge.as_ref() {
+            cartridge.borrow_mut().reset();
+        }
+    }
+
     pub fn save_ram(&self) -> io::Result<()> {
         let Some(cartridge) = self.cartridge.as_ref() else {
             return Ok(());

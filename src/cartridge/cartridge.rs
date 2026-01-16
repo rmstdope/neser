@@ -187,6 +187,14 @@ impl Cartridge {
         &mut *self.mapper
     }
 
+    /// Reset the cartridge to its power-on state.
+    ///
+    /// This delegates to the mapper's reset method to reset bank registers,
+    /// IRQ counters, and other mapper-specific state. PRG-RAM is typically preserved.
+    pub fn reset(&mut self) {
+        self.mapper.reset();
+    }
+
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
