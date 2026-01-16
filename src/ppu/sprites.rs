@@ -263,107 +263,155 @@ impl Sprites {
     }
 
     /// Fetch sprite pattern data
-    /// 
+    ///
     /// IMPORTANT: The PPU hardware ALWAYS fetches 8 sprites worth of pattern data during
     /// pixels 257-320, regardless of how many sprites were found during evaluation.
     /// For sprites not found (sprite_index >= sprites_found), the PPU fetches using
     /// tile $FF at Y coordinate $FF. This is critical for MMC3 IRQ timing as the
     /// A12 transitions must happen consistently even when no sprites are on screen.
+    ///
+    /// PPU sprite fetch timing within each 8-cycle sprite slot:
+    /// - Cycles 0-1: Garbage nametable byte (no CHR read)
+    /// - Cycles 2-3: Garbage nametable byte (no CHR read)
+    /// - Cycles 4-5: Pattern table tile low byte (CHR read, A12 may rise)
+    /// - Cycles 6-7: Pattern table tile high byte (CHR read)
+    ///
+    /// For sprite 0 (pixels 257-264):
+    /// - Pattern low read at pixel 261 (cycle 4 within sprite fetch)
+    /// - Pattern high read at pixel 263 (cycle 6 within sprite fetch)
+    ///
+    /// This timing is critical for MMC3 IRQ - the A12 rising edge should occur
+    /// at around PPU cycle 260-261 (first sprite pattern fetch).
     pub fn fetch_sprite_pattern<F>(
         &mut self,
         pixel: u16,
         scanline: u16,
         sprite_height: u8,
         sprite_pattern_table_base: u16,
-        read_chr: F,
+        mut read_chr: F,
     ) where
-        F: Fn(u16) -> u8,
+        F: FnMut(u16) -> u8,
     {
         let cycle_offset = pixel - 257;
         let sprite_index = (cycle_offset / 8) as usize;
         let fetch_step = cycle_offset % 8;
 
-        // Always perform the CHR read on the appropriate cycle for all 8 sprite slots
-        // This is critical for MMC3 IRQ timing - the A12 transitions must happen
-        // 241 times per frame (once per visible scanline + once on pre-render)
-        if fetch_step == 7 && sprite_index < 8 {
-            // On pre-render scanline (261), sprite evaluation doesn't happen, so
-            // secondary_oam contains stale data from scanline 239's evaluation.
-            // Those sprites were evaluated for scanline 240, not scanline 0.
-            // We must treat all sprites as "dummy" on pre-render to avoid using
-            // stale data that would cause calculation errors.
-            let is_prerender = scanline == 261;
-            
-            // Determine if this is a real sprite or a "dummy" fetch
-            let is_real_sprite = !is_prerender && sprite_index < self.sprites_found as usize;
-            
-            let (tile_index, attributes, sprite_y) = if is_real_sprite {
-                let sec_oam_offset = sprite_index * 4;
-                (
-                    self.secondary_oam[sec_oam_offset + 1],
-                    self.secondary_oam[sec_oam_offset + 2],
-                    self.secondary_oam[sec_oam_offset],
-                )
+        // Only process valid sprite slots
+        if sprite_index >= 8 {
+            return;
+        }
+
+        // CHR reads happen at specific cycles within each sprite's 8-cycle window:
+        // - fetch_step 4: Pattern low byte read (odd cycle of the 2-cycle fetch)
+        // - fetch_step 6: Pattern high byte read (odd cycle of the 2-cycle fetch)
+        //
+        // Actually, the PPU reads on both cycles of each 2-cycle fetch. The address
+        // appears on cycle N (fetch_step 4 or 6) and the read completes on cycle N+1.
+        // For MMC3 A12 detection, the address change is what matters, which happens
+        // on cycle 4 for the low byte.
+        //
+        // To trigger A12 at the correct time, we do the read at fetch_step 5 and 7
+        // (the second cycle of each 2-cycle access, when data is latched).
+
+        let is_pattern_lo_cycle = fetch_step == 5;
+        let is_pattern_hi_cycle = fetch_step == 7;
+
+        if !is_pattern_lo_cycle && !is_pattern_hi_cycle {
+            return;
+        }
+
+        // On pre-render scanline (261), sprite evaluation doesn't happen, so
+        // secondary_oam contains stale data from scanline 239's evaluation.
+        // Those sprites were evaluated for scanline 240, not scanline 0.
+        // We must treat all sprites as "dummy" on pre-render to avoid using
+        // stale data that would cause calculation errors.
+        let is_prerender = scanline == 261;
+
+        // Determine if this is a real sprite or a "dummy" fetch
+        let is_real_sprite = !is_prerender && sprite_index < self.sprites_found as usize;
+
+        let (tile_index, attributes, sprite_y) = if is_real_sprite {
+            let sec_oam_offset = sprite_index * 4;
+            (
+                self.secondary_oam[sec_oam_offset + 1],
+                self.secondary_oam[sec_oam_offset + 2],
+                self.secondary_oam[sec_oam_offset],
+            )
+        } else {
+            // For dummy fetches, use tile $FF at Y=$FF
+            // The NES hardware reads these even though no sprite is visible
+            (0xFF, 0, 0xFF)
+        };
+
+        let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
+        // Adjust Y position: add 1 to sprite_y to move sprites 2 pixels down
+        let sprite_row = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16) as u8;
+
+        // Mask sprite_row to valid range for sprite height
+        // For 8x8 sprites: 0-7, for 8x16 sprites: 0-15
+        let sprite_row = if sprite_height == 8 {
+            sprite_row & 0x07
+        } else {
+            sprite_row & 0x0F
+        };
+
+        // Calculate pattern address
+        let pattern_table_base = if sprite_height == 8 {
+            // Use pattern table base from PPUCTRL (provided by caller)
+            sprite_pattern_table_base
+        } else {
+            // 8x16 sprites: use bit 0 of tile index
+            ((tile_index & 0x01) as u16) << 12
+        };
+
+        let tile_offset = if sprite_height == 8 {
+            (tile_index as u16) << 4
+        } else {
+            ((tile_index & 0xFE) as u16) << 4
+        };
+
+        let effective_row = if (attributes & 0x80) != 0 {
+            if sprite_height == 8 {
+                7 - sprite_row
             } else {
-                // For dummy fetches, use tile $FF at Y=$FF
-                // The NES hardware reads these even though no sprite is visible
-                (0xFF, 0, 0xFF)
-            };
+                15 - sprite_row
+            }
+        } else {
+            sprite_row
+        };
 
-            let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
-            // Adjust Y position: add 1 to sprite_y to move sprites 2 pixels down
-            let sprite_row = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16) as u8;
+        let tile_row = if sprite_height == 16 && effective_row >= 8 {
+            effective_row - 8 + 16
+        } else {
+            effective_row
+        };
 
-            // Calculate pattern address
-            let pattern_table_base = if sprite_height == 8 {
-                // Use pattern table base from PPUCTRL (provided by caller)
-                sprite_pattern_table_base
-            } else {
-                // 8x16 sprites: use bit 0 of tile index
-                ((tile_index & 0x01) as u16) << 12
-            };
+        let addr = pattern_table_base | tile_offset | (tile_row as u16);
 
-            let tile_offset = if sprite_height == 8 {
-                (tile_index as u16) << 4
-            } else {
-                ((tile_index & 0xFE) as u16) << 4
-            };
-
-            let effective_row = if (attributes & 0x80) != 0 {
-                if sprite_height == 8 {
-                    7 - sprite_row
-                } else {
-                    15 - sprite_row
-                }
-            } else {
-                sprite_row
-            };
-
-            let tile_row = if sprite_height == 16 && effective_row >= 8 {
-                effective_row - 8 + 16
-            } else {
-                effective_row
-            };
-
-            let addr = pattern_table_base | tile_offset | (tile_row as u16);
-
-            // Always read CHR to trigger A12 transitions for MMC3
+        if is_pattern_lo_cycle {
+            // Read pattern low byte - this triggers the A12 rising edge for MMC3
             let pattern_lo = read_chr(addr);
-            let pattern_hi = read_chr(addr + 8);
 
-            // Only store pattern data for real sprites
             if is_real_sprite {
-                let (final_lo, final_hi) = if (attributes & 0x40) != 0 {
-                    (pattern_lo.reverse_bits(), pattern_hi.reverse_bits())
+                self.next_sprite_pattern_shift_lo[sprite_index] = if (attributes & 0x40) != 0 {
+                    pattern_lo.reverse_bits()
                 } else {
-                    (pattern_lo, pattern_hi)
+                    pattern_lo
                 };
-
-                self.next_sprite_pattern_shift_lo[sprite_index] = final_lo;
-                self.next_sprite_pattern_shift_hi[sprite_index] = final_hi;
                 self.next_sprite_attributes[sprite_index] = attributes;
                 let sec_oam_offset = sprite_index * 4;
                 self.next_sprite_x_positions[sprite_index] = self.secondary_oam[sec_oam_offset + 3];
+            }
+        } else if is_pattern_hi_cycle {
+            // Read pattern high byte
+            let pattern_hi = read_chr(addr + 8);
+
+            if is_real_sprite {
+                self.next_sprite_pattern_shift_hi[sprite_index] = if (attributes & 0x40) != 0 {
+                    pattern_hi.reverse_bits()
+                } else {
+                    pattern_hi
+                };
             }
         }
     }
@@ -629,6 +677,8 @@ mod tests {
 
         // Fetch pattern for scanline 52
         // With our +1 adjustment: sprite_row = 52 - (50 + 1) = 1
+        // Need to call for both low byte (fetch_step 5) and high byte (fetch_step 7)
+        sprites.fetch_sprite_pattern(257 + 5, 51, 8, 0x0000, read_chr);
         sprites.fetch_sprite_pattern(257 + 7, 51, 8, 0x0000, read_chr);
 
         // Verify pattern data was fetched

@@ -238,25 +238,39 @@ impl Ppu {
 
             if should_fetch {
                 // Perform background tile fetches based on cycle (every 8 pixels)
-                // Fetch step: 0=nametable, 1=attribute, 2=pattern lo, 3=pattern hi
-                let fetch_step = ((pixel - 1) % 8) / 2;
+                // Each memory access takes 2 PPU cycles:
+                //   Cycles 1-2 (pixels 1-2): Nametable byte
+                //   Cycles 3-4 (pixels 3-4): Attribute byte
+                //   Cycles 5-6 (pixels 5-6): Pattern table tile low
+                //   Cycles 7-8 (pixels 7-8): Pattern table tile high
+                //
+                // For MMC3 IRQ timing, the A12 transition should be detected on
+                // the SECOND cycle of each memory access (when the read completes).
+                // This is pixel 6 for pattern_lo and pixel 8 for pattern_hi.
+                let cycle_in_tile = (pixel - 1) % 8;
+                let fetch_step = cycle_in_tile / 2;
+                
+                // Memory reads should only happen once per fetch (on the second cycle)
+                // for correct MMC3 A12 timing.
+                let is_second_cycle_of_fetch = cycle_in_tile % 2 == 1;
+                
                 match fetch_step {
-                    0 => {
-                        // Fetch nametable byte
+                    0 if is_second_cycle_of_fetch => {
+                        // Fetch nametable byte (cycle 2 of tile)
                         let v = self.registers.v();
                         self.background.fetch_nametable(v, |addr| {
                             self.memory.read_nametable_mapped(addr, &self.cartridge)
                         });
                     }
-                    1 => {
-                        // Fetch attribute byte
+                    1 if is_second_cycle_of_fetch => {
+                        // Fetch attribute byte (cycle 4 of tile)
                         let v = self.registers.v();
                         self.background.fetch_attribute(v, |addr| {
                             self.memory.read_nametable_mapped(addr, &self.cartridge)
                         });
                     }
-                    2 => {
-                        // Fetch pattern table low byte
+                    2 if is_second_cycle_of_fetch => {
+                        // Fetch pattern table low byte (cycle 6 of tile)
                         let v = self.registers.v();
                         let bg_pattern_table = self.registers.bg_pattern_table_addr();
                         let cartridge = &self.cartridge;
@@ -266,8 +280,8 @@ impl Ppu {
                                 self.memory.read_chr(addr, cartridge)
                             });
                     }
-                    3 => {
-                        // Fetch pattern table high byte
+                    3 if is_second_cycle_of_fetch => {
+                        // Fetch pattern table high byte (cycle 8 of tile)
                         let v = self.registers.v();
                         let bg_pattern_table = self.registers.bg_pattern_table_addr();
                         let cartridge = &self.cartridge;
