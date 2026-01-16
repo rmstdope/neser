@@ -1911,6 +1911,7 @@ dependencies = [
 name = "neser"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.10.0",
  "gl",
  "glow 0.14.2",
  "imgui",

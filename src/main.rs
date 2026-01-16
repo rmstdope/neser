@@ -16,7 +16,7 @@ mod nes;
 mod ppu;
 mod tracing;
 
-use config::{Config, ParseResult};
+use config::{ApuChannels, Config, ParseResult};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
@@ -96,11 +96,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Apply channel enable/disable settings
     {
         let mut apu = nes_instance.apu.borrow_mut();
-        apu.set_pulse1_enabled(config.pulse1_enabled);
-        apu.set_pulse2_enabled(config.pulse2_enabled);
-        apu.set_triangle_enabled(config.triangle_enabled);
-        apu.set_noise_enabled(config.noise_enabled);
-        apu.set_dmc_enabled(config.dmc_enabled);
+        apu.set_pulse1_enabled(config.apu_channels.contains(ApuChannels::PULSE1));
+        apu.set_pulse2_enabled(config.apu_channels.contains(ApuChannels::PULSE2));
+        apu.set_triangle_enabled(config.apu_channels.contains(ApuChannels::TRIANGLE));
+        apu.set_noise_enabled(config.apu_channels.contains(ApuChannels::NOISE));
+        apu.set_dmc_enabled(config.apu_channels.contains(ApuChannels::DMC));
     }
 
     let run_result = event_loop.run(&mut nes_instance, config.tracing);
