@@ -312,7 +312,16 @@ impl Sprites {
 
             let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
             // Adjust Y position: add 1 to sprite_y to move sprites 2 pixels down
-            let sprite_row = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16) as u8;
+            let mut sprite_row = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16) as u8;
+            
+            // Constrain sprite_row to valid range to prevent spurious A12 transitions
+            // For dummy sprites (Y=$FF), sprite_row can be large, causing pattern addresses
+            // to spill into the next 4KB bank and trigger unwanted A12 rising edges
+            sprite_row = if sprite_height == 8 {
+                sprite_row & 0x07  // 0-7 for 8x8 sprites
+            } else {
+                sprite_row & 0x0F  // 0-15 for 8x16 sprites
+            };
 
             // Calculate pattern address
             let pattern_table_base = if sprite_height == 8 {
