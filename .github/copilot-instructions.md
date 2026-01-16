@@ -54,7 +54,7 @@ When working on a sub-issue, this is important:
 
 When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the sub-issue is part of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
 
-Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh.
+Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh. Don't use backticks in the text, use normal quotes.
 
 ### Committing and Merging to main
 
