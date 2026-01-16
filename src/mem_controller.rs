@@ -4,7 +4,14 @@ use crate::input::Joypad;
 use crate::ppu;
 use std::cell::RefCell;
 use std::io;
+use std::ops::RangeInclusive;
 use std::rc::Rc;
+
+pub trait BusDevice {
+    fn read(&mut self, addr: u16) -> Option<u8>;
+    fn write(&mut self, addr: u16, value: u8) -> bool;
+    fn address_range(&self) -> RangeInclusive<u16>;
+}
 
 /// NES Memory (64KB address space)
 pub struct MemController {
@@ -16,6 +23,7 @@ pub struct MemController {
     joypad1: RefCell<Joypad>,
     joypad2: RefCell<Joypad>,
     open_bus: RefCell<u8>, // Last value on the data bus for open bus behavior
+    devices: RefCell<Vec<Box<dyn BusDevice>>>,
 }
 
 impl MemController {
@@ -30,7 +38,13 @@ impl MemController {
             joypad1: RefCell::new(Joypad::new()),
             joypad2: RefCell::new(Joypad::new()),
             open_bus: RefCell::new(0xFF), // Initialize to 0xFF (common power-on state)
+            devices: RefCell::new(Vec::new()),
         }
+    }
+
+    #[allow(dead_code)]
+    pub fn register_device(&mut self, device: Box<dyn BusDevice>) {
+        self.devices.get_mut().push(device);
     }
 
     /// Map a cartridge into memory
@@ -129,6 +143,11 @@ impl MemController {
     }
 
     fn read_internal(&self, addr: u16, clock_joypads: bool) -> u8 {
+        if let Some(value) = self.read_from_devices(addr) {
+            *self.open_bus.borrow_mut() = value;
+            return value;
+        }
+
         let value = match addr {
             // RAM ($0000-$1FFF) with mirroring
             0x0000..=0x1FFF => self.cpu_ram[(addr & 0x07FF) as usize],
@@ -240,6 +259,19 @@ impl MemController {
         value
     }
 
+    fn read_from_devices(&self, addr: u16) -> Option<u8> {
+        let mut devices = self.devices.borrow_mut();
+        for device in devices.iter_mut() {
+            if device.address_range().contains(&addr)
+                && let Some(value) = device.read(addr)
+            {
+                return Some(value);
+            }
+        }
+
+        None
+    }
+
     /// Sample the mapper-generated IRQ line (e.g., MMC3 scanline IRQ).
     ///
     /// This is a level-triggered signal: it remains asserted until the mapper is acknowledged.
@@ -298,6 +330,10 @@ impl MemController {
     pub fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool {
         // Update open bus with the value being written
         *self.open_bus.borrow_mut() = value;
+
+        if self.write_to_devices(addr, value) {
+            return false;
+        }
 
         // println!("Write to {:04X}: {:02X}", addr, value);
         match addr {
@@ -486,6 +522,17 @@ impl MemController {
         false // No DMA triggered
     }
 
+    fn write_to_devices(&mut self, addr: u16, value: u8) -> bool {
+        let devices = self.devices.get_mut();
+        for device in devices.iter_mut() {
+            if device.address_range().contains(&addr) && device.write(addr, value) {
+                return true;
+            }
+        }
+
+        false
+    }
+
     /// Write a 16-bit word to memory (little-endian)
     #[cfg(test)]
     pub fn write_u16(&mut self, addr: u16, value: u16) {
@@ -536,6 +583,49 @@ impl MemController {
 mod tests {
     use super::*;
 
+    struct TestBusDevice {
+        range: std::ops::RangeInclusive<u16>,
+        read_value: u8,
+        last_write: Rc<RefCell<Option<(u16, u8)>>>,
+    }
+
+    impl TestBusDevice {
+        fn new(
+            range: std::ops::RangeInclusive<u16>,
+            read_value: u8,
+            last_write: Rc<RefCell<Option<(u16, u8)>>>,
+        ) -> Self {
+            Self {
+                range,
+                read_value,
+                last_write,
+            }
+        }
+    }
+
+    impl BusDevice for TestBusDevice {
+        fn read(&mut self, addr: u16) -> Option<u8> {
+            if self.range.contains(&addr) {
+                return Some(self.read_value);
+            }
+
+            None
+        }
+
+        fn write(&mut self, addr: u16, value: u8) -> bool {
+            if self.range.contains(&addr) {
+                *self.last_write.borrow_mut() = Some((addr, value));
+                return true;
+            }
+
+            false
+        }
+
+        fn address_range(&self) -> std::ops::RangeInclusive<u16> {
+            self.range.clone()
+        }
+    }
+
     fn create_mmc1_ines_rom_with_vertical_mirroring() -> Vec<u8> {
         // Minimal iNES ROM with mapper 1 (MMC1):
         // - 32KB PRG ROM (2 * 16KB)
@@ -575,6 +665,24 @@ mod tests {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new(crate::nes::TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         MemController::new(ppu, apu)
+    }
+
+    #[test]
+    fn test_bus_device_dispatches_reads_and_writes() {
+        let mut memory = create_test_memory();
+        let last_write = Rc::new(RefCell::new(None));
+
+        memory.register_device(Box::new(TestBusDevice::new(
+            0x4020..=0x4021,
+            0xAB,
+            last_write.clone(),
+        )));
+
+        assert_eq!(memory.read(0x4020), 0xAB);
+
+        let dma = memory.write(0x4021, 0x55, false);
+        assert!(!dma);
+        assert_eq!(*last_write.borrow(), Some((0x4021, 0x55)));
     }
 
     #[test]
