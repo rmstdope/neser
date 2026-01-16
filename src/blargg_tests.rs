@@ -668,10 +668,10 @@ mod tests {
         test_mmc3_test_3_a12_clocking,
         "roms/blargg/mmc3_test/3-A12_clocking.nes"
     );
-    // blargg_test!(
-    //     test_mmc3_test_4_scanline_timing,
-    //     "roms/blargg/mmc3_test/4-scanline_timing.nes",
-    //     60 * 5
-    // );
+    blargg_test!(
+        test_mmc3_test_4_scanline_timing,
+        "roms/blargg/mmc3_test/4-scanline_timing.nes",
+        60 * 5
+    );
     blargg_test!(test_mmc3_test_5_mmc3, "roms/blargg/mmc3_test/5-MMC3.nes");
 }
