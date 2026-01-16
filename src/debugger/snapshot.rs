@@ -54,8 +54,7 @@ fn read_vectors_for_snapshot(nes: &Nes) -> (u16, u16) {
 
 fn build_snapshot(nes: &Nes, cpu_disasm: Vec<CpuDisasmLineSnapshot>) -> DebuggerSnapshot {
     let cpu_cycles = nes.cpu.get_total_cycles();
-
-    let pc = nes.cpu.pc;
+    let pc = nes.cpu.pc();
 
     let prg_hexdump_base = prg_hexdump_base_from_pc(pc);
 
@@ -69,12 +68,12 @@ fn build_snapshot(nes: &Nes, cpu_disasm: Vec<CpuDisasmLineSnapshot>) -> Debugger
     let (nmi_vector, irq_vector) = read_vectors_for_snapshot(nes);
 
     let cpu_regs = CpuRegsSnapshot {
-        pc: nes.cpu.pc,
-        a: nes.cpu.a,
-        x: nes.cpu.x,
-        y: nes.cpu.y,
-        sp: nes.cpu.sp,
-        p: nes.cpu.p,
+        pc,
+        a: nes.cpu.a(),
+        x: nes.cpu.x(),
+        y: nes.cpu.y(),
+        sp: nes.cpu.sp(),
+        p: nes.cpu.p(),
         cycles: cpu_cycles,
         interrupt: nes.cpu.current_interrupt(),
         nmi_vector,
@@ -85,12 +84,12 @@ fn build_snapshot(nes: &Nes, cpu_disasm: Vec<CpuDisasmLineSnapshot>) -> Debugger
         "CPU\n\
 PC: {pc:04X}  A: {a:02X} X: {x:02X} Y: {y:02X}  SP: {sp:02X}  P: {p:02X}\n\
 CYC: {cycles}",
-        pc = nes.cpu.pc,
-        a = nes.cpu.a,
-        x = nes.cpu.x,
-        y = nes.cpu.y,
-        sp = nes.cpu.sp,
-        p = nes.cpu.p,
+        pc = nes.cpu.pc(),
+        a = nes.cpu.a(),
+        x = nes.cpu.x(),
+        y = nes.cpu.y(),
+        sp = nes.cpu.sp(),
+        p = nes.cpu.p(),
         cycles = cpu_cycles,
     );
 
@@ -139,13 +138,13 @@ fn snapshot_impl(
         match state {
             Some(state) => disassemble_window_with_state(
                 |addr| memory.read_cpu_for_debugger(addr),
-                nes.cpu.pc,
+                nes.cpu.pc(),
                 state,
                 disasm_config,
             ),
             None => disassemble_window(
                 |addr| memory.read_cpu_for_debugger(addr),
-                nes.cpu.pc,
+                nes.cpu.pc(),
                 disasm_config,
             ),
         }
@@ -196,12 +195,12 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         // Seed a couple of CPU registers so the snapshot has something meaningful.
-        nes.cpu.pc = 0xC000;
-        nes.cpu.a = 0x12;
-        nes.cpu.x = 0x34;
-        nes.cpu.y = 0x56;
-        nes.cpu.sp = 0xFD;
-        nes.cpu.p = 0x24;
+        nes.cpu.set_pc(0xC000);
+        nes.cpu.set_a_register(0x12);
+        nes.cpu.set_x(0x34);
+        nes.cpu.set_y(0x56);
+        nes.cpu.set_sp(0xFD);
+        nes.cpu.set_p(0x24);
 
         let snap = snapshot(&nes);
 
@@ -245,7 +244,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(prg_rom, vec![], MirroringMode::Horizontal);
         nes.insert_cartridge(cartridge);
 
-        nes.cpu.pc = 0x8000;
+        nes.cpu.set_pc(0x8000);
 
         let snap = snapshot(&nes);
 

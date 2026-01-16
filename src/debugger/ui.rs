@@ -381,12 +381,12 @@ mod tests {
     #[test]
     fn test_cpu_register_lines_render_expected_values() {
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.cpu.pc = 0xC000;
-        nes.cpu.a = 0x12;
-        nes.cpu.x = 0x34;
-        nes.cpu.y = 0x56;
-        nes.cpu.sp = 0xFD;
-        nes.cpu.p = 0b1010_0101;
+        nes.cpu.set_pc(0xC000);
+        nes.cpu.set_a_register(0x12);
+        nes.cpu.set_x(0x34);
+        nes.cpu.set_y(0x56);
+        nes.cpu.set_sp(0xFD);
+        nes.cpu.set_p(0b1010_0101);
 
         let snapshot = debugger::snapshot(&nes);
         let lines = cpu_register_lines(&snapshot);
