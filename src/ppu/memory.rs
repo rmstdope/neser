@@ -297,8 +297,8 @@ mod tests {
         mem: &Memory,
         cartridge: &Option<Rc<RefCell<Cartridge>>>,
     ) {
-        // MMC3 A12 low-pass filter: requires 8 PPU cycles low.
-        for _ in 0..8 {
+        // MMC3 A12 low-pass filter: requires 12 PPU cycles low.
+        for _ in 0..12 {
             mem.read_chr(0x0FFF, cartridge);
         }
         mem.read_chr(0x1000, cartridge);

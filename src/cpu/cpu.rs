@@ -2742,8 +2742,8 @@ mod tests {
         memory.borrow_mut().write_for_testing(0xC001, 0);
         memory.borrow_mut().write_for_testing(0xE001, 0);
 
-        // Generate two valid A12 rising edges (requires 8 low cycles each) so MMC3 asserts IRQ.
-        for _ in 0..8 {
+        // Generate two valid A12 rising edges (requires 12 low cycles each) so MMC3 asserts IRQ.
+        for _ in 0..12 {
             memory
                 .borrow_mut()
                 .mapper_ppu_address_changed_for_test(0x0FFF);
@@ -2752,7 +2752,7 @@ mod tests {
             .borrow_mut()
             .mapper_ppu_address_changed_for_test(0x1000);
 
-        for _ in 0..8 {
+        for _ in 0..12 {
             memory
                 .borrow_mut()
                 .mapper_ppu_address_changed_for_test(0x0FFF);

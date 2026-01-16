@@ -684,7 +684,7 @@ impl Ppu {
                 // We simulate this by calling ppu_address_changed with the old address
                 // multiple times before notifying about the new address.
                 let mapper = &mut *cartridge.borrow_mut();
-                for _ in 0..8 {
+                for _ in 0..12 {
                     mapper.mapper_mut().ppu_address_changed(old_v);
                 }
                 mapper.mapper_mut().ppu_address_changed(new_v);
@@ -745,7 +745,7 @@ impl Ppu {
                 // For PPUDATA reads/writes, we need to prime the A12 filter similar
                 // to PPUADDR writes, as these are also manual address changes
                 let mapper = &mut *cartridge.borrow_mut();
-                for _ in 0..8 {
+                for _ in 0..12 {
                     mapper.mapper_mut().ppu_address_changed(old_addr);
                 }
                 mapper.mapper_mut().ppu_address_changed(new_addr);
@@ -797,7 +797,7 @@ impl Ppu {
                 // For PPUDATA reads/writes, we need to prime the A12 filter similar
                 // to PPUADDR writes, as these are also manual address changes
                 let mapper = &mut *cartridge.borrow_mut();
-                for _ in 0..8 {
+                for _ in 0..12 {
                     mapper.mapper_mut().ppu_address_changed(old_addr);
                 }
                 mapper.mapper_mut().ppu_address_changed(new_addr);

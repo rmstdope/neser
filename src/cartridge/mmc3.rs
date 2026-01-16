@@ -260,15 +260,15 @@ mod tests {
         // Enable IRQ
         mapper.write_prg(0xE001, 0);
 
-        // First A12 rising edge ($0xxx -> $1xxx). MMC3 requires A12 low for 8 PPU cycles.
-        for _ in 0..8 {
+        // First A12 rising edge ($0xxx -> $1xxx). MMC3 requires A12 low for 12 PPU cycles.
+        for _ in 0..12 {
             mapper.ppu_address_changed(0x0FFF);
         }
         mapper.ppu_address_changed(0x1000);
         assert_eq!(mapper.irq_pending(), false);
 
         // Second A12 rising edge
-        for _ in 0..8 {
+        for _ in 0..12 {
             mapper.ppu_address_changed(0x0FFF);
         }
         mapper.ppu_address_changed(0x1000);
@@ -299,15 +299,15 @@ mod tests {
         mapper.ppu_address_changed(0x1000);
         assert_eq!(mapper.irq_pending(), false);
 
-        // Now hold A12 low for 8 PPU cycles, then rising edge: this clocks once.
-        for _ in 0..8 {
+        // Now hold A12 low for 12 PPU cycles, then rising edge: this clocks once.
+        for _ in 0..12 {
             mapper.ppu_address_changed(0x0FFF);
         }
         mapper.ppu_address_changed(0x1000);
         assert_eq!(mapper.irq_pending(), false);
 
-        // Another valid edge after 8 low cycles: second clock should assert IRQ.
-        for _ in 0..8 {
+        // Another valid edge after 12 low cycles: second clock should assert IRQ.
+        for _ in 0..12 {
             mapper.ppu_address_changed(0x0FFF);
         }
         mapper.ppu_address_changed(0x1000);
