@@ -49,11 +49,12 @@ When working on a sub-issue, this is important:
 
 - ALWAYS assign the main issue and the sub-issue to the developer working on it.
 - ALWAYS create a new branch from main named after the sub-issue number and a short description of the work to be done, e.g., `42-add-user-authentication`. Once the work is completed and reviewed, merge the branch back into main using a pull request. This approach helps to keep the main codebase stable and allows for isolated development of features or fixes.
+- ALWAYS create a pull request (PR) for merging the sub-issue branch back into main. The PR should reference both the main issue and the sub-issue to maintain a clear link between code changes and tracked work.
 - ALWAYS merge a sub-issue branch back into main before starting to work on another issue. This ensures that the latest changes are always incorporated and reduces the risk of merge conflicts.
 
 When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the sub-issue is part of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
 
-Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh.
+Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh. Don't use backticks in the text, use normal quotes.
 
 ### Committing and Merging to main
 

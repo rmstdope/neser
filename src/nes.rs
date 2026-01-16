@@ -236,7 +236,8 @@ impl Nes {
     /// Format: `PC  OPCODE  INSTRUCTION                 A:XX X:XX Y:XX P:XX SP:XX PPU:SSS,PPP CYC:C`
     pub fn trace(&mut self, tracing: &Tracing) -> String {
         let nestest = tracing.nestest;
-        let pc = self.cpu.get_state().pc;
+        let cpu_state = self.cpu.state();
+        let pc = cpu_state.pc;
         let memory = self.memory.borrow();
         // Read the opcode and determine instruction size
         let opcode_byte = memory.read(pc);
@@ -281,7 +282,7 @@ impl Nes {
                 }
             }
             "ZPX" => {
-                let addr = byte1.wrapping_add(self.cpu.get_state().x) as u16;
+                let addr = byte1.wrapping_add(cpu_state.x) as u16;
                 if nestest {
                     let mut value = memory.read(addr);
                     if (0x4000..0x4100).contains(&addr) {
@@ -296,7 +297,7 @@ impl Nes {
                 }
             }
             "ZPY" => {
-                let addr = byte1.wrapping_add(self.cpu.get_state().y) as u16;
+                let addr = byte1.wrapping_add(cpu_state.y) as u16;
                 if nestest {
                     let mut value = memory.read(addr);
                     if (0x4000..0x4100).contains(&addr) {
@@ -328,7 +329,7 @@ impl Nes {
             "ABSX" => {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
-                    let effective_addr = addr.wrapping_add(self.cpu.get_state().x as u16);
+                    let effective_addr = addr.wrapping_add(cpu_state.x as u16);
                     let value = memory.read(effective_addr);
                     format!(
                         "{} ${:04X},X @ {:04X} = {:02X}",
@@ -341,7 +342,7 @@ impl Nes {
             "ABSY" => {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
-                    let effective_addr = addr.wrapping_add(self.cpu.get_state().y as u16);
+                    let effective_addr = addr.wrapping_add(cpu_state.y as u16);
                     let value = memory.read(effective_addr);
                     format!(
                         "{} ${:04X},Y @ {:04X} = {:02X}",
@@ -353,7 +354,7 @@ impl Nes {
             }
             "INDX" => {
                 if nestest {
-                    let zp_addr = byte1.wrapping_add(self.cpu.get_state().x);
+                    let zp_addr = byte1.wrapping_add(cpu_state.x);
                     let addr_lo = memory.read(zp_addr as u16);
                     let addr_hi = memory.read(zp_addr.wrapping_add(1) as u16);
                     let addr = u16::from_le_bytes([addr_lo, addr_hi]);
@@ -371,7 +372,7 @@ impl Nes {
                     let addr_lo = memory.read(byte1 as u16);
                     let addr_hi = memory.read(byte1.wrapping_add(1) as u16);
                     let base_addr = u16::from_le_bytes([addr_lo, addr_hi]);
-                    let effective_addr = base_addr.wrapping_add(self.cpu.get_state().y as u16);
+                    let effective_addr = base_addr.wrapping_add(cpu_state.y as u16);
                     let value = memory.read(effective_addr);
                     format!(
                         "{} (${:02X}),Y = {:04X} @ {:04X} = {:02X}",
@@ -412,7 +413,7 @@ impl Nes {
                 // Same as ABSX but for write/RMW instructions
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
-                    let effective_addr = addr.wrapping_add(self.cpu.get_state().x as u16);
+                    let effective_addr = addr.wrapping_add(cpu_state.x as u16);
                     let value = memory.read(effective_addr);
                     format!(
                         "{} ${:04X},X @ {:04X} = {:02X}",
@@ -426,7 +427,7 @@ impl Nes {
                 // Same as ABSY but for write/RMW instructions
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
-                    let effective_addr = addr.wrapping_add(self.cpu.get_state().y as u16);
+                    let effective_addr = addr.wrapping_add(cpu_state.y as u16);
                     let value = memory.read(effective_addr);
                     format!(
                         "{} ${:04X},Y @ {:04X} = {:02X}",
@@ -442,7 +443,7 @@ impl Nes {
                     let addr_lo = memory.read(byte1 as u16);
                     let addr_hi = memory.read(byte1.wrapping_add(1) as u16);
                     let base_addr = u16::from_le_bytes([addr_lo, addr_hi]);
-                    let effective_addr = base_addr.wrapping_add(self.cpu.get_state().y as u16);
+                    let effective_addr = base_addr.wrapping_add(cpu_state.y as u16);
                     let value = memory.read(effective_addr);
                     format!(
                         "{} (${:02X}),Y = {:04X} @ {:04X} = {:02X}",
@@ -457,7 +458,6 @@ impl Nes {
 
         if nestest {
             let total_cycles = self.cpu.get_total_cycles();
-            let state = self.cpu.get_state();
             let ppu = self.ppu.borrow();
             let mut scanline = ppu.scanline();
             let mut pixel = ppu.pixel();
@@ -480,11 +480,11 @@ impl Nes {
                 hex_dump,
                 pad_before,
                 asm,
-                state.a,
-                state.x,
-                state.y,
-                state.p,
-                state.sp,
+                cpu_state.a,
+                cpu_state.x,
+                cpu_state.y,
+                cpu_state.p,
+                cpu_state.sp,
                 scanline,
                 pixel,
                 total_cycles,
@@ -492,7 +492,6 @@ impl Nes {
             )
         } else {
             let total_cycles = self.cpu.get_total_cycles();
-            let state = self.cpu.get_state();
             let ppu = self.ppu.borrow();
             let scanline = ppu.scanline();
             let pixel = ppu.pixel();
@@ -503,11 +502,11 @@ impl Nes {
                 pc,
                 hex_dump,
                 asm,
-                state.a,
-                state.x,
-                state.y,
-                state.p,
-                state.sp,
+                cpu_state.a,
+                cpu_state.x,
+                cpu_state.y,
+                cpu_state.p,
+                cpu_state.sp,
                 scanline,
                 pixel,
                 total_cycles,
@@ -583,7 +582,7 @@ mod tests {
         nes.insert_cartridge(cartridge);
         nes.cpu.reset(false);
         // nestest automated test starts execution at $C000 (not reset vector $C004)
-        nes.cpu.get_state().pc = 0xC000;
+        nes.cpu.set_pc(0xC000);
         // CPU reset takes 7 cycles, manually sync PPU and CPU cycle counters
         // PPU is already a bit ahead here:
         // - Nes::new runs the PPU for 1 cycle (sprite-0 hit timing offset)
@@ -642,7 +641,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         // Write NOP to RAM and set PC directly (skip reset to avoid ROM requirement)
         nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
-        nes.cpu.get_state().pc = 0x0000; // Set PC to RAM address
+        nes.cpu.set_pc(0x0000); // Set PC to RAM address
 
         // NOP takes 2 CPU cycles, so PPU should run 6 cycles (3x ratio for NTSC)
         // Plus 1 cycle for initial PPU offset (sprite 0 hit timing correction)
@@ -655,7 +654,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Pal);
         // Write NOP to RAM and set PC directly
         nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
-        nes.cpu.get_state().pc = 0x0000;
+        nes.cpu.set_pc(0x0000);
 
         // NOP takes 2 CPU cycles, PAL ratio is 3.2, so 2 * 3.2 = 6.4
         // Plus 1 cycle for initial PPU offset
@@ -671,7 +670,7 @@ mod tests {
         for i in 0..10 {
             nes.memory.borrow_mut().write(i, 0xEA, false); // NOP
         }
-        nes.cpu.get_state().pc = 0x0000;
+        nes.cpu.set_pc(0x0000);
 
         // Run 5 NOPs: 5 instructions * 2 cycles = 10 CPU cycles
         // 10 * 3.2 = 32 PPU cycles, plus 1 cycle initial offset
@@ -688,7 +687,7 @@ mod tests {
         for i in 0..3 {
             nes.memory.borrow_mut().write(i, 0xEA, false); // NOP (2 cycles each)
         }
-        nes.cpu.get_state().pc = 0x0000;
+        nes.cpu.set_pc(0x0000);
 
         // 3 NOPs = 6 CPU cycles, 18 PPU cycles (6 * 3), plus 1 cycle initial offset
         nes.run_cpu_tick();
@@ -701,7 +700,7 @@ mod tests {
     fn test_ppu_cycles_reset_on_nes_reset() {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP
-        nes.cpu.get_state().pc = 0x0000;
+        nes.cpu.set_pc(0x0000);
 
         nes.run_cpu_tick();
         assert_eq!(nes.ppu.borrow().total_cycles(), 7); // 6 + 1 offset

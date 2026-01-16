@@ -273,13 +273,13 @@ impl EventLoop {
         }
 
         self.arm_temporary_breakpoint_after_next_instruction = false;
-        self.set_temporary_breakpoint(nes.cpu.pc);
+        self.set_temporary_breakpoint(nes.cpu.pc());
     }
 
     fn continue_from_debugger(&mut self, nes: &crate::nes::Nes) {
         // Prevent immediately re-breaking on the same instruction.
-        if self.breakpoints.contains(&nes.cpu.pc) {
-            self.breakpoint_ignore_once_at_pc = Some(nes.cpu.pc);
+        if self.breakpoints.contains(&nes.cpu.pc()) {
+            self.breakpoint_ignore_once_at_pc = Some(nes.cpu.pc());
         }
 
         self.paused = false;
@@ -482,7 +482,7 @@ impl EventLoop {
                 // automatically runs the correct number of PPU cycles per CPU instruction.
                 // A full frame is 262 scanlines × 341 pixels = 89,342 PPU cycles for NTSC
                 while !nes.is_ready_to_render() && !nes.cpu.is_halted() {
-                    if self.check_breakpoint_hit(nes.cpu.pc, nes.cpu.current_interrupt()) {
+                    if self.check_breakpoint_hit(nes.cpu.pc(), nes.cpu.current_interrupt()) {
                         break;
                     }
 
@@ -681,7 +681,7 @@ impl EventLoop {
             return false;
         }
 
-        if self.check_breakpoint_hit(nes.cpu.pc, nes.cpu.current_interrupt()) {
+        if self.check_breakpoint_hit(nes.cpu.pc(), nes.cpu.current_interrupt()) {
             return false;
         }
 
@@ -719,7 +719,7 @@ impl EventLoop {
         let mut should_continue = action.continue_run;
 
         if action.step_over {
-            let pc = nes.cpu.pc;
+            let pc = nes.cpu.pc();
             let opcode = {
                 let memory = nes.memory.borrow();
                 memory.read_cpu_for_debugger(pc)
@@ -837,7 +837,7 @@ impl EventLoop {
     fn debugger_step_over(nes: &mut crate::nes::Nes) {
         const JSR_OPCODE: u8 = 0x20;
 
-        let pc = nes.cpu.pc;
+        let pc = nes.cpu.pc();
         let opcode = {
             let memory = nes.memory.borrow();
             memory.read_cpu_for_debugger(pc)
@@ -852,7 +852,7 @@ impl EventLoop {
             // Run until we return to the instruction after the original JSR.
             const MAX_STEPS: usize = 1_000_000;
             for _ in 0..MAX_STEPS {
-                if nes.cpu.pc == next_pc || nes.cpu.is_halted() {
+                if nes.cpu.pc() == next_pc || nes.cpu.is_halted() {
                     break;
                 }
                 nes.run_cpu_tick();
@@ -1153,13 +1153,13 @@ mod tests {
         // Execute two instructions: $8000 and $8001.
         tick_headless_once(&mut event_loop, &mut nes);
         tick_headless_once(&mut event_loop, &mut nes);
-        assert_eq!(nes.cpu.pc, 0x8002);
+        assert_eq!(nes.cpu.pc(), 0x8002);
         assert!(!event_loop.is_paused());
         assert!(!event_loop.debugger_open_requested());
 
         // Next tick should notice the breakpoint and enter the debugger (paused).
         tick_headless_once(&mut event_loop, &mut nes);
-        assert_eq!(nes.cpu.pc, 0x8002);
+        assert_eq!(nes.cpu.pc(), 0x8002);
         assert!(event_loop.is_paused());
         assert!(event_loop.debugger_open_requested());
     }
@@ -1179,7 +1179,7 @@ mod tests {
 
         // If the breakpoint was removed, we should not pause when reaching $8001.
         tick_headless_once(&mut event_loop, &mut nes);
-        assert_eq!(nes.cpu.pc, 0x8001);
+        assert_eq!(nes.cpu.pc(), 0x8001);
         assert!(!event_loop.is_paused());
         assert!(!event_loop.debugger_open_requested());
     }
@@ -1513,7 +1513,7 @@ mod tests {
     #[test]
     fn test_handle_key_down_f10_step_over_jsr_runs_until_return() {
         let mut nes = nes_with_jsr_program();
-        nes.cpu.x = 0;
+        nes.cpu.set_x(0);
 
         let mut paused = true;
         let mut debugger_open_requested = true;
@@ -1532,11 +1532,13 @@ mod tests {
             "step-over should keep debugger open"
         );
         assert_eq!(
-            nes.cpu.pc, 0x8003,
+            nes.cpu.pc(),
+            0x8003,
             "expected step-over to stop at next instruction"
         );
         assert_eq!(
-            nes.cpu.x, 1,
+            nes.cpu.x(),
+            1,
             "expected subroutine to have executed (INX) before returning"
         );
     }
@@ -1544,7 +1546,7 @@ mod tests {
     #[test]
     fn test_handle_key_down_f11_step_into_jsr_enters_subroutine() {
         let mut nes = nes_with_jsr_program();
-        nes.cpu.x = 0;
+        nes.cpu.set_x(0);
 
         let mut paused = true;
         let mut debugger_open_requested = true;
@@ -1562,9 +1564,14 @@ mod tests {
             debugger_open_requested,
             "step-into should keep debugger open"
         );
-        assert_eq!(nes.cpu.pc, 0x8006, "expected step-into to enter subroutine");
         assert_eq!(
-            nes.cpu.x, 0,
+            nes.cpu.pc(),
+            0x8006,
+            "expected step-into to enter subroutine"
+        );
+        assert_eq!(
+            nes.cpu.x(),
+            0,
             "expected to not execute INX when stepping into JSR"
         );
     }
@@ -1612,7 +1619,7 @@ mod tests {
 
         // First tick hits the breakpoint and pauses before executing.
         tick_headless_once(&mut event_loop, &mut nes);
-        assert_eq!(nes.cpu.pc, 0x8000);
+        assert_eq!(nes.cpu.pc(), 0x8000);
         assert!(event_loop.is_paused());
         assert!(event_loop.debugger_open_requested());
 
@@ -1633,7 +1640,7 @@ mod tests {
 
         // Next tick must execute the instruction at $8000 (NOP) and advance.
         tick_headless_once(&mut event_loop, &mut nes);
-        assert_eq!(nes.cpu.pc, 0x8001);
+        assert_eq!(nes.cpu.pc(), 0x8001);
         assert!(!event_loop.is_paused());
         assert!(!event_loop.debugger_open_requested());
     }
@@ -1652,7 +1659,7 @@ mod tests {
 
         // Hit the breakpoint first.
         tick_headless_once(&mut event_loop, &mut nes);
-        assert_eq!(nes.cpu.pc, 0x8000);
+        assert_eq!(nes.cpu.pc(), 0x8000);
         assert!(event_loop.is_paused());
         assert!(event_loop.debugger_open_requested());
 
@@ -1663,7 +1670,7 @@ mod tests {
 
         // Next tick must execute past the breakpoint without immediately re-breaking.
         tick_headless_once(&mut event_loop, &mut nes);
-        assert_eq!(nes.cpu.pc, 0x8001);
+        assert_eq!(nes.cpu.pc(), 0x8001);
         assert!(!event_loop.is_paused());
         assert!(!event_loop.debugger_open_requested());
     }
@@ -1726,7 +1733,7 @@ mod tests {
 
         assert!(event_loop.is_paused());
         assert!(event_loop.debugger_open_requested());
-        assert_eq!(nes.cpu.pc, nmi_vector);
+        assert_eq!(nes.cpu.pc(), nmi_vector);
         assert!(
             event_loop.temporary_breakpoint.is_none(),
             "temporary breakpoint should clear after being hit"
@@ -1764,7 +1771,7 @@ mod tests {
         nes.reset(false);
 
         // Ensure IRQs are unmasked (clear I flag).
-        nes.cpu.p &= !0b0000_0100;
+        nes.cpu.set_p(nes.cpu.p() & !0b0000_0100);
 
         // Force an IRQ to be pending.
         nes.cpu.set_irq_pending(true);
@@ -1798,7 +1805,7 @@ mod tests {
 
         assert!(event_loop.is_paused());
         assert!(event_loop.debugger_open_requested());
-        assert_eq!(nes.cpu.pc, irq_vector);
+        assert_eq!(nes.cpu.pc(), irq_vector);
         assert!(
             event_loop.temporary_breakpoint.is_none(),
             "temporary breakpoint should clear after being hit"
@@ -1837,7 +1844,7 @@ mod tests {
         nes.reset(false);
 
         // Ensure IRQs are unmasked (clear I flag).
-        nes.cpu.p &= !0b0000_0100;
+        nes.cpu.set_p(nes.cpu.p() & !0b0000_0100);
         // Force an IRQ to be pending.
         nes.cpu.set_irq_pending(true);
 
@@ -1867,7 +1874,7 @@ mod tests {
         }
 
         assert!(event_loop.is_paused());
-        assert_eq!(nes.cpu.pc, irq_vector);
+        assert_eq!(nes.cpu.pc(), irq_vector);
         assert_eq!(
             nes.cpu.current_interrupt(),
             Some(crate::cpu::InterruptKind::Irq)
@@ -1925,7 +1932,7 @@ mod tests {
         for _ in 0..1_000_000 {
             nes.run_cpu_tick();
             if nes.cpu.current_interrupt() == Some(crate::cpu::InterruptKind::Nmi)
-                && nes.cpu.pc == nmi_vector
+                && nes.cpu.pc() == nmi_vector
             {
                 break;
             }
@@ -1934,7 +1941,7 @@ mod tests {
             nes.cpu.current_interrupt(),
             Some(crate::cpu::InterruptKind::Nmi)
         );
-        assert_eq!(nes.cpu.pc, nmi_vector);
+        assert_eq!(nes.cpu.pc(), nmi_vector);
 
         // Now request Run-to-NMI while we're already inside the current NMI handler.
         event_loop.request_debugger_open();
@@ -1985,7 +1992,7 @@ mod tests {
             nes.cpu.current_interrupt(),
             Some(crate::cpu::InterruptKind::Nmi)
         );
-        assert_eq!(nes.cpu.pc, nmi_vector);
+        assert_eq!(nes.cpu.pc(), nmi_vector);
     }
 
     #[test]
@@ -2023,7 +2030,7 @@ mod tests {
         for _ in 0..1_000_000 {
             nes.run_cpu_tick();
             if nes.cpu.current_interrupt() == Some(crate::cpu::InterruptKind::Nmi)
-                && nes.cpu.pc == nmi_vector
+                && nes.cpu.pc() == nmi_vector
             {
                 break;
             }
@@ -2032,7 +2039,7 @@ mod tests {
             nes.cpu.current_interrupt(),
             Some(crate::cpu::InterruptKind::Nmi)
         );
-        assert_eq!(nes.cpu.pc, nmi_vector);
+        assert_eq!(nes.cpu.pc(), nmi_vector);
 
         // Place a breakpoint inside the current NMI handler to reproduce the user-reported
         // "Run to NMI just steps one instruction" behavior.
@@ -2083,7 +2090,7 @@ mod tests {
             nes.cpu.current_interrupt(),
             Some(crate::cpu::InterruptKind::Nmi)
         );
-        assert_eq!(nes.cpu.pc, nmi_vector);
+        assert_eq!(nes.cpu.pc(), nmi_vector);
     }
 
     #[test]
@@ -2129,7 +2136,7 @@ mod tests {
             }
         }
 
-        assert_eq!(nes.cpu.pc, 0x8001);
+        assert_eq!(nes.cpu.pc(), 0x8001);
         assert!(event_loop.is_paused());
         assert!(event_loop.debugger_open_requested());
     }
@@ -2140,7 +2147,7 @@ mod tests {
         let config = default_config();
         let mut event_loop = EventLoop::new(true, None, &config).unwrap();
         let mut nes = nes_with_jsr_program();
-        nes.cpu.x = 0;
+        nes.cpu.set_x(0);
 
         event_loop.request_debugger_open();
         assert!(event_loop.is_paused());
@@ -2176,11 +2183,13 @@ mod tests {
         }
 
         assert_eq!(
-            nes.cpu.pc, 0x8003,
+            nes.cpu.pc(),
+            0x8003,
             "expected step-over to stop at next instruction"
         );
         assert_eq!(
-            nes.cpu.x, 1,
+            nes.cpu.x(),
+            1,
             "expected subroutine to have executed (INX) before returning"
         );
         assert!(event_loop.is_paused());
@@ -2222,7 +2231,7 @@ mod tests {
         );
         nes.insert_cartridge(cartridge);
 
-        nes.cpu.pc = 0x1234;
+        nes.cpu.set_pc(0x1234);
         let _ = EventLoop::handle_key_down(
             &mut nes,
             Keycode::F1,
@@ -2230,7 +2239,7 @@ mod tests {
             &mut paused,
             &mut debugger_open_requested,
         );
-        assert_eq!(nes.cpu.pc, reset_vector);
+        assert_eq!(nes.cpu.pc(), reset_vector);
     }
 
     #[test]

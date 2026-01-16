@@ -111,36 +111,6 @@ pub enum MemoryError {
 }
 ```
 
-#### 2.2 Generic `io::Error` Usage
-
-**Location:** `src/cartridge/cartridge.rs`
-
-```rust
-pub fn new(data: &[u8]) -> io::Result<Self> {
-    if data.len() < 16 || &data[0..4] != b"NES\x1A" {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Invalid iNES file format",
-        ));
-    }
-```
-
-**Proposed Refactoring:**
-- Create a dedicated `CartridgeError` enum:
-
-```rust
-#[derive(Debug, thiserror::Error)]
-pub enum CartridgeError {
-    #[error("Invalid iNES header: expected 'NES\\x1A' magic bytes")]
-    InvalidHeader,
-    #[error("File too small: expected at least {expected} bytes, got {actual}")]
-    FileTooSmall { expected: usize, actual: usize },
-    #[error("Unsupported mapper: {0}")]
-    UnsupportedMapper(u8),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-}
-```
 
 ---
 

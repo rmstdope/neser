@@ -11,15 +11,15 @@ use std::rc::Rc;
 /// NES 6502 CPU
 pub struct Cpu {
     /// Accumulator
-    pub a: u8,
+    a: u8,
     /// X register
-    pub x: u8,
+    x: u8,
     /// Y register
-    pub y: u8,
+    y: u8,
     /// Stack pointer
-    pub sp: u8,
+    sp: u8,
     /// Program counter
-    pub pc: u16,
+    pc: u16,
     /// Status register (processor flags)
     /// Bit 7: N (Negative)
     /// Bit 6: V (Overflow)
@@ -29,18 +29,18 @@ pub struct Cpu {
     /// Bit 2: I (Interrupt disable)
     /// Bit 1: Z (Zero)
     /// Bit 0: C (Carry)
-    pub p: u8,
+    p: u8,
     /// Memory
-    pub memory: Rc<RefCell<MemController>>,
+    memory: Rc<RefCell<MemController>>,
     /// PPU
     ppu: Rc<RefCell<Ppu>>,
     /// APU
     #[allow(dead_code)]
     apu: Rc<RefCell<Apu>>,
     /// Halted state (set by KIL instruction)
-    pub halted: bool,
+    halted: bool,
     /// Total cycles executed since last reset
-    pub total_cycles: u64,
+    total_cycles: u64,
     /// Delayed I flag value for IRQ polling
     /// When Some(value), use this value instead of the actual I flag for IRQ polling
     /// This implements the 1-instruction delay for CLI/PLP
@@ -48,7 +48,7 @@ pub struct Cpu {
     delayed_i_flag: Option<bool>,
     /// NMI pending flag - set by external hardware (NES loop)
     /// Checked during BRK execution to determine vector hijacking
-    pub nmi_pending: bool,
+    nmi_pending: bool,
 
     // --- Interrupt timing (latched at end of CPU cycles) ---
     prev_need_nmi: bool,
@@ -111,9 +111,30 @@ pub enum InterruptKind {
     Irq,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CpuState {
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub sp: u8,
+    pub pc: u16,
+    pub p: u8,
+}
+
 impl Cpu {
     pub fn current_interrupt(&self) -> Option<InterruptKind> {
         self.interrupt_stack.last().copied()
+    }
+
+    pub fn state(&self) -> CpuState {
+        CpuState {
+            a: self.a,
+            x: self.x,
+            y: self.y,
+            sp: self.sp,
+            pc: self.pc,
+            p: self.p,
+        }
     }
 
     /// Create a new CPU with default register values at power-on
@@ -167,6 +188,30 @@ impl Cpu {
         self.halted
     }
 
+    pub fn a(&self) -> u8 {
+        self.a
+    }
+
+    pub fn x(&self) -> u8 {
+        self.x
+    }
+
+    pub fn y(&self) -> u8 {
+        self.y
+    }
+
+    pub fn sp(&self) -> u8 {
+        self.sp
+    }
+
+    pub fn pc(&self) -> u16 {
+        self.pc
+    }
+
+    pub fn p(&self) -> u8 {
+        self.p
+    }
+
     /// Get the total number of cycles executed since last reset
     pub fn get_total_cycles(&self) -> u64 {
         self.total_cycles
@@ -175,6 +220,36 @@ impl Cpu {
     #[cfg(test)]
     pub fn set_total_cycles(&mut self, cycles: u64) {
         self.total_cycles = cycles;
+    }
+
+    #[cfg(test)]
+    pub fn set_a_register(&mut self, value: u8) {
+        self.a = value;
+    }
+
+    #[cfg(test)]
+    pub fn set_x(&mut self, value: u8) {
+        self.x = value;
+    }
+
+    #[cfg(test)]
+    pub fn set_y(&mut self, value: u8) {
+        self.y = value;
+    }
+
+    #[cfg(test)]
+    pub fn set_sp(&mut self, value: u8) {
+        self.sp = value;
+    }
+
+    #[cfg(test)]
+    pub fn set_pc(&mut self, value: u16) {
+        self.pc = value;
+    }
+
+    #[cfg(test)]
+    pub fn set_p(&mut self, value: u8) {
+        self.p = value;
     }
 
     pub fn add_cycles(&mut self, cycles: u64) {
@@ -1300,11 +1375,6 @@ impl Cpu {
         self.irq_pending = pending;
     }
 
-    /// Get mutable reference to CPU state for trace/test purposes
-    pub fn get_state(&mut self) -> &mut Self {
-        self
-    }
-
     fn get_operand_value(&mut self, op: &OpCode, operand: u16) -> u8 {
         match op.mode {
             "IMM" => operand as u8,
@@ -2277,6 +2347,46 @@ mod tests {
         assert_eq!(cpu.y, 0x56);
         assert_eq!(cpu.sp, 0x7D);
         assert_ne!(cpu.p & FLAG_INTERRUPT, 0);
+    }
+
+    #[test]
+    fn test_cpu_state_snapshot() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        cpu.a = 0x11;
+        cpu.x = 0x22;
+        cpu.y = 0x33;
+        cpu.sp = 0x44;
+        cpu.pc = 0x5566;
+        cpu.p = 0x77;
+
+        let state = cpu.state();
+        assert_eq!(state.a, 0x11);
+        assert_eq!(state.x, 0x22);
+        assert_eq!(state.y, 0x33);
+        assert_eq!(state.sp, 0x44);
+        assert_eq!(state.pc, 0x5566);
+        assert_eq!(state.p, 0x77);
+    }
+
+    #[test]
+    fn test_set_pc_for_tests() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        cpu.set_pc(0xC0DE);
+        assert_eq!(cpu.pc, 0xC0DE);
     }
 
     #[test]
