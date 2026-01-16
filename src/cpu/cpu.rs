@@ -87,6 +87,8 @@ pub struct Cpu {
     ///
     /// This is derived from interrupt entry (IRQ/NMI) and cleared on RTI.
     interrupt_stack: Vec<InterruptKind>,
+    /// Tracks the current tick number and total ticks for tracing
+    current_tick_info: Option<(u8, u8)>,
 }
 
 // Status register flags
@@ -157,6 +159,7 @@ impl Cpu {
             dmc_dma_need_dummy_read: false,
 
             interrupt_stack: Vec::with_capacity(2),
+            current_tick_info: None,
         }
     }
 
@@ -437,6 +440,17 @@ impl Cpu {
 
     fn internal_cycle(&mut self) {
         // Advance the CPU/PPU/APU by one CPU cycle without performing a bus read/write.
+        if let Some((ref mut tick, total)) = self.current_tick_info {
+            trace_cpu!(
+                "tick ({}/{}) cyc={} [internal]",
+                *tick,
+                total,
+                self.total_cycles
+            );
+            *tick += 1;
+        } else {
+            trace_cpu!("tick cyc={} [internal]", self.total_cycles);
+        }
         self.before_cpu_cycle(false);
         self.after_cpu_cycle(false);
     }
@@ -699,6 +713,18 @@ impl Cpu {
     /// Read a byte from memory at the specified address
     fn read(&mut self, addr: u16) -> u8 {
         loop {
+            if let Some((ref mut tick, total)) = self.current_tick_info {
+                trace_cpu!(
+                    "tick ({}/{}) cyc={} [read] addr=0x{:04X}",
+                    *tick,
+                    total,
+                    self.total_cycles,
+                    addr
+                );
+                *tick += 1;
+            } else {
+                trace_cpu!("tick cyc={} [read] addr=0x{:04X}", self.total_cycles, addr);
+            }
             self.before_cpu_cycle(false);
 
             // Process any pending DMA (OAM and/or DMC)
@@ -742,6 +768,26 @@ impl Cpu {
 
     /// Write a byte to memory at the specified address
     fn write(&mut self, addr: u16, value: u8, dummy: bool) {
+        if let Some((ref mut tick, total)) = self.current_tick_info {
+            trace_cpu!(
+                "tick ({}/{}) cyc={} [write{}] addr=0x{:04X} value=0x{:02X}",
+                *tick,
+                total,
+                self.total_cycles,
+                if dummy { " (dummy)" } else { "" },
+                addr,
+                value
+            );
+            *tick += 1;
+        } else {
+            trace_cpu!(
+                "tick cyc={} [write{}] addr=0x{:04X} value=0x{:02X}",
+                self.total_cycles,
+                if dummy { " (dummy)" } else { "" },
+                addr,
+                value
+            );
+        }
         self.before_cpu_cycle(true);
         self.memory.borrow_mut().write(addr, value, dummy);
 
@@ -1382,10 +1428,26 @@ impl Cpu {
                     "ZP" => format!("{} ${:02X}", op.mnemonic, byte1),
                     "ZPX" => format!("{} ${:02X},X", op.mnemonic, byte1),
                     "ZPY" => format!("{} ${:02X},Y", op.mnemonic, byte1),
-                    "ABS" => format!("{} ${:04X}", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
-                    "ABSX" | "ABSXW" => format!("{} ${:04X},X", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
-                    "ABSY" | "ABSYW" => format!("{} ${:04X},Y", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
-                    "IND" => format!("{} (${:04X})", op.mnemonic, u16::from_le_bytes([byte1, byte2])),
+                    "ABS" => format!(
+                        "{} ${:04X}",
+                        op.mnemonic,
+                        u16::from_le_bytes([byte1, byte2])
+                    ),
+                    "ABSX" | "ABSXW" => format!(
+                        "{} ${:04X},X",
+                        op.mnemonic,
+                        u16::from_le_bytes([byte1, byte2])
+                    ),
+                    "ABSY" | "ABSYW" => format!(
+                        "{} ${:04X},Y",
+                        op.mnemonic,
+                        u16::from_le_bytes([byte1, byte2])
+                    ),
+                    "IND" => format!(
+                        "{} (${:04X})",
+                        op.mnemonic,
+                        u16::from_le_bytes([byte1, byte2])
+                    ),
                     "INDX" => format!("{} (${:02X},X)", op.mnemonic, byte1),
                     "INDY" | "INDYW" => format!("{} (${:02X}),Y", op.mnemonic, byte1),
                     "REL" => {
@@ -1395,8 +1457,10 @@ impl Cpu {
                     }
                     _ => format!("{}", op.mnemonic),
                 };
+                // Set up tick tracking for this instruction
+                self.current_tick_info = Some((1, op.cycles));
                 trace_cpu!(
-                    "tick PC={:04X} {} {:14} A={:02X} X={:02X} Y={:02X} P={:02X} SP={:02X} cyc={}",
+                    "exec PC={:04X} {} {:14}  A={:02X}  X={:02X}  Y={:02X}  P={:02X}  SP={:02X}  cyc={:<3}",
                     pc,
                     hex_dump,
                     asm,
@@ -1415,6 +1479,7 @@ impl Cpu {
             panic!("Invalid opcode: 0x{:02X}", opcode);
         };
         let operand = self.get_operand(*op);
+
         match op.mnemonic.as_ref() {
             "BRK" => {
                 // BRK pushes (PC + 1), which corresponds to BRK+2 overall.
@@ -1976,6 +2041,9 @@ impl Cpu {
             _ => {}
         }
 
+        // Clear tick tracking after instruction
+        self.current_tick_info = None;
+
         // Clear the previous delayed-I state after exactly one instruction.
         // If this instruction introduced a new delay, keep that for the next instruction.
         let cleared_delayed_i_flag_this_instruction = had_delayed_i_flag;
@@ -2470,8 +2538,7 @@ mod tests {
 
         // Map a minimal iNES ROM with mapper 24 (VRC6).
         let mut rom = vec![
-            b'N', b'E', b'S', 0x1A,
-            2,    // 32KB PRG
+            b'N', b'E', b'S', 0x1A, 2,    // 32KB PRG
             1,    // 8KB CHR
             0x80, // flags6: mapper low nibble=8 (0x8<<4)
             0x10, // flags7: mapper high nibble=1 (0x1<<4)
@@ -2498,7 +2565,10 @@ mod tests {
             .expect("DMA should be pending");
 
         let after = memory.borrow().mapper_expansion_audio_sample();
-        assert!(after > 0.0, "expected expansion audio to advance during DMA");
+        assert!(
+            after > 0.0,
+            "expected expansion audio to advance during DMA"
+        );
     }
 
     #[test]

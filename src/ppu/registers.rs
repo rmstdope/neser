@@ -274,7 +274,6 @@ impl Registers {
     }
 
     /// Get temporary VRAM address
-    #[cfg(test)]
     pub fn t(&self) -> u16 {
         self.t
     }
@@ -285,7 +284,6 @@ impl Registers {
     }
 
     /// Get write toggle
-    #[cfg(test)]
     pub fn w(&self) -> bool {
         self.w
     }
@@ -363,7 +361,6 @@ impl Registers {
     }
 
     /// Get control register value
-    #[cfg(test)]
     pub fn control(&self) -> u8 {
         self.control_register
     }
@@ -378,7 +375,6 @@ impl Registers {
     }
 
     /// Get mask register value
-    #[cfg(test)]
     pub fn mask(&self) -> u8 {
         self.mask_register
     }

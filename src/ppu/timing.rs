@@ -97,7 +97,6 @@ impl Timing {
     }
 
     /// Get the total number of cycles since reset
-    #[cfg(test)]
     pub fn total_cycles(&self) -> u64 {
         self.total_cycles
     }
@@ -113,7 +112,6 @@ impl Timing {
     }
 
     /// Get the frame count
-    #[cfg(test)]
     pub fn frame_count(&self) -> u64 {
         self.frame_count
     }

@@ -120,9 +120,22 @@ impl Ppu {
     fn tick(&mut self) {
         // Trace PPU tick with scanline and pixel position
         trace_ppu!(
-            "tick scanline={} pixel={}",
+            "tick y={} x={} v={:04X} t={:04X} x={} w={} ctrl={:02X} mask={:02X} status={:02X} oam={:02X} rd={} bg={} sp={} frame={} cyc={}",
             self.timing.scanline(),
-            self.timing.pixel()
+            self.timing.pixel(),
+            self.registers.v(),
+            self.registers.t(),
+            self.registers.x(),
+            self.registers.w(),
+            self.registers.control(),
+            self.registers.mask(),
+            self.status.read_status(),
+            self.registers.oam_address,
+            self.registers.is_rendering_enabled(),
+            self.registers.is_background_enabled(),
+            self.registers.is_sprite_enabled(),
+            self.timing.frame_count(),
+            self.timing.total_cycles(),
         );
 
         let is_rendering_enabled = self.registers.is_rendering_enabled();
