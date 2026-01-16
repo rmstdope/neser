@@ -1,6 +1,6 @@
 use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
-use crate::trace_cpu;
+use crate::trace_mapper;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Vrc6Variant {
@@ -201,7 +201,7 @@ impl Vrc6Audio {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_cpu!("[vrc6] cpu_cycle (audio)");
+        trace_mapper!(1; "[vrc6] cpu_cycle (audio)");
         if self.global_halt {
             return;
         }
@@ -549,7 +549,7 @@ impl Mapper for VRC6Mapper {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_cpu!("[vrc6] cpu_cycle (irq)");
+        trace_mapper!(1; "[vrc6] cpu_cycle (irq)");
         self.audio.cpu_cycle();
         self.tick_vrc_irq();
     }

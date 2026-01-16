@@ -1,5 +1,3 @@
-#![allow(unused_imports)]
-use crate::trace_cpu;
 // # MMC5 (Mapper 5) Implementation
 //
 // The MMC5 is the most complex mapper ASIC Nintendo made for the NES/Famicom.
@@ -179,7 +177,7 @@ impl Mmc5Pulse {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_cpu!("[mmc5] cpu_cycle (timer)");
+        trace_mapper!(1; "[mmc5] cpu_cycle (timer)");
         if !self.enabled {
             return;
         }
@@ -797,12 +795,12 @@ impl Mapper for MMC5Mapper {
             }
 
             0x5100 => {
-                trace_mapper!("MMC5 PRG_mode={}", value & 0x03);
+                trace_mapper!(1; "MMC5 PRG_mode={}", value & 0x03);
                 self.prg_mode = value & 0x03;
             }
 
             0x5101 => {
-                trace_mapper!("MMC5 CHR_mode={}", value & 0x03);
+                trace_mapper!(1; "MMC5 CHR_mode={}", value & 0x03);
                 self.chr_mode = value & 0x03;
             }
 
@@ -816,13 +814,13 @@ impl Mapper for MMC5Mapper {
 
             // ExRAM mode
             0x5104 => {
-                trace_mapper!("MMC5 ExRAM_mode={}", value & 0x03);
+                trace_mapper!(1; "MMC5 ExRAM_mode={}", value & 0x03);
                 self.ex_ram_mode = value & 0x03;
             }
 
             // Nametable mapping
             0x5105 => {
-                trace_mapper!("MMC5 nametable_mapping=${:02X}", value);
+                trace_mapper!(1; "MMC5 nametable_mapping=${:02X}", value);
                 self.nametable_mapping = value;
             }
 
@@ -838,66 +836,66 @@ impl Mapper for MMC5Mapper {
 
             // PRG bankswitch registers
             0x5113 => {
-                trace_mapper!("MMC5 PRG_bank_5113=${:02X}", value);
+                trace_mapper!(1; "MMC5 PRG_bank_5113=${:02X}", value);
                 self.prg_bank_5113 = value;
             }
             0x5114 => {
-                trace_mapper!("MMC5 PRG_bank_5114=${:02X}", value);
+                trace_mapper!(1; "MMC5 PRG_bank_5114=${:02X}", value);
                 self.prg_bank_5114 = value;
             }
             0x5115 => {
-                trace_mapper!("MMC5 PRG_bank_5115=${:02X}", value);
+                trace_mapper!(1; "MMC5 PRG_bank_5115=${:02X}", value);
                 self.prg_bank_5115 = value;
             }
             0x5116 => {
-                trace_mapper!("MMC5 PRG_bank_5116=${:02X}", value);
+                trace_mapper!(1; "MMC5 PRG_bank_5116=${:02X}", value);
                 self.prg_bank_5116 = value;
             }
             0x5117 => {
-                trace_mapper!("MMC5 PRG_bank_5117=${:02X}", value);
+                trace_mapper!(1; "MMC5 PRG_bank_5117=${:02X}", value);
                 self.prg_bank_5117 = value;
             }
 
             // CHR bank registers
             0x5120..=0x5127 => {
                 let index = (addr - 0x5120) as usize;
-                trace_mapper!("MMC5 CHR_bank_A[{}]=${:02X}", index, value);
+                trace_mapper!(1; "MMC5 CHR_bank_A[{}]=${:02X}", index, value);
                 self.chr_bank_a[index] = value;
                 self.chr_last_set_written = false; // A registers
             }
             0x5128..=0x512B => {
                 let index = (addr - 0x5128) as usize;
-                trace_mapper!("MMC5 CHR_bank_B[{}]=${:02X}", index, value);
+                trace_mapper!(1; "MMC5 CHR_bank_B[{}]=${:02X}", index, value);
                 self.chr_bank_b[index] = value;
                 self.chr_last_set_written = true; // B registers
             }
             0x5130 => {
                 // Upper CHR bank bits for extended attribute mode
-                trace_mapper!("MMC5 CHR_bank_upper=${:02X}", value & 0x03);
+                trace_mapper!(1; "MMC5 CHR_bank_upper=${:02X}", value & 0x03);
                 self.chr_bank_upper = value & 0x03;
             }
 
             // Split screen
             0x5200 => {
-                trace_mapper!("MMC5 split_mode=${:02X}", value);
+                trace_mapper!(1; "MMC5 split_mode=${:02X}", value);
                 self.split_mode = value;
             }
             0x5201 => {
                 self.split_scroll = value;
             }
             0x5202 => {
-                trace_mapper!("MMC5 split_bank=${:02X}", value);
+                trace_mapper!(1; "MMC5 split_bank=${:02X}", value);
                 self.split_bank = value;
             }
 
             // IRQ
             0x5203 => {
-                trace_mapper!("MMC5 IRQ_scanline_compare={}", value);
+                trace_mapper!(1; "MMC5 IRQ_scanline_compare={}", value);
                 self.irq_scanline_compare = value;
             }
             0x5204 => {
                 let enabled = (value & 0x80) != 0;
-                trace_mapper!("MMC5 IRQ_enabled={}", enabled);
+                trace_mapper!(1; "MMC5 IRQ_enabled={}", enabled);
                 self.irq_enabled = enabled;
                 if !self.irq_enabled {
                     self.irq_pending.set(false);
@@ -1088,7 +1086,7 @@ impl Mapper for MMC5Mapper {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_cpu!("[mmc5] cpu_cycle (audio)");
+        trace_mapper!(1; "[mmc5] cpu_cycle (audio)");
         self.pulse1.cpu_cycle();
         self.pulse2.cpu_cycle();
     }

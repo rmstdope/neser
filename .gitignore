@@ -35,6 +35,7 @@ roms/games
 # Miscellaneous
 .DS_Store
 *~
+\#*\#
 
 # NESER config
 neser.conf

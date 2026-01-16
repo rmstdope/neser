@@ -441,7 +441,7 @@ impl Cpu {
     fn internal_cycle(&mut self) {
         // Advance the CPU/PPU/APU by one CPU cycle without performing a bus read/write.
         if let Some((ref mut tick, total)) = self.current_tick_info {
-            trace_cpu!(
+            trace_cpu!(2;
                 "tick ({}/{}) cyc={} [internal]",
                 *tick,
                 total,
@@ -449,7 +449,7 @@ impl Cpu {
             );
             *tick += 1;
         } else {
-            trace_cpu!("tick cyc={} [internal]", self.total_cycles);
+            trace_cpu!(2; "tick cyc={} [internal]", self.total_cycles);
         }
         self.before_cpu_cycle(false);
         self.after_cpu_cycle(false);
@@ -714,7 +714,7 @@ impl Cpu {
     fn read(&mut self, addr: u16) -> u8 {
         loop {
             if let Some((ref mut tick, total)) = self.current_tick_info {
-                trace_cpu!(
+                trace_cpu!(2;
                     "tick ({}/{}) cyc={} [read] addr=0x{:04X}",
                     *tick,
                     total,
@@ -723,7 +723,7 @@ impl Cpu {
                 );
                 *tick += 1;
             } else {
-                trace_cpu!("tick cyc={} [read] addr=0x{:04X}", self.total_cycles, addr);
+                trace_cpu!(2; "tick cyc={} [read] addr=0x{:04X}", self.total_cycles, addr);
             }
             self.before_cpu_cycle(false);
 
@@ -769,7 +769,7 @@ impl Cpu {
     /// Write a byte to memory at the specified address
     fn write(&mut self, addr: u16, value: u8, dummy: bool) {
         if let Some((ref mut tick, total)) = self.current_tick_info {
-            trace_cpu!(
+            trace_cpu!(2;
                 "tick ({}/{}) cyc={} [write{}] addr=0x{:04X} value=0x{:02X}",
                 *tick,
                 total,
@@ -780,7 +780,7 @@ impl Cpu {
             );
             *tick += 1;
         } else {
-            trace_cpu!(
+            trace_cpu!(2;
                 "tick cyc={} [write{}] addr=0x{:04X} value=0x{:02X}",
                 self.total_cycles,
                 if dummy { " (dummy)" } else { "" },
@@ -1459,7 +1459,7 @@ impl Cpu {
                 };
                 // Set up tick tracking for this instruction
                 self.current_tick_info = Some((1, op.cycles));
-                trace_cpu!(
+                trace_cpu!(1;
                     "exec PC={:04X} {} {:14}  A={:02X}  X={:02X}  Y={:02X}  P={:02X}  SP={:02X}  cyc={:<3}",
                     pc,
                     hex_dump,

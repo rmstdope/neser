@@ -75,18 +75,37 @@ pub fn get_tracing() -> Option<Tracing> {
 pub fn get_tracing() -> Option<Tracing> {
     Some(TRACING.with(|cell| *cell.borrow()))
 }
+/// Get the CPU tracing level. Returns 0 if tracing is not initialized.
+#[cfg(all(debug_assertions, not(test)))]
+pub fn cpu_trace_level() -> u8 {
+    TRACING
+        .get()
+        .map(|lock| lock.read().unwrap_or_else(|e| e.into_inner()).cpu)
+        .unwrap_or(0)
+}
+
+#[cfg(all(debug_assertions, test))]
+pub fn cpu_trace_level() -> u8 {
+    TRACING.with(|cell| cell.borrow().cpu)
+}
+
+/// Get the CPU tracing level. Always returns 0 in release builds.
+#[cfg(not(debug_assertions))]
+pub fn cpu_trace_level() -> u8 {
+    0
+}
+
 /// Check if CPU tracing is enabled. Returns false if tracing is not initialized.
 #[cfg(all(debug_assertions, not(test)))]
 pub fn is_cpu_tracing_enabled() -> bool {
-    TRACING
-        .get()
-        .is_some_and(|lock| lock.read().unwrap_or_else(|e| e.into_inner()).cpu)
+    cpu_trace_level() > 0
 }
 
 #[cfg(all(debug_assertions, test))]
 pub fn is_cpu_tracing_enabled() -> bool {
-    TRACING.with(|cell| cell.borrow().cpu)
+    cpu_trace_level() > 0
 }
+
 /// Check if CPU tracing is enabled. Always returns false in release builds.
 #[cfg(not(debug_assertions))]
 pub fn is_cpu_tracing_enabled() -> bool {
@@ -97,16 +116,20 @@ pub fn is_cpu_tracing_enabled() -> bool {
 ///
 /// # Example
 /// ```ignore
-/// trace_cpu!("PC={:04X} A={:02X}", pc, a);
+/// trace_cpu!("PC={:04X} A={:02X}", pc, a);  // defaults to level 1
+/// trace_cpu!(2; "detailed info");           // only prints at level 2+
 /// ```
 #[macro_export]
 #[cfg(debug_assertions)]
 macro_rules! trace_cpu {
+    ($level:literal; $($arg:tt)*) => {
+        if $crate::tracing::cpu_trace_level() >= $level {
+            println!("[CPU] {}", format!($($arg)*));
+        }
+    };
     ($($arg:tt)*) => {
-        if let Some(tracing) = $crate::tracing::get_tracing() {
-            if tracing.cpu {
-                println!("[CPU] {}", format!($($arg)*));
-            }
+        if $crate::tracing::cpu_trace_level() >= 1 {
+            println!("[CPU] {}", format!($($arg)*));
         }
     };
 }
@@ -115,23 +138,47 @@ macro_rules! trace_cpu {
 #[macro_export]
 #[cfg(not(debug_assertions))]
 macro_rules! trace_cpu {
+    ($level:literal; $($arg:tt)*) => {};
     ($($arg:tt)*) => {};
+}
+
+/// Get the PPU tracing level.
+#[cfg(all(debug_assertions, not(test)))]
+pub fn ppu_trace_level() -> u8 {
+    TRACING
+        .get()
+        .map(|lock| lock.read().unwrap_or_else(|e| e.into_inner()).ppu)
+        .unwrap_or(0)
+}
+
+#[cfg(all(debug_assertions, test))]
+pub fn ppu_trace_level() -> u8 {
+    TRACING.with(|cell| cell.borrow().ppu)
+}
+
+#[cfg(not(debug_assertions))]
+pub fn ppu_trace_level() -> u8 {
+    0
 }
 
 /// Trace PPU operations. Only active in debug builds when PPU tracing is enabled.
 ///
 /// # Example
 /// ```ignore
-/// trace_ppu!("scanline={} pixel={}", scanline, pixel);
+/// trace_ppu!("scanline={} pixel={}", scanline, pixel);  // defaults to level 1
+/// trace_ppu!(2; "detailed info");                       // only prints at level 2+
 /// ```
 #[macro_export]
 #[cfg(debug_assertions)]
 macro_rules! trace_ppu {
+    ($level:literal; $($arg:tt)*) => {
+        if $crate::tracing::ppu_trace_level() >= $level {
+            println!("[PPU] {}", format!($($arg)*));
+        }
+    };
     ($($arg:tt)*) => {
-        if let Some(tracing) = $crate::tracing::get_tracing() {
-            if tracing.ppu {
-                println!("[PPU] {}", format!($($arg)*));
-            }
+        if $crate::tracing::ppu_trace_level() >= 1 {
+            println!("[PPU] {}", format!($($arg)*));
         }
     };
 }
@@ -140,23 +187,47 @@ macro_rules! trace_ppu {
 #[macro_export]
 #[cfg(not(debug_assertions))]
 macro_rules! trace_ppu {
+    ($level:literal; $($arg:tt)*) => {};
     ($($arg:tt)*) => {};
+}
+
+/// Get the APU tracing level.
+#[cfg(all(debug_assertions, not(test)))]
+pub fn apu_trace_level() -> u8 {
+    TRACING
+        .get()
+        .map(|lock| lock.read().unwrap_or_else(|e| e.into_inner()).apu)
+        .unwrap_or(0)
+}
+
+#[cfg(all(debug_assertions, test))]
+pub fn apu_trace_level() -> u8 {
+    TRACING.with(|cell| cell.borrow().apu)
+}
+
+#[cfg(not(debug_assertions))]
+pub fn apu_trace_level() -> u8 {
+    0
 }
 
 /// Trace APU operations. Only active in debug builds when APU tracing is enabled.
 ///
 /// # Example
 /// ```ignore
-/// trace_apu!("frame_counter={} cycle={}", fc, cycle);
+/// trace_apu!("frame_counter={} cycle={}", fc, cycle);  // defaults to level 1
+/// trace_apu!(2; "detailed info");                      // only prints at level 2+
 /// ```
 #[macro_export]
 #[cfg(debug_assertions)]
 macro_rules! trace_apu {
+    ($level:literal; $($arg:tt)*) => {
+        if $crate::tracing::apu_trace_level() >= $level {
+            println!("[APU] {}", format!($($arg)*));
+        }
+    };
     ($($arg:tt)*) => {
-        if let Some(tracing) = $crate::tracing::get_tracing() {
-            if tracing.apu {
-                println!("[APU] {}", format!($($arg)*));
-            }
+        if $crate::tracing::apu_trace_level() >= 1 {
+            println!("[APU] {}", format!($($arg)*));
         }
     };
 }
@@ -165,23 +236,47 @@ macro_rules! trace_apu {
 #[macro_export]
 #[cfg(not(debug_assertions))]
 macro_rules! trace_apu {
+    ($level:literal; $($arg:tt)*) => {};
     ($($arg:tt)*) => {};
+}
+
+/// Get the mapper tracing level.
+#[cfg(all(debug_assertions, not(test)))]
+pub fn mapper_trace_level() -> u8 {
+    TRACING
+        .get()
+        .map(|lock| lock.read().unwrap_or_else(|e| e.into_inner()).mapper)
+        .unwrap_or(0)
+}
+
+#[cfg(all(debug_assertions, test))]
+pub fn mapper_trace_level() -> u8 {
+    TRACING.with(|cell| cell.borrow().mapper)
+}
+
+#[cfg(not(debug_assertions))]
+pub fn mapper_trace_level() -> u8 {
+    0
 }
 
 /// Trace mapper operations. Only active in debug builds when mapper tracing is enabled.
 ///
 /// # Example
 /// ```ignore
-/// trace_mapper!("bank switch: PRG bank {} -> ${:04X}", bank, addr);
+/// trace_mapper!("bank switch: PRG bank {} -> ${:04X}", bank, addr);  // defaults to level 1
+/// trace_mapper!(2; "detailed info");                                 // only prints at level 2+
 /// ```
 #[macro_export]
 #[cfg(debug_assertions)]
 macro_rules! trace_mapper {
+    ($level:literal; $($arg:tt)*) => {
+        if $crate::tracing::mapper_trace_level() >= $level {
+            println!("[MAP] {}", format!($($arg)*));
+        }
+    };
     ($($arg:tt)*) => {
-        if let Some(tracing) = $crate::tracing::get_tracing() {
-            if tracing.mapper {
-                println!("[MAPPER] {}", format!($($arg)*));
-            }
+        if $crate::tracing::mapper_trace_level() >= 1 {
+            println!("[MAP] {}", format!($($arg)*));
         }
     };
 }
@@ -190,44 +285,83 @@ macro_rules! trace_mapper {
 #[macro_export]
 #[cfg(not(debug_assertions))]
 macro_rules! trace_mapper {
+    ($level:literal; $($arg:tt)*) => {};
     ($($arg:tt)*) => {};
 }
 
+/// Tracing configuration with per-subsystem trace levels.
+///
+/// Each subsystem has a trace level (0 = off, 1+ = increasing verbosity).
+/// The `nestest` field remains a boolean for compatibility with nestest format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Tracing {
     pub enabled: bool,
-    pub cpu: bool,
-    pub ppu: bool,
-    pub apu: bool,
-    pub mapper: bool,
+    /// CPU trace level (0 = off, 1 = basic, 2+ = verbose)
+    pub cpu: u8,
+    /// PPU trace level (0 = off, 1 = basic, 2+ = verbose)
+    pub ppu: u8,
+    /// APU trace level (0 = off, 1 = basic, 2+ = verbose)
+    pub apu: u8,
+    /// Mapper trace level (0 = off, 1 = basic, 2+ = verbose)
+    pub mapper: u8,
+    /// Enable nestest-compatible output format
     pub nestest: bool,
 }
 
 impl Tracing {
+    /// Parse tracing configuration from command-line arguments.
+    ///
+    /// Supports:
+    /// - `--trace` → CPU level 1
+    /// - `--trace-cpu` → CPU level 1
+    /// - `--trace-cpu=N` → CPU level N
+    /// - `--trace-ppu`, `--trace-ppu=N` → PPU levels
+    /// - `--trace-apu`, `--trace-apu=N` → APU levels
+    /// - `--trace-mapper`, `--trace-mapper=N` → mapper levels
+    /// - `--trace-nestest` → nestest format (boolean)
     pub fn from_args(args: &[String]) -> Self {
         let mut tracing = Tracing::default();
+        tracing.apply_args(args);
+        tracing
+    }
 
+    /// Apply command-line arguments to an existing Tracing config.
+    /// Only overrides values that are explicitly specified in args.
+    pub fn apply_args(&mut self, args: &[String]) {
         for arg in args {
             if arg == "--trace" {
-                tracing.enabled = true;
-                tracing.cpu = true;
+                self.enabled = true;
+                self.cpu = 1;
                 continue;
             }
 
             if arg.starts_with("--trace-") {
-                tracing.enabled = true;
-                match arg.as_str() {
-                    "--trace-nestest" => tracing.nestest = true,
-                    "--trace-cpu" => tracing.cpu = true,
-                    "--trace-ppu" => tracing.ppu = true,
-                    "--trace-apu" => tracing.apu = true,
-                    "--trace-mapper" => tracing.mapper = true,
-                    _ => {}
+                self.enabled = true;
+
+                if arg == "--trace-nestest" {
+                    self.nestest = true;
+                } else if let Some(rest) = arg.strip_prefix("--trace-cpu") {
+                    self.cpu = Self::parse_level(rest);
+                } else if let Some(rest) = arg.strip_prefix("--trace-ppu") {
+                    self.ppu = Self::parse_level(rest);
+                } else if let Some(rest) = arg.strip_prefix("--trace-apu") {
+                    self.apu = Self::parse_level(rest);
+                } else if let Some(rest) = arg.strip_prefix("--trace-mapper") {
+                    self.mapper = Self::parse_level(rest);
                 }
             }
         }
+    }
 
-        tracing
+    /// Parse a level from "" or "=N" suffix. Returns 1 if empty, N if "=N".
+    fn parse_level(suffix: &str) -> u8 {
+        if suffix.is_empty() {
+            1
+        } else if let Some(num_str) = suffix.strip_prefix('=') {
+            num_str.parse().unwrap_or(1)
+        } else {
+            1
+        }
     }
 }
 
@@ -240,10 +374,10 @@ mod tests {
         let args = vec!["neser".to_string()];
         let tracing = Tracing::from_args(&args);
         assert!(!tracing.enabled);
-        assert!(!tracing.cpu);
-        assert!(!tracing.ppu);
-        assert!(!tracing.apu);
-        assert!(!tracing.mapper);
+        assert_eq!(tracing.cpu, 0);
+        assert_eq!(tracing.ppu, 0);
+        assert_eq!(tracing.apu, 0);
+        assert_eq!(tracing.mapper, 0);
         assert!(!tracing.nestest);
     }
 
@@ -252,10 +386,10 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace".to_string()];
         let tracing = Tracing::from_args(&args);
         assert!(tracing.enabled);
-        assert!(tracing.cpu); // --trace enables CPU tracing by default
-        assert!(!tracing.ppu);
-        assert!(!tracing.apu);
-        assert!(!tracing.mapper);
+        assert_eq!(tracing.cpu, 1); // --trace enables CPU tracing at level 1
+        assert_eq!(tracing.ppu, 0);
+        assert_eq!(tracing.apu, 0);
+        assert_eq!(tracing.mapper, 0);
         assert!(!tracing.nestest);
     }
 
@@ -264,10 +398,10 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace-nestest".to_string()];
         let tracing = Tracing::from_args(&args);
         assert!(tracing.enabled);
-        assert!(!tracing.cpu);
-        assert!(!tracing.ppu);
-        assert!(!tracing.apu);
-        assert!(!tracing.mapper);
+        assert_eq!(tracing.cpu, 0);
+        assert_eq!(tracing.ppu, 0);
+        assert_eq!(tracing.apu, 0);
+        assert_eq!(tracing.mapper, 0);
         assert!(tracing.nestest);
     }
 
@@ -276,10 +410,10 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace-cpu".to_string()];
         let tracing = Tracing::from_args(&args);
         assert!(tracing.enabled);
-        assert!(tracing.cpu);
-        assert!(!tracing.ppu);
-        assert!(!tracing.apu);
-        assert!(!tracing.mapper);
+        assert_eq!(tracing.cpu, 1);
+        assert_eq!(tracing.ppu, 0);
+        assert_eq!(tracing.apu, 0);
+        assert_eq!(tracing.mapper, 0);
         assert!(!tracing.nestest);
     }
 
@@ -288,10 +422,10 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace-ppu".to_string()];
         let tracing = Tracing::from_args(&args);
         assert!(tracing.enabled);
-        assert!(!tracing.cpu);
-        assert!(tracing.ppu);
-        assert!(!tracing.apu);
-        assert!(!tracing.mapper);
+        assert_eq!(tracing.cpu, 0);
+        assert_eq!(tracing.ppu, 1);
+        assert_eq!(tracing.apu, 0);
+        assert_eq!(tracing.mapper, 0);
         assert!(!tracing.nestest);
     }
 
@@ -300,10 +434,10 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace-apu".to_string()];
         let tracing = Tracing::from_args(&args);
         assert!(tracing.enabled);
-        assert!(!tracing.cpu);
-        assert!(!tracing.ppu);
-        assert!(tracing.apu);
-        assert!(!tracing.mapper);
+        assert_eq!(tracing.cpu, 0);
+        assert_eq!(tracing.ppu, 0);
+        assert_eq!(tracing.apu, 1);
+        assert_eq!(tracing.mapper, 0);
         assert!(!tracing.nestest);
     }
 
@@ -312,10 +446,10 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace-mapper".to_string()];
         let tracing = Tracing::from_args(&args);
         assert!(tracing.enabled);
-        assert!(!tracing.cpu);
-        assert!(!tracing.ppu);
-        assert!(!tracing.apu);
-        assert!(tracing.mapper);
+        assert_eq!(tracing.cpu, 0);
+        assert_eq!(tracing.ppu, 0);
+        assert_eq!(tracing.apu, 0);
+        assert_eq!(tracing.mapper, 1);
         assert!(!tracing.nestest);
     }
 
@@ -330,10 +464,10 @@ mod tests {
         ];
         let tracing = Tracing::from_args(&args);
         assert!(tracing.enabled);
-        assert!(tracing.cpu);
-        assert!(tracing.ppu);
-        assert!(tracing.apu);
-        assert!(tracing.mapper);
+        assert_eq!(tracing.cpu, 1);
+        assert_eq!(tracing.ppu, 1);
+        assert_eq!(tracing.apu, 1);
+        assert_eq!(tracing.mapper, 1);
         assert!(!tracing.nestest);
     }
 
@@ -342,10 +476,10 @@ mod tests {
     fn init_tracing_sets_global_state() {
         let tracing = Tracing {
             enabled: true,
-            cpu: true,
-            ppu: false,
-            apu: false,
-            mapper: false,
+            cpu: 1,
+            ppu: 0,
+            apu: 0,
+            mapper: 0,
             nestest: false,
         };
         init_tracing(tracing);
@@ -355,7 +489,7 @@ mod tests {
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert!(retrieved.enabled);
-        assert!(retrieved.cpu);
+        assert_eq!(retrieved.cpu, 1);
     }
 
     #[cfg(debug_assertions)]
@@ -363,10 +497,10 @@ mod tests {
     fn init_tracing_overwrites_existing_state() {
         let tracing_on = Tracing {
             enabled: true,
-            cpu: true,
-            ppu: false,
-            apu: false,
-            mapper: false,
+            cpu: 1,
+            ppu: 0,
+            apu: 0,
+            mapper: 0,
             nestest: false,
         };
         init_tracing(tracing_on);
@@ -378,7 +512,7 @@ mod tests {
         assert!(retrieved.is_some());
         let retrieved = retrieved.unwrap();
         assert!(!retrieved.enabled);
-        assert!(!retrieved.cpu);
+        assert_eq!(retrieved.cpu, 0);
     }
 
     #[cfg(all(debug_assertions, test))]
@@ -386,36 +520,74 @@ mod tests {
     fn tracing_is_thread_local_in_tests() {
         init_tracing(Tracing {
             enabled: true,
-            cpu: true,
-            ppu: false,
-            apu: false,
-            mapper: false,
+            cpu: 1,
+            ppu: 0,
+            apu: 0,
+            mapper: 0,
             nestest: false,
         });
 
         let main_tracing = get_tracing().unwrap();
-        assert!(main_tracing.cpu);
+        assert_eq!(main_tracing.cpu, 1);
 
         let handle = std::thread::spawn(|| {
             let other_tracing = get_tracing().unwrap();
-            assert!(!other_tracing.cpu);
+            assert_eq!(other_tracing.cpu, 0);
 
             init_tracing(Tracing {
                 enabled: true,
-                cpu: true,
-                ppu: false,
-                apu: false,
-                mapper: false,
+                cpu: 1,
+                ppu: 0,
+                apu: 0,
+                mapper: 0,
                 nestest: false,
             });
 
             let updated = get_tracing().unwrap();
-            assert!(updated.cpu);
+            assert_eq!(updated.cpu, 1);
         });
 
         handle.join().unwrap();
 
         let main_after = get_tracing().unwrap();
-        assert!(main_after.cpu);
+        assert_eq!(main_after.cpu, 1);
+    }
+
+    #[test]
+    fn tracing_parses_levels_from_args() {
+        let args = vec![
+            "neser".to_string(),
+            "--trace-cpu=2".to_string(),
+            "--trace-ppu=3".to_string(),
+        ];
+        let tracing = Tracing::from_args(&args);
+        assert!(tracing.enabled);
+        assert_eq!(tracing.cpu, 2);
+        assert_eq!(tracing.ppu, 3);
+        assert_eq!(tracing.apu, 0);
+        assert_eq!(tracing.mapper, 0);
+    }
+
+    #[test]
+    fn tracing_parses_all_levels() {
+        let args = vec![
+            "neser".to_string(),
+            "--trace-cpu=5".to_string(),
+            "--trace-ppu=4".to_string(),
+            "--trace-apu=3".to_string(),
+            "--trace-mapper=2".to_string(),
+        ];
+        let tracing = Tracing::from_args(&args);
+        assert_eq!(tracing.cpu, 5);
+        assert_eq!(tracing.ppu, 4);
+        assert_eq!(tracing.apu, 3);
+        assert_eq!(tracing.mapper, 2);
+    }
+
+    #[test]
+    fn tracing_invalid_level_defaults_to_1() {
+        let args = vec!["neser".to_string(), "--trace-cpu=invalid".to_string()];
+        let tracing = Tracing::from_args(&args);
+        assert_eq!(tracing.cpu, 1);
     }
 }

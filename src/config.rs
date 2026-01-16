@@ -308,8 +308,8 @@ impl Config {
             self.shader_path = Some(path);
         }
 
-        // Tracing (merges with existing tracing config)
-        self.tracing = Tracing::from_args(args);
+        // Tracing (merge with existing config file values)
+        self.tracing.apply_args(args);
 
         // APU channel disable flags
         if Self::has_flag(args, "--disable-pulse1") {
@@ -363,6 +363,7 @@ impl Config {
         while i < args.len() {
             let arg = &args[i];
 
+            // Check for exact flag match
             if let Some(flag) = CLI_FLAGS.iter().find(|f| f.flag == arg) {
                 if flag.has_value {
                     if i + 1 >= args.len() {
@@ -372,6 +373,14 @@ impl Config {
                 }
                 i += 1;
                 continue;
+            }
+
+            // Check for --flag=value syntax (e.g., --trace-cpu=2)
+            if let Some((flag_part, _)) = arg.split_once('=') {
+                if CLI_FLAGS.iter().any(|f| f.flag == flag_part) {
+                    i += 1;
+                    continue;
+                }
             }
 
             if arg.starts_with('-') {
@@ -570,6 +579,46 @@ impl Config {
             "video_scale" => {
                 if let Ok(s) = value.parse::<f32>() {
                     self.video_scale = s;
+                }
+            }
+            "trace-cpu" => {
+                if let Ok(level) = value.parse::<u8>() {
+                    self.tracing.cpu = level;
+                    if level > 0 {
+                        self.tracing.enabled = true;
+                    }
+                }
+            }
+            "trace-ppu" => {
+                if let Ok(level) = value.parse::<u8>() {
+                    self.tracing.ppu = level;
+                    if level > 0 {
+                        self.tracing.enabled = true;
+                    }
+                }
+            }
+            "trace-apu" => {
+                if let Ok(level) = value.parse::<u8>() {
+                    self.tracing.apu = level;
+                    if level > 0 {
+                        self.tracing.enabled = true;
+                    }
+                }
+            }
+            "trace-mapper" => {
+                if let Ok(level) = value.parse::<u8>() {
+                    self.tracing.mapper = level;
+                    if level > 0 {
+                        self.tracing.enabled = true;
+                    }
+                }
+            }
+            "trace-nestest" => {
+                if let Ok(b) = Self::parse_bool(value) {
+                    self.tracing.nestest = b;
+                    if b {
+                        self.tracing.enabled = true;
+                    }
                 }
             }
             // NOTE: timing_scale is disabled as it doesn't work with the current eventloop design
@@ -829,7 +878,7 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace".to_string()];
         let config = parse_config(args);
         assert!(config.tracing.enabled);
-        assert!(config.tracing.cpu); // --trace enables CPU tracing
+        assert_eq!(config.tracing.cpu, 1); // --trace enables CPU tracing at level 1
     }
 
     #[test]
@@ -845,7 +894,7 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace-cpu".to_string()];
         let config = parse_config(args);
         assert!(config.tracing.enabled);
-        assert!(config.tracing.cpu);
+        assert_eq!(config.tracing.cpu, 1);
     }
 
     #[test]
@@ -853,7 +902,7 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace-ppu".to_string()];
         let config = parse_config(args);
         assert!(config.tracing.enabled);
-        assert!(config.tracing.ppu);
+        assert_eq!(config.tracing.ppu, 1);
     }
 
     #[test]
@@ -861,7 +910,7 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace-apu".to_string()];
         let config = parse_config(args);
         assert!(config.tracing.enabled);
-        assert!(config.tracing.apu);
+        assert_eq!(config.tracing.apu, 1);
     }
 
     #[test]
@@ -869,7 +918,55 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace-mapper".to_string()];
         let config = parse_config(args);
         assert!(config.tracing.enabled);
-        assert!(config.tracing.mapper);
+        assert_eq!(config.tracing.mapper, 1);
+    }
+
+    #[test]
+    fn test_config_tracing_cpu_with_level() {
+        let args = vec!["neser".to_string(), "--trace-cpu=2".to_string()];
+        let config = parse_config(args);
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.cpu, 2);
+    }
+
+    #[test]
+    fn test_config_tracing_ppu_with_level() {
+        let args = vec!["neser".to_string(), "--trace-ppu=3".to_string()];
+        let config = parse_config(args);
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.ppu, 3);
+    }
+
+    #[test]
+    fn test_config_tracing_apu_with_level() {
+        let args = vec!["neser".to_string(), "--trace-apu=4".to_string()];
+        let config = parse_config(args);
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.apu, 4);
+    }
+
+    #[test]
+    fn test_config_tracing_mapper_with_level() {
+        let args = vec!["neser".to_string(), "--trace-mapper=5".to_string()];
+        let config = parse_config(args);
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.mapper, 5);
+    }
+
+    #[test]
+    fn test_config_tracing_with_multiple_levels() {
+        let args = vec![
+            "neser".to_string(),
+            "--trace-cpu=3".to_string(),
+            "--trace-ppu=2".to_string(),
+            "--trace-apu=1".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.cpu, 3);
+        assert_eq!(config.tracing.ppu, 2);
+        assert_eq!(config.tracing.apu, 1);
+        assert_eq!(config.tracing.mapper, 0);
     }
 
     #[test]
@@ -1065,6 +1162,54 @@ mod tests {
         let mut config = Config::default();
         config.apply_config_value("video_scale", "2.5");
         assert!((config.video_scale - 2.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_config_file_trace_cpu() {
+        let mut config = Config::default();
+        config.apply_config_value("trace-cpu", "2");
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.cpu, 2);
+    }
+
+    #[test]
+    fn test_config_file_trace_ppu() {
+        let mut config = Config::default();
+        config.apply_config_value("trace-ppu", "3");
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.ppu, 3);
+    }
+
+    #[test]
+    fn test_config_file_trace_apu() {
+        let mut config = Config::default();
+        config.apply_config_value("trace-apu", "1");
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.apu, 1);
+    }
+
+    #[test]
+    fn test_config_file_trace_mapper() {
+        let mut config = Config::default();
+        config.apply_config_value("trace-mapper", "4");
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.mapper, 4);
+    }
+
+    #[test]
+    fn test_config_file_trace_nestest() {
+        let mut config = Config::default();
+        config.apply_config_value("trace-nestest", "true");
+        assert!(config.tracing.enabled);
+        assert!(config.tracing.nestest);
+    }
+
+    #[test]
+    fn test_config_file_trace_zero_does_not_enable() {
+        let mut config = Config::default();
+        config.apply_config_value("trace-cpu", "0");
+        assert!(!config.tracing.enabled);
+        assert_eq!(config.tracing.cpu, 0);
     }
 
     // #[test]

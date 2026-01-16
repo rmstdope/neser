@@ -1,5 +1,5 @@
 // ...existing doc comments...
-use crate::trace_cpu;
+use crate::trace_mapper;
 // # Mapper 16 (Bandai FCG) Implementation
 //
 // Used by Dragon Ball, SD Gundam, and other Bandai games.
@@ -285,7 +285,7 @@ impl Mapper for BandaiFcgMapper {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_cpu!("[bandai_fcg] cpu_cycle");
+        trace_mapper!(1; "[bandai_fcg] cpu_cycle");
         // IRQ counter decrements every CPU cycle when enabled
         if self.irq_enabled && self.irq_counter > 0 {
             self.irq_counter -= 1;
