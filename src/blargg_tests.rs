@@ -658,21 +658,21 @@ mod tests {
     // MMC3 test suite (alternative test format)
     blargg_test!(
         test_mmc3_test_1_clocking,
-        "roms/blargg/mmc3_test/1-clocking.nes"
+        "roms/blargg/mmc3_test_2/rom_singles/1-clocking.nes"
     );
     blargg_test!(
         test_mmc3_test_2_details,
-        "roms/blargg/mmc3_test/2-details.nes"
+        "roms/blargg/mmc3_test_2/rom_singles/2-details.nes"
     );
     blargg_test!(
         test_mmc3_test_3_a12_clocking,
-        "roms/blargg/mmc3_test/3-A12_clocking.nes"
+        "roms/blargg/mmc3_test_2/rom_singles/3-A12_clocking.nes"
     );
     blargg_test!(
         test_mmc3_test_4_scanline_timing,
-        "roms/blargg/mmc3_test/4-scanline_timing.nes",
+        "roms/blargg/mmc3_test_2/rom_singles/4-scanline_timing.nes",
         60 * 5
     );
-    blargg_test!(test_mmc3_test_5_mmc3, "roms/blargg/mmc3_test/5-MMC3.nes");
+    blargg_test!(test_mmc3_test_5_mmc3, "roms/blargg/mmc3_test_2/rom_singles/5-MMC3.nes");
     blargg_test!(test_mmc3_test_6_mmc3_alt, "roms/blargg/mmc3_test_2/rom_singles/6-MMC3_alt.nes");
 }
