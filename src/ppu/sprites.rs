@@ -481,10 +481,8 @@ impl Sprites {
 
             if (0..8).contains(&shift) {
                 let bit_pos = 7 - (shift as u8);
-                let pattern_lo_bit =
-                    (self.sprite_pattern_shift_lo[sprite_idx] >> bit_pos) & 0x01;
-                let pattern_hi_bit =
-                    (self.sprite_pattern_shift_hi[sprite_idx] >> bit_pos) & 0x01;
+                let pattern_lo_bit = (self.sprite_pattern_shift_lo[sprite_idx] >> bit_pos) & 0x01;
+                let pattern_hi_bit = (self.sprite_pattern_shift_hi[sprite_idx] >> bit_pos) & 0x01;
                 let pattern = (pattern_hi_bit << 1) | pattern_lo_bit;
 
                 if pattern == 0 {
@@ -537,10 +535,8 @@ impl Sprites {
 
             if (0..8).contains(&shift) {
                 let bit_pos = 7 - (shift as u8);
-                let pattern_lo_bit =
-                    (self.sprite_pattern_shift_lo[sprite_0_idx] >> bit_pos) & 0x01;
-                let pattern_hi_bit =
-                    (self.sprite_pattern_shift_hi[sprite_0_idx] >> bit_pos) & 0x01;
+                let pattern_lo_bit = (self.sprite_pattern_shift_lo[sprite_0_idx] >> bit_pos) & 0x01;
+                let pattern_hi_bit = (self.sprite_pattern_shift_hi[sprite_0_idx] >> bit_pos) & 0x01;
                 let pattern = (pattern_hi_bit << 1) | pattern_lo_bit;
 
                 return pattern != 0;

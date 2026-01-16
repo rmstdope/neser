@@ -298,7 +298,9 @@ impl Config {
         }
 
         // Display argument (only applies if fullscreen is set)
-        if self.fullscreen && let Some(display) = Self::parse_display_arg(args)? {
+        if self.fullscreen
+            && let Some(display) = Self::parse_display_arg(args)?
+        {
             self.fullscreen_display = Some(display);
         }
 
@@ -534,7 +536,9 @@ impl Config {
                 }
             }
             "display" => {
-                if let Ok(d) = value.parse::<i32>() && d >= 0 {
+                if let Ok(d) = value.parse::<i32>()
+                    && d >= 0
+                {
                     self.fullscreen_display = Some(d);
                 }
             }
