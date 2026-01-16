@@ -212,10 +212,99 @@ impl BusDevice for ApuJoypadDevice {
     }
 }
 
+struct MapperDevice {
+    cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
+    ppu: Rc<RefCell<ppu::Ppu>>,
+    open_bus: Rc<RefCell<u8>>,
+}
+
+impl MapperDevice {
+    fn new(
+        cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
+        ppu: Rc<RefCell<ppu::Ppu>>,
+        open_bus: Rc<RefCell<u8>>,
+    ) -> Self {
+        Self {
+            cartridge,
+            ppu,
+            open_bus,
+        }
+    }
+}
+
+impl BusDevice for MapperDevice {
+    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
+        if !self.address_range().contains(&addr) {
+            return None;
+        }
+
+        let open_bus = *self.open_bus.borrow();
+        let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
+            return match addr {
+                0x5000..=0x5FFF => Some(open_bus),
+                0x6000..=0x7FFF => {
+                    eprintln!(
+                        "Warning: Read from PRG-RAM {:04X} without cartridge, returning 0",
+                        addr
+                    );
+                    Some(0)
+                }
+                0x8000..=0xFFFF => panic!("No cartridge mapped, cannot read from {:04X}", addr),
+                _ => None,
+            };
+        };
+
+        Some(
+            cartridge
+                .borrow()
+                .mapper()
+                .read_prg_open_bus(addr, open_bus),
+        )
+    }
+
+    fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
+        if !self.address_range().contains(&addr) {
+            return false;
+        }
+
+        let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
+            match addr {
+                0x5000..=0x5FFF => eprintln!(
+                    "Warning: Write to mapper expansion area {:04X} without cartridge, ignored",
+                    addr
+                ),
+                0x6000..=0x7FFF => eprintln!(
+                    "Warning: Write to PRG-RAM {:04X} without cartridge, ignored",
+                    addr
+                ),
+                0x8000..=0xFFFF => eprintln!(
+                    "Warning: Write to PRG ROM area {:04X} without cartridge, ignored",
+                    addr
+                ),
+                _ => {}
+            }
+            return true;
+        };
+
+        let old_mirroring = cartridge.borrow().mapper().get_mirroring();
+        cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
+        let new_mirroring = cartridge.borrow().mapper().get_mirroring();
+        if new_mirroring != old_mirroring {
+            self.ppu.borrow_mut().set_mirroring(new_mirroring);
+        }
+
+        true
+    }
+
+    fn address_range(&self) -> RangeInclusive<u16> {
+        0x5000..=0xFFFF
+    }
+}
+
 /// NES Memory (64KB address space)
 pub struct MemController {
     cpu_ram: Vec<u8>,
-    cartridge: Option<Rc<RefCell<Cartridge>>>,
+    cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
     ppu: Rc<RefCell<ppu::Ppu>>,
     apu: Rc<RefCell<apu::Apu>>,
     oam_dma_page: Option<u8>, // Stores the page for pending OAM DMA
@@ -230,7 +319,7 @@ impl MemController {
     pub fn new(ppu: Rc<RefCell<ppu::Ppu>>, apu: Rc<RefCell<apu::Apu>>) -> Self {
         let mut controller = Self {
             cpu_ram: vec![0; 0x10000],
-            cartridge: None,
+            cartridge: Rc::new(RefCell::new(None)),
             ppu,
             apu,
             oam_dma_page: None,
@@ -245,6 +334,11 @@ impl MemController {
             controller.apu.clone(),
             controller.joypad1.clone(),
             controller.joypad2.clone(),
+            controller.open_bus.clone(),
+        )));
+        controller.register_device(Box::new(MapperDevice::new(
+            controller.cartridge.clone(),
+            controller.ppu.clone(),
             controller.open_bus.clone(),
         )));
 
@@ -275,28 +369,26 @@ impl MemController {
         ppu.set_cartridge(cartridge_rc.clone());
         ppu.set_mirroring(cartridge_rc.borrow().mapper().get_mirroring());
 
-        self.cartridge = Some(cartridge_rc);
+        *self.cartridge.borrow_mut() = Some(cartridge_rc);
     }
 
     /// Reset the cartridge (if present) to its power-on state.
     ///
     /// This resets mapper state but typically preserves PRG-RAM contents.
     pub fn reset_cartridge(&mut self) {
-        if let Some(cartridge) = self.cartridge.as_ref() {
-            cartridge.borrow_mut().reset();
-        }
+        let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
+            return;
+        };
+
+        cartridge.borrow_mut().reset();
     }
 
     pub fn save_ram(&self) -> io::Result<()> {
-        let Some(cartridge) = self.cartridge.as_ref() else {
+        let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             return Ok(());
         };
 
         cartridge.borrow().save_ram()
-    }
-
-    fn sync_ppu_mirroring_from_mapper(&mut self, mirroring: crate::cartridge::MirroringMode) {
-        self.ppu.borrow_mut().set_mirroring(mirroring);
     }
 
     /// Read a byte from memory
@@ -314,6 +406,7 @@ impl MemController {
         }
 
         self.cartridge
+            .borrow()
             .as_ref()
             .map(|cart| cart.borrow().mapper().read_prg(addr))
             .unwrap_or(0)
@@ -334,6 +427,7 @@ impl MemController {
             0x0000..=0x1FFF => self.cpu_ram[(addr & 0x07FF) as usize],
             0x6000..=0xFFFF => self
                 .cartridge
+                .borrow()
                 .as_ref()
                 .map(|cart| cart.borrow().mapper().read_prg(addr))
                 .unwrap_or(0),
@@ -364,50 +458,6 @@ impl MemController {
 
             // Unallocated I/O space ($4018-$40FF) returns open bus
             0x4018..=0x40FF => *self.open_bus.borrow(),
-
-            // Mapper expansion area ($5000-$5FFF)
-            // Used by advanced mappers like MMC5 for extra features
-            0x5000..=0x5FFF => {
-                if let Some(ref cartridge) = self.cartridge {
-                    let open_bus = *self.open_bus.borrow();
-                    cartridge
-                        .borrow()
-                        .mapper()
-                        .read_prg_open_bus(addr, open_bus)
-                } else {
-                    *self.open_bus.borrow()
-                }
-            }
-
-            // PRG-RAM ($6000-$7FFF)
-            0x6000..=0x7FFF => {
-                if let Some(ref cartridge) = self.cartridge {
-                    let open_bus = *self.open_bus.borrow();
-                    cartridge
-                        .borrow()
-                        .mapper()
-                        .read_prg_open_bus(addr, open_bus)
-                } else {
-                    eprintln!(
-                        "Warning: Read from PRG-RAM {:04X} without cartridge, returning 0",
-                        addr
-                    );
-                    0
-                }
-            }
-
-            // PRG ROM ($8000-$FFFF)
-            0x8000..=0xFFFF => {
-                if let Some(ref cartridge) = self.cartridge {
-                    let open_bus = *self.open_bus.borrow();
-                    cartridge
-                        .borrow()
-                        .mapper()
-                        .read_prg_open_bus(addr, open_bus)
-                } else {
-                    panic!("No cartridge mapped, cannot read from {:04X}", addr);
-                }
-            }
 
             // Everything else
             _ => {
@@ -443,6 +493,7 @@ impl MemController {
     /// This is a level-triggered signal: it remains asserted until the mapper is acknowledged.
     pub fn mapper_irq_pending(&self) -> bool {
         self.cartridge
+            .borrow()
             .as_ref()
             .map(|cart| cart.borrow().mapper().irq_pending())
             .unwrap_or(false)
@@ -451,6 +502,7 @@ impl MemController {
     /// Sample the mapper-provided expansion-audio output.
     pub fn mapper_expansion_audio_sample(&self) -> f32 {
         self.cartridge
+            .borrow()
             .as_ref()
             .map(|cart| cart.borrow().mapper().expansion_audio_sample())
             .unwrap_or(0.0)
@@ -460,9 +512,11 @@ impl MemController {
     ///
     /// Some mappers implement CPU-cycle-driven IRQ systems (e.g., Konami VRC IRQ).
     pub fn mapper_cpu_cycle(&mut self) {
-        if let Some(ref cartridge) = self.cartridge {
-            cartridge.borrow_mut().mapper_mut().cpu_cycle();
-        }
+        let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
+            return;
+        };
+
+        cartridge.borrow_mut().mapper_mut().cpu_cycle();
     }
 
     #[cfg(test)]
@@ -491,12 +545,14 @@ impl MemController {
 
     #[cfg(test)]
     pub fn mapper_ppu_address_changed_for_test(&mut self, addr: u16) {
-        if let Some(ref cartridge) = self.cartridge {
-            cartridge
-                .borrow_mut()
-                .mapper_mut()
-                .ppu_address_changed(addr & 0x1FFF);
-        }
+        let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
+            return;
+        };
+
+        cartridge
+            .borrow_mut()
+            .mapper_mut()
+            .ppu_address_changed(addr & 0x1FFF);
     }
 
     /// Write a byte to memory
@@ -512,13 +568,17 @@ impl MemController {
 
         if self.write_to_devices(addr, value, is_dummy_write) {
             if addr == 0x2000 {
-                if let Some(ref cartridge) = self.cartridge {
-                    cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
-                }
+                let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
+                    return false;
+                };
+
+                cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
             } else if addr == 0x2001 {
-                if let Some(ref cartridge) = self.cartridge {
-                    cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
-                }
+                let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
+                    return false;
+                };
+
+                cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
             }
 
             return false;
@@ -537,66 +597,6 @@ impl MemController {
             // Writes are ignored (no side effects)
             0x4018..=0x40FF => {
                 // Silently ignore writes to unallocated I/O space
-            }
-
-            // Mapper expansion area ($5000-$5FFF)
-            // Used by advanced mappers like MMC5 for extra features
-            0x5000..=0x5FFF => {
-                if let Some(ref cartridge) = self.cartridge {
-                    let old_mirroring = cartridge.borrow().mapper().get_mirroring();
-                    cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
-                    let new_mirroring = cartridge.borrow().mapper().get_mirroring();
-                    if new_mirroring != old_mirroring {
-                        self.sync_ppu_mirroring_from_mapper(new_mirroring);
-                    }
-                } else {
-                    eprintln!(
-                        "Warning: Write to mapper expansion area {:04X} without cartridge, ignored",
-                        addr
-                    );
-                }
-            }
-
-            // PRG-RAM ($6000-$7FFF)
-            0x6000..=0x7FFF => {
-                // if addr >= 0x6000 && addr <= 0x6010 {
-                //     // For debugging, print writes to $6000-$6010 (test output area)
-                //     println!(
-                //         "Debug: Write to ${:04X} PRG-RAM: {:02X} ({})",
-                //         addr, value, value as char
-                //     );
-                // }
-                if let Some(ref cartridge) = self.cartridge {
-                    let old_mirroring = cartridge.borrow().mapper().get_mirroring();
-                    cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
-                    let new_mirroring = cartridge.borrow().mapper().get_mirroring();
-                    if new_mirroring != old_mirroring {
-                        self.sync_ppu_mirroring_from_mapper(new_mirroring);
-                    }
-                } else {
-                    eprintln!(
-                        "Warning: Write to PRG-RAM {:04X} without cartridge, ignored",
-                        addr
-                    );
-                }
-            }
-
-            // PRG ROM area ($8000-$FFFF)
-            // Writes here are typically mapper register writes, not ROM writes
-            0x8000..=0xFFFF => {
-                if let Some(ref cartridge) = self.cartridge {
-                    let old_mirroring = cartridge.borrow().mapper().get_mirroring();
-                    cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
-                    let new_mirroring = cartridge.borrow().mapper().get_mirroring();
-                    if new_mirroring != old_mirroring {
-                        self.sync_ppu_mirroring_from_mapper(new_mirroring);
-                    }
-                } else {
-                    eprintln!(
-                        "Warning: Write to PRG ROM area {:04X} without cartridge, ignored",
-                        addr
-                    );
-                }
             }
 
             // Everything else
@@ -786,6 +786,15 @@ mod tests {
 
         assert!(memory.has_device_for_address(0x4015));
         assert!(memory.has_device_for_address(0x4016));
+    }
+
+    #[test]
+    fn test_mapper_device_is_registered() {
+        let memory = create_test_memory();
+
+        assert!(memory.has_device_for_address(0x5000));
+        assert!(memory.has_device_for_address(0x6000));
+        assert!(memory.has_device_for_address(0x8000));
     }
 
     #[test]
