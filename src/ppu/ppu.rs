@@ -249,11 +249,11 @@ impl Ppu {
                 // This is pixel 6 for pattern_lo and pixel 8 for pattern_hi.
                 let cycle_in_tile = (pixel - 1) % 8;
                 let fetch_step = cycle_in_tile / 2;
-                
+
                 // Memory reads should only happen once per fetch (on the second cycle)
                 // for correct MMC3 A12 timing.
                 let is_second_cycle_of_fetch = cycle_in_tile % 2 == 1;
-                
+
                 match fetch_step {
                     0 if is_second_cycle_of_fetch => {
                         // Fetch nametable byte (cycle 2 of tile)
@@ -887,12 +887,12 @@ impl Ppu {
 
     /// Get reference to screen buffer
     #[cfg(test)]
-    pub fn screen_buffer(&self) -> &crate::screen_buffer::ScreenBuffer {
+    pub fn screen_buffer(&self) -> &super::screen_buffer::ScreenBuffer {
         self.rendering.screen_buffer()
     }
 
     /// Get mutable reference to screen buffer (for compatibility)
-    pub fn screen_buffer_mut(&mut self) -> &mut crate::screen_buffer::ScreenBuffer {
+    pub fn screen_buffer_mut(&mut self) -> &mut super::screen_buffer::ScreenBuffer {
         self.rendering.screen_buffer_mut()
     }
 

@@ -11,7 +11,6 @@ pub mod input;
 pub mod mem_controller;
 pub mod nes;
 pub mod ppu; // Modular PPU structure
-pub mod screen_buffer;
 pub mod tracing;
 
 #[cfg(feature = "sdl")]
@@ -25,4 +24,3 @@ pub mod eventloop;
 
 #[cfg(feature = "sdl")]
 pub(crate) mod rendering;
-

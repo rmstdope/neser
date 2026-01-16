@@ -13,7 +13,6 @@ mod rendering;
 mod mem_controller;
 mod nes;
 mod ppu;
-mod screen_buffer;
 mod tracing;
 
 use config::{Config, ParseResult};
