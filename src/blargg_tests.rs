@@ -674,4 +674,5 @@ mod tests {
         60 * 5
     );
     blargg_test!(test_mmc3_test_5_mmc3, "roms/blargg/mmc3_test/5-MMC3.nes");
+    blargg_test!(test_mmc3_test_6_mmc3_alt, "roms/blargg/mmc3_test_2/rom_singles/6-MMC3_alt.nes");
 }
