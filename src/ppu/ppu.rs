@@ -21,8 +21,7 @@ pub struct Ppu {
     // subtle boundary timing near VBlank end (blargg ppu_vbl_nmi 07).
     vblank_for_nmi: bool,
     /// Register management (PPUCTRL, PPUMASK, Loopy registers)
-    /// Public to allow MemController to access I/O bus latch
-    pub registers: Registers,
+    registers: Registers,
     /// Memory management (VRAM, palette, CHR ROM)
     memory: Memory,
     /// Background rendering
@@ -107,6 +106,14 @@ impl Ppu {
         self.background.reset();
         self.sprites.reset();
         self.prev_a12 = false;
+    }
+
+    pub fn io_bus(&self) -> u8 {
+        self.registers.io_bus()
+    }
+
+    pub fn set_io_bus(&mut self, value: u8) {
+        self.registers.set_io_bus(value);
     }
 
     /// Run the PPU for a specified number of cycles
@@ -1016,6 +1023,15 @@ mod tests {
         let ppu = Ppu::new(TvSystem::Ntsc);
         assert_eq!(ppu.scanline(), 0);
         assert_eq!(ppu.pixel(), 0);
+    }
+
+    #[test]
+    fn test_ppu_io_bus_round_trip() {
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+
+        ppu.set_io_bus(0x5A);
+
+        assert_eq!(ppu.io_bus(), 0x5A);
     }
 
     #[test]

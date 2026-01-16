@@ -137,16 +137,16 @@ impl MemController {
             0x2000..=0x3FFF => match addr & 0x2007 {
                 // Write-only registers return the PPU I/O bus latch
                 // The PPU I/O bus is separate from the CPU data bus!
-                0x2000 => self.ppu.borrow().registers.io_bus(),
-                0x2001 => self.ppu.borrow().registers.io_bus(),
+                0x2000 => self.ppu.borrow().io_bus(),
+                0x2001 => self.ppu.borrow().io_bus(),
                 0x2002 => {
                     // PPUSTATUS: get_status() already handles updating I/O bus correctly
                     self.ppu.borrow_mut().get_status()
                 }
-                0x2003 => self.ppu.borrow().registers.io_bus(),
+                0x2003 => self.ppu.borrow().io_bus(),
                 0x2004 => self.ppu.borrow_mut().read_oam_data(),
-                0x2005 => self.ppu.borrow().registers.io_bus(),
-                0x2006 => self.ppu.borrow().registers.io_bus(),
+                0x2005 => self.ppu.borrow().io_bus(),
+                0x2006 => self.ppu.borrow().io_bus(),
                 0x2007 => self.ppu.borrow_mut().read_data(),
                 _ => panic!("Should never happen!"),
             },
@@ -324,7 +324,7 @@ impl MemController {
                 }
                 0x2002 => {
                     // PPUSTATUS is read-only, but writes still update the I/O bus!
-                    self.ppu.borrow_mut().registers.set_io_bus(value);
+                    self.ppu.borrow_mut().set_io_bus(value);
                 }
                 0x2003 => self.ppu.borrow_mut().write_oam_address(value),
                 0x2004 => self.ppu.borrow_mut().write_oam_data(value),
