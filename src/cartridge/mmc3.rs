@@ -160,28 +160,36 @@ impl MMC3Mapper {
     }
 
     fn clock_irq_counter_on_a12_rising_edge(&mut self) {
-        // MMC3 IRQ counter behavior (minimal):
+        // MMC3 IRQ counter behavior:
         // - On each A12 rising edge, update the counter.
         // - If counter==0 or reload requested: load counter from latch.
         // - Else: decrement counter.
-        // - If counter becomes 0 and IRQ is enabled: assert IRQ.
+        // - THEN check if counter is 0 and IRQ is enabled: assert IRQ.
+        // 
+        // This means with latch=0, IRQ fires every scanline:
+        // - Clock 1: counter=0 or reload → reload to 0 → check: counter=0 → IRQ!
+        // - Clock 2: counter=0 → reload to 0 → check: counter=0 → IRQ!
         let old_counter = self.irq_counter;
         let was_reload = self.irq_reload;
 
         if self.irq_counter == 0 || self.irq_reload {
+            // Reload counter from latch
             self.irq_counter = self.irq_latch;
             self.irq_reload = false;
         } else {
+            // Decrement counter
             self.irq_counter = self.irq_counter.wrapping_sub(1);
         }
 
-        trace_mapper!(2; "MMC3 IRQ clock: old_counter={}, reload_flag={}, latch={}, new_counter={}, enabled={}", 
-            old_counter, was_reload, self.irq_latch, self.irq_counter, self.irq_enabled);
-
+        // Check if counter is 0 AFTER reload/decrement and assert IRQ if enabled
+        // This check happens regardless of whether we reloaded or decremented
         if self.irq_counter == 0 && self.irq_enabled {
             trace_mapper!(1; "MMC3 IRQ ASSERTED!");
             self.irq_asserted = true;
         }
+
+        trace_mapper!(2; "MMC3 IRQ clock: old_counter={}, reload_flag={}, latch={}, new_counter={}, enabled={}, irq_asserted={}", 
+            old_counter, was_reload, self.irq_latch, self.irq_counter, self.irq_enabled, self.irq_asserted);
     }
 
     fn map_chr_addr_to_bank_1k(&self, chr_addr: usize) -> (usize, usize) {

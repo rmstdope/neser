@@ -643,11 +643,11 @@ mod tests {
         test_mmc3_irq_3_a12_clocking,
         "roms/blargg/mmc3_irq_tests/3.A12_clocking.nes"
     );
-    // blargg_console_test!(
-    //     test_mmc3_irq_4_scanline_timing,
-    //     "roms/blargg/mmc3_irq_tests/4.Scanline_timing.nes",
-    //     60 * 5 // May need time for frame rendering
-    // );
+    blargg_console_test!(
+        test_mmc3_irq_4_scanline_timing,
+        "roms/blargg/mmc3_irq_tests/4.Scanline_timing.nes",
+        60 * 5 // May need time for frame rendering
+    );
     // Note: Tests 5 and 6 test different MMC3 revisions (A and B)
     // We'll implement Rev B (most common) as default
     blargg_console_test!(
