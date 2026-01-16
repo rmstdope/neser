@@ -55,6 +55,14 @@ When a PR is merged, the issue should be closed and the branch deleted to keep t
 
 Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh.
 
+### Merging to main
+Before merging to main, the following checkpoint shall pass:
+- Run `cargo check --all-targets --all-features` and fix all warnings.
+<!-- - Run `cargo clippy --all-targets --all-features -- -D warnings` and fix all warnings. -->
+<!-- - Run `cargo fmt -- --check` and fix all warnings. -->
+- Run `cargo test --all-features` and ensure all tests pass.
+
+
 ### Fixing Bugs
 
 When working on a bugin the application, you are free to add any traces, try fixes or anything else. However, when the issue have been pinpointed, either updating existing or add a new test that triggers the error before aplying the fix. This ensures no unecessary modifications are done and helps to prevent regressions in the future. After the test is in place, proceed to fix the bug and verify that the new test passes along with all existing tests.

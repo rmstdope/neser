@@ -21,6 +21,14 @@ pub trait Mapper {
     /// Returns the byte at the given address after bank translation
     fn read_prg(&self, addr: u16) -> u8;
 
+    /// Read a byte from PRG address space (CPU $6000-$FFFF), with open-bus context.
+    ///
+    /// Mappers that return open bus for disabled regions can override this method
+    /// to return `open_bus` when appropriate. Default falls back to `read_prg`.
+    fn read_prg_open_bus(&self, addr: u16, _open_bus: u8) -> u8 {
+        self.read_prg(addr)
+    }
+
     /// Write a byte to PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, writable)
     /// - $8000-$FFFF: Mapper control registers (PRG-ROM is read-only)

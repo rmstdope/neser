@@ -267,7 +267,9 @@ impl MMC3Mapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
+    use crate::cartridge::mapper::Mapper;
     use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mmc3::MMC3Mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
         let mut data = vec![0u8; bank_size * num_banks];
@@ -277,6 +279,16 @@ mod tests {
             data[start..end].fill(bank as u8);
         }
         data
+    }
+
+    #[test]
+    fn test_mmc3_new_prg_ram_enabled_by_default() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
     }
 
     #[test]
