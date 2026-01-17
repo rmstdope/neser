@@ -6,6 +6,7 @@ use super::bandai_fcg::BandaiFcgMapper;
 use super::camerica::CamericaMapper;
 use super::cnrom::CNROMMapper;
 use super::colordreams::ColorDreamsMapper;
+use super::cprom::CpromMapper;
 use super::gxrom::GxROMMapper;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
@@ -269,6 +270,7 @@ pub fn create_mapper_with_crc(
         11 => Ok(Box::new(ColorDreamsMapper::new(
             prg_rom, chr_rom, mirroring,
         ))),
+        13 => Ok(Box::new(CpromMapper::new(prg_rom, chr_rom, mirroring))),
         16 => Ok(Box::new(BandaiFcgMapper::new(prg_rom, chr_rom, mirroring))),
         19 => Ok(Box::new(Namco163Mapper::new(prg_rom, chr_rom, mirroring))),
         21 => Ok(Box::new(Vrc2Vrc4Mapper::new(21, prg_rom, chr_rom, mirroring))),

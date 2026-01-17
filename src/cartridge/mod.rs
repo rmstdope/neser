@@ -6,6 +6,7 @@ mod cartridge;
 mod cnrom;
 mod colordreams;
 mod common;
+mod cprom;
 mod gxrom;
 mod mapper;
 mod mmc1;
