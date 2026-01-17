@@ -8,6 +8,7 @@ use super::colordreams::ColorDreamsMapper;
 use super::gxrom::GxROMMapper;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
+use super::mmc4::MMC4Mapper;
 use super::mmc3::MMC3Mapper;
 use super::mmc5::MMC5Mapper;
 use super::namco118::Namco118Mapper;
@@ -261,6 +262,7 @@ pub fn create_mapper_with_crc(
         5 => Ok(Box::new(MMC5Mapper::new(prg_rom, chr_rom, mirroring))),
         7 => Ok(Box::new(AxROMMapper::new(prg_rom, chr_rom, mirroring))),
         9 => Ok(Box::new(MMC2Mapper::new(prg_rom, chr_rom, mirroring))),
+        10 => Ok(Box::new(MMC4Mapper::new(prg_rom, chr_rom, mirroring))),
         11 => Ok(Box::new(ColorDreamsMapper::new(
             prg_rom, chr_rom, mirroring,
         ))),
