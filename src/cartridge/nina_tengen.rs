@@ -98,14 +98,14 @@ impl Mapper for NinaTengenMapper {
         if (0x8000..=0xFFFF).contains(&addr) {
             // Bits 0-2: PRG bank select
             self.prg_bank_select = value & 0x07;
-            
+
             // Bit 3: Mirroring (0=vertical, 1=horizontal)
             self.mirroring = if (value & 0x08) != 0 {
                 MirroringMode::Horizontal
             } else {
                 MirroringMode::Vertical
             };
-            
+
             // Bits 4-7: CHR bank select
             self.chr_bank_select = (value >> 4) & 0x0F;
         }
@@ -161,7 +161,8 @@ mod tests {
             }
         }
 
-        let mut mapper = NinaTengenMapper::new(prg_rom, vec![0; 128 * 1024], MirroringMode::Horizontal);
+        let mut mapper =
+            NinaTengenMapper::new(prg_rom, vec![0; 128 * 1024], MirroringMode::Horizontal);
 
         // Initially bank 0 at $8000-$BFFF
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -198,7 +199,8 @@ mod tests {
             }
         }
 
-        let mut mapper = NinaTengenMapper::new(vec![0; 128 * 1024], chr_rom, MirroringMode::Horizontal);
+        let mut mapper =
+            NinaTengenMapper::new(vec![0; 128 * 1024], chr_rom, MirroringMode::Horizontal);
 
         // Initially bank 0
         assert_eq!(mapper.read_chr(0x0000), 0);
@@ -219,7 +221,11 @@ mod tests {
 
     #[test]
     fn test_nina_tengen_mirroring_control() {
-        let mut mapper = NinaTengenMapper::new(vec![0; 128 * 1024], vec![0; 128 * 1024], MirroringMode::Horizontal);
+        let mut mapper = NinaTengenMapper::new(
+            vec![0; 128 * 1024],
+            vec![0; 128 * 1024],
+            MirroringMode::Horizontal,
+        );
 
         // Initially horizontal (from constructor)
         assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
@@ -269,7 +275,7 @@ mod tests {
         // Write combined register: PRG=3, Mirroring=Vertical, CHR=7
         // Binary: 0111_0011 (CHR=7, Mir=0, PRG=3)
         mapper.write_prg(0x8000, 0b0111_0011);
-        
+
         assert_eq!(mapper.read_prg(0x8000), 103); // PRG bank 3
         assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical); // Bit 3 = 0
         assert_eq!(mapper.read_chr(0x0000), 207); // CHR bank 7
@@ -277,7 +283,7 @@ mod tests {
         // Write another combined register: PRG=5, Mirroring=Horizontal, CHR=10
         // Binary: 1010_1101 (CHR=10, Mir=1, PRG=5)
         mapper.write_prg(0x8000, 0b1010_1101);
-        
+
         assert_eq!(mapper.read_prg(0x8000), 105); // PRG bank 5
         assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal); // Bit 3 = 1
         assert_eq!(mapper.read_chr(0x0000), 210); // CHR bank 10
@@ -295,7 +301,8 @@ mod tests {
             }
         }
 
-        let mut mapper = NinaTengenMapper::new(prg_rom, vec![0; 8 * 1024], MirroringMode::Horizontal);
+        let mut mapper =
+            NinaTengenMapper::new(prg_rom, vec![0; 8 * 1024], MirroringMode::Horizontal);
 
         // Write with upper bits set - should only use lower 3 bits
         mapper.write_prg(0x8000, 0b1111_1111); // PRG bank = 7
@@ -317,7 +324,8 @@ mod tests {
             }
         }
 
-        let mut mapper = NinaTengenMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+        let mut mapper =
+            NinaTengenMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
 
         // Write with lower bits set - should only use bits 4-7
         mapper.write_prg(0x8000, 0b1111_0000); // CHR bank = 15
@@ -339,7 +347,8 @@ mod tests {
             }
         }
 
-        let mut mapper = NinaTengenMapper::new(prg_rom, vec![0; 8 * 1024], MirroringMode::Horizontal);
+        let mut mapper =
+            NinaTengenMapper::new(prg_rom, vec![0; 8 * 1024], MirroringMode::Horizontal);
 
         // Last bank should always read 57 (bank 7 + 50)
         assert_eq!(mapper.read_prg(0xC000), 57);
@@ -359,7 +368,8 @@ mod tests {
     fn test_nina_tengen_chr_rom_read_only() {
         // CHR ROM should not be writable
         let chr_rom = vec![0xAA; 8 * 1024];
-        let mut mapper = NinaTengenMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+        let mut mapper =
+            NinaTengenMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
 
         // Try to write to CHR
         mapper.write_chr(0x0000, 0x55);

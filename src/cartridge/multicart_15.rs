@@ -75,7 +75,7 @@ impl Mapper for Multicart15Mapper {
         }
 
         let offset = (addr - 0x8000) as usize;
-        
+
         match self.mode {
             // Mode 0 ($8000-$8001): 16KB at $8000, mirror at $C000
             0 => {
@@ -146,10 +146,10 @@ impl Mapper for Multicart15Mapper {
             } else {
                 MirroringMode::Vertical
             };
-            
+
             // Set mode based on address bits 0-2
             let addr_bits = addr & 0x0007;
-            
+
             if addr_bits == 0 || addr_bits == 1 {
                 // $xxx0 or $xxx1: Mode 0
                 self.mode = 0;
@@ -217,7 +217,7 @@ mod tests {
 
         // Write to $8000 (mode 0), select bank 2
         mapper.write_prg(0x8000, 2);
-        
+
         // Both $8000 and $C000 should read from bank 2
         assert_eq!(mapper.read_prg(0x8000), 20);
         assert_eq!(mapper.read_prg(0xBFFF), 20);
@@ -234,7 +234,7 @@ mod tests {
         // Write to $8002 (mode 1), select bank 2
         // Bank 2 -> uses banks 2-3 as 32KB (bank & 0xFE gives 2)
         mapper.write_prg(0x8002, 2);
-        
+
         // Should read from 16KB bank 2 and 3
         assert_eq!(mapper.read_prg(0x8000), 20); // Bank 2 at $8000-$BFFF
         assert_eq!(mapper.read_prg(0xBFFF), 20);
@@ -250,13 +250,13 @@ mod tests {
 
         // Write to $8004 (mode 2), select bank 4
         mapper.write_prg(0x8004, 4);
-        
+
         // $8000-$9FFF and $A000-$BFFF should mirror (bank 8)
         assert_eq!(mapper.read_prg(0x8000), 40);
         assert_eq!(mapper.read_prg(0x9FFF), 40);
         assert_eq!(mapper.read_prg(0xA000), 40);
         assert_eq!(mapper.read_prg(0xBFFF), 40);
-        
+
         // $C000-$DFFF and $E000-$FFFF should mirror (bank 9)
         assert_eq!(mapper.read_prg(0xC000), 40); // Note: Bank calculation may need adjustment
     }
@@ -293,7 +293,7 @@ mod tests {
 
         // Write with upper bits set - should only use lower 6 bits
         mapper.write_prg(0x8000, 0xFF); // Bank = 0x3F
-        
+
         // Should wrap to available banks
         let value = mapper.read_prg(0x8000);
         assert!(value < 80); // Should be within available banks
@@ -302,7 +302,8 @@ mod tests {
     #[test]
     fn test_multicart15_chr_ram() {
         // Multicart mappers typically use CHR-RAM
-        let mut mapper = Multicart15Mapper::new(vec![0; 128 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper =
+            Multicart15Mapper::new(vec![0; 128 * 1024], vec![], MirroringMode::Horizontal);
 
         // CHR-RAM should be writable
         mapper.write_chr(0x0000, 0xAA);
@@ -332,7 +333,7 @@ mod tests {
 
         // Values should differ since banking modes are different
         // (This might not always be true depending on bank numbers, but demonstrates mode switch)
-        
+
         // Switch to mode 2
         mapper.write_prg(0x8004, 3);
         assert_eq!(mapper.mode, 2);
@@ -347,21 +348,21 @@ mod tests {
         // $8000-$8001 -> mode 0
         mapper.write_prg(0x8000, 0);
         assert_eq!(mapper.mode, 0);
-        
+
         mapper.write_prg(0x8001, 0);
         assert_eq!(mapper.mode, 0);
 
         // $8002-$8003 -> mode 1
         mapper.write_prg(0x8002, 0);
         assert_eq!(mapper.mode, 1);
-        
+
         mapper.write_prg(0x8003, 0);
         assert_eq!(mapper.mode, 1);
 
         // $8004-$8007 -> mode 2
         mapper.write_prg(0x8004, 0);
         assert_eq!(mapper.mode, 2);
-        
+
         mapper.write_prg(0x8005, 0);
         assert_eq!(mapper.mode, 2);
     }

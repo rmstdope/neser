@@ -39,7 +39,7 @@ impl BnromNinaMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         // Detect variant: NINA-001 has CHR ROM, BNROM uses CHR-RAM
         let is_nina = !chr_rom.is_empty();
-        
+
         Self {
             prg_rom,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
@@ -209,7 +209,8 @@ mod tests {
     #[test]
     fn test_bnrom_chr_ram() {
         // BNROM uses CHR-RAM
-        let mut mapper = BnromNinaMapper::new(vec![0; 128 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper =
+            BnromNinaMapper::new(vec![0; 128 * 1024], vec![], MirroringMode::Horizontal);
 
         // CHR-RAM should be writable
         mapper.write_chr(0x0000, 0xAA);
@@ -259,7 +260,8 @@ mod tests {
         }
 
         // Non-empty CHR ROM = NINA-001 variant
-        let mut mapper = BnromNinaMapper::new(prg_rom, vec![0; 64 * 1024], MirroringMode::Horizontal);
+        let mut mapper =
+            BnromNinaMapper::new(prg_rom, vec![0; 64 * 1024], MirroringMode::Horizontal);
 
         // Initially bank 0
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -287,7 +289,8 @@ mod tests {
             }
         }
 
-        let mut mapper = BnromNinaMapper::new(vec![0; 128 * 1024], chr_rom, MirroringMode::Horizontal);
+        let mut mapper =
+            BnromNinaMapper::new(vec![0; 128 * 1024], chr_rom, MirroringMode::Horizontal);
 
         // Initially bank 0
         assert_eq!(mapper.read_chr(0x0000), 0);
@@ -317,7 +320,8 @@ mod tests {
             }
         }
 
-        let mut mapper = BnromNinaMapper::new(prg_rom, vec![0; 8 * 1024], MirroringMode::Horizontal);
+        let mut mapper =
+            BnromNinaMapper::new(prg_rom, vec![0; 8 * 1024], MirroringMode::Horizontal);
 
         // Set bank via proper register
         mapper.write_prg(0x7FFD, 1);
@@ -334,11 +338,16 @@ mod tests {
     #[test]
     fn test_bnrom_detection() {
         // Empty CHR ROM = BNROM
-        let mapper_bnrom = BnromNinaMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        let mapper_bnrom =
+            BnromNinaMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
         assert!(!mapper_bnrom.is_nina);
 
         // Non-empty CHR ROM = NINA-001
-        let mapper_nina = BnromNinaMapper::new(vec![0; 32 * 1024], vec![0; 8 * 1024], MirroringMode::Horizontal);
+        let mapper_nina = BnromNinaMapper::new(
+            vec![0; 32 * 1024],
+            vec![0; 8 * 1024],
+            MirroringMode::Horizontal,
+        );
         assert!(mapper_nina.is_nina);
     }
 
@@ -353,10 +362,18 @@ mod tests {
 
     #[test]
     fn test_nina001_mirroring() {
-        let mapper_h = BnromNinaMapper::new(vec![0; 128 * 1024], vec![0; 8 * 1024], MirroringMode::Horizontal);
+        let mapper_h = BnromNinaMapper::new(
+            vec![0; 128 * 1024],
+            vec![0; 8 * 1024],
+            MirroringMode::Horizontal,
+        );
         assert_eq!(mapper_h.get_mirroring(), MirroringMode::Horizontal);
 
-        let mapper_v = BnromNinaMapper::new(vec![0; 128 * 1024], vec![0; 8 * 1024], MirroringMode::Vertical);
+        let mapper_v = BnromNinaMapper::new(
+            vec![0; 128 * 1024],
+            vec![0; 8 * 1024],
+            MirroringMode::Vertical,
+        );
         assert_eq!(mapper_v.get_mirroring(), MirroringMode::Vertical);
     }
 }
