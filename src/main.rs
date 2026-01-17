@@ -69,17 +69,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = std::fs::read("roms/rainwarrior/color_test.nes")?;
 
     // Load game cartridge
-    // let rom_data = std::fs::read("roms/games/pac-man.nes")?;
-    // let rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
-    // let rom_path = "roms/games/donkey kong.nes";
-    // let rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
-    // let rom_path = "roms/games/Mike Tyson's Punch-Out!! (Japan, USA) (Rev 1).nes";
-    // let rom_path = "roms/games/Castlevania III - Dracula's Curse (USA).nes";
-    // let rom_path = "roms/games/Akumajyou_Densetsu_(Tr).nes";
-    // let rom_path = "roms/games/Dragon_Ball_Z_Gaiden_(Tr).nes";
-    // let rom_path = "roms/games/Super Mario Bros. 3 (USA) (Rev 1).nes";
-    // let rom_path = "roms/games/Super Mario Bros. 3 (USA) (Rev 1).nes";
-    let default_rom_path = "roms/games/Super Chinese 3 (J) [p1].nes";
+    // let default_rom_data = std::fs::read("roms/games/pac-man.nes")?;
+    // let default_rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
+    // let default_rom_path = "roms/games/donkey kong.nes";
+    let default_rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
+    // let default_rom_path = "roms/games/Mike Tyson's Punch-Out!! (Japan, USA) (Rev 1).nes";
+    // let default_rom_path = "roms/games/Castlevania III - Dracula's Curse (USA).nes";
+    // let default_rom_path = "roms/games/Akumajyou_Densetsu_(Tr).nes";
+    // let default_rom_path = "roms/games/Dragon_Ball_Z_Gaiden_(Tr).nes";
+    // let default_rom_path = "roms/games/Super Mario Bros. 3 (USA) (Rev 1).nes";
+    // let default_rom_path = "roms/games/Super Mario Bros. 3 (USA) (Rev 1).nes";
+    // let default_rom_path = "roms/games/Super Chinese 3 (J) [p1].nes";
     let rom_path = config.rom_path.as_deref().unwrap_or(default_rom_path);
 
     // Manual testing of Blargg

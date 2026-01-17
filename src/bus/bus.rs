@@ -1,4 +1,5 @@
 use super::apu_device::ApuDevice;
+use super::joypad_device::JoypadDevice;
 use super::mapper_device::MapperDevice;
 use super::oam_dma_device::OamDmaDevice;
 use super::ppu_device::PpuDevice;
@@ -26,8 +27,8 @@ pub struct Bus {
     apu: Rc<RefCell<apu::Apu>>,
     oam_dma_page: Rc<RefCell<Option<u8>>>, // Stores the page for pending OAM DMA
     dma_triggered: Rc<RefCell<bool>>,
-    joypad1: Joypad,
-    joypad2: Joypad,
+    joypad1: Rc<RefCell<Joypad>>,
+    joypad2: Rc<RefCell<Joypad>>,
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
 }
@@ -42,8 +43,8 @@ impl Bus {
             apu,
             oam_dma_page: Rc::new(RefCell::new(None)),
             dma_triggered: Rc::new(RefCell::new(false)),
-            joypad1: Joypad::new(),
-            joypad2: Joypad::new(),
+            joypad1: Rc::new(RefCell::new(Joypad::new())),
+            joypad2: Rc::new(RefCell::new(Joypad::new())),
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
         };
@@ -52,6 +53,10 @@ impl Bus {
         controller.register_device(Box::new(PpuDevice::new(
             controller.ppu.clone(),
             controller.cartridge.clone(),
+        )));
+        controller.register_device(Box::new(JoypadDevice::new(
+            controller.joypad1.clone(),
+            controller.joypad2.clone(),
         )));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -166,11 +171,6 @@ impl Bus {
     }
 
     fn read_internal(&mut self, addr: u16, clock_joypads: bool) -> u8 {
-        if let Some(value) = self.read_joypads(addr, clock_joypads) {
-            self.open_bus = value;
-            return value;
-        }
-
         if let Some(value) = self.read_from_devices(addr, clock_joypads) {
             self.open_bus = value;
             return value;
@@ -200,28 +200,6 @@ impl Bus {
         }
 
         None
-    }
-
-    fn read_joypads(&mut self, addr: u16, clock_joypads: bool) -> Option<u8> {
-        match addr {
-            0x4016 => {
-                let button_state = if clock_joypads {
-                    self.joypad1.read()
-                } else {
-                    self.joypad1.read_no_clock()
-                };
-                Some((self.open_bus & 0xFE) | button_state)
-            }
-            0x4017 => {
-                let button_state = if clock_joypads {
-                    self.joypad2.read()
-                } else {
-                    self.joypad2.read_no_clock()
-                };
-                Some((self.open_bus & 0xFE) | button_state)
-            }
-            _ => None,
-        }
     }
 
     /// Sample the mapper-generated IRQ line (e.g., MMC3 scanline IRQ).
@@ -296,11 +274,6 @@ impl Bus {
         // Update open bus with the value being written
         self.open_bus = value;
 
-        if addr == 0x4016 {
-            self.joypad1.write_strobe(value);
-            self.joypad2.write_strobe(value);
-        }
-
         if self.write_to_devices(addr, value, is_dummy_write) {
             return self.dma_triggered.replace(false);
         }
@@ -359,8 +332,8 @@ impl Bus {
     /// Set button state for a controller
     pub fn set_button(&mut self, controller: u8, button: crate::input::Button, pressed: bool) {
         match controller {
-            1 => self.joypad1.set_button(button, pressed),
-            2 => self.joypad2.set_button(button, pressed),
+            1 => self.joypad1.borrow_mut().set_button(button, pressed),
+            2 => self.joypad2.borrow_mut().set_button(button, pressed),
             _ => {}
         }
     }
@@ -480,6 +453,27 @@ mod tests {
         let dma = memory.write(0x4101, 0x55, false);
         assert!(!dma);
         assert_eq!(*last_write.borrow(), Some((0x4101, 0x55)));
+    }
+
+    #[test]
+    fn test_bus_prefers_device_for_joypad_registers() {
+        let mut memory = create_test_memory();
+        let last_write = Rc::new(RefCell::new(None));
+
+        memory.devices.insert(
+            0,
+            Box::new(TestBusDevice::new(
+                0x4016..=0x4016,
+                0xAA,
+                last_write.clone(),
+            )),
+        );
+
+        assert_eq!(memory.read(0x4016), 0xAA);
+
+        let dma = memory.write(0x4016, 0x55, false);
+        assert!(!dma);
+        assert_eq!(*last_write.borrow(), Some((0x4016, 0x55)));
     }
 
     #[test]

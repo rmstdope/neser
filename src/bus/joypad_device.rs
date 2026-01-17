@@ -1,17 +1,24 @@
 use crate::bus::bus::BusDevice;
-use crate::input::Joypad;
+use crate::input::{Button, Joypad};
+use std::cell::RefCell;
 use std::ops::RangeInclusive;
+use std::rc::Rc;
 
 pub(crate) struct JoypadDevice {
-    joypad1: Joypad,
-    joypad2: Joypad,
+    joypad1: Rc<RefCell<Joypad>>,
+    joypad2: Rc<RefCell<Joypad>>,
 }
 
 impl JoypadDevice {
-    pub(crate) fn new() -> Self {
-        Self {
-            joypad1: Joypad::new(),
-            joypad2: Joypad::new(),
+    pub(crate) fn new(joypad1: Rc<RefCell<Joypad>>, joypad2: Rc<RefCell<Joypad>>) -> Self {
+        Self { joypad1, joypad2 }
+    }
+
+    pub(crate) fn set_button(&mut self, controller: u8, button: Button, pressed: bool) {
+        match controller {
+            1 => self.joypad1.borrow_mut().set_button(button, pressed),
+            2 => self.joypad2.borrow_mut().set_button(button, pressed),
+            _ => {}
         }
     }
 }
@@ -25,17 +32,17 @@ impl BusDevice for JoypadDevice {
         match addr {
             0x4016 => {
                 let button_state = if clock_joypads {
-                    self.joypad1.read()
+                    self.joypad1.borrow_mut().read()
                 } else {
-                    self.joypad1.read_no_clock()
+                    self.joypad1.borrow().read_no_clock()
                 };
                 Some((open_bus & 0xFE) | button_state)
             }
             0x4017 => {
                 let button_state = if clock_joypads {
-                    self.joypad2.read()
+                    self.joypad2.borrow_mut().read()
                 } else {
-                    self.joypad2.read_no_clock()
+                    self.joypad2.borrow().read_no_clock()
                 };
                 Some((open_bus & 0xFE) | button_state)
             }
@@ -50,8 +57,8 @@ impl BusDevice for JoypadDevice {
 
         match addr {
             0x4016 => {
-                self.joypad1.write_strobe(value);
-                self.joypad2.write_strobe(value);
+                self.joypad1.borrow_mut().write_strobe(value);
+                self.joypad2.borrow_mut().write_strobe(value);
                 true
             }
             0x4017 => false,

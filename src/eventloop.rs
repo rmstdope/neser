@@ -132,6 +132,10 @@ impl EventLoop {
         sdl_context: &sdl2::Sdl,
     ) -> Result<(Vec<sdl2::controller::GameController>, HashMap<u32, u8>), String> {
         let game_controller_subsystem = sdl_context.game_controller()?;
+        let num = game_controller_subsystem
+            .load_mappings("gamecontrollerdb.txt")
+            .unwrap_or(0);
+        println!("Loaded {} game controller mappings", num);
         let available = game_controller_subsystem
             .num_joysticks()
             .map_err(|e| format!("Failed to enumerate joysticks: {}", e))?;
@@ -2411,7 +2415,7 @@ mod tests {
     #[serial]
     fn test_gamepad_disabled_by_default() {
         // When gamepads are disabled, no controllers should be initialized
-        let config = default_config();
+        let config = config_with_gamepads(false);
         let event_loop = EventLoop::new(true, None, &config);
         assert!(event_loop.is_ok());
         let event_loop = event_loop.unwrap();
