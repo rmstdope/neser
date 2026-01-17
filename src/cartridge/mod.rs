@@ -1,5 +1,6 @@
 mod axrom;
 mod bandai_fcg;
+mod camerica;
 #[allow(clippy::module_inception)]
 mod cartridge;
 mod cnrom;
