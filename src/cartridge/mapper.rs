@@ -14,6 +14,7 @@ use super::mmc2::MMC2Mapper;
 use super::mmc4::MMC4Mapper;
 use super::mmc3::MMC3Mapper;
 use super::mmc5::MMC5Mapper;
+use super::multicart_15::Multicart15Mapper;
 use super::namco118::Namco118Mapper;
 use super::namco163::Namco163Mapper;
 use super::nina_tengen::NinaTengenMapper;
@@ -273,6 +274,9 @@ pub fn create_mapper_with_crc(
             prg_rom, chr_rom, mirroring,
         ))),
         13 => Ok(Box::new(CpromMapper::new(prg_rom, chr_rom, mirroring))),
+        15 => Ok(Box::new(Multicart15Mapper::new(
+            prg_rom, chr_rom, mirroring,
+        ))),
         16 => Ok(Box::new(BandaiFcgMapper::new(prg_rom, chr_rom, mirroring))),
         19 => Ok(Box::new(Namco163Mapper::new(prg_rom, chr_rom, mirroring))),
         21 => Ok(Box::new(Vrc2Vrc4Mapper::new(21, prg_rom, chr_rom, mirroring))),
