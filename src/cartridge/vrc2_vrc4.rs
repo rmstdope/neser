@@ -145,36 +145,37 @@ impl Vrc2Vrc4Mapper {
 
     /// Normalize register address based on the mapper variant.
     ///
-    /// Each mapper variant has different address line connections:
-    /// - Mapper 21: A0=A0, A1=A1 (VRC4a/VRC4c)
-    /// - Mapper 22: A0=A1, A1=A0 (VRC2a) - swapped from normal
-    /// - Mapper 23: A0=A0+A1, A1=A2+A3 (VRC2b/VRC4e) - uses OR of address lines
-    /// - Mapper 25: A0=A1, A1=A0 (VRC4b/VRC4d) - swapped from normal
+    /// Each mapper variant has different CPU address line connections to the chip's
+    /// register address inputs:
+    /// - Mapper 21: CPU A1→chip A0, CPU A2→chip A1 (VRC4a/VRC4c)
+    /// - Mapper 22: CPU A1→chip A0, CPU A0→chip A1 (VRC2a) - swapped from normal
+    /// - Mapper 23: CPU (A0|A1)→chip A0, CPU (A2|A3)→chip A1 (VRC2b/VRC4e) - uses OR of address lines
+    /// - Mapper 25: CPU A1→chip A0, CPU A3→chip A1 (VRC4b/VRC4d)
     fn normalize_reg_addr(&self, addr: u16) -> u16 {
         // Base address uses A12-A15 for register selection
         let base = addr & 0xF000;
 
         match self.variant {
             Vrc2Vrc4Variant::Mapper21 => {
-                // VRC4a/VRC4c: A0=A0, A1=A1 (registers on bits 1-2, shifted left by 1)
+                // VRC4a/VRC4c: CPU A1→chip A0, CPU A2→chip A1 (registers on bits 1-2, shifted left by 1)
                 let a0 = (addr >> 1) & 0x01;
                 let a1 = (addr >> 2) & 0x01;
                 base | (a1 << 1) | a0
             }
             Vrc2Vrc4Variant::Mapper22 => {
-                // VRC2a: A0=A1, A1=A0 (swapped on bits 0-1)
+                // VRC2a: CPU A1→chip A0, CPU A0→chip A1 (swapped on bits 0-1)
                 let a0 = (addr >> 1) & 0x01;
                 let a1 = addr & 0x01;
                 base | (a1 << 1) | a0
             }
             Vrc2Vrc4Variant::Mapper23 => {
-                // VRC2b/VRC4e: A0=(A0|A1), A1=(A2|A3)
+                // VRC2b/VRC4e: CPU (A0|A1)→chip A0, CPU (A2|A3)→chip A1
                 let a0 = ((addr & 0x01) | ((addr >> 1) & 0x01)) & 0x01;
                 let a1 = (((addr >> 2) & 0x01) | ((addr >> 3) & 0x01)) & 0x01;
                 base | (a1 << 1) | a0
             }
             Vrc2Vrc4Variant::Mapper25 => {
-                // VRC4b/VRC4d: A0=A1, A1=A3 (bits 1 and 3)
+                // VRC4b/VRC4d: CPU A1→chip A0, CPU A3→chip A1 (bits 1 and 3)
                 let a0 = (addr >> 1) & 0x01;
                 let a1 = (addr >> 3) & 0x01;
                 base | (a1 << 1) | a0
