@@ -18,6 +18,7 @@ pub struct Namco163Mapper {
 impl Namco163Mapper {
     const PRG_BANK_SIZE_8K: usize = 0x2000;
     const CHR_BANK_SIZE_1K: usize = 0x0400;
+    const IRQ_COUNTER_MAX: u16 = 0x7FFF;
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         let chr_ram = if chr_rom.is_empty() {
@@ -79,7 +80,7 @@ impl Namco163Mapper {
             1 => MirroringMode::Horizontal,
             2 => MirroringMode::SingleScreenLower,
             3 => MirroringMode::SingleScreenUpper,
-            _ => self.mirroring,
+            _ => unreachable!("value is masked to 0..3"),
         };
     }
 
@@ -121,44 +122,44 @@ impl Namco163Mapper {
 impl Mapper for Namco163Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
-            0x4800..=0x5FFF => return self.read_namco_ram(addr),
-            _ => {}
-        }
+            0x4800..=0x5FFF => self.read_namco_ram(addr),
+            _ => {
+                if let Some(value) = self.prg_ram.try_read(addr) {
+                    return value;
+                }
 
-        if let Some(value) = self.prg_ram.try_read(addr) {
-            return value;
-        }
+                if self.prg_rom.is_empty() {
+                    return 0;
+                }
 
-        if self.prg_rom.is_empty() {
-            return 0;
-        }
-
-        match addr {
-            0x8000..=0x9FFF => {
-                let bank = self.prg_bank_index_8k(self.regs[8]);
-                let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
-                let index = bank * Self::PRG_BANK_SIZE_8K + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
+                match addr {
+                    0x8000..=0x9FFF => {
+                        let bank = self.prg_bank_index_8k(self.regs[8]);
+                        let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
+                        let index = bank * Self::PRG_BANK_SIZE_8K + offset;
+                        self.prg_rom.get(index).copied().unwrap_or(0)
+                    }
+                    0xA000..=0xBFFF => {
+                        let bank = self.prg_bank_index_8k(self.regs[9]);
+                        let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
+                        let index = bank * Self::PRG_BANK_SIZE_8K + offset;
+                        self.prg_rom.get(index).copied().unwrap_or(0)
+                    }
+                    0xC000..=0xDFFF => {
+                        let bank = self.prg_bank_index_8k(self.regs[10]);
+                        let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
+                        let index = bank * Self::PRG_BANK_SIZE_8K + offset;
+                        self.prg_rom.get(index).copied().unwrap_or(0)
+                    }
+                    0xE000..=0xFFFF => {
+                        let bank = self.prg_bank_count_8k().saturating_sub(1);
+                        let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
+                        let index = bank * Self::PRG_BANK_SIZE_8K + offset;
+                        self.prg_rom.get(index).copied().unwrap_or(0)
+                    }
+                    _ => 0,
+                }
             }
-            0xA000..=0xBFFF => {
-                let bank = self.prg_bank_index_8k(self.regs[9]);
-                let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
-                let index = bank * Self::PRG_BANK_SIZE_8K + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
-            }
-            0xC000..=0xDFFF => {
-                let bank = self.prg_bank_index_8k(self.regs[10]);
-                let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
-                let index = bank * Self::PRG_BANK_SIZE_8K + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
-            }
-            0xE000..=0xFFFF => {
-                let bank = self.prg_bank_count_8k().saturating_sub(1);
-                let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
-                let index = bank * Self::PRG_BANK_SIZE_8K + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
-            }
-            _ => 0,
         }
     }
 
@@ -215,11 +216,11 @@ impl Mapper for Namco163Mapper {
             return;
         }
 
-        if self.irq_counter == 0x7FFF {
+        if self.irq_counter == Self::IRQ_COUNTER_MAX {
             self.irq_counter = 0;
             self.irq_pending = true;
         } else {
-            self.irq_counter = (self.irq_counter + 1) & 0x7FFF;
+            self.irq_counter = (self.irq_counter + 1) & Self::IRQ_COUNTER_MAX;
         }
     }
 
@@ -253,7 +254,7 @@ impl Mapper for Namco163Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::cartridge::MirroringMode;
+    use crate::cartridge::MirroringMode;
     use crate::cartridge::mapper::create_mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
