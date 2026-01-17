@@ -23,8 +23,8 @@ const CHR_BANK_SIZE: usize = 0x2000; // 8KB
 /// NINA-001:
 /// - 32KB switchable PRG banks (up to 128KB total = 4 banks)
 /// - 8KB switchable CHR banks (up to 64KB total = 8 banks)
-/// - PRG bank select at $7FFD-$7FFF
-/// - CHR bank select at $7FFE-$7FFF
+/// - PRG bank select at $7FFD and $7FFF
+/// - CHR bank select at $7FFE
 pub struct BnromNinaMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,

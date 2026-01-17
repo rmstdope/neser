@@ -19,10 +19,9 @@ const PRG_BANK_SIZE_16K: usize = 0x4000; // 16KB
 /// - Data bits determine bank number and mirroring
 ///
 /// Banking modes (based on address written to):
-/// - $8000-$8001: 16KB PRG bank at $8000, mirror at $C000, vertical mirroring support
+/// - $8000-$8001: 16KB PRG bank at $8000, mirror at $C000
 /// - $8002-$8003: 32KB PRG bank at $8000
 /// - $8004-$8007: 8KB PRG bank at $8000, 8KB at $C000
-/// - Other addresses: 16KB PRG banking with various configurations
 ///
 /// Known games: Various pirate multicarts (100-in-1, 168-in-1, etc.)
 pub struct Multicart15Mapper {
@@ -113,20 +112,8 @@ impl Mapper for Multicart15Mapper {
                     self.prg_rom.get(index).copied().unwrap_or(0)
                 }
             }
-            // Mode 3 (other): 16KB banks
-            _ => {
-                if offset < 0x4000 {
-                    // $8000-$BFFF: switchable bank
-                    let bank_offset = self.get_prg_bank_16k(self.bank_select);
-                    let index = bank_offset + offset;
-                    self.prg_rom.get(index).copied().unwrap_or(0)
-                } else {
-                    // $C000-$FFFF: fixed to bank from sub_bank
-                    let bank_offset = self.get_prg_bank_16k(self.sub_bank);
-                    let index = bank_offset + (offset - 0x4000);
-                    self.prg_rom.get(index).copied().unwrap_or(0)
-                }
-            }
+            // This should never happen since write_prg only sets mode to 0, 1, or 2
+            _ => unreachable!("Invalid banking mode: {}", self.mode),
         }
     }
 
@@ -251,14 +238,17 @@ mod tests {
         // Write to $8004 (mode 2), select bank 4
         mapper.write_prg(0x8004, 4);
 
-        // $8000-$9FFF and $A000-$BFFF should mirror (bank 8)
+        // $8000-$9FFF and $A000-$BFFF should mirror (8KB bank 8 = 4 << 1)
         assert_eq!(mapper.read_prg(0x8000), 40);
         assert_eq!(mapper.read_prg(0x9FFF), 40);
         assert_eq!(mapper.read_prg(0xA000), 40);
         assert_eq!(mapper.read_prg(0xBFFF), 40);
 
-        // $C000-$DFFF and $E000-$FFFF should mirror (bank 9)
-        assert_eq!(mapper.read_prg(0xC000), 40); // Note: Bank calculation may need adjustment
+        // $C000-$DFFF and $E000-$FFFF should mirror (8KB bank 9 = (4 << 1) | 1)
+        assert_eq!(mapper.read_prg(0xC000), 40); // Bank 9, which is still filled with 40
+        assert_eq!(mapper.read_prg(0xDFFF), 40);
+        assert_eq!(mapper.read_prg(0xE000), 40);
+        assert_eq!(mapper.read_prg(0xFFFF), 40);
     }
 
     #[test]
