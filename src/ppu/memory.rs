@@ -8,6 +8,10 @@ pub struct Memory {
     ppu_ram: [u8; 4096],
     /// Palette RAM - 32 bytes
     palette: [u8; 32],
+    /// Cached palette entry (mirrored index) for hot-path reads
+    last_palette_index: Option<u8>,
+    /// Cached palette value for last_palette_index
+    last_palette_value: u8,
     /// Mirroring mode
     mirroring_mode: MirroringMode,
 }
@@ -24,6 +28,8 @@ impl Memory {
         Self {
             ppu_ram: [0; 4096],
             palette: [0; 32],
+            last_palette_index: None,
+            last_palette_value: 0,
             mirroring_mode: MirroringMode::Horizontal,
         }
     }
@@ -32,6 +38,8 @@ impl Memory {
     pub fn reset(&mut self) {
         self.ppu_ram = [0; 4096];
         self.palette = [0; 32];
+        self.last_palette_index = None;
+        self.last_palette_value = 0;
     }
 
     /// Set mirroring mode
@@ -145,16 +153,27 @@ impl Memory {
     }
 
     /// Read from palette at the specified address (with mirroring)
-    pub fn read_palette(&self, addr: u16) -> u8 {
-        let mirrored = self.mirror_palette_address(addr);
-        self.palette[mirrored]
+    pub fn read_palette(&mut self, addr: u16) -> u8 {
+        let mirrored = self.mirror_palette_address(addr) as u8;
+        if self.last_palette_index == Some(mirrored) {
+            return self.last_palette_value;
+        }
+
+        let value = self.palette[mirrored as usize];
+        self.last_palette_index = Some(mirrored);
+        self.last_palette_value = value;
+        value
     }
 
     /// Write to palette at the specified address (with mirroring)
     /// Palette RAM only stores 6 bits (0-5), bits 6-7 are ignored
     pub fn write_palette(&mut self, addr: u16, value: u8) {
         let mirrored = self.mirror_palette_address(addr);
-        self.palette[mirrored] = value & 0x3F; // Only store bits 5-0
+        let masked = value & 0x3F; // Only store bits 5-0
+        self.palette[mirrored] = masked;
+        if self.last_palette_index == Some(mirrored as u8) {
+            self.last_palette_value = masked;
+        }
     }
 
     /// Mirror VRAM address based on nametable mirroring mode
@@ -252,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_memory_new() {
-        let mem = Memory::new();
+        let mut mem = Memory::new();
         assert_eq!(mem.read_chr(0, &None), 0);
         assert_eq!(mem.read_palette(0x3F00), 0);
     }
