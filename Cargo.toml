@@ -31,6 +31,11 @@ name = "neser"
 path = "src/main.rs"
 required-features = ["sdl"]
 
+[[bin]]
+name = "joysticks"
+path = "src/bin/joysticks.rs"
+required-features = ["sdl"]
+
 [dev-dependencies]
 serial_test = "3.2"
 png = "0.17"

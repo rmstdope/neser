@@ -1,5 +1,5 @@
 use crate::bus::bus::BusDevice;
-use crate::input::{Button, Joypad};
+use crate::input::Joypad;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
 use std::rc::Rc;
