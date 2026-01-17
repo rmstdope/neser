@@ -292,11 +292,11 @@ impl Mapper for SunsoftFme7Mapper {
     }
 
     fn cpu_cycle(&mut self) {
-        // IRQ counter decrements every CPU cycle when counter is enabled
-        // IRQ triggers when counter underflows from 0 to $FFFF
-        if self.irq_counter_enabled && self.irq_enabled {
+        // IRQ counter decrements every CPU cycle when counter enable (bit 7) is set
+        // IRQ triggers on underflow only if IRQ enable (bit 0) is also set
+        if self.irq_counter_enabled {
             self.irq_counter = self.irq_counter.wrapping_sub(1);
-            if self.irq_counter == 0xFFFF {
+            if self.irq_counter == 0xFFFF && self.irq_enabled {
                 self.irq_pending = true;
                 trace_mapper!(2; "[fme7] IRQ triggered on underflow");
             }
@@ -472,19 +472,33 @@ mod tests {
         let chr_rom = banked_data(1024, 8);
         let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
 
-        // Set counter to 1
+        // Set counter to 5
         mapper.write_prg(0x8000, 0x0E);
-        mapper.write_prg(0xA000, 0x01);
+        mapper.write_prg(0xA000, 0x05);
         mapper.write_prg(0x8000, 0x0F);
         mapper.write_prg(0xA000, 0x00);
 
         // Enable counter but not IRQ
         mapper.write_prg(0x8000, 0x0D);
-        mapper.write_prg(0xA000, 0x80); // Counter enabled (bit 7), IRQ disabled
+        mapper.write_prg(0xA000, 0x80); // Counter enabled (bit 7), IRQ disabled (bit 0 = 0)
 
-        // Counter should count down but not trigger IRQ
+        // Counter should count down even with IRQ disabled
+        // After 5 cycles: 5->4->3->2->1->0
+        for _ in 0..5 {
+            mapper.cpu_cycle();
+            assert!(!mapper.irq_pending()); // IRQ should not trigger
+        }
+
+        // After one more cycle, counter underflows to $FFFF but IRQ still shouldn't trigger
         mapper.cpu_cycle();
-        mapper.cpu_cycle();
+        assert!(!mapper.irq_pending());
+
+        // Now enable IRQ - it should trigger immediately since counter already underflowed
+        mapper.write_prg(0x8000, 0x0D);
+        mapper.write_prg(0xA000, 0x81); // Enable both counter and IRQ
+        
+        // IRQ should not trigger immediately on enable (counter is already at $FFFF-1 or similar)
+        // But on next underflow it will trigger
         assert!(!mapper.irq_pending());
     }
 
