@@ -306,18 +306,12 @@ impl Mapper for Vrc2Vrc4Mapper {
                     self.chr_banks_1k[idx] = value;
                 }
                 0xD000..=0xD003 => {
-                    // CHR banking registers (continued)
-                    let idx = ((reg - 0xD000) & 0x0003) as usize;
-                    if idx < 4 {
-                        self.chr_banks_1k[idx] = value;
-                    }
+                    let idx = (reg & 0x0003) as usize;
+                    self.chr_banks_1k[idx] = value;
                 }
                 0xE000..=0xE003 => {
-                    // CHR banking registers (continued)
-                    let idx = 4 + ((reg - 0xE000) & 0x0003) as usize;
-                    if idx < 8 {
-                        self.chr_banks_1k[idx] = value;
-                    }
+                    let idx = 4 + (reg & 0x0003) as usize;
+                    self.chr_banks_1k[idx] = value;
                 }
                 0xF000 => {
                     // IRQ Latch (VRC4 only)
