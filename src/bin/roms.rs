@@ -22,7 +22,12 @@ fn read_mapper_from_file(path: &std::path::Path) -> Result<u8, String> {
 
 fn collect_roms(root: &std::path::Path) -> Result<Vec<std::path::PathBuf>, std::io::Error> {
     let mut roms = Vec::new();
-    for entry in std::fs::read_dir(root)? {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(roms),
+        Err(err) => return Err(err),
+    };
+    for entry in entries {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
@@ -84,5 +89,12 @@ mod tests {
                 .map(|ext| ext.eq_ignore_ascii_case("nes"))
                 .unwrap_or(false)
         }));
+    }
+
+    #[test]
+    fn test_collect_roms_missing_directory_returns_empty() {
+        let root = std::path::Path::new("roms/does-not-exist");
+        let roms = collect_roms(root).expect("collect roms");
+        assert!(roms.is_empty());
     }
 }
