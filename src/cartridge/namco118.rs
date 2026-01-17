@@ -1,7 +1,261 @@
+use crate::cartridge::{Mapper, MirroringMode};
+
+/// Namco 118 / DxROM (iNES mapper 206)
+///
+/// A simplified MMC3:
+/// - Same bank register format ($8000/$8001) for PRG/CHR banking
+/// - No IRQ functionality
+/// - Mirroring is hardwired from the cartridge header (writes to $A000 are ignored)
+pub struct Namco118Mapper {
+    prg_rom: Vec<u8>,
+    chr_rom: Vec<u8>,
+    chr_ram: Vec<u8>,
+    prg_ram: Vec<u8>,
+
+    mirroring: MirroringMode,
+
+    bank_select: u8,
+    regs: [u8; 8],
+}
+
+impl Namco118Mapper {
+    const PRG_BANK_SIZE: usize = 0x2000; // 8KB
+    const CHR_BANK_SIZE: usize = 0x0400; // 1KB
+    const PRG_RAM_SIZE: usize = 0x2000; // 8KB
+    const DEFAULT_CHR_RAM_SIZE: usize = 0x2000; // 8KB
+
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        let chr_ram = if chr_rom.is_empty() {
+            vec![0; Self::DEFAULT_CHR_RAM_SIZE]
+        } else {
+            Vec::new()
+        };
+
+        Self {
+            prg_rom,
+            chr_rom,
+            chr_ram,
+            prg_ram: vec![0; Self::PRG_RAM_SIZE],
+            mirroring,
+            bank_select: 0,
+            regs: [0; 8],
+        }
+    }
+
+    fn prg_bank_count(&self) -> usize {
+        self.prg_rom.len() / Self::PRG_BANK_SIZE
+    }
+
+    fn chr_bank_count_1k(&self) -> usize {
+        let chr_len = if self.chr_rom.is_empty() {
+            self.chr_ram.len()
+        } else {
+            self.chr_rom.len()
+        };
+        chr_len / Self::CHR_BANK_SIZE
+    }
+
+    fn prg_bank_index(&self, bank: u8) -> usize {
+        let count = self.prg_bank_count();
+        if count == 0 {
+            return 0;
+        }
+        (bank as usize) % count
+    }
+
+    fn chr_bank_index_1k(&self, bank: u8) -> usize {
+        let count = self.chr_bank_count_1k();
+        if count == 0 {
+            return 0;
+        }
+        (bank as usize) % count
+    }
+
+    fn prg_mode(&self) -> bool {
+        (self.bank_select & 0b0100_0000) != 0
+    }
+
+    fn chr_mode(&self) -> bool {
+        (self.bank_select & 0b1000_0000) != 0
+    }
+
+    fn selected_reg(&self) -> usize {
+        (self.bank_select & 0b0000_0111) as usize
+    }
+
+    fn read_prg_rom_bank(&self, bank_index: usize, bank_offset: usize) -> u8 {
+        let addr = bank_index * Self::PRG_BANK_SIZE + bank_offset;
+        self.prg_rom.get(addr).copied().unwrap_or(0)
+    }
+
+    fn read_chr_bank_1k(&self, bank_index: usize, bank_offset: usize) -> u8 {
+        let addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
+        if self.chr_rom.is_empty() {
+            self.chr_ram.get(addr).copied().unwrap_or(0)
+        } else {
+            self.chr_rom.get(addr).copied().unwrap_or(0)
+        }
+    }
+
+    fn map_chr_addr_to_bank_1k(&self, chr_addr: usize) -> (usize, usize) {
+        let bank_offset = chr_addr & (Self::CHR_BANK_SIZE - 1);
+
+        let r0 = self.regs[0] & 0xFE; // 2KB bank, even-aligned
+        let r1 = self.regs[1] & 0xFE; // 2KB bank, even-aligned
+        let r2 = self.regs[2];
+        let r3 = self.regs[3];
+        let r4 = self.regs[4];
+        let r5 = self.regs[5];
+
+        let bank_1k = if !self.chr_mode() {
+            // CHR mode 0
+            match chr_addr {
+                0x0000..=0x03FF => r0,
+                0x0400..=0x07FF => r0.wrapping_add(1),
+                0x0800..=0x0BFF => r1,
+                0x0C00..=0x0FFF => r1.wrapping_add(1),
+                0x1000..=0x13FF => r2,
+                0x1400..=0x17FF => r3,
+                0x1800..=0x1BFF => r4,
+                0x1C00..=0x1FFF => r5,
+                _ => 0,
+            }
+        } else {
+            // CHR mode 1
+            match chr_addr {
+                0x0000..=0x03FF => r2,
+                0x0400..=0x07FF => r3,
+                0x0800..=0x0BFF => r4,
+                0x0C00..=0x0FFF => r5,
+                0x1000..=0x13FF => r0,
+                0x1400..=0x17FF => r0.wrapping_add(1),
+                0x1800..=0x1BFF => r1,
+                0x1C00..=0x1FFF => r1.wrapping_add(1),
+                _ => 0,
+            }
+        };
+
+        (self.chr_bank_index_1k(bank_1k), bank_offset)
+    }
+}
+
+impl Mapper for Namco118Mapper {
+    fn read_prg(&self, addr: u16) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => {
+                let offset = (addr - 0x6000) as usize;
+                self.prg_ram.get(offset).copied().unwrap_or(0)
+            }
+            0x8000..=0xFFFF => {
+                let prg_count = self.prg_bank_count();
+                if prg_count == 0 {
+                    return 0;
+                }
+
+                let bank_offset = (addr as usize) & (Self::PRG_BANK_SIZE - 1);
+
+                let fixed_last = prg_count.saturating_sub(1);
+                let fixed_second_last = prg_count.saturating_sub(2);
+
+                let r6 = self.prg_bank_index(self.regs[6]);
+                let r7 = self.prg_bank_index(self.regs[7]);
+
+                let bank_index = match addr {
+                    0x8000..=0x9FFF => {
+                        if self.prg_mode() {
+                            fixed_second_last
+                        } else {
+                            r6
+                        }
+                    }
+                    0xA000..=0xBFFF => r7,
+                    0xC000..=0xDFFF => {
+                        if self.prg_mode() {
+                            r6
+                        } else {
+                            fixed_second_last
+                        }
+                    }
+                    0xE000..=0xFFFF => fixed_last,
+                    _ => 0,
+                };
+
+                self.read_prg_rom_bank(bank_index, bank_offset)
+            }
+            _ => 0,
+        }
+    }
+
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        match addr {
+            0x6000..=0x7FFF => {
+                let offset = (addr - 0x6000) as usize;
+                if let Some(byte) = self.prg_ram.get_mut(offset) {
+                    *byte = value;
+                }
+            }
+            0x8000..=0x9FFF => {
+                if (addr & 1) == 0 {
+                    // Bank select
+                    self.bank_select = value;
+                } else {
+                    // Bank data
+                    let reg = self.selected_reg();
+                    self.regs[reg] = value;
+                }
+            }
+            // $A000/$A001 (mirroring / PRG-RAM protect on MMC3) are ignored; mirroring is hardwired.
+            0xA000..=0xBFFF => {}
+            // $C000/$C001 and $E000/$E001 are IRQ-related on MMC3; ignored for Namco 118.
+            0xC000..=0xFFFF => {}
+            _ => {}
+        }
+    }
+
+    fn read_chr(&self, addr: u16) -> u8 {
+        let chr_addr = (addr & 0x1FFF) as usize;
+        let (bank_index, bank_offset) = self.map_chr_addr_to_bank_1k(chr_addr);
+        self.read_chr_bank_1k(bank_index, bank_offset)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        if !self.chr_rom.is_empty() {
+            return;
+        }
+
+        let chr_addr = (addr & 0x1FFF) as usize;
+        let (bank_index, bank_offset) = self.map_chr_addr_to_bank_1k(chr_addr);
+        let mapped_addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
+        if let Some(byte) = self.chr_ram.get_mut(mapped_addr) {
+            *byte = value;
+        }
+    }
+
+    fn ppu_address_changed(&mut self, _addr: u16) {}
+
+    fn get_mirroring(&self) -> MirroringMode {
+        self.mirroring
+    }
+
+    fn wram_size(&self) -> usize {
+        self.prg_ram.len()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.prg_ram.clone()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(self.prg_ram.len());
+        self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
     use crate::cartridge::mapper::{create_mapper, Mapper};
+    use crate::cartridge::namco118::Namco118Mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
         let mut data = vec![0u8; bank_size * num_banks];
@@ -91,5 +345,23 @@ mod tests {
             mapper.cpu_cycle();
             assert!(!mapper.irq_pending());
         }
+    }
+
+    #[test]
+    fn namco118_prg_ram_works_and_snapshots() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = Vec::new(); // CHR-RAM path
+
+        let mut mapper = Namco118Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+
+        let snap = mapper.wram_snapshot();
+        assert_eq!(snap[0], 0xAA);
+
+        mapper.write_prg(0x6000, 0x00);
+        mapper.load_wram_snapshot(&snap);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
     }
 }
