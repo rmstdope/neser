@@ -43,16 +43,16 @@ Always run the full regression suite before merging any code changes to ensure t
 
 When starting to work on any feature that exists as a github issue, assign that feature to the user that is working on it. Each feature should have a corresponding issue in the issue tracker that describes the work to be done.
 
-All feature size issues should be broken down into smaller sub-issues where appropriate. This makes it easier to manage and track progress on complex tasks. Each sub-issue should represent a discrete piece of work that can be completed independently. Prefix the sub-issues with ""Sub-issue (<<issue-number>>):"" to clearly indicate their relationship to the main feature issue. <<issue-number>> should be replaced with the main issue number.
+If suitable, a larger feature should be broken down into smaller sub-issues. This makes it easier to manage and track progress on complex tasks. Each sub-issue should represent a discrete piece of work that can be completed independently. Prefix the sub-issues with ""Sub-issue (<<issue-number>>):"" to clearly indicate their relationship to the main feature issue. <<issue-number>> should be replaced with the main issue number.
 
-When working on a sub-issue, this is important:
+When working on an issue, this is important:
 
-- ALWAYS assign the main issue and the sub-issue to the developer working on it.
-- ALWAYS create a new branch from main named after the sub-issue number and a short description of the work to be done, e.g., `42-add-user-authentication`. Once the work is completed and reviewed, merge the branch back into main using a pull request. This approach helps to keep the main codebase stable and allows for isolated development of features or fixes.
-- ALWAYS create a pull request (PR) for merging the sub-issue branch back into main. The PR should reference both the main issue and the sub-issue to maintain a clear link between code changes and tracked work.
-- ALWAYS merge a sub-issue branch back into main before starting to work on another issue. This ensures that the latest changes are always incorporated and reduces the risk of merge conflicts.
+- ALWAYS assign the issue to the developer working on it.
+- ALWAYS create a new branch from main named after the issue number and a short description of the work to be done, e.g., `42-add-user-authentication`. Once the work is completed and reviewed, merge the branch back into main using a pull request.
+- ALWAYS create a pull request (PR) for merging the sub-issue branch back into main.
+- ALWAYS merge an issue branch back into main before starting to work on another issue. This ensures that the latest changes are always incorporated and reduces the risk of merge conflicts.
 
-When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the sub-issue is part of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
+When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the issue is a sub-issue of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
 
 Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh. NEVER use backticks in the text with gh.
 
