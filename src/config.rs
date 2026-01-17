@@ -180,6 +180,8 @@ pub struct Config {
     pub video_scale: f32,
     /// Emulation speed multiplier.
     pub timing_scale: f32,
+    /// Optional ROM path from CLI positional argument.
+    pub rom_path: Option<String>,
 }
 
 bitflags! {
@@ -209,6 +211,7 @@ impl Default for Config {
             apu_channels: ApuChannels::ALL,
             video_scale: 4.0,
             timing_scale: 1.0,
+            rom_path: None,
         }
     }
 }
@@ -314,6 +317,10 @@ impl Config {
             self.shader_path = Some(path);
         }
 
+        if let Some(path) = Self::parse_rom_arg(args)? {
+            self.rom_path = Some(path);
+        }
+
         // Tracing (merge with existing config file values)
         self.tracing.apply_args(args);
 
@@ -350,7 +357,7 @@ impl Config {
     /// Print help text to stdout.
     pub fn print_help() {
         println!("NES Emulator");
-        println!("\nUsage: neser [OPTIONS]");
+        println!("\nUsage: neser [OPTIONS] [ROM]");
         println!("\nOptions:");
 
         for flag in CLI_FLAGS {
@@ -366,6 +373,7 @@ impl Config {
     /// Validate command-line arguments.
     fn validate_args(args: &[String]) -> Result<(), String> {
         let mut i = 1; // Skip program name
+        let mut seen_positional = false;
         while i < args.len() {
             let arg = &args[i];
 
@@ -393,9 +401,15 @@ impl Config {
                 return Err(format!("Unknown argument: {arg}\nTry --help for usage."));
             }
 
-            return Err(format!(
-                "Unexpected positional argument: {arg}\nTry --help for usage."
-            ));
+            if seen_positional {
+                return Err(format!(
+                    "Unexpected positional argument: {arg}\nTry --help for usage."
+                ));
+            }
+
+            seen_positional = true;
+            i += 1;
+            continue;
         }
 
         Ok(())
@@ -439,6 +453,47 @@ impl Config {
             }
         }
         None
+    }
+
+    /// Parse a positional ROM path from command-line args.
+    fn parse_rom_arg(args: &[String]) -> Result<Option<String>, String> {
+        let mut i = 1; // Skip program name
+        let mut rom_path: Option<String> = None;
+        while i < args.len() {
+            let arg = &args[i];
+
+            if let Some(flag) = CLI_FLAGS.iter().find(|f| f.flag == arg) {
+                if flag.has_value {
+                    i += 2;
+                } else {
+                    i += 1;
+                }
+                continue;
+            }
+
+            if let Some((flag_part, _)) = arg.split_once('=')
+                && CLI_FLAGS.iter().any(|f| f.flag == flag_part)
+            {
+                i += 1;
+                continue;
+            }
+
+            if arg.starts_with('-') {
+                i += 1;
+                continue;
+            }
+
+            if rom_path.is_some() {
+                return Err(format!(
+                    "Unexpected positional argument: {arg}\nTry --help for usage."
+                ));
+            }
+
+            rom_path = Some(arg.clone());
+            i += 1;
+        }
+
+        Ok(rom_path)
     }
 
     /// Parse a float argument from command-line args.
@@ -700,6 +755,7 @@ mod tests {
         assert!(config.apu_channels.contains(ApuChannels::TRIANGLE));
         assert!(config.apu_channels.contains(ApuChannels::NOISE));
         assert!(config.apu_channels.contains(ApuChannels::DMC));
+        assert_eq!(config.rom_path, None);
     }
 
     #[test]
@@ -893,10 +949,10 @@ mod tests {
     }
 
     #[test]
-    fn test_config_positional_argument_errors() {
+    fn test_config_positional_argument_is_rom_path() {
         let args = vec!["neser".to_string(), "somefile.nes".to_string()];
-        let result = Config::new(&args);
-        assert!(result.is_err());
+        let config = parse_config(args);
+        assert_eq!(config.rom_path.as_deref(), Some("somefile.nes"));
     }
 
     #[test]
