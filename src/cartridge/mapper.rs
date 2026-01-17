@@ -16,6 +16,7 @@ use super::namco163::Namco163Mapper;
 use super::nrom::NROMMapper;
 use super::sunsoft_fme7::SunsoftFme7Mapper;
 use super::uxrom::UxROMMapper;
+use super::vrc2_vrc4::Vrc2Vrc4Mapper;
 use super::vrc6::VRC6Mapper;
 
 pub trait Mapper {
@@ -269,7 +270,11 @@ pub fn create_mapper_with_crc(
         ))),
         16 => Ok(Box::new(BandaiFcgMapper::new(prg_rom, chr_rom, mirroring))),
         19 => Ok(Box::new(Namco163Mapper::new(prg_rom, chr_rom, mirroring))),
+        21 => Ok(Box::new(Vrc2Vrc4Mapper::new(21, prg_rom, chr_rom, mirroring))),
+        22 => Ok(Box::new(Vrc2Vrc4Mapper::new(22, prg_rom, chr_rom, mirroring))),
+        23 => Ok(Box::new(Vrc2Vrc4Mapper::new(23, prg_rom, chr_rom, mirroring))),
         24 => Ok(Box::new(VRC6Mapper::new(24, prg_rom, chr_rom, mirroring))),
+        25 => Ok(Box::new(Vrc2Vrc4Mapper::new(25, prg_rom, chr_rom, mirroring))),
         26 => Ok(Box::new(VRC6Mapper::new(26, prg_rom, chr_rom, mirroring))),
         66 => Ok(Box::new(GxROMMapper::new(prg_rom, chr_rom, mirroring))),
         69 => Ok(Box::new(SunsoftFme7Mapper::new(

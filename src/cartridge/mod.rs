@@ -17,6 +17,7 @@ mod namco163;
 mod nrom;
 mod sunsoft_fme7;
 mod uxrom;
+mod vrc2_vrc4;
 mod vrc6;
 
 pub use cartridge::{Cartridge, MirroringMode};
