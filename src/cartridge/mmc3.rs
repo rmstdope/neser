@@ -31,6 +31,7 @@ pub struct MMC3Mapper {
     irq_asserted: bool,
 
     prev_a12: bool,
+    current_a12: bool,
     a12_low_cycles: u8,
 
     /// Use alternate (NEC) IRQ behavior: only fire on 1→0 transition
@@ -43,7 +44,7 @@ impl MMC3Mapper {
     const PRG_RAM_SIZE: usize = 0x2000; // 8KB
     const DEFAULT_CHR_RAM_SIZE: usize = 0x2000; // 8KB
 
-    const A12_LOW_CYCLES_REQUIRED: u8 = 8;
+    const A12_LOW_CYCLES_REQUIRED: u8 = 3;
 
     const PRG_RAM_ENABLE_MASK: u8 = 0b1000_0000;
     const PRG_RAM_WRITE_PROTECT_MASK: u8 = 0b0100_0000;
@@ -87,6 +88,7 @@ impl MMC3Mapper {
             irq_asserted: false,
 
             prev_a12: false,
+            current_a12: false,
             a12_low_cycles: 0,
             use_alternate_irq,
         }
@@ -158,8 +160,8 @@ impl MMC3Mapper {
         rising_edge
     }
 
-    fn track_a12_low_cycles(&mut self, current_a12: bool) {
-        if current_a12 {
+    fn track_a12_low_cycles(&mut self) {
+        if self.current_a12 {
             self.a12_low_cycles = 0;
         } else {
             self.a12_low_cycles = self.a12_low_cycles.saturating_add(1);
@@ -167,9 +169,10 @@ impl MMC3Mapper {
     }
 
     fn should_clock_irq_on_a12_change(&mut self, addr: u16) -> bool {
-        // MMC3 A12 low-pass filter: A12 must be low for at least 8 PPU cycles
+        // MMC3 A12 low-pass filter: A12 must be low for at least 3 M2 (CPU) cycles
         // before a rising edge is allowed to clock the IRQ counter.
         let current_a12 = (addr & 0x1000) != 0;
+        self.current_a12 = current_a12;
         let rising_edge = self.a12_rising_edge(current_a12);
         let low_cycles_met = self.a12_low_cycles >= Self::A12_LOW_CYCLES_REQUIRED;
         let should_clock = rising_edge && low_cycles_met;
@@ -177,7 +180,6 @@ impl MMC3Mapper {
         trace_mapper!(3; "MMC3 A12 check: addr=${:04X}, a12={}, rising_edge={}, low_cycles={}, should_clock={}", 
             addr, current_a12, rising_edge, self.a12_low_cycles, should_clock);
 
-        self.track_a12_low_cycles(current_a12);
         should_clock
     }
 
@@ -312,16 +314,18 @@ mod tests {
         // Enable IRQ
         mapper.write_prg(0xE001, 0);
 
-        // First A12 rising edge ($0xxx -> $1xxx). MMC3 requires A12 low for 8 PPU cycles.
-        for _ in 0..8 {
-            mapper.ppu_address_changed(0x0FFF);
+        // First A12 rising edge ($0xxx -> $1xxx). MMC3 requires A12 low for 3 CPU cycles.
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
         }
         mapper.ppu_address_changed(0x1000);
         assert!(!mapper.irq_pending());
 
         // Second A12 rising edge
-        for _ in 0..8 {
-            mapper.ppu_address_changed(0x0FFF);
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
         }
         mapper.ppu_address_changed(0x1000);
         assert!(mapper.irq_pending());
@@ -332,9 +336,9 @@ mod tests {
     }
 
     #[test]
-    fn test_mmc3_irq_a12_rising_edge_requires_8_ppu_cycles_low() {
+    fn test_mmc3_irq_a12_rising_edge_requires_3_cpu_cycles_low() {
         // MMC3 has a simple A12 low-pass filter: a rising edge should only clock
-        // the IRQ counter if A12 has been low for at least 8 PPU cycles.
+        // the IRQ counter if A12 has been low for at least 3 CPU cycles.
 
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
@@ -346,21 +350,63 @@ mod tests {
         mapper.write_prg(0xC001, 0); // reload
         mapper.write_prg(0xE001, 0); // enable
 
-        // A12 low for 1 PPU cycle, then rising edge: should be ignored.
+        // A12 low for 1 CPU cycle, then rising edge: should be ignored.
         mapper.ppu_address_changed(0x0FFF);
+        mapper.cpu_cycle();
         mapper.ppu_address_changed(0x1000);
         assert!(!mapper.irq_pending());
 
-        // Now hold A12 low for 8 PPU cycles, then rising edge: this clocks once.
-        for _ in 0..8 {
-            mapper.ppu_address_changed(0x0FFF);
+        // Now hold A12 low for 3 CPU cycles, then rising edge: this clocks once.
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
         }
         mapper.ppu_address_changed(0x1000);
         assert!(!mapper.irq_pending());
 
-        // Another valid edge after 8 low cycles: second clock should assert IRQ.
-        for _ in 0..8 {
-            mapper.ppu_address_changed(0x0FFF);
+        // Another valid edge after 3 low cycles: second clock should assert IRQ.
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
+        }
+        mapper.ppu_address_changed(0x1000);
+        assert!(mapper.irq_pending());
+    }
+
+    #[test]
+    fn test_mmc3_irq_a12_low_pass_uses_cpu_cycles() {
+        // NesDev: A12 must be low for at least 3 falling edges of M2 (CPU cycles)
+        // before a rising edge clocks the IRQ counter.
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC3 (mapper 4) should be implemented");
+
+        mapper.write_prg(0xC000, 1); // latch=1
+        mapper.write_prg(0xC001, 0); // reload
+        mapper.write_prg(0xE001, 0); // enable
+
+        // Only 2 CPU cycles with A12 low: rising edge should be ignored.
+        mapper.ppu_address_changed(0x0FFF);
+        mapper.cpu_cycle();
+        mapper.cpu_cycle();
+        mapper.ppu_address_changed(0x1000);
+        assert!(!mapper.irq_pending());
+
+        // 3 CPU cycles with A12 low: first valid edge clocks but should not assert yet.
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
+        }
+        mapper.ppu_address_changed(0x1000);
+        assert!(!mapper.irq_pending());
+
+        // Second valid edge after 3 low cycles should assert IRQ.
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
         }
         mapper.ppu_address_changed(0x1000);
         assert!(mapper.irq_pending());
@@ -768,6 +814,10 @@ impl Mapper for MMC3Mapper {
         if self.should_clock_irq_on_a12_change(addr) {
             self.clock_irq_counter_on_a12_rising_edge();
         }
+    }
+
+    fn cpu_cycle(&mut self) {
+        self.track_a12_low_cycles();
     }
 
     fn irq_pending(&self) -> bool {

@@ -328,9 +328,13 @@ mod tests {
         mem: &Memory,
         cartridge: &Option<Rc<RefCell<Cartridge>>>,
     ) {
-        // MMC3 A12 low-pass filter: requires 8 PPU cycles low.
-        for _ in 0..8 {
-            mem.read_chr(0x0FFF, cartridge);
+        // MMC3 A12 low-pass filter: requires 3 CPU cycles low.
+        mem.read_chr(0x0FFF, cartridge);
+        if let Some(cart) = cartridge {
+            let mut cart = cart.borrow_mut();
+            for _ in 0..3 {
+                cart.mapper_mut().cpu_cycle();
+            }
         }
         mem.read_chr(0x1000, cartridge);
     }
