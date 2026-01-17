@@ -6,30 +6,27 @@ use std::rc::Rc;
 pub(crate) struct OamDmaDevice {
     oam_dma_page: Rc<RefCell<Option<u8>>>,
     dma_triggered: Rc<RefCell<bool>>,
-    open_bus: Rc<RefCell<u8>>,
 }
 
 impl OamDmaDevice {
     pub(crate) fn new(
         oam_dma_page: Rc<RefCell<Option<u8>>>,
         dma_triggered: Rc<RefCell<bool>>,
-        open_bus: Rc<RefCell<u8>>,
     ) -> Self {
         Self {
             oam_dma_page,
             dma_triggered,
-            open_bus,
         }
     }
 }
 
 impl BusDevice for OamDmaDevice {
-    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, addr: u16, open_bus: u8, _clock_joypads: bool) -> Option<u8> {
         if !self.address_range().contains(&addr) {
             return None;
         }
 
-        Some(*self.open_bus.borrow())
+        Some(open_bus)
     }
 
     fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {

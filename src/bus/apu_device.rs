@@ -6,22 +6,20 @@ use std::rc::Rc;
 
 pub(crate) struct ApuDevice {
     apu: Rc<RefCell<apu::Apu>>,
-    open_bus: Rc<RefCell<u8>>,
 }
 
 impl ApuDevice {
-    pub(crate) fn new(apu: Rc<RefCell<apu::Apu>>, open_bus: Rc<RefCell<u8>>) -> Self {
-        Self { apu, open_bus }
+    pub(crate) fn new(apu: Rc<RefCell<apu::Apu>>) -> Self {
+        Self { apu }
     }
 }
 
 impl BusDevice for ApuDevice {
-    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, addr: u16, open_bus: u8, _clock_joypads: bool) -> Option<u8> {
         if !self.address_range().contains(&addr) {
             return None;
         }
 
-        let open_bus = *self.open_bus.borrow();
         match addr {
             0x4000..=0x4013 => Some(open_bus),
             0x4015 => Some(self.apu.borrow_mut().read_status(open_bus)),

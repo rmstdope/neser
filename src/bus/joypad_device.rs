@@ -1,50 +1,41 @@
 use crate::bus::bus::BusDevice;
 use crate::input::Joypad;
-use std::cell::RefCell;
 use std::ops::RangeInclusive;
-use std::rc::Rc;
 
 pub(crate) struct JoypadDevice {
-    joypad1: Rc<RefCell<Joypad>>,
-    joypad2: Rc<RefCell<Joypad>>,
-    open_bus: Rc<RefCell<u8>>,
+    joypad1: Joypad,
+    joypad2: Joypad,
 }
 
 impl JoypadDevice {
-    pub(crate) fn new(
-        joypad1: Rc<RefCell<Joypad>>,
-        joypad2: Rc<RefCell<Joypad>>,
-        open_bus: Rc<RefCell<u8>>,
-    ) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            joypad1,
-            joypad2,
-            open_bus,
+            joypad1: Joypad::new(),
+            joypad2: Joypad::new(),
         }
     }
 }
 
 impl BusDevice for JoypadDevice {
-    fn read(&mut self, addr: u16, clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, addr: u16, open_bus: u8, clock_joypads: bool) -> Option<u8> {
         if !self.address_range().contains(&addr) {
             return None;
         }
 
-        let open_bus = *self.open_bus.borrow();
         match addr {
             0x4016 => {
                 let button_state = if clock_joypads {
-                    self.joypad1.borrow_mut().read()
+                    self.joypad1.read()
                 } else {
-                    self.joypad1.borrow().read_no_clock()
+                    self.joypad1.read_no_clock()
                 };
                 Some((open_bus & 0xFE) | button_state)
             }
             0x4017 => {
                 let button_state = if clock_joypads {
-                    self.joypad2.borrow_mut().read()
+                    self.joypad2.read()
                 } else {
-                    self.joypad2.borrow().read_no_clock()
+                    self.joypad2.read_no_clock()
                 };
                 Some((open_bus & 0xFE) | button_state)
             }
@@ -59,8 +50,8 @@ impl BusDevice for JoypadDevice {
 
         match addr {
             0x4016 => {
-                self.joypad1.borrow_mut().write_strobe(value);
-                self.joypad2.borrow_mut().write_strobe(value);
+                self.joypad1.write_strobe(value);
+                self.joypad2.write_strobe(value);
                 true
             }
             0x4017 => false,

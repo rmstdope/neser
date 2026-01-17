@@ -99,7 +99,7 @@ mod tests {
             // Run frames and check for results
             for frame in 1..=self.max_frames {
                 // Run one frame (roughly 29780 CPU cycles for NTSC)
-                let mut current_status = nes.memory.borrow().read_for_testing(0x6000);
+                let mut current_status = nes.memory.borrow_mut().read_for_testing(0x6000);
                 if current_status == 0x80 {
                     running = true;
                 }
@@ -111,14 +111,14 @@ mod tests {
                     nes.run_cpu_tick();
 
                     if cpu_cycle != 0 && cpu_cycle % STATUS_POLL_INTERVAL == 0 {
-                        current_status = nes.memory.borrow().read_for_testing(0x6000);
+                        current_status = nes.memory.borrow_mut().read_for_testing(0x6000);
                         if current_status == 0x80 {
                             running = true;
                         }
                     }
                 }
                 // Make sure we observe any status update at end-of-frame.
-                let status = nes.memory.borrow().read_for_testing(0x6000);
+                let status = nes.memory.borrow_mut().read_for_testing(0x6000);
                 if status == 0x80 {
                     running = true;
                 }

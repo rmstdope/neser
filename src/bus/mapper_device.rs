@@ -8,30 +8,23 @@ use std::rc::Rc;
 pub(crate) struct MapperDevice {
     cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
     ppu: Rc<RefCell<ppu::Ppu>>,
-    open_bus: Rc<RefCell<u8>>,
 }
 
 impl MapperDevice {
     pub(crate) fn new(
         cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
         ppu: Rc<RefCell<ppu::Ppu>>,
-        open_bus: Rc<RefCell<u8>>,
     ) -> Self {
-        Self {
-            cartridge,
-            ppu,
-            open_bus,
-        }
+        Self { cartridge, ppu }
     }
 }
 
 impl BusDevice for MapperDevice {
-    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, addr: u16, open_bus: u8, _clock_joypads: bool) -> Option<u8> {
         if !self.address_range().contains(&addr) {
             return None;
         }
 
-        let open_bus = *self.open_bus.borrow();
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             return match addr {
                 0x5000..=0x5FFF => Some(open_bus),
