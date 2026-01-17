@@ -15,6 +15,7 @@ mod mmc5;
 mod namco118;
 mod namco163;
 mod nrom;
+mod sunsoft_fme7;
 mod uxrom;
 mod vrc6;
 
