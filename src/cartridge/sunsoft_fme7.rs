@@ -240,7 +240,7 @@ impl Mapper for SunsoftFme7Mapper {
                 self.read_prg_bank(self.prg_banks[3], offset)
             }
             0xE000..=0xFFFF => {
-                // Bank 4 (typically fixed to last bank, but can be switched)
+                // Bank 4: fixed to the last PRG ROM bank ($E000-$FFFF is not switchable on FME-7)
                 // Use last bank by default
                 let last_bank = self.prg_bank_count().saturating_sub(1) as u8;
                 let offset = (addr - 0xE000) as usize;
