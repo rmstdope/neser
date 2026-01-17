@@ -114,59 +114,6 @@ pub enum MemoryError {
 
 ---
 
-## 6. Performance Hot Spots
-
-### Current Issues Found
-
-#### 6.1 Per-Cycle Allocation in PPU Rendering
-
-**Location:** `src/ppu/ppu.rs`
-
-The `tick()` function runs every PPU cycle and performs multiple conditional checks. This is appropriate given the emulation requirements, but some minor optimizations are possible:
-
-**Observation:**
-The PPU tick function is well-structured with early returns and efficient branching.
-
-#### 6.2 VecDeque for Audio Samples
-
-**Location:** `src/apu/apu.rs`
-
-```rust
-pending_samples: VecDeque<f32>,
-
-// In clock_with_expansion:
-self.pending_samples.push_back(self.mix() + expansion_audio.max(0.0));
-
-if self.pending_samples.len() > MAX_PENDING_SAMPLES {
-    self.pending_samples.pop_front();
-}
-```
-
-**Proposed Refactoring:**
-Consider using a ring buffer crate like `ringbuf` for better cache locality and fewer allocations:
-
-```rust
-use ringbuf::{HeapRb, Producer, Consumer};
-
-// More efficient for audio streaming
-let rb = HeapRb::<f32>::new(MAX_PENDING_SAMPLES);
-```
-
-#### 6.3 Lookup Table Usage ✓
-
-**Location:** `src/apu/apu.rs`
-
-The APU uses pre-computed lookup tables for the mixer, which is excellent:
-
-```rust
-const PULSE_TABLE: [f32; 31] = [...];
-const TND_TABLE: [f32; 203] = [...];
-```
-
-This is a good example of performance optimization.
-
----
-
 ## 7. Interior Mutability Patterns
 
 ### Current Issues Found
