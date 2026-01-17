@@ -9,6 +9,7 @@ mod gxrom;
 mod mapper;
 mod mmc1;
 mod mmc2;
+mod mmc4;
 mod mmc3;
 mod mmc5;
 mod namco118;
