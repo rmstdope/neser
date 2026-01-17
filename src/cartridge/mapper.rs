@@ -11,6 +11,7 @@ use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
 use super::mmc5::MMC5Mapper;
 use super::namco118::Namco118Mapper;
+use super::namco163::Namco163Mapper;
 use super::nrom::NROMMapper;
 use super::uxrom::UxROMMapper;
 use super::vrc6::VRC6Mapper;
@@ -264,6 +265,7 @@ pub fn create_mapper_with_crc(
             prg_rom, chr_rom, mirroring,
         ))),
         16 => Ok(Box::new(BandaiFcgMapper::new(prg_rom, chr_rom, mirroring))),
+        19 => Ok(Box::new(Namco163Mapper::new(prg_rom, chr_rom, mirroring))),
         24 => Ok(Box::new(VRC6Mapper::new(24, prg_rom, chr_rom, mirroring))),
         26 => Ok(Box::new(VRC6Mapper::new(26, prg_rom, chr_rom, mirroring))),
         66 => Ok(Box::new(GxROMMapper::new(prg_rom, chr_rom, mirroring))),
