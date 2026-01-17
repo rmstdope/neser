@@ -17,6 +17,7 @@ mod mmc3;
 mod mmc5;
 mod namco118;
 mod namco163;
+mod nina_tengen;
 mod nrom;
 mod sunsoft_fme7;
 mod uxrom;

@@ -16,6 +16,7 @@ use super::mmc3::MMC3Mapper;
 use super::mmc5::MMC5Mapper;
 use super::namco118::Namco118Mapper;
 use super::namco163::Namco163Mapper;
+use super::nina_tengen::NinaTengenMapper;
 use super::nrom::NROMMapper;
 use super::sunsoft_fme7::SunsoftFme7Mapper;
 use super::uxrom::UxROMMapper;
@@ -286,6 +287,9 @@ pub fn create_mapper_with_crc(
             prg_rom, chr_rom, mirroring,
         ))),
         71 => Ok(Box::new(CamericaMapper::new(
+            prg_rom, chr_rom, mirroring,
+        ))),
+        78 => Ok(Box::new(NinaTengenMapper::new(
             prg_rom, chr_rom, mirroring,
         ))),
         206 => Ok(Box::new(Namco118Mapper::new(prg_rom, chr_rom, mirroring))),

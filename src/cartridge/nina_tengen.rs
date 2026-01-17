@@ -1,0 +1,370 @@
+use crate::cartridge::Mapper;
+use crate::cartridge::MirroringMode;
+use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+
+// Memory size constants
+const PRG_BANK_SIZE: usize = 0x4000; // 16KB
+const CHR_BANK_SIZE: usize = 0x2000; // 8KB
+
+/// Mapper 78 (NINA-03/NINA-06)
+///
+/// Used by Tengen for unlicensed releases.
+/// Supports:
+/// - Up to 128KB PRG ROM (8 banks of 16KB)
+/// - Up to 128KB CHR ROM (16 banks of 8KB)
+/// - 16KB PRG bank switching at $8000-$BFFF
+/// - 16KB fixed PRG bank at $C000-$FFFF (last bank)
+/// - 8KB CHR bank switching
+/// - Configurable mirroring (horizontal/vertical via bit 3)
+///
+/// Bank select register at $8000-$FFFF:
+/// - Bits 0-2: PRG bank select
+/// - Bit 3: Mirroring (0=vertical, 1=horizontal)
+/// - Bits 4-7: CHR bank select
+///
+/// Known games: Pac-Man (Tengen), RBI Baseball (Tengen), Tetris (Tengen)
+pub struct NinaTengenMapper {
+    prg_rom: Vec<u8>,
+    prg_ram: PrgRam,
+    chr_rom: Vec<u8>,
+    prg_bank_select: u8,
+    chr_bank_select: u8,
+    mirroring: MirroringMode,
+}
+
+impl NinaTengenMapper {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        Self {
+            prg_rom,
+            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
+            chr_rom,
+            prg_bank_select: 0,
+            chr_bank_select: 0,
+            mirroring,
+        }
+    }
+
+    fn get_prg_bank_offset(&self) -> usize {
+        let num_banks = (self.prg_rom.len() / PRG_BANK_SIZE).max(1);
+        let bank = (self.prg_bank_select as usize) % num_banks;
+        bank * PRG_BANK_SIZE
+    }
+
+    fn get_last_prg_bank_offset(&self) -> usize {
+        self.prg_rom.len().saturating_sub(PRG_BANK_SIZE)
+    }
+
+    fn get_chr_bank_offset(&self) -> usize {
+        let num_banks = (self.chr_rom.len() / CHR_BANK_SIZE).max(1);
+        let bank = (self.chr_bank_select as usize) % num_banks;
+        bank * CHR_BANK_SIZE
+    }
+}
+
+impl Mapper for NinaTengenMapper {
+    fn read_prg(&self, addr: u16) -> u8 {
+        // PRG-RAM at $6000-$7FFF
+        if let Some(value) = self.prg_ram.try_read(addr) {
+            return value;
+        }
+
+        // PRG ROM at $8000-$FFFF
+        match addr {
+            0x8000..=0xBFFF => {
+                // Switchable 16KB bank
+                let bank_offset = self.get_prg_bank_offset();
+                let offset = (addr - 0x8000) as usize;
+                let index = bank_offset + offset;
+                self.prg_rom.get(index).copied().unwrap_or(0)
+            }
+            0xC000..=0xFFFF => {
+                // Fixed to last 16KB bank
+                let bank_offset = self.get_last_prg_bank_offset();
+                let offset = (addr - 0xC000) as usize;
+                let index = bank_offset + offset;
+                self.prg_rom.get(index).copied().unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        // PRG-RAM at $6000-$7FFF
+        if self.prg_ram.try_write(addr, value) {
+            return;
+        }
+
+        // Any write to $8000-$FFFF sets the bank register
+        if (0x8000..=0xFFFF).contains(&addr) {
+            // Bits 0-2: PRG bank select
+            self.prg_bank_select = value & 0x07;
+            
+            // Bit 3: Mirroring (0=vertical, 1=horizontal)
+            self.mirroring = if (value & 0x08) != 0 {
+                MirroringMode::Horizontal
+            } else {
+                MirroringMode::Vertical
+            };
+            
+            // Bits 4-7: CHR bank select
+            self.chr_bank_select = (value >> 4) & 0x0F;
+        }
+    }
+
+    fn read_chr(&self, addr: u16) -> u8 {
+        let bank_offset = self.get_chr_bank_offset();
+        let offset = (addr & 0x1FFF) as usize;
+        let index = bank_offset + offset;
+        self.chr_rom.get(index).copied().unwrap_or(0)
+    }
+
+    fn write_chr(&mut self, _addr: u16, _value: u8) {
+        // Mapper 78 uses CHR-ROM, writes are ignored
+    }
+
+    fn ppu_address_changed(&mut self, _addr: u16) {
+        // No IRQ support
+    }
+
+    fn get_mirroring(&self) -> MirroringMode {
+        self.mirroring
+    }
+
+    fn wram_size(&self) -> usize {
+        self.prg_ram.size()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.prg_ram.snapshot()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        self.prg_ram.load_snapshot(data);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_nina_tengen_prg_bank_switching() {
+        // Create 128KB (8 banks of 16KB each) PRG ROM
+        let mut prg_rom = vec![0; 128 * 1024];
+
+        // Fill each bank with its bank number
+        for bank in 0..8 {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank * 10) as u8;
+            }
+        }
+
+        let mut mapper = NinaTengenMapper::new(prg_rom, vec![0; 128 * 1024], MirroringMode::Horizontal);
+
+        // Initially bank 0 at $8000-$BFFF
+        assert_eq!(mapper.read_prg(0x8000), 0);
+        assert_eq!(mapper.read_prg(0xBFFF), 0);
+
+        // Last bank (7) always at $C000-$FFFF
+        assert_eq!(mapper.read_prg(0xC000), 70);
+        assert_eq!(mapper.read_prg(0xFFFF), 70);
+
+        // Switch to bank 1 (bits 0-2)
+        mapper.write_prg(0x8000, 0b0000_0001);
+        assert_eq!(mapper.read_prg(0x8000), 10);
+        assert_eq!(mapper.read_prg(0xBFFF), 10);
+
+        // Switch to bank 5 (bits 0-2)
+        mapper.write_prg(0x8000, 0b0000_0101);
+        assert_eq!(mapper.read_prg(0x8000), 50);
+
+        // Last bank should remain unchanged
+        assert_eq!(mapper.read_prg(0xC000), 70);
+    }
+
+    #[test]
+    fn test_nina_tengen_chr_bank_switching() {
+        // Create 128KB (16 banks of 8KB) CHR ROM
+        let mut chr_rom = vec![0; 128 * 1024];
+
+        // Fill each bank with its bank number
+        for bank in 0..16 {
+            let start = bank * 8 * 1024;
+            let end = start + 8 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = (bank * 15) as u8;
+            }
+        }
+
+        let mut mapper = NinaTengenMapper::new(vec![0; 128 * 1024], chr_rom, MirroringMode::Horizontal);
+
+        // Initially bank 0
+        assert_eq!(mapper.read_chr(0x0000), 0);
+        assert_eq!(mapper.read_chr(0x1FFF), 0);
+
+        // Switch to bank 1 (bits 4-7)
+        mapper.write_prg(0x8000, 0b0001_0000);
+        assert_eq!(mapper.read_chr(0x0000), 15);
+
+        // Switch to bank 5 (bits 4-7)
+        mapper.write_prg(0x8000, 0b0101_0000);
+        assert_eq!(mapper.read_chr(0x0000), 75);
+
+        // Switch to bank 15 (bits 4-7)
+        mapper.write_prg(0x8000, 0b1111_0000);
+        assert_eq!(mapper.read_chr(0x0000), 225);
+    }
+
+    #[test]
+    fn test_nina_tengen_mirroring_control() {
+        let mut mapper = NinaTengenMapper::new(vec![0; 128 * 1024], vec![0; 128 * 1024], MirroringMode::Horizontal);
+
+        // Initially horizontal (from constructor)
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+
+        // Bit 3 = 0: vertical mirroring
+        mapper.write_prg(0x8000, 0b0000_0000);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+
+        // Bit 3 = 1: horizontal mirroring
+        mapper.write_prg(0x8000, 0b0000_1000);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+
+        // Test with other bits set
+        mapper.write_prg(0x8000, 0b1111_0111); // Bit 3 = 0
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+
+        mapper.write_prg(0x8000, 0b1111_1111); // Bit 3 = 1
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+    }
+
+    #[test]
+    fn test_nina_tengen_combined_register() {
+        // Test that all register bits work together
+        let mut prg_rom = vec![0; 128 * 1024];
+        let mut chr_rom = vec![0; 128 * 1024];
+
+        // Fill PRG banks
+        for bank in 0..8 {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 100) as u8;
+            }
+        }
+
+        // Fill CHR banks
+        for bank in 0..16 {
+            let start = bank * 8 * 1024;
+            let end = start + 8 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = (bank + 200) as u8;
+            }
+        }
+
+        let mut mapper = NinaTengenMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+
+        // Write combined register: PRG=3, Mirroring=Vertical, CHR=7
+        // Binary: 0111_0011 (CHR=7, Mir=0, PRG=3)
+        mapper.write_prg(0x8000, 0b0111_0011);
+        
+        assert_eq!(mapper.read_prg(0x8000), 103); // PRG bank 3
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical); // Bit 3 = 0
+        assert_eq!(mapper.read_chr(0x0000), 207); // CHR bank 7
+
+        // Write another combined register: PRG=5, Mirroring=Horizontal, CHR=10
+        // Binary: 1010_1101 (CHR=10, Mir=1, PRG=5)
+        mapper.write_prg(0x8000, 0b1010_1101);
+        
+        assert_eq!(mapper.read_prg(0x8000), 105); // PRG bank 5
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal); // Bit 3 = 1
+        assert_eq!(mapper.read_chr(0x0000), 210); // CHR bank 10
+    }
+
+    #[test]
+    fn test_nina_tengen_prg_bank_mask() {
+        // Test that only bits 0-2 affect PRG banking
+        let mut prg_rom = vec![0; 128 * 1024];
+        for bank in 0..8 {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank * 25) as u8;
+            }
+        }
+
+        let mut mapper = NinaTengenMapper::new(prg_rom, vec![0; 8 * 1024], MirroringMode::Horizontal);
+
+        // Write with upper bits set - should only use lower 3 bits
+        mapper.write_prg(0x8000, 0b1111_1111); // PRG bank = 7
+        assert_eq!(mapper.read_prg(0x8000), 175); // Bank 7
+
+        mapper.write_prg(0x8000, 0b1111_1000); // PRG bank = 0
+        assert_eq!(mapper.read_prg(0x8000), 0); // Bank 0
+    }
+
+    #[test]
+    fn test_nina_tengen_chr_bank_mask() {
+        // Test that only bits 4-7 affect CHR banking
+        let mut chr_rom = vec![0; 128 * 1024];
+        for bank in 0..16 {
+            let start = bank * 8 * 1024;
+            let end = start + 8 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = (bank * 12) as u8;
+            }
+        }
+
+        let mut mapper = NinaTengenMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+
+        // Write with lower bits set - should only use bits 4-7
+        mapper.write_prg(0x8000, 0b1111_0000); // CHR bank = 15
+        assert_eq!(mapper.read_chr(0x0000), 180); // Bank 15
+
+        mapper.write_prg(0x8000, 0b0000_0000); // CHR bank = 0
+        assert_eq!(mapper.read_chr(0x0000), 0); // Bank 0
+    }
+
+    #[test]
+    fn test_nina_tengen_fixed_last_prg_bank() {
+        // Verify that $C000-$FFFF is always the last bank
+        let mut prg_rom = vec![0; 128 * 1024];
+        for bank in 0..8 {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 50) as u8;
+            }
+        }
+
+        let mut mapper = NinaTengenMapper::new(prg_rom, vec![0; 8 * 1024], MirroringMode::Horizontal);
+
+        // Last bank should always read 57 (bank 7 + 50)
+        assert_eq!(mapper.read_prg(0xC000), 57);
+
+        // Switch banks several times
+        mapper.write_prg(0x8000, 0);
+        assert_eq!(mapper.read_prg(0xC000), 57);
+
+        mapper.write_prg(0x8000, 3);
+        assert_eq!(mapper.read_prg(0xC000), 57);
+
+        mapper.write_prg(0x8000, 5);
+        assert_eq!(mapper.read_prg(0xC000), 57);
+    }
+
+    #[test]
+    fn test_nina_tengen_chr_rom_read_only() {
+        // CHR ROM should not be writable
+        let chr_rom = vec![0xAA; 8 * 1024];
+        let mut mapper = NinaTengenMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+
+        // Try to write to CHR
+        mapper.write_chr(0x0000, 0x55);
+
+        // Should still read original ROM value
+        assert_eq!(mapper.read_chr(0x0000), 0xAA);
+    }
+}
