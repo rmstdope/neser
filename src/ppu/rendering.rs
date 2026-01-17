@@ -45,38 +45,10 @@ impl Rendering {
         palette_lookup: impl Fn(u8) -> u8,
         system_palette_lookup: impl Fn(u8) -> (u8, u8, u8),
     ) -> bool {
-        // Determine final palette index based on sprite/background priority
-        let mut palette_index =
-            if let Some((sprite_palette_idx, _sprite_idx, is_foreground)) = sprite_pixel {
-                if bg_pixel == 0 {
-                    // Background is transparent, always show sprite
-                    sprite_palette_idx
-                } else if is_foreground {
-                    // Sprite is in foreground, show sprite
-                    sprite_palette_idx
-                } else {
-                    // Sprite is in background, show background
-                    bg_pixel
-                }
-            } else {
-                // No sprite pixel, show background (or backdrop if transparent)
-                bg_pixel
-            };
-
-        // Palette index 0 represents backdrop color (palette[0])
-
-        // Check for sprite 0 hit (both sprite 0 and background have opaque pixels)
-        let sprite_0_hit =
-            if let Some((_sprite_palette_idx, sprite_idx, _is_foreground)) = sprite_pixel {
-                sprite_idx == 0 && bg_pixel != 0
-            } else {
-                false
-            };
+        let (mut palette_index, sprite_0_hit) = select_palette_index(bg_pixel, sprite_pixel);
 
         // Apply grayscale mode if enabled
-        if grayscale {
-            palette_index &= 0x30;
-        }
+        palette_index = apply_grayscale(palette_index, grayscale);
 
         // Look up the color in the palette RAM
         let color_value = palette_lookup(palette_index);
@@ -86,46 +58,84 @@ impl Rendering {
 
         // Apply color emphasis/tint
         if color_emphasis != 0 {
-            let emphasize_red = (color_emphasis & 0x01) != 0;
-            let emphasize_green = (color_emphasis & 0x02) != 0;
-            let emphasize_blue = (color_emphasis & 0x04) != 0;
-
-            const ATTENUATION: f32 = 0.75;
-            const BOOST: f32 = 1.1;
-
-            if emphasize_red {
-                r = ((r as f32) * BOOST).min(255.0) as u8;
-                if !emphasize_green {
-                    g = ((g as f32) * ATTENUATION) as u8;
-                }
-                if !emphasize_blue {
-                    b = ((b as f32) * ATTENUATION) as u8;
-                }
-            }
-            if emphasize_green {
-                g = ((g as f32) * BOOST).min(255.0) as u8;
-                if !emphasize_red {
-                    r = ((r as f32) * ATTENUATION) as u8;
-                }
-                if !emphasize_blue {
-                    b = ((b as f32) * ATTENUATION) as u8;
-                }
-            }
-            if emphasize_blue {
-                b = ((b as f32) * BOOST).min(255.0) as u8;
-                if !emphasize_red {
-                    r = ((r as f32) * ATTENUATION) as u8;
-                }
-                if !emphasize_green {
-                    g = ((g as f32) * ATTENUATION) as u8;
-                }
-            }
+            (r, g, b) = apply_color_emphasis(r, g, b, color_emphasis);
         }
 
         // Write to the screen buffer
         self.screen_buffer.set_pixel(screen_x, screen_y, r, g, b);
 
         sprite_0_hit
+    }
+}
+
+#[cfg(test)]
+#[inline(always)]
+fn select_palette_index(bg_pixel: u8, sprite_pixel: Option<(u8, usize, bool)>) -> (u8, bool) {
+    let mut palette_index = bg_pixel;
+    let mut sprite_0_hit = false;
+
+    if let Some((sprite_palette_idx, sprite_idx, is_foreground)) = sprite_pixel {
+        if bg_pixel == 0 || is_foreground {
+            palette_index = sprite_palette_idx;
+        }
+        sprite_0_hit = sprite_idx == 0 && bg_pixel != 0;
+    }
+
+    (palette_index, sprite_0_hit)
+}
+
+#[cfg(test)]
+#[inline(always)]
+fn apply_color_emphasis(r: u8, g: u8, b: u8, color_emphasis: u8) -> (u8, u8, u8) {
+    let emphasize_red = (color_emphasis & 0x01) != 0;
+    let emphasize_green = (color_emphasis & 0x02) != 0;
+    let emphasize_blue = (color_emphasis & 0x04) != 0;
+
+    const ATTENUATION: f32 = 0.75;
+    const BOOST: f32 = 1.1;
+
+    let mut fr = r as f32;
+    let mut fg = g as f32;
+    let mut fb = b as f32;
+
+    if emphasize_red {
+        fr = (fr * BOOST).min(255.0);
+        if !emphasize_green {
+            fg *= ATTENUATION;
+        }
+        if !emphasize_blue {
+            fb *= ATTENUATION;
+        }
+    }
+    if emphasize_green {
+        fg = (fg * BOOST).min(255.0);
+        if !emphasize_red {
+            fr *= ATTENUATION;
+        }
+        if !emphasize_blue {
+            fb *= ATTENUATION;
+        }
+    }
+    if emphasize_blue {
+        fb = (fb * BOOST).min(255.0);
+        if !emphasize_red {
+            fr *= ATTENUATION;
+        }
+        if !emphasize_green {
+            fg *= ATTENUATION;
+        }
+    }
+
+    (fr as u8, fg as u8, fb as u8)
+}
+
+#[cfg(test)]
+#[inline(always)]
+fn apply_grayscale(palette_index: u8, grayscale: bool) -> u8 {
+    if grayscale {
+        palette_index & 0x30
+    } else {
+        palette_index
     }
 }
 
@@ -235,5 +245,26 @@ mod tests {
             |_| (255, 255, 255),
         );
         assert!(!hit); // No hit when bg is transparent
+    }
+
+    #[test]
+    fn test_select_palette_index_sprite_0_hit_foreground() {
+        let (palette_index, sprite_0_hit) = select_palette_index(1, Some((16, 0, true)));
+        assert_eq!(palette_index, 16);
+        assert!(sprite_0_hit);
+    }
+
+    #[test]
+    fn test_apply_color_emphasis_red_only() {
+        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x01);
+        assert_eq!(r, 110);
+        assert_eq!(g, 75);
+        assert_eq!(b, 75);
+    }
+
+    #[test]
+    fn test_apply_grayscale_enabled() {
+        assert_eq!(apply_grayscale(0x2f, true), 0x20);
+        assert_eq!(apply_grayscale(0x2f, false), 0x2f);
     }
 }
