@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
@@ -23,8 +25,8 @@ pub struct MMC4Mapper {
     chr_bank_1_fd: u8,
     chr_bank_1_fe: u8,
 
-    latch0_is_fd: bool,
-    latch1_is_fd: bool,
+    latch0_is_fd: Cell<bool>,
+    latch1_is_fd: Cell<bool>,
 }
 
 impl MMC4Mapper {
@@ -51,8 +53,8 @@ impl MMC4Mapper {
             chr_bank_0_fe: 0,
             chr_bank_1_fd: 0,
             chr_bank_1_fe: 0,
-            latch0_is_fd: false,
-            latch1_is_fd: false,
+            latch0_is_fd: Cell::new(false),
+            latch1_is_fd: Cell::new(false),
         }
     }
 
@@ -101,12 +103,12 @@ impl MMC4Mapper {
 
     fn chr_bank_for_addr(&self, addr: u16) -> usize {
         let bank = if addr < 0x1000 {
-            if self.latch0_is_fd {
+            if self.latch0_is_fd.get() {
                 self.chr_bank_0_fd
             } else {
                 self.chr_bank_0_fe
             }
-        } else if self.latch1_is_fd {
+        } else if self.latch1_is_fd.get() {
             self.chr_bank_1_fd
         } else {
             self.chr_bank_1_fe
@@ -115,12 +117,12 @@ impl MMC4Mapper {
         self.clamp_chr_bank_4k(bank)
     }
 
-    fn update_latches_for_chr_read(&mut self, addr: u16) {
+    fn update_latches(&self, addr: u16) {
         match addr {
-            0x0FD8..=0x0FDF => self.latch0_is_fd = true,
-            0x0FE8..=0x0FEF => self.latch0_is_fd = false,
-            0x1FD8..=0x1FDF => self.latch1_is_fd = true,
-            0x1FE8..=0x1FEF => self.latch1_is_fd = false,
+            0x0FD8..=0x0FDF => self.latch0_is_fd.set(true),
+            0x0FE8..=0x0FEF => self.latch0_is_fd.set(false),
+            0x1FD8..=0x1FDF => self.latch1_is_fd.set(true),
+            0x1FE8..=0x1FEF => self.latch1_is_fd.set(false),
             _ => {}
         }
     }
@@ -173,12 +175,16 @@ impl Mapper for MMC4Mapper {
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
+        self.update_latches(addr);
+
         let bank = self.chr_bank_for_addr(addr);
         let offset = (addr as usize) & (Self::CHR_BANK_SIZE - 1);
         self.read_chr_bank_4k(bank, offset)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
+        self.update_latches(addr);
+
         if !self.has_chr_ram {
             return;
         }
@@ -191,7 +197,7 @@ impl Mapper for MMC4Mapper {
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
-        self.update_latches_for_chr_read(addr);
+        self.update_latches(addr);
     }
 
     fn get_mirroring(&self) -> MirroringMode {
