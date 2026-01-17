@@ -181,7 +181,7 @@ impl Mapper for Namco163Mapper {
 
     fn read_chr(&self, addr: u16) -> u8 {
         let chr_addr = (addr & 0x1FFF) as usize;
-        let slot = chr_addr / Self::CHR_BANK_SIZE_1K;
+        let slot = (chr_addr / Self::CHR_BANK_SIZE_1K).min(7);
         let bank_offset = chr_addr & (Self::CHR_BANK_SIZE_1K - 1);
         let bank_reg = self.regs.get(slot).copied().unwrap_or(0);
         let bank = self.chr_bank_index_1k(bank_reg);
@@ -200,7 +200,7 @@ impl Mapper for Namco163Mapper {
         }
 
         let chr_addr = (addr & 0x1FFF) as usize;
-        let slot = chr_addr / Self::CHR_BANK_SIZE_1K;
+        let slot = (chr_addr / Self::CHR_BANK_SIZE_1K).min(7);
         let bank_offset = chr_addr & (Self::CHR_BANK_SIZE_1K - 1);
         let bank_reg = self.regs.get(slot).copied().unwrap_or(0);
         let bank = self.chr_bank_index_1k(bank_reg);
