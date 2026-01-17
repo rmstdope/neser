@@ -1,5 +1,4 @@
 use super::apu_device::ApuDevice;
-use super::joypad_device::JoypadDevice;
 use super::mapper_device::MapperDevice;
 use super::oam_dma_device::OamDmaDevice;
 use super::ppu_device::PpuDevice;
@@ -14,7 +13,7 @@ use std::ops::RangeInclusive;
 use std::rc::Rc;
 
 pub trait BusDevice {
-    fn read(&mut self, addr: u16, clock_joypads: bool) -> Option<u8>;
+    fn read(&mut self, addr: u16, open_bus: u8, clock_joypads: bool) -> Option<u8>;
     fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool;
     fn address_range(&self) -> RangeInclusive<u16>;
 }
@@ -27,10 +26,10 @@ pub struct Bus {
     apu: Rc<RefCell<apu::Apu>>,
     oam_dma_page: Rc<RefCell<Option<u8>>>, // Stores the page for pending OAM DMA
     dma_triggered: Rc<RefCell<bool>>,
-    joypad1: Rc<RefCell<Joypad>>,
-    joypad2: Rc<RefCell<Joypad>>,
-    open_bus: Rc<RefCell<u8>>, // Last value on the data bus for open bus behavior
-    devices: RefCell<Vec<Box<dyn BusDevice>>>,
+    joypad1: Joypad,
+    joypad2: Joypad,
+    open_bus: u8, // Last value on the data bus for open bus behavior
+    devices: Vec<Box<dyn BusDevice>>,
 }
 
 impl Bus {
@@ -43,10 +42,10 @@ impl Bus {
             apu,
             oam_dma_page: Rc::new(RefCell::new(None)),
             dma_triggered: Rc::new(RefCell::new(false)),
-            joypad1: Rc::new(RefCell::new(Joypad::new())),
-            joypad2: Rc::new(RefCell::new(Joypad::new())),
-            open_bus: Rc::new(RefCell::new(0xFF)), // Initialize to 0xFF (common power-on state)
-            devices: RefCell::new(Vec::new()),
+            joypad1: Joypad::new(),
+            joypad2: Joypad::new(),
+            open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
+            devices: Vec::new(),
         };
 
         controller.register_device(Box::new(RamDevice::new(controller.cpu_ram.clone())));
@@ -54,31 +53,21 @@ impl Bus {
             controller.ppu.clone(),
             controller.cartridge.clone(),
         )));
-        controller.register_device(Box::new(ApuDevice::new(
-            controller.apu.clone(),
-            controller.open_bus.clone(),
-        )));
-        controller.register_device(Box::new(JoypadDevice::new(
-            controller.joypad1.clone(),
-            controller.joypad2.clone(),
-            controller.open_bus.clone(),
-        )));
+        controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
             controller.oam_dma_page.clone(),
             controller.dma_triggered.clone(),
-            controller.open_bus.clone(),
         )));
         controller.register_device(Box::new(MapperDevice::new(
             controller.cartridge.clone(),
             controller.ppu.clone(),
-            controller.open_bus.clone(),
         )));
 
         controller
     }
 
     pub fn register_device(&mut self, device: Box<dyn BusDevice>) {
-        self.devices.get_mut().push(device);
+        self.devices.push(device);
     }
 
     /// Map a cartridge into memory
@@ -124,7 +113,7 @@ impl Bus {
     }
 
     /// Read a byte from memory
-    pub fn read(&self, addr: u16) -> u8 {
+    pub fn read(&mut self, addr: u16) -> u8 {
         self.read_internal(addr, true)
     }
 
@@ -172,13 +161,18 @@ impl Bus {
     /// During DMA no-op cycles, the CPU repeats the last read externally. For joypad
     /// registers ($4016/$4017), real hardware does not necessarily clock the controller
     /// shift register on these repeated reads; callers can disable joypad clocking.
-    pub fn read_without_joypad_clock(&self, addr: u16) -> u8 {
+    pub fn read_without_joypad_clock(&mut self, addr: u16) -> u8 {
         self.read_internal(addr, false)
     }
 
-    fn read_internal(&self, addr: u16, clock_joypads: bool) -> u8 {
+    fn read_internal(&mut self, addr: u16, clock_joypads: bool) -> u8 {
+        if let Some(value) = self.read_joypads(addr, clock_joypads) {
+            self.open_bus = value;
+            return value;
+        }
+
         if let Some(value) = self.read_from_devices(addr, clock_joypads) {
-            *self.open_bus.borrow_mut() = value;
+            self.open_bus = value;
             return value;
         }
 
@@ -191,22 +185,43 @@ impl Bus {
         };
 
         // Update open bus with the value read
-        *self.open_bus.borrow_mut() = value;
+        self.open_bus = value;
         // self.print_open_bus();
         value
     }
 
-    fn read_from_devices(&self, addr: u16, clock_joypads: bool) -> Option<u8> {
-        let mut devices = self.devices.borrow_mut();
-        for device in devices.iter_mut() {
+    fn read_from_devices(&mut self, addr: u16, clock_joypads: bool) -> Option<u8> {
+        for device in self.devices.iter_mut() {
             if device.address_range().contains(&addr)
-                && let Some(value) = device.read(addr, clock_joypads)
+                && let Some(value) = device.read(addr, self.open_bus, clock_joypads)
             {
                 return Some(value);
             }
         }
 
         None
+    }
+
+    fn read_joypads(&mut self, addr: u16, clock_joypads: bool) -> Option<u8> {
+        match addr {
+            0x4016 => {
+                let button_state = if clock_joypads {
+                    self.joypad1.read()
+                } else {
+                    self.joypad1.read_no_clock()
+                };
+                Some((self.open_bus & 0xFE) | button_state)
+            }
+            0x4017 => {
+                let button_state = if clock_joypads {
+                    self.joypad2.read()
+                } else {
+                    self.joypad2.read_no_clock()
+                };
+                Some((self.open_bus & 0xFE) | button_state)
+            }
+            _ => None,
+        }
     }
 
     /// Sample the mapper-generated IRQ line (e.g., MMC3 scanline IRQ).
@@ -243,25 +258,24 @@ impl Bus {
     #[cfg(test)]
     fn has_device_for_address(&self, addr: u16) -> bool {
         self.devices
-            .borrow()
             .iter()
             .any(|device| device.address_range().contains(&addr))
     }
 
     #[cfg(any(test, debug_assertions))]
     #[allow(dead_code)]
-    pub fn read_for_testing(&self, addr: u16) -> u8 {
-        let old_open_bus = *self.open_bus.borrow_mut();
+    pub fn read_for_testing(&mut self, addr: u16) -> u8 {
+        let old_open_bus = self.open_bus;
         let value = self.read(addr);
-        *self.open_bus.borrow_mut() = old_open_bus;
+        self.open_bus = old_open_bus;
         value
     }
 
     #[cfg(test)]
     pub fn write_for_testing(&mut self, addr: u16, value: u8) {
-        let old_open_bus = *self.open_bus.borrow_mut();
+        let old_open_bus = self.open_bus;
         self.write(addr, value, false);
-        *self.open_bus.borrow_mut() = old_open_bus;
+        self.open_bus = old_open_bus;
     }
 
     #[cfg(test)]
@@ -280,7 +294,12 @@ impl Bus {
     /// Returns true if an OAM DMA was triggered (at $4014)
     pub fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool {
         // Update open bus with the value being written
-        *self.open_bus.borrow_mut() = value;
+        self.open_bus = value;
+
+        if addr == 0x4016 {
+            self.joypad1.write_strobe(value);
+            self.joypad2.write_strobe(value);
+        }
 
         if self.write_to_devices(addr, value, is_dummy_write) {
             return self.dma_triggered.replace(false);
@@ -297,8 +316,7 @@ impl Bus {
     }
 
     fn write_to_devices(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool {
-        let devices = self.devices.get_mut();
-        for device in devices.iter_mut() {
+        for device in self.devices.iter_mut() {
             if device.address_range().contains(&addr) && device.write(addr, value, is_dummy_write) {
                 return true;
             }
@@ -341,10 +359,15 @@ impl Bus {
     /// Set button state for a controller
     pub fn set_button(&mut self, controller: u8, button: crate::input::Button, pressed: bool) {
         match controller {
-            1 => self.joypad1.borrow_mut().set_button(button, pressed),
-            2 => self.joypad2.borrow_mut().set_button(button, pressed),
+            1 => self.joypad1.set_button(button, pressed),
+            2 => self.joypad2.set_button(button, pressed),
             _ => {}
         }
+    }
+
+    #[cfg(test)]
+    fn open_bus_value_for_test(&self) -> u8 {
+        self.open_bus
     }
 
     // /// Print the current open bus value to stdout (for debugging)
@@ -378,7 +401,7 @@ mod tests {
     }
 
     impl BusDevice for TestBusDevice {
-        fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
+        fn read(&mut self, addr: u16, _open_bus: u8, _clock_joypads: bool) -> Option<u8> {
             if self.range.contains(&addr) {
                 return Some(self.read_value);
             }
@@ -507,6 +530,17 @@ mod tests {
     }
 
     #[test]
+    fn test_open_bus_updates_after_read() {
+        let mut memory = create_test_memory();
+
+        memory.write(0x0000, 0x3C, false);
+        let value = memory.read(0x0000);
+
+        assert_eq!(value, 0x3C);
+        assert_eq!(memory.open_bus_value_for_test(), 0x3C);
+    }
+
+    #[test]
     fn test_unallocated_io_space_is_registered() {
         let memory = create_test_memory();
 
@@ -595,7 +629,7 @@ mod tests {
 
     #[test]
     fn test_new_memory_is_initialized() {
-        let memory = create_test_memory();
+        let mut memory = create_test_memory();
         assert_eq!(memory.read(0x0000), 0);
         assert_eq!(memory.read(0x1234), 0);
         assert_eq!(memory.read(0x3FFF), 0);
@@ -946,7 +980,7 @@ mod tests {
     #[test]
     fn test_read_apu_status_register() {
         // Test reading from $4015 returns APU status
-        let memory = create_test_memory();
+        let mut memory = create_test_memory();
 
         // Reading $4015 should return the APU status register
         let status = memory.read(0x4015);
@@ -960,7 +994,7 @@ mod tests {
     #[test]
     fn test_read_apu_status_after_enable() {
         // Test that reading $4015 returns the APU's status
-        let memory = create_test_memory();
+        let mut memory = create_test_memory();
 
         // Directly configure pulse 1 through the APU to test reading
         {
@@ -979,7 +1013,7 @@ mod tests {
     #[test]
     fn test_apu_status_register_mirrored() {
         // Test that $4015 is not mirrored (only accessible at exact address)
-        let memory = create_test_memory();
+        let mut memory = create_test_memory();
 
         // Reading exactly $4015 should work
         let status = memory.read(0x4015);

@@ -20,7 +20,7 @@ impl PpuDevice {
 }
 
 impl BusDevice for PpuDevice {
-    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, addr: u16, _open_bus: u8, _clock_joypads: bool) -> Option<u8> {
         if !self.address_range().contains(&addr) {
             return None;
         }

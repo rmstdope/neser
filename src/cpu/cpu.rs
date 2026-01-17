@@ -454,8 +454,8 @@ impl Cpu {
         self.sp = self.sp.wrapping_sub(1);
 
         // Read NMI vector and set PC
-        let lo = self.memory.borrow().read(NMI_VECTOR) as u16;
-        let hi = self.memory.borrow().read(NMI_VECTOR + 1) as u16;
+        let lo = self.memory.borrow_mut().read(NMI_VECTOR) as u16;
+        let hi = self.memory.borrow_mut().read(NMI_VECTOR + 1) as u16;
         self.pc = (hi << 8) | lo;
 
         self.interrupt_stack.push(InterruptKind::Nmi);
@@ -592,7 +592,7 @@ impl Cpu {
 
                 if let Some(addr) = dma_addr {
                     self.before_cpu_cycle(false);
-                    let value = self.memory.borrow().read(addr);
+                    let value = self.memory.borrow_mut().read(addr);
                     self.after_cpu_cycle(false);
                     self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
                 }
@@ -601,7 +601,10 @@ impl Cpu {
             } else {
                 // Dummy read / alignment cycle
                 self.before_cpu_cycle(false);
-                let _ = self.memory.borrow().read_without_joypad_clock(read_address);
+                let _ = self
+                    .memory
+                    .borrow_mut()
+                    .read_without_joypad_clock(read_address);
                 self.after_cpu_cycle(false);
 
                 if self.dmc_dma_need_dummy_read {
@@ -635,7 +638,7 @@ impl Cpu {
             self.start_dmc_dma();
 
             // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
-            let _ = self.memory.borrow().read(read_address);
+            let _ = self.memory.borrow_mut().read(read_address);
             self.after_cpu_cycle(false);
             self.dmc_dma_need_halt = false;
 
@@ -647,7 +650,7 @@ impl Cpu {
 
         // OAM DMA is pending (possibly with DMC collision)
         // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
-        let _ = self.memory.borrow().read(read_address);
+        let _ = self.memory.borrow_mut().read(read_address);
         self.after_cpu_cycle(false);
 
         // Now run the OAM DMA (which handles DMC collision internally)
@@ -728,7 +731,7 @@ impl Cpu {
                 };
 
                 if let Some(addr) = dma_addr {
-                    let value = self.memory.borrow().read(addr);
+                    let value = self.memory.borrow_mut().read(addr);
                     self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
                 }
                 self.tick_single_dma_cycle();
@@ -739,7 +742,7 @@ impl Cpu {
                     dmc_progress = DMC_READY_TO_READ; // dummy done
                 }
                 let addr = source_base.wrapping_add(sprite_offset);
-                let value = self.memory.borrow().read(addr);
+                let value = self.memory.borrow_mut().read(addr);
                 sprite_dma_value = Some(value);
                 self.tick_single_dma_cycle();
             } else if oam_ready_to_write {
@@ -808,7 +811,7 @@ impl Cpu {
                 continue;
             }
 
-            let value = self.memory.borrow().read(addr);
+            let value = self.memory.borrow_mut().read(addr);
 
             #[cfg(test)]
             {
@@ -1472,7 +1475,7 @@ impl Cpu {
         #[cfg(debug_assertions)]
         if crate::tracing::is_cpu_tracing_enabled() {
             let pc = self.pc;
-            let memory = self.memory.borrow();
+            let mut memory = self.memory.borrow_mut();
             let opcode_byte = memory.read_for_testing(pc);
             if let Some(op) = super::opcode::lookup(opcode_byte) {
                 let byte1 = if op.bytes() > 1 {
@@ -2628,7 +2631,7 @@ mod tests {
         // Verify all 256 bytes were copied to OAM by reading through $2004
         for i in 0..256u16 {
             memory.borrow_mut().write(0x2003, i as u8, false);
-            let oam_byte = memory.borrow().read(0x2004);
+            let oam_byte = memory.borrow_mut().read(0x2004);
             let expected = if (i & 0x03) == 2 {
                 ((i & 0xFF) as u8) & 0xE3
             } else {
@@ -2794,9 +2797,9 @@ mod tests {
         let pcl_addr = 0x0100 | (sp_before.wrapping_sub(1) as u16);
         let p_addr = 0x0100 | (sp_before.wrapping_sub(2) as u16);
 
-        let pch = memory.borrow().read(pch_addr);
-        let pcl = memory.borrow().read(pcl_addr);
-        let pushed_p = memory.borrow().read(p_addr);
+        let pch = memory.borrow_mut().read(pch_addr);
+        let pcl = memory.borrow_mut().read(pcl_addr);
+        let pushed_p = memory.borrow_mut().read(p_addr);
 
         let expected_return_pc = pc_before.wrapping_add(1);
         assert_eq!(pch, (expected_return_pc >> 8) as u8);
@@ -3510,7 +3513,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0b0011_0011, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x42), 0b0110_0110);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0b0110_0110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -3524,7 +3527,7 @@ mod tests {
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0b1010_0101, false); // 0x42 + 0x05
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x47), 0b0100_1010);
+        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0b0100_1010);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -3537,7 +3540,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0b0100_0001, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1234), 0b1000_0010);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0b1000_0010);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 
@@ -3551,7 +3554,7 @@ mod tests {
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0b0000_0001, false); // 0x1234 + 0x10
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1244), 0b0000_0010);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0b0000_0010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
     }
@@ -4130,7 +4133,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x50, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x42), 0x4F);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x4F);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -4144,7 +4147,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x01, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x42), 0x00);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -4158,7 +4161,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x00, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x42), 0xFF);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0xFF);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -4173,7 +4176,7 @@ mod tests {
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0x80, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x47), 0x7F);
+        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0x7F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -4186,7 +4189,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1234), 0x2F);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0x2F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -4200,7 +4203,7 @@ mod tests {
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0x90, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1244), 0x8F);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0x8F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 
@@ -4437,7 +4440,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x50, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x42), 0x51);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x51);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -4451,7 +4454,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0xFF, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x42), 0x00);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -4465,7 +4468,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0x7F, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x42), 0x80);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x80);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -4480,7 +4483,7 @@ mod tests {
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0x20, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x47), 0x21);
+        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0x21);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -4493,7 +4496,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1234), 0x31);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0x31);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -4507,7 +4510,7 @@ mod tests {
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0x8F, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1244), 0x90);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0x90);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 
@@ -4579,8 +4582,8 @@ mod tests {
         assert_eq!(cpu.pc, 0x1235); // PC after BRK at 0x1234
         assert_eq!(cpu.sp, 0xFD); // SP decremented by 2 (pushed 2 bytes)
         // Return address should be 0x0602 (address of last byte of JSR instruction)
-        assert_eq!(cpu.memory.borrow().read(0x01FF), 0x06); // High byte of return address
-        assert_eq!(cpu.memory.borrow().read(0x01FE), 0x02); // Low byte of return address
+        assert_eq!(cpu.memory.borrow_mut().read(0x01FF), 0x06); // High byte of return address
+        assert_eq!(cpu.memory.borrow_mut().read(0x01FE), 0x02); // Low byte of return address
     }
 
     #[test]
@@ -4925,7 +4928,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x42, 0b11001100, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x42), 0b01100110);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0b01100110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -4939,7 +4942,7 @@ mod tests {
         cpu.x = 0x05;
         cpu.memory.borrow_mut().write(0x47, 0b10101011, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x47), 0b01010101);
+        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0b01010101);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -4952,7 +4955,7 @@ mod tests {
         cpu.reset(true);
         cpu.memory.borrow_mut().write(0x1234, 0b01010100, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1234), 0b00101010);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0b00101010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -4966,7 +4969,7 @@ mod tests {
         cpu.x = 0x10;
         cpu.memory.borrow_mut().write(0x1244, 0b00000011, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1244), 0b00000001);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0b00000001);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5348,7 +5351,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x42, 0b11001100, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x42), 0b10011000);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0b10011000);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5363,7 +5366,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x47, 0b10101011, false);
         cpu.p = FLAG_CARRY;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x47), 0b01010111);
+        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0b01010111);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5377,7 +5380,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x1234, 0b01010100, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1234), 0b10101000);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0b10101000);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -5392,7 +5395,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x1244, 0b00000011, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1244), 0b00000110);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0b00000110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -5437,7 +5440,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x42, 0b11001100, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x42), 0b01100110);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0b01100110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -5452,7 +5455,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x47, 0b10101011, false);
         cpu.p = FLAG_CARRY;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x47), 0b11010101);
+        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0b11010101);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5466,7 +5469,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x1234, 0b01010100, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1234), 0b00101010);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0b00101010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -5481,7 +5484,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x1244, 0b00000011, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1244), 0b00000001);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0b00000001);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5684,7 +5687,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x10), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x10), 0x42);
     }
 
     #[test]
@@ -5697,7 +5700,7 @@ mod tests {
         cpu.a = 0x42;
         cpu.x = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x15), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x15), 0x42);
     }
 
     #[test]
@@ -5709,7 +5712,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1000), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0x42);
     }
 
     #[test]
@@ -5722,7 +5725,7 @@ mod tests {
         cpu.a = 0x42;
         cpu.x = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1005), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x42);
     }
 
     #[test]
@@ -5735,7 +5738,7 @@ mod tests {
         cpu.a = 0x42;
         cpu.y = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1005), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x42);
     }
 
     #[test]
@@ -5750,7 +5753,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x15, 0x00, false);
         cpu.memory.borrow_mut().write(0x16, 0x10, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1000), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0x42);
     }
 
     #[test]
@@ -5765,7 +5768,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x10, 0x00, false);
         cpu.memory.borrow_mut().write(0x11, 0x10, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1005), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x42);
     }
 
     #[test]
@@ -5819,7 +5822,7 @@ mod tests {
         cpu.sp = 0xFD;
         run(&mut cpu);
         assert_eq!(cpu.sp, 0xFC);
-        assert_eq!(cpu.memory.borrow().read(0x01FD), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x01FD), 0x42);
     }
 
     #[test]
@@ -5878,7 +5881,7 @@ mod tests {
         run(&mut cpu);
         assert_eq!(cpu.sp, 0xFC);
         // PHP should push P with B flag (bit 4) and unused bit (bit 5) set to 1
-        assert_eq!(cpu.memory.borrow().read(0x01FD), 0xFF);
+        assert_eq!(cpu.memory.borrow_mut().read(0x01FD), 0xFF);
     }
 
     #[test]
@@ -5894,7 +5897,7 @@ mod tests {
         run(&mut cpu);
         assert_eq!(cpu.sp, 0xFC);
         // Should push 0xF0 (0xC0 | 0x30) - B flag and unused bit both set
-        assert_eq!(cpu.memory.borrow().read(0x01FD), 0xF0);
+        assert_eq!(cpu.memory.borrow_mut().read(0x01FD), 0xF0);
     }
 
     #[test]
@@ -5942,7 +5945,7 @@ mod tests {
         cpu.reset(true);
         cpu.x = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x10), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x10), 0x42);
     }
 
     #[test]
@@ -5955,7 +5958,7 @@ mod tests {
         cpu.x = 0x42;
         cpu.y = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x15), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x15), 0x42);
     }
 
     #[test]
@@ -5967,7 +5970,7 @@ mod tests {
         cpu.reset(true);
         cpu.x = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1000), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0x42);
     }
 
     #[test]
@@ -5979,7 +5982,7 @@ mod tests {
         cpu.reset(true);
         cpu.y = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x10), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x10), 0x42);
     }
 
     #[test]
@@ -5992,7 +5995,7 @@ mod tests {
         cpu.y = 0x42;
         cpu.x = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x15), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x15), 0x42);
     }
 
     #[test]
@@ -6004,7 +6007,7 @@ mod tests {
         cpu.reset(true);
         cpu.y = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1000), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0x42);
     }
 
     #[test]
@@ -6017,9 +6020,9 @@ mod tests {
         run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
         // Verify program was loaded at 0x8000
-        assert_eq!(cpu.memory.borrow().read(0x8000), LDA_IMM);
-        assert_eq!(cpu.memory.borrow().read(0x8001), 0x42);
-        assert_eq!(cpu.memory.borrow().read(0x8002), KIL);
+        assert_eq!(cpu.memory.borrow_mut().read(0x8000), LDA_IMM);
+        assert_eq!(cpu.memory.borrow_mut().read(0x8001), 0x42);
+        assert_eq!(cpu.memory.borrow_mut().read(0x8002), KIL);
     }
 
     #[test]
@@ -6062,7 +6065,7 @@ mod tests {
         cpu.a = 0b11110000;
         cpu.x = 0b10101010;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x0050), 0b10100000);
+        assert_eq!(cpu.memory.borrow_mut().read(0x0050), 0b10100000);
     }
 
     #[test]
@@ -6076,7 +6079,7 @@ mod tests {
         cpu.x = 0b10101010;
         cpu.y = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x0055), 0b10100000);
+        assert_eq!(cpu.memory.borrow_mut().read(0x0055), 0b10100000);
     }
 
     #[test]
@@ -6089,7 +6092,7 @@ mod tests {
         cpu.a = 0b11110000;
         cpu.x = 0b10101010;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1000), 0b10100000);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0b10100000);
     }
 
     #[test]
@@ -6107,7 +6110,7 @@ mod tests {
         cpu.memory.borrow_mut().write(0x00EB, 0x10, false);
         run(&mut cpu);
         // Should store A & X = 0b11111111 & 0b10101010 = 0b10101010 at 0x1000
-        assert_eq!(cpu.memory.borrow().read(0x1000), 0b10101010);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0b10101010);
     }
 
     #[test]
@@ -6282,7 +6285,7 @@ mod tests {
         // Value = A AND X AND (high byte of address + 1)
         // high byte of final address 0x1005 is 0x10
         // Value = 0xFF AND 0x7F AND (0x10 + 1) = 0xFF AND 0x7F AND 0x11 = 0x11
-        let stored_value = cpu.memory.borrow().read(0x1005);
+        let stored_value = cpu.memory.borrow_mut().read(0x1005);
         assert_eq!(stored_value, 0x11);
     }
 
@@ -6300,7 +6303,7 @@ mod tests {
         // Value = A AND X AND (high byte of address + 1)
         // high byte of final address 0x1010 is 0x10
         // Value = 0xFF AND 0x3F AND (0x10 + 1) = 0xFF AND 0x3F AND 0x11 = 0x11
-        let stored_value = cpu.memory.borrow().read(0x1010);
+        let stored_value = cpu.memory.borrow_mut().read(0x1010);
         assert_eq!(stored_value, 0x11);
     }
 
@@ -6318,7 +6321,7 @@ mod tests {
         // Value = A AND X AND (high byte of address + 1)
         // high byte of final address 0x1100 is 0x11
         // Value = 0xFF AND 0xFF AND (0x11 + 1) = 0xFF AND 0xFF AND 0x12 = 0x12
-        let stored_value = cpu.memory.borrow().read(0x1100);
+        let stored_value = cpu.memory.borrow_mut().read(0x1100);
         assert_eq!(stored_value, 0x12);
     }
 
@@ -6387,7 +6390,7 @@ mod tests {
         cpu.a = 0x0F;
         run(&mut cpu);
         // Memory at 0x42: 0x10 - 1 = 0x0F
-        assert_eq!(cpu.memory.borrow().read(0x42), 0x0F);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x0F);
         // Compare A (0x0F) with memory (0x0F)
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Equal
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // A >= memory
@@ -6406,7 +6409,7 @@ mod tests {
         cpu.a = 0x30;
         run(&mut cpu);
         // Memory at 0x1005: 0x20 - 1 = 0x1F
-        assert_eq!(cpu.memory.borrow().read(0x1005), 0x1F);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x1F);
         // Compare A (0x30) with memory (0x1F): 0x30 > 0x1F
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // A >= memory
@@ -6427,7 +6430,7 @@ mod tests {
         cpu.a = 0x03;
         run(&mut cpu);
         // Memory at 0x1010: 0x05 - 1 = 0x04
-        assert_eq!(cpu.memory.borrow().read(0x1010), 0x04);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x04);
         // Compare A (0x03) with memory (0x04): 0x03 < 0x04
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // A < memory (borrow)
@@ -6448,7 +6451,7 @@ mod tests {
         let saved_status = cpu.p;
         run(&mut cpu);
         // DOP does nothing - just reads memory and discards
-        assert_eq!(cpu.memory.borrow().read(0x42), 0xFF); // Memory unchanged
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0xFF); // Memory unchanged
         assert_eq!(cpu.a, 0x10); // A unchanged
         assert_eq!(cpu.x, 0x20); // X unchanged
         assert_eq!(cpu.y, 0x30); // Y unchanged
@@ -6469,7 +6472,7 @@ mod tests {
         let saved_status = cpu.p;
         run(&mut cpu);
         // DOP does nothing - just reads memory at 0x40 + X = 0x45 and discards
-        assert_eq!(cpu.memory.borrow().read(0x45), 0xAA); // Memory unchanged
+        assert_eq!(cpu.memory.borrow_mut().read(0x45), 0xAA); // Memory unchanged
         assert_eq!(cpu.a, 0x10); // A unchanged
         assert_eq!(cpu.x, 0x05); // X unchanged
         assert_eq!(cpu.y, 0x30); // Y unchanged
@@ -6507,7 +6510,7 @@ mod tests {
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
         run(&mut cpu);
         // Memory at 0x42: 0x10 + 1 = 0x11
-        assert_eq!(cpu.memory.borrow().read(0x42), 0x11);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x11);
         // Then SBC: A = 0x50 - 0x11 - (1 - carry) = 0x50 - 0x11 - 0 = 0x3F
         assert_eq!(cpu.a, 0x3F);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // No borrow
@@ -6528,7 +6531,7 @@ mod tests {
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
         run(&mut cpu);
         // Memory at 0x1005: 0xFF + 1 = 0x00 (wraps)
-        assert_eq!(cpu.memory.borrow().read(0x1005), 0x00);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x00);
         // Then SBC: A = 0x00 - 0x00 - 0 = 0x00
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -6550,7 +6553,7 @@ mod tests {
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
         run(&mut cpu);
         // Memory at 0x1010: 0x05 + 1 = 0x06
-        assert_eq!(cpu.memory.borrow().read(0x1010), 0x06);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x06);
         // Then SBC: A = 0x10 - 0x06 - 0 = 0x0A
         assert_eq!(cpu.a, 0x0A);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
@@ -6735,7 +6738,7 @@ mod tests {
         run(&mut cpu);
         // RLA: ROL memory (0x6A << 1 = 0xD4), then AND with A
         // Memory should be 0xD4, A should be 0xF0 & 0xD4 = 0xD0
-        assert_eq!(cpu.memory.borrow().read(0x42), 0xD4);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0xD4);
         assert_eq!(cpu.a, 0xD0);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // Carry clear (bit 7 was 0)
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Negative set
@@ -6756,7 +6759,7 @@ mod tests {
         run(&mut cpu);
         // RLA: ROL memory (0x81 << 1 + carry = 0x03), then AND with A
         // Memory should be 0x03, A should be 0xFF & 0x03 = 0x03
-        assert_eq!(cpu.memory.borrow().read(0x1005), 0x03);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x03);
         assert_eq!(cpu.a, 0x03);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry set (bit 7 was 1)
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -6779,7 +6782,7 @@ mod tests {
         run(&mut cpu);
         // RLA: ROL memory (0x01 << 1 = 0x02), then AND with A
         // Memory should be 0x02, A should be 0x01 & 0x02 = 0x00
-        assert_eq!(cpu.memory.borrow().read(0x1010), 0x02);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x02);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Zero flag set
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -6797,7 +6800,7 @@ mod tests {
         cpu.p &= !FLAG_CARRY; // Clear carry
         run(&mut cpu);
         // RRA: ROR memory (0xAA >> 1 = 0x55), then ADC with A (0x10 + 0x55 = 0x65)
-        assert_eq!(cpu.memory.borrow().read(0x10), 0x55);
+        assert_eq!(cpu.memory.borrow_mut().read(0x10), 0x55);
         assert_eq!(cpu.a, 0x65);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry from addition
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -6819,7 +6822,7 @@ mod tests {
         // RRA: ROR memory (0x01 >> 1 with carry = 0x80), then ADC with A (0xFF + 0x80 + carry=1)
         // Memory rotates to 0x80 (carry goes into bit 7), bit 0 goes to carry
         // Then: 0xFF + 0x80 + 1 (carry from ROR) = 0x180 = 0x80 with carry set
-        assert_eq!(cpu.memory.borrow().read(0x1005), 0x80);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x80);
         assert_eq!(cpu.a, 0x80);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry from addition
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Result is negative
@@ -6840,7 +6843,7 @@ mod tests {
         cpu.p &= !FLAG_CARRY;
         run(&mut cpu);
         // RRA: ROR memory (0x02 >> 1 = 0x01), then ADC with A (0x00 + 0x01 = 0x01)
-        assert_eq!(cpu.memory.borrow().read(0x1010), 0x01);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x01);
         assert_eq!(cpu.a, 0x01);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -6875,7 +6878,7 @@ mod tests {
         cpu.a = 0b0000_1111; // 0x0F
         run(&mut cpu);
         // SLO: ASL memory (0x55 << 1 = 0xAA), then ORA with A (0x0F | 0xAA = 0xAF)
-        assert_eq!(cpu.memory.borrow().read(0x10), 0xAA);
+        assert_eq!(cpu.memory.borrow_mut().read(0x10), 0xAA);
         assert_eq!(cpu.a, 0xAF);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry from shift
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Result is negative
@@ -6893,7 +6896,7 @@ mod tests {
         cpu.a = 0b0000_0010; // 0x02
         run(&mut cpu);
         // SLO: ASL memory (0x81 << 1 = 0x02, carry set), then ORA with A (0x02 | 0x02 = 0x02)
-        assert_eq!(cpu.memory.borrow().read(0x1005), 0x02);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x02);
         assert_eq!(cpu.a, 0x02);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry from shift
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -6913,7 +6916,7 @@ mod tests {
         cpu.a = 0b0000_0000; // 0x00
         run(&mut cpu);
         // SLO: ASL memory (0x01 << 1 = 0x02), then ORA with A (0x00 | 0x02 = 0x02)
-        assert_eq!(cpu.memory.borrow().read(0x1010), 0x02);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x02);
         assert_eq!(cpu.a, 0x02);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -6930,7 +6933,7 @@ mod tests {
         cpu.a = 0b0000_0001; // 0x01
         run(&mut cpu);
         // SRE: LSR memory (0x06 >> 1 = 0x03), then EOR with A (0x01 ^ 0x03 = 0x02)
-        assert_eq!(cpu.memory.borrow().read(0x42), 0x03);
+        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x03);
         assert_eq!(cpu.a, 0x02);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry from shift
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -6950,7 +6953,7 @@ mod tests {
         cpu.a = 0b0000_0011; // 0x03
         run(&mut cpu);
         // SRE: LSR memory (0x05 >> 1 = 0x02 with carry), then EOR with A (0x03 ^ 0x02 = 0x01)
-        assert_eq!(cpu.memory.borrow().read(0x1010), 0x02);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x02);
         assert_eq!(cpu.a, 0x01);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry from LSR
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -6970,7 +6973,7 @@ mod tests {
         cpu.a = 0b0000_0100; // 0x04
         run(&mut cpu);
         // SRE: LSR memory (0x08 >> 1 = 0x04), then EOR with A (0x04 ^ 0x04 = 0x00)
-        assert_eq!(cpu.memory.borrow().read(0x1010), 0x04);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x04);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Result is zero
@@ -6991,7 +6994,7 @@ mod tests {
         cpu.x = 0xFF;
         cpu.y = 0x10;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1010), 0x11); // X AND (0x10 + 1)
+        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x11); // X AND (0x10 + 1)
     }
 
     #[test]
@@ -7009,7 +7012,7 @@ mod tests {
         cpu.y = 0xFF;
         cpu.x = 0x10;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow().read(0x1010), 0x11); // Y AND (0x10 + 1)
+        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x11); // Y AND (0x10 + 1)
     }
 
     #[test]
@@ -7081,7 +7084,7 @@ mod tests {
         // SP should be A & X
         assert_eq!(cpu.sp, 0xF0);
         // Memory at $1010 should be SP & (HIGH(addr) + 1) = 0xF0 & 0x11 = 0x10
-        assert_eq!(cpu.memory.borrow().read(0x1010), 0x10);
+        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x10);
     }
 
     // Cycle counter tests
@@ -7178,8 +7181,8 @@ mod tests {
         // Read back from PPU memory at $3040 to verify
         cpu.memory.borrow_mut().write(0x2006, 0x30, false);
         cpu.memory.borrow_mut().write(0x2006, 0x40, false);
-        let _ = cpu.memory.borrow().read(0x2007); // Dummy read (buffered)
-        let value = cpu.memory.borrow().read(0x2007); // Actual value
+        let _ = cpu.memory.borrow_mut().read(0x2007); // Dummy read (buffered)
+        let value = cpu.memory.borrow_mut().read(0x2007); // Actual value
 
         assert_eq!(
             value, 0xAB,
@@ -7836,7 +7839,7 @@ mod tests {
         // 0b11110000 | 0b00001010 = 0b11111010 (250)
         assert_eq!(cpu.a, 0b11111010, "A should be 0xF0 | (5 << 1)");
         assert_eq!(
-            cpu.memory.borrow().read(0x1234),
+            cpu.memory.borrow_mut().read(0x1234),
             0b00001010,
             "Memory should contain shifted value"
         );
@@ -7866,7 +7869,7 @@ mod tests {
         // 0b00001111 | 0b10000000 = 0b10001111 (143)
         assert_eq!(cpu.a, 0b10001111, "A should be 15 | (64 << 1)");
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b10000000,
             "Memory should contain shifted value"
         );
@@ -7896,7 +7899,7 @@ mod tests {
         // 0b00001111 | 0b00000010 = 0b00001111 (15)
         assert_eq!(cpu.a, 0b00001111, "A should be 15 | (129 << 1)");
         assert_eq!(
-            cpu.memory.borrow().read(0x1234),
+            cpu.memory.borrow_mut().read(0x1234),
             0b00000010,
             "Memory should contain shifted value"
         );
@@ -7931,7 +7934,7 @@ mod tests {
         // 0b11000000 | 0b00000110 = 0b11000110 (198)
         assert_eq!(cpu.a, 0b11000110, "A should be 192 | (3 << 1)");
         assert_eq!(
-            cpu.memory.borrow().read(0x1237),
+            cpu.memory.borrow_mut().read(0x1237),
             0b00000110,
             "Memory should contain shifted value"
         );
@@ -7956,7 +7959,7 @@ mod tests {
         // 0b00000001 | 0b00100000 = 0b00100001 (33)
         assert_eq!(cpu.a, 0b00100001, "A should be 1 | (16 << 1)");
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b00100000,
             "Memory should contain shifted value"
         );
@@ -7981,7 +7984,7 @@ mod tests {
         // 0b01010101 | 0b00000100 = 0b01010101 (85)
         assert_eq!(cpu.a, 0b01010101, "A should be 85 | (2 << 1)");
         assert_eq!(
-            cpu.memory.borrow().read(0x1237),
+            cpu.memory.borrow_mut().read(0x1237),
             0b00000100,
             "Memory should contain shifted value"
         );
@@ -8007,7 +8010,7 @@ mod tests {
         // 0b00000000 | 0b00010000 = 0b00010000 (16)
         assert_eq!(cpu.a, 0b00010000, "A should be 0 | (8 << 1)");
         assert_eq!(
-            cpu.memory.borrow().read(0x1236),
+            cpu.memory.borrow_mut().read(0x1236),
             0b00010000,
             "Memory should contain shifted value"
         );
@@ -8364,7 +8367,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b10101010,
             "Memory should be shifted left"
         );
@@ -8398,7 +8401,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0045),
+            cpu.memory.borrow_mut().read(0x0045),
             0b10000000,
             "Memory at $45 should be shifted left"
         );
@@ -8435,7 +8438,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1234),
+            cpu.memory.borrow_mut().read(0x1234),
             0b01000000,
             "Memory at $1234 should be shifted left"
         );
@@ -8465,7 +8468,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1234),
+            cpu.memory.borrow_mut().read(0x1234),
             0b00000000,
             "Memory at $1234 should be shifted left to 0"
         );
@@ -8502,7 +8505,7 @@ mod tests {
         cpu.execute();
 
         // PHP should push P with bits 4 and 5 set (BREAK and UNUSED flags)
-        let pushed_value = cpu.memory.borrow().read(0x01FF);
+        let pushed_value = cpu.memory.borrow_mut().read(0x01FF);
         assert_eq!(
             pushed_value,
             0b10110101 | FLAG_BREAK | FLAG_UNUSED,
@@ -9059,7 +9062,7 @@ mod tests {
         // 0b01010101 ROL with carry=0 -> 0b10101010
         // 0xFF AND 0b10101010 -> 0b10101010
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b10101010,
             "Memory should be rotated left"
         );
@@ -9100,7 +9103,7 @@ mod tests {
         // 0b10000001 ROL with carry=1 -> 0b00000011 (carry out = 1)
         // 0xFF AND 0b00000011 -> 0b00000011
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b00000011,
             "Memory should be rotated left with carry in"
         );
@@ -9309,12 +9312,12 @@ mod tests {
 
         // Check stack contents (return address high byte first, then low byte)
         assert_eq!(
-            cpu.memory.borrow().read(0x01FF),
+            cpu.memory.borrow_mut().read(0x01FF),
             0x80,
             "High byte of return address on stack"
         );
         assert_eq!(
-            cpu.memory.borrow().read(0x01FE),
+            cpu.memory.borrow_mut().read(0x01FE),
             0x02,
             "Low byte of return address on stack"
         );
@@ -9342,12 +9345,12 @@ mod tests {
         // Check stack wrapping
         assert_eq!(cpu.sp, 0xFF, "SP should wrap around");
         assert_eq!(
-            cpu.memory.borrow().read(0x0101),
+            cpu.memory.borrow_mut().read(0x0101),
             0x80,
             "High byte pushed at correct location"
         );
         assert_eq!(
-            cpu.memory.borrow().read(0x0100),
+            cpu.memory.borrow_mut().read(0x0100),
             0x02,
             "Low byte pushed at correct location"
         );
@@ -9462,7 +9465,7 @@ mod tests {
 
         // 0b01000000 << 1 | 0 = 0b10000000
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b10000000,
             "Memory should be rotated left"
         );
@@ -9495,7 +9498,7 @@ mod tests {
 
         // 0b11111111 << 1 | 1 = 0b11111111 (with carry out)
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b11111111,
             "Memory at ZP+X should be rotated"
         );
@@ -9517,7 +9520,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1234),
+            cpu.memory.borrow_mut().read(0x1234),
             0b00000010,
             "Memory should be rotated left"
         );
@@ -9546,7 +9549,7 @@ mod tests {
 
         // 0b10000000 << 1 | 0 = 0b00000000
         assert_eq!(
-            cpu.memory.borrow().read(0x1234),
+            cpu.memory.borrow_mut().read(0x1234),
             0b00000000,
             "Memory at ABS+X should be rotated"
         );
@@ -10059,7 +10062,7 @@ mod tests {
 
         // 0b00000010 >> 1 = 0b00000001
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b00000001,
             "Memory should be shifted right"
         );
@@ -10086,7 +10089,7 @@ mod tests {
 
         // 0b00000001 >> 1 = 0b00000000
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b00000000,
             "Memory should be 0"
         );
@@ -10108,7 +10111,7 @@ mod tests {
 
         // 0xFF >> 1 = 0x7F
         assert_eq!(
-            cpu.memory.borrow().read(0x1234),
+            cpu.memory.borrow_mut().read(0x1234),
             0x7F,
             "Memory should be 0x7F"
         );
@@ -10131,7 +10134,7 @@ mod tests {
 
         // 0b10101010 >> 1 = 0b01010101
         assert_eq!(
-            cpu.memory.borrow().read(0x1234),
+            cpu.memory.borrow_mut().read(0x1234),
             0b01010101,
             "Memory should be shifted"
         );
@@ -10162,7 +10165,7 @@ mod tests {
         // 0b11110000 XOR 0b00000111 = 0b11110111
         assert_eq!(cpu.a, 0b11110111, "A should be XORed with shifted value");
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b00000111,
             "Memory should be shifted"
         );
@@ -10338,7 +10341,7 @@ mod tests {
 
         assert_eq!(cpu.sp, 0xFE, "SP should decrement");
         assert_eq!(
-            cpu.memory.borrow().read(0x01FF),
+            cpu.memory.borrow_mut().read(0x01FF),
             0x42,
             "A should be pushed to stack"
         );
@@ -10360,7 +10363,7 @@ mod tests {
 
         assert_eq!(cpu.sp, 0xFF, "SP should wrap around");
         assert_eq!(
-            cpu.memory.borrow().read(0x0100),
+            cpu.memory.borrow_mut().read(0x0100),
             0xAB,
             "A should be pushed to correct location"
         );
@@ -11219,7 +11222,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b01100110,
             "Memory should be rotated right"
         );
@@ -11247,7 +11250,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0045),
+            cpu.memory.borrow_mut().read(0x0045),
             0b11010101,
             "Memory should be rotated right with carry in"
         );
@@ -11274,7 +11277,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0b00011001,
             "Memory should be rotated right"
         );
@@ -11306,7 +11309,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1208),
+            cpu.memory.borrow_mut().read(0x1208),
             0b01111000,
             "Memory should be rotated right"
         );
@@ -11336,7 +11339,7 @@ mod tests {
         // Memory: 0b10000000 rotated right = 0b01000000 (0x40)
         // A = 0x10 + 0x40 = 0x50
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0x40,
             "Memory should be rotated right"
         );
@@ -11368,7 +11371,7 @@ mod tests {
         // Memory: 0b00000011 rotated right = 0b00000001, carry set
         // A = 0x05 + 0x01 + 1(carry from rotation) = 0x07
         assert_eq!(
-            cpu.memory.borrow().read(0x0045),
+            cpu.memory.borrow_mut().read(0x0045),
             0x01,
             "Memory should be rotated right"
         );
@@ -11403,7 +11406,7 @@ mod tests {
         // Memory: 0x02 rotated right = 0x01
         // A = 0xFF + 0x01 = 0x00 (with carry)
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x01,
             "Memory should be rotated right"
         );
@@ -11440,7 +11443,7 @@ mod tests {
         // Memory: 0x20 rotated right = 0x10
         // A = 0x05 + 0x10 = 0x15
         assert_eq!(
-            cpu.memory.borrow().read(0x1210),
+            cpu.memory.borrow_mut().read(0x1210),
             0x10,
             "Memory should be rotated right"
         );
@@ -11471,7 +11474,7 @@ mod tests {
         // Memory: 0x04 rotated right = 0x02
         // A = 0x01 + 0x02 = 0x03
         assert_eq!(
-            cpu.memory.borrow().read(0x1208),
+            cpu.memory.borrow_mut().read(0x1208),
             0x02,
             "Memory should be rotated right"
         );
@@ -11504,7 +11507,7 @@ mod tests {
         // Memory: 0x08 rotated right = 0x04
         // A = 0x01 + 0x04 = 0x05
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x04,
             "Memory should be rotated right"
         );
@@ -11537,7 +11540,7 @@ mod tests {
         // Memory: 0x10 rotated right = 0x08
         // A = 0x0F + 0x08 = 0x17
         assert_eq!(
-            cpu.memory.borrow().read(0x1208),
+            cpu.memory.borrow_mut().read(0x1208),
             0x08,
             "Memory should be rotated right"
         );
@@ -11868,7 +11871,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0x55,
             "Memory should contain A"
         );
@@ -11894,7 +11897,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0045),
+            cpu.memory.borrow_mut().read(0x0045),
             0xAA,
             "Memory should contain A"
         );
@@ -11919,7 +11922,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x77,
             "Memory should contain A"
         );
@@ -11945,7 +11948,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1210),
+            cpu.memory.borrow_mut().read(0x1210),
             0x88,
             "Memory should contain A"
         );
@@ -11971,7 +11974,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1208),
+            cpu.memory.borrow_mut().read(0x1208),
             0x99,
             "Memory should contain A"
         );
@@ -11999,7 +12002,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0xCC,
             "Memory should contain A"
         );
@@ -12027,7 +12030,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1208),
+            cpu.memory.borrow_mut().read(0x1208),
             0xDD,
             "Memory should contain A"
         );
@@ -12054,7 +12057,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0b11000000,
             "Memory should contain A AND X"
         );
@@ -12081,7 +12084,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0045),
+            cpu.memory.borrow_mut().read(0x0045),
             0x55,
             "Memory should contain A AND X"
         );
@@ -12107,7 +12110,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x00,
             "Memory should contain A AND X (0x00)"
         );
@@ -12135,7 +12138,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x05,
             "Memory should contain A AND X"
         );
@@ -12161,7 +12164,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0x66,
             "Memory should contain Y"
         );
@@ -12187,7 +12190,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0045),
+            cpu.memory.borrow_mut().read(0x0045),
             0x77,
             "Memory should contain Y"
         );
@@ -12212,7 +12215,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x88,
             "Memory should contain Y"
         );
@@ -12238,7 +12241,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0042),
+            cpu.memory.borrow_mut().read(0x0042),
             0x99,
             "Memory should contain X"
         );
@@ -12264,7 +12267,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0045),
+            cpu.memory.borrow_mut().read(0x0045),
             0xAA,
             "Memory should contain X"
         );
@@ -12289,7 +12292,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0xBB,
             "Memory should contain X"
         );
@@ -12593,7 +12596,7 @@ mod tests {
         // High byte of address = 0x12, so (0x12 + 1) = 0x13
         // Result: 0xFF & 0xFF & 0x13 = 0x13
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x13,
             "Memory should contain A & X & (H+1)"
         );
@@ -12619,7 +12622,7 @@ mod tests {
         // High byte = 0x11, so (0x11 + 1) = 0x12
         // Result: 0xFF & 0xFF & 0x12 = 0x12
         assert_eq!(
-            cpu.memory.borrow().read(0x11F8),
+            cpu.memory.borrow_mut().read(0x11F8),
             0x12,
             "Memory should contain A & X & (H+1)"
         );
@@ -12642,7 +12645,7 @@ mod tests {
         // High byte = 0x02, so (0x02 + 1) = 0x03
         // Result: 0b11110000 & 0b11001100 & 0x03 = 0b11000000 & 0x03 = 0x00
         assert_eq!(
-            cpu.memory.borrow().read(0x0200),
+            cpu.memory.borrow_mut().read(0x0200),
             0x00,
             "Memory should contain masked value"
         );
@@ -12762,7 +12765,7 @@ mod tests {
         // High byte of address = 0x12, so (0x12 + 1) = 0x13
         // Result: 0xFF & 0x13 = 0x13
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x13,
             "Memory should contain Y & (H+1)"
         );
@@ -12785,7 +12788,7 @@ mod tests {
         // High byte = 0x03, so (0x03 + 1) = 0x04
         // Result: 0b11110000 & 0x04 = 0x00
         assert_eq!(
-            cpu.memory.borrow().read(0x0300),
+            cpu.memory.borrow_mut().read(0x0300),
             0x00,
             "Memory should contain masked value"
         );
@@ -12810,7 +12813,7 @@ mod tests {
         // On page crossing, the high byte of the *target address* is ANDed with Y:
         // high(0x1300) & 0x0F = 0x13 & 0x0F = 0x03 => final addr 0x0300
         assert_eq!(
-            cpu.memory.borrow().read(0x0300),
+            cpu.memory.borrow_mut().read(0x0300),
             0x03,
             "SYA should use base high byte and apply page-crossing high-byte quirk"
         );
@@ -12835,7 +12838,7 @@ mod tests {
         // High byte of address = 0x12, so (0x12 + 1) = 0x13
         // Result: 0xFF & 0x13 = 0x13
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x13,
             "Memory should contain X & (H+1)"
         );
@@ -12858,7 +12861,7 @@ mod tests {
         // High byte = 0x03, so (0x03 + 1) = 0x04
         // Result: 0b11110000 & 0x04 = 0x00
         assert_eq!(
-            cpu.memory.borrow().read(0x0300),
+            cpu.memory.borrow_mut().read(0x0300),
             0x00,
             "Memory should contain masked value"
         );
@@ -12883,7 +12886,7 @@ mod tests {
         // On page crossing, the high byte of the *target address* is ANDed with X:
         // high(0x1300) & 0x0F = 0x13 & 0x0F = 0x03 => final addr 0x0300
         assert_eq!(
-            cpu.memory.borrow().read(0x0300),
+            cpu.memory.borrow_mut().read(0x0300),
             0x03,
             "SXA should use base high byte and apply page-crossing high-byte quirk"
         );
@@ -12912,7 +12915,7 @@ mod tests {
         // High byte of address = 0x12, so (0x12 + 1) = 0x13
         // Result: 0xFF & 0xFF & 0x13 = 0x13
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x13,
             "Memory should contain A & X & (H+1)"
         );
@@ -12936,7 +12939,7 @@ mod tests {
         // High byte of address = 0x12, so (0x12 + 1) = 0x13
         // Result: 0xFF & 0xFF & 0x13 = 0x13
         assert_eq!(
-            cpu.memory.borrow().read(0x1200),
+            cpu.memory.borrow_mut().read(0x1200),
             0x13,
             "Memory should contain A & X & (H+1)"
         );
@@ -14504,7 +14507,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0010),
+            cpu.memory.borrow_mut().read(0x0010),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14533,7 +14536,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0015),
+            cpu.memory.borrow_mut().read(0x0015),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14560,7 +14563,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x2000),
+            cpu.memory.borrow_mut().read(0x2000),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14588,7 +14591,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x2010),
+            cpu.memory.borrow_mut().read(0x2010),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14616,7 +14619,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x2010),
+            cpu.memory.borrow_mut().read(0x2010),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14646,7 +14649,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x3000),
+            cpu.memory.borrow_mut().read(0x3000),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14676,7 +14679,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x3010),
+            cpu.memory.borrow_mut().read(0x3010),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -15685,7 +15688,7 @@ mod tests {
 
         // Memory increments from 0x0F to 0x10, then 0x50 - 0x10 = 0x40
         assert_eq!(
-            cpu.memory.borrow().read(0x0010),
+            cpu.memory.borrow_mut().read(0x0010),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15714,7 +15717,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0015),
+            cpu.memory.borrow_mut().read(0x0015),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15742,7 +15745,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x2000),
+            cpu.memory.borrow_mut().read(0x2000),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15771,7 +15774,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x2005),
+            cpu.memory.borrow_mut().read(0x2005),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15800,7 +15803,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x2005),
+            cpu.memory.borrow_mut().read(0x2005),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15831,7 +15834,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x2000),
+            cpu.memory.borrow_mut().read(0x2000),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15862,7 +15865,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x2005),
+            cpu.memory.borrow_mut().read(0x2005),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15930,7 +15933,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0010),
+            cpu.memory.borrow_mut().read(0x0010),
             0x43,
             "Memory should be incremented to 0x43"
         );
@@ -15956,7 +15959,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0010),
+            cpu.memory.borrow_mut().read(0x0010),
             0x00,
             "Memory should wrap to 0x00"
         );
@@ -15977,7 +15980,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0010),
+            cpu.memory.borrow_mut().read(0x0010),
             0x80,
             "Memory should be 0x80"
         );
@@ -16004,7 +16007,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0015),
+            cpu.memory.borrow_mut().read(0x0015),
             0x43,
             "Memory should be incremented to 0x43"
         );
@@ -16029,7 +16032,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0200),
+            cpu.memory.borrow_mut().read(0x0200),
             0x43,
             "Memory should be incremented to 0x43"
         );
@@ -16055,7 +16058,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0205),
+            cpu.memory.borrow_mut().read(0x0205),
             0x43,
             "Memory should be incremented to 0x43"
         );
@@ -16081,7 +16084,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0010),
+            cpu.memory.borrow_mut().read(0x0010),
             0x41,
             "Memory should be decremented to 0x41"
         );
@@ -16107,7 +16110,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0010),
+            cpu.memory.borrow_mut().read(0x0010),
             0x00,
             "Memory should be 0x00"
         );
@@ -16128,7 +16131,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0010),
+            cpu.memory.borrow_mut().read(0x0010),
             0xFF,
             "Memory should wrap to 0xFF"
         );
@@ -16155,7 +16158,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0015),
+            cpu.memory.borrow_mut().read(0x0015),
             0x41,
             "Memory should be decremented to 0x41"
         );
@@ -16180,7 +16183,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0200),
+            cpu.memory.borrow_mut().read(0x0200),
             0x41,
             "Memory should be decremented to 0x41"
         );
@@ -16206,7 +16209,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow().read(0x0205),
+            cpu.memory.borrow_mut().read(0x0205),
             0x41,
             "Memory should be decremented to 0x41"
         );

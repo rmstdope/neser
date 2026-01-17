@@ -235,7 +235,7 @@ impl Nes {
         let nestest = tracing.nestest;
         let cpu_state = self.cpu.state();
         let pc = cpu_state.pc;
-        let memory = self.memory.borrow();
+        let mut memory = self.memory.borrow_mut();
         // Read the opcode and determine instruction size
         let opcode_byte = memory.read(pc);
         let instruction = cpu::lookup(opcode_byte)
@@ -911,7 +911,7 @@ mod tests {
             // Set OAM address via $2003
             nes.memory.borrow_mut().write(0x2003, i as u8, false);
             // Read OAM data via $2004
-            let oam_byte = nes.memory.borrow().read(0x2004);
+            let oam_byte = nes.memory.borrow_mut().read(0x2004);
             let expected = if (i & 0x03) == 2 {
                 // Attribute byte: mask bits 2-4
                 ((i & 0xFF) as u8) & 0xE3
@@ -949,7 +949,7 @@ mod tests {
             // Set OAM address via $2003
             nes.memory.borrow_mut().write(0x2003, i as u8, false);
             // Read OAM data via $2004
-            let oam_byte = nes.memory.borrow().read(0x2004);
+            let oam_byte = nes.memory.borrow_mut().read(0x2004);
             let expected = if (i & 0x03) == 2 {
                 // Attribute byte: 0xAA with masking = 0xAA & 0xE3 = 0xA2
                 0xA2
@@ -1287,7 +1287,7 @@ mod tests {
 
         // Write to PRG-RAM (would be affected by a mapper that has reset state)
         nes.memory.borrow_mut().write(0x6000, 0xAB, false);
-        assert_eq!(nes.memory.borrow().read(0x6000), 0xAB);
+        assert_eq!(nes.memory.borrow_mut().read(0x6000), 0xAB);
 
         // Soft reset should call cartridge reset
         // For NROM this doesn't change much, but the call chain should work
@@ -1295,6 +1295,6 @@ mod tests {
 
         // PRG-RAM should still have the value (NROM doesn't clear RAM on reset)
         // This test verifies the reset call chain works without crashing
-        assert_eq!(nes.memory.borrow().read(0x6000), 0xAB);
+        assert_eq!(nes.memory.borrow_mut().read(0x6000), 0xAB);
     }
 }
