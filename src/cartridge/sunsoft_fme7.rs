@@ -293,12 +293,12 @@ impl Mapper for SunsoftFme7Mapper {
 
     fn cpu_cycle(&mut self) {
         // IRQ counter decrements every CPU cycle when counter is enabled
+        // IRQ triggers when counter underflows from 0 to $FFFF
         if self.irq_counter_enabled && self.irq_enabled {
-            if self.irq_counter == 0 {
+            self.irq_counter = self.irq_counter.wrapping_sub(1);
+            if self.irq_counter == 0xFFFF {
                 self.irq_pending = true;
-                trace_mapper!(2; "[fme7] IRQ triggered");
-            } else {
-                self.irq_counter = self.irq_counter.wrapping_sub(1);
+                trace_mapper!(2; "[fme7] IRQ triggered on underflow");
             }
         }
     }
@@ -455,12 +455,13 @@ mod tests {
         assert!(!mapper.irq_pending());
 
         // Countdown should decrement each CPU cycle
+        // After 10 cycles, counter goes from 10 -> 9 -> ... -> 1 -> 0
         for _ in 0..10 {
             mapper.cpu_cycle();
             assert!(!mapper.irq_pending());
         }
 
-        // After 10 cycles, counter should be 0 and IRQ should trigger
+        // After one more cycle, counter underflows from 0 to $FFFF and IRQ triggers
         mapper.cpu_cycle();
         assert!(mapper.irq_pending());
     }
