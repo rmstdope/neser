@@ -11,6 +11,7 @@ mod mmc1;
 mod mmc2;
 mod mmc3;
 mod mmc5;
+mod namco118;
 mod nrom;
 mod uxrom;
 mod vrc6;
