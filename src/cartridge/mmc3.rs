@@ -524,6 +524,40 @@ mod tests {
     }
 
     #[test]
+    fn test_mmc3_prg_ram_disabled_returns_open_bus() {
+        // MMC3 PRG-RAM disable (A001 bit 7 = 0) should return open bus, not 0.
+        // Refs: https://www.nesdev.org/wiki/MMC3#PRG_RAM_protect_(-,_odd)
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC3 (mapper 4) should be implemented");
+
+        // Write a value to PRG-RAM while it's enabled
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+
+        // Disable PRG-RAM
+        mapper.write_prg(0xA001, 0b0000_0000);
+
+        // read_prg should still return 0 for backward compatibility
+        assert_eq!(mapper.read_prg(0x6000), 0x00);
+
+        // read_prg_open_bus should return the open bus value
+        let open_bus_value = 0x42;
+        assert_eq!(mapper.read_prg_open_bus(0x6000, open_bus_value), open_bus_value);
+
+        // Test with different open bus value
+        let open_bus_value2 = 0xBD;
+        assert_eq!(mapper.read_prg_open_bus(0x7FFF, open_bus_value2), open_bus_value2);
+
+        // Re-enable PRG-RAM - should read the original value (writes were ignored)
+        mapper.write_prg(0xA001, 0b1000_0000);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+    }
+
+    #[test]
     fn test_mmc3_chr_bank_switching_mode1() {
         // MMC3 CHR banking (CHR mode 1):
         // - R2..R5: 1KB banks @ $0000, $0400, $0800, $0C00
@@ -718,6 +752,18 @@ impl Mapper for MMC3Mapper {
                 self.read_prg_rom_bank(bank_index, bank_offset)
             }
             _ => 0,
+        }
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => {
+                if !self.prg_ram_enabled {
+                    return open_bus;
+                }
+                self.read_prg(addr)
+            }
+            _ => self.read_prg(addr),
         }
     }
 
