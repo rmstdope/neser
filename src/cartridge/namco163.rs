@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, DEFAULT_CHR_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
 /// Namco 163 (iNES mapper 19) – basic banking + IRQ (audio omitted).
@@ -124,11 +124,13 @@ impl Namco163Mapper {
         }
     }
 
+    #[cfg(test)]
     fn read_namco_ram(&self, addr: u16) -> u8 {
         let offset = ((addr as usize).saturating_sub(0x4800)) & 0x7F;
         self.namco_ram[offset]
     }
 
+    #[cfg(test)]
     fn write_namco_ram(&mut self, addr: u16, value: u8) {
         let offset = ((addr as usize).saturating_sub(0x4800)) & 0x7F;
         self.namco_ram[offset] = value;
@@ -140,7 +142,8 @@ impl Namco163Mapper {
             self.namco_ram[idx] = value;
         }
         if self.audio_autoinc.get() {
-            self.audio_addr.set(self.audio_addr.get().wrapping_add(1) & 0x7F);
+            self.audio_addr
+                .set(self.audio_addr.get().wrapping_add(1) & 0x7F);
         }
     }
 
@@ -194,9 +197,7 @@ impl Namco163Mapper {
     fn audio_wave_length(&self, channel: usize) -> u8 {
         let base = 0x40 + channel * 8;
         let raw = self.namco_ram[base + 4] & 0xFC;
-        256u16
-            .saturating_sub(raw as u16)
-            .max(4) as u8 // clamp to minimum length of 4
+        256u16.saturating_sub(raw as u16).max(4) as u8 // clamp to minimum length of 4
     }
 
     fn audio_wave_address(&self, channel: usize) -> u8 {
@@ -246,11 +247,7 @@ impl Namco163Mapper {
             sum = sum.saturating_add(self.audio_channel_output[ch as usize]);
         }
         let channels = count_minus_one + 1;
-        self.audio_last_output = if channels > 0 {
-            sum / channels
-        } else {
-            0
-        };
+        self.audio_last_output = if channels > 0 { sum / channels } else { 0 };
     }
 
     fn audio_clock(&mut self) {
@@ -437,7 +434,7 @@ impl Mapper for Namco163Mapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::MirroringMode;
-    use crate::cartridge::mapper::{create_mapper, Mapper};
+    use crate::cartridge::mapper::{Mapper, create_mapper};
     use crate::cartridge::namco163::Namco163Mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
@@ -455,7 +452,8 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper: Namco163Mapper = Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut mapper: Namco163Mapper =
+            Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
 
         // Select PRG banks for $8000/$A000/$C000.
         mapper.write_prg(0x8008, 1);
@@ -522,13 +520,17 @@ mod tests {
         let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
 
         // Internal 128-byte RAM via data port + address port.
-        mapper.write_prg(0xF800, 0x80 | 0x00); // ptr=0, auto-inc
+        mapper.write_prg(0xF800, 0x80); // ptr=0, auto-inc
         mapper.write_prg(0x4800, 0xAA);
         mapper.write_prg(0x4800, 0xBB);
 
         mapper.write_prg(0xF800, 0x00); // ptr=0, no auto-inc
         assert_eq!(mapper.read_prg(0x4800), 0xAA);
         assert_eq!(mapper.read_prg(0x4800), 0xAA); // still ptr=0
+
+        assert_eq!(mapper.read_namco_ram(0x4800), 0xAA);
+        mapper.write_namco_ram(0x4800, 0xCC);
+        assert_eq!(mapper.read_namco_ram(0x4800), 0xCC);
 
         // PRG-RAM snapshot/restore.
         mapper.write_prg(0x6000, 0x11);
@@ -548,7 +550,7 @@ mod tests {
         let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
 
         // Set RAM pointer to 0 with auto-increment.
-        mapper.write_prg(0xF800, 0x80 | 0x00);
+        mapper.write_prg(0xF800, 0x80);
         mapper.write_prg(0x4800, 0x12);
         mapper.write_prg(0x4800, 0x34);
 
@@ -558,7 +560,7 @@ mod tests {
         assert_eq!(mapper.read_prg(0x4800), 0x12); // no auto-inc, still 0x12
 
         // Enable auto-increment on read.
-        mapper.write_prg(0xF800, 0x80 | 0x00);
+        mapper.write_prg(0xF800, 0x80);
         assert_eq!(mapper.read_prg(0x4800), 0x12);
         assert_eq!(mapper.read_prg(0x4800), 0x34);
     }
@@ -572,13 +574,13 @@ mod tests {
             Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
 
         // Write a simple waveform: nibble 0xF at position 0.
-        mapper.write_prg(0xF800, 0x80 | 0x00); // pointer=0, auto-inc
+        mapper.write_prg(0xF800, 0x80); // pointer=0, auto-inc
         mapper.write_prg(0x4800, 0x0F);
 
         // Configure channel 7 (single-channel mode) registers.
         let base = 0x78u8; // 0x40 + 7*8
         // freq low
-        mapper.write_prg(0xF800, 0x80 | base as u8);
+        mapper.write_prg(0xF800, 0x80 | base);
         mapper.write_prg(0x4800, 0x01);
         // phase low
         mapper.write_prg(0x4800, 0x00);
@@ -596,11 +598,11 @@ mod tests {
         mapper.write_prg(0x4800, 0x0F);
 
         // Verify volume register was written.
-        mapper.write_prg(0xF800, 0x00 | (base + 7));
+        mapper.write_prg(0xF800, base + 7);
         assert_eq!(mapper.read_prg(0x4800), 0x0F);
 
         // Set channel count to 1 (high nibble = 0) while keeping volume nibble.
-        mapper.write_prg(0xF800, 0x00 | 0x7F);
+        mapper.write_prg(0xF800, 0x7F);
         mapper.write_prg(0x4800, 0x0F);
 
         // Run enough CPU cycles for an update tick.
