@@ -2,7 +2,7 @@ use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 use crate::trace_mapper;
 
-/// VRC2/VRC4 mapper variants (iNES Mapper 21-23, 25).
+/// VRC2/VRC4 mapper variants (iNES Mappers 21-23, 25).
 ///
 /// These mappers represent different pin configurations of Konami's VRC2 and VRC4 chips.
 /// They share the same functionality but access registers at different addresses due to
@@ -298,19 +298,14 @@ impl Mapper for Vrc2Vrc4Mapper {
                     self.update_mirroring_from_b003();
                 }
                 0xA000..=0xA003 => self.prg_bank_8k = value & 0x1F,
-                0xB000..=0xB003 => {
+                // CHR banking: after address normalization, Bxxx/Dxxx map to banks 0-3
+                // and Cxxx/Exxx map to banks 4-7. This is a simplified view of the
+                // VRC2/VRC4 split-nibble CHR registers.
+                0xB000..=0xB003 | 0xD000..=0xD003 => {
                     let idx = (reg & 0x0003) as usize;
                     self.chr_banks_1k[idx] = value;
                 }
-                0xC000..=0xC003 => {
-                    let idx = 4 + (reg & 0x0003) as usize;
-                    self.chr_banks_1k[idx] = value;
-                }
-                0xD000..=0xD003 => {
-                    let idx = (reg & 0x0003) as usize;
-                    self.chr_banks_1k[idx] = value;
-                }
-                0xE000..=0xE003 => {
+                0xC000..=0xC003 | 0xE000..=0xE003 => {
                     let idx = 4 + (reg & 0x0003) as usize;
                     self.chr_banks_1k[idx] = value;
                 }
