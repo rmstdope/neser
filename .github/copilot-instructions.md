@@ -80,3 +80,13 @@ Take all architectural decisions in a collaborative way with the navigator. Docu
 ## Framework decisions
 
 Where appropriate, use established crates to streamline development and leverage existing solutions. However, ensure that the chosen crates align with the project's requirements and do not introduce unnecessary complexity. Regularly evaluate the suitability of crates as the project evolves. Take all crate decisions in a collaborative way with the navigator.
+
+## Repository-specific guidance
+
+- Project type: Rust NES emulator with an optional SDL frontend (enable `sdl` feature for windowed/audio output).
+- Build release with UI: `cargo build --release --features sdl`
+- Run release with UI: `cargo run --release --features sdl`
+- Main regression suite: `cargo test` (no extra features needed).
+- If touching Rust code, prefer `cargo fmt -- --check` before sending changes.
+- Test ROMs live in `roms/`; keep the existing files and names intact.
+- Runtime config options are documented in `neser.conf.example`; copy it to `neser.conf` or `~/.neser/neser.conf` when running locally.
