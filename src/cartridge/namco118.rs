@@ -23,6 +23,11 @@ impl Namco118Mapper {
     const CHR_BANK_SIZE: usize = 0x0400; // 1KB
     const PRG_RAM_SIZE: usize = 0x2000; // 8KB
     const DEFAULT_CHR_RAM_SIZE: usize = 0x2000; // 8KB
+    const PRG_MODE_MASK: u8 = 0b0100_0000;
+    const CHR_MODE_MASK: u8 = 0b1000_0000;
+    const REG_SELECT_MASK: u8 = 0b0000_0111;
+    const EVEN_ALIGN_MASK: u8 = 0xFE;
+    const CHR_ADDR_MASK: u16 = 0x1FFF;
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         let chr_ram = if chr_rom.is_empty() {
@@ -72,15 +77,15 @@ impl Namco118Mapper {
     }
 
     fn prg_mode(&self) -> bool {
-        (self.bank_select & 0b0100_0000) != 0
+        (self.bank_select & Self::PRG_MODE_MASK) != 0
     }
 
     fn chr_mode(&self) -> bool {
-        (self.bank_select & 0b1000_0000) != 0
+        (self.bank_select & Self::CHR_MODE_MASK) != 0
     }
 
     fn selected_reg(&self) -> usize {
-        (self.bank_select & 0b0000_0111) as usize
+        (self.bank_select & Self::REG_SELECT_MASK) as usize
     }
 
     fn read_prg_rom_bank(&self, bank_index: usize, bank_offset: usize) -> u8 {
@@ -100,8 +105,8 @@ impl Namco118Mapper {
     fn map_chr_addr_to_bank_1k(&self, chr_addr: usize) -> (usize, usize) {
         let bank_offset = chr_addr & (Self::CHR_BANK_SIZE - 1);
 
-        let r0 = self.regs[0] & 0xFE; // 2KB bank, even-aligned
-        let r1 = self.regs[1] & 0xFE; // 2KB bank, even-aligned
+        let r0 = self.regs[0] & Self::EVEN_ALIGN_MASK; // 2KB bank, even-aligned
+        let r1 = self.regs[1] & Self::EVEN_ALIGN_MASK; // 2KB bank, even-aligned
         let r2 = self.regs[2];
         let r3 = self.regs[3];
         let r4 = self.regs[4];
@@ -213,7 +218,7 @@ impl Mapper for Namco118Mapper {
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        let chr_addr = (addr & 0x1FFF) as usize;
+        let chr_addr = (addr & Self::CHR_ADDR_MASK) as usize;
         let (bank_index, bank_offset) = self.map_chr_addr_to_bank_1k(chr_addr);
         self.read_chr_bank_1k(bank_index, bank_offset)
     }
@@ -223,7 +228,7 @@ impl Mapper for Namco118Mapper {
             return;
         }
 
-        let chr_addr = (addr & 0x1FFF) as usize;
+        let chr_addr = (addr & Self::CHR_ADDR_MASK) as usize;
         let (bank_index, bank_offset) = self.map_chr_addr_to_bank_1k(chr_addr);
         let mapped_addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
         if let Some(byte) = self.chr_ram.get_mut(mapped_addr) {
