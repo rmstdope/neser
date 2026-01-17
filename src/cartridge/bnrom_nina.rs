@@ -90,7 +90,7 @@ impl Mapper for BnromNinaMapper {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         // PRG-RAM at $6000-$7FFF (but check for NINA-001 registers first)
-        if self.is_nina && addr >= 0x7FFD && addr <= 0x7FFF {
+        if self.is_nina && (0x7FFD..=0x7FFF).contains(&addr) {
             // NINA-001 registers at $7FFD-$7FFF
             match addr {
                 0x7FFD | 0x7FFF => {
