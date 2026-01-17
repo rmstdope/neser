@@ -154,6 +154,11 @@ impl MMC3Mapper {
         self.prg_ram_write_protected = (value & Self::PRG_RAM_WRITE_PROTECT_MASK) != 0;
     }
 
+    #[cfg(test)]
+    fn irq_counter(&self) -> u8 {
+        self.irq_counter
+    }
+
     fn a12_rising_edge(&mut self, current_a12: bool) -> bool {
         let rising_edge = !self.prev_a12 && current_a12;
         self.prev_a12 = current_a12;
@@ -410,6 +415,58 @@ mod tests {
         }
         mapper.ppu_address_changed(0x1000);
         assert!(mapper.irq_pending());
+    }
+
+    #[test]
+    fn test_mmc3_irq_reload_clears_counter_immediately() {
+        // NesDev: Writing to $C001 (IRQ reload) clears the IRQ counter immediately to 0
+        // and sets the reload flag. The counter reloads from latch on the next A12 rising edge.
+        // Refs: https://www.nesdev.org/wiki/MMC3#IRQ_reload_(-,_odd)
+
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+
+        // Set latch to a non-zero value
+        mapper.write_prg(0xC000, 5);
+
+        // Simulate an A12 rising edge to load the counter from the latch
+        // (Counter starts at 0, so it will reload to 5)
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
+        }
+        mapper.ppu_address_changed(0x1000);
+
+        // Counter should now be 5
+        assert_eq!(mapper.irq_counter(), 5, "Counter should be loaded with latch value 5");
+
+        // Simulate another A12 rising edge to decrement counter
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
+        }
+        mapper.ppu_address_changed(0x1000);
+
+        // Counter should now be 4
+        assert_eq!(mapper.irq_counter(), 4, "Counter should be decremented to 4");
+
+        // Now write to $C001 (reload): should clear counter to 0 immediately
+        mapper.write_prg(0xC001, 0);
+
+        // THE KEY TEST: Counter should be 0 immediately after writing to $C001
+        assert_eq!(mapper.irq_counter(), 0, "Counter should be cleared to 0 immediately after writing to $C001");
+
+        // Next A12 rising edge should reload from latch (5)
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
+        }
+        mapper.ppu_address_changed(0x1000);
+
+        // Counter should now be 5 (reloaded from latch)
+        assert_eq!(mapper.irq_counter(), 5, "Counter should be reloaded from latch to 5");
     }
 
     #[test]
@@ -816,6 +873,7 @@ impl Mapper for MMC3Mapper {
                 } else {
                     // IRQ reload
                     trace_mapper!(1; "MMC3 IRQ_reload");
+                    self.irq_counter = 0;
                     self.irq_reload = true;
                 }
             }
