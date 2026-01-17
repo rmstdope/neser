@@ -13,14 +13,6 @@ impl JoypadDevice {
     pub(crate) fn new(joypad1: Rc<RefCell<Joypad>>, joypad2: Rc<RefCell<Joypad>>) -> Self {
         Self { joypad1, joypad2 }
     }
-
-    pub(crate) fn set_button(&mut self, controller: u8, button: Button, pressed: bool) {
-        match controller {
-            1 => self.joypad1.borrow_mut().set_button(button, pressed),
-            2 => self.joypad2.borrow_mut().set_button(button, pressed),
-            _ => {}
-        }
-    }
 }
 
 impl BusDevice for JoypadDevice {
