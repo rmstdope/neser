@@ -259,7 +259,7 @@ impl Mapper for Namco118Mapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
-    use crate::cartridge::mapper::{create_mapper, Mapper};
+    use crate::cartridge::mapper::{Mapper, create_mapper};
     use crate::cartridge::namco118::Namco118Mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
