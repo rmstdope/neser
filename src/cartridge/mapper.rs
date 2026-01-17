@@ -3,17 +3,21 @@ use std::io;
 
 use super::axrom::AxROMMapper;
 use super::bandai_fcg::BandaiFcgMapper;
+use super::bnrom_nina::BnromNinaMapper;
 use super::camerica::CamericaMapper;
 use super::cnrom::CNROMMapper;
 use super::colordreams::ColorDreamsMapper;
+use super::cprom::CpromMapper;
 use super::gxrom::GxROMMapper;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
-use super::mmc4::MMC4Mapper;
 use super::mmc3::MMC3Mapper;
+use super::mmc4::MMC4Mapper;
 use super::mmc5::MMC5Mapper;
+use super::multicart_15::Multicart15Mapper;
 use super::namco118::Namco118Mapper;
 use super::namco163::Namco163Mapper;
+use super::nina_tengen::NinaTengenMapper;
 use super::nrom::NROMMapper;
 use super::sunsoft_fme7::SunsoftFme7Mapper;
 use super::uxrom::UxROMMapper;
@@ -269,21 +273,33 @@ pub fn create_mapper_with_crc(
         11 => Ok(Box::new(ColorDreamsMapper::new(
             prg_rom, chr_rom, mirroring,
         ))),
+        13 => Ok(Box::new(CpromMapper::new(prg_rom, chr_rom, mirroring))),
+        15 => Ok(Box::new(Multicart15Mapper::new(
+            prg_rom, chr_rom, mirroring,
+        ))),
         16 => Ok(Box::new(BandaiFcgMapper::new(prg_rom, chr_rom, mirroring))),
         19 => Ok(Box::new(Namco163Mapper::new(prg_rom, chr_rom, mirroring))),
-        21 => Ok(Box::new(Vrc2Vrc4Mapper::new(21, prg_rom, chr_rom, mirroring))),
-        22 => Ok(Box::new(Vrc2Vrc4Mapper::new(22, prg_rom, chr_rom, mirroring))),
-        23 => Ok(Box::new(Vrc2Vrc4Mapper::new(23, prg_rom, chr_rom, mirroring))),
+        21 => Ok(Box::new(Vrc2Vrc4Mapper::new(
+            21, prg_rom, chr_rom, mirroring,
+        ))),
+        22 => Ok(Box::new(Vrc2Vrc4Mapper::new(
+            22, prg_rom, chr_rom, mirroring,
+        ))),
+        23 => Ok(Box::new(Vrc2Vrc4Mapper::new(
+            23, prg_rom, chr_rom, mirroring,
+        ))),
         24 => Ok(Box::new(VRC6Mapper::new(24, prg_rom, chr_rom, mirroring))),
-        25 => Ok(Box::new(Vrc2Vrc4Mapper::new(25, prg_rom, chr_rom, mirroring))),
+        25 => Ok(Box::new(Vrc2Vrc4Mapper::new(
+            25, prg_rom, chr_rom, mirroring,
+        ))),
         26 => Ok(Box::new(VRC6Mapper::new(26, prg_rom, chr_rom, mirroring))),
+        34 => Ok(Box::new(BnromNinaMapper::new(prg_rom, chr_rom, mirroring))),
         66 => Ok(Box::new(GxROMMapper::new(prg_rom, chr_rom, mirroring))),
         69 => Ok(Box::new(SunsoftFme7Mapper::new(
             prg_rom, chr_rom, mirroring,
         ))),
-        71 => Ok(Box::new(CamericaMapper::new(
-            prg_rom, chr_rom, mirroring,
-        ))),
+        71 => Ok(Box::new(CamericaMapper::new(prg_rom, chr_rom, mirroring))),
+        78 => Ok(Box::new(NinaTengenMapper::new(prg_rom, chr_rom, mirroring))),
         206 => Ok(Box::new(Namco118Mapper::new(prg_rom, chr_rom, mirroring))),
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,

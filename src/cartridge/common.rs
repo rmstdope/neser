@@ -151,16 +151,28 @@ impl ChrMemory {
 
     /// Check if this is CHR-RAM (writable) vs CHR-ROM (read-only).
     #[inline]
-    #[cfg(test)]
     pub fn is_ram(&self) -> bool {
         self.is_ram
     }
 
     /// Get the total size of CHR memory.
     #[inline]
-    #[cfg(test)]
     pub fn size(&self) -> usize {
         self.data.len()
+    }
+
+    /// Read a byte from CHR memory at a specific index (for banked CHR).
+    #[inline]
+    pub fn read_at_index(&self, index: usize) -> u8 {
+        self.data.get(index).copied().unwrap_or(0)
+    }
+
+    /// Write a byte to CHR memory at a specific index (for banked CHR).
+    #[inline]
+    pub fn write_at_index(&mut self, index: usize, value: u8) {
+        if self.is_ram && index < self.data.len() {
+            self.data[index] = value;
+        }
     }
 }
 

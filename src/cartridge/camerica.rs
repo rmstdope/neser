@@ -236,7 +236,8 @@ mod tests {
     #[test]
     fn test_mapper71_chr_ram() {
         // Mapper 71 uses 8KB CHR-RAM
-        let mut mapper = CamericaMapper::new(vec![0; 128 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper =
+            CamericaMapper::new(vec![0; 128 * 1024], vec![], MirroringMode::Horizontal);
 
         // CHR-RAM should be writable
         mapper.write_chr(0x0000, 0xAA);

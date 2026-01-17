@@ -184,11 +184,11 @@ impl SunsoftFme7Mapper {
                 // IRQ control
                 self.irq_enabled = (value & 0x01) != 0;
                 self.irq_counter_enabled = (value & 0x80) != 0;
-                
+
                 if self.irq_enabled {
                     self.irq_pending = false;
                 }
-                
+
                 trace_mapper!(1; "[fme7] IRQ enabled={}, counter_enabled={}", 
                     self.irq_enabled, self.irq_counter_enabled);
             }
@@ -496,7 +496,7 @@ mod tests {
         // Now enable IRQ - it should trigger immediately since counter already underflowed
         mapper.write_prg(0x8000, 0x0D);
         mapper.write_prg(0xA000, 0x81); // Enable both counter and IRQ
-        
+
         // IRQ should not trigger immediately on enable (counter is already at $FFFF-1 or similar)
         // But on next underflow it will trigger
         assert!(!mapper.irq_pending());
