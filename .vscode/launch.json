@@ -29,7 +29,8 @@
                     "test",
                     "--no-run",
                     "--bin=neser",
-                    "--package=neser"
+                    "--package=neser",
+                    "--all-features"
                 ],
                 "filter": {
                     "name": "neser",

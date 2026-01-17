@@ -1,3 +1,9 @@
+use super::apu_device::ApuDevice;
+use super::joypad_device::JoypadDevice;
+use super::mapper_device::MapperDevice;
+use super::oam_dma_device::OamDmaDevice;
+use super::ppu_device::PpuDevice;
+use super::ram_device::RamDevice;
 use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::input::Joypad;
@@ -13,347 +19,9 @@ pub trait BusDevice {
     fn address_range(&self) -> RangeInclusive<u16>;
 }
 
-struct PpuRegisterDevice {
-    ppu: Rc<RefCell<ppu::Ppu>>,
-    cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
-}
-
-impl PpuRegisterDevice {
-    fn new(ppu: Rc<RefCell<ppu::Ppu>>, cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>) -> Self {
-        Self { ppu, cartridge }
-    }
-}
-
-impl BusDevice for PpuRegisterDevice {
-    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
-        if !self.address_range().contains(&addr) {
-            return None;
-        }
-
-        let reg = addr & 0x2007;
-        match reg {
-            0x2000 | 0x2001 | 0x2003 | 0x2005 | 0x2006 => Some(self.ppu.borrow().io_bus()),
-            0x2002 => Some(self.ppu.borrow_mut().get_status()),
-            0x2004 => Some(self.ppu.borrow_mut().read_oam_data()),
-            0x2007 => Some(self.ppu.borrow_mut().read_data()),
-            _ => None,
-        }
-    }
-
-    fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool {
-        if !self.address_range().contains(&addr) {
-            return false;
-        }
-
-        let reg = addr & 0x2007;
-        match reg {
-            0x2000 => {
-                self.ppu.borrow_mut().write_control(value);
-                if let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() {
-                    cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
-                }
-                true
-            }
-            0x2001 => {
-                self.ppu.borrow_mut().write_mask(value);
-                if let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() {
-                    cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
-                }
-                true
-            }
-            0x2002 => {
-                self.ppu.borrow_mut().set_io_bus(value);
-                true
-            }
-            0x2003 => {
-                self.ppu.borrow_mut().write_oam_address(value);
-                true
-            }
-            0x2004 => {
-                self.ppu.borrow_mut().write_oam_data(value);
-                true
-            }
-            0x2005 => {
-                self.ppu.borrow_mut().write_scroll(value, is_dummy_write);
-                true
-            }
-            0x2006 => {
-                self.ppu.borrow_mut().write_address(value, is_dummy_write);
-                true
-            }
-            0x2007 => {
-                self.ppu.borrow_mut().write_data(value);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    fn address_range(&self) -> RangeInclusive<u16> {
-        0x2000..=0x3FFF
-    }
-}
-
-struct ApuJoypadDevice {
-    apu: Rc<RefCell<apu::Apu>>,
-    joypad1: Rc<RefCell<Joypad>>,
-    joypad2: Rc<RefCell<Joypad>>,
-    open_bus: Rc<RefCell<u8>>,
-}
-
-impl ApuJoypadDevice {
-    fn new(
-        apu: Rc<RefCell<apu::Apu>>,
-        joypad1: Rc<RefCell<Joypad>>,
-        joypad2: Rc<RefCell<Joypad>>,
-        open_bus: Rc<RefCell<u8>>,
-    ) -> Self {
-        Self {
-            apu,
-            joypad1,
-            joypad2,
-            open_bus,
-        }
-    }
-}
-
-impl BusDevice for ApuJoypadDevice {
-    fn read(&mut self, addr: u16, clock_joypads: bool) -> Option<u8> {
-        if !self.address_range().contains(&addr) {
-            return None;
-        }
-
-        let open_bus = *self.open_bus.borrow();
-        match addr {
-            0x4000..=0x4013 => Some(open_bus),
-            0x4015 => Some(self.apu.borrow_mut().read_status(open_bus)),
-            0x4016 => {
-                let button_state = if clock_joypads {
-                    self.joypad1.borrow_mut().read()
-                } else {
-                    self.joypad1.borrow().read_no_clock()
-                };
-                Some((open_bus & 0xFE) | button_state)
-            }
-            0x4017 => {
-                let button_state = if clock_joypads {
-                    self.joypad2.borrow_mut().read()
-                } else {
-                    self.joypad2.borrow().read_no_clock()
-                };
-                Some((open_bus & 0xFE) | button_state)
-            }
-            _ => None,
-        }
-    }
-
-    fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
-        if !self.address_range().contains(&addr) {
-            return false;
-        }
-
-        match addr {
-            0x4000 => self.apu.borrow_mut().pulse1_mut().write_control(value),
-            0x4001 => self.apu.borrow_mut().pulse1_mut().write_sweep(value),
-            0x4002 => self.apu.borrow_mut().pulse1_mut().write_timer_low(value),
-            0x4003 => self
-                .apu
-                .borrow_mut()
-                .pulse1_mut()
-                .write_length_counter_timer_high(value),
-
-            0x4004 => self.apu.borrow_mut().pulse2_mut().write_control(value),
-            0x4005 => self.apu.borrow_mut().pulse2_mut().write_sweep(value),
-            0x4006 => self.apu.borrow_mut().pulse2_mut().write_timer_low(value),
-            0x4007 => self
-                .apu
-                .borrow_mut()
-                .pulse2_mut()
-                .write_length_counter_timer_high(value),
-
-            0x4008 => self
-                .apu
-                .borrow_mut()
-                .triangle_mut()
-                .write_linear_counter(value),
-            0x400A => self.apu.borrow_mut().triangle_mut().write_timer_low(value),
-            0x400B => self
-                .apu
-                .borrow_mut()
-                .triangle_mut()
-                .write_length_counter_timer_high(value),
-
-            0x400C => self.apu.borrow_mut().noise_mut().write_envelope(value),
-            0x400E => self.apu.borrow_mut().noise_mut().write_period(value),
-            0x400F => self.apu.borrow_mut().noise_mut().write_length(value),
-
-            0x4010 => self.apu.borrow_mut().dmc_mut().write_flags_and_rate(value),
-            0x4011 => self.apu.borrow_mut().dmc_mut().write_direct_load(value),
-            0x4012 => self.apu.borrow_mut().dmc_mut().write_sample_address(value),
-            0x4013 => self.apu.borrow_mut().dmc_mut().write_sample_length(value),
-
-            0x4014 => return false,
-
-            0x4015 => self.apu.borrow_mut().write_enable(value),
-            0x4016 => {
-                self.joypad1.borrow_mut().write_strobe(value);
-                self.joypad2.borrow_mut().write_strobe(value);
-            }
-            0x4017 => self.apu.borrow_mut().write_frame_counter(value),
-
-            0x4009 | 0x400D => {}
-            _ => {
-                eprintln!(
-                    "Warning: Write to unimplemented APU/IO register {:04X} ignored",
-                    addr
-                );
-            }
-        }
-
-        true
-    }
-
-    fn address_range(&self) -> RangeInclusive<u16> {
-        0x4000..=0x4017
-    }
-}
-
-struct OamDmaDevice {
-    oam_dma_page: Rc<RefCell<Option<u8>>>,
-    dma_triggered: Rc<RefCell<bool>>,
-    open_bus: Rc<RefCell<u8>>,
-}
-
-impl OamDmaDevice {
-    fn new(
-        oam_dma_page: Rc<RefCell<Option<u8>>>,
-        dma_triggered: Rc<RefCell<bool>>,
-        open_bus: Rc<RefCell<u8>>,
-    ) -> Self {
-        Self {
-            oam_dma_page,
-            dma_triggered,
-            open_bus,
-        }
-    }
-}
-
-impl BusDevice for OamDmaDevice {
-    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
-        if !self.address_range().contains(&addr) {
-            return None;
-        }
-
-        Some(*self.open_bus.borrow())
-    }
-
-    fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
-        if !self.address_range().contains(&addr) {
-            return false;
-        }
-
-        *self.oam_dma_page.borrow_mut() = Some(value);
-        *self.dma_triggered.borrow_mut() = true;
-        true
-    }
-
-    fn address_range(&self) -> RangeInclusive<u16> {
-        0x4014..=0x4014
-    }
-}
-
-struct MapperDevice {
-    cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
-    ppu: Rc<RefCell<ppu::Ppu>>,
-    open_bus: Rc<RefCell<u8>>,
-}
-
-impl MapperDevice {
-    fn new(
-        cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
-        ppu: Rc<RefCell<ppu::Ppu>>,
-        open_bus: Rc<RefCell<u8>>,
-    ) -> Self {
-        Self {
-            cartridge,
-            ppu,
-            open_bus,
-        }
-    }
-}
-
-impl BusDevice for MapperDevice {
-    fn read(&mut self, addr: u16, _clock_joypads: bool) -> Option<u8> {
-        if !self.address_range().contains(&addr) {
-            return None;
-        }
-
-        let open_bus = *self.open_bus.borrow();
-        let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
-            return match addr {
-                0x5000..=0x5FFF => Some(open_bus),
-                0x6000..=0x7FFF => {
-                    eprintln!(
-                        "Warning: Read from PRG-RAM {:04X} without cartridge, returning 0",
-                        addr
-                    );
-                    Some(0)
-                }
-                0x8000..=0xFFFF => panic!("No cartridge mapped, cannot read from {:04X}", addr),
-                _ => None,
-            };
-        };
-
-        Some(
-            cartridge
-                .borrow()
-                .mapper()
-                .read_prg_open_bus(addr, open_bus),
-        )
-    }
-
-    fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
-        if !self.address_range().contains(&addr) {
-            return false;
-        }
-
-        let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
-            match addr {
-                0x5000..=0x5FFF => eprintln!(
-                    "Warning: Write to mapper expansion area {:04X} without cartridge, ignored",
-                    addr
-                ),
-                0x6000..=0x7FFF => eprintln!(
-                    "Warning: Write to PRG-RAM {:04X} without cartridge, ignored",
-                    addr
-                ),
-                0x8000..=0xFFFF => eprintln!(
-                    "Warning: Write to PRG ROM area {:04X} without cartridge, ignored",
-                    addr
-                ),
-                _ => {}
-            }
-            return true;
-        };
-
-        let old_mirroring = cartridge.borrow().mapper().get_mirroring();
-        cartridge.borrow_mut().mapper_mut().write_prg(addr, value);
-        let new_mirroring = cartridge.borrow().mapper().get_mirroring();
-        if new_mirroring != old_mirroring {
-            self.ppu.borrow_mut().set_mirroring(new_mirroring);
-        }
-
-        true
-    }
-
-    fn address_range(&self) -> RangeInclusive<u16> {
-        0x5000..=0xFFFF
-    }
-}
-
 /// NES Memory (64KB address space)
-pub struct MemController {
-    cpu_ram: Vec<u8>,
+pub struct Bus {
+    cpu_ram: Rc<RefCell<Vec<u8>>>,
     cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
     ppu: Rc<RefCell<ppu::Ppu>>,
     apu: Rc<RefCell<apu::Apu>>,
@@ -365,11 +33,11 @@ pub struct MemController {
     devices: RefCell<Vec<Box<dyn BusDevice>>>,
 }
 
-impl MemController {
+impl Bus {
     /// Create a new memory instance with 64KB of RAM initialized to 0
     pub fn new(ppu: Rc<RefCell<ppu::Ppu>>, apu: Rc<RefCell<apu::Apu>>) -> Self {
         let mut controller = Self {
-            cpu_ram: vec![0; 0x10000],
+            cpu_ram: Rc::new(RefCell::new(vec![0; 0x10000])),
             cartridge: Rc::new(RefCell::new(None)),
             ppu,
             apu,
@@ -381,12 +49,16 @@ impl MemController {
             devices: RefCell::new(Vec::new()),
         };
 
-        controller.register_device(Box::new(PpuRegisterDevice::new(
+        controller.register_device(Box::new(RamDevice::new(controller.cpu_ram.clone())));
+        controller.register_device(Box::new(PpuDevice::new(
             controller.ppu.clone(),
             controller.cartridge.clone(),
         )));
-        controller.register_device(Box::new(ApuJoypadDevice::new(
+        controller.register_device(Box::new(ApuDevice::new(
             controller.apu.clone(),
+            controller.open_bus.clone(),
+        )));
+        controller.register_device(Box::new(JoypadDevice::new(
             controller.joypad1.clone(),
             controller.joypad2.clone(),
             controller.open_bus.clone(),
@@ -417,7 +89,7 @@ impl MemController {
     /// 3. Configures initial PPU mirroring mode from mapper
     /// 4. Makes cartridge accessible to CPU for PRG ROM/RAM operations
     ///
-    /// The shared reference pattern allows both CPU (via MemController) and PPU
+    /// The shared reference pattern allows both CPU (via Bus) and PPU
     /// to access the cartridge mapper independently while maintaining proper
     /// bank switching state.
     pub fn map_cartridge(&mut self, cartridge: Cartridge) {
@@ -484,7 +156,7 @@ impl MemController {
     /// - $6000-$FFFF (PRG RAM/ROM via mapper)
     pub fn read_cpu_for_debugger(&self, addr: u16) -> u8 {
         match addr {
-            0x0000..=0x1FFF => self.cpu_ram[(addr & 0x07FF) as usize],
+            0x0000..=0x1FFF => self.cpu_ram.borrow()[(addr & 0x07FF) as usize],
             0x6000..=0xFFFF => self
                 .cartridge
                 .borrow()
@@ -510,23 +182,12 @@ impl MemController {
             return value;
         }
 
-        let value = match addr {
-            // RAM ($0000-$1FFF) with mirroring
-            0x0000..=0x1FFF => self.cpu_ram[(addr & 0x07FF) as usize],
-
-            // PPU/APU/joypad registers are handled by BusDevice dispatch.
-
-            // Unallocated I/O space ($4018-$40FF) returns open bus
-            0x4018..=0x40FF => *self.open_bus.borrow(),
-
-            // Everything else
-            _ => {
-                eprintln!(
-                    "Warning: Read from unimplemented address {:04X}, returning 0",
-                    addr
-                );
-                0
-            }
+        let value = {
+            eprintln!(
+                "Warning: Read from unimplemented address {:04X}, returning 0",
+                addr
+            );
+            0
         };
 
         // Update open bus with the value read
@@ -626,27 +287,11 @@ impl MemController {
         }
 
         // println!("Write to {:04X}: {:02X}", addr, value);
-        match addr {
-            // RAM ($0000-$1FFF) with mirroring
-            0x0000..=0x1FFF => {
-                self.cpu_ram[(addr & 0x07FF) as usize] = value;
-            }
-
-            // PPU/APU/joypad writes are handled by BusDevice dispatch.
-
-            // Unallocated I/O space ($4018-$40FF)
-            // Writes are ignored (no side effects)
-            0x4018..=0x40FF => {
-                // Silently ignore writes to unallocated I/O space
-            }
-
-            // Everything else
-            _ => {
-                eprintln!(
-                    "Warning: Write to unimplemented address {:04X} ignored",
-                    addr
-                );
-            }
+        {
+            eprintln!(
+                "Warning: Write to unimplemented address {:04X} ignored",
+                addr
+            );
         }
         false // No DMA triggered
     }
@@ -790,10 +435,10 @@ mod tests {
         rom
     }
 
-    fn create_test_memory() -> MemController {
+    fn create_test_memory() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new(crate::nes::TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        MemController::new(ppu, apu)
+        Bus::new(ppu, apu)
     }
 
     #[test]
@@ -802,31 +447,47 @@ mod tests {
         let last_write = Rc::new(RefCell::new(None));
 
         memory.register_device(Box::new(TestBusDevice::new(
-            0x4020..=0x4021,
+            0x4100..=0x4101,
             0xAB,
             last_write.clone(),
         )));
 
-        assert_eq!(memory.read(0x4020), 0xAB);
+        assert_eq!(memory.read(0x4100), 0xAB);
 
-        let dma = memory.write(0x4021, 0x55, false);
+        let dma = memory.write(0x4101, 0x55, false);
         assert!(!dma);
-        assert_eq!(*last_write.borrow(), Some((0x4021, 0x55)));
+        assert_eq!(*last_write.borrow(), Some((0x4101, 0x55)));
     }
 
     #[test]
-    fn test_ppu_register_device_is_registered() {
+    fn test_ram_device_is_registered() {
+        let memory = create_test_memory();
+
+        assert!(memory.has_device_for_address(0x0000));
+        assert!(memory.has_device_for_address(0x1FFF));
+    }
+
+    #[test]
+    fn test_ppu_device_is_registered() {
         let memory = create_test_memory();
 
         assert!(memory.has_device_for_address(0x2002));
     }
 
     #[test]
-    fn test_apu_joypad_device_is_registered() {
+    fn test_apu_device_is_registered() {
         let memory = create_test_memory();
 
         assert!(memory.has_device_for_address(0x4015));
+        assert!(memory.has_device_for_address(0x4017));
+    }
+
+    #[test]
+    fn test_joypad_device_is_registered() {
+        let memory = create_test_memory();
+
         assert!(memory.has_device_for_address(0x4016));
+        assert!(memory.has_device_for_address(0x4017));
     }
 
     #[test]
@@ -843,6 +504,14 @@ mod tests {
         let memory = create_test_memory();
 
         assert!(memory.has_device_for_address(0x4014));
+    }
+
+    #[test]
+    fn test_unallocated_io_space_is_registered() {
+        let memory = create_test_memory();
+
+        assert!(memory.has_device_for_address(0x4018));
+        assert!(memory.has_device_for_address(0x40FF));
     }
 
     #[test]
@@ -863,7 +532,7 @@ mod tests {
 
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new(crate::nes::TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        let mut mem = MemController::new(ppu.clone(), apu);
+        let mut mem = Bus::new(ppu.clone(), apu);
 
         let cart = Cartridge::new(&create_mmc1_ines_rom_with_vertical_mirroring())
             .expect("MMC1 test ROM should load");

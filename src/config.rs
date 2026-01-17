@@ -8,6 +8,7 @@
 
 use crate::nes::TvSystem;
 use crate::tracing::Tracing;
+use bitflags::bitflags;
 use std::fs;
 use std::path::Path;
 
@@ -174,15 +175,23 @@ pub struct Config {
     /// Tracing configuration.
     pub tracing: Tracing,
     /// APU channel enable flags.
-    pub pulse1_enabled: bool,
-    pub pulse2_enabled: bool,
-    pub triangle_enabled: bool,
-    pub noise_enabled: bool,
-    pub dmc_enabled: bool,
+    pub apu_channels: ApuChannels,
     /// Window scaling factor (1.0 to 5.0). Only applies in windowed mode.
     pub video_scale: f32,
     /// Emulation speed multiplier.
     pub timing_scale: f32,
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct ApuChannels: u8 {
+        const PULSE1 = 0b00001;
+        const PULSE2 = 0b00010;
+        const TRIANGLE = 0b00100;
+        const NOISE = 0b01000;
+        const DMC = 0b10000;
+        const ALL = 0b11111;
+    }
 }
 
 impl Default for Config {
@@ -197,11 +206,7 @@ impl Default for Config {
             shader_path: None,
             debugger_enabled: false,
             tracing: Tracing::default(),
-            pulse1_enabled: true,
-            pulse2_enabled: true,
-            triangle_enabled: true,
-            noise_enabled: true,
-            dmc_enabled: true,
+            apu_channels: ApuChannels::ALL,
             video_scale: 4.0,
             timing_scale: 1.0,
         }
@@ -314,19 +319,19 @@ impl Config {
 
         // APU channel disable flags
         if Self::has_flag(args, "--disable-pulse1") {
-            self.pulse1_enabled = false;
+            self.apu_channels.remove(ApuChannels::PULSE1);
         }
         if Self::has_flag(args, "--disable-pulse2") {
-            self.pulse2_enabled = false;
+            self.apu_channels.remove(ApuChannels::PULSE2);
         }
         if Self::has_flag(args, "--disable-triangle") {
-            self.triangle_enabled = false;
+            self.apu_channels.remove(ApuChannels::TRIANGLE);
         }
         if Self::has_flag(args, "--disable-noise") {
-            self.noise_enabled = false;
+            self.apu_channels.remove(ApuChannels::NOISE);
         }
         if Self::has_flag(args, "--disable-dmc") {
-            self.dmc_enabled = false;
+            self.apu_channels.remove(ApuChannels::DMC);
         }
 
         // Video scale
@@ -554,27 +559,47 @@ impl Config {
             }
             "pulse1" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.pulse1_enabled = b;
+                    if b {
+                        self.apu_channels.insert(ApuChannels::PULSE1);
+                    } else {
+                        self.apu_channels.remove(ApuChannels::PULSE1);
+                    }
                 }
             }
             "pulse2" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.pulse2_enabled = b;
+                    if b {
+                        self.apu_channels.insert(ApuChannels::PULSE2);
+                    } else {
+                        self.apu_channels.remove(ApuChannels::PULSE2);
+                    }
                 }
             }
             "triangle" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.triangle_enabled = b;
+                    if b {
+                        self.apu_channels.insert(ApuChannels::TRIANGLE);
+                    } else {
+                        self.apu_channels.remove(ApuChannels::TRIANGLE);
+                    }
                 }
             }
             "noise" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.noise_enabled = b;
+                    if b {
+                        self.apu_channels.insert(ApuChannels::NOISE);
+                    } else {
+                        self.apu_channels.remove(ApuChannels::NOISE);
+                    }
                 }
             }
             "dmc" => {
                 if let Ok(b) = Self::parse_bool(value) {
-                    self.dmc_enabled = b;
+                    if b {
+                        self.apu_channels.insert(ApuChannels::DMC);
+                    } else {
+                        self.apu_channels.remove(ApuChannels::DMC);
+                    }
                 }
             }
             "video_scale" => {
@@ -670,11 +695,11 @@ mod tests {
         assert_eq!(config.fullscreen_display, None);
         assert_eq!(config.shader_path, None);
         assert!(!config.debugger_enabled);
-        assert!(config.pulse1_enabled);
-        assert!(config.pulse2_enabled);
-        assert!(config.triangle_enabled);
-        assert!(config.noise_enabled);
-        assert!(config.dmc_enabled);
+        assert!(config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(config.apu_channels.contains(ApuChannels::TRIANGLE));
+        assert!(config.apu_channels.contains(ApuChannels::NOISE));
+        assert!(config.apu_channels.contains(ApuChannels::DMC));
     }
 
     #[test]
@@ -824,37 +849,37 @@ mod tests {
     fn test_config_disable_pulse1() {
         let args = vec!["neser".to_string(), "--disable-pulse1".to_string()];
         let config = parse_config(args);
-        assert!(!config.pulse1_enabled);
-        assert!(config.pulse2_enabled);
+        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
     }
 
     #[test]
     fn test_config_disable_pulse2() {
         let args = vec!["neser".to_string(), "--disable-pulse2".to_string()];
         let config = parse_config(args);
-        assert!(config.pulse1_enabled);
-        assert!(!config.pulse2_enabled);
+        assert!(config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(!config.apu_channels.contains(ApuChannels::PULSE2));
     }
 
     #[test]
     fn test_config_disable_triangle() {
         let args = vec!["neser".to_string(), "--disable-triangle".to_string()];
         let config = parse_config(args);
-        assert!(!config.triangle_enabled);
+        assert!(!config.apu_channels.contains(ApuChannels::TRIANGLE));
     }
 
     #[test]
     fn test_config_disable_noise() {
         let args = vec!["neser".to_string(), "--disable-noise".to_string()];
         let config = parse_config(args);
-        assert!(!config.noise_enabled);
+        assert!(!config.apu_channels.contains(ApuChannels::NOISE));
     }
 
     #[test]
     fn test_config_disable_dmc() {
         let args = vec!["neser".to_string(), "--disable-dmc".to_string()];
         let config = parse_config(args);
-        assert!(!config.dmc_enabled);
+        assert!(!config.apu_channels.contains(ApuChannels::DMC));
     }
 
     #[test]
@@ -987,9 +1012,9 @@ mod tests {
         assert!(!config.audio_enabled);
         assert!(config.fullscreen);
         assert_eq!(config.fullscreen_display, Some(2));
-        assert!(!config.pulse1_enabled);
-        assert!(config.pulse2_enabled);
-        assert!(!config.noise_enabled);
+        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(!config.apu_channels.contains(ApuChannels::NOISE));
     }
 
     #[test]
@@ -1153,11 +1178,11 @@ mod tests {
         config.apply_config_value("noise", "false");
         config.apply_config_value("dmc", "false");
 
-        assert!(!config.pulse1_enabled);
-        assert!(!config.pulse2_enabled);
-        assert!(!config.triangle_enabled);
-        assert!(!config.noise_enabled);
-        assert!(!config.dmc_enabled);
+        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(!config.apu_channels.contains(ApuChannels::PULSE2));
+        assert!(!config.apu_channels.contains(ApuChannels::TRIANGLE));
+        assert!(!config.apu_channels.contains(ApuChannels::NOISE));
+        assert!(!config.apu_channels.contains(ApuChannels::DMC));
     }
 
     #[test]
@@ -1275,10 +1300,10 @@ pulse1=false
         assert!(config.fullscreen);
         assert_eq!(config.fullscreen_display, Some(2));
         assert_eq!(config.shader_path, Some("shaders/test.slangp".to_string()));
-        assert!(!config.pulse1_enabled);
+        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
         // Other values should remain default
         assert!(config.vsync_enabled);
-        assert!(config.pulse2_enabled);
+        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
     }
 
     #[test]
