@@ -113,7 +113,7 @@ impl Mapper for Multicart15Mapper {
                 }
             }
             // This should never happen since write_prg only sets mode to 0, 1, or 2
-            _ => unreachable!("Invalid banking mode: {}", self.mode),
+            _ => unreachable!("Invalid banking mode"),
         }
     }
 
