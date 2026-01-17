@@ -3,6 +3,7 @@ use std::io;
 
 use super::axrom::AxROMMapper;
 use super::bandai_fcg::BandaiFcgMapper;
+use super::camerica::CamericaMapper;
 use super::cnrom::CNROMMapper;
 use super::colordreams::ColorDreamsMapper;
 use super::gxrom::GxROMMapper;
@@ -278,6 +279,9 @@ pub fn create_mapper_with_crc(
         26 => Ok(Box::new(VRC6Mapper::new(26, prg_rom, chr_rom, mirroring))),
         66 => Ok(Box::new(GxROMMapper::new(prg_rom, chr_rom, mirroring))),
         69 => Ok(Box::new(SunsoftFme7Mapper::new(
+            prg_rom, chr_rom, mirroring,
+        ))),
+        71 => Ok(Box::new(CamericaMapper::new(
             prg_rom, chr_rom, mirroring,
         ))),
         206 => Ok(Box::new(Namco118Mapper::new(prg_rom, chr_rom, mirroring))),
