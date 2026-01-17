@@ -4,7 +4,8 @@ use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
 use crate::trace_apu;
-use std::collections::VecDeque;
+use ringbuf::HeapRb;
+use ringbuf::traits::{Consumer, Observer, RingBuffer};
 
 // CPU clock frequency (NTSC)
 const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
@@ -87,7 +88,7 @@ pub struct Apu {
     // Sample generation
     sample_accumulator: f32,
     cycles_per_sample: f32,
-    pending_samples: VecDeque<f32>,
+    pending_samples: HeapRb<f32>,
     // Channel enable/disable flags for debugging
     pulse1_enabled: bool,
     pulse2_enabled: bool,
@@ -107,6 +108,8 @@ impl Apu {
     pub fn new() -> Self {
         const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
 
+        let pending_samples = HeapRb::<f32>::new(MAX_PENDING_SAMPLES);
+
         let mut apu = Self {
             frame_counter: FrameCounter::new(),
             pulse1: Pulse::new(true),  // Pulse 1 uses ones' complement
@@ -116,7 +119,7 @@ impl Apu {
             dmc: Dmc::new(),
             sample_accumulator: 0.0,
             cycles_per_sample: CPU_CLOCK_NTSC / DEFAULT_SAMPLE_RATE,
-            pending_samples: VecDeque::new(),
+            pending_samples,
             pulse1_enabled: true,
             pulse2_enabled: true,
             triangle_enabled: true,
@@ -142,6 +145,8 @@ impl Apu {
     fn new_for_testing() -> Self {
         const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
 
+        let pending_samples = HeapRb::<f32>::new(MAX_PENDING_SAMPLES);
+
         let mut apu = Self {
             frame_counter: FrameCounter::new(),
             pulse1: Pulse::new(true),
@@ -151,7 +156,7 @@ impl Apu {
             dmc: Dmc::new(),
             sample_accumulator: 0.0,
             cycles_per_sample: CPU_CLOCK_NTSC / DEFAULT_SAMPLE_RATE,
-            pending_samples: VecDeque::new(),
+            pending_samples,
             // For testing: start with all channels enabled for convenience
             pulse1_enabled: true,
             pulse2_enabled: true,
@@ -187,7 +192,7 @@ impl Apu {
         self.noise.reset();
         self.dmc.reset();
         self.sample_accumulator = 0.0;
-        self.pending_samples.clear();
+        self.clear_pending_samples();
         self.apu_cycle = 0;
 
         // Power-on: behave as if `$4017 = $00`.
@@ -424,12 +429,7 @@ impl Apu {
         self.sample_accumulator += 1.0;
         if self.sample_accumulator >= self.cycles_per_sample {
             self.sample_accumulator -= self.cycles_per_sample;
-            self.pending_samples
-                .push_back(self.mix() + expansion_audio.max(0.0));
-
-            if self.pending_samples.len() > MAX_PENDING_SAMPLES {
-                self.pending_samples.pop_front();
-            }
+            self.push_pending_sample(self.mix() + expansion_audio.max(0.0));
         }
     }
 
@@ -445,7 +445,7 @@ impl Apu {
     /// Returns `Some(sample)` if a sample is available, `None` otherwise.
     /// The sample is in the range 0.0 to 1.0.
     pub fn get_sample(&mut self) -> Option<f32> {
-        self.pending_samples.pop_front()
+        self.pending_samples.try_pop()
     }
 
     /// Poll the APU IRQ flag (frame counter or DMC IRQ)
@@ -609,7 +609,20 @@ impl Apu {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.cycles_per_sample = CPU_CLOCK_NTSC / sample_rate;
         self.sample_accumulator = 0.0;
+        self.clear_pending_samples();
+    }
+
+    fn push_pending_sample(&mut self, sample: f32) {
+        self.pending_samples.push_overwrite(sample);
+    }
+
+    fn clear_pending_samples(&mut self) {
         self.pending_samples.clear();
+    }
+
+    #[cfg(test)]
+    fn push_sample_for_test(&mut self, sample: f32) {
+        self.push_pending_sample(sample);
     }
 
     /// Enable or disable individual channels for debugging
@@ -1651,5 +1664,17 @@ mod tests {
         }
 
         assert_eq!(drained, MAX_PENDING_SAMPLES);
+    }
+
+    #[test]
+    fn test_sample_generation_pending_queue_drops_oldest() {
+        let mut apu = Apu::new_for_testing();
+
+        for i in 0..(MAX_PENDING_SAMPLES + 2) {
+            apu.push_sample_for_test(i as f32);
+        }
+
+        let first = apu.get_sample().expect("sample should be available");
+        assert_eq!(first, 2.0);
     }
 }
