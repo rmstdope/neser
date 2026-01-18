@@ -114,6 +114,10 @@ pub struct MMC5Mapper {
     irq_pending: Cell<bool>,  // IRQ pending flag (cleared on read of $5204)
     in_frame: bool,           // Track if PPU is in frame
     scanline_counter: u16,    // Current scanline counter
+    
+    // PPU read tracking for hardware-accurate scanline detection
+    cpu_cycles_since_ppu_read: u8, // CPU cycles since last PPU read from $2xxx
+    last_ppu_read_scanline: u16,   // Track scanline for PPU read sequences
 
     // Hardware multiplier
     multiplicand: u8, // $5205
@@ -299,6 +303,10 @@ impl MMC5Mapper {
             irq_pending: Cell::new(false),
             in_frame: false,
             scanline_counter: 0,
+            
+            // PPU read tracking
+            cpu_cycles_since_ppu_read: 0,
+            last_ppu_read_scanline: 0,
 
             // Hardware multiplier
             multiplicand: 0,
@@ -1011,6 +1019,17 @@ impl Mapper for MMC5Mapper {
             return None;
         }
 
+        // MMC5 hardware scanline detection:
+        // Track PPU reads from $2xxx range to detect scanlines.
+        // Hardware detects a scanline when it sees PPU reading from nametable addresses.
+        // Reset CPU cycle counter since we just saw a PPU read.
+        self.cpu_cycles_since_ppu_read = 0;
+        
+        // Set in_frame flag when we see PPU reads from nametable
+        if !self.in_frame {
+            self.in_frame = true;
+        }
+
         // Record the most recent background tile fetch address (within the 1KB nametable page).
         // The PPU fetches a tile byte ($2000-$23BF) and then an attribute byte ($23C0-$23FF).
         // MMC5 extended attribute mode uses the tile position to select a palette from ExRAM.
@@ -1091,6 +1110,18 @@ impl Mapper for MMC5Mapper {
         trace_mapper!(1; "[mmc5] cpu_cycle (audio)");
         self.pulse1.cpu_cycle();
         self.pulse2.cpu_cycle();
+        
+        // MMC5 hardware in-frame detection:
+        // Clear in_frame flag after 3 CPU cycles without PPU reads.
+        // This matches the hardware behavior where the in-frame signal
+        // is cleared when the PPU stops reading from nametables.
+        if self.in_frame {
+            self.cpu_cycles_since_ppu_read = self.cpu_cycles_since_ppu_read.saturating_add(1);
+            if self.cpu_cycles_since_ppu_read >= 3 {
+                self.in_frame = false;
+                self.cpu_cycles_since_ppu_read = 0;
+            }
+        }
     }
 
     fn expansion_audio_sample(&self) -> f32 {
@@ -1114,17 +1145,26 @@ impl Mapper for MMC5Mapper {
     }
 
     fn ppu_scanline(&mut self, scanline: u16, rendering_enabled: bool) {
-        // MMC5 scanline IRQ behavior (current scope: scanline-notify based):
-        // - Only active during rendering.
-        // - Track in-frame while rendering is enabled.
-        // - Assert IRQ when scanline matches compare and IRQ is enabled.
+        // MMC5 scanline IRQ behavior:
+        // Hardware detects scanlines by observing PPU reads from $2xxx addresses.
+        // The in_frame flag is set when rendering is enabled or when PPU reads occur,
+        // and cleared after 3 CPU cycles without reads (handled in cpu_cycle).
+        // This callback is used to update the scanline counter and check for IRQ.
+        
         if !rendering_enabled {
+            // When rendering is disabled, clear in_frame immediately
+            // (hardware would stop seeing PPU reads)
             self.in_frame = false;
+            self.cpu_cycles_since_ppu_read = 0;
             self.update_split_active(scanline, rendering_enabled);
             return;
         }
 
+        // Set in_frame when rendering is enabled (hardware would be seeing PPU reads)
         self.in_frame = true;
+        
+        // Update scanline counter - this happens when rendering is enabled
+        // and is coordinated with PPU read detection
         self.scanline_counter = scanline;
 
         // Minimal split-screen state: become active once we reach the configured split Y tile row.
