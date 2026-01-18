@@ -386,6 +386,7 @@ impl Registers {
     }
 
     /// Restore register state from a save-state.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn restore_state(
         &mut self,

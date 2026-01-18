@@ -140,21 +140,25 @@ impl Status {
     }
 
     /// Check if sprite 0 hit flag is set
+    #[cfg(test)]
     pub fn is_sprite_0_hit(&self) -> bool {
         self.sprite_0_hit
     }
 
     /// Get sprite overflow flag for save-state.
+    #[cfg(test)]
     pub fn is_sprite_overflow(&self) -> bool {
         self.sprite_overflow
     }
 
     /// Get NMI enabled flag for save-state.
+    #[cfg(test)]
     pub fn is_nmi_enabled(&self) -> bool {
         self.nmi_enabled
     }
 
     /// Restore status state from a save-state.
+    #[cfg(test)]
     pub fn restore_state(
         &mut self,
         vblank: bool,

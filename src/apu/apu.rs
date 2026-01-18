@@ -647,6 +647,7 @@ impl Apu {
     }
 
     /// Capture the current APU state for save-state.
+    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::ApuState {
         crate::savestate::ApuState {
             frame_counter: crate::savestate::FrameCounterState {
@@ -667,10 +668,15 @@ impl Apu {
     }
 
     /// Restore APU state from a save-state.
+    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::ApuState) {
         // Restore frame counter
-        self.frame_counter
-            .restore_state(state.frame_counter.cycle_counter, state.frame_counter.mode, state.frame_counter.irq_inhibit, state.frame_counter.irq_flag);
+        self.frame_counter.restore_state(
+            state.frame_counter.cycle_counter,
+            state.frame_counter.mode,
+            state.frame_counter.irq_inhibit,
+            state.frame_counter.irq_flag,
+        );
 
         // Restore channels
         self.pulse1.restore_state(&state.pulse1);

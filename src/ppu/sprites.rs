@@ -552,16 +552,19 @@ impl Sprites {
     }
 
     /// Create a snapshot of OAM for save-state.
+    #[cfg(test)]
     pub fn oam_snapshot(&self) -> Vec<u8> {
         self.oam_data.to_vec()
     }
 
     /// Create a snapshot of secondary OAM for save-state.
+    #[cfg(test)]
     pub fn secondary_oam_snapshot(&self) -> Vec<u8> {
         self.secondary_oam.to_vec()
     }
 
     /// Restore OAM from a save-state.
+    #[cfg(test)]
     pub fn restore_oam(&mut self, oam: &[u8], secondary_oam: &[u8]) {
         let len = oam.len().min(self.oam_data.len());
         self.oam_data[..len].copy_from_slice(&oam[..len]);

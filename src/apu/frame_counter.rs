@@ -83,6 +83,7 @@ impl FrameCounter {
     }
 
     /// Get the current mode
+    #[cfg(test)]
     pub fn get_mode(&self) -> bool {
         self.mode == Mode::FiveStep
     }
@@ -104,12 +105,20 @@ impl FrameCounter {
     }
 
     /// Get the IRQ inhibit flag state
+    #[cfg(test)]
     pub fn get_irq_inhibit(&self) -> bool {
         self.irq_inhibit
     }
 
     /// Restore frame counter state from a save-state.
-    pub fn restore_state(&mut self, cycle_counter: u32, mode: bool, irq_inhibit: bool, irq_flag: bool) {
+    #[cfg(test)]
+    pub fn restore_state(
+        &mut self,
+        cycle_counter: u32,
+        mode: bool,
+        irq_inhibit: bool,
+        irq_flag: bool,
+    ) {
         self.cycle_counter = cycle_counter;
         self.mode = if mode { Mode::FiveStep } else { Mode::FourStep };
         self.irq_inhibit = irq_inhibit;

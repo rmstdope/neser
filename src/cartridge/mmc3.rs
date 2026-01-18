@@ -440,7 +440,11 @@ mod tests {
         mapper.ppu_address_changed(0x1000);
 
         // Counter should now be 5
-        assert_eq!(mapper.irq_counter(), 5, "Counter should be loaded with latch value 5");
+        assert_eq!(
+            mapper.irq_counter(),
+            5,
+            "Counter should be loaded with latch value 5"
+        );
 
         // Simulate another A12 rising edge to decrement counter
         mapper.ppu_address_changed(0x0FFF);
@@ -450,13 +454,21 @@ mod tests {
         mapper.ppu_address_changed(0x1000);
 
         // Counter should now be 4
-        assert_eq!(mapper.irq_counter(), 4, "Counter should be decremented to 4");
+        assert_eq!(
+            mapper.irq_counter(),
+            4,
+            "Counter should be decremented to 4"
+        );
 
         // Now write to $C001 (reload): should clear counter to 0 immediately
         mapper.write_prg(0xC001, 0);
 
         // THE KEY TEST: Counter should be 0 immediately after writing to $C001
-        assert_eq!(mapper.irq_counter(), 0, "Counter should be cleared to 0 immediately after writing to $C001");
+        assert_eq!(
+            mapper.irq_counter(),
+            0,
+            "Counter should be cleared to 0 immediately after writing to $C001"
+        );
 
         // Next A12 rising edge should reload from latch (5)
         mapper.ppu_address_changed(0x0FFF);
@@ -466,7 +478,11 @@ mod tests {
         mapper.ppu_address_changed(0x1000);
 
         // Counter should now be 5 (reloaded from latch)
-        assert_eq!(mapper.irq_counter(), 5, "Counter should be reloaded from latch to 5");
+        assert_eq!(
+            mapper.irq_counter(),
+            5,
+            "Counter should be reloaded from latch to 5"
+        );
     }
 
     #[test]
@@ -603,11 +619,17 @@ mod tests {
 
         // read_prg_open_bus should return the open bus value
         let open_bus_value = 0x42;
-        assert_eq!(mapper.read_prg_open_bus(0x6000, open_bus_value), open_bus_value);
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, open_bus_value),
+            open_bus_value
+        );
 
         // Test with different open bus value
         let open_bus_value2 = 0xBD;
-        assert_eq!(mapper.read_prg_open_bus(0x7FFF, open_bus_value2), open_bus_value2);
+        assert_eq!(
+            mapper.read_prg_open_bus(0x7FFF, open_bus_value2),
+            open_bus_value2
+        );
 
         // Re-enable PRG-RAM - should read the original value (writes were ignored)
         mapper.write_prg(0xA001, 0b1000_0000);
