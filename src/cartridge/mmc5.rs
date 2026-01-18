@@ -1161,11 +1161,11 @@ impl Mapper for MMC5Mapper {
 
         // Set in_frame when rendering is enabled (hardware would be seeing PPU reads)
         self.in_frame = true;
+        self.cpu_cycles_since_ppu_read = 0;
         
         // Update scanline counter - this happens when rendering is enabled
         // and is coordinated with PPU read detection
         self.scanline_counter = scanline;
-
         // Minimal split-screen state: become active once we reach the configured split Y tile row.
         // (Real MMC5 behavior is more nuanced; this is sufficient for the current tests.)
         self.update_split_active(scanline, rendering_enabled);
