@@ -130,6 +130,10 @@ impl Mapper for NinaTengenMapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        78
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }

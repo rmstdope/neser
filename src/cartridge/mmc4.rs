@@ -204,6 +204,10 @@ impl Mapper for MMC4Mapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        10
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }

@@ -235,6 +235,10 @@ impl Mapper for MMC2Mapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        9
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }

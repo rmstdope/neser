@@ -304,6 +304,10 @@ impl Mapper for BandaiFcgMapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        16
+    }
+
     fn wram_size(&self) -> usize {
         // Mapper 16 does not have traditional PRG-RAM.
         // Save data is stored in EEPROM (not yet implemented).

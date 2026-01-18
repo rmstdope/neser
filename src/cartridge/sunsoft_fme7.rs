@@ -311,6 +311,10 @@ impl Mapper for SunsoftFme7Mapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        69
+    }
+
     fn wram_size(&self) -> usize {
         Self::PRG_RAM_SIZE
     }

@@ -404,6 +404,10 @@ impl Mapper for Namco163Mapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        19
+    }
+
     fn reset(&mut self) {
         self.regs = [0; 16];
         self.irq_counter = 0;

@@ -387,6 +387,15 @@ impl Mapper for Vrc2Vrc4Mapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        match self.variant {
+            Vrc2Vrc4Variant::Mapper21 => 21,
+            Vrc2Vrc4Variant::Mapper22 => 22,
+            Vrc2Vrc4Variant::Mapper23 => 23,
+            Vrc2Vrc4Variant::Mapper25 => 25,
+        }
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }

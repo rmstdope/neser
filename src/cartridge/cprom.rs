@@ -106,6 +106,10 @@ impl Mapper for CpromMapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        13
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }

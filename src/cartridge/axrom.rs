@@ -100,6 +100,10 @@ impl Mapper for AxROMMapper {
         MirroringMode::SingleScreen
     }
 
+    fn mapper_number(&self) -> u8 {
+        7
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }

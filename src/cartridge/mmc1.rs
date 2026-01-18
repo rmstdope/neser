@@ -353,6 +353,10 @@ impl Mapper for MMC1Mapper {
         self.get_mirroring_mode()
     }
 
+    fn mapper_number(&self) -> u8 {
+        1
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.len()
     }

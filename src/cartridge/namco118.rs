@@ -242,6 +242,10 @@ impl Mapper for Namco118Mapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        206
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.len()
     }

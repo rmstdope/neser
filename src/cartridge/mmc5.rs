@@ -1174,6 +1174,10 @@ impl Mapper for MMC5Mapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        5
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.len()
     }
