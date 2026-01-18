@@ -54,7 +54,15 @@ When working on an issue, this is important:
 
 When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the issue is a sub-issue of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
 
-Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh. NEVER use backticks in the text with gh.
+### Github CLI
+Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh. NEVER use backticks in the text with gh and use real newlines instead of \n.
+When creating issues, always add the appropriate labels to the issue using gh:
+- bug - for all bugs
+- enhancement - for any feature development
+- games - for anything that has to do with a specific game or games
+- mapper - for anything that has to do with a specific mapper or mappers
+- refactoring - for anything that has to do with refactoring the codebase
+- testing - for anything that has to do with testing
 
 ### Committing and Merging to main
 
@@ -72,10 +80,6 @@ When working on a bugin the application, you are free to add any traces, try fix
 ## Issue Tracking
 
 All major on the application should be tracked using GitHub's issue tracking system. Each feature, bug fix, or improvement should have a corresponding issue that describes the work to be done. This ensures transparency, accountability, and helps in prioritizing tasks effectively. For implementing new features, issues should be created per feature, but broken down into smaller sub-issues to keep them manageable. When starting to work on an issue, it should be assigned to the developer working on it. Once the work is completed and merged, the issue should be closed to reflect its completion. When code is committed, the commit message should reference the relevant issue number to maintain a clear link between code changes and tracked work.
-
-## Architectural decisions
-
-Take all architectural decisions in a collaborative way with the navigator. Document all major architectural decisions in a dedicated `ARCHITECTURE.md` file in the root of the repository. This documentation should include the rationale behind each decision, alternatives considered, and any implications for future development.
 
 ## Framework decisions
 
