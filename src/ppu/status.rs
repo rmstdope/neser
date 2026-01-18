@@ -155,8 +155,8 @@ impl Status {
         self.sprite_overflow
     }
 
-    /// Get NMI enabled/occurred flag for save-state.
-    pub fn nmi_occurred(&self) -> bool {
+    /// Get NMI enabled flag for save-state.
+    pub fn nmi_enabled(&self) -> bool {
         self.nmi_enabled
     }
 
