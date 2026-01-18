@@ -52,7 +52,10 @@
 // ### Scanline IRQ - Minor gaps
 // - Reading $FFFA/$FFFB should reset in-frame flag (not implemented)
 // - Writing to $4014 (OAMDMA) should reset scanline counter (not implemented)
-// - PPU-cycle-accurate detection not implemented (uses scanline callbacks)
+// - PPU-cycle-accurate detection partially implemented:
+//   * In-frame flag set by PPU reads from $2xxx range
+//   * In-frame flag clears after 3 CPU cycles without PPU reads
+//   * Scanline counter uses ppu_scanline callback (approximation)
 //
 // ## References
 // - NESdev Wiki: <https://www.nesdev.org/wiki/MMC5>
@@ -114,7 +117,6 @@ pub struct MMC5Mapper {
     irq_pending: Cell<bool>,  // IRQ pending flag (cleared on read of $5204)
     in_frame: bool,           // Track if PPU is in frame
     scanline_counter: u16,    // Current scanline counter
-    
     // PPU read tracking for hardware-accurate scanline detection
     cpu_cycles_since_ppu_read: u8, // CPU cycles since last PPU read from $2xxx
 
@@ -302,7 +304,6 @@ impl MMC5Mapper {
             irq_pending: Cell::new(false),
             in_frame: false,
             scanline_counter: 0,
-            
             // PPU read tracking
             cpu_cycles_since_ppu_read: 0,
 
