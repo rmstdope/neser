@@ -95,6 +95,6 @@ impl BusDevice for ApuDevice {
     }
 
     fn address_range(&self) -> RangeInclusive<u16> {
-        0x4000..=0x40FF
+        0x4000..=0x401F
     }
 }

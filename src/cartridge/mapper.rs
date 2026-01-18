@@ -27,6 +27,7 @@ use super::vrc6::VRC6Mapper;
 /// Metadata for constructing a mapper, containing cartridge header details and
 /// derived values (e.g., CRC32) used by the factory.
 #[derive(Debug)]
+#[allow(dead_code)]
 pub struct MapperContext {
     /// iNES/NES 2.0 mapper number. Submapper is kept separately.
     pub mapper: u16,
@@ -46,6 +47,7 @@ pub struct MapperContext {
     pub crc32: u32,
 }
 
+#[allow(dead_code)]
 impl MapperContext {
     /// Create mapper metadata with default submapper 0, 1×8KB PRG-RAM (not battery-backed),
     /// and CRC32 computed from PRG+CHR data.
@@ -108,7 +110,11 @@ pub trait Mapper {
     /// Mappers that return open bus for disabled regions can override this method
     /// to return `open_bus` when appropriate. Default falls back to `read_prg`.
     fn read_prg_open_bus(&self, addr: u16, _open_bus: u8) -> u8 {
-        self.read_prg(addr)
+        if addr < 0x6000 {
+            _open_bus
+        } else {
+            self.read_prg(addr)
+        }
     }
 
     /// Write a byte to PRG address space (CPU $6000-$FFFF)

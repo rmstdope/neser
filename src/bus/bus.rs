@@ -586,6 +586,36 @@ mod tests {
         rom
     }
 
+    fn create_nrom_rom() -> Vec<u8> {
+        let prg_rom_banks = 1u8;
+        let chr_rom_banks = 1u8;
+        let flags6 = 0x00;
+        let flags7 = 0x00;
+
+        let mut rom = vec![
+            b'N',
+            b'E',
+            b'S',
+            0x1A,
+            prg_rom_banks,
+            chr_rom_banks,
+            flags6,
+            flags7,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+
+        rom.extend(vec![0u8; prg_rom_banks as usize * 16 * 1024]);
+        rom.extend(vec![0u8; chr_rom_banks as usize * 8 * 1024]);
+        rom
+    }
+
     fn create_test_memory() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new(crate::nes::TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
@@ -597,11 +627,14 @@ mod tests {
         let mut memory = create_test_memory();
         let last_write = Rc::new(RefCell::new(None));
 
-        memory.register_device(Box::new(TestBusDevice::new(
-            0x4100..=0x4101,
-            0xAB,
-            last_write.clone(),
-        )));
+        memory.devices.insert(
+            0,
+            Box::new(TestBusDevice::new(
+                0x4100..=0x4101,
+                0xAB,
+                last_write.clone(),
+            )),
+        );
 
         assert_eq!(memory.read(0x4100), 0xAB);
 
@@ -690,11 +723,15 @@ mod tests {
     }
 
     #[test]
-    fn test_unallocated_io_space_is_registered() {
+    fn test_cpu_memory_map_io_and_mapper_ranges() {
         let memory = create_test_memory();
 
+        // $4018-$401F is normally disabled/test mode but is claimed by the APU device.
         assert!(memory.has_device_for_address(0x4018));
-        assert!(memory.has_device_for_address(0x40FF));
+        assert!(memory.has_device_for_address(0x401F));
+
+        // Cartridge space begins at $4020.
+        assert!(memory.has_device_for_address(0x4020));
     }
 
     #[test]
@@ -705,6 +742,45 @@ mod tests {
         assert!(dma);
         assert!(memory.oam_dma_pending());
         assert_eq!(memory.take_oam_dma_page(), Some(0x22));
+    }
+
+    #[test]
+    fn test_unmapped_cartridge_space_returns_open_bus() {
+        let mut memory = create_test_memory();
+
+        memory.write(0x0000, 0x3C, false);
+        let open_bus = memory.read(0x0000);
+
+        assert_eq!(open_bus, 0x3C);
+        assert_eq!(memory.read(0x4020), open_bus);
+    }
+
+    #[test]
+    fn test_unmapped_cartridge_space_returns_open_bus_with_mapper() {
+        let mut memory = create_test_memory();
+        let rom = create_mmc1_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom).expect("valid cartridge");
+        memory.map_cartridge(cartridge);
+
+        memory.write(0x0000, 0x5A, false);
+        let open_bus = memory.read(0x0000);
+
+        assert_eq!(open_bus, 0x5A);
+        assert_eq!(memory.read(0x4020), open_bus);
+    }
+
+    #[test]
+    fn test_unmapped_cartridge_space_returns_open_bus_with_nrom() {
+        let mut memory = create_test_memory();
+        let rom = create_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom).expect("valid cartridge");
+        memory.map_cartridge(cartridge);
+
+        memory.write(0x0000, 0xA5, false);
+        let open_bus = memory.read(0x0000);
+
+        assert_eq!(open_bus, 0xA5);
+        assert_eq!(memory.read(0x4020), open_bus);
     }
 
     #[test]

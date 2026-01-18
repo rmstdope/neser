@@ -27,7 +27,7 @@ impl BusDevice for MapperDevice {
 
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             return match addr {
-                0x5000..=0x5FFF => Some(open_bus),
+                0x4020..=0x5FFF => Some(open_bus),
                 0x6000..=0x7FFF => {
                     eprintln!(
                         "Warning: Read from PRG-RAM {:04X} without cartridge, returning 0",
@@ -55,7 +55,7 @@ impl BusDevice for MapperDevice {
 
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             match addr {
-                0x5000..=0x5FFF => eprintln!(
+                0x4020..=0x5FFF => eprintln!(
                     "Warning: Write to mapper expansion area {:04X} without cartridge, ignored",
                     addr
                 ),
@@ -83,6 +83,6 @@ impl BusDevice for MapperDevice {
     }
 
     fn address_range(&self) -> RangeInclusive<u16> {
-        0x5000..=0xFFFF
+        0x4020..=0xFFFF
     }
 }

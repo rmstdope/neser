@@ -311,7 +311,13 @@ impl Mapper for MMC1Mapper {
                 }
                 self.read_prg(addr)
             }
-            _ => self.read_prg(addr),
+            _ => {
+                if addr < 0x6000 {
+                    open_bus
+                } else {
+                    self.read_prg(addr)
+                }
+            }
         }
     }
 
