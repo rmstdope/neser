@@ -217,12 +217,12 @@ impl SaveState {
         serde_json::from_str(json)
     }
 
-    /// Serialize the save state to bytes (compact binary format).
+    /// Serialize the save state to JSON-encoded UTF-8 bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(self)
     }
 
-    /// Deserialize a save state from bytes.
+    /// Deserialize a save state from JSON-encoded UTF-8 bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(bytes)
     }
