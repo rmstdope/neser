@@ -578,7 +578,8 @@ impl Nes {
     ///
     /// # Errors
     ///
-    /// Returns an error if the save-state version is incompatible.
+    /// Returns an error if the save-state version is incompatible or if
+    /// the mapper number doesn't match the currently loaded cartridge.
     pub fn load_state(
         &mut self,
         state: &crate::savestate::SaveState,
@@ -588,6 +589,15 @@ impl Nes {
             return Err(SaveStateError::IncompatibleVersion {
                 expected: crate::savestate::SAVESTATE_VERSION,
                 found: state.version,
+            });
+        }
+
+        // Check mapper compatibility
+        let current_mapper = self.memory.borrow().capture_mapper_state().mapper_number;
+        if state.mapper.mapper_number != current_mapper {
+            return Err(SaveStateError::MapperMismatch {
+                expected: current_mapper,
+                found: state.mapper.mapper_number,
             });
         }
 
@@ -611,6 +621,8 @@ impl Nes {
 pub enum SaveStateError {
     /// The save-state format version is incompatible.
     IncompatibleVersion { expected: u32, found: u32 },
+    /// The mapper number doesn't match the currently loaded cartridge.
+    MapperMismatch { expected: u8, found: u8 },
 }
 
 #[cfg(test)]
