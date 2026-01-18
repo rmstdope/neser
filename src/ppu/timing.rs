@@ -117,11 +117,12 @@ impl Timing {
     }
 
     /// Restore timing state from a save-state.
-    pub fn restore_state(&mut self, scanline: u16, pixel: u16, total_cycles: u64, odd_frame: bool) {
+    pub fn restore_state(&mut self, scanline: u16, pixel: u16, total_cycles: u64, frame_count: u64) {
         self.scanline = scanline;
         self.pixel = pixel;
         self.total_cycles = total_cycles;
-        self.frame_count = if odd_frame { 1 } else { 0 }; // Preserve odd/even frame state
+        self.frame_count = frame_count;
+        // Note: rendering_enabled delays will be recalculated during emulation
         self.rendering_enabled_d1 = false;
         self.rendering_enabled_d2 = false;
     }

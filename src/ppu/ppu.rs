@@ -506,7 +506,7 @@ impl Ppu {
                 scanline: self.timing.scanline,
                 pixel: self.timing.pixel,
                 total_cycles: self.timing.total_cycles(),
-                odd_frame: self.timing.frame_count() % 2 == 1,
+                frame_count: self.timing.frame_count(),
             },
             registers: crate::savestate::PpuRegisterState {
                 control: self.registers.control(),
@@ -519,9 +519,9 @@ impl Ppu {
                 io_bus: self.registers.io_bus(),
             },
             vblank_flag: self.status.is_in_vblank(),
-            sprite_zero_hit: false, // Status.sprite_0_hit is not exposed, but will be recalculated
-            sprite_overflow: false, // Status.sprite_overflow is not exposed
-            nmi_occurred: false,    // Status.nmi_enabled - will be repopulated
+            sprite_zero_hit: self.status.sprite_0_hit(),
+            sprite_overflow: self.status.sprite_overflow(),
+            nmi_occurred: self.status.nmi_occurred(),
             vram: self.memory.vram_snapshot(),
             palette: self.memory.palette_snapshot(),
             oam: self.sprites.oam_snapshot(),
@@ -533,7 +533,7 @@ impl Ppu {
     /// Restore PPU state from a save-state.
     pub fn restore_state(&mut self, state: &crate::savestate::PpuState) {
         // Restore timing
-        self.timing.restore_state(state.timing.scanline, state.timing.pixel, state.timing.total_cycles, state.timing.odd_frame);
+        self.timing.restore_state(state.timing.scanline, state.timing.pixel, state.timing.total_cycles, state.timing.frame_count);
 
         // Restore registers
         self.registers.restore_state(

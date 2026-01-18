@@ -145,6 +145,21 @@ impl Status {
         self.sprite_0_hit
     }
 
+    /// Get sprite 0 hit flag for save-state.
+    pub fn sprite_0_hit(&self) -> bool {
+        self.sprite_0_hit
+    }
+
+    /// Get sprite overflow flag for save-state.
+    pub fn sprite_overflow(&self) -> bool {
+        self.sprite_overflow
+    }
+
+    /// Get NMI enabled/occurred flag for save-state.
+    pub fn nmi_occurred(&self) -> bool {
+        self.nmi_enabled
+    }
+
     /// Restore status state from a save-state.
     pub fn restore_state(
         &mut self,
@@ -158,6 +173,7 @@ impl Status {
         self.pending_sprite_0_hit = false;
         self.sprite_overflow = sprite_overflow;
         self.nmi_enabled = nmi_enabled;
+        // Note: frame_complete is derived state, will be set during next vblank
         self.frame_complete = false;
     }
 }

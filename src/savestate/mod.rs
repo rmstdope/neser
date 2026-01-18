@@ -50,7 +50,7 @@ pub struct PpuTimingState {
     pub scanline: u16,
     pub pixel: u16,
     pub total_cycles: u64,
-    pub odd_frame: bool,
+    pub frame_count: u64,
 }
 
 /// PPU register state.
@@ -256,7 +256,7 @@ mod tests {
                 scanline: 100,
                 pixel: 200,
                 total_cycles: 50000,
-                odd_frame: false,
+                frame_count: 0,
             },
             registers: PpuRegisterState {
                 control: 0x80,
