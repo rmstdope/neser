@@ -220,6 +220,7 @@ impl MMC5Mapper {
     const PRG_RAM_BANK_COUNT_MAX: usize = 8;
     const PRG_ROM_BANK_SIZE: usize = 8 * 1024;
 
+    #[allow(dead_code)]
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         Self::new_with_prg_ram_size(
             prg_rom,
@@ -777,6 +778,14 @@ impl Mapper for MMC5Mapper {
             }
 
             _ => 0,
+        }
+    }
+
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if addr < 0x5000 {
+            open_bus
+        } else {
+            self.read_prg(addr)
         }
     }
 
@@ -1749,6 +1758,20 @@ mod tests {
         // Reading $5204 should clear the pending flag.
         let _ = mmc5.read_prg(0x5204);
         assert!(!mmc5.irq_pending());
+    }
+
+    #[test]
+    fn test_mmc5_read_prg_open_bus_allows_expansion_registers() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 1);
+        let mut mmc5 = MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+
+        mmc5.write_prg(0x5205, 3);
+        mmc5.write_prg(0x5206, 4);
+
+        let open_bus = 0xA5;
+        assert_eq!(mmc5.read_prg_open_bus(0x5205, open_bus), 12);
+        assert_eq!(mmc5.read_prg_open_bus(0x5206, open_bus), 0);
     }
 
     #[test]
