@@ -46,7 +46,13 @@ pub enum Mmc1Revision {
 /// - $8000-$9FFF: Control (mirroring, PRG mode, CHR mode)
 /// - $A000-$BFFF: CHR bank 0 (4KB at $0000 or 8KB at $0000)
 /// - $C000-$DFFF: CHR bank 1 (4KB at $1000)
-/// - $E000-$FFFF: PRG bank (16KB switchable)
+/// - $E000-$FFFF: PRG bank (16KB switchable), bit 4 controls PRG-RAM enable
+///
+/// PRG-RAM Enable (Revision-Specific):
+/// - MMC1A: PRG-RAM is always enabled, bit 4 of PRG bank register is ignored
+/// - MMC1B/C: Bit 4 controls PRG-RAM (0 = enabled, 1 = disabled)
+///
+/// See: https://www.nesdev.org/wiki/MMC1#ASIC_Revisions
 ///
 /// Used in games like The Legend of Zelda, Metroid, Mega Man 2, Final Fantasy.
 pub struct MMC1Mapper {
