@@ -24,19 +24,31 @@ use super::uxrom::UxROMMapper;
 use super::vrc2_vrc4::Vrc2Vrc4Mapper;
 use super::vrc6::VRC6Mapper;
 
+/// Metadata for constructing a mapper, containing cartridge header details and
+/// derived values (e.g., CRC32) used by the factory.
 #[derive(Debug)]
 pub struct MapperContext {
+    /// iNES/NES 2.0 mapper number. Submapper is kept separately.
     pub mapper: u16,
+    /// NES 2.0 submapper id (0 when not specified).
     pub submapper: u8,
+    /// PPU nametable mirroring mode from the header.
     pub mirroring: MirroringMode,
+    /// PRG ROM bytes.
     pub prg_rom: Vec<u8>,
+    /// CHR ROM bytes (empty when CHR-RAM).
     pub chr_rom: Vec<u8>,
+    /// PRG-RAM size in 8KB units (minimum 1).
     pub prg_ram_banks_8k: u8,
+    /// Whether PRG-RAM is battery backed.
     pub battery_backed_prg_ram: bool,
+    /// CRC32 of concatenated PRG/CHR; may be overridden for tests.
     pub crc32: u32,
 }
 
 impl MapperContext {
+    /// Create mapper metadata with default submapper 0, 1×8KB PRG-RAM (not battery-backed),
+    /// and CRC32 computed from PRG+CHR data.
     pub fn new(mapper: u8, prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         let crc32 = calculate_rom_crc32(&prg_rom, &chr_rom);
         Self {
@@ -51,21 +63,25 @@ impl MapperContext {
         }
     }
 
+    /// Set NES 2.0 submapper id.
     pub fn with_submapper(mut self, submapper: u8) -> Self {
         self.submapper = submapper;
         self
     }
 
+    /// Override PRG-RAM size in 8KB units (clamped to at least one bank).
     pub fn with_prg_ram_banks(mut self, prg_ram_banks_8k: u8) -> Self {
         self.prg_ram_banks_8k = prg_ram_banks_8k.max(1);
         self
     }
 
+    /// Mark PRG-RAM as battery backed.
     pub fn with_battery_backed_prg_ram(mut self, battery_backed_prg_ram: bool) -> Self {
         self.battery_backed_prg_ram = battery_backed_prg_ram;
         self
     }
 
+    /// Override CRC32 value (useful for tests with synthetic ROM data).
     pub fn with_crc32(mut self, crc32: u32) -> Self {
         self.crc32 = crc32;
         self
@@ -375,7 +391,6 @@ mapper_registry! {
     1 => MMC1Mapper::new,
     2 => UxROMMapper::new,
     3 => CNROMMapper::new,
-    5 => MMC5Mapper::new,
     7 => AxROMMapper::new,
     9 => MMC2Mapper::new,
     10 => MMC4Mapper::new,

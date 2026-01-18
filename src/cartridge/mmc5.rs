@@ -1586,9 +1586,7 @@ impl Mapper for MMC5Mapper {
 mod tests {
     use crate::cartridge::cartridge::Cartridge;
     use crate::cartridge::cartridge::MirroringMode;
-    use crate::cartridge::mapper::{
-        Mapper, MapperContext, create_mapper as create_mapper_with_context,
-    };
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
 
     use super::MMC5Mapper;
 
@@ -1608,15 +1606,14 @@ mod tests {
         MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal)
     }
 
-    fn create_mapper(
-        mapper_number: u8,
+    fn create_mmc5_mapper(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
         mirroring: MirroringMode,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        let context = MapperContext::new(mapper_number, prg_rom, chr_rom, mirroring)
+        let context = MapperContext::new(5, prg_rom, chr_rom, mirroring)
             .with_prg_ram_banks(MMC5Mapper::PRG_RAM_BANK_COUNT_MAX as u8);
-        create_mapper_with_context(context)
+        create_mapper(context)
     }
 
     fn make_mmc5_ines_rom_with_prg_ram_banks(prg_ram_banks_8k: u8) -> Vec<u8> {
@@ -1778,7 +1775,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
     }
 
@@ -1795,7 +1792,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Explicitly select PRG mode 3.
@@ -1825,7 +1822,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 16);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // CHR mode 3 (1KB).
@@ -1865,7 +1862,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 16);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // CHR mode 3 (1KB).
@@ -1901,7 +1898,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Map $2000 quadrant to ExRAM (value 2 in bits 1-0).
@@ -1919,7 +1916,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Map $2000 quadrant to ExRAM (value 2).
@@ -1966,7 +1963,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Map $2000 quadrant to fill mode (value 3 in bits 1-0).
@@ -1993,7 +1990,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Map $2000 quadrant to internal VRAM (value 0 in bits 1-0).
@@ -2015,7 +2012,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Enable extended attribute mode.
@@ -2062,7 +2059,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(4 * 1024, 64);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Note: CHR mode is ignored in extended attribute mode, but set it anyway
@@ -2114,7 +2111,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Explicitly disable extended attribute mode.
@@ -2136,7 +2133,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(4 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // CHR mode 1 (4KB banks).
@@ -2166,7 +2163,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(4 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // CHR mode 1 (4KB banks).
@@ -2191,7 +2188,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Pulse 1 control (volume = 15).
@@ -2215,7 +2212,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Pulse 2 control (volume = 15).
@@ -2238,7 +2235,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Enable PCM / set mode (exact bit meaning handled in implementation).
@@ -2257,7 +2254,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Select PRG-RAM bank 0 and write a value.
@@ -2332,7 +2329,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Select PRG mode 2.
@@ -2361,7 +2358,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 16);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Select PRG mode 0
@@ -2384,7 +2381,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 16);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Select PRG mode 1
@@ -2409,7 +2406,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Write multiplicand and multiplier
@@ -2436,7 +2433,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Write to ExRAM
@@ -2457,7 +2454,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mapper(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // By default, PRG-RAM should be writable (protect registers initialized to 0x02/0x01)

@@ -132,9 +132,7 @@ impl Mapper for ColorDreamsMapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::MirroringMode;
-    use crate::cartridge::mapper::{
-        Mapper, MapperContext, create_mapper as create_mapper_with_context,
-    };
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
         let mut data = vec![0u8; bank_size * num_banks];
@@ -146,18 +144,12 @@ mod tests {
         data
     }
 
-    fn create_mapper(
-        mapper_number: u8,
+    fn create_colordreams_mapper(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
         mirroring: MirroringMode,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        create_mapper_with_context(MapperContext::new(
-            mapper_number,
-            prg_rom,
-            chr_rom,
-            mirroring,
-        ))
+        create_mapper(MapperContext::new(11, prg_rom, chr_rom, mirroring))
     }
 
     #[test]
@@ -169,7 +161,7 @@ mod tests {
         let prg_rom = banked_data(32 * 1024, 4);
         let chr_rom = banked_data(8 * 1024, 4);
 
-        let mut mapper = create_mapper(11, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("ColorDreams (mapper 11) should be implemented");
 
         // Initial banks should be 0.
@@ -194,7 +186,7 @@ mod tests {
         let prg_rom = banked_data(32 * 1024, 16); // 16 banks of 32KB
         let chr_rom = banked_data(8 * 1024, 4);
 
-        let mut mapper = create_mapper(11, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("ColorDreams (mapper 11) should be implemented");
 
         // Test bank 8 (0b1000_0000 = 0x80)
@@ -211,7 +203,7 @@ mod tests {
         let prg_rom = banked_data(32 * 1024, 2);
         let chr_rom = banked_data(8 * 1024, 2);
 
-        let mut mapper = create_mapper(11, prg_rom, chr_rom, MirroringMode::Vertical)
+        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Vertical)
             .expect("ColorDreams (mapper 11) should be implemented");
 
         assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
@@ -228,7 +220,7 @@ mod tests {
         let prg_rom = banked_data(32 * 1024, 4); // Only 4 PRG banks
         let chr_rom = banked_data(8 * 1024, 2); // Only 2 CHR banks
 
-        let mut mapper = create_mapper(11, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("ColorDreams (mapper 11) should be implemented");
 
         // Select bank 5, should wrap to bank 1 (5 % 4 = 1)
@@ -245,20 +237,16 @@ mod tests {
         let prg_rom = banked_data(32 * 1024, 4);
         let chr_rom = banked_data(8 * 1024, 4);
 
-        let mut mapper = create_mapper(
-            11,
-            prg_rom.clone(),
-            chr_rom.clone(),
-            MirroringMode::Horizontal,
-        )
-        .expect("ColorDreams (mapper 11) should be implemented");
+        let mut mapper =
+            create_colordreams_mapper(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
+                .expect("ColorDreams (mapper 11) should be implemented");
 
         // Select PRG bank 2 and CHR bank 3 (0b0010_0011 = 0x23)
         mapper.write_prg(0x8000, 0x23);
 
         let snapshot = mapper.registers_snapshot();
 
-        let mut restored = create_mapper(11, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut restored = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("ColorDreams (mapper 11) should be implemented");
         restored.restore_registers(&snapshot);
 
