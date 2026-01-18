@@ -353,14 +353,6 @@ impl Bus {
         let mut ram = self.cpu_ram.borrow_mut();
         let len = data.len().min(0x800);
         ram[..len].copy_from_slice(&data[..len]);
-        // Mirror the RAM to the full 8KB area
-        for mirror in 1..4 {
-            let start = mirror * 0x800;
-            let end = start + len;
-            if end <= 0x2000 {
-                ram[start..end].copy_from_slice(&data[..len]);
-            }
-        }
     }
 
     /// Capture mapper state for save-state.
