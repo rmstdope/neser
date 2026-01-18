@@ -256,6 +256,51 @@ impl Cpu {
         self.total_cycles += cycles;
     }
 
+    /// Capture the current CPU state for save-state.
+    pub fn capture_state(&self) -> crate::savestate::CpuState {
+        crate::savestate::CpuState {
+            a: self.a,
+            x: self.x,
+            y: self.y,
+            sp: self.sp,
+            pc: self.pc,
+            p: self.p,
+            total_cycles: self.total_cycles,
+            halted: self.halted,
+            nmi_pending: self.nmi_pending,
+            irq_pending: self.irq_pending,
+            prev_need_nmi: self.prev_need_nmi,
+            prev_run_irq: self.prev_run_irq,
+            run_irq: self.run_irq,
+        }
+    }
+
+    /// Restore CPU state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::savestate::CpuState) {
+        self.a = state.a;
+        self.x = state.x;
+        self.y = state.y;
+        self.sp = state.sp;
+        self.pc = state.pc;
+        self.p = state.p;
+        self.total_cycles = state.total_cycles;
+        self.halted = state.halted;
+        self.nmi_pending = state.nmi_pending;
+        self.irq_pending = state.irq_pending;
+        self.prev_need_nmi = state.prev_need_nmi;
+        self.prev_run_irq = state.prev_run_irq;
+        self.run_irq = state.run_irq;
+        // Clear derived state that will be recomputed
+        self.delayed_i_flag = None;
+        self.forced_irq_pending = false;
+        self.skip_interrupt_latch_this_cycle = false;
+        self.dmc_dma_running = false;
+        self.dmc_dma_need_halt = false;
+        self.dmc_dma_need_dummy_read = false;
+        self.interrupt_stack.clear();
+        self.current_tick_info = None;
+    }
+
     fn end_cpu_cycle_latch_interrupt_lines(&mut self) {
         // Capture previous-cycle state, then update
         // edge/level detections based on the current end-of-cycle line status.

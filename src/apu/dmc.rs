@@ -329,6 +329,46 @@ impl Dmc {
     pub fn has_bytes_remaining(&self) -> bool {
         self.bytes_remaining > 0
     }
+
+    /// Capture the current DMC channel state for save-state.
+    pub fn capture_state(&self) -> crate::savestate::DmcState {
+        crate::savestate::DmcState {
+            timer: self.timer,
+            timer_period: self.timer_period,
+            output_level: self.output_level,
+            sample_address: self.sample_address,
+            sample_length: self.sample_length,
+            current_address: self.current_address,
+            bytes_remaining: self.bytes_remaining,
+            sample_buffer: self.sample_buffer,
+            shift_register: self.shift_register,
+            bits_remaining: self.bits_remaining,
+            silence_flag: self.silence_flag,
+            irq_enabled: self.irq_enabled,
+            irq_flag: self.interrupt_flag,
+            loop_flag: self.loop_flag,
+        }
+    }
+
+    /// Restore DMC channel state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::savestate::DmcState) {
+        self.timer = state.timer;
+        self.timer_period = state.timer_period;
+        self.output_level = state.output_level;
+        self.sample_address = state.sample_address;
+        self.sample_length = state.sample_length;
+        self.current_address = state.current_address;
+        self.bytes_remaining = state.bytes_remaining;
+        self.sample_buffer = state.sample_buffer;
+        self.shift_register = state.shift_register;
+        self.bits_remaining = state.bits_remaining;
+        self.silence_flag = state.silence_flag;
+        self.irq_enabled = state.irq_enabled;
+        self.interrupt_flag = state.irq_flag;
+        self.loop_flag = state.loop_flag;
+        self.dma_pending = false;
+        self.transfer_start_delay = 0;
+    }
 }
 
 #[cfg(test)]

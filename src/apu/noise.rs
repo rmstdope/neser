@@ -160,6 +160,34 @@ impl Noise {
     pub fn clear_length_counter(&mut self) {
         self.length_counter.clear();
     }
+
+    /// Capture the current noise channel state for save-state.
+    pub fn capture_state(&self) -> crate::savestate::NoiseState {
+        crate::savestate::NoiseState {
+            timer: self.timer,
+            timer_period: self.timer_period,
+            length_counter: self.length_counter.value(),
+            length_counter_enabled: self.length_counter.is_enabled(),
+            envelope: self.envelope.capture_state(),
+            mode_flag: self.mode,
+            shift_register: self.shift_register,
+        }
+    }
+
+    /// Restore noise channel state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::savestate::NoiseState) {
+        self.timer = state.timer;
+        self.timer_period = state.timer_period;
+        self.length_counter.set_value(state.length_counter);
+        if state.length_counter_enabled {
+            self.length_counter.enable();
+        } else {
+            self.length_counter.disable();
+        }
+        self.envelope.restore_state(&state.envelope);
+        self.mode = state.mode_flag;
+        self.shift_register = state.shift_register;
+    }
 }
 
 #[cfg(test)]

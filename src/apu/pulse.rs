@@ -281,6 +281,46 @@ impl Pulse {
             self.get_envelope_volume()
         }
     }
+
+    /// Capture the current pulse channel state for save-state.
+    pub fn capture_state(&self) -> crate::savestate::PulseState {
+        crate::savestate::PulseState {
+            timer: self.timer_counter,
+            timer_period: self.timer_period,
+            length_counter: self.length_counter.value(),
+            length_counter_enabled: self.length_counter.is_enabled(),
+            duty: self.duty_mode,
+            duty_position: self.sequence_position,
+            envelope: self.envelope.capture_state(),
+            sweep_enabled: self.sweep_enabled,
+            sweep_period: self.sweep_divider_period,
+            sweep_negate: self.sweep_negate,
+            sweep_shift: self.sweep_shift,
+            sweep_reload: self.sweep_reload,
+            sweep_divider: self.sweep_divider,
+        }
+    }
+
+    /// Restore pulse channel state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::savestate::PulseState) {
+        self.timer_counter = state.timer;
+        self.timer_period = state.timer_period;
+        self.length_counter.set_value(state.length_counter);
+        if state.length_counter_enabled {
+            self.length_counter.enable();
+        } else {
+            self.length_counter.disable();
+        }
+        self.duty_mode = state.duty;
+        self.sequence_position = state.duty_position;
+        self.envelope.restore_state(&state.envelope);
+        self.sweep_enabled = state.sweep_enabled;
+        self.sweep_divider_period = state.sweep_period;
+        self.sweep_negate = state.sweep_negate;
+        self.sweep_shift = state.sweep_shift;
+        self.sweep_reload = state.sweep_reload;
+        self.sweep_divider = state.sweep_divider;
+    }
 }
 
 #[cfg(test)]

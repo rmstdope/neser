@@ -498,6 +498,66 @@ impl Ppu {
         self.prev_a12 = current_a12;
         rising_edge
     }
+
+    /// Capture the current PPU state for save-state.
+    pub fn capture_state(&self) -> crate::savestate::PpuState {
+        crate::savestate::PpuState {
+            timing: crate::savestate::PpuTimingState {
+                scanline: self.timing.scanline,
+                pixel: self.timing.pixel,
+                total_cycles: self.timing.total_cycles(),
+                odd_frame: self.timing.frame_count() % 2 == 1,
+            },
+            registers: crate::savestate::PpuRegisterState {
+                control: self.registers.control(),
+                mask: self.registers.mask(),
+                oam_addr: self.registers.oam_address,
+                v: self.registers.v(),
+                t: self.registers.t(),
+                fine_x: self.registers.x(),
+                w: self.registers.w(),
+                io_bus: self.registers.io_bus(),
+            },
+            vblank_flag: self.status.is_in_vblank(),
+            sprite_zero_hit: false, // Status.sprite_0_hit is not exposed, but will be recalculated
+            sprite_overflow: false, // Status.sprite_overflow is not exposed
+            nmi_occurred: false,    // Status.nmi_enabled - will be repopulated
+            vram: self.memory.vram_snapshot(),
+            palette: self.memory.palette_snapshot(),
+            oam: self.sprites.oam_snapshot(),
+            secondary_oam: self.sprites.secondary_oam_snapshot(),
+            read_buffer: self.registers.data_buffer(),
+        }
+    }
+
+    /// Restore PPU state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::savestate::PpuState) {
+        // Restore timing
+        self.timing.restore_state(state.timing.scanline, state.timing.pixel, state.timing.total_cycles, state.timing.odd_frame);
+
+        // Restore registers
+        self.registers.restore_state(
+            state.registers.control,
+            state.registers.mask,
+            state.registers.oam_addr,
+            state.registers.v,
+            state.registers.t,
+            state.registers.fine_x,
+            state.registers.w,
+            state.registers.io_bus,
+            state.read_buffer,
+        );
+
+        // Restore memory
+        self.memory.restore_vram(&state.vram);
+        self.memory.restore_palette(&state.palette);
+
+        // Restore OAM
+        self.sprites.restore_oam(&state.oam, &state.secondary_oam);
+
+        // Restore status flags
+        self.status.restore_state(state.vblank_flag, state.sprite_zero_hit, state.sprite_overflow, state.nmi_occurred);
+    }
 }
 
 #[cfg(test)]

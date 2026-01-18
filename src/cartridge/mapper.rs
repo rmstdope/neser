@@ -182,6 +182,52 @@ pub trait Mapper {
             self.write_prg(0x6000 + i as u16, byte);
         }
     }
+
+    /// Get the mapper number (iNES mapper ID).
+    ///
+    /// Returns the iNES mapper number for this mapper (e.g., 0 for NROM, 1 for MMC1).
+    /// Default implementation returns 0.
+    fn mapper_number(&self) -> u8 {
+        0
+    }
+
+    /// Create a snapshot of PRG-RAM for save-state.
+    ///
+    /// Default implementation uses wram_snapshot.
+    fn prg_ram_snapshot(&self) -> Vec<u8> {
+        self.wram_snapshot()
+    }
+
+    /// Create a snapshot of CHR-RAM for save-state.
+    ///
+    /// Default implementation returns empty (CHR-ROM has no state to save).
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// Create a snapshot of mapper-specific registers for save-state.
+    ///
+    /// Default implementation returns empty (for simple mappers with no internal state).
+    fn registers_snapshot(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    /// Restore PRG-RAM from a save-state.
+    ///
+    /// Default implementation uses load_wram_snapshot.
+    fn restore_prg_ram(&mut self, data: &[u8]) {
+        self.load_wram_snapshot(data);
+    }
+
+    /// Restore CHR-RAM from a save-state.
+    ///
+    /// Default implementation is a no-op.
+    fn restore_chr_ram(&mut self, _data: &[u8]) {}
+
+    /// Restore mapper-specific registers from a save-state.
+    ///
+    /// Default implementation is a no-op.
+    fn restore_registers(&mut self, _data: &[u8]) {}
 }
 
 /// Calculate CRC32 of ROM data (PRG + CHR combined).

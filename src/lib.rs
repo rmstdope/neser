@@ -12,6 +12,7 @@ pub mod input;
 pub use bus::bus::Bus;
 pub mod nes;
 pub mod ppu; // Modular PPU structure
+pub mod savestate;
 pub mod tracing;
 
 #[cfg(feature = "sdl")]

@@ -343,6 +343,58 @@ impl Bus {
         self.open_bus
     }
 
+    /// Create a snapshot of CPU RAM for save-state (first 2KB is the actual RAM).
+    pub fn ram_snapshot(&self) -> Vec<u8> {
+        self.cpu_ram.borrow()[..0x800].to_vec()
+    }
+
+    /// Restore CPU RAM from a save-state.
+    pub fn restore_ram(&mut self, data: &[u8]) {
+        let mut ram = self.cpu_ram.borrow_mut();
+        let len = data.len().min(0x800);
+        ram[..len].copy_from_slice(&data[..len]);
+        // Mirror the RAM to the full 8KB area
+        for mirror in 1..4 {
+            let start = mirror * 0x800;
+            let end = start + len;
+            if end <= 0x2000 {
+                ram[start..end].copy_from_slice(&data[..len]);
+            }
+        }
+    }
+
+    /// Capture mapper state for save-state.
+    pub fn capture_mapper_state(&self) -> crate::savestate::MapperState {
+        if let Some(ref cartridge_opt) = *self.cartridge.borrow() {
+            let cartridge = cartridge_opt.borrow();
+            let mapper = cartridge.mapper();
+            crate::savestate::MapperState {
+                mapper_number: mapper.mapper_number(),
+                prg_ram: mapper.prg_ram_snapshot(),
+                chr_ram: mapper.chr_ram_snapshot(),
+                registers: mapper.registers_snapshot(),
+            }
+        } else {
+            crate::savestate::MapperState {
+                mapper_number: 0,
+                prg_ram: vec![],
+                chr_ram: vec![],
+                registers: vec![],
+            }
+        }
+    }
+
+    /// Restore mapper state from a save-state.
+    pub fn restore_mapper_state(&mut self, state: &crate::savestate::MapperState) {
+        if let Some(ref cartridge_opt) = *self.cartridge.borrow() {
+            let mut cartridge = cartridge_opt.borrow_mut();
+            let mapper = cartridge.mapper_mut();
+            mapper.restore_prg_ram(&state.prg_ram);
+            mapper.restore_chr_ram(&state.chr_ram);
+            mapper.restore_registers(&state.registers);
+        }
+    }
+
     // /// Print the current open bus value to stdout (for debugging)
     // pub fn print_open_bus(&self) {
     //     println!("Open bus: 0x{:02X}", *self.open_bus.borrow());

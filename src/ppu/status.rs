@@ -144,6 +144,22 @@ impl Status {
     pub fn is_sprite_0_hit(&self) -> bool {
         self.sprite_0_hit
     }
+
+    /// Restore status state from a save-state.
+    pub fn restore_state(
+        &mut self,
+        vblank: bool,
+        sprite_0_hit: bool,
+        sprite_overflow: bool,
+        nmi_enabled: bool,
+    ) {
+        self.vblank_flag = vblank;
+        self.sprite_0_hit = sprite_0_hit;
+        self.pending_sprite_0_hit = false;
+        self.sprite_overflow = sprite_overflow;
+        self.nmi_enabled = nmi_enabled;
+        self.frame_complete = false;
+    }
 }
 
 #[cfg(test)]

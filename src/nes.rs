@@ -556,6 +556,61 @@ impl Nes {
 
         text
     }
+
+    /// Create a complete save-state snapshot of the emulator.
+    ///
+    /// This captures the full state of CPU, PPU, APU, RAM, and mapper,
+    /// allowing the emulator to be restored to this exact state later.
+    pub fn save_state(&self) -> crate::savestate::SaveState {
+        crate::savestate::SaveState::new(
+            self.cpu.capture_state(),
+            self.ppu.borrow().capture_state(),
+            self.apu.borrow().capture_state(),
+            self.memory.borrow().ram_snapshot(),
+            self.memory.borrow().capture_mapper_state(),
+        )
+    }
+
+    /// Restore emulator state from a save-state.
+    ///
+    /// This restores the full state of CPU, PPU, APU, RAM, and mapper
+    /// from a previously saved state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the save-state version is incompatible.
+    pub fn load_state(
+        &mut self,
+        state: &crate::savestate::SaveState,
+    ) -> Result<(), SaveStateError> {
+        // Check version compatibility
+        if state.version != crate::savestate::SAVESTATE_VERSION {
+            return Err(SaveStateError::IncompatibleVersion {
+                expected: crate::savestate::SAVESTATE_VERSION,
+                found: state.version,
+            });
+        }
+
+        // Restore all components
+        self.cpu.restore_state(&state.cpu);
+        self.ppu.borrow_mut().restore_state(&state.ppu);
+        self.apu.borrow_mut().restore_state(&state.apu);
+        self.memory.borrow_mut().restore_ram(&state.ram);
+        self.memory.borrow_mut().restore_mapper_state(&state.mapper);
+
+        // Clear derived state
+        self.fractional_ppu_cycles = 0.0;
+        self.ready_to_render = false;
+
+        Ok(())
+    }
+}
+
+/// Errors that can occur when loading a save-state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SaveStateError {
+    /// The save-state format version is incompatible.
+    IncompatibleVersion { expected: u32, found: u32 },
 }
 
 #[cfg(test)]
@@ -1296,5 +1351,121 @@ mod tests {
         // PRG-RAM should still have the value (NROM doesn't clear RAM on reset)
         // This test verifies the reset call chain works without crashing
         assert_eq!(nes.memory.borrow_mut().read(0x6000), 0xAB);
+    }
+
+    #[test]
+    fn test_save_state_roundtrip() {
+        // Create and initialize NES
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Run some cycles to get the emulator into an interesting state
+        for _ in 0..1000 {
+            nes.run_cpu_tick();
+        }
+
+        // Capture state after some execution
+        let state1 = nes.save_state();
+
+        // Run more cycles
+        for _ in 0..500 {
+            nes.run_cpu_tick();
+        }
+
+        // Capture state after more execution (should be different)
+        let state2 = nes.save_state();
+
+        // States should be different
+        assert_ne!(state1.cpu.pc, state2.cpu.pc);
+
+        // Now restore to state1
+        nes.load_state(&state1).expect("load_state should succeed");
+
+        // Capture state again - should match state1
+        let state_restored = nes.save_state();
+        assert_eq!(state_restored.cpu.a, state1.cpu.a);
+        assert_eq!(state_restored.cpu.x, state1.cpu.x);
+        assert_eq!(state_restored.cpu.y, state1.cpu.y);
+        assert_eq!(state_restored.cpu.sp, state1.cpu.sp);
+        assert_eq!(state_restored.cpu.pc, state1.cpu.pc);
+        assert_eq!(state_restored.cpu.p, state1.cpu.p);
+        assert_eq!(state_restored.cpu.total_cycles, state1.cpu.total_cycles);
+    }
+
+    #[test]
+    fn test_save_state_version_check() {
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Create a state with an incompatible version
+        let mut state = nes.save_state();
+        state.version = 9999; // Invalid version
+
+        // Loading should fail with version error
+        let result = nes.load_state(&state);
+        assert!(result.is_err());
+
+        if let Err(super::SaveStateError::IncompatibleVersion { expected, found }) = result {
+            assert_eq!(expected, crate::savestate::SAVESTATE_VERSION);
+            assert_eq!(found, 9999);
+        } else {
+            panic!("Expected IncompatibleVersion error");
+        }
+    }
+
+    #[test]
+    fn test_save_state_deterministic_execution() {
+        // This test verifies that loading a state and running produces identical results
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Run to get to an interesting state
+        for _ in 0..500 {
+            nes.run_cpu_tick();
+        }
+
+        // Save state
+        let saved_state = nes.save_state();
+
+        // Run 100 more cycles and capture the resulting state
+        for _ in 0..100 {
+            nes.run_cpu_tick();
+        }
+        let end_state1 = nes.save_state();
+
+        // Restore to saved state
+        nes.load_state(&saved_state).unwrap();
+
+        // Run the same 100 cycles
+        for _ in 0..100 {
+            nes.run_cpu_tick();
+        }
+        let end_state2 = nes.save_state();
+
+        // Both end states should be identical (deterministic execution)
+        assert_eq!(end_state1.cpu.pc, end_state2.cpu.pc);
+        assert_eq!(end_state1.cpu.a, end_state2.cpu.a);
+        assert_eq!(end_state1.cpu.x, end_state2.cpu.x);
+        assert_eq!(end_state1.cpu.y, end_state2.cpu.y);
+        assert_eq!(end_state1.cpu.sp, end_state2.cpu.sp);
+        assert_eq!(end_state1.cpu.p, end_state2.cpu.p);
+        assert_eq!(end_state1.cpu.total_cycles, end_state2.cpu.total_cycles);
+        assert_eq!(
+            end_state1.ppu.timing.scanline,
+            end_state2.ppu.timing.scanline
+        );
+        assert_eq!(end_state1.ppu.timing.pixel, end_state2.ppu.timing.pixel);
     }
 }

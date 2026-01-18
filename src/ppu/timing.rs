@@ -116,6 +116,16 @@ impl Timing {
         self.frame_count
     }
 
+    /// Restore timing state from a save-state.
+    pub fn restore_state(&mut self, scanline: u16, pixel: u16, total_cycles: u64, odd_frame: bool) {
+        self.scanline = scanline;
+        self.pixel = pixel;
+        self.total_cycles = total_cycles;
+        self.frame_count = if odd_frame { 1 } else { 0 }; // Preserve odd/even frame state
+        self.rendering_enabled_d1 = false;
+        self.rendering_enabled_d2 = false;
+    }
+
     /// Get the TV system
     pub fn tv_system(&self) -> TvSystem {
         self.tv_system
