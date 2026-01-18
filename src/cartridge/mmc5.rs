@@ -117,7 +117,6 @@ pub struct MMC5Mapper {
     
     // PPU read tracking for hardware-accurate scanline detection
     cpu_cycles_since_ppu_read: u8, // CPU cycles since last PPU read from $2xxx
-    last_ppu_read_scanline: u16,   // Track scanline for PPU read sequences
 
     // Hardware multiplier
     multiplicand: u8, // $5205
@@ -306,7 +305,6 @@ impl MMC5Mapper {
             
             // PPU read tracking
             cpu_cycles_since_ppu_read: 0,
-            last_ppu_read_scanline: 0,
 
             // Hardware multiplier
             multiplicand: 0,
@@ -2064,5 +2062,120 @@ mod tests {
         // Now writes should work again
         mapper.write_prg(0x6000, 0xCC);
         assert_eq!(mapper.read_prg(0x6000), 0xCC);
+    }
+
+    #[test]
+    fn test_mmc5_in_frame_clears_after_cpu_cycles_without_ppu_reads() {
+        // MMC5 hardware clears the in_frame flag after 3 CPU cycles without PPU reads.
+        // This test validates that behavior.
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        // Map a nametable to ExRAM so we can trigger read_nametable
+        mmc5.write_prg(0x5105, 0b00_00_00_10); // $2000 quadrant to ExRAM
+        mmc5.write_prg(0x5104, 0x00); // ExRAM mode 0 (readable as nametable)
+
+        // Initially, in_frame should be false
+        assert!(!mmc5.in_frame);
+
+        // Simulate a PPU read from nametable - this should set in_frame
+        let _ = mmc5.read_nametable(0x2000);
+        assert!(mmc5.in_frame, "in_frame should be set after PPU read");
+
+        // Run 2 CPU cycles - in_frame should still be true
+        mmc5.cpu_cycle();
+        mmc5.cpu_cycle();
+        assert!(
+            mmc5.in_frame,
+            "in_frame should still be true after 2 CPU cycles"
+        );
+
+        // Run 1 more CPU cycle (total 3) - in_frame should clear
+        mmc5.cpu_cycle();
+        assert!(
+            !mmc5.in_frame,
+            "in_frame should clear after 3 CPU cycles without PPU reads"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_ppu_reads_reset_cpu_cycle_counter() {
+        // PPU reads should reset the CPU cycle counter, preventing in_frame from clearing.
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        // Map a nametable to ExRAM so we can trigger read_nametable
+        mmc5.write_prg(0x5105, 0b00_00_00_10);
+        mmc5.write_prg(0x5104, 0x00);
+
+        // First PPU read sets in_frame
+        let _ = mmc5.read_nametable(0x2000);
+        assert!(mmc5.in_frame);
+
+        // Run 2 CPU cycles
+        mmc5.cpu_cycle();
+        mmc5.cpu_cycle();
+
+        // Another PPU read before the 3rd CPU cycle - should reset counter
+        let _ = mmc5.read_nametable(0x2001);
+        assert!(
+            mmc5.in_frame,
+            "in_frame should still be true after PPU read reset counter"
+        );
+
+        // Run 2 more CPU cycles - should still be true
+        mmc5.cpu_cycle();
+        mmc5.cpu_cycle();
+        assert!(
+            mmc5.in_frame,
+            "in_frame should still be true 2 cycles after reset"
+        );
+
+        // Run 1 more CPU cycle (3 total since last PPU read) - should clear
+        mmc5.cpu_cycle();
+        assert!(
+            !mmc5.in_frame,
+            "in_frame should clear after 3 CPU cycles since last PPU read"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_in_frame_flag_in_status_register() {
+        // The in_frame flag should be readable via $5204 bit 6
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        // Map a nametable to ExRAM
+        mmc5.write_prg(0x5105, 0b00_00_00_10);
+        mmc5.write_prg(0x5104, 0x00);
+
+        // Initially, status should not have in_frame bit set
+        let status = mmc5.read_prg(0x5204);
+        assert_eq!(
+            status & 0x40,
+            0x00,
+            "in_frame bit should be clear initially"
+        );
+
+        // Trigger a PPU read to set in_frame
+        let _ = mmc5.read_nametable(0x2000);
+
+        // Status should now report in_frame
+        let status = mmc5.read_prg(0x5204);
+        assert_eq!(
+            status & 0x40,
+            0x40,
+            "in_frame bit should be set after PPU read"
+        );
+
+        // Run 3 CPU cycles to clear in_frame
+        mmc5.cpu_cycle();
+        mmc5.cpu_cycle();
+        mmc5.cpu_cycle();
+
+        // Status should now have in_frame cleared
+        let status = mmc5.read_prg(0x5204);
+        assert_eq!(
+            status & 0x40,
+            0x00,
+            "in_frame bit should clear after 3 CPU cycles"
+        );
     }
 }
