@@ -521,7 +521,7 @@ impl Ppu {
             vblank_flag: self.status.is_in_vblank(),
             sprite_zero_hit: self.status.is_sprite_0_hit(),
             sprite_overflow: self.status.is_sprite_overflow(),
-            nmi_occurred: self.status.is_nmi_enabled(),
+            nmi_pending: self.status.is_nmi_enabled(),
             vram: self.memory.vram_snapshot(),
             palette: self.memory.palette_snapshot(),
             oam: self.sprites.oam_snapshot(),
@@ -556,7 +556,7 @@ impl Ppu {
         self.sprites.restore_oam(&state.oam, &state.secondary_oam);
 
         // Restore status flags
-        self.status.restore_state(state.vblank_flag, state.sprite_zero_hit, state.sprite_overflow, state.nmi_occurred);
+        self.status.restore_state(state.vblank_flag, state.sprite_zero_hit, state.sprite_overflow, state.nmi_pending);
     }
 }
 

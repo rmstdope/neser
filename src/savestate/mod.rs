@@ -74,7 +74,9 @@ pub struct PpuState {
     pub vblank_flag: bool,
     pub sprite_zero_hit: bool,
     pub sprite_overflow: bool,
-    pub nmi_occurred: bool,
+    /// Internal edge-detection latch for NMI generation.
+    /// This is polled and cleared by the CPU, not the NMI enable control bit.
+    pub nmi_pending: bool,
     pub vram: Vec<u8>,
     pub palette: Vec<u8>,
     pub oam: Vec<u8>,
@@ -271,7 +273,7 @@ mod tests {
             vblank_flag: false,
             sprite_zero_hit: false,
             sprite_overflow: false,
-            nmi_occurred: false,
+            nmi_pending: false,
             vram: vec![0; 0x800],
             palette: vec![0; 32],
             oam: vec![0; 256],

@@ -431,6 +431,8 @@ impl Mapper for MMC1Mapper {
             self.chr_bank_1 = data[4];
             self.prg_bank = data[5];
         }
+    }
+
     fn cpu_cycle(&mut self) {
         // Increment CPU cycle counter for consecutive-write detection
         self.cpu_cycle_count += 1;
