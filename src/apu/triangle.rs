@@ -209,6 +209,7 @@ impl Triangle {
     }
 
     /// Capture the current triangle channel state for save-state.
+    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::TriangleState {
         crate::savestate::TriangleState {
             timer: self.timer_counter,
@@ -224,6 +225,7 @@ impl Triangle {
     }
 
     /// Restore triangle channel state from a save-state.
+    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::TriangleState) {
         self.timer_counter = state.timer;
         self.timer_period = state.timer_period;

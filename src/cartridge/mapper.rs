@@ -272,6 +272,88 @@ fn requires_mmc3_alternate_irq(crc: u32) -> bool {
     MMC3_ALTERNATE_IRQ_CRCS.contains(&crc)
 }
 
+fn vrc2_vrc4_21(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
+    Vrc2Vrc4Mapper::new(21, prg_rom, chr_rom, mirroring)
+}
+
+fn vrc2_vrc4_22(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
+    Vrc2Vrc4Mapper::new(22, prg_rom, chr_rom, mirroring)
+}
+
+fn vrc2_vrc4_23(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
+    Vrc2Vrc4Mapper::new(23, prg_rom, chr_rom, mirroring)
+}
+
+fn vrc2_vrc4_25(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
+    Vrc2Vrc4Mapper::new(25, prg_rom, chr_rom, mirroring)
+}
+
+fn vrc6_24(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> VRC6Mapper {
+    VRC6Mapper::new(24, prg_rom, chr_rom, mirroring)
+}
+
+fn vrc6_26(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> VRC6Mapper {
+    VRC6Mapper::new(26, prg_rom, chr_rom, mirroring)
+}
+
+macro_rules! mapper_registry {
+    ($($id:expr => $ctor:path),+ $(,)?) => {
+        fn create_registry_mapper(
+            mapper_number: u8,
+            prg_rom: Vec<u8>,
+            chr_rom: Vec<u8>,
+            mirroring: MirroringMode,
+        ) -> Option<Box<dyn Mapper>> {
+            match mapper_number {
+                $(
+                    $id => Some(Box::new($ctor(prg_rom, chr_rom, mirroring))),
+                )+
+                _ => None,
+            }
+        }
+    };
+}
+
+mapper_registry! {
+    0 => NROMMapper::new,
+    1 => MMC1Mapper::new,
+    2 => UxROMMapper::new,
+    3 => CNROMMapper::new,
+    5 => MMC5Mapper::new,
+    7 => AxROMMapper::new,
+    9 => MMC2Mapper::new,
+    10 => MMC4Mapper::new,
+    11 => ColorDreamsMapper::new,
+    13 => CpromMapper::new,
+    15 => Multicart15Mapper::new,
+    16 => BandaiFcgMapper::new,
+    19 => Namco163Mapper::new,
+    21 => vrc2_vrc4_21,
+    22 => vrc2_vrc4_22,
+    23 => vrc2_vrc4_23,
+    24 => vrc6_24,
+    25 => vrc2_vrc4_25,
+    26 => vrc6_26,
+    34 => BnromNinaMapper::new,
+    66 => GxROMMapper::new,
+    69 => SunsoftFme7Mapper::new,
+    71 => CamericaMapper::new,
+    78 => NinaTengenMapper::new,
+    206 => Namco118Mapper::new,
+}
+
+#[cfg(test)]
+const SUPPORTED_MAPPERS: &[u8] = &[
+    4, // MMC3 is constructed with CRC-specific behavior.
+    0, 1, 2, 3, 5, 7, 9, 10, 11, 13, 15, 16, 19, 21, 22, 23, 24, 25, 26, 34, 66, 69, 71, 78, 206,
+];
+
+/// List of supported iNES mapper IDs handled by the factory.
+#[cfg(test)]
+pub fn supported_mappers() -> &'static [u8] {
+    SUPPORTED_MAPPERS
+}
+
 /// Create a mapper instance based on mapper number
 pub fn create_mapper(
     mapper_number: u8,
@@ -292,66 +374,30 @@ pub fn create_mapper_with_crc(
     mirroring: MirroringMode,
     crc: u32,
 ) -> io::Result<Box<dyn Mapper>> {
-    match mapper_number {
-        0 => Ok(Box::new(NROMMapper::new(prg_rom, chr_rom, mirroring))),
-        1 => Ok(Box::new(MMC1Mapper::new(prg_rom, chr_rom, mirroring))),
-        2 => Ok(Box::new(UxROMMapper::new(prg_rom, chr_rom, mirroring))),
-        3 => Ok(Box::new(CNROMMapper::new(prg_rom, chr_rom, mirroring))),
-        4 => {
-            let use_alternate_irq = requires_mmc3_alternate_irq(crc);
-            if use_alternate_irq {
-                eprintln!(
-                    "MMC3: Using alternate (NEC) IRQ behavior for CRC 0x{:08X}",
-                    crc
-                );
-            }
-            Ok(Box::new(MMC3Mapper::new_with_irq_mode(
-                prg_rom,
-                chr_rom,
-                mirroring,
-                use_alternate_irq,
-            )))
+    if mapper_number == 4 {
+        let use_alternate_irq = requires_mmc3_alternate_irq(crc);
+        if use_alternate_irq {
+            eprintln!(
+                "MMC3: Using alternate (NEC) IRQ behavior for CRC 0x{:08X}",
+                crc
+            );
         }
-        5 => Ok(Box::new(MMC5Mapper::new(prg_rom, chr_rom, mirroring))),
-        7 => Ok(Box::new(AxROMMapper::new(prg_rom, chr_rom, mirroring))),
-        9 => Ok(Box::new(MMC2Mapper::new(prg_rom, chr_rom, mirroring))),
-        10 => Ok(Box::new(MMC4Mapper::new(prg_rom, chr_rom, mirroring))),
-        11 => Ok(Box::new(ColorDreamsMapper::new(
-            prg_rom, chr_rom, mirroring,
-        ))),
-        13 => Ok(Box::new(CpromMapper::new(prg_rom, chr_rom, mirroring))),
-        15 => Ok(Box::new(Multicart15Mapper::new(
-            prg_rom, chr_rom, mirroring,
-        ))),
-        16 => Ok(Box::new(BandaiFcgMapper::new(prg_rom, chr_rom, mirroring))),
-        19 => Ok(Box::new(Namco163Mapper::new(prg_rom, chr_rom, mirroring))),
-        21 => Ok(Box::new(Vrc2Vrc4Mapper::new(
-            21, prg_rom, chr_rom, mirroring,
-        ))),
-        22 => Ok(Box::new(Vrc2Vrc4Mapper::new(
-            22, prg_rom, chr_rom, mirroring,
-        ))),
-        23 => Ok(Box::new(Vrc2Vrc4Mapper::new(
-            23, prg_rom, chr_rom, mirroring,
-        ))),
-        24 => Ok(Box::new(VRC6Mapper::new(24, prg_rom, chr_rom, mirroring))),
-        25 => Ok(Box::new(Vrc2Vrc4Mapper::new(
-            25, prg_rom, chr_rom, mirroring,
-        ))),
-        26 => Ok(Box::new(VRC6Mapper::new(26, prg_rom, chr_rom, mirroring))),
-        34 => Ok(Box::new(BnromNinaMapper::new(prg_rom, chr_rom, mirroring))),
-        66 => Ok(Box::new(GxROMMapper::new(prg_rom, chr_rom, mirroring))),
-        69 => Ok(Box::new(SunsoftFme7Mapper::new(
-            prg_rom, chr_rom, mirroring,
-        ))),
-        71 => Ok(Box::new(CamericaMapper::new(prg_rom, chr_rom, mirroring))),
-        78 => Ok(Box::new(NinaTengenMapper::new(prg_rom, chr_rom, mirroring))),
-        206 => Ok(Box::new(Namco118Mapper::new(prg_rom, chr_rom, mirroring))),
-        _ => Err(io::Error::new(
-            io::ErrorKind::Unsupported,
-            format!("Mapper {} not implemented", mapper_number),
-        )),
+        return Ok(Box::new(MMC3Mapper::new_with_irq_mode(
+            prg_rom,
+            chr_rom,
+            mirroring,
+            use_alternate_irq,
+        )));
     }
+
+    if let Some(mapper) = create_registry_mapper(mapper_number, prg_rom, chr_rom, mirroring) {
+        return Ok(mapper);
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!("Mapper {} not implemented", mapper_number),
+    ))
 }
 
 /// Create a mapper instance using cartridge metadata.
@@ -374,5 +420,22 @@ pub fn create_mapper_with_prg_ram_size(
             prg_ram_banks_8k,
         ))),
         _ => create_mapper(mapper_number, prg_rom, chr_rom, mirroring),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_supported_mappers_contains_common_ids() {
+        let supported = supported_mappers();
+        assert!(supported.contains(&0));
+        assert!(supported.contains(&1));
+        assert!(supported.contains(&2));
+        assert!(supported.contains(&3));
+        assert!(supported.contains(&4));
+        assert!(supported.contains(&5));
+        assert!(supported.contains(&7));
     }
 }

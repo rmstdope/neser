@@ -210,21 +210,25 @@ impl SaveState {
     }
 
     /// Serialize the save state to JSON.
+    #[cfg(test)]
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string(self)
     }
 
     /// Deserialize a save state from JSON.
+    #[cfg(test)]
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         serde_json::from_str(json)
     }
 
     /// Serialize the save state to JSON-encoded UTF-8 bytes.
+    #[cfg(test)]
     pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(self)
     }
 
     /// Deserialize a save state from JSON-encoded UTF-8 bytes.
+    #[cfg(test)]
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(bytes)
     }

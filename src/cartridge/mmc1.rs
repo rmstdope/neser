@@ -22,6 +22,7 @@ const MMC1_DEFAULT_CONTROL: u8 = 0x0C; // PRG mode 3, CHR mode 0
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mmc1Revision {
     /// MMC1A: PRG-RAM always enabled, bit 4 ignored
+    #[cfg(test)]
     Mmc1A,
     /// MMC1B/C: PRG-RAM enable controlled by bit 4 of PRG bank register
     Mmc1B,
@@ -75,8 +76,8 @@ pub struct MMC1Mapper {
     revision: Mmc1Revision, // MMC1A vs MMC1B behavior
 
     // Cycle tracking for consecutive-write ignore behavior
-    cpu_cycle_count: u64,      // Current CPU cycle count
-    last_write_cycle: u64,     // CPU cycle of last write to shift register
+    cpu_cycle_count: u64,  // Current CPU cycle count
+    last_write_cycle: u64, // CPU cycle of last write to shift register
 }
 
 impl MMC1Mapper {
@@ -192,6 +193,7 @@ impl MMC1Mapper {
 
     fn is_wram_enabled(&self) -> bool {
         match self.revision {
+            #[cfg(test)]
             Mmc1Revision::Mmc1A => {
                 // MMC1A always has PRG-RAM enabled, bit 4 is ignored
                 true
@@ -1030,7 +1032,7 @@ mod tests {
 
         // Advance to cycle 1 for first real write
         mapper.cpu_cycle(); // cycle = 1
-        
+
         // First write on cycle 1: shift in bit 1 (write_count = 1)
         mapper.write_prg(0x8000, 0x01); // last_write = 1, write_count = 1
 
@@ -1051,13 +1053,13 @@ mod tests {
 
         // Third accepted write - bit 1 (write_count = 3)
         mapper.write_prg(0x8000, 0x01); // last_write = 3, write_count = 3
-        
+
         // Advance to cycle 4
         mapper.cpu_cycle(); // cycle = 4
 
         // Fourth accepted write - bit 1 (write_count = 4)
         mapper.write_prg(0x8000, 0x01); // last_write = 4, write_count = 4
-        
+
         // Advance to cycle 5
         mapper.cpu_cycle(); // cycle = 5
 

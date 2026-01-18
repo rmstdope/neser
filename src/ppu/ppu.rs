@@ -500,6 +500,7 @@ impl Ppu {
     }
 
     /// Capture the current PPU state for save-state.
+    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::PpuState {
         crate::savestate::PpuState {
             timing: crate::savestate::PpuTimingState {
@@ -531,9 +532,15 @@ impl Ppu {
     }
 
     /// Restore PPU state from a save-state.
+    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::PpuState) {
         // Restore timing
-        self.timing.restore_state(state.timing.scanline, state.timing.pixel, state.timing.total_cycles, state.timing.frame_count);
+        self.timing.restore_state(
+            state.timing.scanline,
+            state.timing.pixel,
+            state.timing.total_cycles,
+            state.timing.frame_count,
+        );
 
         // Restore registers
         self.registers.restore_state(
@@ -556,7 +563,12 @@ impl Ppu {
         self.sprites.restore_oam(&state.oam, &state.secondary_oam);
 
         // Restore status flags
-        self.status.restore_state(state.vblank_flag, state.sprite_zero_hit, state.sprite_overflow, state.nmi_pending);
+        self.status.restore_state(
+            state.vblank_flag,
+            state.sprite_zero_hit,
+            state.sprite_overflow,
+            state.nmi_pending,
+        );
     }
 }
 

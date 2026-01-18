@@ -114,6 +114,7 @@ impl Envelope {
     }
 
     /// Capture the current envelope state for save-state.
+    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::EnvelopeState {
         crate::savestate::EnvelopeState {
             start_flag: self.start_flag,
@@ -126,6 +127,7 @@ impl Envelope {
     }
 
     /// Restore envelope state from a save-state.
+    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::EnvelopeState) {
         self.start_flag = state.start_flag;
         self.divider = state.divider;

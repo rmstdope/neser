@@ -257,6 +257,7 @@ impl Cpu {
     }
 
     /// Capture the current CPU state for save-state.
+    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::CpuState {
         crate::savestate::CpuState {
             a: self.a,
@@ -276,6 +277,7 @@ impl Cpu {
     }
 
     /// Restore CPU state from a save-state.
+    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::CpuState) {
         self.a = state.a;
         self.x = state.x;

@@ -356,6 +356,7 @@ impl Bus {
     }
 
     /// Capture mapper state for save-state.
+    #[cfg(test)]
     pub fn capture_mapper_state(&self) -> crate::savestate::MapperState {
         if let Some(ref cartridge_opt) = *self.cartridge.borrow() {
             let cartridge = cartridge_opt.borrow();
@@ -377,6 +378,7 @@ impl Bus {
     }
 
     /// Restore mapper state from a save-state.
+    #[cfg(test)]
     pub fn restore_mapper_state(&mut self, state: &crate::savestate::MapperState) {
         if let Some(ref cartridge_opt) = *self.cartridge.borrow() {
             let mut cartridge = cartridge_opt.borrow_mut();

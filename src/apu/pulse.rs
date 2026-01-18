@@ -283,6 +283,7 @@ impl Pulse {
     }
 
     /// Capture the current pulse channel state for save-state.
+    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::PulseState {
         crate::savestate::PulseState {
             timer: self.timer_counter,
@@ -302,6 +303,7 @@ impl Pulse {
     }
 
     /// Restore pulse channel state from a save-state.
+    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::PulseState) {
         self.timer_counter = state.timer;
         self.timer_period = state.timer_period;

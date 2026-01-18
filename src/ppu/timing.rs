@@ -117,7 +117,14 @@ impl Timing {
     }
 
     /// Restore timing state from a save-state.
-    pub fn restore_state(&mut self, scanline: u16, pixel: u16, total_cycles: u64, frame_count: u64) {
+    #[cfg(test)]
+    pub fn restore_state(
+        &mut self,
+        scanline: u16,
+        pixel: u16,
+        total_cycles: u64,
+        frame_count: u64,
+    ) {
         self.scanline = scanline;
         self.pixel = pixel;
         self.total_cycles = total_cycles;

@@ -63,18 +63,6 @@ pub fn init_tracing(tracing: Tracing) {
 #[cfg(not(debug_assertions))]
 pub fn init_tracing(_tracing: Tracing) {}
 
-/// Get the current tracing configuration.
-#[cfg(all(debug_assertions, not(test)))]
-#[allow(dead_code)]
-pub fn get_tracing() -> Option<Tracing> {
-    TRACING
-        .get()
-        .map(|lock| *lock.read().unwrap_or_else(|e| e.into_inner()))
-}
-#[cfg(all(debug_assertions, test))]
-pub fn get_tracing() -> Option<Tracing> {
-    Some(TRACING.with(|cell| *cell.borrow()))
-}
 /// Get the CPU tracing level. Returns 0 if tracing is not initialized.
 #[cfg(all(debug_assertions, not(test)))]
 pub fn cpu_trace_level() -> u8 {
@@ -309,23 +297,6 @@ pub struct Tracing {
 }
 
 impl Tracing {
-    /// Parse tracing configuration from command-line arguments.
-    ///
-    /// Supports:
-    /// - `--trace` → CPU level 1
-    /// - `--trace-cpu` → CPU level 1
-    /// - `--trace-cpu=N` → CPU level N
-    /// - `--trace-ppu`, `--trace-ppu=N` → PPU levels
-    /// - `--trace-apu`, `--trace-apu=N` → APU levels
-    /// - `--trace-mapper`, `--trace-mapper=N` → mapper levels
-    /// - `--trace-nestest` → nestest format (boolean)
-    #[cfg(test)]
-    pub fn from_args(args: &[String]) -> Self {
-        let mut tracing = Tracing::default();
-        tracing.apply_args(args);
-        tracing
-    }
-
     /// Apply command-line arguments to an existing Tracing config.
     /// Only overrides values that are explicitly specified in args.
     pub fn apply_args(&mut self, args: &[String]) {
@@ -370,10 +341,20 @@ impl Tracing {
 mod tests {
     use super::*;
 
+    fn parse_tracing(args: &[String]) -> Tracing {
+        let mut tracing = Tracing::default();
+        tracing.apply_args(args);
+        tracing
+    }
+
+    fn get_tracing() -> Option<Tracing> {
+        Some(TRACING.with(|cell| *cell.borrow()))
+    }
+
     #[test]
     fn tracing_defaults_to_disabled() {
         let args = vec!["neser".to_string()];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert!(!tracing.enabled);
         assert_eq!(tracing.cpu, 0);
         assert_eq!(tracing.ppu, 0);
@@ -385,7 +366,7 @@ mod tests {
     #[test]
     fn tracing_is_enabled_with_trace_flag() {
         let args = vec!["neser".to_string(), "--trace".to_string()];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert!(tracing.enabled);
         assert_eq!(tracing.cpu, 1); // --trace enables CPU tracing at level 1
         assert_eq!(tracing.ppu, 0);
@@ -397,7 +378,7 @@ mod tests {
     #[test]
     fn tracing_uses_nestest_format_when_requested() {
         let args = vec!["neser".to_string(), "--trace-nestest".to_string()];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert!(tracing.enabled);
         assert_eq!(tracing.cpu, 0);
         assert_eq!(tracing.ppu, 0);
@@ -409,7 +390,7 @@ mod tests {
     #[test]
     fn tracing_enables_cpu_trace_with_trace_cpu_flag() {
         let args = vec!["neser".to_string(), "--trace-cpu".to_string()];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert!(tracing.enabled);
         assert_eq!(tracing.cpu, 1);
         assert_eq!(tracing.ppu, 0);
@@ -421,7 +402,7 @@ mod tests {
     #[test]
     fn tracing_enables_ppu_trace_with_trace_ppu_flag() {
         let args = vec!["neser".to_string(), "--trace-ppu".to_string()];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert!(tracing.enabled);
         assert_eq!(tracing.cpu, 0);
         assert_eq!(tracing.ppu, 1);
@@ -433,7 +414,7 @@ mod tests {
     #[test]
     fn tracing_enables_apu_trace_with_trace_apu_flag() {
         let args = vec!["neser".to_string(), "--trace-apu".to_string()];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert!(tracing.enabled);
         assert_eq!(tracing.cpu, 0);
         assert_eq!(tracing.ppu, 0);
@@ -445,7 +426,7 @@ mod tests {
     #[test]
     fn tracing_enables_mapper_trace_with_trace_mapper_flag() {
         let args = vec!["neser".to_string(), "--trace-mapper".to_string()];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert!(tracing.enabled);
         assert_eq!(tracing.cpu, 0);
         assert_eq!(tracing.ppu, 0);
@@ -463,7 +444,7 @@ mod tests {
             "--trace-apu".to_string(),
             "--trace-mapper".to_string(),
         ];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert!(tracing.enabled);
         assert_eq!(tracing.cpu, 1);
         assert_eq!(tracing.ppu, 1);
@@ -561,7 +542,7 @@ mod tests {
             "--trace-cpu=2".to_string(),
             "--trace-ppu=3".to_string(),
         ];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert!(tracing.enabled);
         assert_eq!(tracing.cpu, 2);
         assert_eq!(tracing.ppu, 3);
@@ -578,7 +559,7 @@ mod tests {
             "--trace-apu=3".to_string(),
             "--trace-mapper=2".to_string(),
         ];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert_eq!(tracing.cpu, 5);
         assert_eq!(tracing.ppu, 4);
         assert_eq!(tracing.apu, 3);
@@ -588,7 +569,7 @@ mod tests {
     #[test]
     fn tracing_invalid_level_defaults_to_1() {
         let args = vec!["neser".to_string(), "--trace-cpu=invalid".to_string()];
-        let tracing = Tracing::from_args(&args);
+        let tracing = parse_tracing(&args);
         assert_eq!(tracing.cpu, 1);
     }
 }

@@ -331,6 +331,7 @@ impl Dmc {
     }
 
     /// Capture the current DMC channel state for save-state.
+    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::DmcState {
         crate::savestate::DmcState {
             timer: self.timer,
@@ -351,6 +352,7 @@ impl Dmc {
     }
 
     /// Restore DMC channel state from a save-state.
+    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::DmcState) {
         self.timer = state.timer;
         self.timer_period = state.timer_period;

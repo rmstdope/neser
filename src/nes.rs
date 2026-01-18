@@ -561,6 +561,7 @@ impl Nes {
     ///
     /// This captures the full state of CPU, PPU, APU, RAM, and mapper,
     /// allowing the emulator to be restored to this exact state later.
+    #[cfg(test)]
     pub fn save_state(&self) -> crate::savestate::SaveState {
         crate::savestate::SaveState::new(
             self.cpu.capture_state(),
@@ -580,6 +581,7 @@ impl Nes {
     ///
     /// Returns an error if the save-state version is incompatible or if
     /// the mapper number doesn't match the currently loaded cartridge.
+    #[cfg(test)]
     pub fn load_state(
         &mut self,
         state: &crate::savestate::SaveState,
@@ -616,37 +618,43 @@ impl Nes {
     }
 }
 
-/// Errors that can occur when loading a save-state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SaveStateError {
-    /// The save-state format version is incompatible.
-    IncompatibleVersion { expected: u32, found: u32 },
-    /// The mapper number doesn't match the currently loaded cartridge.
-    MapperMismatch { expected: u8, found: u8 },
-}
+#[cfg(test)]
+mod savestate_error {
+    /// Errors that can occur when loading a save-state.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum SaveStateError {
+        /// The save-state format version is incompatible.
+        IncompatibleVersion { expected: u32, found: u32 },
+        /// The mapper number doesn't match the currently loaded cartridge.
+        MapperMismatch { expected: u8, found: u8 },
+    }
 
-impl std::fmt::Display for SaveStateError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SaveStateError::IncompatibleVersion { expected, found } => {
-                write!(
-                    f,
-                    "Incompatible save-state version: expected {}, found {}",
-                    expected, found
-                )
-            }
-            SaveStateError::MapperMismatch { expected, found } => {
-                write!(
-                    f,
-                    "Mapper mismatch: cartridge uses mapper {}, but save-state is for mapper {}",
-                    expected, found
-                )
+    impl std::fmt::Display for SaveStateError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                SaveStateError::IncompatibleVersion { expected, found } => {
+                    write!(
+                        f,
+                        "Incompatible save-state version: expected {}, found {}",
+                        expected, found
+                    )
+                }
+                SaveStateError::MapperMismatch { expected, found } => {
+                    write!(
+                        f,
+                        "Mapper mismatch: cartridge uses mapper {}, but save-state is for mapper {}",
+                        expected, found
+                    )
+                }
             }
         }
     }
+
+    impl std::error::Error for SaveStateError {}
 }
 
-impl std::error::Error for SaveStateError {}
+#[cfg(test)]
+pub use savestate_error::SaveStateError;
 
 #[cfg(test)]
 mod tests {

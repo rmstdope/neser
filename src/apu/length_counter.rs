@@ -71,16 +71,19 @@ impl LengthCounter {
     }
 
     /// Set the length counter value directly (for save-state restore).
+    #[cfg(test)]
     pub fn set_value(&mut self, value: u8) {
         self.value = value;
     }
 
     /// Enable the length counter (for save-state restore).
+    #[cfg(test)]
     pub fn enable(&mut self) {
         self.enabled = true;
     }
 
     /// Disable the length counter (for save-state restore).
+    #[cfg(test)]
     pub fn disable(&mut self) {
         self.enabled = false;
     }

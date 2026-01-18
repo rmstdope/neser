@@ -162,6 +162,7 @@ impl Noise {
     }
 
     /// Capture the current noise channel state for save-state.
+    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::NoiseState {
         crate::savestate::NoiseState {
             timer: self.timer,
@@ -175,6 +176,7 @@ impl Noise {
     }
 
     /// Restore noise channel state from a save-state.
+    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::NoiseState) {
         self.timer = state.timer;
         self.timer_period = state.timer_period;
