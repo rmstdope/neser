@@ -230,30 +230,74 @@ impl Memory {
     }
 
     /// Create a snapshot of VRAM for save-state.
-    #[cfg(test)]
     pub fn vram_snapshot(&self) -> Vec<u8> {
         self.ppu_ram.to_vec()
     }
 
     /// Create a snapshot of palette for save-state.
-    #[cfg(test)]
     pub fn palette_snapshot(&self) -> Vec<u8> {
         self.palette.to_vec()
     }
 
     /// Restore VRAM from a save-state.
-    #[cfg(test)]
     pub fn restore_vram(&mut self, data: &[u8]) {
         let len = data.len().min(self.ppu_ram.len());
         self.ppu_ram[..len].copy_from_slice(&data[..len]);
     }
 
     /// Restore palette from a save-state.
-    #[cfg(test)]
     pub fn restore_palette(&mut self, data: &[u8]) {
         let len = data.len().min(self.palette.len());
         self.palette[..len].copy_from_slice(&data[..len]);
         self.last_palette_index = None; // Invalidate cache
+    }
+
+    pub fn last_palette_index(&self) -> Option<u8> {
+        self.last_palette_index
+    }
+
+    pub fn last_palette_value(&self) -> u8 {
+        self.last_palette_value
+    }
+
+    pub fn mirroring_mode(&self) -> MirroringMode {
+        self.mirroring_mode
+    }
+
+    pub fn set_palette_cache(&mut self, index: Option<u8>, value: u8) {
+        self.last_palette_index = index;
+        self.last_palette_value = value;
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryDebugState {
+    pub ppu_ram: [u8; 4096],
+    pub palette: [u8; 32],
+    pub last_palette_index: Option<u8>,
+    pub last_palette_value: u8,
+    pub mirroring_mode: MirroringMode,
+}
+
+#[cfg(test)]
+impl Memory {
+    pub fn debug_state(&self) -> MemoryDebugState {
+        MemoryDebugState {
+            ppu_ram: self.ppu_ram,
+            palette: self.palette,
+            last_palette_index: self.last_palette_index,
+            last_palette_value: self.last_palette_value,
+            mirroring_mode: self.mirroring_mode,
+        }
+    }
+
+    pub fn set_debug_state(&mut self, state: MemoryDebugState) {
+        self.ppu_ram = state.ppu_ram;
+        self.palette = state.palette;
+        self.last_palette_index = state.last_palette_index;
+        self.last_palette_value = state.last_palette_value;
+        self.mirroring_mode = state.mirroring_mode;
     }
 }
 

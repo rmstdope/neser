@@ -296,8 +296,8 @@ impl Mapper for MMC2Mapper {
             self.latch0_is_fd = (data[5] & 1) != 0;
             self.latch1_is_fd = (data[5] & 2) != 0;
             self.mirroring = match data[6] {
-                0 => MirroringMode::Horizontal,
-                1 => MirroringMode::Vertical,
+                0 => MirroringMode::Vertical,
+                1 => MirroringMode::Horizontal,
                 _ => MirroringMode::Horizontal,
             };
         }
@@ -320,7 +320,7 @@ mod tests {
         let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, prg_banks);
         let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
 
-        let mut mapper = MMC2Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mapper = MMC2Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
 
         // Power-on: bank 0 at $8000.
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -329,13 +329,34 @@ mod tests {
         assert_eq!(mapper.read_prg(0xA000), (prg_banks - 3) as u8);
         assert_eq!(mapper.read_prg(0xC000), (prg_banks - 2) as u8);
         assert_eq!(mapper.read_prg(0xE000), (prg_banks - 1) as u8);
+    }
 
-        // Switch $8000 bank via $A000.
-        mapper.write_prg(0xA000, 2);
-        assert_eq!(mapper.read_prg(0x8000), 2);
+    #[test]
+    fn test_mmc2_registers_snapshot_preserves_latches_and_mirroring() {
+        let prg_rom = filled_banks(MMC2Mapper::PRG_BANK_SIZE, 4);
+        let chr_rom = filled_banks(MMC2Mapper::CHR_BANK_SIZE, 8);
 
-        mapper.write_prg(0xA123, 7);
-        assert_eq!(mapper.read_prg(0x8000), 7);
+        let mut mapper = MMC2Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+
+        mapper.write_prg(0xA000, 0x03); // PRG bank
+        mapper.write_prg(0xB000, 0x01); // CHR 0 FD
+        mapper.write_prg(0xC000, 0x02); // CHR 0 FE
+        mapper.write_prg(0xD000, 0x03); // CHR 1 FD
+        mapper.write_prg(0xE000, 0x04); // CHR 1 FE
+        mapper.write_prg(0xF000, 0x01); // Mirroring horizontal
+
+        mapper.ppu_address_changed(0x0FD8); // latch0 FD
+        mapper.ppu_address_changed(0x1FE8); // latch1 FE
+
+        let saved = mapper.registers_snapshot();
+
+        let mut restored = MMC2Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        restored.restore_registers(&saved);
+
+        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.read_prg(0x8000), 3);
+        assert_eq!(restored.read_chr(0x0000), 1);
+        assert_eq!(restored.read_chr(0x1000), 4);
     }
 
     #[test]

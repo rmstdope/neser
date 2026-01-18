@@ -116,6 +116,17 @@ impl Mapper for ColorDreamsMapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![self.prg_bank_select, self.chr_bank_select]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 2 {
+            self.prg_bank_select = data[0];
+            self.chr_bank_select = data[1];
+        }
+    }
 }
 
 #[cfg(test)]
@@ -211,5 +222,31 @@ mod tests {
         // Select CHR bank 3, should wrap to bank 1 (3 % 2 = 1)
         mapper.write_prg(0x8000, 0x03); // 0b0000_0011
         assert_eq!(mapper.read_chr(0x0000), 1);
+    }
+
+    #[test]
+    fn test_colordreams_registers_snapshot_restores_banks() {
+        let prg_rom = banked_data(32 * 1024, 4);
+        let chr_rom = banked_data(8 * 1024, 4);
+
+        let mut mapper = create_mapper(
+            11,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            MirroringMode::Horizontal,
+        )
+        .expect("ColorDreams (mapper 11) should be implemented");
+
+        // Select PRG bank 2 and CHR bank 3 (0b0010_0011 = 0x23)
+        mapper.write_prg(0x8000, 0x23);
+
+        let snapshot = mapper.registers_snapshot();
+
+        let mut restored = create_mapper(11, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("ColorDreams (mapper 11) should be implemented");
+        restored.restore_registers(&snapshot);
+
+        assert_eq!(restored.read_prg(0x8000), 2);
+        assert_eq!(restored.read_chr(0x0000), 3);
     }
 }

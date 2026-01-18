@@ -418,6 +418,42 @@ mod tests {
     }
 
     #[test]
+    fn test_mmc3_registers_snapshot_preserves_a12_low_pass_state() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = create_mapper(
+            4,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            MirroringMode::Horizontal,
+        )
+        .expect("MMC3 (mapper 4) should be implemented");
+
+        mapper.write_prg(0xC000, 0); // latch=0
+        mapper.write_prg(0xC001, 0); // reload
+        mapper.write_prg(0xE001, 0); // enable
+
+        // Establish A12 low state and 3 low CPU cycles to satisfy the filter.
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
+        }
+
+        let saved = mapper.registers_snapshot();
+
+        let mut restored = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC3 (mapper 4) should be implemented");
+        restored.restore_registers(&saved);
+
+        restored.ppu_address_changed(0x1000);
+        assert!(
+            restored.irq_pending(),
+            "A12 low-pass state should be preserved across save-state"
+        );
+    }
+
+    #[test]
     fn test_mmc3_irq_reload_clears_counter_immediately() {
         // NesDev: Writing to $C001 (IRQ reload) clears the IRQ counter immediately to 0
         // and sets the reload flag. The counter reloads from latch on the next A12 rising edge.
@@ -990,7 +1026,10 @@ impl Mapper for MMC3Mapper {
         // [10]: irq_counter
         // [11]: flags (irq_reload, irq_enabled, irq_asserted, prg_ram_enabled, prg_ram_write_protected)
         // [12]: mirroring mode
-        let mut snapshot = Vec::with_capacity(13);
+        // [13]: prev_a12
+        // [14]: current_a12
+        // [15]: a12_low_cycles
+        let mut snapshot = Vec::with_capacity(16);
         snapshot.push(self.bank_select);
         snapshot.extend_from_slice(&self.regs);
         snapshot.push(self.irq_latch);
@@ -1002,6 +1041,9 @@ impl Mapper for MMC3Mapper {
             | ((self.prg_ram_write_protected as u8) << 4);
         snapshot.push(flags);
         snapshot.push(self.mirroring as u8);
+        snapshot.push(self.prev_a12 as u8);
+        snapshot.push(self.current_a12 as u8);
+        snapshot.push(self.a12_low_cycles);
         snapshot
     }
 
@@ -1024,6 +1066,12 @@ impl Mapper for MMC3Mapper {
                 3 => MirroringMode::FourScreen,
                 _ => MirroringMode::Horizontal,
             };
+        }
+
+        if data.len() >= 16 {
+            self.prev_a12 = data[13] != 0;
+            self.current_a12 = data[14] != 0;
+            self.a12_low_cycles = data[15];
         }
     }
 }

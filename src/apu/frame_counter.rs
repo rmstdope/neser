@@ -83,7 +83,6 @@ impl FrameCounter {
     }
 
     /// Get the current mode
-    #[cfg(test)]
     pub fn get_mode(&self) -> bool {
         self.mode == Mode::FiveStep
     }
@@ -99,36 +98,110 @@ impl FrameCounter {
         self.cycle_counter
     }
 
+    pub(crate) fn pending_write(&self) -> Option<u8> {
+        self.pending_write
+    }
+
+    pub(crate) fn write_delay(&self) -> u8 {
+        self.write_delay
+    }
+
+    pub(crate) fn pending_write_on_odd_cpu_cycle(&self) -> bool {
+        self.pending_write_on_odd_cpu_cycle
+    }
+
+    pub(crate) fn pending_immediate_clock(&self) -> (bool, bool) {
+        self.pending_immediate_clock
+    }
+
+    pub(crate) fn irq_assert_cycles_remaining(&self) -> u8 {
+        self.irq_assert_cycles_remaining
+    }
+
+    pub(crate) fn five_step_extra_cycle(&self) -> bool {
+        self.five_step_extra_cycle
+    }
+
+    #[cfg(test)]
+    pub fn debug_pending_write(&self) -> Option<u8> {
+        self.pending_write
+    }
+
+    #[cfg(test)]
+    pub fn debug_write_delay(&self) -> u8 {
+        self.write_delay
+    }
+
+    #[cfg(test)]
+    pub fn debug_pending_write_on_odd_cpu_cycle(&self) -> bool {
+        self.pending_write_on_odd_cpu_cycle
+    }
+
+    #[cfg(test)]
+    pub fn debug_pending_immediate_clock(&self) -> (bool, bool) {
+        self.pending_immediate_clock
+    }
+
+    #[cfg(test)]
+    pub fn debug_irq_assert_cycles_remaining(&self) -> u8 {
+        self.irq_assert_cycles_remaining
+    }
+
+    #[cfg(test)]
+    pub fn debug_five_step_extra_cycle(&self) -> bool {
+        self.five_step_extra_cycle
+    }
+
+    #[cfg(test)]
+    pub fn debug_set_irq_assert_cycles_remaining(&mut self, value: u8) {
+        self.irq_assert_cycles_remaining = value;
+    }
+
+    #[cfg(test)]
+    pub fn debug_set_five_step_extra_cycle(&mut self, value: bool) {
+        self.five_step_extra_cycle = value;
+    }
+
+    #[cfg(test)]
+    pub fn debug_set_pending_immediate_clock(&mut self, quarter: bool, half: bool) {
+        self.pending_immediate_clock = (quarter, half);
+    }
+
     /// Get the IRQ flag state
     pub fn get_irq_flag(&self) -> bool {
         self.irq_flag
     }
 
     /// Get the IRQ inhibit flag state
-    #[cfg(test)]
     pub fn get_irq_inhibit(&self) -> bool {
         self.irq_inhibit
     }
 
     /// Restore frame counter state from a save-state.
-    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
     pub fn restore_state(
         &mut self,
         cycle_counter: u32,
         mode: bool,
         irq_inhibit: bool,
         irq_flag: bool,
+        irq_assert_cycles_remaining: u8,
+        five_step_extra_cycle: bool,
+        pending_write: Option<u8>,
+        write_delay: u8,
+        pending_write_on_odd_cpu_cycle: bool,
+        pending_immediate_clock: (bool, bool),
     ) {
         self.cycle_counter = cycle_counter;
         self.mode = if mode { Mode::FiveStep } else { Mode::FourStep };
         self.irq_inhibit = irq_inhibit;
         self.irq_flag = irq_flag;
-        self.irq_assert_cycles_remaining = 0;
-        self.five_step_extra_cycle = false;
-        self.pending_write = None;
-        self.write_delay = 0;
-        self.pending_write_on_odd_cpu_cycle = false;
-        self.pending_immediate_clock = (false, false);
+        self.irq_assert_cycles_remaining = irq_assert_cycles_remaining;
+        self.five_step_extra_cycle = five_step_extra_cycle;
+        self.pending_write = pending_write;
+        self.write_delay = write_delay;
+        self.pending_write_on_odd_cpu_cycle = pending_write_on_odd_cpu_cycle;
+        self.pending_immediate_clock = pending_immediate_clock;
     }
 
     /// Clear the IRQ flag

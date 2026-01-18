@@ -12,13 +12,13 @@ The application shall ALWAYS be developed in very small, manageable increments t
 
 In the development process, when appropriate, the application should be built using Test-driven Development (TDD) principles. This means that tests are written before the actual code is implemented. This always need be done for all implementation, not just feature additions. The development cycle should always follow the "Red-Green-Refactor" approach:
 
-1. **Red**: Write a failing test that defines a desired improvement or new function.
-2. **Green**: Write the minimum amount of code necessary to make the test pass.
+1. **Red**: Write failing test(s) that defines a desired improvement or new function. Test all relevant aspects of the functionality.
+2. **Green**: Write the minimum amount of code necessary to make the test pass and verify that it passes.
 3. **Refactor**: Clean up the code while ensuring that all tests still pass. This approach helps to ensure that the code is reliable, maintainable, and meets the specified requirements from the outset.
 
 It is VERY VERY important to:
 
-- For more complex things, stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
+- For more complex tasks, stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
 - ALWAYS stop after the green phase and ask the navigator to review the implementation and approve before moving on to the refactor phase.
 - ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on.
 - ALWAYS use a TDD approach for all kinds of code, feature implementation, bug fixing, feature enhancements.
@@ -55,8 +55,10 @@ When working on an issue, this is important:
 When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the issue is a sub-issue of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
 
 ### Github CLI
+
 Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh. NEVER use backticks in the text with gh and use real newlines instead of \n.
 When creating issues, always add the appropriate labels to the issue using gh:
+
 - bug - for all bugs
 - enhancement - for any feature development
 - games - for anything that has to do with a specific game or games

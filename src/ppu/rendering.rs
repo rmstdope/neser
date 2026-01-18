@@ -31,6 +31,14 @@ impl Rendering {
         &mut self.screen_buffer
     }
 
+    pub fn screen_buffer_snapshot(&self) -> Vec<u8> {
+        self.screen_buffer.snapshot()
+    }
+
+    pub fn restore_screen_buffer(&mut self, data: &[u8]) {
+        self.screen_buffer.restore_from_snapshot(data);
+    }
+
     /// Compose and render a pixel to the screen buffer
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
@@ -65,6 +73,25 @@ impl Rendering {
         self.screen_buffer.set_pixel(screen_x, screen_y, r, g, b);
 
         sprite_0_hit
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderingDebugState {
+    pub screen_buffer: super::screen_buffer::ScreenBufferDebugState,
+}
+
+#[cfg(test)]
+impl Rendering {
+    pub fn debug_state(&self) -> RenderingDebugState {
+        RenderingDebugState {
+            screen_buffer: self.screen_buffer.debug_state(),
+        }
+    }
+
+    pub fn set_debug_state(&mut self, state: RenderingDebugState) {
+        self.screen_buffer.set_debug_state(state.screen_buffer);
     }
 }
 

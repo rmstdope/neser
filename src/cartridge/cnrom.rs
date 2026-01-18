@@ -106,6 +106,16 @@ impl Mapper for CNROMMapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![self.chr_bank_select]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if let Some(&value) = data.first() {
+            self.chr_bank_select = value;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -196,6 +206,34 @@ mod tests {
         // Writing higher bits should wrap (only 2 banks available)
         mapper.write_prg(0x8000, 0b0000_0011); // Bank 3 wraps to bank 1
         assert_eq!(mapper.read_chr(0x0000), 50);
+    }
+
+    #[test]
+    fn test_cnrom_registers_snapshot_restores_chr_bank() {
+        let mut chr_rom = vec![0; 32 * 1024];
+
+        for bank in 0..4 {
+            let start = bank * 8 * 1024;
+            let end = start + 8 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = (bank * 7) as u8;
+            }
+        }
+
+        let mut mapper = CNROMMapper::new(
+            vec![0; 32 * 1024],
+            chr_rom.clone(),
+            MirroringMode::Horizontal,
+        );
+        mapper.write_prg(0x8000, 0b0000_0011);
+
+        let registers = mapper.registers_snapshot();
+
+        let mut restored = CNROMMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+        restored.restore_registers(&registers);
+
+        assert_eq!(restored.read_chr(0x0000), 21);
+        assert_eq!(restored.read_chr(0x1FFF), 21);
     }
 
     #[test]

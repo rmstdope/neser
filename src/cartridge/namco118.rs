@@ -401,4 +401,45 @@ mod tests {
         mapper.load_wram_snapshot(&snap);
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
     }
+
+    #[test]
+    fn namco118_registers_snapshot_restores_bank_mapping() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = create_mapper(
+            206,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            MirroringMode::Horizontal,
+        )
+        .expect("Mapper 206 should be implemented");
+
+        // Set PRG bank registers R6/R7.
+        mapper.write_prg(0x8000, 0b0000_0110);
+        mapper.write_prg(0x8001, 3);
+        mapper.write_prg(0x8000, 0b0000_0111);
+        mapper.write_prg(0x8001, 4);
+
+        // Set CHR registers R0/R1 (2KB) and R2 (1KB).
+        mapper.write_prg(0x8000, 0b0000_0000);
+        mapper.write_prg(0x8001, 6);
+        mapper.write_prg(0x8000, 0b0000_0001);
+        mapper.write_prg(0x8001, 8);
+        mapper.write_prg(0x8000, 0b0000_0010);
+        mapper.write_prg(0x8001, 10);
+
+        let regs = mapper.registers_snapshot();
+
+        let mut restored = create_mapper(206, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("Mapper 206 should be implemented");
+        restored.restore_registers(&regs);
+
+        assert_eq!(restored.read_prg(0x8000), 3);
+        assert_eq!(restored.read_prg(0xA000), 4);
+        assert_eq!(restored.read_chr(0x0000), 6);
+        assert_eq!(restored.read_chr(0x0400), 7);
+        assert_eq!(restored.read_chr(0x0800), 8);
+        assert_eq!(restored.read_chr(0x1000), 10);
+    }
 }

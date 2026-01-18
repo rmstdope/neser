@@ -111,6 +111,24 @@ impl Mapper for UxROMMapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_memory.snapshot()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        self.chr_memory.load_snapshot(data);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![self.bank_select]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if !data.is_empty() {
+            self.bank_select = data[0];
+        }
+    }
 }
 
 #[cfg(test)]
@@ -262,5 +280,32 @@ mod tests {
 
         mapper.write_prg(0x8000, 10);
         assert_eq!(mapper.read_prg(0xC000), 115);
+    }
+
+    #[test]
+    fn test_uxrom_registers_snapshot_restores_bank_and_chr_ram() {
+        let mut prg_rom = vec![0; 128 * 1024];
+        for bank in 0..8 {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        let mut mapper = UxROMMapper::new(prg_rom.clone(), vec![], MirroringMode::Horizontal);
+
+        mapper.write_prg(0x8000, 3);
+        mapper.write_chr(0x0000, 0x5A);
+
+        let regs = mapper.registers_snapshot();
+        let chr = mapper.chr_ram_snapshot();
+
+        let mut restored = UxROMMapper::new(prg_rom, vec![], MirroringMode::Horizontal);
+        restored.restore_registers(&regs);
+        restored.restore_chr_ram(&chr);
+
+        assert_eq!(restored.read_prg(0x8000), 3);
+        assert_eq!(restored.read_chr(0x0000), 0x5A);
     }
 }

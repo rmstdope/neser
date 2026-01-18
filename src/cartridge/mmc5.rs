@@ -1023,7 +1023,7 @@ impl Mapper for MMC5Mapper {
         // Hardware detects a scanline when it sees PPU reading from nametable addresses.
         // Reset CPU cycle counter since we just saw a PPU read.
         self.cpu_cycles_since_ppu_read = 0;
-        
+
         // Set in_frame flag when we see PPU reads from nametable
         if !self.in_frame {
             self.in_frame = true;
@@ -1109,7 +1109,7 @@ impl Mapper for MMC5Mapper {
         trace_mapper!(1; "[mmc5] cpu_cycle (audio)");
         self.pulse1.cpu_cycle();
         self.pulse2.cpu_cycle();
-        
+
         // MMC5 hardware in-frame detection:
         // Clear in_frame flag after 3 CPU cycles without PPU reads.
         // This matches the hardware behavior where the in-frame signal
@@ -1149,7 +1149,7 @@ impl Mapper for MMC5Mapper {
         // The in_frame flag is set when rendering is enabled or when PPU reads occur,
         // and cleared after 3 CPU cycles without reads (handled in cpu_cycle).
         // This callback is used to update the scanline counter and check for IRQ.
-        
+
         if !rendering_enabled {
             // When rendering is disabled, clear in_frame immediately
             // (hardware would stop seeing PPU reads)
@@ -1162,7 +1162,7 @@ impl Mapper for MMC5Mapper {
         // Set in_frame when rendering is enabled (hardware would be seeing PPU reads)
         self.in_frame = true;
         self.cpu_cycles_since_ppu_read = 0;
-        
+
         // Update scanline counter - this happens when rendering is enabled
         // and is coordinated with PPU read detection
         self.scanline_counter = scanline;
@@ -1231,6 +1231,353 @@ impl Mapper for MMC5Mapper {
         // MMC5: Write directly to all PRG-RAM banks, bypassing banking and write-protect state.
         let to_copy = data.len().min(self.prg_ram.len());
         self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        match &self.chr {
+            Chr::Ram(data) => data.clone(),
+            Chr::Rom(_) => Vec::new(),
+        }
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        let Chr::Ram(chr_ram) = &mut self.chr else {
+            return;
+        };
+
+        let to_copy = data.len().min(chr_ram.len());
+        chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        let mut snapshot = Vec::with_capacity(256);
+
+        snapshot.push(self.prg_mode);
+        snapshot.push(self.prg_bank_5113);
+        snapshot.push(self.prg_bank_5114);
+        snapshot.push(self.prg_bank_5115);
+        snapshot.push(self.prg_bank_5116);
+        snapshot.push(self.prg_bank_5117);
+
+        snapshot.push(self.prg_ram_protect_1);
+        snapshot.push(self.prg_ram_protect_2);
+
+        snapshot.push(self.chr_mode);
+        snapshot.extend_from_slice(&self.chr_bank_a);
+        snapshot.extend_from_slice(&self.chr_bank_b);
+        snapshot.push(self.chr_bank_upper);
+        snapshot.push(self.chr_fetch_is_sprite as u8);
+        snapshot.push(self.chr_last_set_written as u8);
+        snapshot.push(self.chr_is_rendering_fetch as u8);
+        snapshot.push(self.sprite_8x16_mode as u8);
+
+        snapshot.push(self.nametable_mapping);
+        snapshot.push(self.fill_tile);
+        snapshot.push(self.fill_attr);
+
+        snapshot.push(self.ex_ram_mode);
+        let ex_len = self.ex_ram.len() as u16;
+        snapshot.extend_from_slice(&ex_len.to_le_bytes());
+        snapshot.extend_from_slice(&self.ex_ram);
+
+        snapshot.extend_from_slice(&(self.last_bg_tile_index as u16).to_le_bytes());
+
+        snapshot.push(self.split_mode);
+        snapshot.push(self.split_scroll);
+        snapshot.push(self.split_bank);
+        snapshot.push(self.split_active as u8);
+
+        snapshot.push(self.irq_scanline_compare);
+        snapshot.push(self.irq_enabled as u8);
+        snapshot.push(self.irq_pending.get() as u8);
+        snapshot.push(self.in_frame as u8);
+        snapshot.extend_from_slice(&self.scanline_counter.to_le_bytes());
+        snapshot.push(self.cpu_cycles_since_ppu_read);
+
+        snapshot.push(self.multiplicand);
+        snapshot.push(self.multiplier);
+
+        snapshot.push(self.pulse1.enabled as u8);
+        snapshot.push(self.pulse1.volume);
+        snapshot.extend_from_slice(&self.pulse1.timer_reload.to_le_bytes());
+        snapshot.extend_from_slice(&self.pulse1.timer.to_le_bytes());
+        snapshot.push(self.pulse1.phase as u8);
+
+        snapshot.push(self.pulse2.enabled as u8);
+        snapshot.push(self.pulse2.volume);
+        snapshot.extend_from_slice(&self.pulse2.timer_reload.to_le_bytes());
+        snapshot.extend_from_slice(&self.pulse2.timer.to_le_bytes());
+        snapshot.push(self.pulse2.phase as u8);
+
+        snapshot.push(self.pcm_enabled as u8);
+        snapshot.push(self.pcm_value);
+
+        snapshot.push(self.mirroring as u8);
+
+        snapshot
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        let mut idx = 0usize;
+        let next_u8 = |data: &[u8], idx: &mut usize| -> Option<u8> {
+            let value = data.get(*idx).copied();
+            *idx += 1;
+            value
+        };
+
+        let next_u16 = |data: &[u8], idx: &mut usize| -> Option<u16> {
+            let lo = data.get(*idx).copied()?;
+            let hi = data.get(*idx + 1).copied()?;
+            *idx += 2;
+            Some(u16::from_le_bytes([lo, hi]))
+        };
+
+        let Some(prg_mode) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(prg_bank_5113) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(prg_bank_5114) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(prg_bank_5115) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(prg_bank_5116) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(prg_bank_5117) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(prg_ram_protect_1) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(prg_ram_protect_2) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(chr_mode) = next_u8(data, &mut idx) else {
+            return;
+        };
+
+        if data.len() < idx + 8 + 4 {
+            return;
+        }
+
+        let mut chr_bank_a = [0u8; 8];
+        chr_bank_a.copy_from_slice(&data[idx..idx + 8]);
+        idx += 8;
+
+        let mut chr_bank_b = [0u8; 4];
+        chr_bank_b.copy_from_slice(&data[idx..idx + 4]);
+        idx += 4;
+
+        let Some(chr_bank_upper) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(chr_fetch_is_sprite_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(chr_last_set_written_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(chr_is_rendering_fetch_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(sprite_8x16_mode_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+
+        let chr_fetch_is_sprite = chr_fetch_is_sprite_raw != 0;
+        let chr_last_set_written = chr_last_set_written_raw != 0;
+        let chr_is_rendering_fetch = chr_is_rendering_fetch_raw != 0;
+        let sprite_8x16_mode = sprite_8x16_mode_raw != 0;
+
+        let Some(nametable_mapping) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(fill_tile) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(fill_attr) = next_u8(data, &mut idx) else {
+            return;
+        };
+
+        let Some(ex_ram_mode) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(ex_len) = next_u16(data, &mut idx) else {
+            return;
+        };
+        let ex_len = ex_len as usize;
+        if data.len() < idx + ex_len {
+            return;
+        }
+        let ex_ram_slice = &data[idx..idx + ex_len];
+        idx += ex_len;
+
+        let Some(last_bg_tile_index) = next_u16(data, &mut idx) else {
+            return;
+        };
+        let last_bg_tile_index = last_bg_tile_index as usize;
+
+        let Some(split_mode) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(split_scroll) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(split_bank) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(split_active_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let split_active = split_active_raw != 0;
+
+        let Some(irq_scanline_compare) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(irq_enabled_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(irq_pending_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(in_frame_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(scanline_counter) = next_u16(data, &mut idx) else {
+            return;
+        };
+        let Some(cpu_cycles_since_ppu_read) = next_u8(data, &mut idx) else {
+            return;
+        };
+
+        let irq_enabled = irq_enabled_raw != 0;
+        let irq_pending = irq_pending_raw != 0;
+        let in_frame = in_frame_raw != 0;
+
+        let Some(multiplicand) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(multiplier) = next_u8(data, &mut idx) else {
+            return;
+        };
+
+        let Some(pulse1_enabled_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(pulse1_volume) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(pulse1_timer_reload) = next_u16(data, &mut idx) else {
+            return;
+        };
+        let Some(pulse1_timer) = next_u16(data, &mut idx) else {
+            return;
+        };
+        let Some(pulse1_phase_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+
+        let Some(pulse2_enabled_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(pulse2_volume) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(pulse2_timer_reload) = next_u16(data, &mut idx) else {
+            return;
+        };
+        let Some(pulse2_timer) = next_u16(data, &mut idx) else {
+            return;
+        };
+        let Some(pulse2_phase_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+
+        let Some(pcm_enabled_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(pcm_value) = next_u8(data, &mut idx) else {
+            return;
+        };
+
+        let Some(mirroring_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+
+        let pulse1_enabled = pulse1_enabled_raw != 0;
+        let pulse1_phase = pulse1_phase_raw != 0;
+        let pulse2_enabled = pulse2_enabled_raw != 0;
+        let pulse2_phase = pulse2_phase_raw != 0;
+        let pcm_enabled = pcm_enabled_raw != 0;
+
+        let mirroring = match mirroring_raw {
+            0 => MirroringMode::Horizontal,
+            1 => MirroringMode::Vertical,
+            2 => MirroringMode::SingleScreen,
+            3 => MirroringMode::FourScreen,
+            _ => MirroringMode::Horizontal,
+        };
+
+        self.prg_mode = prg_mode;
+        self.prg_bank_5113 = prg_bank_5113;
+        self.prg_bank_5114 = prg_bank_5114;
+        self.prg_bank_5115 = prg_bank_5115;
+        self.prg_bank_5116 = prg_bank_5116;
+        self.prg_bank_5117 = prg_bank_5117;
+        self.prg_ram_protect_1 = prg_ram_protect_1;
+        self.prg_ram_protect_2 = prg_ram_protect_2;
+
+        self.chr_mode = chr_mode;
+        self.chr_bank_a = chr_bank_a;
+        self.chr_bank_b = chr_bank_b;
+        self.chr_bank_upper = chr_bank_upper;
+        self.chr_fetch_is_sprite = chr_fetch_is_sprite;
+        self.chr_last_set_written = chr_last_set_written;
+        self.chr_is_rendering_fetch = chr_is_rendering_fetch;
+        self.sprite_8x16_mode = sprite_8x16_mode;
+
+        self.nametable_mapping = nametable_mapping;
+        self.fill_tile = fill_tile;
+        self.fill_attr = fill_attr;
+        self.ex_ram_mode = ex_ram_mode;
+        let to_copy = ex_ram_slice.len().min(self.ex_ram.len());
+        self.ex_ram[..to_copy].copy_from_slice(&ex_ram_slice[..to_copy]);
+
+        self.last_bg_tile_index = last_bg_tile_index;
+        self.split_mode = split_mode;
+        self.split_scroll = split_scroll;
+        self.split_bank = split_bank;
+        self.split_active = split_active;
+
+        self.irq_scanline_compare = irq_scanline_compare;
+        self.irq_enabled = irq_enabled;
+        self.irq_pending.set(irq_pending);
+        self.in_frame = in_frame;
+        self.scanline_counter = scanline_counter;
+        self.cpu_cycles_since_ppu_read = cpu_cycles_since_ppu_read;
+
+        self.multiplicand = multiplicand;
+        self.multiplier = multiplier;
+
+        self.pulse1.enabled = pulse1_enabled;
+        self.pulse1.volume = pulse1_volume;
+        self.pulse1.timer_reload = pulse1_timer_reload.max(1);
+        self.pulse1.timer = pulse1_timer;
+        self.pulse1.phase = pulse1_phase;
+
+        self.pulse2.enabled = pulse2_enabled;
+        self.pulse2.volume = pulse2_volume;
+        self.pulse2.timer_reload = pulse2_timer_reload.max(1);
+        self.pulse2.timer = pulse2_timer;
+        self.pulse2.phase = pulse2_phase;
+
+        self.pcm_enabled = pcm_enabled;
+        self.pcm_value = pcm_value;
+        self.mirroring = mirroring;
     }
 }
 
@@ -1305,6 +1652,63 @@ mod tests {
         assert!(!mmc5.irq_pending());
         mmc5.ppu_scanline(5, true);
         assert!(mmc5.irq_pending());
+    }
+
+    #[test]
+    fn test_mmc5_registers_snapshot_restores_state() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper = MMC5Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+
+        mapper.write_prg(0x5100, 3);
+        mapper.write_prg(0x5114, 0x80 | 1);
+        mapper.write_prg(0x5115, 0x80 | 2);
+        mapper.write_prg(0x5116, 0x80 | 3);
+        mapper.write_prg(0x5117, 0x80 | 4);
+
+        mapper.write_prg(0x5101, 3);
+        mapper.write_prg(0x5128, 5); // chr_bank_b[0]
+        mapper.write_prg(0x5120, 1); // chr_bank_a[0]
+        mapper.ppu_write_ctrl(0x20); // 8x16 sprites => use B regs for BG
+        mapper.ppu_set_chr_fetch_is_sprite(false);
+
+        mapper.write_prg(0x5104, 0);
+        mapper.write_prg(0x5105, 0b0000_0010); // $2000 quadrant -> ExRAM
+        assert!(mapper.write_nametable(0x2000, 0x77));
+
+        mapper.write_prg(0xF000, 0x01); // horizontal mirroring
+
+        mapper.write_prg(0x5203, 3);
+        mapper.write_prg(0x5204, 0x80);
+        mapper.ppu_scanline(3, true);
+
+        mapper.write_prg(0x5000, 0x0F);
+        mapper.write_prg(0x5002, 0x01);
+        mapper.write_prg(0x5003, 0x00);
+        mapper.write_prg(0x5015, 0x01);
+        let audio_sample = mapper.expansion_audio_sample();
+
+        let saved = mapper.registers_snapshot();
+
+        let mut restored = MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        restored.restore_registers(&saved);
+
+        assert_eq!(restored.read_prg(0x8000), 1);
+        assert_eq!(restored.read_prg(0xA000), 2);
+        assert_eq!(restored.read_prg(0xC000), 3);
+        assert_eq!(restored.read_prg(0xE000), 4);
+
+        assert_eq!(restored.read_chr(0x0000), 5);
+
+        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+
+        assert_eq!(restored.read_nametable(0x2000), Some(0x77));
+
+        assert!(restored.irq_pending());
+
+        let restored_sample = restored.expansion_audio_sample();
+        assert!((restored_sample - audio_sample).abs() < 1e-6);
     }
 
     #[test]

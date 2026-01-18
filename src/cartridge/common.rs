@@ -174,6 +174,25 @@ impl ChrMemory {
             self.data[index] = value;
         }
     }
+
+    /// Create a snapshot of CHR-RAM for save-state persistence.
+    pub fn snapshot(&self) -> Vec<u8> {
+        if self.is_ram {
+            self.data.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Load a snapshot into CHR-RAM from save-state persistence.
+    pub fn load_snapshot(&mut self, data: &[u8]) {
+        if !self.is_ram {
+            return;
+        }
+
+        let to_copy = data.len().min(self.data.len());
+        self.data[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
 }
 
 #[cfg(test)]

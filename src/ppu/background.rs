@@ -211,6 +211,84 @@ impl Background {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackgroundState {
+    pub bg_pattern_shift_lo: u16,
+    pub bg_pattern_shift_hi: u16,
+    pub bg_attribute_shift_lo: u16,
+    pub bg_attribute_shift_hi: u16,
+    pub nametable_latch: u8,
+    pub attribute_latch: u8,
+    pub pattern_lo_latch: u8,
+    pub pattern_hi_latch: u8,
+}
+
+impl Background {
+    pub fn capture_state(&self) -> BackgroundState {
+        BackgroundState {
+            bg_pattern_shift_lo: self.bg_pattern_shift_lo,
+            bg_pattern_shift_hi: self.bg_pattern_shift_hi,
+            bg_attribute_shift_lo: self.bg_attribute_shift_lo,
+            bg_attribute_shift_hi: self.bg_attribute_shift_hi,
+            nametable_latch: self.nametable_latch,
+            attribute_latch: self.attribute_latch,
+            pattern_lo_latch: self.pattern_lo_latch,
+            pattern_hi_latch: self.pattern_hi_latch,
+        }
+    }
+
+    pub fn restore_state(&mut self, state: &BackgroundState) {
+        self.bg_pattern_shift_lo = state.bg_pattern_shift_lo;
+        self.bg_pattern_shift_hi = state.bg_pattern_shift_hi;
+        self.bg_attribute_shift_lo = state.bg_attribute_shift_lo;
+        self.bg_attribute_shift_hi = state.bg_attribute_shift_hi;
+        self.nametable_latch = state.nametable_latch;
+        self.attribute_latch = state.attribute_latch;
+        self.pattern_lo_latch = state.pattern_lo_latch;
+        self.pattern_hi_latch = state.pattern_hi_latch;
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackgroundDebugState {
+    pub bg_pattern_shift_lo: u16,
+    pub bg_pattern_shift_hi: u16,
+    pub bg_attribute_shift_lo: u16,
+    pub bg_attribute_shift_hi: u16,
+    pub nametable_latch: u8,
+    pub attribute_latch: u8,
+    pub pattern_lo_latch: u8,
+    pub pattern_hi_latch: u8,
+}
+
+#[cfg(test)]
+impl Background {
+    pub fn debug_state(&self) -> BackgroundDebugState {
+        BackgroundDebugState {
+            bg_pattern_shift_lo: self.bg_pattern_shift_lo,
+            bg_pattern_shift_hi: self.bg_pattern_shift_hi,
+            bg_attribute_shift_lo: self.bg_attribute_shift_lo,
+            bg_attribute_shift_hi: self.bg_attribute_shift_hi,
+            nametable_latch: self.nametable_latch,
+            attribute_latch: self.attribute_latch,
+            pattern_lo_latch: self.pattern_lo_latch,
+            pattern_hi_latch: self.pattern_hi_latch,
+        }
+    }
+
+    pub fn set_debug_state(&mut self, state: BackgroundDebugState) {
+        self.bg_pattern_shift_lo = state.bg_pattern_shift_lo;
+        self.bg_pattern_shift_hi = state.bg_pattern_shift_hi;
+        self.bg_attribute_shift_lo = state.bg_attribute_shift_lo;
+        self.bg_attribute_shift_hi = state.bg_attribute_shift_hi;
+        self.nametable_latch = state.nametable_latch;
+        self.attribute_latch = state.attribute_latch;
+        self.pattern_lo_latch = state.pattern_lo_latch;
+        self.pattern_hi_latch = state.pattern_hi_latch;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

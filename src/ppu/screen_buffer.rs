@@ -118,6 +118,34 @@ impl ScreenBuffer {
 
         dest[..self.buffer.len()].copy_from_slice(&self.buffer);
     }
+
+    pub fn snapshot(&self) -> Vec<u8> {
+        self.buffer.clone()
+    }
+
+    pub fn restore_from_snapshot(&mut self, data: &[u8]) {
+        let len = data.len().min(self.buffer.len());
+        self.buffer[..len].copy_from_slice(&data[..len]);
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScreenBufferDebugState {
+    pub buffer: Vec<u8>,
+}
+
+#[cfg(test)]
+impl ScreenBuffer {
+    pub fn debug_state(&self) -> ScreenBufferDebugState {
+        ScreenBufferDebugState {
+            buffer: self.buffer.clone(),
+        }
+    }
+
+    pub fn set_debug_state(&mut self, state: ScreenBufferDebugState) {
+        self.buffer = state.buffer;
+    }
 }
 
 #[cfg(test)]

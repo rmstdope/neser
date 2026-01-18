@@ -145,6 +145,32 @@ impl Mapper for NinaTengenMapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        let mirroring = match self.mirroring {
+            MirroringMode::Horizontal => 0,
+            MirroringMode::Vertical => 1,
+            MirroringMode::SingleScreen | MirroringMode::SingleScreenLower => 2,
+            MirroringMode::SingleScreenUpper => 3,
+            MirroringMode::FourScreen => 4,
+        };
+        vec![self.prg_bank_select, self.chr_bank_select, mirroring]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 3 {
+            self.prg_bank_select = data[0];
+            self.chr_bank_select = data[1];
+            self.mirroring = match data[2] {
+                0 => MirroringMode::Horizontal,
+                1 => MirroringMode::Vertical,
+                2 => MirroringMode::SingleScreen,
+                3 => MirroringMode::SingleScreenUpper,
+                4 => MirroringMode::FourScreen,
+                _ => MirroringMode::Horizontal,
+            };
+        }
+    }
 }
 
 #[cfg(test)]
@@ -380,5 +406,42 @@ mod tests {
 
         // Should still read original ROM value
         assert_eq!(mapper.read_chr(0x0000), 0xAA);
+    }
+
+    #[test]
+    fn test_nina_tengen_registers_snapshot_restores_banks_and_mirroring() {
+        let mut prg_rom = vec![0; 128 * 1024];
+        let mut chr_rom = vec![0; 128 * 1024];
+
+        for bank in 0..8 {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 10) as u8;
+            }
+        }
+
+        for bank in 0..16 {
+            let start = bank * 8 * 1024;
+            let end = start + 8 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = (bank + 20) as u8;
+            }
+        }
+
+        let mut mapper =
+            NinaTengenMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+
+        // PRG=5, Mirroring=Horizontal, CHR=9
+        mapper.write_prg(0x8000, 0b1001_1101);
+
+        let snapshot = mapper.registers_snapshot();
+
+        let mut restored = NinaTengenMapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        restored.restore_registers(&snapshot);
+
+        assert_eq!(restored.read_prg(0x8000), 15);
+        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.read_chr(0x0000), 29);
     }
 }

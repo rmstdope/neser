@@ -117,7 +117,6 @@ impl Timing {
     }
 
     /// Restore timing state from a save-state.
-    #[cfg(test)]
     pub fn restore_state(
         &mut self,
         scanline: u16,
@@ -132,6 +131,15 @@ impl Timing {
         // Note: rendering_enabled delays will be recalculated during emulation
         self.rendering_enabled_d1 = false;
         self.rendering_enabled_d2 = false;
+    }
+
+    pub fn rendering_enabled_delays(&self) -> (bool, bool) {
+        (self.rendering_enabled_d1, self.rendering_enabled_d2)
+    }
+
+    pub fn set_rendering_enabled_delays(&mut self, d1: bool, d2: bool) {
+        self.rendering_enabled_d1 = d1;
+        self.rendering_enabled_d2 = d2;
     }
 
     /// Get the TV system
@@ -163,6 +171,43 @@ impl Timing {
     #[cfg(test)]
     pub fn is_visible_pixel(&self) -> bool {
         self.scanline < 240 && self.pixel >= 1 && self.pixel <= 256
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimingDebugState {
+    pub total_cycles: u64,
+    pub tv_system: TvSystem,
+    pub scanline: u16,
+    pub pixel: u16,
+    pub frame_count: u64,
+    pub rendering_enabled_d1: bool,
+    pub rendering_enabled_d2: bool,
+}
+
+#[cfg(test)]
+impl Timing {
+    pub fn debug_state(&self) -> TimingDebugState {
+        TimingDebugState {
+            total_cycles: self.total_cycles,
+            tv_system: self.tv_system,
+            scanline: self.scanline,
+            pixel: self.pixel,
+            frame_count: self.frame_count,
+            rendering_enabled_d1: self.rendering_enabled_d1,
+            rendering_enabled_d2: self.rendering_enabled_d2,
+        }
+    }
+
+    pub fn set_debug_state(&mut self, state: TimingDebugState) {
+        self.total_cycles = state.total_cycles;
+        self.tv_system = state.tv_system;
+        self.scanline = state.scanline;
+        self.pixel = state.pixel;
+        self.frame_count = state.frame_count;
+        self.rendering_enabled_d1 = state.rendering_enabled_d1;
+        self.rendering_enabled_d2 = state.rendering_enabled_d2;
     }
 }
 

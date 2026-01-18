@@ -98,6 +98,14 @@ impl Mapper for NROMMapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_memory.snapshot()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        self.chr_memory.load_snapshot(data);
+    }
 }
 
 #[cfg(test)]
@@ -222,5 +230,21 @@ mod tests {
         mapper.ppu_address_changed(0x0000);
         mapper.ppu_address_changed(0x1000);
         mapper.ppu_address_changed(0x1FFF);
+    }
+
+    #[test]
+    fn test_nrom_chr_ram_snapshot_restores_contents() {
+        let mut mapper = NROMMapper::new(vec![0; 0x8000], vec![], MirroringMode::Horizontal);
+
+        mapper.write_chr(0x0000, 0xAA);
+        mapper.write_chr(0x1FFF, 0xBB);
+
+        let chr = mapper.chr_ram_snapshot();
+
+        let mut restored = NROMMapper::new(vec![0; 0x8000], vec![], MirroringMode::Horizontal);
+        restored.restore_chr_ram(&chr);
+
+        assert_eq!(restored.read_chr(0x0000), 0xAA);
+        assert_eq!(restored.read_chr(0x1FFF), 0xBB);
     }
 }

@@ -166,6 +166,27 @@ impl Mapper for BnromNinaMapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_memory.snapshot()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        self.chr_memory.load_snapshot(data);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![self.prg_bank_select, self.chr_bank_select]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if let Some(&value) = data.first() {
+            self.prg_bank_select = value;
+        }
+        if let Some(&value) = data.get(1) {
+            self.chr_bank_select = value;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -224,6 +245,35 @@ mod tests {
         assert_eq!(mapper.read_chr(0x0000), 0xAA);
         assert_eq!(mapper.read_chr(0x1000), 0xBB);
         assert_eq!(mapper.read_chr(0x1FFF), 0xCC);
+    }
+
+    #[test]
+    fn test_bnrom_registers_and_chr_ram_snapshot_roundtrip() {
+        let mut prg_rom = vec![0; 128 * 1024];
+
+        for bank in 0..4 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 3) as u8;
+            }
+        }
+
+        let mut mapper = BnromNinaMapper::new(prg_rom.clone(), vec![], MirroringMode::Horizontal);
+        mapper.write_prg(0x8000, 2);
+        mapper.write_chr(0x0000, 0x11);
+        mapper.write_chr(0x1FFF, 0x22);
+
+        let registers = mapper.registers_snapshot();
+        let chr_ram = mapper.chr_ram_snapshot();
+
+        let mut restored = BnromNinaMapper::new(prg_rom, vec![], MirroringMode::Horizontal);
+        restored.restore_registers(&registers);
+        restored.restore_chr_ram(&chr_ram);
+
+        assert_eq!(restored.read_prg(0x8000), 5);
+        assert_eq!(restored.read_chr(0x0000), 0x11);
+        assert_eq!(restored.read_chr(0x1FFF), 0x22);
     }
 
     #[test]

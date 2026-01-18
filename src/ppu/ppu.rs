@@ -500,14 +500,18 @@ impl Ppu {
     }
 
     /// Capture the current PPU state for save-state.
-    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::PpuState {
+        let (rendering_enabled_d1, rendering_enabled_d2) = self.timing.rendering_enabled_delays();
+        let bg_state = self.background.capture_state();
+        let sprites_state = self.sprites.capture_state();
         crate::savestate::PpuState {
             timing: crate::savestate::PpuTimingState {
                 scanline: self.timing.scanline,
                 pixel: self.timing.pixel,
                 total_cycles: self.timing.total_cycles(),
                 frame_count: self.timing.frame_count(),
+                rendering_enabled_d1,
+                rendering_enabled_d2,
             },
             registers: crate::savestate::PpuRegisterState {
                 control: self.registers.control(),
@@ -518,21 +522,57 @@ impl Ppu {
                 fine_x: self.registers.x(),
                 w: self.registers.w(),
                 io_bus: self.registers.io_bus(),
+                io_bus_refresh_time: self.registers.io_bus_refresh_time(),
+                cycle_count: self.registers.cycle_count(),
             },
             vblank_flag: self.status.is_in_vblank(),
             sprite_zero_hit: self.status.is_sprite_0_hit(),
+            pending_sprite_zero_hit: self.status.pending_sprite_0_hit(),
             sprite_overflow: self.status.is_sprite_overflow(),
             nmi_pending: self.status.is_nmi_enabled(),
+            frame_complete: self.status.frame_complete(),
+            vblank_suppressed_for_frame: self.vblank_suppressed_for_frame,
+            vblank_for_nmi: self.vblank_for_nmi,
+            prev_a12: self.prev_a12,
             vram: self.memory.vram_snapshot(),
             palette: self.memory.palette_snapshot(),
+            last_palette_index: self.memory.last_palette_index(),
+            last_palette_value: self.memory.last_palette_value(),
+            mirroring_mode: self.memory.mirroring_mode(),
             oam: self.sprites.oam_snapshot(),
             secondary_oam: self.sprites.secondary_oam_snapshot(),
+            sprites_found: sprites_state.sprites_found,
+            sprite_count: sprites_state.sprite_count,
+            next_sprite_count: sprites_state.next_sprite_count,
+            sprite_buffers_ready: sprites_state.sprite_buffers_ready,
+            sprite_0_index: sprites_state.sprite_0_index,
+            next_sprite_0_index: sprites_state.next_sprite_0_index,
+            sprite_eval_n: sprites_state.sprite_eval_n,
+            sprite_eval_m: sprites_state.sprite_eval_m,
+            sprite_eval_cycle: sprites_state.sprite_eval_cycle,
+            sprite_eval_in_range: sprites_state.sprite_eval_in_range,
+            sprite_pattern_shift_lo: sprites_state.sprite_pattern_shift_lo,
+            sprite_pattern_shift_hi: sprites_state.sprite_pattern_shift_hi,
+            sprite_x_positions: sprites_state.sprite_x_positions,
+            sprite_attributes: sprites_state.sprite_attributes,
+            next_sprite_pattern_shift_lo: sprites_state.next_sprite_pattern_shift_lo,
+            next_sprite_pattern_shift_hi: sprites_state.next_sprite_pattern_shift_hi,
+            next_sprite_x_positions: sprites_state.next_sprite_x_positions,
+            next_sprite_attributes: sprites_state.next_sprite_attributes,
+            bg_pattern_shift_lo: bg_state.bg_pattern_shift_lo,
+            bg_pattern_shift_hi: bg_state.bg_pattern_shift_hi,
+            bg_attribute_shift_lo: bg_state.bg_attribute_shift_lo,
+            bg_attribute_shift_hi: bg_state.bg_attribute_shift_hi,
+            nametable_latch: bg_state.nametable_latch,
+            attribute_latch: bg_state.attribute_latch,
+            pattern_lo_latch: bg_state.pattern_lo_latch,
+            pattern_hi_latch: bg_state.pattern_hi_latch,
+            screen_buffer: self.rendering.screen_buffer_snapshot(),
             read_buffer: self.registers.data_buffer(),
         }
     }
 
     /// Restore PPU state from a save-state.
-    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::PpuState) {
         // Restore timing
         self.timing.restore_state(
@@ -540,6 +580,10 @@ impl Ppu {
             state.timing.pixel,
             state.timing.total_cycles,
             state.timing.frame_count,
+        );
+        self.timing.set_rendering_enabled_delays(
+            state.timing.rendering_enabled_d1,
+            state.timing.rendering_enabled_d2,
         );
 
         // Restore registers
@@ -554,13 +598,49 @@ impl Ppu {
             state.registers.io_bus,
             state.read_buffer,
         );
+        self.registers
+            .set_io_bus_refresh_time(state.registers.io_bus_refresh_time);
+        self.registers.set_cycle_count(state.registers.cycle_count);
 
         // Restore memory
         self.memory.restore_vram(&state.vram);
         self.memory.restore_palette(&state.palette);
+        self.memory
+            .set_palette_cache(state.last_palette_index, state.last_palette_value);
+        self.memory.set_mirroring(state.mirroring_mode);
 
         // Restore OAM
-        self.sprites.restore_oam(&state.oam, &state.secondary_oam);
+        let mut oam_data = [0xFF; 256];
+        let oam_len = state.oam.len().min(oam_data.len());
+        oam_data[..oam_len].copy_from_slice(&state.oam[..oam_len]);
+
+        let mut secondary_oam = [0xFF; 32];
+        let sec_len = state.secondary_oam.len().min(secondary_oam.len());
+        secondary_oam[..sec_len].copy_from_slice(&state.secondary_oam[..sec_len]);
+
+        self.sprites
+            .restore_state(&crate::ppu::sprites::SpritesState {
+                oam_data,
+                secondary_oam,
+                sprites_found: state.sprites_found,
+                sprite_count: state.sprite_count,
+                next_sprite_count: state.next_sprite_count,
+                sprite_buffers_ready: state.sprite_buffers_ready,
+                sprite_0_index: state.sprite_0_index,
+                next_sprite_0_index: state.next_sprite_0_index,
+                sprite_eval_n: state.sprite_eval_n,
+                sprite_eval_m: state.sprite_eval_m,
+                sprite_eval_cycle: state.sprite_eval_cycle,
+                sprite_eval_in_range: state.sprite_eval_in_range,
+                sprite_pattern_shift_lo: state.sprite_pattern_shift_lo,
+                sprite_pattern_shift_hi: state.sprite_pattern_shift_hi,
+                sprite_x_positions: state.sprite_x_positions,
+                sprite_attributes: state.sprite_attributes,
+                next_sprite_pattern_shift_lo: state.next_sprite_pattern_shift_lo,
+                next_sprite_pattern_shift_hi: state.next_sprite_pattern_shift_hi,
+                next_sprite_x_positions: state.next_sprite_x_positions,
+                next_sprite_attributes: state.next_sprite_attributes,
+            });
 
         // Restore status flags
         self.status.restore_state(
@@ -569,12 +649,83 @@ impl Ppu {
             state.sprite_overflow,
             state.nmi_pending,
         );
+        self.status
+            .set_pending_sprite_0_hit(state.pending_sprite_zero_hit);
+        self.status.set_frame_complete(state.frame_complete);
+
+        self.background
+            .restore_state(&crate::ppu::background::BackgroundState {
+                bg_pattern_shift_lo: state.bg_pattern_shift_lo,
+                bg_pattern_shift_hi: state.bg_pattern_shift_hi,
+                bg_attribute_shift_lo: state.bg_attribute_shift_lo,
+                bg_attribute_shift_hi: state.bg_attribute_shift_hi,
+                nametable_latch: state.nametable_latch,
+                attribute_latch: state.attribute_latch,
+                pattern_lo_latch: state.pattern_lo_latch,
+                pattern_hi_latch: state.pattern_hi_latch,
+            });
+
+        self.rendering.restore_screen_buffer(&state.screen_buffer);
+
+        self.vblank_suppressed_for_frame = state.vblank_suppressed_for_frame;
+        self.vblank_for_nmi = state.vblank_for_nmi;
+        self.prev_a12 = state.prev_a12;
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PpuDebugState {
+    pub timing: super::timing::TimingDebugState,
+    pub status: super::status::StatusDebugState,
+    pub registers: super::registers::RegistersDebugState,
+    pub memory: super::memory::MemoryDebugState,
+    pub background: super::background::BackgroundDebugState,
+    pub sprites: super::sprites::SpritesDebugState,
+    pub rendering: super::rendering::RenderingDebugState,
+    pub vblank_suppressed_for_frame: bool,
+    pub vblank_for_nmi: bool,
+    pub prev_a12: bool,
+}
+
+#[cfg(test)]
+impl Ppu {
+    pub fn debug_state(&self) -> PpuDebugState {
+        PpuDebugState {
+            timing: self.timing.debug_state(),
+            status: self.status.debug_state(),
+            registers: self.registers.debug_state(),
+            memory: self.memory.debug_state(),
+            background: self.background.debug_state(),
+            sprites: self.sprites.debug_state(),
+            rendering: self.rendering.debug_state(),
+            vblank_suppressed_for_frame: self.vblank_suppressed_for_frame,
+            vblank_for_nmi: self.vblank_for_nmi,
+            prev_a12: self.prev_a12,
+        }
+    }
+
+    pub fn set_debug_state(&mut self, state: PpuDebugState) {
+        self.timing.set_debug_state(state.timing);
+        self.status.set_debug_state(state.status);
+        self.registers.set_debug_state(state.registers);
+        self.memory.set_debug_state(state.memory);
+        self.background.set_debug_state(state.background);
+        self.sprites.set_debug_state(state.sprites);
+        self.rendering.set_debug_state(state.rendering);
+        self.vblank_suppressed_for_frame = state.vblank_suppressed_for_frame;
+        self.vblank_for_nmi = state.vblank_for_nmi;
+        self.prev_a12 = state.prev_a12;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::MirroringMode;
+    use crate::ppu::{
+        background, memory, registers, rendering, screen_buffer, sprites, status, timing,
+    };
 
     struct ScanlineSpyMapper {
         calls: Rc<RefCell<Vec<(u16, bool)>>>,
@@ -669,6 +820,148 @@ mod tests {
         let calls = calls.borrow();
         assert!(!calls.is_empty());
         assert_eq!(calls.last().copied(), Some((1, false)));
+    }
+
+    #[test]
+    fn test_ppu_save_state_roundtrip_includes_internal_state() {
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+
+        let mut ppu_ram = [0u8; 4096];
+        ppu_ram[0] = 0x11;
+        ppu_ram[4095] = 0x22;
+
+        let mut palette = [0u8; 32];
+        palette[0] = 0x3F;
+        palette[31] = 0x2A;
+
+        let mut oam = [0u8; 256];
+        oam[0] = 0x10;
+        oam[1] = 0x20;
+        oam[2] = 0x30;
+        oam[3] = 0x40;
+
+        let mut secondary_oam = [0u8; 32];
+        secondary_oam[0] = 0xAA;
+        secondary_oam[31] = 0xBB;
+
+        let mut io_bus_refresh_time = [0u64; 8];
+        io_bus_refresh_time[0] = 123;
+        io_bus_refresh_time[7] = 456;
+
+        let screen_buffer = screen_buffer::ScreenBufferDebugState {
+            buffer: vec![0x5A; 256 * 240 * 3],
+        };
+
+        let debug_state = PpuDebugState {
+            timing: timing::TimingDebugState {
+                total_cycles: 999,
+                tv_system: TvSystem::Ntsc,
+                scanline: 120,
+                pixel: 200,
+                frame_count: 7,
+                rendering_enabled_d1: true,
+                rendering_enabled_d2: true,
+            },
+            status: status::StatusDebugState {
+                vblank_flag: true,
+                sprite_0_hit: true,
+                pending_sprite_0_hit: true,
+                sprite_overflow: true,
+                nmi_enabled: true,
+                frame_complete: true,
+            },
+            registers: registers::RegistersDebugState {
+                control_register: 0xA5,
+                mask_register: 0x3C,
+                oam_address: 0x7F,
+                data_buffer: 0xEE,
+                io_bus: 0x5A,
+                io_bus_refresh_time,
+                cycle_count: 12345,
+                v: 0x2123,
+                t: 0x3ABC,
+                x: 5,
+                w: true,
+            },
+            memory: memory::MemoryDebugState {
+                ppu_ram,
+                palette,
+                last_palette_index: Some(7),
+                last_palette_value: 0x1C,
+                mirroring_mode: MirroringMode::SingleScreenUpper,
+            },
+            background: background::BackgroundDebugState {
+                bg_pattern_shift_lo: 0x1234,
+                bg_pattern_shift_hi: 0x5678,
+                bg_attribute_shift_lo: 0x9ABC,
+                bg_attribute_shift_hi: 0xDEF0,
+                nametable_latch: 0x12,
+                attribute_latch: 0x34,
+                pattern_lo_latch: 0x56,
+                pattern_hi_latch: 0x78,
+            },
+            sprites: sprites::SpritesDebugState {
+                oam_data: oam,
+                secondary_oam,
+                sprites_found: 5,
+                sprite_count: 4,
+                next_sprite_count: 3,
+                sprite_buffers_ready: true,
+                sprite_0_index: Some(2),
+                next_sprite_0_index: Some(1),
+                sprite_eval_n: 12,
+                sprite_eval_m: 2,
+                sprite_eval_cycle: 6,
+                sprite_eval_in_range: true,
+                sprite_pattern_shift_lo: [0x11; 8],
+                sprite_pattern_shift_hi: [0x22; 8],
+                sprite_x_positions: [0x33; 8],
+                sprite_attributes: [0x44; 8],
+                next_sprite_pattern_shift_lo: [0x55; 8],
+                next_sprite_pattern_shift_hi: [0x66; 8],
+                next_sprite_x_positions: [0x77; 8],
+                next_sprite_attributes: [0x88; 8],
+            },
+            rendering: rendering::RenderingDebugState { screen_buffer },
+            vblank_suppressed_for_frame: true,
+            vblank_for_nmi: true,
+            prev_a12: true,
+        };
+
+        ppu.set_debug_state(debug_state.clone());
+
+        let state = ppu.capture_state();
+        let mut restored = Ppu::new(TvSystem::Ntsc);
+        restored.restore_state(&state);
+
+        let restored_debug = restored.debug_state();
+
+        assert_eq!(
+            restored_debug.vblank_suppressed_for_frame,
+            debug_state.vblank_suppressed_for_frame
+        );
+        assert_eq!(restored_debug.vblank_for_nmi, debug_state.vblank_for_nmi);
+        assert_eq!(restored_debug.prev_a12, debug_state.prev_a12);
+
+        assert_eq!(restored_debug.timing, debug_state.timing);
+        assert_eq!(restored_debug.status, debug_state.status);
+        assert_eq!(restored_debug.registers, debug_state.registers);
+        assert_eq!(restored_debug.memory, debug_state.memory);
+        assert_eq!(restored_debug.background, debug_state.background);
+        assert_eq!(restored_debug.sprites, debug_state.sprites);
+
+        assert_eq!(
+            restored_debug.rendering.screen_buffer.buffer.len(),
+            debug_state.rendering.screen_buffer.buffer.len()
+        );
+        assert_eq!(
+            restored_debug.rendering.screen_buffer.buffer[0],
+            debug_state.rendering.screen_buffer.buffer[0]
+        );
+        assert_eq!(
+            restored_debug.rendering.screen_buffer.buffer[123],
+            debug_state.rendering.screen_buffer.buffer[123]
+        );
     }
 
     struct EndFrameSpyMapper {

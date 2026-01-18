@@ -3,10 +3,12 @@ use crate::rendering::GlBackend;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;
+use std::fs;
 use std::time::{Duration, Instant};
 
 use crate::audio::NesAudio;
 use crate::input::Button;
+use crate::savestate::SaveState;
 use crate::tracing::Tracing;
 
 /// EventLoop manages the SDL2 event loop for the application.
@@ -424,8 +426,8 @@ impl EventLoop {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            // Handle F6 for shader cycling
-                            if keycode == Keycode::F6 {
+                            // Handle F4 for shader cycling
+                            if keycode == Keycode::F4 {
                                 gl_backend.cycle_shader();
                             } else if self.handle_key_down_for_run(nes, keycode)
                                 == KeyDownOutcome::Quit
@@ -884,6 +886,8 @@ impl EventLoop {
     /// - F10: Debugger step-over (JSR runs until RTS)
     /// - F11: Debugger step-into (single CPU tick)
     /// - F2/F3: Volume up/down (when audio is enabled)
+    /// - F6: Save state (when a ROM is loaded)
+    /// - F7: Load state (when a ROM is loaded)
     fn handle_key_down(
         nes: &mut crate::nes::Nes,
         keycode: Keycode,
@@ -934,6 +938,12 @@ impl EventLoop {
                     apply_volume_hotkey(audio, Keycode::F3);
                 }
             }
+            Keycode::F6 => {
+                Self::save_state_to_disk(nes);
+            }
+            Keycode::F7 => {
+                Self::load_state_from_disk(nes);
+            }
             Keycode::W => nes.set_button(1, Button::Up, true),
             Keycode::S => nes.set_button(1, Button::Down, true),
             Keycode::A => nes.set_button(1, Button::Left, true),
@@ -959,6 +969,70 @@ impl EventLoop {
             Keycode::R => nes.set_button(1, Button::Select, false),
             Keycode::T => nes.set_button(1, Button::Start, false),
             _ => {}
+        }
+    }
+
+    fn save_state_to_disk(nes: &mut crate::nes::Nes) {
+        let Some(state_path) = nes.state_path() else {
+            return;
+        };
+
+        let state = nes.save_state();
+        let bytes = match state.to_bytes() {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                eprintln!("Failed to serialize save-state: {err}");
+                return;
+            }
+        };
+
+        if let Some(parent) = state_path.parent()
+            && let Err(err) = fs::create_dir_all(parent)
+        {
+            eprintln!("Failed to create save-state directory: {err}");
+            return;
+        }
+
+        let mut tmp_path = state_path.clone();
+        tmp_path.set_extension(format!("state.tmp.{}", std::process::id()));
+
+        if let Err(err) = fs::write(&tmp_path, bytes) {
+            eprintln!("Failed to write save-state: {err}");
+            return;
+        }
+
+        if let Err(err) = fs::rename(&tmp_path, &state_path) {
+            eprintln!("Failed to finalize save-state: {err}");
+        }
+    }
+
+    fn load_state_from_disk(nes: &mut crate::nes::Nes) {
+        let Some(state_path) = nes.state_path() else {
+            return;
+        };
+
+        if !state_path.exists() {
+            return;
+        }
+
+        let bytes = match fs::read(&state_path) {
+            Ok(bytes) => bytes,
+            Err(err) => {
+                eprintln!("Failed to read save-state: {err}");
+                return;
+            }
+        };
+
+        let state = match SaveState::from_bytes(&bytes) {
+            Ok(state) => state,
+            Err(err) => {
+                eprintln!("Failed to deserialize save-state: {err}");
+                return;
+            }
+        };
+
+        if let Err(err) = nes.load_state(&state) {
+            eprintln!("Failed to restore save-state: {err}");
         }
     }
 
@@ -1078,15 +1152,25 @@ fn apply_volume_hotkey(audio: &NesAudio, keycode: Keycode) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::Cartridge;
     use crate::config::Config;
     use crate::nes::{Nes, TvSystem};
     use serial_test::serial;
     use std::cell::RefCell;
     use std::env;
+    use std::fs;
+    use std::path::PathBuf;
     use std::rc::Rc;
+    use tempfile::TempDir;
 
     fn default_config() -> Config {
         Config::with_defaults()
+    }
+
+    fn copy_test_rom(temp_dir: &TempDir) -> PathBuf {
+        let rom_path = temp_dir.path().join("test.nes");
+        fs::copy("roms/nestest.nes", &rom_path).expect("Failed to copy test ROM");
+        rom_path
     }
 
     fn config_with_video_scale(scale: f32) -> Config {
@@ -1302,6 +1386,63 @@ mod tests {
         assert!((audio.get_volume() - before).abs() < 1e-6);
 
         drop(restore);
+    }
+
+    #[test]
+    fn test_handle_key_down_f6_saves_state_next_to_rom() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+
+        let cart = Cartridge::load_from_file(&rom_path).expect("Failed to load ROM");
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        let mut paused = false;
+        let mut debugger_open_requested = false;
+        EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F6,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+
+        let state_path = rom_path.with_extension("state");
+        assert!(state_path.exists(), "Expected state file to be created");
+    }
+
+    #[test]
+    fn test_handle_key_down_f7_loads_state_when_present() {
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+
+        let cart = Cartridge::load_from_file(&rom_path).expect("Failed to load ROM");
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        let saved_pc = nes.cpu.pc();
+        let mut paused = false;
+        let mut debugger_open_requested = false;
+        EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F6,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+
+        nes.cpu.set_pc(saved_pc.wrapping_add(1));
+        EventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F7,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+
+        assert_eq!(nes.cpu.pc(), saved_pc);
     }
 
     #[test]

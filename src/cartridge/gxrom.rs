@@ -114,6 +114,19 @@ impl Mapper for GxROMMapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![self.prg_bank_select, self.chr_bank_select]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if let Some(&value) = data.first() {
+            self.prg_bank_select = value;
+        }
+        if let Some(&value) = data.get(1) {
+            self.chr_bank_select = value;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -170,5 +183,30 @@ mod tests {
         // Bank select write should not affect mirroring.
         mapper.write_prg(0xFFFF, 0xFF);
         assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+    }
+
+    #[test]
+    fn test_gxrom_registers_snapshot_restores_bank_selects() {
+        let prg_rom = banked_data(32 * 1024, 4);
+        let chr_rom = banked_data(8 * 1024, 4);
+
+        let mut mapper = create_mapper(
+            66,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            MirroringMode::Horizontal,
+        )
+        .expect("GxROM (mapper 66) should be implemented");
+
+        mapper.write_prg(0x8000, 0x21); // PRG bank 2, CHR bank 1
+
+        let registers = mapper.registers_snapshot();
+
+        let mut restored = create_mapper(66, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("GxROM (mapper 66) should be implemented");
+        restored.restore_registers(&registers);
+
+        assert_eq!(restored.read_prg(0x8000), 2);
+        assert_eq!(restored.read_chr(0x0000), 1);
     }
 }

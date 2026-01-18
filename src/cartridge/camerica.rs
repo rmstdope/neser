@@ -132,6 +132,27 @@ impl Mapper for CamericaMapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_memory.snapshot()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        self.chr_memory.load_snapshot(data);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        // [0]: bank_select
+        // [1]: one_screen_upper
+        vec![self.bank_select, self.one_screen_upper as u8]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 2 {
+            self.bank_select = data[0];
+            self.one_screen_upper = data[1] != 0;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -329,5 +350,34 @@ mod tests {
         // Read back
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
         assert_eq!(mapper.read_prg(0x7FFF), 0xBB);
+    }
+
+    #[test]
+    fn test_camerica_registers_snapshot_restores_bank_mirroring_and_chr_ram() {
+        let mut prg_rom = vec![0; 64 * 1024];
+        for bank in 0..4 {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        let mut mapper = CamericaMapper::new(prg_rom.clone(), vec![], MirroringMode::Horizontal);
+
+        mapper.write_prg(0x8000, 2);
+        mapper.write_prg(0xC000, 0x10); // one-screen upper
+        mapper.write_chr(0x0000, 0x5A);
+
+        let regs = mapper.registers_snapshot();
+        let chr = mapper.chr_ram_snapshot();
+
+        let mut restored = CamericaMapper::new(prg_rom, vec![], MirroringMode::Horizontal);
+        restored.restore_registers(&regs);
+        restored.restore_chr_ram(&chr);
+
+        assert_eq!(restored.read_prg(0x8000), 2);
+        assert_eq!(restored.get_mirroring(), MirroringMode::SingleScreenUpper);
+        assert_eq!(restored.read_chr(0x0000), 0x5A);
     }
 }

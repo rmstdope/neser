@@ -181,6 +181,45 @@ impl Mapper for Multicart15Mapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_memory.snapshot()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        self.chr_memory.load_snapshot(data);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        // [0]: bank_select
+        // [1]: sub_bank
+        // [2]: mode
+        // [3]: mirroring
+        let mirroring = match self.mirroring {
+            MirroringMode::Horizontal => 0,
+            MirroringMode::Vertical => 1,
+            MirroringMode::SingleScreen | MirroringMode::SingleScreenLower => 2,
+            MirroringMode::SingleScreenUpper => 3,
+            MirroringMode::FourScreen => 4,
+        };
+        vec![self.bank_select, self.sub_bank, self.mode, mirroring]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 4 {
+            self.bank_select = data[0];
+            self.sub_bank = data[1];
+            self.mode = data[2];
+            self.mirroring = match data[3] {
+                0 => MirroringMode::Horizontal,
+                1 => MirroringMode::Vertical,
+                2 => MirroringMode::SingleScreen,
+                3 => MirroringMode::SingleScreenUpper,
+                4 => MirroringMode::FourScreen,
+                _ => MirroringMode::Horizontal,
+            };
+        }
+    }
 }
 
 #[cfg(test)]
@@ -376,5 +415,26 @@ mod tests {
 
         mapper.write_prg(0x8000, 20);
         assert_eq!(mapper.read_prg(0x8000), 200);
+    }
+
+    #[test]
+    fn test_multicart15_registers_snapshot_restores_state() {
+        let prg_rom = create_test_prg_rom(8);
+        let mut mapper = Multicart15Mapper::new(prg_rom.clone(), vec![], MirroringMode::Vertical);
+
+        mapper.write_prg(0x8004, 0x80 | 0x12); // mode 2, bank select 0x12, horizontal mirroring
+        mapper.write_chr(0x0000, 0xAB);
+
+        let regs = mapper.registers_snapshot();
+        let chr = mapper.chr_ram_snapshot();
+
+        let mut restored = Multicart15Mapper::new(prg_rom, vec![], MirroringMode::Vertical);
+        restored.restore_registers(&regs);
+        restored.restore_chr_ram(&chr);
+
+        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.read_chr(0x0000), 0xAB);
+        assert_eq!(restored.mode, 2);
+        assert_eq!(restored.bank_select, 0x12 & 0x3F);
     }
 }

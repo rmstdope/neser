@@ -11,6 +11,7 @@ use crate::ppu;
 use std::cell::RefCell;
 use std::io;
 use std::ops::RangeInclusive;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 pub trait BusDevice {
@@ -115,6 +116,13 @@ impl Bus {
         };
 
         cartridge.borrow().save_ram()
+    }
+
+    pub fn cartridge_state_path(&self) -> Option<PathBuf> {
+        self.cartridge
+            .borrow()
+            .as_ref()
+            .and_then(|cart| cart.borrow().state_path())
     }
 
     /// Read a byte from memory
@@ -356,7 +364,6 @@ impl Bus {
     }
 
     /// Capture mapper state for save-state.
-    #[cfg(test)]
     pub fn capture_mapper_state(&self) -> crate::savestate::MapperState {
         if let Some(ref cartridge_opt) = *self.cartridge.borrow() {
             let cartridge = cartridge_opt.borrow();
@@ -378,7 +385,6 @@ impl Bus {
     }
 
     /// Restore mapper state from a save-state.
-    #[cfg(test)]
     pub fn restore_mapper_state(&mut self, state: &crate::savestate::MapperState) {
         if let Some(ref cartridge_opt) = *self.cartridge.borrow() {
             let mut cartridge = cartridge_opt.borrow_mut();
@@ -386,7 +392,28 @@ impl Bus {
             mapper.restore_prg_ram(&state.prg_ram);
             mapper.restore_chr_ram(&state.chr_ram);
             mapper.restore_registers(&state.registers);
+            let mirroring = mapper.get_mirroring();
+            self.ppu.borrow_mut().set_mirroring(mirroring);
         }
+    }
+
+    /// Capture bus state for save-state.
+    pub fn capture_state(&self) -> crate::savestate::BusState {
+        crate::savestate::BusState {
+            open_bus: self.open_bus,
+            oam_dma_page: *self.oam_dma_page.borrow(),
+            joypad1: self.joypad1.borrow().capture_state(),
+            joypad2: self.joypad2.borrow().capture_state(),
+        }
+    }
+
+    /// Restore bus state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::savestate::BusState) {
+        self.open_bus = state.open_bus;
+        *self.oam_dma_page.borrow_mut() = state.oam_dma_page;
+        self.dma_triggered.replace(false);
+        self.joypad1.borrow_mut().restore_state(&state.joypad1);
+        self.joypad2.borrow_mut().restore_state(&state.joypad2);
     }
 
     // /// Print the current open bus value to stdout (for debugging)
@@ -398,6 +425,8 @@ impl Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nes::TvSystem;
+    use std::rc::Rc;
 
     struct TestBusDevice {
         range: std::ops::RangeInclusive<u16>,
@@ -440,6 +469,86 @@ mod tests {
         fn address_range(&self) -> std::ops::RangeInclusive<u16> {
             self.range.clone()
         }
+    }
+
+    fn create_mmc1_rom() -> Vec<u8> {
+        let prg_rom_banks = 1u8;
+        let chr_rom_banks = 0u8; // CHR RAM
+        let flags6 = 0x10; // mapper 1, horizontal mirroring
+        let flags7 = 0x00;
+
+        let mut rom = vec![
+            b'N',
+            b'E',
+            b'S',
+            0x1A,
+            prg_rom_banks,
+            chr_rom_banks,
+            flags6,
+            flags7,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        ];
+
+        let prg_size = prg_rom_banks as usize * 0x4000;
+        rom.extend(std::iter::repeat_n(0, prg_size));
+        rom
+    }
+
+    fn write_mmc1_control(bus: &mut Bus, value: u8) {
+        for i in 0..5 {
+            let bit = (value >> i) & 0x01;
+            bus.write_for_testing(0x8000, bit);
+        }
+    }
+
+    fn assert_vertical_mirroring(ppu: &mut ppu::Ppu) {
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
+        ppu.write_data(0x42);
+
+        ppu.write_address(0x28, false);
+        ppu.write_address(0x00, false);
+        let _ = ppu.read_data();
+        assert_eq!(ppu.read_data(), 0x42);
+    }
+
+    fn assert_horizontal_mirroring(ppu: &mut ppu::Ppu) {
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
+        ppu.write_data(0x55);
+
+        ppu.write_address(0x24, false);
+        ppu.write_address(0x00, false);
+        let _ = ppu.read_data();
+        assert_eq!(ppu.read_data(), 0x55);
+    }
+
+    #[test]
+    fn test_restore_mapper_state_updates_ppu_mirroring() {
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let apu = Rc::new(RefCell::new(apu::Apu::new()));
+        let mut bus = Bus::new(ppu.clone(), apu);
+
+        let rom = create_mmc1_rom();
+        let cartridge = Cartridge::new(&rom).expect("Failed to create MMC1 ROM");
+        bus.map_cartridge(cartridge);
+
+        write_mmc1_control(&mut bus, 0x1E); // PRG mode 3, vertical mirroring
+        assert_vertical_mirroring(&mut ppu.borrow_mut());
+        let saved_state = bus.capture_mapper_state();
+
+        write_mmc1_control(&mut bus, 0x1F); // PRG mode 3, horizontal mirroring
+        assert_horizontal_mirroring(&mut ppu.borrow_mut());
+
+        bus.restore_mapper_state(&saved_state);
+        assert_vertical_mirroring(&mut ppu.borrow_mut());
     }
 
     fn create_mmc1_ines_rom_with_vertical_mirroring() -> Vec<u8> {
@@ -596,6 +705,36 @@ mod tests {
         assert!(dma);
         assert!(memory.oam_dma_pending());
         assert_eq!(memory.take_oam_dma_page(), Some(0x22));
+    }
+
+    #[test]
+    fn test_bus_save_state_roundtrip_includes_internal_state() {
+        let mut memory = create_test_memory();
+
+        memory.write(0x0000, 0x3C, false);
+        memory.write(0x4014, 0x22, false);
+
+        memory.set_button(1, crate::input::Button::A, true);
+        memory.set_button(1, crate::input::Button::Right, true);
+        memory.write(0x4016, 0x00, false);
+        memory.read(0x4016);
+        memory.read(0x4016);
+
+        let expected_open_bus = memory.open_bus_value_for_test();
+
+        let saved_state = memory.capture_state();
+
+        let mut restored = create_test_memory();
+        restored.restore_state(&saved_state);
+
+        assert_eq!(restored.open_bus_value_for_test(), expected_open_bus);
+        assert!(restored.oam_dma_pending());
+        assert_eq!(restored.take_oam_dma_page(), Some(0x22));
+
+        let expected_sequence = [0, 0, 0, 0, 0, 1];
+        for expected in expected_sequence {
+            assert_eq!(restored.read(0x4016) & 0x01, expected);
+        }
     }
 
     #[test]
