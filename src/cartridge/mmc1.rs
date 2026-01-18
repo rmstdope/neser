@@ -372,6 +372,13 @@ mod tests {
     use super::*;
     use crate::cartridge::mapper::create_mapper;
 
+    /// Helper function to write a 5-bit value to a register using the MMC1 shift mechanism
+    fn write_register(mapper: &mut MMC1Mapper, addr: u16, value: u8) {
+        for i in 0..5 {
+            mapper.write_prg(addr, (value >> i) & 0x01);
+        }
+    }
+
     #[test]
     fn test_mmc1_shift_register_load() {
         // MMC1 requires 5 sequential writes to load a register
@@ -863,12 +870,8 @@ mod tests {
         assert_eq!(mapper.read_prg(0x7FFF), 0xCC);
 
         // Try to disable WRAM by setting bit 4 of prg_bank register ($E000-$FFFF)
-        // Write sequence: 0,0,0,0,1 to load 0b10000
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000001);
+        // Load 0b10000 (bit 4 set)
+        write_register(&mut mapper, 0xE000, 0b10000);
 
         // On MMC1A, WRAM should still be enabled (bit 4 is ignored)
         // Reads should return the previously written values
@@ -903,11 +906,7 @@ mod tests {
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
 
         // Disable WRAM by setting bit 4 of prg_bank register
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000001);
+        write_register(&mut mapper, 0xE000, 0b10000);
 
         // With WRAM disabled, reads should return 0
         assert_eq!(mapper.read_prg(0x6000), 0x00);
@@ -917,9 +916,7 @@ mod tests {
         assert_eq!(mapper.read_prg(0x6000), 0x00); // Still reads 0, not 0xBB
 
         // Re-enable WRAM by clearing bit 4
-        for _ in 0..5 {
-            mapper.write_prg(0xE000, 0b00000000);
-        }
+        write_register(&mut mapper, 0xE000, 0b00000);
 
         // With WRAM enabled again, writes should work
         mapper.write_prg(0x6000, 0xCC);
@@ -942,11 +939,7 @@ mod tests {
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
 
         // Disable WRAM (should work on MMC1B)
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000000);
-        mapper.write_prg(0xE000, 0b00000001);
+        write_register(&mut mapper, 0xE000, 0b10000);
 
         // Should be disabled (reads 0)
         assert_eq!(mapper.read_prg(0x6000), 0x00);
