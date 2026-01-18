@@ -26,4 +26,4 @@ mod vrc2_vrc4;
 mod vrc6;
 
 pub use cartridge::{Cartridge, MirroringMode};
-pub use mapper::Mapper;
+pub use mapper::{Mapper, MapperContext};

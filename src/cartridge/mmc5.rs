@@ -1586,8 +1586,9 @@ impl Mapper for MMC5Mapper {
 mod tests {
     use crate::cartridge::cartridge::Cartridge;
     use crate::cartridge::cartridge::MirroringMode;
-    use crate::cartridge::mapper::Mapper;
-    use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mapper::{
+        Mapper, MapperContext, create_mapper as create_mapper_with_context,
+    };
 
     use super::MMC5Mapper;
 
@@ -1605,6 +1606,17 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
         MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal)
+    }
+
+    fn create_mapper(
+        mapper_number: u8,
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+    ) -> std::io::Result<Box<dyn Mapper>> {
+        let context = MapperContext::new(mapper_number, prg_rom, chr_rom, mirroring)
+            .with_prg_ram_banks(MMC5Mapper::PRG_RAM_BANK_COUNT_MAX as u8);
+        create_mapper_with_context(context)
     }
 
     fn make_mmc5_ines_rom_with_prg_ram_banks(prg_ram_banks_8k: u8) -> Vec<u8> {

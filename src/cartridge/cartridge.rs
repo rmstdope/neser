@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::{error, fmt};
 
 use crate::cartridge::Mapper;
+use crate::cartridge::mapper::MapperContext;
 use serde::{Deserialize, Serialize};
 
 // Mirroring types for nametables
@@ -133,12 +134,10 @@ impl Cartridge {
         let chr_rom = data[chr_rom_start..chr_rom_end].to_vec();
 
         // Create mapper instance
-        let mapper = crate::cartridge::mapper::create_mapper_with_prg_ram_size(
-            mapper_number,
-            prg_rom,
-            chr_rom,
-            mirroring,
-            prg_ram_banks_8k,
+        let mapper = crate::cartridge::mapper::create_mapper(
+            MapperContext::new(mapper_number, prg_rom, chr_rom, mirroring)
+                .with_prg_ram_banks(prg_ram_banks_8k)
+                .with_battery_backed_prg_ram(battery_backed_prg_ram),
         )
         .map_err(|err| {
             if err.kind() == io::ErrorKind::Unsupported {

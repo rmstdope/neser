@@ -398,7 +398,7 @@ impl Mapper for SunsoftFme7Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mapper::{MapperContext, create_mapper};
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
         let mut data = vec![0u8; bank_size * num_banks];
@@ -414,7 +414,12 @@ mod tests {
     fn test_mapper_69_is_wired_in_factory() {
         let prg_rom = banked_data(8 * 1024, 16);
         let chr_rom = banked_data(1024, 8);
-        let mapper = create_mapper(69, prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mapper = create_mapper(MapperContext::new(
+            69,
+            prg_rom,
+            chr_rom,
+            MirroringMode::Horizontal,
+        ));
         assert!(mapper.is_ok(), "Mapper 69 should be implemented");
     }
 

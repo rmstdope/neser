@@ -291,7 +291,9 @@ impl Mapper for Namco118Mapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
-    use crate::cartridge::mapper::{Mapper, create_mapper};
+    use crate::cartridge::mapper::{
+        Mapper, MapperContext, create_mapper as create_mapper_with_context,
+    };
     use crate::cartridge::namco118::Namco118Mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
@@ -302,6 +304,20 @@ mod tests {
             data[start..end].fill(bank as u8);
         }
         data
+    }
+
+    fn create_mapper(
+        mapper_number: u8,
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+    ) -> std::io::Result<Box<dyn Mapper>> {
+        create_mapper_with_context(MapperContext::new(
+            mapper_number,
+            prg_rom,
+            chr_rom,
+            mirroring,
+        ))
     }
 
     #[test]

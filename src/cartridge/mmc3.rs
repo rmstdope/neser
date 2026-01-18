@@ -276,8 +276,7 @@ impl MMC3Mapper {
 #[allow(clippy::items_after_test_module)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
-    use crate::cartridge::mapper::Mapper;
-    use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::mmc3::MMC3Mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
@@ -288,6 +287,15 @@ mod tests {
             data[start..end].fill(bank as u8);
         }
         data
+    }
+
+    fn create_mmc3_mapper(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+    ) -> Box<dyn Mapper> {
+        create_mapper(MapperContext::new(4, prg_rom, chr_rom, mirroring))
+            .expect("MMC3 (mapper 4) should be implemented")
     }
 
     #[test]
@@ -309,8 +317,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Set IRQ latch to 1
         mapper.write_prg(0xC000, 1);
@@ -348,8 +355,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         mapper.write_prg(0xC000, 1); // latch=1
         mapper.write_prg(0xC001, 0); // reload
@@ -386,8 +392,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         mapper.write_prg(0xC000, 1); // latch=1
         mapper.write_prg(0xC001, 0); // reload
@@ -422,13 +427,8 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mapper(
-            4,
-            prg_rom.clone(),
-            chr_rom.clone(),
-            MirroringMode::Horizontal,
-        )
-        .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper =
+            create_mmc3_mapper(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
 
         mapper.write_prg(0xC000, 0); // latch=0
         mapper.write_prg(0xC001, 0); // reload
@@ -442,8 +442,7 @@ mod tests {
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut restored = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
         restored.restore_registers(&saved);
 
         restored.ppu_address_changed(0x1000);
@@ -530,8 +529,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8); // 8 x 8KB banks; last=7, second-last=6
         let chr_rom = banked_data(1024, 16); // Enough to satisfy mapper creation; not used in this test
 
-        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // PRG mode 0, set R6=$8000 bank 2, R7=$A000 bank 3
         mapper.write_prg(0x8000, 0b0000_0110); // bank select: register 6, PRG mode 0, CHR mode 0
@@ -565,8 +563,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16); // 16 x 1KB banks
 
-        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Ensure CHR mode 0.
         mapper.write_prg(0x8000, 0b0000_0000); // bank select: register 0, CHR mode 0
@@ -609,8 +606,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Default: PRG-RAM enabled (can read and write)
         mapper.write_prg(0x6000, 0xAA);
@@ -640,8 +636,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Write a value to PRG-RAM while it's enabled
         mapper.write_prg(0x6000, 0xAA);
@@ -682,8 +677,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16); // 16 x 1KB banks
 
-        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Enable CHR mode 1 (bit7=1) and program registers.
         mapper.write_prg(0x8000, 0b1000_0000); // R0, CHR mode 1
@@ -721,8 +715,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Starts with the cartridge-provided mirroring.
         assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
@@ -747,8 +740,7 @@ mod tests {
         // Switching the bank should change what is visible at the same PPU address.
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let mut mapper = create_mapper(4, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, vec![], MirroringMode::Horizontal);
 
         // CHR mode 0: $1000-$13FF uses R2 (1KB bank).
         mapper.write_prg(0x8000, 0b0000_0010); // select R2
@@ -775,8 +767,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Ensure CHR mode 0 and select R1.
         mapper.write_prg(0x8000, 0b0000_0001); // R1, CHR mode 0
@@ -799,8 +790,7 @@ mod tests {
 
         let chr_rom = vec![]; // No CHR-ROM (uses CHR-RAM)
 
-        let mapper = create_mapper(4, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("MMC3 (mapper 4) should be implemented");
+        let mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // With 2 banks and default configuration (PRG mode 0):
         // $8000-$9FFF: R6 (bank 0) = 0xAA

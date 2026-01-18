@@ -132,7 +132,9 @@ impl Mapper for GxROMMapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::MirroringMode;
-    use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mapper::{
+        Mapper, MapperContext, create_mapper as create_mapper_with_context,
+    };
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
         let mut data = vec![0u8; bank_size * num_banks];
@@ -142,6 +144,20 @@ mod tests {
             data[start..end].fill(bank as u8);
         }
         data
+    }
+
+    fn create_mapper(
+        mapper_number: u8,
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+    ) -> std::io::Result<Box<dyn Mapper>> {
+        create_mapper_with_context(MapperContext::new(
+            mapper_number,
+            prg_rom,
+            chr_rom,
+            mirroring,
+        ))
     }
 
     #[test]
