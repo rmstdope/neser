@@ -138,7 +138,12 @@ impl Mapper for AxROMMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mapper::{MapperContext, create_mapper};
+
+    fn create_axrom_mapper(prg_rom: Vec<u8>, mirroring: MirroringMode) -> Box<dyn Mapper> {
+        create_mapper(MapperContext::new(7, prg_rom, vec![], mirroring))
+            .expect("Failed to create AxROM mapper")
+    }
 
     #[test]
     fn test_axrom_256kb_prg_bank_switching() {
@@ -154,8 +159,7 @@ mod tests {
             }
         }
 
-        let mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("Failed to create AxROM mapper");
+        let mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
 
         // Default bank should be 0
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -175,8 +179,7 @@ mod tests {
             }
         }
 
-        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("Failed to create AxROM mapper");
+        let mut mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
 
         // Write to $8000 with different bank values
         mapper.write_prg(0x8000, 0x00); // Bank 0
@@ -197,8 +200,7 @@ mod tests {
     fn test_axrom_chr_ram() {
         // AxROM uses 8KB CHR-RAM (no CHR ROM)
         let prg_rom = vec![0; 128 * 1024];
-        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("Failed to create AxROM mapper");
+        let mut mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
 
         // Write to CHR-RAM
         mapper.write_chr(0x0000, 0x42);
@@ -213,8 +215,7 @@ mod tests {
     fn test_axrom_one_screen_mirroring_lower() {
         // Bit 4 = 0 selects lower nametable (single-screen A)
         let prg_rom = vec![0; 128 * 1024];
-        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("Failed to create AxROM mapper");
+        let mut mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
 
         // Write with bit 4 = 0 (lower nametable)
         mapper.write_prg(0x8000, 0x00); // Bits: 0000 0000
@@ -229,8 +230,7 @@ mod tests {
     fn test_axrom_one_screen_mirroring_upper() {
         // Bit 4 = 1 selects upper nametable (single-screen B)
         let prg_rom = vec![0; 128 * 1024];
-        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("Failed to create AxROM mapper");
+        let mut mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
 
         // Write with bit 4 = 1 (upper nametable)
         mapper.write_prg(0x8000, 0x10); // Bits: 0001 0000
@@ -249,8 +249,7 @@ mod tests {
             }
         }
 
-        let mut mapper = create_mapper(7, prg_rom.clone(), vec![], MirroringMode::Horizontal)
-            .expect("Failed to create AxROM mapper");
+        let mut mapper = create_axrom_mapper(prg_rom.clone(), MirroringMode::Horizontal);
 
         mapper.write_prg(0x8000, 0x07); // select bank 7
         mapper.write_chr(0x0000, 0x42);
@@ -259,8 +258,7 @@ mod tests {
         let registers = mapper.registers_snapshot();
         let chr_ram = mapper.chr_ram_snapshot();
 
-        let mut restored = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("Failed to create AxROM mapper");
+        let mut restored = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
         restored.restore_registers(&registers);
         restored.restore_chr_ram(&chr_ram);
 
@@ -282,8 +280,7 @@ mod tests {
             }
         }
 
-        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("Failed to create AxROM mapper");
+        let mut mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
 
         // Select each of the 4 banks
         for bank in 0..4 {
@@ -309,8 +306,7 @@ mod tests {
             }
         }
 
-        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("Failed to create AxROM mapper");
+        let mut mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
 
         // Write to different addresses in PRG ROM space
         mapper.write_prg(0x8000, 0x00);
@@ -327,8 +323,7 @@ mod tests {
     fn test_axrom_prg_ram_support() {
         // AxROM should support PRG-RAM at $6000-$7FFF
         let prg_rom = vec![0; 128 * 1024];
-        let mut mapper = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("Failed to create AxROM mapper");
+        let mut mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
 
         // Write to PRG-RAM
         mapper.write_prg(0x6000, 0xAA);

@@ -471,13 +471,22 @@ impl Mapper for MMC1Mapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mapper::{MapperContext, create_mapper};
 
     /// Helper function to write a 5-bit value to a register using the MMC1 shift mechanism
     fn write_register(mapper: &mut MMC1Mapper, addr: u16, value: u8) {
         for i in 0..5 {
             mapper.write_prg(addr, (value >> i) & 0x01);
         }
+    }
+
+    fn create_mmc1_mapper(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+    ) -> Box<dyn Mapper> {
+        create_mapper(MapperContext::new(1, prg_rom, chr_rom, mirroring))
+            .expect("MMC1 (mapper 1) should be implemented")
     }
 
     #[test]
@@ -488,8 +497,7 @@ mod tests {
 
         let prg_rom = vec![0; 128 * 1024]; // 128KB = 8 banks of 16KB
         let chr_rom = vec![0; 32 * 1024]; // 32KB = 8 banks of 4KB
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Load value 0b00011 (3) into control register at $8000-$9FFF
         // This requires 5 writes, each with bit 0 containing the next bit of the value
@@ -537,8 +545,7 @@ mod tests {
         // Writing with bit 7 set should reset the shift register
         let prg_rom = vec![0; 256 * 1024];
         let chr_rom = vec![0; 128 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Start loading a value
         mapper.write_prg(0x8000, 0b00000001);
@@ -565,8 +572,7 @@ mod tests {
         // 3: horizontal
         let prg_rom = vec![0; 256 * 1024];
         let chr_rom = vec![0; 128 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Load 0b00000 (mirroring = 0 = SingleScreenLower)
         for _ in 0..5 {
@@ -613,8 +619,7 @@ mod tests {
         }
 
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Set control register to PRG mode 0 (bits 2-3 = 0b00) and mirroring
         // Value: 0b00000 (mirroring=0, prg_mode=0, chr_mode=0)
@@ -655,8 +660,7 @@ mod tests {
         }
 
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Set control register to PRG mode 2 (bits 2-3 = 0b10)
         // Value: 0b01000 (mirroring=0, prg_mode=2, chr_mode=0)
@@ -694,8 +698,7 @@ mod tests {
         }
 
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Set control register to PRG mode 3 (bits 2-3 = 0b11) - this is the default
         // Value: 0b01100 (mirroring=0, prg_mode=3, chr_mode=0)
@@ -733,8 +736,7 @@ mod tests {
         }
 
         let prg_rom = vec![0; 32 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Set control register to CHR mode 0 (bit 4 = 0)
         // Value: 0b00000 (mirroring=0, prg_mode=0, chr_mode=0)
@@ -770,8 +772,7 @@ mod tests {
         }
 
         let prg_rom = vec![0; 32 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Set control register to CHR mode 1 (bit 4 = 1)
         // Value: 0b10000 (mirroring=0, prg_mode=0, chr_mode=1)
@@ -805,8 +806,7 @@ mod tests {
         // MMC1 should support 8KB PRG-RAM at $6000-$7FFF
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Write to PRG-RAM
         mapper.write_prg(0x6000, 0xAA);
@@ -823,8 +823,7 @@ mod tests {
     fn test_mmc1_chr_ram_when_no_chr_rom() {
         // If CHR ROM is empty, MMC1 should use CHR-RAM
         let prg_rom = vec![0; 128 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, vec![], MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, vec![], MirroringMode::Horizontal);
 
         // Initially should read 0
         assert_eq!(mapper.read_chr(0x0000), 0x00);
@@ -847,8 +846,7 @@ mod tests {
         // After 5 writes, the shift register should contain the 5-bit value
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Write sequence: 1, 0, 1, 0, 1 should result in value 0b10101
         // With proper power-on state (0x10), after 5 writes we should see the bit pattern
@@ -867,8 +865,7 @@ mod tests {
         // After reset, the shift register should go back to 0x10
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Do some writes
         mapper.write_prg(0x8000, 0b00000001);
@@ -894,8 +891,7 @@ mod tests {
         // When bit 4 is clear (0), WRAM is enabled
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Initially WRAM should be enabled (prg_bank defaults to 0)
         mapper.write_prg(0x6000, 0xAA);
@@ -939,8 +935,7 @@ mod tests {
         // Verify WRAM disable affects the entire WRAM range ($6000-$7FFF)
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mapper(1, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Failed to create MMC1 mapper");
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Write to various WRAM addresses while enabled
         mapper.write_prg(0x6000, 0x11);

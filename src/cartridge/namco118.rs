@@ -291,7 +291,7 @@ impl Mapper for Namco118Mapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
-    use crate::cartridge::mapper::{Mapper, create_mapper};
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::namco118::Namco118Mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
@@ -304,12 +304,20 @@ mod tests {
         data
     }
 
+    fn create_namco118_mapper(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+    ) -> std::io::Result<Box<dyn Mapper>> {
+        create_mapper(MapperContext::new(206, prg_rom, chr_rom, mirroring))
+    }
+
     #[test]
     fn namco118_prg_chr_banking_matches_mmc3_subset() {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mapper(206, prg_rom, chr_rom, MirroringMode::Vertical)
+        let mut mapper = create_namco118_mapper(prg_rom, chr_rom, MirroringMode::Vertical)
             .expect("Mapper 206 should be implemented");
 
         // PRG mode 0 (bit 6 clear): R6 @ $8000, R7 @ $A000, fixed second-last @ $C000, last @ $E000.
@@ -362,7 +370,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(206, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_namco118_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("Mapper 206 should be implemented");
 
         // Mirroring should stay hardwired to the cartridge header; writes to $A000 must not change it.
@@ -407,13 +415,9 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mapper(
-            206,
-            prg_rom.clone(),
-            chr_rom.clone(),
-            MirroringMode::Horizontal,
-        )
-        .expect("Mapper 206 should be implemented");
+        let mut mapper =
+            create_namco118_mapper(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
+                .expect("Mapper 206 should be implemented");
 
         // Set PRG bank registers R6/R7.
         mapper.write_prg(0x8000, 0b0000_0110);
@@ -431,7 +435,7 @@ mod tests {
 
         let regs = mapper.registers_snapshot();
 
-        let mut restored = create_mapper(206, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut restored = create_namco118_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("Mapper 206 should be implemented");
         restored.restore_registers(&regs);
 

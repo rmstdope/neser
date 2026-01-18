@@ -484,7 +484,7 @@ impl Mapper for Vrc2Vrc4Mapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
-    use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
         let mut data = vec![0u8; bank_size * num_banks];
@@ -496,6 +496,21 @@ mod tests {
         data
     }
 
+    fn create_vrc_mapper(
+        mapper_number: u8,
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+    ) -> Box<dyn Mapper> {
+        create_mapper(MapperContext::new(
+            mapper_number,
+            prg_rom,
+            chr_rom,
+            mirroring,
+        ))
+        .expect("VRC mapper should be implemented")
+    }
+
     #[test]
     fn test_vrc4_mapper_21_prg_banking() {
         // VRC4 banking (same as VRC6):
@@ -505,8 +520,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(21, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Mapper 21 should be implemented");
+        let mut mapper = create_vrc_mapper(21, prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Select 16KB bank #1 at $8000-$BFFF (8KB banks 2 and 3)
         mapper.write_prg(0x8000, 0x01);
@@ -526,8 +540,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(22, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Mapper 22 should be implemented");
+        let mut mapper = create_vrc_mapper(22, prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Try to enable IRQ (should be ignored for VRC2)
         mapper.write_prg(0xF000, 0xFF);
@@ -547,8 +560,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(23, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Mapper 23 should be implemented");
+        let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, MirroringMode::Horizontal);
 
         mapper.write_prg(0xF000, 0xFE);
         mapper.write_prg(0xF001, 0b0000_0110); // M=1, E=1, A=0
@@ -571,8 +583,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 32);
 
-        let mut mapper = create_mapper(25, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Mapper 25 should be implemented");
+        let mut mapper = create_vrc_mapper(25, prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Set CHR bank 0 to bank 7
         mapper.write_prg(0xB000, 7);
@@ -588,8 +599,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(21, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .expect("Mapper 21 should be implemented");
+        let mut mapper = create_vrc_mapper(21, prg_rom, chr_rom, MirroringMode::Horizontal);
 
         // Test vertical mirroring
         mapper.write_prg(0x9000, 0x00);
@@ -609,13 +619,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(
+        let mut mapper = create_vrc_mapper(
             21,
             prg_rom.clone(),
             chr_rom.clone(),
             MirroringMode::Horizontal,
-        )
-        .expect("Mapper 21 should be implemented");
+        );
 
         mapper.write_prg(0x8000, 0x03); // prg_bank_16k
         mapper.write_prg(0xA000, 0x05); // prg_bank_8k
@@ -629,8 +638,7 @@ mod tests {
 
         let regs = mapper.registers_snapshot();
 
-        let mut restored = create_mapper(21, prg_rom, chr_rom, MirroringMode::Vertical)
-            .expect("Mapper 21 should be implemented");
+        let mut restored = create_vrc_mapper(21, prg_rom, chr_rom, MirroringMode::Vertical);
         restored.restore_registers(&regs);
 
         assert_eq!(restored.read_prg(0x8000), 6);

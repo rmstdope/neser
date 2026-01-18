@@ -508,7 +508,7 @@ impl Mapper for Namco163Mapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::MirroringMode;
-    use crate::cartridge::mapper::{Mapper, create_mapper};
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::namco163::Namco163Mapper;
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
@@ -519,6 +519,14 @@ mod tests {
             data[start..end].fill(bank as u8);
         }
         data
+    }
+
+    fn create_namco163_mapper(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+    ) -> std::io::Result<Box<dyn Mapper>> {
+        create_mapper(MapperContext::new(19, prg_rom, chr_rom, mirroring))
     }
 
     #[test]
@@ -568,7 +576,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 4);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(19, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_namco163_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("Mapper 19 should be implemented");
 
         // Load counter to 0x7FFF and enable (bit 7 of reg 13).

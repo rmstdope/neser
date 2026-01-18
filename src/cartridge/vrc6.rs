@@ -688,7 +688,7 @@ impl Mapper for VRC6Mapper {
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;
-    use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
 
     fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
         let mut data = vec![0u8; bank_size * num_banks];
@@ -700,6 +700,20 @@ mod tests {
         data
     }
 
+    fn create_vrc6_mapper(
+        mapper_number: u8,
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+    ) -> std::io::Result<Box<dyn Mapper>> {
+        create_mapper(MapperContext::new(
+            mapper_number,
+            prg_rom,
+            chr_rom,
+            mirroring,
+        ))
+    }
+
     #[test]
     fn test_vrc6_audio_pulse_mode_ignores_duty_outputs_volume_when_enabled() {
         // Red-phase test: VRC6 expansion audio should produce non-zero output when configured.
@@ -708,7 +722,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
 
         // Pulse 1: mode=1, duty doesn't matter, volume=15
@@ -726,7 +740,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
 
         // Saw: rate=8, period=0, enable
@@ -747,7 +761,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(
+        let mut mapper = create_vrc6_mapper(
             24,
             prg_rom.clone(),
             chr_rom.clone(),
@@ -778,7 +792,7 @@ mod tests {
         }
         let sample = mapper.expansion_audio_sample();
 
-        let mut restored = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut restored = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
         restored.restore_registers(&saved);
 
@@ -803,7 +817,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
 
         mapper.write_prg(0xF000, 0xFE);
@@ -839,7 +853,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
 
         // Force immediate trip on first counter clock by starting at 0xFF.
@@ -867,7 +881,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
 
         // Select 16KB bank #1 at $8000-$BFFF.
@@ -893,7 +907,7 @@ mod tests {
         let chr_rom = banked_data(1024, 32);
 
         // Mapper 24: write R1 at $D001 to bank 7 -> $0400-$07FF reads bank 7.
-        let mut m24 = create_mapper(
+        let mut m24 = create_vrc6_mapper(
             24,
             prg_rom.clone(),
             chr_rom.clone(),
@@ -905,7 +919,7 @@ mod tests {
 
         // Mapper 26: the same CPU address $D001 should target internal R2 (not R1).
         // So $0400 should remain at default bank 0, while $0800 uses bank 7.
-        let mut m26 = create_mapper(26, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut m26 = create_vrc6_mapper(26, prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("VRC6 (mapper 26) should be implemented");
         m26.write_prg(0xD001, 7);
         assert_eq!(m26.read_chr(0x0400), 0);

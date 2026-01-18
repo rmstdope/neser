@@ -158,13 +158,18 @@ impl Mapper for CamericaMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::mapper::create_mapper;
+    use crate::cartridge::mapper::{MapperContext, create_mapper};
 
     #[test]
     fn test_mapper_71_is_wired_in_factory() {
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![];
-        let mapper = create_mapper(71, prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mapper = create_mapper(MapperContext::new(
+            71,
+            prg_rom,
+            chr_rom,
+            MirroringMode::Horizontal,
+        ));
         assert!(mapper.is_ok(), "Mapper 71 should be implemented");
     }
 

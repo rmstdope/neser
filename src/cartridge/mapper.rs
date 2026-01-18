@@ -24,6 +24,78 @@ use super::uxrom::UxROMMapper;
 use super::vrc2_vrc4::Vrc2Vrc4Mapper;
 use super::vrc6::VRC6Mapper;
 
+/// Metadata for constructing a mapper, containing cartridge header details and
+/// derived values (e.g., CRC32) used by the factory.
+#[derive(Debug)]
+pub struct MapperContext {
+    /// iNES/NES 2.0 mapper number. Submapper is kept separately.
+    pub mapper: u16,
+    /// NES 2.0 submapper id (0 when not specified).
+    pub submapper: u8,
+    /// PPU nametable mirroring mode from the header.
+    pub mirroring: MirroringMode,
+    /// PRG ROM bytes.
+    pub prg_rom: Vec<u8>,
+    /// CHR ROM bytes (empty when CHR-RAM).
+    pub chr_rom: Vec<u8>,
+    /// PRG-RAM size in 8KB units (minimum 1).
+    pub prg_ram_banks_8k: u8,
+    /// Whether PRG-RAM is battery backed.
+    pub battery_backed_prg_ram: bool,
+    /// CRC32 of concatenated PRG/CHR; may be overridden for tests.
+    pub crc32: u32,
+}
+
+impl MapperContext {
+    /// Create mapper metadata with default submapper 0, 1×8KB PRG-RAM (not battery-backed),
+    /// and CRC32 computed from PRG+CHR data.
+    pub fn new(mapper: u8, prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        let crc32 = calculate_rom_crc32(&prg_rom, &chr_rom);
+        Self {
+            mapper: mapper as u16,
+            submapper: 0,
+            mirroring,
+            prg_rom,
+            chr_rom,
+            prg_ram_banks_8k: 1,
+            battery_backed_prg_ram: false,
+            crc32,
+        }
+    }
+
+    /// Set NES 2.0 submapper id.
+    pub fn with_submapper(mut self, submapper: u8) -> Self {
+        self.submapper = submapper;
+        self
+    }
+
+    /// Override PRG-RAM size in 8KB units (clamped to at least one bank).
+    pub fn with_prg_ram_banks(mut self, prg_ram_banks_8k: u8) -> Self {
+        self.prg_ram_banks_8k = prg_ram_banks_8k.max(1);
+        self
+    }
+
+    /// Mark PRG-RAM as battery backed.
+    pub fn with_battery_backed_prg_ram(mut self, battery_backed_prg_ram: bool) -> Self {
+        self.battery_backed_prg_ram = battery_backed_prg_ram;
+        self
+    }
+
+    /// Override CRC32 value (useful for tests with synthetic ROM data).
+    pub fn with_crc32(mut self, crc32: u32) -> Self {
+        self.crc32 = crc32;
+        self
+    }
+
+    fn mapper_u8(&self) -> u8 {
+        self.mapper as u8
+    }
+
+    fn into_parts(self) -> (Vec<u8>, Vec<u8>, MirroringMode) {
+        (self.prg_rom, self.chr_rom, self.mirroring)
+    }
+}
+
 pub trait Mapper {
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, battery-backed on some cartridges)
@@ -299,14 +371,14 @@ fn vrc6_26(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> VRC6
 macro_rules! mapper_registry {
     ($($id:expr => $ctor:path),+ $(,)?) => {
         fn create_registry_mapper(
-            mapper_number: u8,
-            prg_rom: Vec<u8>,
-            chr_rom: Vec<u8>,
-            mirroring: MirroringMode,
+            metadata: MapperContext,
         ) -> Option<Box<dyn Mapper>> {
-            match mapper_number {
+            match metadata.mapper_u8() {
                 $(
-                    $id => Some(Box::new($ctor(prg_rom, chr_rom, mirroring))),
+                    $id => {
+                        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
+                        Some(Box::new($ctor(prg_rom, chr_rom, mirroring)))
+                    }
                 )+
                 _ => None,
             }
@@ -319,7 +391,6 @@ mapper_registry! {
     1 => MMC1Mapper::new,
     2 => UxROMMapper::new,
     3 => CNROMMapper::new,
-    5 => MMC5Mapper::new,
     7 => AxROMMapper::new,
     9 => MMC2Mapper::new,
     10 => MMC4Mapper::new,
@@ -354,32 +425,18 @@ pub fn supported_mappers() -> &'static [u8] {
     SUPPORTED_MAPPERS
 }
 
-/// Create a mapper instance based on mapper number
-pub fn create_mapper(
-    mapper_number: u8,
-    prg_rom: Vec<u8>,
-    chr_rom: Vec<u8>,
-    mirroring: MirroringMode,
-) -> io::Result<Box<dyn Mapper>> {
-    // Calculate CRC for ROM-specific behavior detection
-    let crc = calculate_rom_crc32(&prg_rom, &chr_rom);
-    create_mapper_with_crc(mapper_number, prg_rom, chr_rom, mirroring, crc)
-}
+/// Create a mapper instance based on mapper metadata.
+pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
+    let mapper_number = metadata.mapper_u8();
 
-/// Create a mapper instance with explicit CRC for ROM-specific behavior.
-pub fn create_mapper_with_crc(
-    mapper_number: u8,
-    prg_rom: Vec<u8>,
-    chr_rom: Vec<u8>,
-    mirroring: MirroringMode,
-    crc: u32,
-) -> io::Result<Box<dyn Mapper>> {
     if mapper_number == 4 {
-        let use_alternate_irq = requires_mmc3_alternate_irq(crc);
+        let crc32 = metadata.crc32;
+        let use_alternate_irq = requires_mmc3_alternate_irq(crc32);
+        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
         if use_alternate_irq {
             eprintln!(
                 "MMC3: Using alternate (NEC) IRQ behavior for CRC 0x{:08X}",
-                crc
+                crc32
             );
         }
         return Ok(Box::new(MMC3Mapper::new_with_irq_mode(
@@ -390,7 +447,18 @@ pub fn create_mapper_with_crc(
         )));
     }
 
-    if let Some(mapper) = create_registry_mapper(mapper_number, prg_rom, chr_rom, mirroring) {
+    if mapper_number == 5 {
+        let prg_ram_banks_8k = metadata.prg_ram_banks_8k;
+        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
+        return Ok(Box::new(MMC5Mapper::new_with_prg_ram_size(
+            prg_rom,
+            chr_rom,
+            mirroring,
+            prg_ram_banks_8k,
+        )));
+    }
+
+    if let Some(mapper) = create_registry_mapper(metadata) {
         return Ok(mapper);
     }
 
@@ -400,32 +468,10 @@ pub fn create_mapper_with_crc(
     ))
 }
 
-/// Create a mapper instance using cartridge metadata.
-///
-/// `prg_ram_banks_8k` is PRG-RAM size in 8KB units (iNES v1 header byte 8).
-///
-/// Currently only MMC5 uses PRG-RAM sizing metadata.
-pub fn create_mapper_with_prg_ram_size(
-    mapper_number: u8,
-    prg_rom: Vec<u8>,
-    chr_rom: Vec<u8>,
-    mirroring: MirroringMode,
-    prg_ram_banks_8k: u8,
-) -> io::Result<Box<dyn Mapper>> {
-    match mapper_number {
-        5 => Ok(Box::new(MMC5Mapper::new_with_prg_ram_size(
-            prg_rom,
-            chr_rom,
-            mirroring,
-            prg_ram_banks_8k,
-        ))),
-        _ => create_mapper(mapper_number, prg_rom, chr_rom, mirroring),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::MirroringMode;
 
     #[test]
     fn test_supported_mappers_contains_common_ids() {
@@ -437,5 +483,16 @@ mod tests {
         assert!(supported.contains(&4));
         assert!(supported.contains(&5));
         assert!(supported.contains(&7));
+    }
+
+    #[test]
+    fn create_mapper_uses_metadata_for_mmc5_prg_ram_size() {
+        let prg_rom = vec![0u8; 8 * 1024 * 4];
+        let chr_rom = vec![0u8; 8 * 1024];
+        let metadata = MapperContext::new(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .with_prg_ram_banks(2);
+
+        let mapper = create_mapper(metadata).expect("MMC5 mapper should be created");
+        assert_eq!(mapper.wram_size(), 16 * 1024);
     }
 }
