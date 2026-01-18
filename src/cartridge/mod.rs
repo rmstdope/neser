@@ -27,3 +27,4 @@ mod vrc6;
 
 pub use cartridge::{Cartridge, MirroringMode};
 pub use mapper::Mapper;
+pub use mmc1::{MMC1Mapper, Mmc1Revision};

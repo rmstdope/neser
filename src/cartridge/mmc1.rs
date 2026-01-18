@@ -12,6 +12,21 @@ const MMC1_SHIFT_REGISTER_RESET: u8 = 0x80; // Bit 7 set triggers reset
 const MMC1_WRITE_COUNT_MAX: u8 = 5; // Number of writes to load a register
 const MMC1_DEFAULT_CONTROL: u8 = 0x0C; // PRG mode 3, CHR mode 0
 
+/// MMC1 ASIC revision variants
+///
+/// Different MMC1 hardware revisions have different PRG-RAM enable behavior:
+/// - MMC1A: PRG-RAM always enabled (bit 4 of PRG bank register ignored)
+/// - MMC1B: PRG-RAM can be disabled via bit 4 (starts enabled by default)
+///
+/// See: https://www.nesdev.org/wiki/MMC1#ASIC_Revisions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mmc1Revision {
+    /// MMC1A: PRG-RAM always enabled, bit 4 ignored
+    Mmc1A,
+    /// MMC1B/C: PRG-RAM enable controlled by bit 4 of PRG bank register
+    Mmc1B,
+}
+
 /// MMC1 mapper (Mapper 1)
 ///
 /// One of the most common NES mappers with sophisticated banking capabilities.
@@ -31,7 +46,13 @@ const MMC1_DEFAULT_CONTROL: u8 = 0x0C; // PRG mode 3, CHR mode 0
 /// - $8000-$9FFF: Control (mirroring, PRG mode, CHR mode)
 /// - $A000-$BFFF: CHR bank 0 (4KB at $0000 or 8KB at $0000)
 /// - $C000-$DFFF: CHR bank 1 (4KB at $1000)
-/// - $E000-$FFFF: PRG bank (16KB switchable)
+/// - $E000-$FFFF: PRG bank (16KB switchable), bit 4 controls PRG-RAM enable
+///
+/// PRG-RAM Enable (Revision-Specific):
+/// - MMC1A: PRG-RAM is always enabled, bit 4 of PRG bank register is ignored
+/// - MMC1B/C: Bit 4 controls PRG-RAM (0 = enabled, 1 = disabled)
+///
+/// See: https://www.nesdev.org/wiki/MMC1#ASIC_Revisions
 ///
 /// Used in games like The Legend of Zelda, Metroid, Mega Man 2, Final Fantasy.
 pub struct MMC1Mapper {
@@ -49,10 +70,23 @@ pub struct MMC1Mapper {
     chr_bank_0: u8, // CHR bank 0 select
     chr_bank_1: u8, // CHR bank 1 select
     prg_bank: u8,   // PRG bank select
+
+    // Hardware revision
+    revision: Mmc1Revision, // MMC1A vs MMC1B behavior
 }
 
 impl MMC1Mapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: MirroringMode) -> Self {
+        // Default to MMC1B for backward compatibility and broader game support
+        Self::new_with_revision(prg_rom, chr_rom, _mirroring, Mmc1Revision::Mmc1B)
+    }
+
+    pub fn new_with_revision(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        _mirroring: MirroringMode,
+        revision: Mmc1Revision,
+    ) -> Self {
         let has_chr_ram = chr_rom.is_empty();
         let chr_memory = if has_chr_ram {
             vec![0; CHR_RAM_SIZE]
@@ -71,6 +105,7 @@ impl MMC1Mapper {
             chr_bank_0: 0,
             chr_bank_1: 0,
             prg_bank: 0,
+            revision,
         }
     }
 
@@ -137,9 +172,17 @@ impl MMC1Mapper {
     }
 
     fn is_wram_enabled(&self) -> bool {
-        // Bit 4 of prg_bank register controls WRAM
-        // 0 = enabled, 1 = disabled
-        (self.prg_bank & 0x10) == 0
+        match self.revision {
+            Mmc1Revision::Mmc1A => {
+                // MMC1A always has PRG-RAM enabled, bit 4 is ignored
+                true
+            }
+            Mmc1Revision::Mmc1B => {
+                // MMC1B/C: Bit 4 of prg_bank register controls WRAM
+                // 0 = enabled, 1 = disabled
+                (self.prg_bank & 0x10) == 0
+            }
+        }
     }
 
     fn get_mirroring_mode(&self) -> MirroringMode {
@@ -328,6 +371,13 @@ impl Mapper for MMC1Mapper {
 mod tests {
     use super::*;
     use crate::cartridge::mapper::create_mapper;
+
+    /// Helper function to write a 5-bit value to a register using the MMC1 shift mechanism
+    fn write_register(mapper: &mut MMC1Mapper, addr: u16, value: u8) {
+        for i in 0..5 {
+            mapper.write_prg(addr, (value >> i) & 0x01);
+        }
+    }
 
     #[test]
     fn test_mmc1_shift_register_load() {
@@ -795,5 +845,103 @@ mod tests {
         assert_eq!(mapper.read_prg(0x6000), 0x00);
         assert_eq!(mapper.read_prg(0x7000), 0x00);
         assert_eq!(mapper.read_prg(0x7FFF), 0x00);
+    }
+
+    #[test]
+    fn test_mmc1a_wram_always_enabled() {
+        // MMC1A revision: PRG-RAM is always enabled, bit 4 is ignored
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = MMC1Mapper::new_with_revision(
+            prg_rom,
+            chr_rom,
+            MirroringMode::Horizontal,
+            Mmc1Revision::Mmc1A,
+        );
+
+        // Write to WRAM while enabled
+        mapper.write_prg(0x6000, 0xAA);
+        mapper.write_prg(0x7000, 0xBB);
+        mapper.write_prg(0x7FFF, 0xCC);
+
+        // Verify writes worked
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+        assert_eq!(mapper.read_prg(0x7000), 0xBB);
+        assert_eq!(mapper.read_prg(0x7FFF), 0xCC);
+
+        // Try to disable WRAM by setting bit 4 of prg_bank register ($E000-$FFFF)
+        // Load 0b10000 (bit 4 set)
+        write_register(&mut mapper, 0xE000, 0b10000);
+
+        // On MMC1A, WRAM should still be enabled (bit 4 is ignored)
+        // Reads should return the previously written values
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+        assert_eq!(mapper.read_prg(0x7000), 0xBB);
+        assert_eq!(mapper.read_prg(0x7FFF), 0xCC);
+
+        // Writes should still work
+        mapper.write_prg(0x6000, 0xDD);
+        mapper.write_prg(0x7000, 0xEE);
+        mapper.write_prg(0x7FFF, 0xFF);
+
+        assert_eq!(mapper.read_prg(0x6000), 0xDD);
+        assert_eq!(mapper.read_prg(0x7000), 0xEE);
+        assert_eq!(mapper.read_prg(0x7FFF), 0xFF);
+    }
+
+    #[test]
+    fn test_mmc1b_wram_enable_disable() {
+        // MMC1B revision: PRG-RAM can be disabled via bit 4
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = MMC1Mapper::new_with_revision(
+            prg_rom,
+            chr_rom,
+            MirroringMode::Horizontal,
+            Mmc1Revision::Mmc1B,
+        );
+
+        // Initially WRAM should be enabled (prg_bank defaults to 0)
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+
+        // Disable WRAM by setting bit 4 of prg_bank register
+        write_register(&mut mapper, 0xE000, 0b10000);
+
+        // With WRAM disabled, reads should return 0
+        assert_eq!(mapper.read_prg(0x6000), 0x00);
+
+        // Writes should be ignored
+        mapper.write_prg(0x6000, 0xBB);
+        assert_eq!(mapper.read_prg(0x6000), 0x00); // Still reads 0, not 0xBB
+
+        // Re-enable WRAM by clearing bit 4
+        write_register(&mut mapper, 0xE000, 0b00000);
+
+        // With WRAM enabled again, writes should work
+        mapper.write_prg(0x6000, 0xCC);
+        assert_eq!(mapper.read_prg(0x6000), 0xCC);
+
+        // Previous write while disabled should not have affected memory
+        mapper.write_prg(0x6001, 0xDD);
+        assert_eq!(mapper.read_prg(0x6001), 0xDD);
+    }
+
+    #[test]
+    fn test_mmc1_default_revision_is_mmc1b() {
+        // Default constructor should use MMC1B for backward compatibility
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+
+        // Write to WRAM
+        mapper.write_prg(0x6000, 0xAA);
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+
+        // Disable WRAM (should work on MMC1B)
+        write_register(&mut mapper, 0xE000, 0b10000);
+
+        // Should be disabled (reads 0)
+        assert_eq!(mapper.read_prg(0x6000), 0x00);
     }
 }
