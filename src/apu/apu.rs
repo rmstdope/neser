@@ -620,6 +620,31 @@ impl Apu {
         self.pending_samples.clear();
     }
 
+    fn pending_samples_snapshot(&self) -> Vec<f32> {
+        let start = self.pending_samples.read_index();
+        let end = self.pending_samples.write_index();
+        let (first, second) = unsafe { self.pending_samples.unsafe_slices(start, end) };
+        let mut samples = Vec::with_capacity(self.pending_samples.occupied_len());
+        samples.extend(
+            first
+                .iter()
+                .map(|value| unsafe { *value.assume_init_ref() }),
+        );
+        samples.extend(
+            second
+                .iter()
+                .map(|value| unsafe { *value.assume_init_ref() }),
+        );
+        samples
+    }
+
+    fn restore_pending_samples(&mut self, samples: &[f32]) {
+        self.clear_pending_samples();
+        for &sample in samples {
+            self.push_pending_sample(sample);
+        }
+    }
+
     #[cfg(test)]
     fn push_sample_for_test(&mut self, sample: f32) {
         self.push_pending_sample(sample);
@@ -647,7 +672,6 @@ impl Apu {
     }
 
     /// Capture the current APU state for save-state.
-    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::ApuState {
         crate::savestate::ApuState {
             frame_counter: crate::savestate::FrameCounterState {
@@ -655,12 +679,27 @@ impl Apu {
                 mode: self.frame_counter.get_mode(),
                 irq_inhibit: self.frame_counter.get_irq_inhibit(),
                 irq_flag: self.frame_counter.get_irq_flag(),
+                irq_assert_cycles_remaining: self.frame_counter.irq_assert_cycles_remaining(),
+                five_step_extra_cycle: self.frame_counter.five_step_extra_cycle(),
+                pending_write: self.frame_counter.pending_write(),
+                write_delay: self.frame_counter.write_delay(),
+                pending_write_on_odd_cpu_cycle: self.frame_counter.pending_write_on_odd_cpu_cycle(),
+                pending_immediate_quarter: self.frame_counter.pending_immediate_clock().0,
+                pending_immediate_half: self.frame_counter.pending_immediate_clock().1,
             },
             pulse1: self.pulse1.capture_state(),
             pulse2: self.pulse2.capture_state(),
             triangle: self.triangle.capture_state(),
             noise: self.noise.capture_state(),
             dmc: self.dmc.capture_state(),
+            sample_accumulator: self.sample_accumulator,
+            cycles_per_sample: self.cycles_per_sample,
+            pending_samples: self.pending_samples_snapshot(),
+            pulse1_enabled: self.pulse1_enabled,
+            pulse2_enabled: self.pulse2_enabled,
+            triangle_enabled: self.triangle_enabled,
+            noise_enabled: self.noise_enabled,
+            dmc_enabled: self.dmc_enabled,
             apu_cycle: self.apu_cycle,
             cpu_cycle: self.cpu_cycle,
             last_4017_write: self.last_4017_write,
@@ -668,7 +707,6 @@ impl Apu {
     }
 
     /// Restore APU state from a save-state.
-    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::ApuState) {
         // Restore frame counter
         self.frame_counter.restore_state(
@@ -676,6 +714,15 @@ impl Apu {
             state.frame_counter.mode,
             state.frame_counter.irq_inhibit,
             state.frame_counter.irq_flag,
+            state.frame_counter.irq_assert_cycles_remaining,
+            state.frame_counter.five_step_extra_cycle,
+            state.frame_counter.pending_write,
+            state.frame_counter.write_delay,
+            state.frame_counter.pending_write_on_odd_cpu_cycle,
+            (
+                state.frame_counter.pending_immediate_quarter,
+                state.frame_counter.pending_immediate_half,
+            ),
         );
 
         // Restore channels
@@ -690,9 +737,15 @@ impl Apu {
         self.cpu_cycle = state.cpu_cycle;
         self.last_4017_write = state.last_4017_write;
 
-        // Clear sample buffer
-        self.clear_pending_samples();
-        self.sample_accumulator = 0.0;
+        self.sample_accumulator = state.sample_accumulator;
+        self.cycles_per_sample = state.cycles_per_sample;
+        self.restore_pending_samples(&state.pending_samples);
+
+        self.pulse1_enabled = state.pulse1_enabled;
+        self.pulse2_enabled = state.pulse2_enabled;
+        self.triangle_enabled = state.triangle_enabled;
+        self.noise_enabled = state.noise_enabled;
+        self.dmc_enabled = state.dmc_enabled;
     }
 }
 
@@ -722,6 +775,81 @@ mod tests {
 
         let sample = apu.get_sample().expect("expected a sample");
         assert!((sample - 0.1).abs() < 0.0001, "sample was {sample}");
+    }
+
+    #[test]
+    fn test_apu_save_state_roundtrip_includes_internal_state() {
+        let mut apu = Apu::new_for_testing();
+
+        apu.sample_accumulator = 7.25;
+        apu.cycles_per_sample = 123.0;
+        apu.pulse1_enabled = false;
+        apu.pulse2_enabled = true;
+        apu.triangle_enabled = false;
+        apu.noise_enabled = true;
+        apu.dmc_enabled = false;
+
+        apu.apu_cycle = 1234;
+        apu.cpu_cycle = 5678;
+        apu.last_4017_write = 0xC0;
+
+        apu.push_sample_for_test(0.1);
+        apu.push_sample_for_test(0.2);
+
+        apu.frame_counter
+            .queue_delayed_write_with_jitter(0x80, 3, true);
+        apu.frame_counter
+            .debug_set_pending_immediate_clock(true, false);
+        apu.frame_counter.debug_set_irq_assert_cycles_remaining(2);
+        apu.frame_counter.debug_set_five_step_extra_cycle(true);
+
+        apu.dmc.debug_set_dma_pending(true);
+        apu.dmc.debug_set_transfer_start_delay(2);
+
+        let state = apu.capture_state();
+
+        let mut restored = Apu::new_for_testing();
+        restored.restore_state(&state);
+
+        assert!((restored.sample_accumulator - 7.25).abs() < 1e-6);
+        assert!((restored.cycles_per_sample - 123.0).abs() < 1e-6);
+        assert!(!restored.pulse1_enabled);
+        assert!(restored.pulse2_enabled);
+        assert!(!restored.triangle_enabled);
+        assert!(restored.noise_enabled);
+        assert!(!restored.dmc_enabled);
+
+        assert_eq!(restored.apu_cycle, 1234);
+        assert_eq!(restored.cpu_cycle, 5678);
+        assert_eq!(restored.last_4017_write, 0xC0);
+
+        assert_eq!(restored.frame_counter.debug_pending_write(), Some(0x80));
+        assert_eq!(restored.frame_counter.debug_write_delay(), 3);
+        assert!(
+            restored
+                .frame_counter
+                .debug_pending_write_on_odd_cpu_cycle()
+        );
+        assert_eq!(
+            restored.frame_counter.debug_pending_immediate_clock(),
+            (true, false)
+        );
+        assert_eq!(
+            restored.frame_counter.debug_irq_assert_cycles_remaining(),
+            2
+        );
+        assert!(restored.frame_counter.debug_five_step_extra_cycle());
+
+        assert!(restored.dmc.dma_pending());
+        assert_eq!(restored.dmc.debug_transfer_start_delay(), 2);
+
+        let sample1 = restored.get_sample();
+        let sample2 = restored.get_sample();
+        let sample3 = restored.get_sample();
+
+        assert!(matches!(sample1, Some(value) if (value - 0.1).abs() < 1e-6));
+        assert!(matches!(sample2, Some(value) if (value - 0.2).abs() < 1e-6));
+        assert!(sample3.is_none());
     }
 
     #[test]

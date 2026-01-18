@@ -307,24 +307,8 @@ impl Sprites {
             return;
         }
 
-        // CHR reads happen at specific cycles within each sprite's 8-cycle window:
-        // - fetch_step 4: Pattern low byte read (odd cycle of the 2-cycle fetch)
-        // - fetch_step 6: Pattern high byte read (odd cycle of the 2-cycle fetch)
-        //
-        // Actually, the PPU reads on both cycles of each 2-cycle fetch. The address
-        // appears on cycle N (fetch_step 4 or 6) and the read completes on cycle N+1.
-        // For MMC3 A12 detection, the address change is what matters, which happens
-        // on cycle 4 for the low byte.
-        //
-        // To trigger A12 at the correct time, we do the read at fetch_step 5 and 7
-        // (the second cycle of each 2-cycle access, when data is latched).
-
         let is_pattern_lo_cycle = fetch_step == 5;
         let is_pattern_hi_cycle = fetch_step == 7;
-
-        if !is_pattern_lo_cycle && !is_pattern_hi_cycle {
-            return;
-        }
 
         // On pre-render scanline (261), sprite evaluation doesn't happen, so
         // secondary_oam contains stale data from scanline 239's evaluation.
@@ -552,37 +536,163 @@ impl Sprites {
     }
 
     /// Create a snapshot of OAM for save-state.
-    #[cfg(test)]
     pub fn oam_snapshot(&self) -> Vec<u8> {
         self.oam_data.to_vec()
     }
 
     /// Create a snapshot of secondary OAM for save-state.
-    #[cfg(test)]
     pub fn secondary_oam_snapshot(&self) -> Vec<u8> {
         self.secondary_oam.to_vec()
     }
+}
 
-    /// Restore OAM from a save-state.
-    #[cfg(test)]
-    pub fn restore_oam(&mut self, oam: &[u8], secondary_oam: &[u8]) {
-        let len = oam.len().min(self.oam_data.len());
-        self.oam_data[..len].copy_from_slice(&oam[..len]);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpritesState {
+    pub oam_data: [u8; 256],
+    pub secondary_oam: [u8; 32],
+    pub sprites_found: u8,
+    pub sprite_count: u8,
+    pub next_sprite_count: u8,
+    pub sprite_buffers_ready: bool,
+    pub sprite_0_index: Option<usize>,
+    pub next_sprite_0_index: Option<usize>,
+    pub sprite_eval_n: u8,
+    pub sprite_eval_m: u8,
+    pub sprite_eval_cycle: u8,
+    pub sprite_eval_in_range: bool,
+    pub sprite_pattern_shift_lo: [u8; 8],
+    pub sprite_pattern_shift_hi: [u8; 8],
+    pub sprite_x_positions: [u8; 8],
+    pub sprite_attributes: [u8; 8],
+    pub next_sprite_pattern_shift_lo: [u8; 8],
+    pub next_sprite_pattern_shift_hi: [u8; 8],
+    pub next_sprite_x_positions: [u8; 8],
+    pub next_sprite_attributes: [u8; 8],
+}
 
-        let sec_len = secondary_oam.len().min(self.secondary_oam.len());
-        self.secondary_oam[..sec_len].copy_from_slice(&secondary_oam[..sec_len]);
+impl Sprites {
+    pub fn capture_state(&self) -> SpritesState {
+        SpritesState {
+            oam_data: self.oam_data,
+            secondary_oam: self.secondary_oam,
+            sprites_found: self.sprites_found,
+            sprite_count: self.sprite_count,
+            next_sprite_count: self.next_sprite_count,
+            sprite_buffers_ready: self.sprite_buffers_ready,
+            sprite_0_index: self.sprite_0_index,
+            next_sprite_0_index: self.next_sprite_0_index,
+            sprite_eval_n: self.sprite_eval_n,
+            sprite_eval_m: self.sprite_eval_m,
+            sprite_eval_cycle: self.sprite_eval_cycle,
+            sprite_eval_in_range: self.sprite_eval_in_range,
+            sprite_pattern_shift_lo: self.sprite_pattern_shift_lo,
+            sprite_pattern_shift_hi: self.sprite_pattern_shift_hi,
+            sprite_x_positions: self.sprite_x_positions,
+            sprite_attributes: self.sprite_attributes,
+            next_sprite_pattern_shift_lo: self.next_sprite_pattern_shift_lo,
+            next_sprite_pattern_shift_hi: self.next_sprite_pattern_shift_hi,
+            next_sprite_x_positions: self.next_sprite_x_positions,
+            next_sprite_attributes: self.next_sprite_attributes,
+        }
+    }
 
-        // Reset evaluation state
-        self.sprites_found = 0;
-        self.sprite_count = 0;
-        self.next_sprite_count = 0;
-        self.sprite_buffers_ready = false;
-        self.sprite_0_index = None;
-        self.next_sprite_0_index = None;
-        self.sprite_eval_n = 0;
-        self.sprite_eval_m = 0;
-        self.sprite_eval_cycle = 0;
-        self.sprite_eval_in_range = false;
+    pub fn restore_state(&mut self, state: &SpritesState) {
+        self.oam_data = state.oam_data;
+        self.secondary_oam = state.secondary_oam;
+        self.sprites_found = state.sprites_found;
+        self.sprite_count = state.sprite_count;
+        self.next_sprite_count = state.next_sprite_count;
+        self.sprite_buffers_ready = state.sprite_buffers_ready;
+        self.sprite_0_index = state.sprite_0_index;
+        self.next_sprite_0_index = state.next_sprite_0_index;
+        self.sprite_eval_n = state.sprite_eval_n;
+        self.sprite_eval_m = state.sprite_eval_m;
+        self.sprite_eval_cycle = state.sprite_eval_cycle;
+        self.sprite_eval_in_range = state.sprite_eval_in_range;
+        self.sprite_pattern_shift_lo = state.sprite_pattern_shift_lo;
+        self.sprite_pattern_shift_hi = state.sprite_pattern_shift_hi;
+        self.sprite_x_positions = state.sprite_x_positions;
+        self.sprite_attributes = state.sprite_attributes;
+        self.next_sprite_pattern_shift_lo = state.next_sprite_pattern_shift_lo;
+        self.next_sprite_pattern_shift_hi = state.next_sprite_pattern_shift_hi;
+        self.next_sprite_x_positions = state.next_sprite_x_positions;
+        self.next_sprite_attributes = state.next_sprite_attributes;
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpritesDebugState {
+    pub oam_data: [u8; 256],
+    pub secondary_oam: [u8; 32],
+    pub sprites_found: u8,
+    pub sprite_count: u8,
+    pub next_sprite_count: u8,
+    pub sprite_buffers_ready: bool,
+    pub sprite_0_index: Option<usize>,
+    pub next_sprite_0_index: Option<usize>,
+    pub sprite_eval_n: u8,
+    pub sprite_eval_m: u8,
+    pub sprite_eval_cycle: u8,
+    pub sprite_eval_in_range: bool,
+    pub sprite_pattern_shift_lo: [u8; 8],
+    pub sprite_pattern_shift_hi: [u8; 8],
+    pub sprite_x_positions: [u8; 8],
+    pub sprite_attributes: [u8; 8],
+    pub next_sprite_pattern_shift_lo: [u8; 8],
+    pub next_sprite_pattern_shift_hi: [u8; 8],
+    pub next_sprite_x_positions: [u8; 8],
+    pub next_sprite_attributes: [u8; 8],
+}
+
+#[cfg(test)]
+impl Sprites {
+    pub fn debug_state(&self) -> SpritesDebugState {
+        SpritesDebugState {
+            oam_data: self.oam_data,
+            secondary_oam: self.secondary_oam,
+            sprites_found: self.sprites_found,
+            sprite_count: self.sprite_count,
+            next_sprite_count: self.next_sprite_count,
+            sprite_buffers_ready: self.sprite_buffers_ready,
+            sprite_0_index: self.sprite_0_index,
+            next_sprite_0_index: self.next_sprite_0_index,
+            sprite_eval_n: self.sprite_eval_n,
+            sprite_eval_m: self.sprite_eval_m,
+            sprite_eval_cycle: self.sprite_eval_cycle,
+            sprite_eval_in_range: self.sprite_eval_in_range,
+            sprite_pattern_shift_lo: self.sprite_pattern_shift_lo,
+            sprite_pattern_shift_hi: self.sprite_pattern_shift_hi,
+            sprite_x_positions: self.sprite_x_positions,
+            sprite_attributes: self.sprite_attributes,
+            next_sprite_pattern_shift_lo: self.next_sprite_pattern_shift_lo,
+            next_sprite_pattern_shift_hi: self.next_sprite_pattern_shift_hi,
+            next_sprite_x_positions: self.next_sprite_x_positions,
+            next_sprite_attributes: self.next_sprite_attributes,
+        }
+    }
+
+    pub fn set_debug_state(&mut self, state: SpritesDebugState) {
+        self.oam_data = state.oam_data;
+        self.secondary_oam = state.secondary_oam;
+        self.sprites_found = state.sprites_found;
+        self.sprite_count = state.sprite_count;
+        self.next_sprite_count = state.next_sprite_count;
+        self.sprite_buffers_ready = state.sprite_buffers_ready;
+        self.sprite_0_index = state.sprite_0_index;
+        self.next_sprite_0_index = state.next_sprite_0_index;
+        self.sprite_eval_n = state.sprite_eval_n;
+        self.sprite_eval_m = state.sprite_eval_m;
+        self.sprite_eval_cycle = state.sprite_eval_cycle;
+        self.sprite_eval_in_range = state.sprite_eval_in_range;
+        self.sprite_pattern_shift_lo = state.sprite_pattern_shift_lo;
+        self.sprite_pattern_shift_hi = state.sprite_pattern_shift_hi;
+        self.sprite_x_positions = state.sprite_x_positions;
+        self.sprite_attributes = state.sprite_attributes;
+        self.next_sprite_pattern_shift_lo = state.next_sprite_pattern_shift_lo;
+        self.next_sprite_pattern_shift_hi = state.next_sprite_pattern_shift_hi;
+        self.next_sprite_x_positions = state.next_sprite_x_positions;
+        self.next_sprite_attributes = state.next_sprite_attributes;
     }
 }
 

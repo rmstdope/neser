@@ -5,6 +5,7 @@ use crate::cpu;
 use crate::ppu;
 use crate::tracing::Tracing;
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +88,10 @@ impl Nes {
     /// Insert a cartridge and map it into memory
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
         self.memory.borrow_mut().map_cartridge(cartridge);
+    }
+
+    pub fn state_path(&self) -> Option<PathBuf> {
+        self.memory.borrow().cartridge_state_path()
     }
 
     /// Reset the NES system.
@@ -561,12 +566,12 @@ impl Nes {
     ///
     /// This captures the full state of CPU, PPU, APU, RAM, and mapper,
     /// allowing the emulator to be restored to this exact state later.
-    #[cfg(test)]
     pub fn save_state(&self) -> crate::savestate::SaveState {
         crate::savestate::SaveState::new(
             self.cpu.capture_state(),
             self.ppu.borrow().capture_state(),
             self.apu.borrow().capture_state(),
+            self.memory.borrow().capture_state(),
             self.memory.borrow().ram_snapshot(),
             self.memory.borrow().capture_mapper_state(),
         )
@@ -581,7 +586,6 @@ impl Nes {
     ///
     /// Returns an error if the save-state version is incompatible or if
     /// the mapper number doesn't match the currently loaded cartridge.
-    #[cfg(test)]
     pub fn load_state(
         &mut self,
         state: &crate::savestate::SaveState,
@@ -607,6 +611,7 @@ impl Nes {
         self.cpu.restore_state(&state.cpu);
         self.ppu.borrow_mut().restore_state(&state.ppu);
         self.apu.borrow_mut().restore_state(&state.apu);
+        self.memory.borrow_mut().restore_state(&state.bus);
         self.memory.borrow_mut().restore_ram(&state.ram);
         self.memory.borrow_mut().restore_mapper_state(&state.mapper);
 
@@ -618,7 +623,6 @@ impl Nes {
     }
 }
 
-#[cfg(test)]
 mod savestate_error {
     /// Errors that can occur when loading a save-state.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -653,7 +657,6 @@ mod savestate_error {
     impl std::error::Error for SaveStateError {}
 }
 
-#[cfg(test)]
 pub use savestate_error::SaveStateError;
 
 #[cfg(test)]

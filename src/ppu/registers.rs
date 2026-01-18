@@ -386,7 +386,6 @@ impl Registers {
     }
 
     /// Restore register state from a save-state.
-    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn restore_state(
         &mut self,
@@ -410,6 +409,71 @@ impl Registers {
         self.io_bus = io_bus;
         self.data_buffer = data_buffer;
         // Note: io_bus_refresh_time and cycle_count not restored as they're for decay only
+    }
+
+    pub fn io_bus_refresh_time(&self) -> [u64; 8] {
+        self.io_bus_refresh_time
+    }
+
+    pub fn cycle_count(&self) -> u64 {
+        self.cycle_count
+    }
+
+    pub fn set_io_bus_refresh_time(&mut self, times: [u64; 8]) {
+        self.io_bus_refresh_time = times;
+    }
+
+    pub fn set_cycle_count(&mut self, cycles: u64) {
+        self.cycle_count = cycles;
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistersDebugState {
+    pub control_register: u8,
+    pub mask_register: u8,
+    pub oam_address: u8,
+    pub data_buffer: u8,
+    pub io_bus: u8,
+    pub io_bus_refresh_time: [u64; 8],
+    pub cycle_count: u64,
+    pub v: u16,
+    pub t: u16,
+    pub x: u8,
+    pub w: bool,
+}
+
+#[cfg(test)]
+impl Registers {
+    pub fn debug_state(&self) -> RegistersDebugState {
+        RegistersDebugState {
+            control_register: self.control_register,
+            mask_register: self.mask_register,
+            oam_address: self.oam_address,
+            data_buffer: self.data_buffer,
+            io_bus: self.io_bus,
+            io_bus_refresh_time: self.io_bus_refresh_time,
+            cycle_count: self.cycle_count,
+            v: self.v,
+            t: self.t,
+            x: self.x,
+            w: self.w,
+        }
+    }
+
+    pub fn set_debug_state(&mut self, state: RegistersDebugState) {
+        self.control_register = state.control_register;
+        self.mask_register = state.mask_register;
+        self.oam_address = state.oam_address;
+        self.data_buffer = state.data_buffer;
+        self.io_bus = state.io_bus;
+        self.io_bus_refresh_time = state.io_bus_refresh_time;
+        self.cycle_count = state.cycle_count;
+        self.v = state.v;
+        self.t = state.t;
+        self.x = state.x;
+        self.w = state.w;
     }
 }
 

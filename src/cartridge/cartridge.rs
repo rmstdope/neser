@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 use std::{error, fmt};
 
 use crate::cartridge::Mapper;
+use serde::{Deserialize, Serialize};
 
 // Mirroring types for nametables
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MirroringMode {
     Vertical,
     Horizontal,
@@ -61,6 +62,7 @@ pub struct Cartridge {
     /// Mapper instance that handles banking and memory access
     mapper: Box<dyn Mapper>,
 
+    rom_path: Option<PathBuf>,
     save_path: Option<PathBuf>,
     battery_backed_prg_ram: bool,
 }
@@ -162,6 +164,7 @@ impl Cartridge {
 
         Ok(Self {
             mapper,
+            rom_path: None,
             save_path: None,
             battery_backed_prg_ram,
         })
@@ -173,10 +176,17 @@ impl Cartridge {
         let data = fs::read(&rom_path)?;
         let mut cart = Self::new(&data)?;
 
+        cart.rom_path = Some(rom_path.clone());
         cart.save_path = Some(rom_path.with_extension("sav"));
         cart.load_save_ram_from_disk()?;
 
         Ok(cart)
+    }
+
+    pub fn state_path(&self) -> Option<PathBuf> {
+        self.rom_path
+            .as_ref()
+            .map(|path| path.with_extension("state"))
     }
 
     pub fn save_ram(&self) -> io::Result<()> {
@@ -255,6 +265,7 @@ impl Cartridge {
         let mapper = Box::new(NROMMapper::new(prg_rom, chr_rom, mirroring));
         Self {
             mapper,
+            rom_path: None,
             save_path: None,
             battery_backed_prg_ram: false,
         }
@@ -264,6 +275,7 @@ impl Cartridge {
     pub fn from_mapper_for_test(mapper: Box<dyn Mapper>) -> Self {
         Self {
             mapper,
+            rom_path: None,
             save_path: None,
             battery_backed_prg_ram: false,
         }

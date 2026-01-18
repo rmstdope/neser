@@ -359,7 +359,15 @@ impl Mapper for SunsoftFme7Mapper {
         snapshot.push(flags);
         snapshot.push((self.irq_counter & 0xFF) as u8);
         snapshot.push((self.irq_counter >> 8) as u8);
-        snapshot.push(self.mirroring as u8);
+        let mirroring = match self.mirroring {
+            MirroringMode::Horizontal => 0,
+            MirroringMode::Vertical => 1,
+            MirroringMode::SingleScreenLower => 2,
+            MirroringMode::SingleScreenUpper => 3,
+            MirroringMode::SingleScreen => 2,
+            MirroringMode::FourScreen => 4,
+        };
+        snapshot.push(mirroring);
         snapshot
     }
 
@@ -378,8 +386,9 @@ impl Mapper for SunsoftFme7Mapper {
             self.mirroring = match data[16] {
                 0 => MirroringMode::Horizontal,
                 1 => MirroringMode::Vertical,
-                2 => MirroringMode::SingleScreen,
-                3 => MirroringMode::FourScreen,
+                2 => MirroringMode::SingleScreenLower,
+                3 => MirroringMode::SingleScreenUpper,
+                4 => MirroringMode::FourScreen,
                 _ => MirroringMode::Horizontal,
             };
         }
@@ -571,5 +580,32 @@ mod tests {
 
         // $E000-$FFFF should read from last bank (bank 15)
         assert_eq!(mapper.read_prg(0xE000), 15);
+    }
+
+    #[test]
+    fn test_fme7_registers_snapshot_restores_mirroring_and_banks() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper =
+            SunsoftFme7Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+
+        // Set PRG bank 1 and CHR bank 0.
+        mapper.write_prg(0x8000, 0x09);
+        mapper.write_prg(0xA000, 0x03);
+        mapper.write_prg(0x8000, 0x00);
+        mapper.write_prg(0xA000, 0x04);
+
+        // Set mirroring to single screen upper.
+        mapper.write_prg(0x8000, 0x0C);
+        mapper.write_prg(0xA000, 0x03);
+
+        let regs = mapper.registers_snapshot();
+
+        let mut restored = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        restored.restore_registers(&regs);
+
+        assert_eq!(restored.get_mirroring(), MirroringMode::SingleScreenUpper);
+        assert_eq!(restored.read_prg(0x8000), 3);
+        assert_eq!(restored.read_chr(0x0000), 4);
     }
 }

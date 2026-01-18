@@ -14,7 +14,6 @@ mod bus;
 pub use bus::bus::Bus;
 mod nes;
 mod ppu;
-#[cfg(test)]
 mod savestate;
 mod tracing;
 

@@ -452,25 +452,55 @@ impl Mapper for Namco163Mapper {
         // [144]: irq_counter low byte
         // [145]: irq_counter high byte (7 bits) + irq_enabled (1 bit)
         // [146]: flags (irq_pending, audio_disabled)
-        let mut snapshot = Vec::with_capacity(147);
+        // [147]: audio_addr
+        // [148]: audio_autoinc
+        // [149-164]: audio_channel_output[0-7] (i16 LE)
+        // [165]: audio_update_counter
+        // [166]: audio_current_channel
+        // [167-168]: audio_last_output (i16 LE)
+        let mut snapshot = Vec::with_capacity(169);
         snapshot.extend_from_slice(&self.regs);
         snapshot.extend_from_slice(&self.namco_ram);
         snapshot.push((self.irq_counter & 0xFF) as u8);
         snapshot.push(((self.irq_counter >> 8) as u8) | ((self.irq_enabled as u8) << 7));
         let flags = (self.irq_pending as u8) | ((self.audio_disabled as u8) << 1);
         snapshot.push(flags);
+        snapshot.push(self.audio_addr.get());
+        snapshot.push(self.audio_autoinc.get() as u8);
+        for value in self.audio_channel_output {
+            snapshot.extend_from_slice(&value.to_le_bytes());
+        }
+        snapshot.push(self.audio_update_counter);
+        snapshot.push(self.audio_current_channel as u8);
+        snapshot.extend_from_slice(&self.audio_last_output.to_le_bytes());
         snapshot
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 147 {
             self.regs.copy_from_slice(&data[0..16]);
+            self.map_mirroring(self.regs[11]);
             self.namco_ram.copy_from_slice(&data[16..144]);
             self.irq_counter = (data[144] as u16) | (((data[145] & 0x7F) as u16) << 8);
             self.irq_enabled = (data[145] & 0x80) != 0;
             let flags = data[146];
             self.irq_pending = (flags & 1) != 0;
             self.audio_disabled = (flags & 2) != 0;
+        }
+
+        if data.len() >= 169 {
+            self.audio_addr.set(data[147] & 0x7F);
+            self.audio_autoinc.set((data[148] & 1) != 0);
+            let mut offset = 149;
+            for slot in &mut self.audio_channel_output {
+                let lo = data[offset];
+                let hi = data[offset + 1];
+                *slot = i16::from_le_bytes([lo, hi]);
+                offset += 2;
+            }
+            self.audio_update_counter = data[165];
+            self.audio_current_channel = data[166] as i8;
+            self.audio_last_output = i16::from_le_bytes([data[167], data[168]]);
         }
     }
 }
@@ -660,5 +690,61 @@ mod tests {
 
         assert!(mapper.debug_audio_last_output() != 0);
         assert!(mapper.expansion_audio_sample() != 0.0);
+    }
+
+    #[test]
+    fn namco163_registers_snapshot_restores_audio_state_and_mirroring() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+
+        let mut mapper =
+            Namco163Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+
+        // Configure audio so we have a non-zero last output.
+        mapper.write_prg(0xF800, 0x80); // pointer=0, auto-inc
+        mapper.write_prg(0x4800, 0x0F);
+
+        let base = 0x78u8; // channel 7 base
+        mapper.write_prg(0xF800, 0x80 | base);
+        mapper.write_prg(0x4800, 0x01); // freq low
+        mapper.write_prg(0x4800, 0x00); // phase low
+        mapper.write_prg(0x4800, 0x00); // freq mid
+        mapper.write_prg(0x4800, 0x00); // phase mid
+        mapper.write_prg(0x4800, 0xFC); // freq high + length
+        mapper.write_prg(0x4800, 0x00); // phase high
+        mapper.write_prg(0x4800, 0x00); // wave address
+        mapper.write_prg(0x4800, 0x0F); // volume
+
+        mapper.write_prg(0xF800, 0x7F);
+        mapper.write_prg(0x4800, 0x0F);
+
+        for _ in 0..32 {
+            mapper.cpu_cycle();
+        }
+
+        assert!(mapper.debug_audio_last_output() != 0);
+
+        // Set a known audio pointer/autoinc state.
+        mapper.write_prg(0xF800, 0x80 | 0x05);
+        mapper.write_prg(0x4800, 0xAA);
+        mapper.write_prg(0x4800, 0xBB);
+        mapper.write_prg(0xF800, 0x80 | 0x05);
+
+        // Set mirroring to SingleScreenLower.
+        mapper.write_prg(0x800B, 2);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
+
+        let snapshot = mapper.registers_snapshot();
+
+        let mut restored = Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        restored.restore_registers(&snapshot);
+
+        assert_eq!(restored.get_mirroring(), MirroringMode::SingleScreenLower);
+        assert_eq!(restored.read_prg(0x4800), 0xAA);
+        assert_eq!(restored.read_prg(0x4800), 0xBB);
+        assert_eq!(
+            restored.debug_audio_last_output(),
+            mapper.debug_audio_last_output()
+        );
     }
 }

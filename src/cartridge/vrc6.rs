@@ -8,7 +8,7 @@ enum Vrc6Variant {
     Mapper26,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 struct Vrc6Pulse {
     enabled: bool,
     mode_ignore_duty: bool,
@@ -19,25 +19,11 @@ struct Vrc6Pulse {
     duty_step: u8,
 }
 
-impl Default for Vrc6Pulse {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            mode_ignore_duty: false,
-            duty: 0,
-            volume: 0,
-            period: 0,
-            divider: 0,
-            duty_step: 15,
-        }
-    }
-}
-
 impl Vrc6Pulse {
     fn write_control(&mut self, value: u8) {
-        self.volume = value & 0x0F;
-        self.duty = (value >> 4) & 0x07;
         self.mode_ignore_duty = (value & 0x80) != 0;
+        self.duty = (value >> 4) & 0x07;
+        self.volume = value & 0x0F;
     }
 
     fn write_period_low(&mut self, value: u8) {
@@ -594,8 +580,12 @@ impl Mapper for VRC6Mapper {
         // [13]: flags (irq_enabled, irq_mode_cycle, irq_enable_after_ack, irq_asserted)
         // [14-17]: irq_prescaler (little endian i32)
         // [18]: mirroring
-        // Note: VRC6 audio state not serialized - would need significant additional work
-        let mut snapshot = Vec::with_capacity(19);
+        // [19]: audio.global_halt
+        // [20]: audio.global_shift
+        // [21-27]: pulse1 (enabled, mode_ignore_duty, duty, volume, period LE, divider LE, duty_step)
+        // [28-34]: pulse2 (enabled, mode_ignore_duty, duty, volume, period LE, divider LE, duty_step)
+        // [35-40]: saw (enabled, rate, period LE, divider LE, accumulator, step)
+        let mut snapshot = Vec::with_capacity(41);
         snapshot.push(self.prg_bank_16k);
         snapshot.push(self.prg_bank_8k);
         snapshot.extend_from_slice(&self.chr_banks_1k);
@@ -610,6 +600,31 @@ impl Mapper for VRC6Mapper {
         let prescaler_bytes = self.irq_prescaler.to_le_bytes();
         snapshot.extend_from_slice(&prescaler_bytes);
         snapshot.push(self.mirroring as u8);
+        snapshot.push(self.audio.global_halt as u8);
+        snapshot.push(self.audio.global_shift);
+
+        snapshot.push(self.audio.pulse1.enabled as u8);
+        snapshot.push(self.audio.pulse1.mode_ignore_duty as u8);
+        snapshot.push(self.audio.pulse1.duty);
+        snapshot.push(self.audio.pulse1.volume);
+        snapshot.extend_from_slice(&self.audio.pulse1.period.to_le_bytes());
+        snapshot.extend_from_slice(&self.audio.pulse1.divider.to_le_bytes());
+        snapshot.push(self.audio.pulse1.duty_step);
+
+        snapshot.push(self.audio.pulse2.enabled as u8);
+        snapshot.push(self.audio.pulse2.mode_ignore_duty as u8);
+        snapshot.push(self.audio.pulse2.duty);
+        snapshot.push(self.audio.pulse2.volume);
+        snapshot.extend_from_slice(&self.audio.pulse2.period.to_le_bytes());
+        snapshot.extend_from_slice(&self.audio.pulse2.divider.to_le_bytes());
+        snapshot.push(self.audio.pulse2.duty_step);
+
+        snapshot.push(self.audio.saw.enabled as u8);
+        snapshot.push(self.audio.saw.rate);
+        snapshot.extend_from_slice(&self.audio.saw.period.to_le_bytes());
+        snapshot.extend_from_slice(&self.audio.saw.divider.to_le_bytes());
+        snapshot.push(self.audio.saw.accumulator);
+        snapshot.push(self.audio.saw.step);
         snapshot
     }
 
@@ -634,6 +649,38 @@ impl Mapper for VRC6Mapper {
                 3 => MirroringMode::FourScreen,
                 _ => MirroringMode::Horizontal,
             };
+        }
+
+        if data.len() >= 41 {
+            self.audio.global_halt = data[19] != 0;
+            self.audio.global_shift = data[20];
+
+            self.audio.pulse1.enabled = data[21] != 0;
+            self.audio.pulse1.mode_ignore_duty = data[22] != 0;
+            self.audio.pulse1.duty = data[23];
+            self.audio.pulse1.volume = data[24];
+            self.audio.pulse1.period = u16::from_le_bytes([data[25], data[26]]);
+            self.audio.pulse1.divider = u16::from_le_bytes([data[27], data[28]]);
+            self.audio.pulse1.duty_step = data[29];
+
+            self.audio.pulse2.enabled = data[30] != 0;
+            self.audio.pulse2.mode_ignore_duty = data[31] != 0;
+            self.audio.pulse2.duty = data[32];
+            self.audio.pulse2.volume = data[33];
+            self.audio.pulse2.period = u16::from_le_bytes([data[34], data[35]]);
+            self.audio.pulse2.divider = u16::from_le_bytes([data[36], data[37]]);
+            self.audio.pulse2.duty_step = data[38];
+
+            self.audio.saw.enabled = data[39] != 0;
+            self.audio.saw.rate = data[40];
+            if data.len() >= 46 {
+                self.audio.saw.period = u16::from_le_bytes([data[41], data[42]]);
+                self.audio.saw.divider = u16::from_le_bytes([data[43], data[44]]);
+                self.audio.saw.accumulator = data[45];
+                if data.len() >= 47 {
+                    self.audio.saw.step = data[46];
+                }
+            }
         }
     }
 }
@@ -693,6 +740,54 @@ mod tests {
         }
 
         assert!(mapper.expansion_audio_sample() > 0.0);
+    }
+
+    #[test]
+    fn test_vrc6_registers_snapshot_restores_audio_state() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+
+        let mut mapper = create_mapper(
+            24,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            MirroringMode::Horizontal,
+        )
+        .expect("VRC6 (mapper 24) should be implemented");
+
+        mapper.write_prg(0x9000, 0b1000_0111); // pulse1 volume 7, ignore duty
+        mapper.write_prg(0x9001, 0x10);
+        mapper.write_prg(0x9002, 0b1000_0000);
+
+        mapper.write_prg(0xA000, 0b0000_1010); // pulse2 volume 10
+        mapper.write_prg(0xA001, 0x08);
+        mapper.write_prg(0xA002, 0b1000_0000);
+
+        mapper.write_prg(0xB000, 0x20); // saw rate
+        mapper.write_prg(0xB001, 0x02);
+        mapper.write_prg(0xB002, 0b1000_0000);
+
+        for _ in 0..8 {
+            mapper.cpu_cycle();
+        }
+
+        let saved = mapper.registers_snapshot();
+
+        for _ in 0..2 {
+            mapper.cpu_cycle();
+        }
+        let sample = mapper.expansion_audio_sample();
+
+        let mut restored = create_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("VRC6 (mapper 24) should be implemented");
+        restored.restore_registers(&saved);
+
+        for _ in 0..2 {
+            restored.cpu_cycle();
+        }
+
+        let restored_sample = restored.expansion_audio_sample();
+        assert!((restored_sample - sample).abs() < 1e-6);
     }
 
     #[test]

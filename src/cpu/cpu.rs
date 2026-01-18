@@ -76,6 +76,7 @@ pub struct Cpu {
     ///
     /// This is kept separate from `master_clock` because `master_clock` is also
     /// advanced by bus accesses during normal instruction execution.
+    // TODO This must go in the future.
     oob_master_clock: MasterClock,
 
     // DMC DMA state machine
@@ -105,7 +106,7 @@ const NMI_VECTOR: u16 = 0xFFFA;
 const RESET_VECTOR: u16 = 0xFFFC;
 const IRQ_VECTOR: u16 = 0xFFFE;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterruptKind {
     Nmi,
     Irq,
@@ -257,7 +258,6 @@ impl Cpu {
     }
 
     /// Capture the current CPU state for save-state.
-    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::CpuState {
         crate::savestate::CpuState {
             a: self.a,
@@ -273,11 +273,22 @@ impl Cpu {
             prev_need_nmi: self.prev_need_nmi,
             prev_run_irq: self.prev_run_irq,
             run_irq: self.run_irq,
+            delayed_i_flag: self.delayed_i_flag,
+            forced_irq_pending: self.forced_irq_pending,
+            skip_interrupt_latch_this_cycle: self.skip_interrupt_latch_this_cycle,
+            master_clock: self.master_clock.master_cycles(),
+            master_clock_ppu: self.master_clock.ppu_cycles(),
+            oob_master_clock: self.oob_master_clock.master_cycles(),
+            oob_master_clock_ppu: self.oob_master_clock.ppu_cycles(),
+            dmc_dma_running: self.dmc_dma_running,
+            dmc_dma_need_halt: self.dmc_dma_need_halt,
+            dmc_dma_need_dummy_read: self.dmc_dma_need_dummy_read,
+            interrupt_stack: self.interrupt_stack.clone(),
+            current_tick_info: self.current_tick_info,
         }
     }
 
     /// Restore CPU state from a save-state.
-    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::CpuState) {
         self.a = state.a;
         self.x = state.x;
@@ -292,15 +303,20 @@ impl Cpu {
         self.prev_need_nmi = state.prev_need_nmi;
         self.prev_run_irq = state.prev_run_irq;
         self.run_irq = state.run_irq;
-        // Clear derived state that will be recomputed
-        self.delayed_i_flag = None;
-        self.forced_irq_pending = false;
-        self.skip_interrupt_latch_this_cycle = false;
-        self.dmc_dma_running = false;
-        self.dmc_dma_need_halt = false;
-        self.dmc_dma_need_dummy_read = false;
-        self.interrupt_stack.clear();
-        self.current_tick_info = None;
+        self.delayed_i_flag = state.delayed_i_flag;
+        self.forced_irq_pending = state.forced_irq_pending;
+        self.skip_interrupt_latch_this_cycle = state.skip_interrupt_latch_this_cycle;
+        self.master_clock.set_master_cycles(state.master_clock);
+        self.master_clock.set_ppu_cycles(state.master_clock_ppu);
+        self.oob_master_clock
+            .set_master_cycles(state.oob_master_clock);
+        self.oob_master_clock
+            .set_ppu_cycles(state.oob_master_clock_ppu);
+        self.dmc_dma_running = state.dmc_dma_running;
+        self.dmc_dma_need_halt = state.dmc_dma_need_halt;
+        self.dmc_dma_need_dummy_read = state.dmc_dma_need_dummy_read;
+        self.interrupt_stack = state.interrupt_stack.clone();
+        self.current_tick_info = state.current_tick_info;
     }
 
     fn end_cpu_cycle_latch_interrupt_lines(&mut self) {
@@ -2423,6 +2439,92 @@ mod tests {
         assert_eq!(state.sp, 0x44);
         assert_eq!(state.pc, 0x5566);
         assert_eq!(state.p, 0x77);
+    }
+
+    #[test]
+    fn test_cpu_save_state_roundtrip_includes_internal_flags() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        cpu.a = 0x11;
+        cpu.x = 0x22;
+        cpu.y = 0x33;
+        cpu.sp = 0x44;
+        cpu.pc = 0x5566;
+        cpu.p = 0x77;
+        cpu.halted = true;
+        cpu.set_total_cycles(1234);
+        cpu.delayed_i_flag = Some(true);
+        cpu.nmi_pending = true;
+        cpu.prev_need_nmi = true;
+        cpu.prev_run_irq = true;
+        cpu.run_irq = true;
+        cpu.irq_pending = true;
+        cpu.forced_irq_pending = true;
+        cpu.skip_interrupt_latch_this_cycle = true;
+        cpu.master_clock.set_master_cycles(111);
+        cpu.master_clock.set_ppu_cycles(222);
+        cpu.oob_master_clock.set_master_cycles(333);
+        cpu.oob_master_clock.set_ppu_cycles(444);
+        cpu.dmc_dma_running = true;
+        cpu.dmc_dma_need_halt = true;
+        cpu.dmc_dma_need_dummy_read = true;
+        cpu.interrupt_stack = vec![InterruptKind::Irq, InterruptKind::Nmi];
+        cpu.current_tick_info = Some((2, 5));
+
+        let state = cpu.capture_state();
+
+        let mut restored = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
+        restored.restore_state(&state);
+
+        assert_eq!(restored.a, cpu.a);
+        assert_eq!(restored.x, cpu.x);
+        assert_eq!(restored.y, cpu.y);
+        assert_eq!(restored.sp, cpu.sp);
+        assert_eq!(restored.pc, cpu.pc);
+        assert_eq!(restored.p, cpu.p);
+        assert_eq!(restored.halted, cpu.halted);
+        assert_eq!(restored.total_cycles, cpu.total_cycles);
+        assert_eq!(restored.delayed_i_flag, cpu.delayed_i_flag);
+        assert_eq!(restored.nmi_pending, cpu.nmi_pending);
+        assert_eq!(restored.prev_need_nmi, cpu.prev_need_nmi);
+        assert_eq!(restored.prev_run_irq, cpu.prev_run_irq);
+        assert_eq!(restored.run_irq, cpu.run_irq);
+        assert_eq!(restored.irq_pending, cpu.irq_pending);
+        assert_eq!(restored.forced_irq_pending, cpu.forced_irq_pending);
+        assert_eq!(
+            restored.skip_interrupt_latch_this_cycle,
+            cpu.skip_interrupt_latch_this_cycle
+        );
+        assert_eq!(
+            restored.master_clock.master_cycles(),
+            cpu.master_clock.master_cycles()
+        );
+        assert_eq!(
+            restored.master_clock.ppu_cycles(),
+            cpu.master_clock.ppu_cycles()
+        );
+        assert_eq!(
+            restored.oob_master_clock.master_cycles(),
+            cpu.oob_master_clock.master_cycles()
+        );
+        assert_eq!(
+            restored.oob_master_clock.ppu_cycles(),
+            cpu.oob_master_clock.ppu_cycles()
+        );
+        assert_eq!(restored.dmc_dma_running, cpu.dmc_dma_running);
+        assert_eq!(restored.dmc_dma_need_halt, cpu.dmc_dma_need_halt);
+        assert_eq!(
+            restored.dmc_dma_need_dummy_read,
+            cpu.dmc_dma_need_dummy_read
+        );
+        assert_eq!(restored.interrupt_stack, cpu.interrupt_stack);
+        assert_eq!(restored.current_tick_info, cpu.current_tick_info);
     }
 
     #[test]

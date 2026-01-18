@@ -414,6 +414,8 @@ impl Mapper for MMC1Mapper {
         // [3]: chr_bank_0
         // [4]: chr_bank_1
         // [5]: prg_bank
+        // [6..=13]: cpu_cycle_count (u64 LE)
+        // [14..=21]: last_write_cycle (u64 LE)
         vec![
             self.shift_register,
             self.write_count,
@@ -421,6 +423,22 @@ impl Mapper for MMC1Mapper {
             self.chr_bank_0,
             self.chr_bank_1,
             self.prg_bank,
+            (self.cpu_cycle_count & 0xFF) as u8,
+            ((self.cpu_cycle_count >> 8) & 0xFF) as u8,
+            ((self.cpu_cycle_count >> 16) & 0xFF) as u8,
+            ((self.cpu_cycle_count >> 24) & 0xFF) as u8,
+            ((self.cpu_cycle_count >> 32) & 0xFF) as u8,
+            ((self.cpu_cycle_count >> 40) & 0xFF) as u8,
+            ((self.cpu_cycle_count >> 48) & 0xFF) as u8,
+            ((self.cpu_cycle_count >> 56) & 0xFF) as u8,
+            (self.last_write_cycle & 0xFF) as u8,
+            ((self.last_write_cycle >> 8) & 0xFF) as u8,
+            ((self.last_write_cycle >> 16) & 0xFF) as u8,
+            ((self.last_write_cycle >> 24) & 0xFF) as u8,
+            ((self.last_write_cycle >> 32) & 0xFF) as u8,
+            ((self.last_write_cycle >> 40) & 0xFF) as u8,
+            ((self.last_write_cycle >> 48) & 0xFF) as u8,
+            ((self.last_write_cycle >> 56) & 0xFF) as u8,
         ]
     }
 
@@ -432,6 +450,15 @@ impl Mapper for MMC1Mapper {
             self.chr_bank_0 = data[3];
             self.chr_bank_1 = data[4];
             self.prg_bank = data[5];
+        }
+
+        if data.len() >= 22 {
+            self.cpu_cycle_count = u64::from_le_bytes([
+                data[6], data[7], data[8], data[9], data[10], data[11], data[12], data[13],
+            ]);
+            self.last_write_cycle = u64::from_le_bytes([
+                data[14], data[15], data[16], data[17], data[18], data[19], data[20], data[21],
+            ]);
         }
     }
 
@@ -477,6 +504,32 @@ mod tests {
         // Bits 2-3: PRG ROM bank mode = 0b00
         // Bit 4: CHR ROM bank mode = 0
         assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+    }
+
+    #[test]
+    fn test_mmc1_registers_snapshot_preserves_write_ignore_timing() {
+        let prg_rom = vec![0; PRG_BANK_SIZE * 2];
+        let chr_rom = vec![];
+
+        let mut mapper =
+            MMC1Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+
+        mapper.cpu_cycle();
+        mapper.write_prg(0x8000, 0x01);
+
+        let saved = mapper.registers_snapshot();
+
+        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        restored.restore_registers(&saved);
+
+        let before = restored.registers_snapshot();
+        restored.write_prg(0x8000, 0x00);
+        let after = restored.registers_snapshot();
+
+        assert_eq!(
+            after, before,
+            "consecutive write should be ignored when cpu_cycle_count matches last_write_cycle"
+        );
     }
 
     #[test]

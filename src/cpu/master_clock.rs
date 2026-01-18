@@ -56,6 +56,14 @@ impl MasterClock {
         ppu_cycles
     }
 
+    pub fn ppu_cycles(&self) -> u64 {
+        self.ppu_clock
+    }
+
+    pub fn set_ppu_cycles(&mut self, cycles: u64) {
+        self.ppu_clock = cycles;
+    }
+
     pub fn reset(&mut self) {
         self.master_clock = 0;
         self.ppu_clock = 0;

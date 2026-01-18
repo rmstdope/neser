@@ -444,7 +444,15 @@ impl Mapper for Vrc2Vrc4Mapper {
         snapshot.push(flags);
         let prescaler_bytes = self.irq_prescaler.to_le_bytes();
         snapshot.extend_from_slice(&prescaler_bytes);
-        snapshot.push(self.mirroring as u8);
+        let mirroring = match self.mirroring {
+            MirroringMode::Horizontal => 0,
+            MirroringMode::Vertical => 1,
+            MirroringMode::SingleScreen => 2,
+            MirroringMode::FourScreen => 3,
+            MirroringMode::SingleScreenLower => 2,
+            MirroringMode::SingleScreenUpper => 2,
+        };
+        snapshot.push(mirroring);
         snapshot
     }
 
@@ -594,5 +602,42 @@ mod tests {
         // Test single screen mirroring
         mapper.write_prg(0x9000, 0x02);
         assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+    }
+
+    #[test]
+    fn test_vrc2_vrc4_registers_snapshot_restores_state() {
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 8);
+
+        let mut mapper = create_mapper(
+            21,
+            prg_rom.clone(),
+            chr_rom.clone(),
+            MirroringMode::Horizontal,
+        )
+        .expect("Mapper 21 should be implemented");
+
+        mapper.write_prg(0x8000, 0x03); // prg_bank_16k
+        mapper.write_prg(0xA000, 0x05); // prg_bank_8k
+        mapper.write_prg(0xB000, 0x02); // chr bank 0
+        mapper.write_prg(0xC000, 0x04); // chr bank 4
+        mapper.write_prg(0x9000, 0x01); // mirroring horizontal
+
+        mapper.write_prg(0xF000, 0xFE);
+        mapper.write_prg(0xF001, 0b0000_0110);
+        mapper.cpu_cycle();
+
+        let regs = mapper.registers_snapshot();
+
+        let mut restored = create_mapper(21, prg_rom, chr_rom, MirroringMode::Vertical)
+            .expect("Mapper 21 should be implemented");
+        restored.restore_registers(&regs);
+
+        assert_eq!(restored.read_prg(0x8000), 6);
+        assert_eq!(restored.read_prg(0xC000), 5);
+        assert_eq!(restored.read_chr(0x0000), 2);
+        assert_eq!(restored.read_chr(0x1000), 4);
+        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.irq_pending(), mapper.irq_pending());
     }
 }

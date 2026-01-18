@@ -351,7 +351,15 @@ impl Mapper for BandaiFcgMapper {
         snapshot.push((self.irq_counter >> 8) as u8);
         snapshot.push((self.irq_latch & 0xFF) as u8);
         snapshot.push((self.irq_latch >> 8) as u8);
-        snapshot.push(self.mirroring as u8);
+        let mirroring = match self.mirroring {
+            MirroringMode::Horizontal => 0,
+            MirroringMode::Vertical => 1,
+            MirroringMode::SingleScreenLower => 2,
+            MirroringMode::SingleScreenUpper => 3,
+            MirroringMode::SingleScreen => 2,
+            MirroringMode::FourScreen => 4,
+        };
+        snapshot.push(mirroring);
         snapshot
     }
 
@@ -367,8 +375,9 @@ impl Mapper for BandaiFcgMapper {
             self.mirroring = match data[14] {
                 0 => MirroringMode::Horizontal,
                 1 => MirroringMode::Vertical,
-                2 => MirroringMode::SingleScreen,
-                3 => MirroringMode::FourScreen,
+                2 => MirroringMode::SingleScreenLower,
+                3 => MirroringMode::SingleScreenUpper,
+                4 => MirroringMode::FourScreen,
                 _ => MirroringMode::Horizontal,
             };
         }
@@ -716,5 +725,35 @@ mod tests {
             mapper.irq_pending(),
             "IRQ should trigger after 3 cycles (latch behavior)"
         );
+    }
+
+    #[test]
+    fn test_bandai_fcg_registers_snapshot_restores_state() {
+        let prg_rom = banked_data(16 * 1024, 4);
+        let chr_rom = vec![]; // CHR-RAM path
+
+        let mut mapper = BandaiFcgMapper::new(prg_rom.clone(), chr_rom, MirroringMode::Horizontal);
+
+        mapper.write_prg(0x8008, 2); // PRG bank
+        mapper.write_prg(0x8000, 3); // CHR bank 0
+        mapper.write_prg(0x8009, 3); // mirroring upper
+
+        mapper.write_chr(0x0000, 0xAB);
+
+        mapper.write_prg(0x800B, 0x34);
+        mapper.write_prg(0x800C, 0x12);
+        mapper.write_prg(0x800A, 1);
+
+        let regs = mapper.registers_snapshot();
+        let chr = mapper.chr_ram_snapshot();
+
+        let mut restored = BandaiFcgMapper::new(prg_rom, vec![], MirroringMode::Vertical);
+        restored.restore_registers(&regs);
+        restored.restore_chr_ram(&chr);
+
+        assert_eq!(restored.read_prg(0x8000), 2);
+        assert_eq!(restored.read_chr(0x0000), 0xAB);
+        assert_eq!(restored.get_mirroring(), MirroringMode::SingleScreenUpper);
+        assert_eq!(restored.irq_pending(), mapper.irq_pending());
     }
 }

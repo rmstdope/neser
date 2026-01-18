@@ -90,6 +90,22 @@ impl Joypad {
             self.button_states &= !(1 << bit);
         }
     }
+
+    /// Capture current joypad state for save-state.
+    pub fn capture_state(&self) -> crate::savestate::JoypadState {
+        crate::savestate::JoypadState {
+            strobe: self.strobe,
+            button_index: self.button_index,
+            button_states: self.button_states,
+        }
+    }
+
+    /// Restore joypad state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::savestate::JoypadState) {
+        self.strobe = state.strobe;
+        self.button_index = state.button_index;
+        self.button_states = state.button_states;
+    }
 }
 
 #[cfg(test)]

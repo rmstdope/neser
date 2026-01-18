@@ -87,6 +87,21 @@ impl Dmc {
         self.dma_pending
     }
 
+    #[cfg(test)]
+    pub fn debug_set_dma_pending(&mut self, value: bool) {
+        self.dma_pending = value;
+    }
+
+    #[cfg(test)]
+    pub fn debug_set_transfer_start_delay(&mut self, value: u8) {
+        self.transfer_start_delay = value;
+    }
+
+    #[cfg(test)]
+    pub fn debug_transfer_start_delay(&self) -> u8 {
+        self.transfer_start_delay
+    }
+
     /// If a DMA request is pending, returns the address the DMA should read.
     pub fn dma_address(&self) -> Option<u16> {
         self.dma_pending.then_some(self.current_address)
@@ -331,7 +346,6 @@ impl Dmc {
     }
 
     /// Capture the current DMC channel state for save-state.
-    #[cfg(test)]
     pub fn capture_state(&self) -> crate::savestate::DmcState {
         crate::savestate::DmcState {
             timer: self.timer,
@@ -348,11 +362,12 @@ impl Dmc {
             irq_enabled: self.irq_enabled,
             irq_flag: self.interrupt_flag,
             loop_flag: self.loop_flag,
+            dma_pending: self.dma_pending,
+            transfer_start_delay: self.transfer_start_delay,
         }
     }
 
     /// Restore DMC channel state from a save-state.
-    #[cfg(test)]
     pub fn restore_state(&mut self, state: &crate::savestate::DmcState) {
         self.timer = state.timer;
         self.timer_period = state.timer_period;
@@ -368,8 +383,8 @@ impl Dmc {
         self.irq_enabled = state.irq_enabled;
         self.interrupt_flag = state.irq_flag;
         self.loop_flag = state.loop_flag;
-        self.dma_pending = false;
-        self.transfer_start_delay = 0;
+        self.dma_pending = state.dma_pending;
+        self.transfer_start_delay = state.transfer_start_delay;
     }
 }
 

@@ -115,6 +115,24 @@ impl Mapper for AxROMMapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_memory.snapshot()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        self.chr_memory.load_snapshot(data);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![self.bank_select]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if let Some(&value) = data.first() {
+            self.bank_select = value;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -217,6 +235,38 @@ mod tests {
         // Write with bit 4 = 1 (upper nametable)
         mapper.write_prg(0x8000, 0x10); // Bits: 0001 0000
         assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+    }
+
+    #[test]
+    fn test_axrom_registers_and_chr_ram_snapshot_roundtrip() {
+        let mut prg_rom = vec![0; 256 * 1024];
+
+        for bank in 0..8 {
+            let start = bank * 32 * 1024;
+            let end = start + 32 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = (bank + 1) as u8;
+            }
+        }
+
+        let mut mapper = create_mapper(7, prg_rom.clone(), vec![], MirroringMode::Horizontal)
+            .expect("Failed to create AxROM mapper");
+
+        mapper.write_prg(0x8000, 0x07); // select bank 7
+        mapper.write_chr(0x0000, 0x42);
+        mapper.write_chr(0x1FFF, 0x99);
+
+        let registers = mapper.registers_snapshot();
+        let chr_ram = mapper.chr_ram_snapshot();
+
+        let mut restored = create_mapper(7, prg_rom, vec![], MirroringMode::Horizontal)
+            .expect("Failed to create AxROM mapper");
+        restored.restore_registers(&registers);
+        restored.restore_chr_ram(&chr_ram);
+
+        assert_eq!(restored.read_prg(0x8000), 8);
+        assert_eq!(restored.read_chr(0x0000), 0x42);
+        assert_eq!(restored.read_chr(0x1FFF), 0x99);
     }
 
     #[test]

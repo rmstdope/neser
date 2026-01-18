@@ -318,4 +318,21 @@ mod tests {
         mapper.write_prg(0xFFFF, 3);
         assert_eq!(mapper.read_chr(0x0000), 103);
     }
+
+    #[test]
+    fn test_cprom_registers_snapshot_restores_chr_bank() {
+        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+
+        mapper.write_prg(0x8000, 0b0000_0010); // select bank 2
+        let regs = mapper.registers_snapshot();
+
+        let mut restored = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        restored.restore_registers(&regs);
+
+        restored.write_chr(0x0000, 0xAA);
+        assert_eq!(restored.read_chr(0x0000), 0xAA);
+
+        restored.write_prg(0x8000, 0b0000_0011); // switch to bank 3
+        assert_ne!(restored.read_chr(0x0000), 0xAA);
+    }
 }

@@ -140,25 +140,29 @@ impl Status {
     }
 
     /// Check if sprite 0 hit flag is set
-    #[cfg(test)]
     pub fn is_sprite_0_hit(&self) -> bool {
         self.sprite_0_hit
     }
 
     /// Get sprite overflow flag for save-state.
-    #[cfg(test)]
     pub fn is_sprite_overflow(&self) -> bool {
         self.sprite_overflow
     }
 
     /// Get NMI enabled flag for save-state.
-    #[cfg(test)]
     pub fn is_nmi_enabled(&self) -> bool {
         self.nmi_enabled
     }
 
+    pub fn pending_sprite_0_hit(&self) -> bool {
+        self.pending_sprite_0_hit
+    }
+
+    pub fn frame_complete(&self) -> bool {
+        self.frame_complete
+    }
+
     /// Restore status state from a save-state.
-    #[cfg(test)]
     pub fn restore_state(
         &mut self,
         vblank: bool,
@@ -173,6 +177,48 @@ impl Status {
         self.nmi_enabled = nmi_enabled;
         // Note: frame_complete is derived state, will be set during next vblank
         self.frame_complete = false;
+    }
+
+    pub fn set_pending_sprite_0_hit(&mut self, pending: bool) {
+        self.pending_sprite_0_hit = pending;
+    }
+
+    pub fn set_frame_complete(&mut self, complete: bool) {
+        self.frame_complete = complete;
+    }
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusDebugState {
+    pub vblank_flag: bool,
+    pub sprite_0_hit: bool,
+    pub pending_sprite_0_hit: bool,
+    pub sprite_overflow: bool,
+    pub nmi_enabled: bool,
+    pub frame_complete: bool,
+}
+
+#[cfg(test)]
+impl Status {
+    pub fn debug_state(&self) -> StatusDebugState {
+        StatusDebugState {
+            vblank_flag: self.vblank_flag,
+            sprite_0_hit: self.sprite_0_hit,
+            pending_sprite_0_hit: self.pending_sprite_0_hit,
+            sprite_overflow: self.sprite_overflow,
+            nmi_enabled: self.nmi_enabled,
+            frame_complete: self.frame_complete,
+        }
+    }
+
+    pub fn set_debug_state(&mut self, state: StatusDebugState) {
+        self.vblank_flag = state.vblank_flag;
+        self.sprite_0_hit = state.sprite_0_hit;
+        self.pending_sprite_0_hit = state.pending_sprite_0_hit;
+        self.sprite_overflow = state.sprite_overflow;
+        self.nmi_enabled = state.nmi_enabled;
+        self.frame_complete = state.frame_complete;
     }
 }
 
