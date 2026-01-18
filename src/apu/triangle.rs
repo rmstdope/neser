@@ -207,6 +207,38 @@ impl Triangle {
     pub fn is_length_counter_enabled(&self) -> bool {
         self.length_counter.is_enabled()
     }
+
+    /// Capture the current triangle channel state for save-state.
+    pub fn capture_state(&self) -> crate::savestate::TriangleState {
+        crate::savestate::TriangleState {
+            timer: self.timer_counter,
+            timer_period: self.timer_period,
+            length_counter: self.length_counter.value(),
+            length_counter_enabled: self.length_counter.is_enabled(),
+            linear_counter: self.linear_counter,
+            linear_counter_reload: self.linear_counter_reload_value,
+            linear_counter_reload_flag: self.linear_counter_reload_flag,
+            control_flag: self.control_flag,
+            sequence_position: self.sequence_position,
+        }
+    }
+
+    /// Restore triangle channel state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::savestate::TriangleState) {
+        self.timer_counter = state.timer;
+        self.timer_period = state.timer_period;
+        self.length_counter.set_value(state.length_counter);
+        if state.length_counter_enabled {
+            self.length_counter.enable();
+        } else {
+            self.length_counter.disable();
+        }
+        self.linear_counter = state.linear_counter;
+        self.linear_counter_reload_value = state.linear_counter_reload;
+        self.linear_counter_reload_flag = state.linear_counter_reload_flag;
+        self.control_flag = state.control_flag;
+        self.sequence_position = state.sequence_position;
+    }
 }
 
 #[cfg(test)]

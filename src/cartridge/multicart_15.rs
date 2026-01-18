@@ -166,6 +166,10 @@ impl Mapper for Multicart15Mapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        15
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }

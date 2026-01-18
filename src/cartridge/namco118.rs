@@ -242,6 +242,10 @@ impl Mapper for Namco118Mapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        206
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.len()
     }
@@ -253,6 +257,34 @@ impl Mapper for Namco118Mapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         let to_copy = data.len().min(self.prg_ram.len());
         self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_ram.clone()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(self.chr_ram.len());
+        if to_copy > 0 {
+            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        }
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        // Serialize Namco118 internal registers:
+        // [0]: bank_select
+        // [1-8]: regs[0-7]
+        let mut snapshot = Vec::with_capacity(9);
+        snapshot.push(self.bank_select);
+        snapshot.extend_from_slice(&self.regs);
+        snapshot
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 9 {
+            self.bank_select = data[0];
+            self.regs.copy_from_slice(&data[1..9]);
+        }
     }
 }
 

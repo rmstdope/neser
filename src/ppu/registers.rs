@@ -384,6 +384,32 @@ impl Registers {
     pub fn mask(&self) -> u8 {
         self.mask_register
     }
+
+    /// Restore register state from a save-state.
+    #[allow(clippy::too_many_arguments)]
+    pub fn restore_state(
+        &mut self,
+        control: u8,
+        mask: u8,
+        oam_address: u8,
+        v: u16,
+        t: u16,
+        fine_x: u8,
+        w: bool,
+        io_bus: u8,
+        data_buffer: u8,
+    ) {
+        self.control_register = control;
+        self.mask_register = mask;
+        self.oam_address = oam_address;
+        self.v = v;
+        self.t = t;
+        self.x = fine_x;
+        self.w = w;
+        self.io_bus = io_bus;
+        self.data_buffer = data_buffer;
+        // Note: io_bus_refresh_time and cycle_count not restored as they're for decay only
+    }
 }
 
 #[cfg(test)]

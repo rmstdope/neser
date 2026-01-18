@@ -645,6 +645,49 @@ impl Apu {
     pub fn set_dmc_enabled(&mut self, enabled: bool) {
         self.dmc_enabled = enabled;
     }
+
+    /// Capture the current APU state for save-state.
+    pub fn capture_state(&self) -> crate::savestate::ApuState {
+        crate::savestate::ApuState {
+            frame_counter: crate::savestate::FrameCounterState {
+                cycle_counter: self.frame_counter.get_cycle_counter(),
+                mode: self.frame_counter.get_mode(),
+                irq_inhibit: self.frame_counter.get_irq_inhibit(),
+                irq_flag: self.frame_counter.get_irq_flag(),
+            },
+            pulse1: self.pulse1.capture_state(),
+            pulse2: self.pulse2.capture_state(),
+            triangle: self.triangle.capture_state(),
+            noise: self.noise.capture_state(),
+            dmc: self.dmc.capture_state(),
+            apu_cycle: self.apu_cycle,
+            cpu_cycle: self.cpu_cycle,
+            last_4017_write: self.last_4017_write,
+        }
+    }
+
+    /// Restore APU state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::savestate::ApuState) {
+        // Restore frame counter
+        self.frame_counter
+            .restore_state(state.frame_counter.cycle_counter, state.frame_counter.mode, state.frame_counter.irq_inhibit, state.frame_counter.irq_flag);
+
+        // Restore channels
+        self.pulse1.restore_state(&state.pulse1);
+        self.pulse2.restore_state(&state.pulse2);
+        self.triangle.restore_state(&state.triangle);
+        self.noise.restore_state(&state.noise);
+        self.dmc.restore_state(&state.dmc);
+
+        // Restore timing state
+        self.apu_cycle = state.apu_cycle;
+        self.cpu_cycle = state.cpu_cycle;
+        self.last_4017_write = state.last_4017_write;
+
+        // Clear sample buffer
+        self.clear_pending_samples();
+        self.sample_accumulator = 0.0;
+    }
 }
 
 impl Default for Apu {

@@ -304,6 +304,10 @@ impl Mapper for BandaiFcgMapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        16
+    }
+
     fn wram_size(&self) -> usize {
         // Mapper 16 does not have traditional PRG-RAM.
         // Save data is stored in EEPROM (not yet implemented).
@@ -317,6 +321,57 @@ impl Mapper for BandaiFcgMapper {
 
     fn load_wram_snapshot(&mut self, _data: &[u8]) {
         // No WRAM to restore - EEPROM save data is separate
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_ram.clone()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(self.chr_ram.len());
+        if to_copy > 0 {
+            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        }
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        // Serialize Bandai FCG internal registers:
+        // [0]: prg_bank
+        // [1-8]: chr_banks[0-7]
+        // [9]: flags (irq_enabled, irq_pending)
+        // [10-11]: irq_counter (little endian)
+        // [12-13]: irq_latch (little endian)
+        // [14]: mirroring
+        let mut snapshot = Vec::with_capacity(15);
+        snapshot.push(self.prg_bank);
+        snapshot.extend_from_slice(&self.chr_banks);
+        let flags = (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1);
+        snapshot.push(flags);
+        snapshot.push((self.irq_counter & 0xFF) as u8);
+        snapshot.push((self.irq_counter >> 8) as u8);
+        snapshot.push((self.irq_latch & 0xFF) as u8);
+        snapshot.push((self.irq_latch >> 8) as u8);
+        snapshot.push(self.mirroring as u8);
+        snapshot
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 15 {
+            self.prg_bank = data[0];
+            self.chr_banks.copy_from_slice(&data[1..9]);
+            let flags = data[9];
+            self.irq_enabled = (flags & 1) != 0;
+            self.irq_pending = (flags & 2) != 0;
+            self.irq_counter = (data[10] as u16) | ((data[11] as u16) << 8);
+            self.irq_latch = (data[12] as u16) | ((data[13] as u16) << 8);
+            self.mirroring = match data[14] {
+                0 => MirroringMode::Horizontal,
+                1 => MirroringMode::Vertical,
+                2 => MirroringMode::SingleScreen,
+                3 => MirroringMode::FourScreen,
+                _ => MirroringMode::Horizontal,
+            };
+        }
     }
 }
 

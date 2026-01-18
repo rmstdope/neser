@@ -112,6 +112,28 @@ impl Envelope {
     pub fn debug_counter(&self) -> u8 {
         self.counter
     }
+
+    /// Capture the current envelope state for save-state.
+    pub fn capture_state(&self) -> crate::savestate::EnvelopeState {
+        crate::savestate::EnvelopeState {
+            start_flag: self.start_flag,
+            divider: self.divider,
+            decay_level: self.counter,
+            constant_volume: self.disable_flag,
+            loop_flag: self.loop_flag,
+            period: self.n,
+        }
+    }
+
+    /// Restore envelope state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::savestate::EnvelopeState) {
+        self.start_flag = state.start_flag;
+        self.divider = state.divider;
+        self.counter = state.decay_level;
+        self.disable_flag = state.constant_volume;
+        self.loop_flag = state.loop_flag;
+        self.n = state.period;
+    }
 }
 
 #[cfg(test)]

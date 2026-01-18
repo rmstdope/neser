@@ -404,6 +404,10 @@ impl Mapper for Namco163Mapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        19
+    }
+
     fn reset(&mut self) {
         self.regs = [0; 16];
         self.irq_counter = 0;
@@ -428,6 +432,46 @@ impl Mapper for Namco163Mapper {
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_ram.clone()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(self.chr_ram.len());
+        if to_copy > 0 {
+            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        }
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        // Serialize Namco163 internal registers:
+        // [0-15]: regs[0-15]
+        // [16-143]: namco_ram[0-127]
+        // [144]: irq_counter low byte
+        // [145]: irq_counter high byte (7 bits) + irq_enabled (1 bit)
+        // [146]: flags (irq_pending, audio_disabled)
+        let mut snapshot = Vec::with_capacity(147);
+        snapshot.extend_from_slice(&self.regs);
+        snapshot.extend_from_slice(&self.namco_ram);
+        snapshot.push((self.irq_counter & 0xFF) as u8);
+        snapshot.push(((self.irq_counter >> 8) as u8) | ((self.irq_enabled as u8) << 7));
+        let flags = (self.irq_pending as u8) | ((self.audio_disabled as u8) << 1);
+        snapshot.push(flags);
+        snapshot
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 147 {
+            self.regs.copy_from_slice(&data[0..16]);
+            self.namco_ram.copy_from_slice(&data[16..144]);
+            self.irq_counter = (data[144] as u16) | (((data[145] & 0x7F) as u16) << 8);
+            self.irq_enabled = (data[145] & 0x80) != 0;
+            let flags = data[146];
+            self.irq_pending = (flags & 1) != 0;
+            self.audio_disabled = (flags & 2) != 0;
+        }
     }
 }
 

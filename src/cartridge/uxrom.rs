@@ -96,6 +96,10 @@ impl Mapper for UxROMMapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        2
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }

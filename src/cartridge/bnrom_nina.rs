@@ -151,6 +151,10 @@ impl Mapper for BnromNinaMapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        34
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }

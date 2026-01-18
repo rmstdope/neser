@@ -550,6 +550,37 @@ impl Sprites {
     pub fn sprite_count(&self) -> u8 {
         self.sprite_count
     }
+
+    /// Create a snapshot of OAM for save-state.
+    pub fn oam_snapshot(&self) -> Vec<u8> {
+        self.oam_data.to_vec()
+    }
+
+    /// Create a snapshot of secondary OAM for save-state.
+    pub fn secondary_oam_snapshot(&self) -> Vec<u8> {
+        self.secondary_oam.to_vec()
+    }
+
+    /// Restore OAM from a save-state.
+    pub fn restore_oam(&mut self, oam: &[u8], secondary_oam: &[u8]) {
+        let len = oam.len().min(self.oam_data.len());
+        self.oam_data[..len].copy_from_slice(&oam[..len]);
+
+        let sec_len = secondary_oam.len().min(self.secondary_oam.len());
+        self.secondary_oam[..sec_len].copy_from_slice(&secondary_oam[..sec_len]);
+
+        // Reset evaluation state
+        self.sprites_found = 0;
+        self.sprite_count = 0;
+        self.next_sprite_count = 0;
+        self.sprite_buffers_ready = false;
+        self.sprite_0_index = None;
+        self.next_sprite_0_index = None;
+        self.sprite_eval_n = 0;
+        self.sprite_eval_m = 0;
+        self.sprite_eval_cycle = 0;
+        self.sprite_eval_in_range = false;
+    }
 }
 
 #[cfg(test)]

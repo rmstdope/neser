@@ -99,6 +99,10 @@ impl Mapper for GxROMMapper {
         self.mirroring
     }
 
+    fn mapper_number(&self) -> u8 {
+        66
+    }
+
     fn wram_size(&self) -> usize {
         self.prg_ram.size()
     }
