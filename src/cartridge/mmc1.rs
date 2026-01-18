@@ -369,6 +369,50 @@ impl Mapper for MMC1Mapper {
         let to_copy = data.len().min(self.prg_ram.len());
         self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        if self.has_chr_ram {
+            self.chr_memory.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        if self.has_chr_ram && !data.is_empty() {
+            let to_copy = data.len().min(self.chr_memory.len());
+            self.chr_memory[..to_copy].copy_from_slice(&data[..to_copy]);
+        }
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        // Serialize MMC1 internal registers:
+        // [0]: shift_register
+        // [1]: write_count
+        // [2]: control
+        // [3]: chr_bank_0
+        // [4]: chr_bank_1
+        // [5]: prg_bank
+        vec![
+            self.shift_register,
+            self.write_count,
+            self.control,
+            self.chr_bank_0,
+            self.chr_bank_1,
+            self.prg_bank,
+        ]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 6 {
+            self.shift_register = data[0];
+            self.write_count = data[1];
+            self.control = data[2];
+            self.chr_bank_0 = data[3];
+            self.chr_bank_1 = data[4];
+            self.prg_bank = data[5];
+        }
+    }
 }
 
 #[cfg(test)]

@@ -327,6 +327,63 @@ impl Mapper for SunsoftFme7Mapper {
         let to_copy = data.len().min(self.prg_ram.len());
         self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_ram.clone()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(self.chr_ram.len());
+        if to_copy > 0 {
+            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        }
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        // Serialize Sunsoft FME-7 internal registers:
+        // [0]: command
+        // [1-4]: prg_banks[0-3]
+        // [5-12]: chr_banks[0-7]
+        // [13]: flags (prg_ram_enabled, prg_ram_readonly, irq_enabled, irq_counter_enabled, irq_pending)
+        // [14-15]: irq_counter (little endian)
+        // [16]: mirroring
+        let mut snapshot = Vec::with_capacity(17);
+        snapshot.push(self.command);
+        snapshot.extend_from_slice(&self.prg_banks);
+        snapshot.extend_from_slice(&self.chr_banks);
+        let flags = (self.prg_ram_enabled as u8)
+            | ((self.prg_ram_readonly as u8) << 1)
+            | ((self.irq_enabled as u8) << 2)
+            | ((self.irq_counter_enabled as u8) << 3)
+            | ((self.irq_pending as u8) << 4);
+        snapshot.push(flags);
+        snapshot.push((self.irq_counter & 0xFF) as u8);
+        snapshot.push((self.irq_counter >> 8) as u8);
+        snapshot.push(self.mirroring as u8);
+        snapshot
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 17 {
+            self.command = data[0];
+            self.prg_banks.copy_from_slice(&data[1..5]);
+            self.chr_banks.copy_from_slice(&data[5..13]);
+            let flags = data[13];
+            self.prg_ram_enabled = (flags & 1) != 0;
+            self.prg_ram_readonly = (flags & 2) != 0;
+            self.irq_enabled = (flags & 4) != 0;
+            self.irq_counter_enabled = (flags & 8) != 0;
+            self.irq_pending = (flags & 16) != 0;
+            self.irq_counter = (data[14] as u16) | ((data[15] as u16) << 8);
+            self.mirroring = match data[16] {
+                0 => MirroringMode::Horizontal,
+                1 => MirroringMode::Vertical,
+                2 => MirroringMode::SingleScreen,
+                3 => MirroringMode::FourScreen,
+                _ => MirroringMode::Horizontal,
+            };
+        }
+    }
 }
 
 #[cfg(test)]

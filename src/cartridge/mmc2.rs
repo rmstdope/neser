@@ -250,6 +250,58 @@ impl Mapper for MMC2Mapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        if self.has_chr_ram {
+            self.chr_ram.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        if self.has_chr_ram && !data.is_empty() {
+            let to_copy = data.len().min(self.chr_ram.len());
+            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        }
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        // Serialize MMC2 internal registers:
+        // [0]: prg_bank_8k
+        // [1]: chr_bank_0_fd
+        // [2]: chr_bank_0_fe
+        // [3]: chr_bank_1_fd
+        // [4]: chr_bank_1_fe
+        // [5]: latches (bit 0 = latch0_is_fd, bit 1 = latch1_is_fd)
+        // [6]: mirroring
+        vec![
+            self.prg_bank_8k,
+            self.chr_bank_0_fd,
+            self.chr_bank_0_fe,
+            self.chr_bank_1_fd,
+            self.chr_bank_1_fe,
+            (self.latch0_is_fd as u8) | ((self.latch1_is_fd as u8) << 1),
+            self.mirroring as u8,
+        ]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 7 {
+            self.prg_bank_8k = data[0];
+            self.chr_bank_0_fd = data[1];
+            self.chr_bank_0_fe = data[2];
+            self.chr_bank_1_fd = data[3];
+            self.chr_bank_1_fe = data[4];
+            self.latch0_is_fd = (data[5] & 1) != 0;
+            self.latch1_is_fd = (data[5] & 2) != 0;
+            self.mirroring = match data[6] {
+                0 => MirroringMode::Horizontal,
+                1 => MirroringMode::Vertical,
+                _ => MirroringMode::Horizontal,
+            };
+        }
+    }
 }
 
 #[cfg(test)]

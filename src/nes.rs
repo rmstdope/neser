@@ -625,6 +625,29 @@ pub enum SaveStateError {
     MapperMismatch { expected: u8, found: u8 },
 }
 
+impl std::fmt::Display for SaveStateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SaveStateError::IncompatibleVersion { expected, found } => {
+                write!(
+                    f,
+                    "Incompatible save-state version: expected {}, found {}",
+                    expected, found
+                )
+            }
+            SaveStateError::MapperMismatch { expected, found } => {
+                write!(
+                    f,
+                    "Mapper mismatch: cartridge uses mapper {}, but save-state is for mapper {}",
+                    expected, found
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for SaveStateError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1430,6 +1453,31 @@ mod tests {
             assert_eq!(found, 9999);
         } else {
             panic!("Expected IncompatibleVersion error");
+        }
+    }
+
+    #[test]
+    fn test_save_state_mapper_mismatch() {
+        let rom_data = create_minimal_nrom_rom();
+        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Create a state with a different mapper number
+        let mut state = nes.save_state();
+        state.mapper.mapper_number = 4; // MMC3 instead of NROM (0)
+
+        // Loading should fail with mapper mismatch error
+        let result = nes.load_state(&state);
+        assert!(result.is_err());
+
+        if let Err(super::SaveStateError::MapperMismatch { expected, found }) = result {
+            assert_eq!(expected, 0); // NROM
+            assert_eq!(found, 4); // MMC3
+        } else {
+            panic!("Expected MapperMismatch error");
         }
     }
 

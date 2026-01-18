@@ -950,4 +950,58 @@ impl Mapper for MMC3Mapper {
         let to_copy = data.len().min(self.prg_ram.len());
         self.prg_ram[..to_copy].copy_from_slice(&data[..to_copy]);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_ram.clone()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(self.chr_ram.len());
+        self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        // Serialize MMC3 internal registers:
+        // [0]: bank_select
+        // [1-8]: regs[0-7]
+        // [9]: irq_latch
+        // [10]: irq_counter
+        // [11]: flags (irq_reload, irq_enabled, irq_asserted, prg_ram_enabled, prg_ram_write_protected)
+        // [12]: mirroring mode
+        let mut snapshot = Vec::with_capacity(13);
+        snapshot.push(self.bank_select);
+        snapshot.extend_from_slice(&self.regs);
+        snapshot.push(self.irq_latch);
+        snapshot.push(self.irq_counter);
+        let flags = (self.irq_reload as u8)
+            | ((self.irq_enabled as u8) << 1)
+            | ((self.irq_asserted as u8) << 2)
+            | ((self.prg_ram_enabled as u8) << 3)
+            | ((self.prg_ram_write_protected as u8) << 4);
+        snapshot.push(flags);
+        snapshot.push(self.mirroring as u8);
+        snapshot
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 13 {
+            self.bank_select = data[0];
+            self.regs.copy_from_slice(&data[1..9]);
+            self.irq_latch = data[9];
+            self.irq_counter = data[10];
+            let flags = data[11];
+            self.irq_reload = (flags & 1) != 0;
+            self.irq_enabled = (flags & 2) != 0;
+            self.irq_asserted = (flags & 4) != 0;
+            self.prg_ram_enabled = (flags & 8) != 0;
+            self.prg_ram_write_protected = (flags & 16) != 0;
+            self.mirroring = match data[12] {
+                0 => MirroringMode::Horizontal,
+                1 => MirroringMode::Vertical,
+                2 => MirroringMode::SingleScreen,
+                3 => MirroringMode::FourScreen,
+                _ => MirroringMode::Horizontal,
+            };
+        }
+    }
 }

@@ -571,6 +571,71 @@ impl Mapper for VRC6Mapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_ram.clone()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(self.chr_ram.len());
+        if to_copy > 0 {
+            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        }
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        // Serialize VRC6 internal registers:
+        // [0]: prg_bank_16k
+        // [1]: prg_bank_8k
+        // [2-9]: chr_banks_1k[0-7]
+        // [10]: b003
+        // [11]: irq_latch
+        // [12]: irq_counter
+        // [13]: flags (irq_enabled, irq_mode_cycle, irq_enable_after_ack, irq_asserted)
+        // [14-17]: irq_prescaler (little endian i32)
+        // [18]: mirroring
+        // Note: VRC6 audio state not serialized - would need significant additional work
+        let mut snapshot = Vec::with_capacity(19);
+        snapshot.push(self.prg_bank_16k);
+        snapshot.push(self.prg_bank_8k);
+        snapshot.extend_from_slice(&self.chr_banks_1k);
+        snapshot.push(self.b003);
+        snapshot.push(self.irq_latch);
+        snapshot.push(self.irq_counter);
+        let flags = (self.irq_enabled as u8)
+            | ((self.irq_mode_cycle as u8) << 1)
+            | ((self.irq_enable_after_ack as u8) << 2)
+            | ((self.irq_asserted as u8) << 3);
+        snapshot.push(flags);
+        let prescaler_bytes = self.irq_prescaler.to_le_bytes();
+        snapshot.extend_from_slice(&prescaler_bytes);
+        snapshot.push(self.mirroring as u8);
+        snapshot
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 19 {
+            self.prg_bank_16k = data[0];
+            self.prg_bank_8k = data[1];
+            self.chr_banks_1k.copy_from_slice(&data[2..10]);
+            self.b003 = data[10];
+            self.irq_latch = data[11];
+            self.irq_counter = data[12];
+            let flags = data[13];
+            self.irq_enabled = (flags & 1) != 0;
+            self.irq_mode_cycle = (flags & 2) != 0;
+            self.irq_enable_after_ack = (flags & 4) != 0;
+            self.irq_asserted = (flags & 8) != 0;
+            self.irq_prescaler = i32::from_le_bytes([data[14], data[15], data[16], data[17]]);
+            self.mirroring = match data[18] {
+                0 => MirroringMode::Horizontal,
+                1 => MirroringMode::Vertical,
+                2 => MirroringMode::SingleScreen,
+                3 => MirroringMode::FourScreen,
+                _ => MirroringMode::Horizontal,
+            };
+        }
+    }
 }
 
 #[cfg(test)]

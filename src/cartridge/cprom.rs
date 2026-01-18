@@ -121,6 +121,25 @@ impl Mapper for CpromMapper {
     fn load_wram_snapshot(&mut self, data: &[u8]) {
         self.prg_ram.load_snapshot(data);
     }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_ram.clone()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(self.chr_ram.len());
+        self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![self.chr_bank_select]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if !data.is_empty() {
+            self.chr_bank_select = data[0];
+        }
+    }
 }
 
 #[cfg(test)]
