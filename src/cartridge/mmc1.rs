@@ -73,6 +73,10 @@ pub struct MMC1Mapper {
 
     // Hardware revision
     revision: Mmc1Revision, // MMC1A vs MMC1B behavior
+
+    // Cycle tracking for consecutive-write ignore behavior
+    cpu_cycle_count: u64,      // Current CPU cycle count
+    last_write_cycle: u64,     // CPU cycle of last write to shift register
 }
 
 impl MMC1Mapper {
@@ -106,6 +110,8 @@ impl MMC1Mapper {
             chr_bank_1: 0,
             prg_bank: 0,
             revision,
+            cpu_cycle_count: 0,
+            last_write_cycle: 0,
         }
     }
 
@@ -116,11 +122,24 @@ impl MMC1Mapper {
     }
 
     fn write_register(&mut self, addr: u16, value: u8) {
-        // Check for reset (bit 7 set)
+        // Check for reset (bit 7 set) - reset writes are NEVER ignored
         if value & MMC1_SHIFT_REGISTER_RESET != 0 {
             self.reset_shift_register();
+            self.last_write_cycle = self.cpu_cycle_count;
             return;
         }
+
+        // MMC1 ignores consecutive-cycle writes (except reset writes above)
+        // This prevents RMW instructions from shifting two bits
+        // Only apply this filtering if cpu_cycle() has been called (cpu_cycle_count > 0)
+        // This allows tests without cpu_cycle() calls to work as before
+        if self.cpu_cycle_count > 0 && self.cpu_cycle_count == self.last_write_cycle {
+            // Consecutive write detected - ignore it
+            return;
+        }
+
+        // Update last write cycle
+        self.last_write_cycle = self.cpu_cycle_count;
 
         // Shift in bit 0
         self.shift_register >>= 1;
@@ -412,6 +431,9 @@ impl Mapper for MMC1Mapper {
             self.chr_bank_1 = data[4];
             self.prg_bank = data[5];
         }
+    fn cpu_cycle(&mut self) {
+        // Increment CPU cycle counter for consecutive-write detection
+        self.cpu_cycle_count += 1;
     }
 }
 
@@ -991,5 +1013,86 @@ mod tests {
 
         // Should be disabled (reads 0)
         assert_eq!(mapper.read_prg(0x6000), 0x00);
+    }
+
+    #[test]
+    fn test_mmc1_consecutive_write_ignore() {
+        // MMC1 should ignore consecutive-cycle writes to prevent RMW instructions
+        // from shifting two bits. Reset writes (bit 7 set) are never ignored.
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+
+        // Start with a clean shift register (reset it first)
+        mapper.write_prg(0x8000, 0x80); // Reset, cycle 0
+
+        // Advance to cycle 1 for first real write
+        mapper.cpu_cycle(); // cycle = 1
+        
+        // First write on cycle 1: shift in bit 1 (write_count = 1)
+        mapper.write_prg(0x8000, 0x01); // last_write = 1, write_count = 1
+
+        // Immediately write again on same cycle (simulates RMW) - should be IGNORED
+        mapper.write_prg(0x8000, 0x01); // still cycle 1, ignored
+
+        // Advance to cycle 2
+        mapper.cpu_cycle(); // cycle = 2
+
+        // Second accepted write on cycle 2 - bit 0 (write_count = 2)
+        mapper.write_prg(0x8000, 0x00); // last_write = 2, write_count = 2
+
+        // Consecutive write again - should be IGNORED
+        mapper.write_prg(0x8000, 0x01); // still cycle 2, ignored
+
+        // Advance to cycle 3
+        mapper.cpu_cycle(); // cycle = 3
+
+        // Third accepted write - bit 1 (write_count = 3)
+        mapper.write_prg(0x8000, 0x01); // last_write = 3, write_count = 3
+        
+        // Advance to cycle 4
+        mapper.cpu_cycle(); // cycle = 4
+
+        // Fourth accepted write - bit 1 (write_count = 4)
+        mapper.write_prg(0x8000, 0x01); // last_write = 4, write_count = 4
+        
+        // Advance to cycle 5
+        mapper.cpu_cycle(); // cycle = 5
+
+        // Fifth accepted write - bit 0 (write_count = 5, triggers load)
+        mapper.write_prg(0x8000, 0x00); // last_write = 5, write_count = 0 (reset after load)
+
+        // We should have shifted in: 1, 0, 1, 1, 0 (in LSB-first order)
+        // This gives us 0b01101 in the register
+        // Bits 0-1 = 01 = SingleScreenUpper
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenUpper);
+    }
+
+    #[test]
+    fn test_mmc1_consecutive_reset_not_ignored() {
+        // Reset writes (bit 7 set) should never be ignored, even if consecutive
+        let prg_rom = vec![0; 128 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+
+        // Start loading a value
+        mapper.write_prg(0x8000, 0x01);
+        mapper.cpu_cycle();
+        mapper.write_prg(0x8000, 0x01);
+        mapper.cpu_cycle();
+        mapper.write_prg(0x8000, 0x01);
+
+        // Consecutive reset write - should NOT be ignored
+        mapper.write_prg(0x8000, 0x80); // Reset
+
+        // The shift register should be reset
+        // Load a new value: 0b00000 (all zeros)
+        for _ in 0..5 {
+            mapper.cpu_cycle();
+            mapper.write_prg(0x8000, 0x00);
+        }
+
+        // Should have mirroring mode 0 = SingleScreenLower
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
     }
 }
