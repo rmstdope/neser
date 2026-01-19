@@ -966,7 +966,6 @@ impl Mapper for MMC5Mapper {
                     trace_mapper!(1; "MMC5 nametable_mapping=${:02X}", value);
                 }
                 self.nametable_mapping = value;
-                let _ = prev;
             }
 
             // Fill mode tile
