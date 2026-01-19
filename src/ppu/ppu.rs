@@ -153,7 +153,6 @@ impl Ppu {
             self.registers.v(),
         );
 
-
         let nmi_is_enabled = self.registers.should_generate_nmi();
 
         // NMI-off timing quirk: disabling NMI right around VBlank start can suppress

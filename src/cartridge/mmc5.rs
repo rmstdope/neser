@@ -881,7 +881,8 @@ impl Mapper for MMC5Mapper {
                     if self.ppumask_rendering_enabled {
                         open_bus
                     } else {
-                        self.read_prg(addr)
+                        let index = (addr - 0x5C00) as usize;
+                        self.ex_ram.get(index).copied().unwrap_or(0)
                     }
                 }
                 0x01 => open_bus,
@@ -1291,12 +1292,29 @@ impl Mapper for MMC5Mapper {
             return Some(self.ex_ram.get(page_offset).copied().unwrap_or(0));
         }
 
+        // Extended attribute mode ($5104=1): override attribute-table reads with per-tile
+        // palette bits from ExRAM.
+        // ExRAM format: AACC CCCC where AA (bits 7-6) is the palette select
+        if self.ppumask_rendering_enabled
+            && (self.ex_ram_mode & 0x03) == 0x01
+            && page_offset >= 0x03C0
+        {
+            let ex = self
+                .ex_ram
+                .get(self.last_bg_tile_index)
+                .copied()
+                .unwrap_or(0);
+            // Palette is in upper 2 bits (7-6), shift to get the 2-bit value
+            return Some(Self::replicate_2bit_attribute(ex >> 6));
+        }
+
         // $5105 nametable mapping overrides always take precedence.
         let mapping = self.nametable_mapping_for_addr(addr);
 
         match mapping {
             0 | 1 => {
-                let index = (mapping as usize) * 0x400 + page_offset;
+                // CIRAM page 0/1 (1KB each).
+                let index = (mapping as usize * 0x400) + page_offset;
                 return Some(self.ciram.get(index).copied().unwrap_or(0));
             }
             2 => {
@@ -1329,22 +1347,6 @@ impl Mapper for MMC5Mapper {
             _ => {}
         }
 
-        // Extended attribute mode ($5104=1): override attribute-table reads with per-tile
-        // palette bits from ExRAM.
-        // ExRAM format: AACC CCCC where AA (bits 7-6) is the palette select
-        if self.ppumask_rendering_enabled
-            && (self.ex_ram_mode & 0x03) == 0x01
-            && page_offset >= 0x03C0
-        {
-            let ex = self
-                .ex_ram
-                .get(self.last_bg_tile_index)
-                .copied()
-                .unwrap_or(0);
-            // Palette is in upper 2 bits (7-6), shift to get the 2-bit value
-            return Some(Self::replicate_2bit_attribute(ex >> 6));
-        }
-
         None
     }
 
@@ -1354,10 +1356,10 @@ impl Mapper for MMC5Mapper {
             return false;
         }
 
-        match self.nametable_mapping_for_addr(addr) {
+        let mapping = self.nametable_mapping_for_addr(addr);
+        match mapping {
             0 | 1 => {
-                let index = (self.nametable_mapping_for_addr(addr) as usize) * 0x400
-                    + (addr & 0x03FF) as usize;
+                let index = ((mapping as usize) * 0x400) + ((addr & 0x03FF) as usize);
                 if let Some(slot) = self.ciram.get_mut(index) {
                     *slot = value;
                 }
@@ -2230,34 +2232,34 @@ mod tests {
         let mut mmc5 = MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         mmc5.write_prg(0x5205, 3);
-
-        #[test]
-        fn test_mmc5_registers_snapshot_preserves_ciram() {
-            let prg_rom = banked_data(8 * 1024, 2);
-            let chr_rom = banked_data(1 * 1024, 8);
-
-            let mut mapper =
-                create_mmc5_mapper(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
-                    .expect("MMC5 (mapper 5) should be implemented");
-
-            mapper.write_prg(0x5105, 0x44);
-            assert!(mapper.write_nametable(0x2000, 0x11));
-            assert!(mapper.write_nametable(0x2400, 0x22));
-
-            let saved = mapper.registers_snapshot();
-
-            let mut restored = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
-                .expect("MMC5 (mapper 5) should be implemented");
-            restored.restore_registers(&saved);
-
-            assert_eq!(restored.read_nametable(0x2000), Some(0x11));
-            assert_eq!(restored.read_nametable(0x2400), Some(0x22));
-        }
         mmc5.write_prg(0x5206, 4);
 
         let open_bus = 0xA5;
         assert_eq!(mmc5.read_prg_open_bus(0x5205, open_bus), 12);
         assert_eq!(mmc5.read_prg_open_bus(0x5206, open_bus), 0);
+    }
+
+    #[test]
+    fn test_mmc5_registers_snapshot_preserves_ciram() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper =
+            create_mmc5_mapper(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
+                .expect("MMC5 (mapper 5) should be implemented");
+
+        mapper.write_prg(0x5105, 0x44);
+        assert!(mapper.write_nametable(0x2000, 0x11));
+        assert!(mapper.write_nametable(0x2400, 0x22));
+
+        let saved = mapper.registers_snapshot();
+
+        let mut restored = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+        restored.restore_registers(&saved);
+
+        assert_eq!(restored.read_nametable(0x2000), Some(0x11));
+        assert_eq!(restored.read_nametable(0x2400), Some(0x22));
     }
 
     #[test]
@@ -2700,11 +2702,11 @@ mod tests {
         let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
-        // Map $2000 quadrant to internal VRAM (value 0 in bits 1-0).
+        // Map $2000 quadrant to CIRAM page 0 (value 0 in bits 1-0).
         mapper.write_prg(0x5105, 0b00_00_00_00);
 
-        assert_eq!(mapper.read_nametable(0x2000), None);
-        assert!(!mapper.write_nametable(0x2000, 0xAB));
+        assert!(mapper.write_nametable(0x2000, 0xAB));
+        assert_eq!(mapper.read_nametable(0x2000), Some(0xAB));
     }
 
     #[test]
@@ -2824,11 +2826,13 @@ mod tests {
         // Explicitly disable extended attribute mode.
         mapper.write_prg(0x5104, 0x00);
         mapper.write_prg(0x5C00, 0x03);
+        mapper.write_prg(0x5105, 0x00);
 
         // Without extended attributes (and without $5105 mapping ExRAM/fill), attribute reads
-        // should fall through to internal VRAM (mapper returns None).
+        // should return the CIRAM contents.
+        assert!(mapper.write_nametable(0x23C0, 0x9C));
         let _ = mapper.read_nametable(0x2000);
-        assert_eq!(mapper.read_nametable(0x23C0), None);
+        assert_eq!(mapper.read_nametable(0x23C0), Some(0x9C));
     }
 
     #[test]
@@ -2842,6 +2846,7 @@ mod tests {
         // Enable extended attribute mode and provide a palette entry in ExRAM.
         mapper.write_prg(0x5104, 0x01);
         mapper.write_prg(0x5C00, 0x40); // palette 1 in bits 7-6
+        mapper.write_prg(0x5105, 0x00);
 
         // With rendering enabled, extended attributes should override attribute reads.
         mapper.ppu_write_mask(0x18);
@@ -2850,10 +2855,11 @@ mod tests {
 
         // When PPUMASK disables rendering (E bits cleared), substitutions are disabled.
         mapper.ppu_write_mask(0x00);
+        assert!(mapper.write_nametable(0x23C0, 0x3C));
         let _ = mapper.read_nametable(0x2000);
         assert_eq!(
             mapper.read_nametable(0x23C0),
-            None,
+            Some(0x3C),
             "PPUMASK disable should block extended attribute substitution"
         );
     }
@@ -2930,53 +2936,6 @@ mod tests {
         mapper.ppu_set_chr_fetch_is_sprite(false);
         mapper.ppu_scanline(0, true);
 
-        #[test]
-        fn test_mmc5_nametable_mapping_ciram_pages_per_quadrant() {
-            let prg_rom = banked_data(8 * 1024, 2);
-            let chr_rom = banked_data(1 * 1024, 8);
-
-            let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
-                .expect("MMC5 (mapper 5) should be implemented");
-
-            // $5105 = 0x44: NTA=0, NTB=1, NTC=0, NTD=1
-            mapper.write_prg(0x5105, 0x44);
-
-            // Write distinct values into the A and B CIRAM pages via PPU addresses.
-            assert!(mapper.write_nametable(0x2000, 0x11));
-            assert!(mapper.write_nametable(0x2400, 0x22));
-
-            // Direct quadrant reads should return the corresponding page values.
-            assert_eq!(mapper.read_nametable(0x2000), Some(0x11));
-            assert_eq!(mapper.read_nametable(0x2400), Some(0x22));
-
-            // NTC maps to page 0, NTD maps to page 1 for 0x44.
-            assert_eq!(mapper.read_nametable(0x2800), Some(0x11));
-            assert_eq!(mapper.read_nametable(0x2C00), Some(0x22));
-        }
-
-        #[test]
-        fn test_mmc5_chr_upper_bits_latched_on_bank_write() {
-            let prg_rom = banked_data(8 * 1024, 2);
-            let chr_rom = banked_data_with_upper_marker(1 * 1024, 512);
-
-            let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
-                .expect("MMC5 (mapper 5) should be implemented");
-
-            // 1KB CHR mode.
-            mapper.write_prg(0x5101, 0x03);
-
-            // Set upper bits to 1, then write bank 0 into $5120.
-            mapper.write_prg(0x5130, 0x01);
-            mapper.write_prg(0x5120, 0x00);
-
-            // Change upper bits to 2 without rewriting $5120.
-            mapper.write_prg(0x5130, 0x02);
-
-            // If upper bits are latched on write, bank should still read with upper bits = 1.
-            mapper.ppu_set_chr_fetch_is_sprite(false);
-            assert_eq!(mapper.read_chr(0x0000), 0x01);
-        }
-
         let _ = mapper.read_nametable(0x2000);
         assert_eq!(mapper.read_chr(0x0000), 2);
 
@@ -2985,6 +2944,53 @@ mod tests {
 
         let _ = mapper.read_nametable(0x2002);
         assert_eq!(mapper.read_chr(0x0000), 1);
+    }
+
+    #[test]
+    fn test_mmc5_nametable_mapping_ciram_pages_per_quadrant() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // $5105 = 0x44: NTA=0, NTB=1, NTC=0, NTD=1
+        mapper.write_prg(0x5105, 0x44);
+
+        // Write distinct values into the A and B CIRAM pages via PPU addresses.
+        assert!(mapper.write_nametable(0x2000, 0x11));
+        assert!(mapper.write_nametable(0x2400, 0x22));
+
+        // Direct quadrant reads should return the corresponding page values.
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x11));
+        assert_eq!(mapper.read_nametable(0x2400), Some(0x22));
+
+        // NTC maps to page 0, NTD maps to page 1 for 0x44.
+        assert_eq!(mapper.read_nametable(0x2800), Some(0x11));
+        assert_eq!(mapper.read_nametable(0x2C00), Some(0x22));
+    }
+
+    #[test]
+    fn test_mmc5_chr_upper_bits_latched_on_bank_write() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data_with_upper_marker(1 * 1024, 512);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // 1KB CHR mode.
+        mapper.write_prg(0x5101, 0x03);
+
+        // Set upper bits to 1, then write bank 0 into $5120.
+        mapper.write_prg(0x5130, 0x01);
+        mapper.write_prg(0x5120, 0x00);
+
+        // Change upper bits to 2 without rewriting $5120.
+        mapper.write_prg(0x5130, 0x02);
+
+        // If upper bits are latched on write, bank should still read with upper bits = 1.
+        mapper.ppu_set_chr_fetch_is_sprite(false);
+        assert_eq!(mapper.read_chr(0x0000), 0x01);
     }
 
     #[test]

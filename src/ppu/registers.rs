@@ -91,7 +91,6 @@ impl Registers {
         self.t = (self.t & 0xF3FF) | (nametable_bits << 10);
     }
 
-
     /// Write to mask register ($2001)
     pub fn write_mask(&mut self, value: u8) {
         self.mask_register = value;
