@@ -50,8 +50,6 @@
 // **Castlevania III does NOT use split-screen.**
 //
 // ### Scanline IRQ - Minor gaps
-// - Reading $FFFA/$FFFB should reset in-frame flag (not implemented)
-// - Writing to $4014 (OAMDMA) should reset scanline counter (not implemented)
 // - PPU-cycle-accurate detection partially implemented:
 //   * In-frame flag set by PPU reads from $2xxx range
 //   * In-frame flag clears after 3 CPU cycles without PPU reads
@@ -652,10 +650,21 @@ impl MMC5Mapper {
             && self.chr_is_rendering_fetch
     }
 
+    fn reset_scanline_tracking(&mut self, clear_in_frame: bool) {
+        if clear_in_frame {
+            self.in_frame = false;
+        }
+        self.scanline_counter = 0;
+        self.cpu_cycles_since_ppu_read = 0;
+        self.last_ppu_nametable_addr = None;
+        self.ppu_nametable_match_count = 0;
+        self.ppu_scanline_ready = false;
+    }
+
     fn read_chr_banked(&self, bank: u16, addr: u16) -> u8 {
-    // In extended attribute or split mode, CHR banks are always 4KB regardless of chr_mode
-    let bank_size = if self.is_extended_attribute_mode_chr_active() {
-        4 * 1024 // Extended attribute and split modes always uses 4KB banks
+        // In extended attribute or split mode, CHR banks are always 4KB regardless of chr_mode
+        let bank_size = if self.is_extended_attribute_mode_chr_active() {
+            4 * 1024 // Extended attribute and split modes always uses 4KB banks
         } else {
             match self.chr_mode {
                 0 => 8 * 1024, // 8KB
@@ -1046,6 +1055,14 @@ impl Mapper for MMC5Mapper {
 
             _ => {}
         }
+    }
+
+    fn on_oam_dma(&mut self) {
+        self.reset_scanline_tracking(false);
+    }
+
+    fn on_irq_vector_read(&mut self, _addr: u16) {
+        self.reset_scanline_tracking(true);
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
@@ -1929,6 +1946,46 @@ mod tests {
         // Reading $5204 should clear the pending flag.
         let _ = mmc5.read_prg(0x5204);
         assert!(!mmc5.irq_pending());
+    }
+
+    #[test]
+    fn test_mmc5_fffa_read_clears_in_frame_and_resets_scanline_counter() {
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        mmc5.ppu_scanline(5, true);
+        assert!(mmc5.in_frame);
+        assert_eq!(mmc5.scanline_counter, 5);
+
+        mmc5.on_irq_vector_read(0xFFFA);
+
+        assert!(!mmc5.in_frame);
+        assert_eq!(mmc5.scanline_counter, 0);
+    }
+
+    #[test]
+    fn test_mmc5_fffb_read_clears_in_frame_and_resets_scanline_counter() {
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        mmc5.ppu_scanline(7, true);
+        assert!(mmc5.in_frame);
+        assert_eq!(mmc5.scanline_counter, 7);
+
+        mmc5.on_irq_vector_read(0xFFFB);
+
+        assert!(!mmc5.in_frame);
+        assert_eq!(mmc5.scanline_counter, 0);
+    }
+
+    #[test]
+    fn test_mmc5_oam_dma_resets_scanline_counter() {
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        mmc5.ppu_scanline(4, true);
+        assert_eq!(mmc5.scanline_counter, 4);
+
+        mmc5.on_oam_dma();
+
+        assert_eq!(mmc5.scanline_counter, 0);
     }
 
     #[test]

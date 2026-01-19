@@ -179,6 +179,12 @@ impl Bus {
     }
 
     fn read_internal(&mut self, addr: u16, clock_joypads: bool) -> u8 {
+        if (0xFFFA..=0xFFFB).contains(&addr)
+            && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
+        {
+            cartridge.borrow_mut().mapper_mut().on_irq_vector_read(addr);
+        }
+
         if let Some(value) = self.read_from_devices(addr, clock_joypads) {
             self.open_bus = value;
             return value;
@@ -283,6 +289,12 @@ impl Bus {
         self.open_bus = value;
 
         if self.write_to_devices(addr, value, is_dummy_write) {
+            if addr == 0x4014
+                && !is_dummy_write
+                && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
+            {
+                cartridge.borrow_mut().mapper_mut().on_oam_dma();
+            }
             return self.dma_triggered.replace(false);
         }
 
@@ -434,6 +446,16 @@ mod tests {
         last_write: Rc<RefCell<Option<(u16, u8)>>>,
     }
 
+    struct OamDmaCountingMapper {
+        oam_dma_calls: Rc<RefCell<u32>>,
+    }
+
+    impl OamDmaCountingMapper {
+        fn new(oam_dma_calls: Rc<RefCell<u32>>) -> Self {
+            Self { oam_dma_calls }
+        }
+    }
+
     impl TestBusDevice {
         fn new(
             range: std::ops::RangeInclusive<u16>,
@@ -468,6 +490,30 @@ mod tests {
 
         fn address_range(&self) -> std::ops::RangeInclusive<u16> {
             self.range.clone()
+        }
+    }
+
+    impl crate::cartridge::Mapper for OamDmaCountingMapper {
+        fn read_prg(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_prg(&mut self, _addr: u16, _value: u8) {}
+
+        fn read_chr(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_chr(&mut self, _addr: u16, _value: u8) {}
+
+        fn ppu_address_changed(&mut self, _addr: u16) {}
+
+        fn on_oam_dma(&mut self) {
+            *self.oam_dma_calls.borrow_mut() += 1;
+        }
+
+        fn get_mirroring(&self) -> crate::cartridge::MirroringMode {
+            crate::cartridge::MirroringMode::Horizontal
         }
     }
 
@@ -742,6 +788,24 @@ mod tests {
         assert!(dma);
         assert!(memory.oam_dma_pending());
         assert_eq!(memory.take_oam_dma_page(), Some(0x22));
+    }
+
+    #[test]
+    fn test_oam_dma_write_notifies_mapper_only_on_real_write() {
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let apu = Rc::new(RefCell::new(apu::Apu::new()));
+        let mut memory = Bus::new(ppu, apu);
+
+        let oam_dma_calls = Rc::new(RefCell::new(0u32));
+        let mapper = Box::new(OamDmaCountingMapper::new(oam_dma_calls.clone()));
+        let cartridge = Cartridge::from_mapper_for_test(mapper);
+        memory.map_cartridge(cartridge);
+
+        memory.write(0x4014, 0x22, false);
+        assert_eq!(*oam_dma_calls.borrow(), 1);
+
+        memory.write(0x4014, 0x33, true);
+        assert_eq!(*oam_dma_calls.borrow(), 1);
     }
 
     #[test]
