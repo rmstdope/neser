@@ -164,10 +164,15 @@ pub trait Mapper {
     /// Default implementation is a no-op.
     fn on_oam_dma(&mut self) {}
 
-    /// Notify mapper of a CPU read from the IRQ/NMI vectors ($FFFA/$FFFB).
+    /// Notify mapper of a CPU read from an interrupt vector ($FFFA-$FFFF).
     ///
-    /// Some mappers (e.g., MMC5) reset scanline/in-frame tracking on vector reads.
-    /// Default implementation is a no-op.
+    /// The `_addr` argument indicates which vector was read:
+    ///   - $FFFA/$FFFB: NMI
+    ///   - $FFFC/$FFFD: Reset
+    ///   - $FFFE/$FFFF: IRQ/BRK
+    ///
+    /// Some mappers (e.g., MMC5) reset scanline/in-frame tracking on interrupt
+    /// vector reads. Default implementation is a no-op.
     fn on_irq_vector_read(&mut self, _addr: u16) {}
 
     /// Notify mapper about the current scanline (during rendering) for PPU-driven IRQ systems.
