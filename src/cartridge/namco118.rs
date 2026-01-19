@@ -290,7 +290,7 @@ impl Mapper for Namco118Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::cartridge::MirroringMode;
+    use crate::cartridge::cartridge_core::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::namco118::Namco118Mapper;
 

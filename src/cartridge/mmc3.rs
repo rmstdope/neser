@@ -275,7 +275,7 @@ impl MMC3Mapper {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use crate::cartridge::cartridge::MirroringMode;
+    use crate::cartridge::cartridge_core::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::mmc3::MMC3Mapper;
 

@@ -58,7 +58,7 @@
 // ## References
 // - NESdev Wiki: <https://www.nesdev.org/wiki/MMC5>
 
-use crate::cartridge::cartridge::MirroringMode;
+use crate::cartridge::cartridge_core::MirroringMode;
 use crate::cartridge::mapper::Mapper;
 use crate::trace_mapper;
 use std::cell::Cell;
@@ -1936,8 +1936,8 @@ impl Mapper for MMC5Mapper {
 #[cfg(test)]
 #[allow(clippy::identity_op)]
 mod tests {
-    use crate::cartridge::cartridge::Cartridge;
-    use crate::cartridge::cartridge::MirroringMode;
+    use crate::cartridge::cartridge_core::Cartridge;
+    use crate::cartridge::cartridge_core::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::tracing::{Tracing, clear_mapper_traces, init_tracing, take_mapper_traces};
 

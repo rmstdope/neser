@@ -36,7 +36,7 @@ use crate::trace_mapper;
 // ## References
 // - <https://www.nesdev.org/wiki/INES_Mapper_016>
 
-use crate::cartridge::cartridge::MirroringMode;
+use crate::cartridge::cartridge_core::MirroringMode;
 use crate::cartridge::mapper::Mapper;
 
 /// Submapper variants for Bandai FCG

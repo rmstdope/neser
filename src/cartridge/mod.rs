@@ -2,8 +2,7 @@ mod axrom;
 mod bandai_fcg;
 mod bnrom_nina;
 mod camerica;
-#[allow(clippy::module_inception)]
-mod cartridge;
+mod cartridge_core;
 mod cnrom;
 mod colordreams;
 mod common;
@@ -26,6 +25,6 @@ mod uxrom;
 mod vrc2_vrc4;
 mod vrc6;
 
-pub use cartridge::{Cartridge, MirroringMode};
+pub use cartridge_core::{Cartridge, MirroringMode};
 #[allow(unused_imports)]
 pub use mapper::{Mapper, MapperContext};
