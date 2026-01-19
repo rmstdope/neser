@@ -38,10 +38,10 @@
 //
 // ## Known Limitations ⚠️
 //
-// ### Split-Screen ($5200-$5202) - Simplified
-// Real MMC5 split-screen is a **horizontal** split based on tile fetch count
-// per scanline (0-33 tiles). Our implementation uses a simplified **vertical**
-// interpretation where bits 0-4 of $5200 specify a Y tile row threshold.
+// ### Split-Screen ($5200-$5202) - Partial
+// Split selection follows the hardware **horizontal** tile-count threshold per
+// scanline (0-33 tiles), but vertical scroll override and some edge cases are
+// still unimplemented.
 //
 // **Games using split-screen** (will NOT work correctly):
 // - Uchuu Keibitai SDF (intro sequence)
@@ -106,11 +106,12 @@ pub struct MMC5Mapper {
     // Extended attribute mode bookkeeping
     last_bg_tile_index: usize,
 
-    // Split screen (simplified vertical implementation - see module docs for limitations)
+    // Split screen
     split_mode: u8,   // $5200
     split_scroll: u8, // $5201
     split_bank: u8,   // $5202
     split_active: bool,
+    split_tile_count: u8,
 
     // Scanline IRQ
     irq_scanline_compare: u8, // $5203
@@ -303,6 +304,7 @@ impl MMC5Mapper {
             split_scroll: 0,
             split_bank: 0,
             split_active: false,
+            split_tile_count: 0,
 
             // Scanline IRQ
             irq_scanline_compare: 0,
@@ -330,7 +332,7 @@ impl MMC5Mapper {
 
     /// Check if split-screen mode is enabled (bit 7 of $5200).
     ///
-    /// # Hardware behavior (NOT fully implemented)
+    /// # Hardware behavior (partially implemented)
     /// Real MMC5 split-screen is a **horizontal** split based on tile fetch count per
     /// scanline (0-33), not a vertical/scanline-based split. The threshold in bits 0-4
     /// specifies which tile column triggers the split:
@@ -351,34 +353,44 @@ impl MMC5Mapper {
     ///
     /// Castlevania III does NOT use split-screen.
     ///
-    /// # Current implementation
-    /// We use a simplified **vertical** interpretation where bits 0-4 specify a Y tile
-    /// row, and split activates for all scanlines at or below that row. This is
-    /// sufficient for basic testing but not accurate for the games listed above.
     fn split_enabled(&self) -> bool {
         (self.split_mode & 0x80) != 0
     }
 
-    /// Get the split threshold interpreted as a Y tile row (simplified implementation).
-    /// Real hardware interprets this as X tile count per scanline.
-    fn split_y_tiles(&self) -> u8 {
+    fn split_right(&self) -> bool {
+        (self.split_mode & 0x40) != 0
+    }
+
+    fn split_tile_threshold(&self) -> u8 {
         self.split_mode & 0x1F
     }
 
-    /// Convert Y tile row to scanline number (simplified implementation).
-    fn split_start_scanline(&self) -> u16 {
-        (self.split_y_tiles() as u16) * 8
+    fn split_allowed(&self) -> bool {
+        self.split_enabled() && self.ppumask_rendering_enabled && (self.ex_ram_mode & 0x03) < 2
     }
 
-    /// Update split_active state based on current scanline (simplified implementation).
-    /// Real hardware tracks horizontal tile fetch position, not scanline.
-    fn update_split_active(&mut self, scanline: u16, rendering_enabled: bool) {
+    fn split_region_for_tile(&self, tile_index: u8) -> bool {
+        if !self.split_allowed() {
+            return false;
+        }
+
+        let threshold = self.split_tile_threshold();
+        if self.split_right() {
+            tile_index >= threshold
+        } else {
+            tile_index < threshold
+        }
+    }
+
+    fn update_split_active(&mut self, rendering_enabled: bool) {
         if !rendering_enabled {
             self.split_active = false;
+            self.split_tile_count = 0;
             return;
         }
 
-        self.split_active = self.split_enabled() && scanline >= self.split_start_scanline();
+        self.split_tile_count = 0;
+        self.split_active = self.split_region_for_tile(0);
     }
 
     fn prg_rom_bank_count_8k(&self) -> usize {
@@ -515,6 +527,10 @@ impl MMC5Mapper {
             ((upper as u16 & 0x03) << 8) | (bank as u16)
         }
 
+        if self.split_chr_active() {
+            return self.split_bank as u16;
+        }
+
         // Extended attribute mode ($5104=1): for background tile fetches during rendering,
         // CHR banking works completely differently:
         // - CHR mode register is IGNORED - always 4KB banks
@@ -575,14 +591,7 @@ impl MMC5Mapper {
             }
             1 => {
                 // 4KB mode: use $5123 (low) or $5127 (high)
-                // Minimal split-screen behavior: when split is active, background fetches use $5202.
-                if self.ppumask_rendering_enabled
-                    && self.chr_is_rendering_fetch
-                    && !self.chr_fetch_is_sprite
-                    && self.split_active
-                {
-                    self.split_bank
-                } else if !self.chr_is_rendering_fetch && self.chr_last_set_written {
+                if !self.chr_is_rendering_fetch && self.chr_last_set_written {
                     self.chr_bank_b[3] // $512B for PPUDATA
                 } else {
                     let high = addr >= 0x1000;
@@ -636,9 +645,16 @@ impl MMC5Mapper {
             && self.chr_is_rendering_fetch
     }
 
+    fn split_chr_active(&self) -> bool {
+        self.split_active
+            && self.split_allowed()
+            && !self.chr_fetch_is_sprite
+            && self.chr_is_rendering_fetch
+    }
+
     fn read_chr_banked(&self, bank: u16, addr: u16) -> u8 {
         // In extended attribute mode, CHR banks are always 4KB regardless of chr_mode
-        let bank_size = if self.is_extended_attribute_mode_chr_active() {
+        let bank_size = if self.is_extended_attribute_mode_chr_active() || self.split_chr_active() {
             4 * 1024 // Extended attribute mode always uses 4KB banks
         } else {
             match self.chr_mode {
@@ -870,6 +886,10 @@ impl Mapper for MMC5Mapper {
             0x5104 => {
                 trace_mapper!(1; "MMC5 ExRAM_mode={}", value & 0x03);
                 self.ex_ram_mode = value & 0x03;
+                if (self.ex_ram_mode & 0x03) >= 2 {
+                    self.split_active = false;
+                    self.split_tile_count = 0;
+                }
             }
 
             // Nametable mapping
@@ -1074,6 +1094,7 @@ impl Mapper for MMC5Mapper {
         if !rendering_enabled {
             self.ppumask_rendering_enabled = false;
             self.split_active = false;
+            self.split_tile_count = 0;
             return;
         }
 
@@ -1129,8 +1150,20 @@ impl Mapper for MMC5Mapper {
         // The PPU fetches a tile byte ($2000-$23BF) and then an attribute byte ($23C0-$23FF).
         // MMC5 extended attribute mode uses the tile position to select a palette from ExRAM.
         let page_offset = (addr & 0x03FF) as usize;
-        if page_offset < 0x03C0 {
+        let is_tile_fetch = page_offset < 0x03C0;
+        if is_tile_fetch {
             self.last_bg_tile_index = page_offset;
+        }
+
+        // MMC5 split-screen uses horizontal tile count per scanline to select the split region.
+        if self.ppumask_rendering_enabled && is_tile_fetch {
+            self.split_active = self.split_region_for_tile(self.split_tile_count);
+            self.split_tile_count = self.split_tile_count.saturating_add(1);
+        }
+
+        // When split is active, nametable data comes from ExRAM regardless of $5105.
+        if self.split_active {
+            return Some(self.ex_ram.get(page_offset).copied().unwrap_or(0));
         }
 
         // $5105 nametable mapping overrides always take precedence.
@@ -1257,7 +1290,7 @@ impl Mapper for MMC5Mapper {
             // (hardware would stop seeing PPU reads)
             self.in_frame = false;
             self.cpu_cycles_since_ppu_read = 0;
-            self.update_split_active(scanline, rendering_enabled);
+            self.update_split_active(rendering_enabled);
             return;
         }
 
@@ -1270,7 +1303,7 @@ impl Mapper for MMC5Mapper {
         self.scanline_counter = scanline;
         // Minimal split-screen state: become active once we reach the configured split Y tile row.
         // (Real MMC5 behavior is more nuanced; this is sufficient for the current tests.)
-        self.update_split_active(scanline, rendering_enabled);
+        self.update_split_active(rendering_enabled);
 
         // MMC5 scanline IRQ: trigger when scanline matches compare value.
         // Special case: $5203 = $00 never produces IRQ pending conditions.
@@ -1388,6 +1421,7 @@ impl Mapper for MMC5Mapper {
         snapshot.push(self.split_scroll);
         snapshot.push(self.split_bank);
         snapshot.push(self.split_active as u8);
+        snapshot.push(self.split_tile_count);
 
         snapshot.push(self.irq_scanline_compare);
         snapshot.push(self.irq_enabled as u8);
@@ -1543,6 +1577,9 @@ impl Mapper for MMC5Mapper {
         let Some(split_active_raw) = next_u8(data, &mut idx) else {
             return;
         };
+        let Some(split_tile_count) = next_u8(data, &mut idx) else {
+            return;
+        };
         let split_active = split_active_raw != 0;
 
         let Some(irq_scanline_compare) = next_u8(data, &mut idx) else {
@@ -1681,6 +1718,7 @@ impl Mapper for MMC5Mapper {
         self.split_scroll = split_scroll;
         self.split_bank = split_bank;
         self.split_active = split_active;
+        self.split_tile_count = split_tile_count;
 
         self.irq_scanline_compare = irq_scanline_compare;
         self.irq_enabled = irq_enabled;
@@ -2442,10 +2480,8 @@ mod tests {
     }
 
     #[test]
-    fn test_mmc5_split_screen_switches_bg_chr_bank_at_split_y_when_enabled() {
-        // Minimal split-screen expectation: once the scanline reaches the configured split Y
-        // (in tile rows), background CHR banking uses $5202 (split bank) instead of the normal
-        // background CHR banks.
+    fn test_mmc5_split_screen_left_uses_split_bank_before_threshold() {
+        // Left split (bit 6 clear): tiles 0..T-1 use split region, T+ use normal.
 
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(4 * 1024, 8);
@@ -2453,25 +2489,55 @@ mod tests {
         let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
-        // CHR mode 1 (4KB banks).
         mapper.write_prg(0x5101, 0x01);
-        // Normal BG bank for $0000-$0FFF.
         mapper.write_prg(0x5123, 1);
-        // Split bank.
         mapper.write_prg(0x5202, 2);
 
-        // Enable split; interpret low 5 bits as split Y (tile row).
-        let split_y_tiles: u8 = 2;
-        mapper.write_prg(0x5200, 0x80 | (split_y_tiles & 0x1F));
+        let split_tiles: u8 = 2;
+        mapper.write_prg(0x5200, 0x80 | (split_tiles & 0x1F));
 
+        mapper.ppu_write_mask(0x08);
         mapper.ppu_set_chr_fetch_is_sprite(false);
+        mapper.ppu_scanline(0, true);
 
-        // Before split point: should use normal BG bank.
-        mapper.ppu_scanline((split_y_tiles as u16) * 8 - 1, true);
+        let _ = mapper.read_nametable(0x2000);
+        assert_eq!(mapper.read_chr(0x0000), 2);
+
+        let _ = mapper.read_nametable(0x2001);
+        assert_eq!(mapper.read_chr(0x0000), 2);
+
+        let _ = mapper.read_nametable(0x2002);
+        assert_eq!(mapper.read_chr(0x0000), 1);
+    }
+
+    #[test]
+    fn test_mmc5_split_screen_right_uses_split_bank_after_threshold() {
+        // Right split (bit 6 set): tiles 0..T-1 use normal, T+ use split region.
+
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(4 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        mapper.write_prg(0x5101, 0x01);
+        mapper.write_prg(0x5123, 1);
+        mapper.write_prg(0x5202, 2);
+
+        let split_tiles: u8 = 2;
+        mapper.write_prg(0x5200, 0x80 | 0x40 | (split_tiles & 0x1F));
+
+        mapper.ppu_write_mask(0x08);
+        mapper.ppu_set_chr_fetch_is_sprite(false);
+        mapper.ppu_scanline(0, true);
+
+        let _ = mapper.read_nametable(0x2000);
         assert_eq!(mapper.read_chr(0x0000), 1);
 
-        // At/after split point: should use split bank.
-        mapper.ppu_scanline((split_y_tiles as u16) * 8, true);
+        let _ = mapper.read_nametable(0x2001);
+        assert_eq!(mapper.read_chr(0x0000), 1);
+
+        let _ = mapper.read_nametable(0x2002);
         assert_eq!(mapper.read_chr(0x0000), 2);
     }
 
@@ -2491,8 +2557,11 @@ mod tests {
         // Split disabled (bit 7 clear).
         mapper.write_prg(0x5200, 0x00 | 2);
 
+        mapper.ppu_write_mask(0x08);
         mapper.ppu_set_chr_fetch_is_sprite(false);
-        mapper.ppu_scanline(16, true);
+        mapper.ppu_scanline(0, true);
+
+        let _ = mapper.read_nametable(0x2000);
         assert_eq!(mapper.read_chr(0x0000), 1);
     }
 
