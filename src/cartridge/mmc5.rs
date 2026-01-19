@@ -120,6 +120,9 @@ pub struct MMC5Mapper {
     scanline_counter: u16,    // Current scanline counter
     // PPU read tracking for hardware-accurate scanline detection
     cpu_cycles_since_ppu_read: u8, // CPU cycles since last PPU read from $2xxx
+    last_ppu_nametable_addr: Option<u16>,
+    ppu_nametable_match_count: u8,
+    ppu_scanline_ready: bool,
 
     // Hardware multiplier
     multiplicand: u8, // $5205
@@ -309,6 +312,9 @@ impl MMC5Mapper {
             scanline_counter: 0,
             // PPU read tracking
             cpu_cycles_since_ppu_read: 0,
+            last_ppu_nametable_addr: None,
+            ppu_nametable_match_count: 0,
+            ppu_scanline_ready: false,
 
             // Hardware multiplier
             multiplicand: 0,
@@ -1087,10 +1093,33 @@ impl Mapper for MMC5Mapper {
         // Reset CPU cycle counter since we just saw a PPU read.
         self.cpu_cycles_since_ppu_read = 0;
 
-        // Set in_frame flag when we see PPU reads from nametable
-        if !self.in_frame {
-            self.in_frame = true;
+        // MMC5 scanline detection sequence: three consecutive reads from the same
+        // nametable address, followed by another PPU read (typically attribute fetch).
+        if self.ppu_scanline_ready {
+            self.ppu_scanline_ready = false;
+            self.ppu_nametable_match_count = 0;
+
+            if !self.in_frame {
+                self.in_frame = true;
+                self.scanline_counter = 0;
+            } else {
+                self.scanline_counter = self.scanline_counter.wrapping_add(1);
+                if self.irq_scanline_compare != 0
+                    && (self.scanline_counter as u8) == self.irq_scanline_compare
+                {
+                    self.irq_pending.set(true);
+                }
+            }
+        } else if self.last_ppu_nametable_addr == Some(addr) {
+            self.ppu_nametable_match_count = (self.ppu_nametable_match_count + 1).min(2);
+            if self.ppu_nametable_match_count == 2 {
+                self.ppu_scanline_ready = true;
+            }
+        } else {
+            self.ppu_nametable_match_count = 0;
         }
+
+        self.last_ppu_nametable_addr = Some(addr);
 
         // Record the most recent background tile fetch address (within the 1KB nametable page).
         // The PPU fetches a tile byte ($2000-$23BF) and then an attribute byte ($23C0-$23FF).
@@ -1185,6 +1214,9 @@ impl Mapper for MMC5Mapper {
             if self.cpu_cycles_since_ppu_read >= 3 {
                 self.in_frame = false;
                 self.cpu_cycles_since_ppu_read = 0;
+                self.last_ppu_nametable_addr = None;
+                self.ppu_nametable_match_count = 0;
+                self.ppu_scanline_ready = false;
             }
         }
     }
@@ -1359,6 +1391,10 @@ impl Mapper for MMC5Mapper {
         snapshot.push(self.in_frame as u8);
         snapshot.extend_from_slice(&self.scanline_counter.to_le_bytes());
         snapshot.push(self.cpu_cycles_since_ppu_read);
+        snapshot.push(self.last_ppu_nametable_addr.is_some() as u8);
+        snapshot.extend_from_slice(&self.last_ppu_nametable_addr.unwrap_or(0).to_le_bytes());
+        snapshot.push(self.ppu_nametable_match_count);
+        snapshot.push(self.ppu_scanline_ready as u8);
 
         snapshot.push(self.multiplicand);
         snapshot.push(self.multiplier);
@@ -1523,10 +1559,28 @@ impl Mapper for MMC5Mapper {
         let Some(cpu_cycles_since_ppu_read) = next_u8(data, &mut idx) else {
             return;
         };
+        let Some(has_last_ppu_addr_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(last_ppu_addr) = next_u16(data, &mut idx) else {
+            return;
+        };
+        let Some(ppu_nametable_match_count) = next_u8(data, &mut idx) else {
+            return;
+        };
+        let Some(ppu_scanline_ready_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
 
         let irq_enabled = irq_enabled_raw != 0;
         let irq_pending = irq_pending_raw != 0;
         let in_frame = in_frame_raw != 0;
+        let ppu_scanline_ready = ppu_scanline_ready_raw != 0;
+        let last_ppu_nametable_addr = if has_last_ppu_addr_raw != 0 {
+            Some(last_ppu_addr)
+        } else {
+            None
+        };
 
         let Some(multiplicand) = next_u8(data, &mut idx) else {
             return;
@@ -1630,6 +1684,9 @@ impl Mapper for MMC5Mapper {
         self.in_frame = in_frame;
         self.scanline_counter = scanline_counter;
         self.cpu_cycles_since_ppu_read = cpu_cycles_since_ppu_read;
+        self.last_ppu_nametable_addr = last_ppu_nametable_addr;
+        self.ppu_nametable_match_count = ppu_nametable_match_count;
+        self.ppu_scanline_ready = ppu_scanline_ready;
 
         self.multiplicand = multiplicand;
         self.multiplier = multiplier;
@@ -1820,6 +1877,26 @@ mod tests {
         // Reading $5204 should clear the pending flag.
         let _ = mmc5.read_prg(0x5204);
         assert!(!mmc5.irq_pending());
+    }
+
+    #[test]
+    fn test_mmc5_in_frame_sets_after_scanline_detect_sequence() {
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        // Single nametable read should not immediately set in-frame.
+        let _ = mmc5.read_nametable(0x2000);
+        let status = mmc5.read_prg(0x5204);
+        assert_eq!(status & 0x40, 0x00);
+
+        // Hardware detects scanline after three matching nametable reads followed by
+        // another PPU read (typically attribute fetch).
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x23C0);
+
+        let status = mmc5.read_prg(0x5204);
+        assert_eq!(status & 0x40, 0x40);
     }
 
     #[test]
@@ -2671,9 +2748,15 @@ mod tests {
         // Initially, in_frame should be false
         assert!(!mmc5.in_frame);
 
-        // Simulate a PPU read from nametable - this should set in_frame
+        // Simulate scanline detection sequence to set in_frame
         let _ = mmc5.read_nametable(0x2000);
-        assert!(mmc5.in_frame, "in_frame should be set after PPU read");
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x23C0);
+        assert!(
+            mmc5.in_frame,
+            "in_frame should be set after scanline detect"
+        );
 
         // Run 2 CPU cycles - in_frame should still be true
         mmc5.cpu_cycle();
@@ -2700,8 +2783,11 @@ mod tests {
         mmc5.write_prg(0x5105, 0b00_00_00_10);
         mmc5.write_prg(0x5104, 0x00);
 
-        // First PPU read sets in_frame
+        // Scanline detection sequence sets in_frame
         let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x23C0);
         assert!(mmc5.in_frame);
 
         // Run 2 CPU cycles
@@ -2748,15 +2834,18 @@ mod tests {
             "in_frame bit should be clear initially"
         );
 
-        // Trigger a PPU read to set in_frame
+        // Trigger scanline detection sequence to set in_frame
         let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x23C0);
 
         // Status should now report in_frame
         let status = mmc5.read_prg(0x5204);
         assert_eq!(
             status & 0x40,
             0x40,
-            "in_frame bit should be set after PPU read"
+            "in_frame bit should be set after scanline detect"
         );
 
         // Run 3 CPU cycles to clear in_frame
