@@ -1024,12 +1024,18 @@ impl Mapper for MMC5Mapper {
                             *slot = value;
                         }
                     }
-                    0x00 | 0x01 => {
+                    0x00 => {
                         if self.ppumask_rendering_enabled {
                             let index = (addr - 0x5C00) as usize;
                             if let Some(slot) = self.ex_ram.get_mut(index) {
                                 *slot = value;
                             }
+                        }
+                    }
+                    0x01 => {
+                        let index = (addr - 0x5C00) as usize;
+                        if let Some(slot) = self.ex_ram.get_mut(index) {
+                            *slot = value;
                         }
                     }
                     0x03 => {
@@ -2348,6 +2354,26 @@ mod tests {
             Some(0x00),
             "mode 3: should return 0 instead of ExRAM data"
         );
+    }
+
+    #[test]
+    fn test_mmc5_exram_mode1_allows_cpu_writes_when_rendering_disabled() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Disable rendering (PPUMASK = 0).
+        mapper.ppu_write_mask(0x00);
+
+        // Mode 1: extended attributes. Writes to ExRAM should still be allowed.
+        mapper.write_prg(0x5104, 0x01);
+        mapper.write_prg(0x5C00, 0x42);
+
+        // Switch to mode 2 to allow CPU reads back from ExRAM.
+        mapper.write_prg(0x5104, 0x02);
+        assert_eq!(mapper.read_prg(0x5C00), 0x42);
     }
 
     #[test]
