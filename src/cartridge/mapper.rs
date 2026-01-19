@@ -478,4 +478,19 @@ mod tests {
         let mapper = create_mapper(metadata).expect("MMC5 mapper should be created");
         assert_eq!(mapper.wram_size(), 16 * 1024);
     }
+
+    #[test]
+    fn test_ppu_address_changed_default_is_noop() {
+        // Test that simple mappers can use the default no-op implementation
+        let prg_rom = vec![0u8; 32 * 1024];
+        let chr_rom = vec![0u8; 8 * 1024];
+        let metadata = MapperContext::new(0, prg_rom, chr_rom, MirroringMode::Horizontal);
+
+        let mut mapper = create_mapper(metadata).expect("NROM mapper should be created");
+        
+        // Call ppu_address_changed - should be a no-op and not panic
+        mapper.ppu_address_changed(0x0000);
+        mapper.ppu_address_changed(0x1000);
+        mapper.ppu_address_changed(0x1FFF);
+    }
 }
