@@ -729,8 +729,17 @@ impl Mapper for MMC5Mapper {
 
             // ExRAM
             0x5C00..=0x5FFF => {
-                let index = (addr - 0x5C00) as usize;
-                self.ex_ram.get(index).copied().unwrap_or(0)
+                let mode = self.ex_ram_mode & 0x03;
+                if mode == 0x03 {
+                    let index = (addr - 0x5C00) as usize;
+                    return self.ex_ram.get(index).copied().unwrap_or(0);
+                }
+                if mode == 0x02 {
+                    let index = (addr - 0x5C00) as usize;
+                    return self.ex_ram.get(index).copied().unwrap_or(0);
+                }
+                // Modes 0/1 should return open bus; handled in read_prg_open_bus.
+                0
             }
 
             0x6000..=0x7FFF => self.read_prg_ram_8k(self.prg_bank_5113, addr, 0x6000),
@@ -794,6 +803,13 @@ impl Mapper for MMC5Mapper {
     fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
         if addr < 0x5000 {
             open_bus
+        } else if (0x5C00..=0x5FFF).contains(&addr) {
+            let mode = self.ex_ram_mode & 0x03;
+            if mode <= 0x01 {
+                open_bus
+            } else {
+                self.read_prg(addr)
+            }
         } else {
             self.read_prg(addr)
         }
@@ -940,9 +956,26 @@ impl Mapper for MMC5Mapper {
 
             // ExRAM
             0x5C00..=0x5FFF => {
-                let index = (addr - 0x5C00) as usize;
-                if let Some(slot) = self.ex_ram.get_mut(index) {
-                    *slot = value;
+                let mode = self.ex_ram_mode & 0x03;
+                match mode {
+                    0x02 => {
+                        let index = (addr - 0x5C00) as usize;
+                        if let Some(slot) = self.ex_ram.get_mut(index) {
+                            *slot = value;
+                        }
+                    }
+                    0x00 | 0x01 => {
+                        if self.ppumask_rendering_enabled {
+                            let index = (addr - 0x5C00) as usize;
+                            if let Some(slot) = self.ex_ram.get_mut(index) {
+                                *slot = value;
+                            }
+                        }
+                    }
+                    0x03 => {
+                        // Read-only in mode 3; ignore writes.
+                    }
+                    _ => {}
                 }
             }
 
@@ -2205,6 +2238,57 @@ mod tests {
     }
 
     #[test]
+    fn test_mmc5_exram_cpu_reads_return_open_bus_in_modes_0_and_1() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Write a value into ExRAM so we can detect if reads leak data.
+        mapper.write_prg(0x5C00, 0x42);
+
+        let open_bus = 0xA5;
+
+        mapper.write_prg(0x5104, 0x00);
+        assert_eq!(
+            mapper.read_prg_open_bus(0x5C00, open_bus),
+            open_bus,
+            "mode 0 should return open bus on CPU read"
+        );
+
+        mapper.write_prg(0x5104, 0x01);
+        assert_eq!(
+            mapper.read_prg_open_bus(0x5C00, open_bus),
+            open_bus,
+            "mode 1 should return open bus on CPU read"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_exram_cpu_access_modes_2_and_3() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Mode 2: CPU read/write allowed.
+        mapper.write_prg(0x5104, 0x02);
+        mapper.write_prg(0x5C00, 0x77);
+        assert_eq!(mapper.read_prg(0x5C00), 0x77);
+
+        // Mode 3: CPU read-only; writes should not take effect.
+        mapper.write_prg(0x5104, 0x03);
+        mapper.write_prg(0x5C00, 0x11);
+        assert_eq!(
+            mapper.read_prg(0x5C00),
+            0x77,
+            "mode 3 should be read-only for CPU ExRAM access"
+        );
+    }
+
+    #[test]
     fn test_mmc5_split_screen_switches_bg_chr_bank_at_split_y_when_enabled() {
         // Minimal split-screen expectation: once the scanline reaches the configured split Y
         // (in tile rows), background CHR banking uses $5202 (split bank) instead of the normal
@@ -2515,6 +2599,9 @@ mod tests {
 
         let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
+
+        // Mode 2 allows CPU read/write access to ExRAM.
+        mapper.write_prg(0x5104, 0x02);
 
         // Write to ExRAM
         mapper.write_prg(0x5C00, 0xAA);
