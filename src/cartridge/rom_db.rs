@@ -60,8 +60,8 @@ mod tests {
         let prg_rom = vec![0x4E, 0x45, 0x53, 0x1A]; // "NES" header start
         let chr_rom = vec![0xFF, 0x00, 0xFF, 0x00];
         let crc = calculate_rom_crc32(&prg_rom, &chr_rom);
-        // CRC should be deterministic for this input
-        assert_ne!(crc, 0);
+        // Verify the exact CRC32 value for this specific input
+        assert_eq!(crc, 0xA26D5B91);
     }
 
     #[test]
