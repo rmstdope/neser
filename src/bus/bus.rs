@@ -8,6 +8,7 @@ use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::input::Joypad;
 use crate::ppu;
+use crate::trace_mapper;
 use std::cell::RefCell;
 use std::io;
 use std::ops::RangeInclusive;
@@ -32,6 +33,7 @@ pub struct Bus {
     joypad2: Rc<RefCell<Joypad>>,
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
+    mmc5_scroll_log_active: bool,
 }
 
 impl Bus {
@@ -48,6 +50,7 @@ impl Bus {
             joypad2: Rc::new(RefCell::new(Joypad::new())),
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
+            mmc5_scroll_log_active: false,
         };
 
         controller.register_device(Box::new(RamDevice::new(controller.cpu_ram.clone())));
@@ -288,7 +291,41 @@ impl Bus {
         // Update open bus with the value being written
         self.open_bus = value;
 
-        if self.write_to_devices(addr, value, is_dummy_write) {
+        let mapper_number = self
+            .cartridge
+            .borrow()
+            .as_ref()
+            .map(|cart| cart.borrow().mapper().mapper_number())
+            .unwrap_or(0);
+
+        if addr == 0x5105 && mapper_number == 5 {
+            self.mmc5_scroll_log_active = value == 0x55;
+        }
+
+        if Self::should_log_mmc5_scroll(addr, value, mapper_number) {
+            let ppu = self.ppu.borrow();
+            let (t, v, fine_x, w) = ppu.scroll_state();
+            trace_mapper!(1; "[mmc5][scroll] $5105=0x55 t=0x{:04X} v=0x{:04X} fine_x={} w={}",
+                t, v, fine_x, w
+            );
+        }
+
+        let wrote = self.write_to_devices(addr, value, is_dummy_write);
+        if wrote
+            && Self::should_log_mmc5_ppu_scroll_write(
+                addr,
+                mapper_number,
+                self.mmc5_scroll_log_active,
+            )
+        {
+            let ppu = self.ppu.borrow();
+            let (t, v, fine_x, w) = ppu.scroll_state();
+            trace_mapper!(4; "[mmc5][scroll] ${:04X}={:#04X} t=0x{:04X} v=0x{:04X} fine_x={} w={}",
+                addr, value, t, v, fine_x, w
+            );
+        }
+
+        if wrote {
             if addr == 0x4014
                 && !is_dummy_write
                 && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
@@ -315,6 +352,26 @@ impl Bus {
             }
         }
 
+        false
+    }
+
+    #[cfg(debug_assertions)]
+    fn should_log_mmc5_scroll(addr: u16, value: u8, mapper_number: u8) -> bool {
+        mapper_number == 5 && addr == 0x5105 && value == 0x55
+    }
+
+    #[cfg(debug_assertions)]
+    fn should_log_mmc5_ppu_scroll_write(addr: u16, mapper_number: u8, active: bool) -> bool {
+        mapper_number == 5 && active && matches!(addr, 0x2000 | 0x2005 | 0x2006)
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn should_log_mmc5_scroll(_addr: u16, _value: u8, _mapper_number: u8) -> bool {
+        false
+    }
+
+    #[cfg(not(debug_assertions))]
+    fn should_log_mmc5_ppu_scroll_write(_addr: u16, _mapper_number: u8, _active: bool) -> bool {
         false
     }
 
@@ -574,6 +631,24 @@ mod tests {
         ppu.write_address(0x00, false);
         let _ = ppu.read_data();
         assert_eq!(ppu.read_data(), 0x55);
+    }
+
+    #[test]
+    fn test_should_log_mmc5_scroll_on_nametable_change() {
+        assert!(Bus::should_log_mmc5_scroll(0x5105, 0x55, 5));
+        assert!(!Bus::should_log_mmc5_scroll(0x5105, 0x44, 5));
+        assert!(!Bus::should_log_mmc5_scroll(0x5104, 0x55, 5));
+        assert!(!Bus::should_log_mmc5_scroll(0x5105, 0x55, 4));
+    }
+
+    #[test]
+    fn test_should_log_mmc5_ppu_scroll_write() {
+        assert!(Bus::should_log_mmc5_ppu_scroll_write(0x2005, 5, true));
+        assert!(Bus::should_log_mmc5_ppu_scroll_write(0x2006, 5, true));
+        assert!(Bus::should_log_mmc5_ppu_scroll_write(0x2000, 5, true));
+        assert!(!Bus::should_log_mmc5_ppu_scroll_write(0x2001, 5, true));
+        assert!(!Bus::should_log_mmc5_ppu_scroll_write(0x2005, 4, true));
+        assert!(!Bus::should_log_mmc5_ppu_scroll_write(0x2005, 5, false));
     }
 
     #[test]

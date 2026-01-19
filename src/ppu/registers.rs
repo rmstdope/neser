@@ -426,6 +426,10 @@ impl Registers {
     pub fn set_cycle_count(&mut self, cycles: u64) {
         self.cycle_count = cycles;
     }
+
+    pub fn scroll_state(&self) -> (u16, u16, u8, bool) {
+        (self.t, self.v, self.x, self.w)
+    }
 }
 
 #[cfg(test)]
@@ -520,6 +524,38 @@ mod tests {
         regs.write_address(0x3F, false);
         regs.write_address(0x00, false);
         assert_eq!(regs.v(), 0x3F00);
+    }
+
+    #[test]
+    fn test_write_control_only_updates_nametable_bits_in_t() {
+        let mut regs = Registers::new();
+
+        // Seed t with a full value via $2006 writes.
+        regs.write_address(0x3F, false);
+        regs.write_address(0xFF, false);
+        let before = regs.t();
+
+        regs.write_control(0x00);
+        let after = regs.t();
+
+        assert_eq!(after & !0x0C00, before & !0x0C00);
+        assert_eq!(after & 0x0C00, 0x0000);
+
+        regs.write_control(0x03);
+        let after2 = regs.t();
+        assert_eq!(after2 & !0x0C00, before & !0x0C00);
+        assert_eq!(after2 & 0x0C00, 0x0C00);
+    }
+
+    #[test]
+    fn test_scroll_state_reports_internal_registers() {
+        let mut regs = Registers::new();
+        regs.write_scroll(0b1001_0110, false);
+        let (t, v, x, w) = regs.scroll_state();
+        assert_eq!(t, regs.t());
+        assert_eq!(v, regs.v());
+        assert_eq!(x, regs.x());
+        assert_eq!(w, regs.w());
     }
 
     #[test]

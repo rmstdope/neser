@@ -32,6 +32,7 @@ pub static TRACING: std::sync::OnceLock<std::sync::RwLock<Tracing>> = std::sync:
 #[cfg(all(debug_assertions, test))]
 thread_local! {
     static TRACING: std::cell::RefCell<Tracing> = std::cell::RefCell::new(Tracing::default());
+    static MAPPER_TRACE_OUTPUT: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
 }
 
 /// Initialize the global tracing state. Call this once at startup.
@@ -57,6 +58,26 @@ pub fn init_tracing(tracing: Tracing) {
     TRACING.with(|cell| {
         *cell.borrow_mut() = tracing;
     });
+}
+
+#[cfg(all(debug_assertions, test))]
+pub fn clear_mapper_traces() {
+    MAPPER_TRACE_OUTPUT.with(|cell| cell.borrow_mut().clear());
+}
+
+#[cfg(all(debug_assertions, test))]
+pub fn take_mapper_traces() -> Vec<String> {
+    MAPPER_TRACE_OUTPUT.with(|cell| cell.borrow_mut().drain(..).collect())
+}
+
+#[cfg(all(debug_assertions, test))]
+pub fn emit_mapper_trace(line: String) {
+    MAPPER_TRACE_OUTPUT.with(|cell| cell.borrow_mut().push(line));
+}
+
+#[cfg(all(debug_assertions, not(test)))]
+pub fn emit_mapper_trace(line: String) {
+    println!("{}", line);
 }
 
 /// Initialize the global tracing state. No-op in release builds.
@@ -259,12 +280,12 @@ pub fn mapper_trace_level() -> u8 {
 macro_rules! trace_mapper {
     ($level:literal; $($arg:tt)*) => {
         if $crate::tracing::mapper_trace_level() >= $level {
-            println!("[MAP] {}", format!($($arg)*));
+            $crate::tracing::emit_mapper_trace(format!("[MAP] {}", format!($($arg)*)));
         }
     };
     ($($arg:tt)*) => {
         if $crate::tracing::mapper_trace_level() >= 1 {
-            println!("[MAP] {}", format!($($arg)*));
+            $crate::tracing::emit_mapper_trace(format!("[MAP] {}", format!($($arg)*)));
         }
     };
 }
@@ -315,11 +336,11 @@ impl Tracing {
                 } else if let Some(rest) = arg.strip_prefix("--trace-cpu") {
                     self.cpu = Self::parse_level(rest);
                 } else if let Some(rest) = arg.strip_prefix("--trace-ppu") {
-                    self.ppu = Self::parse_level(rest);
+                    self.ppu = Self::clamp_ppu_level(Self::parse_level(rest));
                 } else if let Some(rest) = arg.strip_prefix("--trace-apu") {
                     self.apu = Self::parse_level(rest);
                 } else if let Some(rest) = arg.strip_prefix("--trace-mapper") {
-                    self.mapper = Self::parse_level(rest);
+                    self.mapper = Self::clamp_mapper_level(Self::parse_level(rest));
                 }
             }
         }
@@ -334,6 +355,14 @@ impl Tracing {
         } else {
             1
         }
+    }
+
+    pub(crate) fn clamp_mapper_level(level: u8) -> u8 {
+        level.min(5)
+    }
+
+    pub(crate) fn clamp_ppu_level(level: u8) -> u8 {
+        level.min(5)
     }
 }
 
@@ -571,5 +600,21 @@ mod tests {
         let args = vec!["neser".to_string(), "--trace-cpu=invalid".to_string()];
         let tracing = parse_tracing(&args);
         assert_eq!(tracing.cpu, 1);
+    }
+
+    #[test]
+    fn tracing_ppu_level_is_capped_at_five() {
+        let args = vec!["neser".to_string(), "--trace-ppu=9".to_string()];
+        let tracing = parse_tracing(&args);
+        assert!(tracing.enabled);
+        assert_eq!(tracing.ppu, 5);
+    }
+
+    #[test]
+    fn tracing_mapper_level_is_capped_at_five() {
+        let args = vec!["neser".to_string(), "--trace-mapper=9".to_string()];
+        let tracing = parse_tracing(&args);
+        assert!(tracing.enabled);
+        assert_eq!(tracing.mapper, 5);
     }
 }

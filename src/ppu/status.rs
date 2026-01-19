@@ -77,6 +77,17 @@ impl Status {
     /// Read the status register (clears VBlank flag and write toggle)
     /// Returns the status byte
     pub fn read_status(&mut self) -> u8 {
+        let status = self.peek_status();
+
+        // Reading status clears VBlank flag.
+        self.vblank_flag = false;
+
+        status
+    }
+
+    /// Read the status register without side effects.
+    /// Returns the status byte without clearing flags.
+    pub fn peek_status(&self) -> u8 {
         let mut status = 0u8;
 
         if self.vblank_flag {
@@ -88,9 +99,6 @@ impl Status {
         if self.sprite_overflow {
             status |= 0b0010_0000; // Bit 5: Sprite overflow
         }
-
-        // Reading status clears VBlank flag.
-        self.vblank_flag = false;
 
         status
     }
@@ -264,6 +272,16 @@ mod tests {
         let status_byte = status.read_status();
         assert_eq!(status_byte & 0b1000_0000, 0b1000_0000);
         assert!(!status.is_in_vblank());
+    }
+
+    #[test]
+    fn test_peek_status_does_not_clear_vblank() {
+        let mut status = Status::new();
+        status.enter_vblank();
+
+        let status_byte = status.peek_status();
+        assert_eq!(status_byte & 0b1000_0000, 0b1000_0000);
+        assert!(status.is_in_vblank());
     }
 
     #[test]

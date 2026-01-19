@@ -112,6 +112,11 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
+        flag: "--load-state",
+        help: Some("Load save-state on startup (uses ROM .state path)"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--fullscreen",
         help: Some("Run emulator in fullscreen mode"),
         has_value: false,
@@ -172,6 +177,8 @@ pub struct Config {
     pub shader_path: Option<String>,
     /// Whether to open debugger on startup.
     pub debugger_enabled: bool,
+    /// Whether to load save-state on startup.
+    pub load_state: bool,
     /// Tracing configuration.
     pub tracing: Tracing,
     /// APU channel enable flags.
@@ -207,6 +214,7 @@ impl Default for Config {
             fullscreen_display: None,
             shader_path: None,
             debugger_enabled: false,
+            load_state: false,
             tracing: Tracing::default(),
             apu_channels: ApuChannels::ALL,
             video_scale: 4.0,
@@ -303,6 +311,9 @@ impl Config {
         }
         if Self::has_flag(args, "--start-in-debugger") {
             self.debugger_enabled = true;
+        }
+        if Self::has_flag(args, "--load-state") {
+            self.load_state = true;
         }
 
         // Display argument (only applies if fullscreen is set)
@@ -672,7 +683,7 @@ impl Config {
             }
             "trace-ppu" => {
                 if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.ppu = level;
+                    self.tracing.ppu = crate::tracing::Tracing::clamp_ppu_level(level);
                     if level > 0 {
                         self.tracing.enabled = true;
                     }
@@ -688,7 +699,7 @@ impl Config {
             }
             "trace-mapper" => {
                 if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.mapper = level;
+                    self.tracing.mapper = crate::tracing::Tracing::clamp_mapper_level(level);
                     if level > 0 {
                         self.tracing.enabled = true;
                     }
@@ -750,6 +761,7 @@ mod tests {
         assert_eq!(config.fullscreen_display, None);
         assert_eq!(config.shader_path, None);
         assert!(!config.debugger_enabled);
+        assert!(!config.load_state);
         assert!(config.apu_channels.contains(ApuChannels::PULSE1));
         assert!(config.apu_channels.contains(ApuChannels::PULSE2));
         assert!(config.apu_channels.contains(ApuChannels::TRIANGLE));
@@ -821,6 +833,13 @@ mod tests {
         let config = parse_config(args);
         assert!(config.fullscreen);
         assert_eq!(config.fullscreen_display, None);
+    }
+
+    #[test]
+    fn test_config_load_state_flag() {
+        let args = vec!["neser".to_string(), "--load-state".to_string()];
+        let config = parse_config(args);
+        assert!(config.load_state);
     }
 
     #[test]
@@ -1020,6 +1039,14 @@ mod tests {
     }
 
     #[test]
+    fn test_config_tracing_ppu_level_is_capped_at_five() {
+        let args = vec!["neser".to_string(), "--trace-ppu=9".to_string()];
+        let config = parse_config(args);
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.ppu, 5);
+    }
+
+    #[test]
     fn test_config_tracing_apu_with_level() {
         let args = vec!["neser".to_string(), "--trace-apu=4".to_string()];
         let config = parse_config(args);
@@ -1030,6 +1057,14 @@ mod tests {
     #[test]
     fn test_config_tracing_mapper_with_level() {
         let args = vec!["neser".to_string(), "--trace-mapper=5".to_string()];
+        let config = parse_config(args);
+        assert!(config.tracing.enabled);
+        assert_eq!(config.tracing.mapper, 5);
+    }
+
+    #[test]
+    fn test_config_tracing_mapper_level_is_capped_at_five() {
+        let args = vec!["neser".to_string(), "--trace-mapper=9".to_string()];
         let config = parse_config(args);
         assert!(config.tracing.enabled);
         assert_eq!(config.tracing.mapper, 5);

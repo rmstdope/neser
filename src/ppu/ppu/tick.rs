@@ -19,9 +19,19 @@ fn is_bg_fetch_pixel(pixel: u16) -> bool {
     (1..=256).contains(&pixel) || (321..=336).contains(&pixel)
 }
 
+#[inline(always)]
+fn should_trace_vblank_enter(scanline: u16, pixel: u16, vblank_suppressed: bool) -> bool {
+    scanline == 241 && pixel == 1 && !vblank_suppressed
+}
+
+#[inline(always)]
+fn should_trace_vblank_exit(scanline: u16, prerender_scanline: u16, pixel: u16) -> bool {
+    scanline == prerender_scanline && pixel == 1
+}
+
 pub(super) fn tick(ppu: &mut Ppu) {
     // Trace PPU tick with scanline and pixel position
-    trace_ppu!(
+    trace_ppu!(5;
         "tick y={} x={} v={:04X} t={:04X} x={} w={} ctrl={:02X} mask={:02X} status={:02X} oam={:02X} rd={} bg={} sp={} frame={} cyc={}",
         ppu.timing.scanline(),
         ppu.timing.pixel(),
@@ -31,7 +41,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
         ppu.registers.w(),
         ppu.registers.control(),
         ppu.registers.mask(),
-        ppu.status.read_status(),
+        ppu.status.peek_status(),
         ppu.registers.oam_address,
         ppu.registers.is_rendering_enabled(),
         ppu.registers.is_background_enabled(),
@@ -54,6 +64,12 @@ pub(super) fn tick(ppu: &mut Ppu) {
         skipped || (scanline_before_tick == prerender_scanline && pixel_before_tick == 340);
 
     if frame_wrapped {
+        trace_ppu!(1; "frame wrap y={} x={} frame={} cyc={}",
+            scanline_before_tick,
+            pixel_before_tick,
+            ppu.timing.frame_count(),
+            ppu.timing.total_cycles(),
+        );
         ppu.with_mapper_mut(|mapper| mapper.ppu_end_frame());
     }
 
@@ -71,6 +87,14 @@ pub(super) fn tick(ppu: &mut Ppu) {
 
     // Enter VBlank at scanline 241, pixel 1.
     // Note: reading PPUSTATUS right at VBlank set time can suppress VBlank for the frame.
+    if should_trace_vblank_enter(scanline, pixel, ppu.vblank_suppressed_for_frame) {
+        trace_ppu!(1; "vblank enter y={} x={} status={:02X}",
+            scanline,
+            pixel,
+            ppu.status.peek_status(),
+        );
+    }
+
     if scanline == 241 && pixel == 1 && !ppu.vblank_suppressed_for_frame {
         // Hardware quirk/timing: VBlank flag is set at dot 1, but the NMI edge is observed
         // slightly later. We latch the NMI edge at dot 2 (see below).
@@ -85,10 +109,23 @@ pub(super) fn tick(ppu: &mut Ppu) {
         && ppu.status.is_in_vblank()
         && ppu.registers.should_generate_nmi()
     {
+        trace_ppu!(2; "vblank nmi edge y={} x={} status={:02X}",
+            scanline,
+            pixel,
+            ppu.status.peek_status(),
+        );
         ppu.status.trigger_nmi();
     }
 
     // Exit VBlank at the pre-render scanline, pixel 1.
+    if should_trace_vblank_exit(scanline, prerender_scanline, pixel) {
+        trace_ppu!(1; "vblank exit y={} x={} status={:02X}",
+            scanline,
+            pixel,
+            ppu.status.peek_status(),
+        );
+    }
+
     if scanline == prerender_scanline && pixel == 1 {
         ppu.status.exit_vblank();
     }
@@ -216,10 +253,34 @@ pub(super) fn tick(ppu: &mut Ppu) {
         // Handle scroll register updates during visible pixels
         if pixel == 256 {
             // Increment fine Y at end of visible scanline
+            trace_ppu!(3; "fine_y inc y={} x={} t_before={:04X} v_before={:04X}",
+                scanline,
+                pixel,
+                ppu.registers.t(),
+                ppu.registers.v(),
+            );
             ppu.registers.increment_fine_y();
+            trace_ppu!(3; "fine_y inc y={} x={} t_after={:04X} v_after={:04X}",
+                scanline,
+                pixel,
+                ppu.registers.t(),
+                ppu.registers.v(),
+            );
         } else if pixel == 257 {
             // Copy horizontal bits from t to v
+            trace_ppu!(3; "hcopy y={} x={} t={:04X} v_before={:04X}",
+                scanline,
+                pixel,
+                ppu.registers.t(),
+                ppu.registers.v(),
+            );
             ppu.registers.copy_horizontal_bits();
+            trace_ppu!(3; "hcopy y={} x={} t={:04X} v_after={:04X}",
+                scanline,
+                pixel,
+                ppu.registers.t(),
+                ppu.registers.v(),
+            );
         }
     }
 
@@ -227,10 +288,34 @@ pub(super) fn tick(ppu: &mut Ppu) {
     if is_rendering_enabled && is_prerender {
         if pixel == 257 {
             // Copy horizontal bits from t to v at pixel 257
+            trace_ppu!(3; "prerender hcopy y={} x={} t={:04X} v_before={:04X}",
+                scanline,
+                pixel,
+                ppu.registers.t(),
+                ppu.registers.v(),
+            );
             ppu.registers.copy_horizontal_bits();
+            trace_ppu!(3; "prerender hcopy y={} x={} t={:04X} v_after={:04X}",
+                scanline,
+                pixel,
+                ppu.registers.t(),
+                ppu.registers.v(),
+            );
         } else if (280..=304).contains(&pixel) {
             // Copy vertical bits from t to v during pixels 280-304
+            trace_ppu!(3; "vcopy y={} x={} t={:04X} v_before={:04X}",
+                scanline,
+                pixel,
+                ppu.registers.t(),
+                ppu.registers.v(),
+            );
             ppu.registers.copy_vertical_bits();
+            trace_ppu!(3; "vcopy y={} x={} t={:04X} v_after={:04X}",
+                scanline,
+                pixel,
+                ppu.registers.t(),
+                ppu.registers.v(),
+            );
         }
     }
 
@@ -486,5 +571,21 @@ mod tests {
         assert!(is_bg_fetch_pixel(336));
         assert!(!is_bg_fetch_pixel(337));
         assert!(!is_bg_fetch_pixel(340));
+    }
+
+    #[test]
+    fn test_should_trace_vblank_enter() {
+        assert!(should_trace_vblank_enter(241, 1, false));
+        assert!(!should_trace_vblank_enter(241, 1, true));
+        assert!(!should_trace_vblank_enter(240, 1, false));
+        assert!(!should_trace_vblank_enter(241, 2, false));
+    }
+
+    #[test]
+    fn test_should_trace_vblank_exit() {
+        let prerender = prerender_scanline(TvSystem::Ntsc);
+        assert!(should_trace_vblank_exit(prerender, prerender, 1));
+        assert!(!should_trace_vblank_exit(prerender, prerender, 0));
+        assert!(!should_trace_vblank_exit(0, prerender, 1));
     }
 }

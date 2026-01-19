@@ -24,7 +24,7 @@ It is VERY VERY important to:
 - ALWAYS use a TDD approach for all kinds of code, feature implementation, bug fixing, feature enhancements.
 <!-- - It is NOT NEEDED to use a TDD approach when trying to debug or pinpoint a bug. When the bug is pinpointed, use TDD to write a test that reproduces the bug, then proceed with TDD to fix it. -->
 
-Never stray from the TDD process unless explicitly instructed to do so by the navigator.
+Never stray from the TDD process unless you are just adding traces/logging or are explicitly instructed to do so by the navigator.
 
 ### Collaboration
 

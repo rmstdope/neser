@@ -174,7 +174,7 @@ impl Vrc6Audio {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_mapper!(1; "[vrc6] cpu_cycle (audio)");
+        trace_mapper!(5; "[vrc6] cpu_cycle (audio)");
         if self.global_halt {
             return;
         }
@@ -522,7 +522,7 @@ impl Mapper for VRC6Mapper {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_mapper!(1; "[vrc6] cpu_cycle (irq)");
+        trace_mapper!(5; "[vrc6] cpu_cycle (irq)");
         self.audio.cpu_cycle();
         self.tick_vrc_irq();
     }
