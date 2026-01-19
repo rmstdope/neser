@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
@@ -17,7 +17,7 @@ const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 ///
 /// Common in games like Mega Man, Castlevania, Contra, Duck Tales, Metal Gear.
 pub struct UxROMMapper {
-    prg_rom: Vec<u8>,
+    prg_rom: BankedRom,
     prg_ram: PrgRam,
     chr_memory: ChrMemory,
     mirroring: MirroringMode,
@@ -28,16 +28,12 @@ impl UxROMMapper {
     pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         // UxROM uses CHR-RAM, ignore chr_rom parameter
         Self {
-            prg_rom,
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_memory: ChrMemory::new_ram(8192),
             mirroring,
             bank_select: 0,
         }
-    }
-
-    fn get_last_bank_offset(&self) -> usize {
-        self.prg_rom.len().saturating_sub(PRG_BANK_SIZE)
     }
 }
 
@@ -52,17 +48,13 @@ impl Mapper for UxROMMapper {
         match addr {
             0x8000..=0xBFFF => {
                 // Switchable 16KB bank
-                let offset = (addr - 0x8000) as usize;
-                let bank_offset = (self.bank_select as usize) * PRG_BANK_SIZE;
-                let index = bank_offset + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
+                let bank = self.bank_select as usize;
+                self.prg_rom.read_with_base(bank, 0x8000, addr)
             }
             0xC000..=0xFFFF => {
                 // Fixed to last 16KB bank
-                let offset = (addr - 0xC000) as usize;
-                let last_bank_offset = self.get_last_bank_offset();
-                let index = last_bank_offset + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
+                let last_bank = self.prg_rom.num_banks().saturating_sub(1);
+                self.prg_rom.read_with_base(last_bank, 0xC000, addr)
             }
             _ => 0,
         }

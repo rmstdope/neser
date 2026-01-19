@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const PRG_BANK_SIZE_32K: usize = 0x8000; // 32KB (for AxROM)
@@ -22,7 +22,7 @@ const PRG_BANK_SIZE_32K: usize = 0x8000; // 32KB (for AxROM)
 ///
 /// Used in games like Battletoads, Marble Madness, Wizards & Warriors.
 pub struct AxROMMapper {
-    prg_rom: Vec<u8>,
+    prg_rom: BankedRom,
     prg_ram: PrgRam,
     chr_memory: ChrMemory,
     bank_select: u8, // Stores the full register value (bits 0-2 for bank, bit 4 for mirroring)
@@ -32,19 +32,11 @@ impl AxROMMapper {
     pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, _mirroring: MirroringMode) -> Self {
         // AxROM uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
         Self {
-            prg_rom,
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_32K),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_memory: ChrMemory::new_ram(8192),
             bank_select: 0, // Default to bank 0, lower nametable
         }
-    }
-
-    fn get_prg_bank_offset(&self) -> usize {
-        // Extract bank number from bits 0-2
-        let bank = (self.bank_select & 0x07) as usize;
-        let num_banks = self.prg_rom.len() / PRG_BANK_SIZE_32K;
-        let bank = bank % num_banks.max(1);
-        bank * PRG_BANK_SIZE_32K
     }
 }
 
@@ -58,10 +50,9 @@ impl Mapper for AxROMMapper {
         // PRG ROM at $8000-$FFFF (32KB switchable bank)
         match addr {
             0x8000..=0xFFFF => {
-                let bank_offset = self.get_prg_bank_offset();
-                let offset = (addr - 0x8000) as usize;
-                let index = bank_offset + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
+                // Extract bank number from bits 0-2
+                let bank = (self.bank_select & 0x07) as usize;
+                self.prg_rom.read_with_base(bank, 0x8000, addr)
             }
             _ => 0,
         }
