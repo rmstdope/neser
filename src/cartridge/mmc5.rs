@@ -637,9 +637,9 @@ impl MMC5Mapper {
     }
 
     fn read_chr_banked(&self, bank: u16, addr: u16) -> u8 {
-        // In extended attribute mode, CHR banks are always 4KB regardless of chr_mode
-        let bank_size = if self.is_extended_attribute_mode_chr_active() {
-            4 * 1024 // Extended attribute mode always uses 4KB banks
+    // In extended attribute or split mode, CHR banks are always 4KB regardless of chr_mode
+    let bank_size = if self.is_extended_attribute_mode_chr_active() {
+        4 * 1024 // Extended attribute and split modes always uses 4KB banks
         } else {
             match self.chr_mode {
                 0 => 8 * 1024, // 8KB
