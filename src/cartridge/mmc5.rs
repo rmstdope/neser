@@ -506,9 +506,13 @@ impl MMC5Mapper {
         self.read_prg_rom_8k(bank_base.wrapping_add(offset_8k), addr, base_addr)
     }
 
-    fn get_chr_bank(&self, addr: u16) -> u8 {
+    fn get_chr_bank(&self, addr: u16) -> u16 {
         fn bank_idx_1k(addr: u16) -> u8 {
             ((addr >> 10) & 0x07) as u8
+        }
+
+        fn apply_upper_bits(upper: u8, bank: u8) -> u16 {
+            ((upper as u16 & 0x03) << 8) | (bank as u16)
         }
 
         // Extended attribute mode ($5104=1): for background tile fetches during rendering,
@@ -539,7 +543,7 @@ impl MMC5Mapper {
             // $5130 provides the upper 2 bits (bits 6-7 of the bank number)
             let upper_bits = self.chr_bank_upper & 0x03;
             // Combine: upper_bits are bits 7-6, ex_bank is bits 5-0
-            return (upper_bits << 6) | ex_bank;
+            return ((upper_bits << 6) | ex_bank) as u16;
         }
 
         // Normal CHR banking (extended attribute mode disabled, sprite fetch, or PPUDATA read)
@@ -560,7 +564,7 @@ impl MMC5Mapper {
 
         let chr_mode = self.chr_mode & 0x03;
 
-        match chr_mode {
+        let bank = match chr_mode {
             0 => {
                 // 8KB mode: always use $5127 (or $512B if last written for PPUDATA)
                 if !self.chr_is_rendering_fetch && self.chr_last_set_written {
@@ -577,10 +581,8 @@ impl MMC5Mapper {
                     && !self.chr_fetch_is_sprite
                     && self.split_active
                 {
-                    return self.split_bank;
-                }
-                // For PPUDATA, use last set written; for rendering, always use A
-                if !self.chr_is_rendering_fetch && self.chr_last_set_written {
+                    self.split_bank
+                } else if !self.chr_is_rendering_fetch && self.chr_last_set_written {
                     self.chr_bank_b[3] // $512B for PPUDATA
                 } else {
                     let high = addr >= 0x1000;
@@ -621,7 +623,9 @@ impl MMC5Mapper {
                 }
             }
             _ => unreachable!(),
-        }
+        };
+
+        apply_upper_bits(self.chr_bank_upper, bank)
     }
 
     /// Check if extended attribute mode is active for CHR banking (rendering only)
@@ -632,7 +636,7 @@ impl MMC5Mapper {
             && self.chr_is_rendering_fetch
     }
 
-    fn read_chr_banked(&self, bank: u8, addr: u16) -> u8 {
+    fn read_chr_banked(&self, bank: u16, addr: u16) -> u8 {
         // In extended attribute mode, CHR banks are always 4KB regardless of chr_mode
         let bank_size = if self.is_extended_attribute_mode_chr_active() {
             4 * 1024 // Extended attribute mode always uses 4KB banks
@@ -661,7 +665,7 @@ impl MMC5Mapper {
         }
     }
 
-    fn write_chr_banked(&mut self, bank: u8, addr: u16, value: u8) {
+    fn write_chr_banked(&mut self, bank: u16, addr: u16, value: u8) {
         // Calculate the actual address in CHR RAM
         let bank_size = match self.chr_mode {
             0 => 8 * 1024, // 8KB
@@ -1728,6 +1732,16 @@ mod tests {
         data
     }
 
+    fn banked_data_with_upper_marker(bank_size: usize, num_banks: usize) -> Vec<u8> {
+        let mut data = vec![0u8; bank_size * num_banks];
+        for bank in 0..num_banks {
+            let start = bank * bank_size;
+            let end = start + bank_size;
+            data[start..end].fill((bank >> 8) as u8);
+        }
+        data
+    }
+
     fn new_mmc5_for_irq_test() -> MMC5Mapper {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
@@ -1984,6 +1998,55 @@ mod tests {
         assert_eq!(mapper.read_prg(0xA000), 3);
         assert_eq!(mapper.read_prg(0xC000), 4);
         assert_eq!(mapper.read_prg(0xE000), 7);
+    }
+
+    #[test]
+    fn test_mmc5_chr_bank_upper_applies_in_1kb_and_2kb_modes() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data_with_upper_marker(1024, 2048);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        mapper.ppu_set_chr_fetch_is_ppudata();
+
+        // 1KB mode uses $5120-$5127; upper bits should extend the bank number.
+        mapper.write_prg(0x5101, 0x03);
+        mapper.write_prg(0x5130, 0x01);
+        mapper.write_prg(0x5120, 0x00);
+        assert_eq!(mapper.read_chr(0x0000), 1);
+
+        // 2KB mode uses $5121/$5123/$5125/$5127; upper bits should extend the bank number.
+        mapper.write_prg(0x5101, 0x02);
+        mapper.write_prg(0x5130, 0x02);
+        mapper.write_prg(0x5121, 0x00);
+        assert_eq!(mapper.read_chr(0x0000), 4);
+    }
+
+    #[test]
+    fn test_mmc5_chr_bank_upper_applies_in_4kb_and_8kb_modes() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom_4k = banked_data_with_upper_marker(4 * 1024, 257);
+        let chr_rom_8k = banked_data_with_upper_marker(8 * 1024, 257);
+
+        let mut mapper_4k =
+            create_mmc5_mapper(prg_rom.clone(), chr_rom_4k, MirroringMode::Horizontal)
+                .expect("MMC5 (mapper 5) should be implemented");
+
+        mapper_4k.ppu_set_chr_fetch_is_ppudata();
+        mapper_4k.write_prg(0x5101, 0x01);
+        mapper_4k.write_prg(0x5130, 0x01);
+        mapper_4k.write_prg(0x5123, 0x00);
+        assert_eq!(mapper_4k.read_chr(0x0000), 1);
+
+        let mut mapper_8k = create_mmc5_mapper(prg_rom, chr_rom_8k, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        mapper_8k.ppu_set_chr_fetch_is_ppudata();
+        mapper_8k.write_prg(0x5101, 0x00);
+        mapper_8k.write_prg(0x5130, 0x01);
+        mapper_8k.write_prg(0x5127, 0x00);
+        assert_eq!(mapper_8k.read_chr(0x0000), 1);
     }
 
     #[test]
