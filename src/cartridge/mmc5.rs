@@ -1239,7 +1239,6 @@ impl Mapper for MMC5Mapper {
         // MMC5 scanline IRQ: trigger when scanline matches compare value.
         // Special case: $5203 = $00 never produces IRQ pending conditions.
         if rendering_enabled
-            && self.irq_enabled
             && self.irq_scanline_compare != 0
             && (scanline as u8) == self.irq_scanline_compare
         {
@@ -1821,6 +1820,20 @@ mod tests {
         // Reading $5204 should clear the pending flag.
         let _ = mmc5.read_prg(0x5204);
         assert!(!mmc5.irq_pending());
+    }
+
+    #[test]
+    fn test_mmc5_irq_pending_sets_even_when_irq_disabled() {
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        mmc5.write_prg(0x5203, 2);
+        mmc5.write_prg(0x5204, 0x00); // IRQ disabled
+
+        mmc5.ppu_scanline(2, true);
+        assert!(
+            mmc5.irq_pending(),
+            "IRQ pending should set even when IRQ is disabled"
+        );
     }
 
     #[test]
