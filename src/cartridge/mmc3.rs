@@ -182,7 +182,7 @@ impl MMC3Mapper {
         let low_cycles_met = self.a12_low_cycles >= Self::A12_LOW_CYCLES_REQUIRED;
         let should_clock = rising_edge && low_cycles_met;
 
-        trace_mapper!(3; "MMC3 A12 check: addr=${:04X}, a12={}, rising_edge={}, low_cycles={}, should_clock={}", 
+        trace_mapper!(5; "MMC3 A12 check: addr=${:04X}, a12={}, rising_edge={}, low_cycles={}, should_clock={}", 
             addr, current_a12, rising_edge, self.a12_low_cycles, should_clock);
 
         should_clock
@@ -207,7 +207,7 @@ impl MMC3Mapper {
             self.irq_counter = self.irq_counter.wrapping_sub(1);
         }
 
-        trace_mapper!(2; "MMC3 IRQ clock: old_counter={}, reload_flag={}, latch={}, new_counter={}, enabled={}, alternate={}", 
+        trace_mapper!(4; "MMC3 IRQ clock: old_counter={}, reload_flag={}, latch={}, new_counter={}, enabled={}, alternate={}", 
             old_counter, was_reload, self.irq_latch, self.irq_counter, self.irq_enabled, self.use_alternate_irq);
 
         // Determine if IRQ should fire

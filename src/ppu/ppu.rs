@@ -1,6 +1,7 @@
 use crate::cartridge::{Cartridge, MirroringMode};
 use crate::nes::TvSystem;
 use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
+use crate::trace_ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -133,8 +134,25 @@ impl Ppu {
     pub fn write_control(&mut self, value: u8) {
         let nmi_was_enabled = self.registers.should_generate_nmi();
 
+        trace_ppu!(3; "ppuctrl write value={:02X} y={} x={} t_before={:04X} v_before={:04X}",
+            value,
+            self.timing.scanline(),
+            self.timing.pixel(),
+            self.registers.t(),
+            self.registers.v(),
+        );
+
         self.registers.write_control(value);
         self.registers.set_io_bus(value); // Update I/O bus
+
+        trace_ppu!(3; "ppuctrl write value={:02X} y={} x={} t_after={:04X} v_after={:04X}",
+            value,
+            self.timing.scanline(),
+            self.timing.pixel(),
+            self.registers.t(),
+            self.registers.v(),
+        );
+
 
         let nmi_is_enabled = self.registers.should_generate_nmi();
 
@@ -157,7 +175,27 @@ impl Ppu {
 
     /// Write to mask register ($2001)
     pub fn write_mask(&mut self, value: u8) {
+        trace_ppu!(3; "ppumask write value={:02X} y={} x={} render_before={} bg_before={} sp_before={} t={:04X} v={:04X}",
+            value,
+            self.timing.scanline(),
+            self.timing.pixel(),
+            self.registers.is_rendering_enabled(),
+            self.registers.is_background_enabled(),
+            self.registers.is_sprite_enabled(),
+            self.registers.t(),
+            self.registers.v(),
+        );
         self.registers.write_mask(value);
+        trace_ppu!(3; "ppumask write value={:02X} y={} x={} render_after={} bg_after={} sp_after={} t={:04X} v={:04X}",
+            value,
+            self.timing.scanline(),
+            self.timing.pixel(),
+            self.registers.is_rendering_enabled(),
+            self.registers.is_background_enabled(),
+            self.registers.is_sprite_enabled(),
+            self.registers.t(),
+            self.registers.v(),
+        );
         self.registers.set_io_bus(value); // Update I/O bus
     }
 
@@ -165,6 +203,15 @@ impl Ppu {
     pub fn get_status(&mut self) -> u8 {
         let scanline = self.timing.scanline();
         let pixel = self.timing.pixel();
+
+        trace_ppu!(3; "ppustatus read y={} x={} status={:02X} w={} t={:04X} v={:04X}",
+            scanline,
+            pixel,
+            self.status.peek_status(),
+            self.registers.w(),
+            self.registers.t(),
+            self.registers.v(),
+        );
 
         // VBlank suppression quirk: if $2002 is read right as VBlank is being set,
         // the flag can be suppressed for the frame.
@@ -195,14 +242,38 @@ impl Ppu {
 
     /// Write to scroll register ($2005)
     pub fn write_scroll(&mut self, value: u8, is_dummy_write: bool) {
+        trace_ppu!(3; "ppuscroll write value={:02X} w_before={} t_before={:04X} v_before={:04X}",
+            value,
+            self.registers.w(),
+            self.registers.t(),
+            self.registers.v(),
+        );
         self.registers.write_scroll(value, is_dummy_write);
+        trace_ppu!(3; "ppuscroll write value={:02X} w_after={} t_after={:04X} v_after={:04X}",
+            value,
+            self.registers.w(),
+            self.registers.t(),
+            self.registers.v(),
+        );
         self.registers.set_io_bus(value); // Update I/O bus
     }
 
     /// Write to address register ($2006)
     pub fn write_address(&mut self, value: u8, is_dummy_write: bool) {
+        trace_ppu!(3; "ppuaddr write value={:02X} w_before={} t_before={:04X} v_before={:04X}",
+            value,
+            self.registers.w(),
+            self.registers.t(),
+            self.registers.v(),
+        );
         let old_v = self.registers.v();
         self.registers.write_address(value, is_dummy_write);
+        trace_ppu!(3; "ppuaddr write value={:02X} w_after={} t_after={:04X} v_after={:04X}",
+            value,
+            self.registers.w(),
+            self.registers.t(),
+            self.registers.v(),
+        );
         self.registers.set_io_bus(value); // Update I/O bus
 
         // Notify mapper if v register changed (happens on second write to $2006)
@@ -670,6 +741,10 @@ impl Ppu {
         self.vblank_suppressed_for_frame = state.vblank_suppressed_for_frame;
         self.vblank_for_nmi = state.vblank_for_nmi;
         self.prev_a12 = state.prev_a12;
+    }
+
+    pub fn scroll_state(&self) -> (u16, u16, u8, bool) {
+        self.registers.scroll_state()
     }
 }
 

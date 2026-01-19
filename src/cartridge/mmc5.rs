@@ -68,6 +68,7 @@ pub struct MMC5Mapper {
     chr: Chr,
     prg_ram: Vec<u8>,
     mirroring: MirroringMode,
+    ciram: Vec<u8>,
 
     // PRG banking
     prg_mode: u8,
@@ -86,6 +87,8 @@ pub struct MMC5Mapper {
     chr_bank_a: [u8; 8], // $5120-$5127 for BG
     chr_bank_b: [u8; 4], // $5128-$512B for sprites
     chr_bank_upper: u8,  // $5130 - upper 2 bits for extended attribute mode
+    chr_bank_a_upper: [u8; 8],
+    chr_bank_b_upper: [u8; 4],
     chr_fetch_is_sprite: bool,
     chr_last_set_written: bool, // false = A regs ($5120-$5127), true = B regs ($5128-$512B)
     chr_is_rendering_fetch: bool, // true when PPU is rendering, false for PPUDATA reads
@@ -185,7 +188,7 @@ impl Mmc5Pulse {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_mapper!(1; "[mmc5] cpu_cycle (timer)");
+        trace_mapper!(5; "[mmc5] cpu_cycle (timer)");
         if !self.enabled {
             return;
         }
@@ -252,6 +255,7 @@ impl MMC5Mapper {
         let prg_ram_bank_count =
             (prg_ram_banks_8k.max(1) as usize).min(Self::PRG_RAM_BANK_COUNT_MAX);
         let prg_ram = vec![0u8; prg_ram_bank_count * Self::PRG_RAM_BANK_SIZE];
+        let ciram = vec![0u8; 2 * 1024];
 
         // MMC5 PRG mode defaults to 3 at power-on.
         // $5117 defaults to $FF on real hardware; for our bank-indexed model, we map it to the
@@ -261,6 +265,7 @@ impl MMC5Mapper {
             chr,
             prg_ram,
             mirroring,
+            ciram,
 
             // PRG banking
             prg_mode: 3,
@@ -279,6 +284,8 @@ impl MMC5Mapper {
             chr_bank_a: [0; 8],
             chr_bank_b: [0; 4],
             chr_bank_upper: 0,
+            chr_bank_a_upper: [0; 8],
+            chr_bank_b_upper: [0; 4],
             chr_fetch_is_sprite: false,
             chr_last_set_written: false,
             chr_is_rendering_fetch: false,
@@ -599,22 +606,26 @@ impl MMC5Mapper {
 
         let chr_mode = self.chr_mode & 0x03;
 
-        let bank = match chr_mode {
+        let bank_from_a = |index: usize| (self.chr_bank_a[index], self.chr_bank_a_upper[index]);
+        let bank_from_b = |index: usize| (self.chr_bank_b[index], self.chr_bank_b_upper[index]);
+
+        let (bank, upper) = match chr_mode {
             0 => {
                 // 8KB mode: always use $5127 (or $512B if last written for PPUDATA)
                 if !self.chr_is_rendering_fetch && self.chr_last_set_written {
-                    self.chr_bank_b[3] // $512B for PPUDATA when B was last written
+                    bank_from_b(3) // $512B for PPUDATA when B was last written
                 } else {
-                    self.chr_bank_a[7] // $5127
+                    bank_from_a(7) // $5127
                 }
             }
             1 => {
                 // 4KB mode: use $5123 (low) or $5127 (high)
                 if !self.chr_is_rendering_fetch && self.chr_last_set_written {
-                    self.chr_bank_b[3] // $512B for PPUDATA
+                    bank_from_b(3) // $512B for PPUDATA
                 } else {
                     let high = addr >= 0x1000;
-                    self.chr_bank_a[if high { 7 } else { 3 }]
+                    let index = if high { 7 } else { 3 };
+                    bank_from_a(index)
                 }
             }
             2 => {
@@ -622,9 +633,11 @@ impl MMC5Mapper {
                 let bank_idx = (addr >> 11) & 0x03;
                 if !self.chr_is_rendering_fetch && self.chr_last_set_written {
                     // B registers: $5129, $512B cover 2KB banks for PPUDATA
-                    self.chr_bank_b[((bank_idx & 0x01) * 2 + 1) as usize]
+                    let index = ((bank_idx & 0x01) * 2 + 1) as usize;
+                    bank_from_b(index)
                 } else {
-                    self.chr_bank_a[(bank_idx * 2 + 1) as usize]
+                    let index = (bank_idx * 2 + 1) as usize;
+                    bank_from_a(index)
                 }
             }
             3 => {
@@ -635,7 +648,7 @@ impl MMC5Mapper {
                 let bank_idx = bank_idx_1k(addr);
 
                 let use_b_registers = if self.chr_is_rendering_fetch {
-                    // B registers only used for BG when in 8x16 sprite mode
+                    // B registers are used for BG rendering only in 8x16 sprite mode.
                     self.ppumask_rendering_enabled
                         && self.sprite_8x16_mode
                         && !self.chr_fetch_is_sprite
@@ -645,15 +658,17 @@ impl MMC5Mapper {
 
                 if use_b_registers {
                     // B registers: 4 x 1KB banks, wrap index for full 8KB
-                    self.chr_bank_b[(bank_idx & 0x03) as usize]
+                    let index = (bank_idx & 0x03) as usize;
+                    bank_from_b(index)
                 } else {
-                    self.chr_bank_a[bank_idx as usize]
+                    let index = bank_idx as usize;
+                    bank_from_a(index)
                 }
             }
             _ => unreachable!(),
         };
 
-        apply_upper_bits(self.chr_bank_upper, bank)
+        apply_upper_bits(upper, bank)
     }
 
     /// Check if extended attribute mode is active for CHR banking (rendering only)
@@ -861,10 +876,16 @@ impl Mapper for MMC5Mapper {
             open_bus
         } else if (0x5C00..=0x5FFF).contains(&addr) {
             let mode = self.ex_ram_mode & 0x03;
-            if mode <= 0x01 {
-                open_bus
-            } else {
-                self.read_prg(addr)
+            match mode {
+                0x00 => {
+                    if self.ppumask_rendering_enabled {
+                        open_bus
+                    } else {
+                        self.read_prg(addr)
+                    }
+                }
+                0x01 => open_bus,
+                _ => self.read_prg(addr),
             }
         } else {
             self.read_prg(addr)
@@ -895,26 +916,41 @@ impl Mapper for MMC5Mapper {
             }
 
             0x5100 => {
-                trace_mapper!(1; "MMC5 PRG_mode={}", value & 0x03);
-                self.prg_mode = value & 0x03;
+                let new_value = value & 0x03;
+                if self.prg_mode != new_value {
+                    trace_mapper!(1; "MMC5 PRG_mode={}", new_value);
+                }
+                self.prg_mode = new_value;
             }
 
             0x5101 => {
-                trace_mapper!(1; "MMC5 CHR_mode={}", value & 0x03);
-                self.chr_mode = value & 0x03;
+                let new_value = value & 0x03;
+                if self.chr_mode != new_value {
+                    trace_mapper!(1; "MMC5 CHR_mode={}", new_value);
+                }
+                self.chr_mode = new_value;
             }
 
             // PRG-RAM write protection
             0x5102 => {
+                if self.prg_ram_protect_1 != value {
+                    trace_mapper!(1; "MMC5 PRG_ram_protect_1=${:02X}", value);
+                }
                 self.prg_ram_protect_1 = value;
             }
             0x5103 => {
+                if self.prg_ram_protect_2 != value {
+                    trace_mapper!(1; "MMC5 PRG_ram_protect_2=${:02X}", value);
+                }
                 self.prg_ram_protect_2 = value;
             }
 
             // ExRAM mode
             0x5104 => {
-                trace_mapper!(1; "MMC5 ExRAM_mode={}", value & 0x03);
+                let prev = self.ex_ram_mode & 0x03;
+                if prev != (value & 0x03) {
+                    trace_mapper!(1; "MMC5 ExRAM_mode={}", value & 0x03);
+                }
                 self.ex_ram_mode = value & 0x03;
                 if (self.ex_ram_mode & 0x03) >= 2 {
                     self.split_active = false;
@@ -924,82 +960,123 @@ impl Mapper for MMC5Mapper {
 
             // Nametable mapping
             0x5105 => {
-                trace_mapper!(1; "MMC5 nametable_mapping=${:02X}", value);
+                let prev = self.nametable_mapping;
+                if prev != value {
+                    trace_mapper!(1; "MMC5 nametable_mapping=${:02X}", value);
+                }
                 self.nametable_mapping = value;
+                let _ = prev;
             }
 
             // Fill mode tile
             0x5106 => {
+                if self.fill_tile != value {
+                    trace_mapper!(1; "MMC5 fill_tile=${:02X}", value);
+                }
                 self.fill_tile = value;
             }
 
             // Fill mode attribute
             0x5107 => {
-                self.fill_attr = value & 0x03;
+                let new_value = value & 0x03;
+                if self.fill_attr != new_value {
+                    trace_mapper!(1; "MMC5 fill_attr={}", new_value);
+                }
+                self.fill_attr = new_value;
             }
 
             // PRG bankswitch registers
             0x5113 => {
-                trace_mapper!(1; "MMC5 PRG_bank_5113=${:02X}", value);
+                if self.prg_bank_5113 != value {
+                    trace_mapper!(1; "MMC5 PRG_bank_5113=${:02X}", value);
+                }
                 self.prg_bank_5113 = value;
             }
             0x5114 => {
-                trace_mapper!(1; "MMC5 PRG_bank_5114=${:02X}", value);
+                if self.prg_bank_5114 != value {
+                    trace_mapper!(1; "MMC5 PRG_bank_5114=${:02X}", value);
+                }
                 self.prg_bank_5114 = value;
             }
             0x5115 => {
-                trace_mapper!(1; "MMC5 PRG_bank_5115=${:02X}", value);
+                if self.prg_bank_5115 != value {
+                    trace_mapper!(1; "MMC5 PRG_bank_5115=${:02X}", value);
+                }
                 self.prg_bank_5115 = value;
             }
             0x5116 => {
-                trace_mapper!(1; "MMC5 PRG_bank_5116=${:02X}", value);
+                if self.prg_bank_5116 != value {
+                    trace_mapper!(1; "MMC5 PRG_bank_5116=${:02X}", value);
+                }
                 self.prg_bank_5116 = value;
             }
             0x5117 => {
-                trace_mapper!(1; "MMC5 PRG_bank_5117=${:02X}", value);
+                if self.prg_bank_5117 != value {
+                    trace_mapper!(1; "MMC5 PRG_bank_5117=${:02X}", value);
+                }
                 self.prg_bank_5117 = value;
             }
 
             // CHR bank registers
             0x5120..=0x5127 => {
                 let index = (addr - 0x5120) as usize;
-                trace_mapper!(1; "MMC5 CHR_bank_A[{}]=${:02X}", index, value);
+                if self.chr_bank_a[index] != value {
+                    trace_mapper!(1; "MMC5 CHR_bank_A[{}]=${:02X}", index, value);
+                }
                 self.chr_bank_a[index] = value;
+                self.chr_bank_a_upper[index] = self.chr_bank_upper & 0x03;
                 self.chr_last_set_written = false; // A registers
             }
             0x5128..=0x512B => {
                 let index = (addr - 0x5128) as usize;
-                trace_mapper!(1; "MMC5 CHR_bank_B[{}]=${:02X}", index, value);
+                if self.chr_bank_b[index] != value {
+                    trace_mapper!(1; "MMC5 CHR_bank_B[{}]=${:02X}", index, value);
+                }
                 self.chr_bank_b[index] = value;
+                self.chr_bank_b_upper[index] = self.chr_bank_upper & 0x03;
                 self.chr_last_set_written = true; // B registers
             }
             0x5130 => {
                 // Upper CHR bank bits for extended attribute mode
-                trace_mapper!(1; "MMC5 CHR_bank_upper=${:02X}", value & 0x03);
-                self.chr_bank_upper = value & 0x03;
+                let new_value = value & 0x03;
+                if self.chr_bank_upper != new_value {
+                    trace_mapper!(1; "MMC5 CHR_bank_upper=${:02X}", new_value);
+                }
+                self.chr_bank_upper = new_value;
             }
 
             // Split screen
             0x5200 => {
-                trace_mapper!(1; "MMC5 split_mode=${:02X}", value);
+                if self.split_mode != value {
+                    trace_mapper!(1; "MMC5 split_mode=${:02X}", value);
+                }
                 self.split_mode = value;
             }
             0x5201 => {
+                if self.split_scroll != value {
+                    trace_mapper!(1; "MMC5 split_scroll=${:02X}", value);
+                }
                 self.split_scroll = value;
             }
             0x5202 => {
-                trace_mapper!(1; "MMC5 split_bank=${:02X}", value);
+                if self.split_bank != value {
+                    trace_mapper!(1; "MMC5 split_bank=${:02X}", value);
+                }
                 self.split_bank = value;
             }
 
             // IRQ
             0x5203 => {
-                trace_mapper!(1; "MMC5 IRQ_scanline_compare={}", value);
+                if self.irq_scanline_compare != value {
+                    trace_mapper!(1; "MMC5 IRQ_scanline_compare={}", value);
+                }
                 self.irq_scanline_compare = value;
             }
             0x5204 => {
                 let enabled = (value & 0x80) != 0;
-                trace_mapper!(1; "MMC5 IRQ_enabled={}", enabled);
+                if self.irq_enabled != enabled {
+                    trace_mapper!(1; "MMC5 IRQ_enabled={}", enabled);
+                }
                 self.irq_enabled = enabled;
                 if !self.irq_enabled {
                     self.irq_pending.set(false);
@@ -1025,11 +1102,9 @@ impl Mapper for MMC5Mapper {
                         }
                     }
                     0x00 => {
-                        if self.ppumask_rendering_enabled {
-                            let index = (addr - 0x5C00) as usize;
-                            if let Some(slot) = self.ex_ram.get_mut(index) {
-                                *slot = value;
-                            }
+                        let index = (addr - 0x5C00) as usize;
+                        if let Some(slot) = self.ex_ram.get_mut(index) {
+                            *slot = value;
                         }
                     }
                     0x01 => {
@@ -1217,7 +1292,13 @@ impl Mapper for MMC5Mapper {
         }
 
         // $5105 nametable mapping overrides always take precedence.
-        match self.nametable_mapping_for_addr(addr) {
+        let mapping = self.nametable_mapping_for_addr(addr);
+
+        match mapping {
+            0 | 1 => {
+                let index = (mapping as usize) * 0x400 + page_offset;
+                return Some(self.ciram.get(index).copied().unwrap_or(0));
+            }
             2 => {
                 // ExRAM (1KB). Multiple quadrants mapped to ExRAM will alias.
                 // When $5104 is set to mode 2 or 3, nametable reads return 0 instead of ExRAM data.
@@ -1274,6 +1355,14 @@ impl Mapper for MMC5Mapper {
         }
 
         match self.nametable_mapping_for_addr(addr) {
+            0 | 1 => {
+                let index = (self.nametable_mapping_for_addr(addr) as usize) * 0x400
+                    + (addr & 0x03FF) as usize;
+                if let Some(slot) = self.ciram.get_mut(index) {
+                    *slot = value;
+                }
+                true
+            }
             2 => {
                 let index = (addr & 0x03FF) as usize;
                 if let Some(slot) = self.ex_ram.get_mut(index) {
@@ -1298,7 +1387,7 @@ impl Mapper for MMC5Mapper {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_mapper!(1; "[mmc5] cpu_cycle (audio)");
+        trace_mapper!(5; "[mmc5] cpu_cycle (audio)");
         self.pulse1.cpu_cycle();
         self.pulse2.cpu_cycle();
 
@@ -1395,11 +1484,11 @@ impl Mapper for MMC5Mapper {
         } else if mapping == 0b01_01_01_01 {
             // All to B -> Single screen
             return MirroringMode::SingleScreen;
-        } else if mapping == 0b00_00_01_01 {
-            // Vertical mirroring (A|A, B|B)
-            return MirroringMode::Vertical;
         } else if mapping == 0b01_00_01_00 {
-            // Horizontal mirroring (A|B, A|B)
+            // Vertical mirroring (A|B, A|B)
+            return MirroringMode::Vertical;
+        } else if mapping == 0b01_01_00_00 {
+            // Horizontal mirroring (A|A, B|B)
             return MirroringMode::Horizontal;
         }
 
@@ -1460,6 +1549,8 @@ impl Mapper for MMC5Mapper {
         snapshot.extend_from_slice(&self.chr_bank_a);
         snapshot.extend_from_slice(&self.chr_bank_b);
         snapshot.push(self.chr_bank_upper);
+        snapshot.extend_from_slice(&self.chr_bank_a_upper);
+        snapshot.extend_from_slice(&self.chr_bank_b_upper);
         snapshot.push(self.chr_fetch_is_sprite as u8);
         snapshot.push(self.chr_last_set_written as u8);
         snapshot.push(self.chr_is_rendering_fetch as u8);
@@ -1469,6 +1560,10 @@ impl Mapper for MMC5Mapper {
         snapshot.push(self.nametable_mapping);
         snapshot.push(self.fill_tile);
         snapshot.push(self.fill_attr);
+
+        let ciram_len = self.ciram.len() as u16;
+        snapshot.extend_from_slice(&ciram_len.to_le_bytes());
+        snapshot.extend_from_slice(&self.ciram);
 
         snapshot.push(self.ex_ram_mode);
         let ex_len = self.ex_ram.len() as u16;
@@ -1575,6 +1670,18 @@ impl Mapper for MMC5Mapper {
         let Some(chr_bank_upper) = next_u8(data, &mut idx) else {
             return;
         };
+        if data.len() < idx + 8 + 4 {
+            return;
+        }
+
+        let mut chr_bank_a_upper = [0u8; 8];
+        chr_bank_a_upper.copy_from_slice(&data[idx..idx + 8]);
+        idx += 8;
+
+        let mut chr_bank_b_upper = [0u8; 4];
+        chr_bank_b_upper.copy_from_slice(&data[idx..idx + 4]);
+        idx += 4;
+
         let Some(chr_fetch_is_sprite_raw) = next_u8(data, &mut idx) else {
             return;
         };
@@ -1606,6 +1713,16 @@ impl Mapper for MMC5Mapper {
         let Some(fill_attr) = next_u8(data, &mut idx) else {
             return;
         };
+
+        let Some(ciram_len) = next_u16(data, &mut idx) else {
+            return;
+        };
+        let ciram_len = ciram_len as usize;
+        if data.len() < idx + ciram_len {
+            return;
+        }
+        let ciram_slice = &data[idx..idx + ciram_len];
+        idx += ciram_len;
 
         let Some(ex_ram_mode) = next_u8(data, &mut idx) else {
             return;
@@ -1760,6 +1877,8 @@ impl Mapper for MMC5Mapper {
         self.chr_bank_a = chr_bank_a;
         self.chr_bank_b = chr_bank_b;
         self.chr_bank_upper = chr_bank_upper;
+        self.chr_bank_a_upper = chr_bank_a_upper;
+        self.chr_bank_b_upper = chr_bank_b_upper;
         self.chr_fetch_is_sprite = chr_fetch_is_sprite;
         self.chr_last_set_written = chr_last_set_written;
         self.chr_is_rendering_fetch = chr_is_rendering_fetch;
@@ -1769,6 +1888,8 @@ impl Mapper for MMC5Mapper {
         self.nametable_mapping = nametable_mapping;
         self.fill_tile = fill_tile;
         self.fill_attr = fill_attr;
+        let to_copy = ciram_slice.len().min(self.ciram.len());
+        self.ciram[..to_copy].copy_from_slice(&ciram_slice[..to_copy]);
         self.ex_ram_mode = ex_ram_mode;
         let to_copy = ex_ram_slice.len().min(self.ex_ram.len());
         self.ex_ram[..to_copy].copy_from_slice(&ex_ram_slice[..to_copy]);
@@ -1817,6 +1938,7 @@ mod tests {
     use crate::cartridge::cartridge::Cartridge;
     use crate::cartridge::cartridge::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::tracing::{Tracing, clear_mapper_traces, init_tracing, take_mapper_traces};
 
     use super::MMC5Mapper;
 
@@ -1881,6 +2003,42 @@ mod tests {
         // PRG ROM: 16KB.
         rom.extend(vec![0u8; 16 * 1024]);
         rom
+    }
+
+    #[test]
+    fn test_mmc5_register_writes_emit_mapper_traces() {
+        init_tracing(Tracing {
+            enabled: true,
+            cpu: 0,
+            ppu: 0,
+            apu: 0,
+            mapper: 1,
+            nestest: false,
+        });
+        clear_mapper_traces();
+
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        mmc5.write_prg(0x5100, 0x02);
+        mmc5.write_prg(0x5101, 0x03);
+        mmc5.write_prg(0x5102, 0xAA);
+        mmc5.write_prg(0x5103, 0x55);
+        mmc5.write_prg(0x5104, 0x01);
+        mmc5.write_prg(0x5105, 0xC3);
+        mmc5.write_prg(0x5106, 0x12);
+        mmc5.write_prg(0x5107, 0x03);
+        mmc5.write_prg(0x5201, 0x40);
+
+        let output = take_mapper_traces().join("\n");
+        assert!(output.contains("MMC5 PRG_mode=2"));
+        assert!(output.contains("MMC5 CHR_mode=3"));
+        assert!(output.contains("MMC5 PRG_ram_protect_1=$AA"));
+        assert!(output.contains("MMC5 PRG_ram_protect_2=$55"));
+        assert!(output.contains("MMC5 ExRAM_mode=1"));
+        assert!(output.contains("MMC5 nametable_mapping=$C3"));
+        assert!(output.contains("MMC5 fill_tile=$12"));
+        assert!(output.contains("MMC5 fill_attr=3"));
+        assert!(output.contains("MMC5 split_scroll=$40"));
     }
 
     #[test]
@@ -2072,6 +2230,29 @@ mod tests {
         let mut mmc5 = MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
 
         mmc5.write_prg(0x5205, 3);
+
+        #[test]
+        fn test_mmc5_registers_snapshot_preserves_ciram() {
+            let prg_rom = banked_data(8 * 1024, 2);
+            let chr_rom = banked_data(1 * 1024, 8);
+
+            let mut mapper =
+                create_mmc5_mapper(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
+                    .expect("MMC5 (mapper 5) should be implemented");
+
+            mapper.write_prg(0x5105, 0x44);
+            assert!(mapper.write_nametable(0x2000, 0x11));
+            assert!(mapper.write_nametable(0x2400, 0x22));
+
+            let saved = mapper.registers_snapshot();
+
+            let mut restored = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+                .expect("MMC5 (mapper 5) should be implemented");
+            restored.restore_registers(&saved);
+
+            assert_eq!(restored.read_nametable(0x2000), Some(0x11));
+            assert_eq!(restored.read_nametable(0x2400), Some(0x22));
+        }
         mmc5.write_prg(0x5206, 4);
 
         let open_bus = 0xA5;
@@ -2377,6 +2558,85 @@ mod tests {
     }
 
     #[test]
+    fn test_mmc5_exram_mode0_allows_cpu_writes_when_rendering_disabled() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Disable rendering (PPUMASK = 0).
+        mapper.ppu_write_mask(0x00);
+
+        // Mode 0: ExRAM as nametable. Writes to ExRAM should still be allowed.
+        mapper.write_prg(0x5104, 0x00);
+        mapper.write_prg(0x5C00, 0x37);
+
+        // Switch to mode 2 to allow CPU reads back from ExRAM.
+        mapper.write_prg(0x5104, 0x02);
+        assert_eq!(mapper.read_prg(0x5C00), 0x37);
+    }
+
+    #[test]
+    fn test_mmc5_exram_mode0_allows_cpu_reads_when_rendering_disabled() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Disable rendering (PPUMASK = 0).
+        mapper.ppu_write_mask(0x00);
+
+        // Mode 0: ExRAM as nametable. CPU reads should be allowed when rendering is disabled.
+        mapper.write_prg(0x5104, 0x00);
+        mapper.write_prg(0x5C00, 0x5A);
+
+        assert_eq!(mapper.read_prg_open_bus(0x5C00, 0x00), 0x5A);
+    }
+
+    #[test]
+    fn test_mmc5_nametable_mapping_sets_vertical_and_horizontal_mirroring() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // $5105: A/B/A/B (0x44) should be vertical mirroring.
+        mapper.write_prg(0x5105, 0x44);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+
+        // $5105: A/A/B/B (0x50) should be horizontal mirroring.
+        mapper.write_prg(0x5105, 0x50);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+    }
+
+    #[test]
+    fn test_mmc5_chr_mode3_ignores_banks_for_bg_in_8x8_sprite_mode() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Enable rendering and select 8x8 sprites.
+        mapper.ppu_write_mask(0x18);
+        mapper.ppu_write_ctrl(0x00);
+
+        // 1KB CHR mode.
+        mapper.write_prg(0x5101, 0x03);
+
+        // Set A and B bank 0 to different values.
+        mapper.write_prg(0x5120, 0x01); // A[0]
+        mapper.write_prg(0x5128, 0x02); // B[0]
+
+        // In 8x8 sprite mode, $5128-$512B are ignored; BG uses A banks.
+        mapper.ppu_set_chr_fetch_is_sprite(false);
+        assert_eq!(mapper.read_chr(0x0000), 0x01);
+    }
+
+    #[test]
     fn test_mmc5_nametable_mapping_fill_mode_returns_fill_tile_and_attr() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
@@ -2669,6 +2929,53 @@ mod tests {
         mapper.ppu_write_mask(0x08);
         mapper.ppu_set_chr_fetch_is_sprite(false);
         mapper.ppu_scanline(0, true);
+
+        #[test]
+        fn test_mmc5_nametable_mapping_ciram_pages_per_quadrant() {
+            let prg_rom = banked_data(8 * 1024, 2);
+            let chr_rom = banked_data(1 * 1024, 8);
+
+            let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+                .expect("MMC5 (mapper 5) should be implemented");
+
+            // $5105 = 0x44: NTA=0, NTB=1, NTC=0, NTD=1
+            mapper.write_prg(0x5105, 0x44);
+
+            // Write distinct values into the A and B CIRAM pages via PPU addresses.
+            assert!(mapper.write_nametable(0x2000, 0x11));
+            assert!(mapper.write_nametable(0x2400, 0x22));
+
+            // Direct quadrant reads should return the corresponding page values.
+            assert_eq!(mapper.read_nametable(0x2000), Some(0x11));
+            assert_eq!(mapper.read_nametable(0x2400), Some(0x22));
+
+            // NTC maps to page 0, NTD maps to page 1 for 0x44.
+            assert_eq!(mapper.read_nametable(0x2800), Some(0x11));
+            assert_eq!(mapper.read_nametable(0x2C00), Some(0x22));
+        }
+
+        #[test]
+        fn test_mmc5_chr_upper_bits_latched_on_bank_write() {
+            let prg_rom = banked_data(8 * 1024, 2);
+            let chr_rom = banked_data_with_upper_marker(1 * 1024, 512);
+
+            let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+                .expect("MMC5 (mapper 5) should be implemented");
+
+            // 1KB CHR mode.
+            mapper.write_prg(0x5101, 0x03);
+
+            // Set upper bits to 1, then write bank 0 into $5120.
+            mapper.write_prg(0x5130, 0x01);
+            mapper.write_prg(0x5120, 0x00);
+
+            // Change upper bits to 2 without rewriting $5120.
+            mapper.write_prg(0x5130, 0x02);
+
+            // If upper bits are latched on write, bank should still read with upper bits = 1.
+            mapper.ppu_set_chr_fetch_is_sprite(false);
+            assert_eq!(mapper.read_chr(0x0000), 0x01);
+        }
 
         let _ = mapper.read_nametable(0x2000);
         assert_eq!(mapper.read_chr(0x0000), 2);

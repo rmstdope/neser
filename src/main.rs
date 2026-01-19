@@ -18,6 +18,8 @@ mod savestate;
 mod tracing;
 
 use config::{ApuChannels, Config, ParseResult};
+use savestate::SaveState;
+use std::fs;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
@@ -95,7 +97,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cart = cartridge::Cartridge::load_from_file(rom_path)?;
     nes_instance.insert_cartridge(cart);
 
-    nes_instance.reset(false);
+    if config.load_state {
+        let state_path = nes_instance
+            .state_path()
+            .ok_or("No save-state path available for loaded ROM")?;
+        let bytes = fs::read(&state_path)?;
+        let state = SaveState::from_bytes(&bytes)
+            .map_err(|err| format!("Failed to deserialize save-state: {err}"))?;
+        nes_instance
+            .load_state(&state)
+            .map_err(|err| format!("Failed to restore save-state: {err}"))?;
+    } else {
+        nes_instance.reset(false);
+    }
 
     // Apply channel enable/disable settings
     {

@@ -369,7 +369,7 @@ impl Mapper for Vrc2Vrc4Mapper {
     }
 
     fn cpu_cycle(&mut self) {
-        trace_mapper!(1; "[vrc2_vrc4] cpu_cycle (irq)");
+        trace_mapper!(5; "[vrc2_vrc4] cpu_cycle (irq)");
         if self.variant.has_irq() {
             self.tick_vrc_irq();
         }
