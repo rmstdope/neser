@@ -513,7 +513,28 @@ impl MMC5Mapper {
         } else {
             0x8000
         };
-        self.read_prg_rom_8k(bank_base.wrapping_add(offset_8k), addr, base_addr)
+
+        if !is_high && (reg & 0x80) == 0 {
+            if offset_8k == 0 {
+                self.read_prg_ram_8k(reg, addr, base_addr)
+            } else {
+                self.read_prg_ram_8k(reg.wrapping_add(1), addr, base_addr)
+            }
+        } else {
+            self.read_prg_rom_8k(bank_base.wrapping_add(offset_8k), addr, base_addr)
+        }
+    }
+
+    fn write_window_16k_mode1(&mut self, reg: u8, addr: u16, value: u8) {
+        if (reg & 0x80) != 0 {
+            return;
+        }
+
+        if addr >= 0xA000 {
+            self.write_prg_ram_8k(reg.wrapping_add(1), addr, 0xA000, value);
+        } else {
+            self.write_prg_ram_8k(reg, addr, 0x8000, value);
+        }
     }
 
     fn get_chr_bank(&self, addr: u16) -> u16 {
@@ -1048,6 +1069,12 @@ impl Mapper for MMC5Mapper {
                         }
                         _ => {}
                     },
+
+                    1 => {
+                        if let 0x8000..=0xBFFF = addr {
+                            self.write_window_16k_mode1(self.prg_bank_5115, addr, value);
+                        }
+                    }
 
                     _ => {}
                 }
@@ -2093,6 +2120,27 @@ mod tests {
         assert_eq!(mapper.read_prg(0xA000), 3);
         assert_eq!(mapper.read_prg(0xC000), 4);
         assert_eq!(mapper.read_prg(0xE000), 7);
+    }
+
+    #[test]
+    fn test_mmc5_prg_mode_1_allows_ram_in_low_16k_window() {
+        let prg_rom = banked_data(8 * 1024, 4);
+        let chr_rom = banked_data(1 * 1024, 1);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // PRG mode 1: two 16KB banks.
+        mapper.write_prg(0x5100, 0x01);
+
+        // Select PRG-RAM for $8000-$BFFF via $5115 (bit 7 = 0).
+        mapper.write_prg(0x5115, 0x00);
+        mapper.write_prg(0x8000, 0xAA);
+        assert_eq!(mapper.read_prg(0x8000), 0xAA);
+
+        // Switch $8000-$BFFF back to ROM (bit 7 = 1); bank 2 maps to value 2.
+        mapper.write_prg(0x5115, 0x80 | 2);
+        assert_eq!(mapper.read_prg(0x8000), 2);
     }
 
     #[test]
