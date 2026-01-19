@@ -133,7 +133,8 @@ pub trait Mapper {
 
     /// Notify mapper of PPU address bus changes
     /// Used for detecting A12 rising edges (for MMC3 IRQ)
-    fn ppu_address_changed(&mut self, addr: u16);
+    /// Default implementation is a no-op.
+    fn ppu_address_changed(&mut self, _addr: u16) {}
 
     /// Set the current PPU CHR fetch kind.
     ///

@@ -375,8 +375,6 @@ impl Mapper for Namco163Mapper {
         }
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {}
-
     fn cpu_cycle(&mut self) {
         self.audio_clock();
 

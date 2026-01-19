@@ -517,10 +517,6 @@ impl Mapper for VRC6Mapper {
         }
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {
-        // VRC6 does not use A12 edge IRQs (VRC IRQ is CPU-cycle based).
-    }
-
     fn cpu_cycle(&mut self) {
         trace_mapper!(5; "[vrc6] cpu_cycle (irq)");
         self.audio.cpu_cycle();

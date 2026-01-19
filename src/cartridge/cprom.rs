@@ -98,10 +98,6 @@ impl Mapper for CpromMapper {
         }
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {
-        // CPROM doesn't care about PPU address changes (no IRQ)
-    }
-
     fn get_mirroring(&self) -> MirroringMode {
         self.mirroring
     }
