@@ -73,7 +73,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let default_rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let default_rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let default_rom_path = "roms/games/donkey kong.nes";
-    let default_rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
+    // let default_rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
     // let default_rom_path = "roms/games/Mike Tyson's Punch-Out!! (Japan, USA) (Rev 1).nes";
     let default_rom_path = "roms/games/Castlevania III - Dracula's Curse (USA).nes";
     // let default_rom_path = "roms/games/Akumajyou_Densetsu_(Tr).nes";

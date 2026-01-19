@@ -92,6 +92,7 @@ pub struct MMC5Mapper {
     chr_last_set_written: bool, // false = A regs ($5120-$5127), true = B regs ($5128-$512B)
     chr_is_rendering_fetch: bool, // true when PPU is rendering, false for PPUDATA reads
     sprite_8x16_mode: bool,     // true when PPUCTRL bit 5 is set (8x16 sprites)
+    ppumask_rendering_enabled: bool,
 
     // Nametable control
     nametable_mapping: u8, // $5105
@@ -280,6 +281,7 @@ impl MMC5Mapper {
             chr_last_set_written: false,
             chr_is_rendering_fetch: false,
             sprite_8x16_mode: false,
+            ppumask_rendering_enabled: true,
 
             // Nametable control
             nametable_mapping: 0,
@@ -516,7 +518,8 @@ impl MMC5Mapper {
         // ExRAM format: AACC CCCC
         //   AA (bits 7-6) = palette select
         //   CC CCCC (bits 5-0) = 4KB CHR bank
-        if (self.ex_ram_mode & 0x03) == 0x01
+        if self.ppumask_rendering_enabled
+            && (self.ex_ram_mode & 0x03) == 0x01
             && !self.chr_fetch_is_sprite
             && self.chr_is_rendering_fetch
         {
@@ -563,7 +566,11 @@ impl MMC5Mapper {
             1 => {
                 // 4KB mode: use $5123 (low) or $5127 (high)
                 // Minimal split-screen behavior: when split is active, background fetches use $5202.
-                if self.chr_is_rendering_fetch && !self.chr_fetch_is_sprite && self.split_active {
+                if self.ppumask_rendering_enabled
+                    && self.chr_is_rendering_fetch
+                    && !self.chr_fetch_is_sprite
+                    && self.split_active
+                {
                     return self.split_bank;
                 }
                 // For PPUDATA, use last set written; for rendering, always use A
@@ -593,7 +600,9 @@ impl MMC5Mapper {
 
                 let use_b_registers = if self.chr_is_rendering_fetch {
                     // B registers only used for BG when in 8x16 sprite mode
-                    self.sprite_8x16_mode && !self.chr_fetch_is_sprite
+                    self.ppumask_rendering_enabled
+                        && self.sprite_8x16_mode
+                        && !self.chr_fetch_is_sprite
                 } else {
                     self.chr_last_set_written // PPUDATA uses last written set
                 };
@@ -611,7 +620,8 @@ impl MMC5Mapper {
 
     /// Check if extended attribute mode is active for CHR banking (rendering only)
     fn is_extended_attribute_mode_chr_active(&self) -> bool {
-        (self.ex_ram_mode & 0x03) == 0x01
+        self.ppumask_rendering_enabled
+            && (self.ex_ram_mode & 0x03) == 0x01
             && !self.chr_fetch_is_sprite
             && self.chr_is_rendering_fetch
     }
@@ -1016,9 +1026,20 @@ impl Mapper for MMC5Mapper {
         // affect scanline counting and other features.
         const SHOW_BG: u8 = 0b0000_1000;
         const SHOW_SPRITES: u8 = 0b0001_0000;
-        let _rendering_enabled = (value & (SHOW_BG | SHOW_SPRITES)) != 0;
-        // Currently we rely on ppu_scanline's rendering_enabled parameter for this.
-        // This is here for potential future refinement.
+        let rendering_enabled = (value & (SHOW_BG | SHOW_SPRITES)) != 0;
+
+        if !rendering_enabled {
+            self.ppumask_rendering_enabled = false;
+            self.split_active = false;
+            return;
+        }
+
+        if !self.ppumask_rendering_enabled {
+            // Transition from disabled -> enabled resets scanline counter.
+            self.scanline_counter = 0;
+        }
+
+        self.ppumask_rendering_enabled = true;
     }
 
     fn read_nametable(&mut self, addr: u16) -> Option<u8> {
@@ -1071,7 +1092,10 @@ impl Mapper for MMC5Mapper {
         // Extended attribute mode ($5104=1): override attribute-table reads with per-tile
         // palette bits from ExRAM.
         // ExRAM format: AACC CCCC where AA (bits 7-6) is the palette select
-        if (self.ex_ram_mode & 0x03) == 0x01 && page_offset >= 0x03C0 {
+        if self.ppumask_rendering_enabled
+            && (self.ex_ram_mode & 0x03) == 0x01
+            && page_offset >= 0x03C0
+        {
             let ex = self
                 .ex_ram
                 .get(self.last_bg_tile_index)
@@ -1279,6 +1303,7 @@ impl Mapper for MMC5Mapper {
         snapshot.push(self.chr_last_set_written as u8);
         snapshot.push(self.chr_is_rendering_fetch as u8);
         snapshot.push(self.sprite_8x16_mode as u8);
+        snapshot.push(self.ppumask_rendering_enabled as u8);
 
         snapshot.push(self.nametable_mapping);
         snapshot.push(self.fill_tile);
@@ -1396,11 +1421,15 @@ impl Mapper for MMC5Mapper {
         let Some(sprite_8x16_mode_raw) = next_u8(data, &mut idx) else {
             return;
         };
+        let Some(ppumask_rendering_enabled_raw) = next_u8(data, &mut idx) else {
+            return;
+        };
 
         let chr_fetch_is_sprite = chr_fetch_is_sprite_raw != 0;
         let chr_last_set_written = chr_last_set_written_raw != 0;
         let chr_is_rendering_fetch = chr_is_rendering_fetch_raw != 0;
         let sprite_8x16_mode = sprite_8x16_mode_raw != 0;
+        let ppumask_rendering_enabled = ppumask_rendering_enabled_raw != 0;
 
         let Some(nametable_mapping) = next_u8(data, &mut idx) else {
             return;
@@ -1548,6 +1577,7 @@ impl Mapper for MMC5Mapper {
         self.chr_last_set_written = chr_last_set_written;
         self.chr_is_rendering_fetch = chr_is_rendering_fetch;
         self.sprite_8x16_mode = sprite_8x16_mode;
+        self.ppumask_rendering_enabled = ppumask_rendering_enabled;
 
         self.nametable_mapping = nametable_mapping;
         self.fill_tile = fill_tile;
@@ -2145,6 +2175,33 @@ mod tests {
         // should fall through to internal VRAM (mapper returns None).
         let _ = mapper.read_nametable(0x2000);
         assert_eq!(mapper.read_nametable(0x23C0), None);
+    }
+
+    #[test]
+    fn test_mmc5_ppumask_disable_blocks_extended_attribute_substitution() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Enable extended attribute mode and provide a palette entry in ExRAM.
+        mapper.write_prg(0x5104, 0x01);
+        mapper.write_prg(0x5C00, 0x40); // palette 1 in bits 7-6
+
+        // With rendering enabled, extended attributes should override attribute reads.
+        mapper.ppu_write_mask(0x18);
+        let _ = mapper.read_nametable(0x2000);
+        assert_eq!(mapper.read_nametable(0x23C0), Some(0x55));
+
+        // When PPUMASK disables rendering (E bits cleared), substitutions are disabled.
+        mapper.ppu_write_mask(0x00);
+        let _ = mapper.read_nametable(0x2000);
+        assert_eq!(
+            mapper.read_nametable(0x23C0),
+            None,
+            "PPUMASK disable should block extended attribute substitution"
+        );
     }
 
     #[test]
