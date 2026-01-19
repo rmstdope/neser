@@ -2,6 +2,7 @@ use crate::cartridge::MirroringMode;
 use std::io;
 
 use super::axrom::AxROMMapper;
+use super::rom_db;
 use super::bandai_fcg::BandaiFcgMapper;
 use super::bnrom_nina::BnromNinaMapper;
 use super::camerica::CamericaMapper;
@@ -52,7 +53,7 @@ impl MapperContext {
     /// Create mapper metadata with default submapper 0, 1×8KB PRG-RAM (not battery-backed),
     /// and CRC32 computed from PRG+CHR data.
     pub fn new(mapper: u8, prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        let crc32 = calculate_rom_crc32(&prg_rom, &chr_rom);
+        let crc32 = rom_db::calculate_rom_crc32(&prg_rom, &chr_rom);
         Self {
             mapper: mapper as u16,
             submapper: 0,
@@ -325,48 +326,6 @@ pub trait Mapper {
     fn restore_registers(&mut self, _data: &[u8]) {}
 }
 
-/// Calculate CRC32 of ROM data (PRG + CHR combined).
-/// Uses the standard CRC-32 (ISO 3309) polynomial.
-pub fn calculate_rom_crc32(prg_rom: &[u8], chr_rom: &[u8]) -> u32 {
-    const CRC32_TABLE: [u32; 256] = {
-        let mut table = [0u32; 256];
-        let mut i = 0;
-        while i < 256 {
-            let mut crc = i as u32;
-            let mut j = 0;
-            while j < 8 {
-                if crc & 1 != 0 {
-                    crc = (crc >> 1) ^ 0xEDB88320;
-                } else {
-                    crc >>= 1;
-                }
-                j += 1;
-            }
-            table[i] = crc;
-            i += 1;
-        }
-        table
-    };
-
-    let mut crc = 0xFFFFFFFFu32;
-    for &byte in prg_rom.iter().chain(chr_rom.iter()) {
-        let index = ((crc ^ byte as u32) & 0xFF) as usize;
-        crc = (crc >> 8) ^ CRC32_TABLE[index];
-    }
-    !crc
-}
-
-/// CRC32 values for ROMs that require alternate (NEC) MMC3 IRQ behavior.
-const MMC3_ALTERNATE_IRQ_CRCS: &[u32] = &[
-    0x633AFE6F, // 6-MMC3_alt.nes (blargg mmc3_test_2)
-    0xF312D1DE, // 5.MMC3_rev_A.nes (blargg mmc3_irq_tests)
-];
-
-/// Check if a ROM CRC requires alternate MMC3 IRQ behavior.
-fn requires_mmc3_alternate_irq(crc: u32) -> bool {
-    MMC3_ALTERNATE_IRQ_CRCS.contains(&crc)
-}
-
 fn vrc2_vrc4_21(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
     Vrc2Vrc4Mapper::new(21, prg_rom, chr_rom, mirroring)
 }
@@ -454,7 +413,7 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
 
     if mapper_number == 4 {
         let crc32 = metadata.crc32;
-        let use_alternate_irq = requires_mmc3_alternate_irq(crc32);
+        let use_alternate_irq = rom_db::requires_mmc3_alternate_irq(crc32);
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
         if use_alternate_irq {
             eprintln!(
