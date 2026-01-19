@@ -179,6 +179,12 @@ impl Bus {
     }
 
     fn read_internal(&mut self, addr: u16, clock_joypads: bool) -> u8 {
+        if (0xFFFA..=0xFFFB).contains(&addr)
+            && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
+        {
+            cartridge.borrow_mut().mapper_mut().on_irq_vector_read(addr);
+        }
+
         if let Some(value) = self.read_from_devices(addr, clock_joypads) {
             self.open_bus = value;
             return value;
@@ -283,6 +289,12 @@ impl Bus {
         self.open_bus = value;
 
         if self.write_to_devices(addr, value, is_dummy_write) {
+            if addr == 0x4014
+                && !is_dummy_write
+                && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
+            {
+                cartridge.borrow_mut().mapper_mut().on_oam_dma();
+            }
             return self.dma_triggered.replace(false);
         }
 
