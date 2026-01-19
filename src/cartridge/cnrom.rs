@@ -1,10 +1,9 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const CHR_BANK_SIZE: usize = 8192; // 8KB
-const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 
 /// CNROM mapper (Mapper 3)
 ///
@@ -20,7 +19,7 @@ const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 pub struct CNROMMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,
-    chr_rom: Vec<u8>,
+    chr_rom: BankedRom,
     mirroring: MirroringMode,
     chr_bank_select: u8,
 }
@@ -30,16 +29,10 @@ impl CNROMMapper {
         Self {
             prg_rom,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom,
+            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
             mirroring,
             chr_bank_select: 0,
         }
-    }
-
-    fn get_chr_bank_offset(&self) -> usize {
-        let num_banks = (self.chr_rom.len() / CHR_BANK_SIZE).max(1);
-        let bank = (self.chr_bank_select as usize) % num_banks;
-        bank * CHR_BANK_SIZE
     }
 }
 
@@ -74,9 +67,9 @@ impl Mapper for CNROMMapper {
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        let bank_offset = self.get_chr_bank_offset();
-        let index = bank_offset + (addr & CHR_MASK) as usize;
-        self.chr_rom.get(index).copied().unwrap_or(0)
+        let bank = self.chr_bank_select as usize;
+        let offset = (addr & 0x1FFF) as usize;
+        self.chr_rom.read(bank, offset)
     }
 
     fn write_chr(&mut self, _addr: u16, _value: u8) {
