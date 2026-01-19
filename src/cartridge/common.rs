@@ -195,6 +195,105 @@ impl ChrMemory {
     }
 }
 
+/// Banked ROM helper for PRG and CHR bank switching.
+///
+/// Centralizes common bank calculation logic used across mappers:
+/// - Automatic bank wrapping based on ROM size
+/// - Bank offset calculation
+/// - Bounds checking
+///
+/// # Example
+/// ```ignore
+/// // Create a helper for 16KB PRG banks
+/// let banked_prg = BankedRom::new(prg_rom, 0x4000);
+///
+/// // Read from bank 3, offset 0x1000
+/// let value = banked_prg.read(3, 0x1000);
+///
+/// // Or use with address calculation
+/// let value = banked_prg.read_with_base(bank, 0x8000, 0x9000);
+/// ```
+#[derive(Clone)]
+pub struct BankedRom {
+    data: Vec<u8>,
+    bank_size: usize,
+}
+
+impl BankedRom {
+    /// Create a new banked ROM with the specified bank size.
+    ///
+    /// # Arguments
+    /// * `data` - The ROM data
+    /// * `bank_size` - Size of each bank in bytes (e.g., 0x4000 for 16KB banks)
+    pub fn new(data: Vec<u8>, bank_size: usize) -> Self {
+        Self { data, bank_size }
+    }
+
+    /// Get the number of banks available.
+    #[inline]
+    pub fn num_banks(&self) -> usize {
+        if self.bank_size == 0 || self.data.is_empty() {
+            return 0;
+        }
+        self.data.len() / self.bank_size
+    }
+
+    /// Read a byte from a specific bank and offset.
+    ///
+    /// # Arguments
+    /// * `bank` - Bank number (automatically wraps based on available banks)
+    /// * `offset` - Offset within the bank (0 to bank_size-1)
+    ///
+    /// # Returns
+    /// The byte at the specified location, or 0 if out of bounds.
+    #[inline]
+    pub fn read(&self, bank: usize, offset: usize) -> u8 {
+        let num_banks = self.num_banks();
+        if num_banks == 0 {
+            return 0;
+        }
+
+        // Wrap bank number to available banks
+        let bank = bank % num_banks;
+
+        // Calculate absolute index
+        let index = bank * self.bank_size + offset;
+
+        // Return byte or 0 if out of bounds
+        self.data.get(index).copied().unwrap_or(0)
+    }
+
+    /// Read a byte using a base address calculation.
+    ///
+    /// This is a convenience method for typical mapper usage where you have
+    /// an address and need to read from a specific bank.
+    ///
+    /// # Arguments
+    /// * `bank` - Bank number (automatically wraps)
+    /// * `base_addr` - Base address for the bank (e.g., 0x8000)
+    /// * `addr` - The address being read
+    ///
+    /// # Returns
+    /// The byte at the calculated offset, or 0 if out of bounds.
+    #[inline]
+    pub fn read_with_base(&self, bank: usize, base_addr: u16, addr: u16) -> u8 {
+        let offset = addr.wrapping_sub(base_addr) as usize;
+        self.read(bank, offset)
+    }
+
+    /// Get the total size of the ROM data.
+    #[inline]
+    pub fn size(&self) -> usize {
+        self.data.len()
+    }
+
+    /// Get the bank size.
+    #[inline]
+    pub fn bank_size(&self) -> usize {
+        self.bank_size
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,5 +370,106 @@ mod tests {
         // Address should be masked to 8KB range
         assert_eq!(chr.read(0x0100), 0x42);
         assert_eq!(chr.read(0x2100), 0x42); // $2100 & $1FFF = $0100
+    }
+
+    #[test]
+    fn test_banked_rom_single_bank() {
+        // Create ROM with 1 bank of 8KB
+        let mut rom = vec![0; 8192];
+        rom[0] = 0xAA;
+        rom[8191] = 0xBB;
+
+        let banked = BankedRom::new(rom, 8192);
+
+        // Read from bank 0
+        assert_eq!(banked.read(0, 0), 0xAA);
+        assert_eq!(banked.read(0, 8191), 0xBB);
+    }
+
+    #[test]
+    fn test_banked_rom_multiple_banks() {
+        // Create ROM with 4 banks of 16KB each
+        let mut rom = vec![0; 64 * 1024];
+        for bank in 0..4 {
+            let start = bank * 16 * 1024;
+            rom[start] = (bank + 10) as u8;
+            rom[start + 16 * 1024 - 1] = (bank + 20) as u8;
+        }
+
+        let banked = BankedRom::new(rom, 16 * 1024);
+
+        // Read from different banks
+        assert_eq!(banked.read(0, 0), 10);
+        assert_eq!(banked.read(0, 16 * 1024 - 1), 20);
+        assert_eq!(banked.read(1, 0), 11);
+        assert_eq!(banked.read(1, 16 * 1024 - 1), 21);
+        assert_eq!(banked.read(3, 0), 13);
+        assert_eq!(banked.read(3, 16 * 1024 - 1), 23);
+    }
+
+    #[test]
+    fn test_banked_rom_wrapping() {
+        // Create ROM with 2 banks of 8KB each
+        let mut rom = vec![0; 16 * 1024];
+        rom[0] = 0x11;
+        rom[8192] = 0x22;
+
+        let banked = BankedRom::new(rom, 8192);
+
+        // Bank 0 and 1 should work
+        assert_eq!(banked.read(0, 0), 0x11);
+        assert_eq!(banked.read(1, 0), 0x22);
+
+        // Bank 2 should wrap to bank 0
+        assert_eq!(banked.read(2, 0), 0x11);
+
+        // Bank 3 should wrap to bank 1
+        assert_eq!(banked.read(3, 0), 0x22);
+    }
+
+    #[test]
+    fn test_banked_rom_out_of_bounds_offset() {
+        let rom = vec![0xAA; 8192];
+        let banked = BankedRom::new(rom, 8192);
+
+        // Reading beyond bank size should return 0
+        assert_eq!(banked.read(0, 8192), 0);
+        assert_eq!(banked.read(0, 10000), 0);
+    }
+
+    #[test]
+    fn test_banked_rom_num_banks() {
+        let rom = vec![0; 64 * 1024]; // 4 banks of 16KB
+        let banked = BankedRom::new(rom, 16 * 1024);
+
+        assert_eq!(banked.num_banks(), 4);
+    }
+
+    #[test]
+    fn test_banked_rom_empty() {
+        let rom = vec![];
+        let banked = BankedRom::new(rom, 8192);
+
+        // Empty ROM should have 0 banks but not panic
+        assert_eq!(banked.num_banks(), 0);
+        assert_eq!(banked.read(0, 0), 0);
+    }
+
+    #[test]
+    fn test_banked_rom_read_with_base_address() {
+        // Test read_with_base for typical mapper usage
+        let mut rom = vec![0; 32 * 1024];
+        for bank in 0..2 {
+            let start = bank * 16 * 1024;
+            rom[start] = (bank + 100) as u8;
+        }
+
+        let banked = BankedRom::new(rom, 16 * 1024);
+
+        // Read from bank 0 with base address $8000
+        assert_eq!(banked.read_with_base(0, 0x8000, 0x8000), 100);
+
+        // Read from bank 1 with base address $C000
+        assert_eq!(banked.read_with_base(1, 0xC000, 0xC000), 101);
     }
 }
