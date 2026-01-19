@@ -50,7 +50,7 @@ When working on an issue, this is important:
 - ALWAYS assign the issue to the developer working on it.
 - ALWAYS create a new branch from main named after the issue number and a short description of the work to be done, e.g., `42-add-user-authentication`. Once the work is completed and reviewed, merge the branch back into main using a pull request.
 - ALWAYS create a pull request (PR) for merging the sub-issue branch back into main.
-- Before merging the PR, ensure that all tests pass and that the code has been reviewed by at least one other person (the navigator).
+- Before merging the PR, ALWAYS wait for the navigator to explicitly approve the PR.
 - ALWAYS merge an issue branch back into main before starting to work on another issue. This ensures that the latest changes are always incorporated and reduces the risk of merge conflicts.
 
 When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the issue is a sub-issue of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
