@@ -2123,7 +2123,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mmc5_prg_mode_1_allows_ram_in_low_16k_window() {
+    fn test_mmc5_prg_mode_1_allows_ram_in_high_8k_half_of_low_16k_window() {
         let prg_rom = banked_data(8 * 1024, 4);
         let chr_rom = banked_data(1 * 1024, 1);
 
@@ -2135,12 +2135,20 @@ mod tests {
 
         // Select PRG-RAM for $8000-$BFFF via $5115 (bit 7 = 0).
         mapper.write_prg(0x5115, 0x00);
-        mapper.write_prg(0x8000, 0xAA);
-        assert_eq!(mapper.read_prg(0x8000), 0xAA);
+
+        // Writes in the second 8KB half should map to bank+1 (wrapping_add(1)).
+        mapper.write_prg(0xA000, 0x11);
+        assert_eq!(mapper.read_prg(0xA000), 0x11);
+
+        // Ensure first 8KB half remains distinct.
+        mapper.write_prg(0x8000, 0x22);
+        assert_eq!(mapper.read_prg(0x8000), 0x22);
+        assert_eq!(mapper.read_prg(0xA000), 0x11);
 
         // Switch $8000-$BFFF back to ROM (bit 7 = 1); bank 2 maps to value 2.
         mapper.write_prg(0x5115, 0x80 | 2);
         assert_eq!(mapper.read_prg(0x8000), 2);
+        assert_eq!(mapper.read_prg(0xA000), 3);
     }
 
     #[test]
