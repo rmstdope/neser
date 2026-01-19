@@ -2397,6 +2397,8 @@ mod tests {
         // Palette 2 in upper bits => replicated attribute byte 0xAA.
         mapper.write_prg(0x5C00, 0x80);
 
+        // Enable rendering so that tile/attribute fetch behavior matches PPU operation.
+        mapper.ppu_write_mask(0x18);
         let _ = mapper.read_nametable(0x2000);
         let attr = mapper
             .read_nametable(0x23C0)
