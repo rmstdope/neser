@@ -1222,12 +1222,22 @@ impl Mapper for MMC5Mapper {
                 return Some(self.ex_ram.get(page_offset).copied().unwrap_or(0));
             }
             3 => {
-                // Fill mode: tile area returns $5106, attribute area returns replicated $5107.
-                return Some(if page_offset < 0x03C0 {
-                    self.fill_tile
-                } else {
-                    self.fill_attribute_byte()
-                });
+                // Fill mode: tile area returns $5106. Attribute area returns $5107 unless
+                // extended attribute mode is active, in which case ExRAM supplies the palette.
+                if page_offset < 0x03C0 {
+                    return Some(self.fill_tile);
+                }
+
+                if self.ppumask_rendering_enabled && (self.ex_ram_mode & 0x03) == 0x01 {
+                    let ex = self
+                        .ex_ram
+                        .get(self.last_bg_tile_index)
+                        .copied()
+                        .unwrap_or(0);
+                    return Some(Self::replicate_2bit_attribute(ex >> 6));
+                }
+
+                return Some(self.fill_attribute_byte());
             }
             _ => {}
         }
@@ -2365,6 +2375,35 @@ mod tests {
 
         // Writes to fill-mode nametable should not fall through to internal VRAM.
         assert!(mapper.write_nametable(0x2000, 0x99));
+    }
+
+    #[test]
+    fn test_mmc5_fill_mode_uses_exram_attributes_in_extended_attribute_mode() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+            .expect("MMC5 (mapper 5) should be implemented");
+
+        // Enable extended attribute mode.
+        mapper.write_prg(0x5104, 0x01);
+
+        // Map $2000 quadrant to fill mode (value 3 in bits 1-0).
+        mapper.write_prg(0x5105, 0b00_00_00_11);
+        mapper.write_prg(0x5106, 0x55);
+        mapper.write_prg(0x5107, 0x00);
+
+        // ExRAM palette bits should override $5107 in extended attribute mode.
+        // Palette 2 in upper bits => replicated attribute byte 0xAA.
+        mapper.write_prg(0x5C00, 0x80);
+
+        // Enable rendering so that tile/attribute fetch behavior matches PPU operation.
+        mapper.ppu_write_mask(0x18);
+        let _ = mapper.read_nametable(0x2000);
+        let attr = mapper
+            .read_nametable(0x23C0)
+            .expect("fill-mode attribute read should be overridden");
+        assert_eq!(attr, 0xAA);
     }
 
     #[test]
