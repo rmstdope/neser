@@ -1,6 +1,6 @@
 use neser::autorun::{
-    AUTORUN_VERSION, AutorunFile, AutorunFrame, autorun_path_for_rom, crc32,
-    load_autorun_file, save_autorun_file,
+    AUTORUN_VERSION, AutorunFile, AutorunFrame, autorun_path_for_rom, crc32, load_autorun_file,
+    save_autorun_file,
 };
 use neser::cartridge::Cartridge;
 use neser::config::{Config, ParseResult};
@@ -8,10 +8,10 @@ use neser::input::Button;
 use neser::nes::Nes;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use std::path::PathBuf;
 use std::collections::HashMap;
+use std::io::{Write, stdout};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
-use std::io::{stdout, Write};
 
 struct ProgressBar {
     total: usize,
@@ -44,20 +44,26 @@ impl ProgressBar {
         }
         self.last_frame = frame;
         self.last_update = now;
-        let ratio = frame.min(self.total) as f32 / self.total as f32;
+        let bar = self.format_bar(frame);
+        print!("\r{bar}");
+        let _ = stdout().flush();
+    }
+
+    fn format_bar(&self, frame: usize) -> String {
+        let clamped_frame = frame.min(self.total);
+        let ratio = clamped_frame as f32 / self.total as f32;
         let filled = (ratio * self.width as f32).round() as usize;
         let empty = self.width.saturating_sub(filled);
         let percent = (ratio * 100.0).round() as u32;
-        let bar = format!(
-            "[{}{}] {:3}% ({}/{})",
+        let (elapsed, total) = format_time_pair(clamped_frame, self.total);
+        format!(
+            "[{}{}] {:3}% ({} / {})",
             "#".repeat(filled),
             "-".repeat(empty),
             percent,
-            frame,
-            self.total
-        );
-        print!("\r{bar}");
-        let _ = stdout().flush();
+            elapsed,
+            total
+        )
     }
 
     fn finish(&mut self) {
@@ -94,13 +100,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut gl_backend = neser::rendering::GlBackend::new(&sdl_context, &config)?;
         state.init_gamepads(&sdl_context)?;
 
-        run_loop(
-            &mut nes,
-            &mut gl_backend,
-            &mut event_pump,
-            mode,
-            &mut state,
-        )?;
+        run_loop(&mut nes, &mut gl_backend, &mut event_pump, mode, &mut state)?;
     }
 
     Ok(())
@@ -385,10 +385,7 @@ fn map_controller_button(button: sdl2::controller::Button) -> Option<Button> {
 
 fn init_gamepads(
     sdl_context: &sdl2::Sdl,
-) -> Result<
-    (Vec<sdl2::controller::GameController>, HashMap<u32, u8>),
-    String,
-> {
+) -> Result<(Vec<sdl2::controller::GameController>, HashMap<u32, u8>), String> {
     let game_controller_subsystem = sdl_context.game_controller()?;
     let num = game_controller_subsystem
         .load_mappings("gamecontrollerdb.txt")
@@ -421,6 +418,19 @@ fn init_gamepads(
     }
 
     Ok((controllers, controller_player_map))
+}
+
+fn format_time_pair(current_frames: usize, total_frames: usize) -> (String, String) {
+    const FPS: usize = 60;
+    let current_secs = current_frames / FPS;
+    let total_secs = total_frames / FPS;
+    (format_mm_ss(current_secs), format_mm_ss(total_secs))
+}
+
+fn format_mm_ss(seconds: usize) -> String {
+    let minutes = seconds / 60;
+    let secs = seconds % 60;
+    format!("{minutes:02}:{secs:02}")
 }
 
 fn apply_button_change(
@@ -488,8 +498,7 @@ fn finalize_run(
     match mode {
         Mode::Record => {
             state.autorun.checksum = last_frame_crc;
-            save_autorun_file(&state.autorun_path, &state.autorun)
-                .map_err(|e| format!("{e}"))?;
+            save_autorun_file(&state.autorun_path, &state.autorun).map_err(|e| format!("{e}"))?;
             println!("Autorun recorded to {}", state.autorun_path.display());
         }
         Mode::Playback => {
@@ -520,14 +529,18 @@ mod tests {
     }
 
     #[test]
+    fn test_progress_bar_formats_time() {
+        let mut progress = ProgressBar::new(120);
+        let text = progress.format_bar(90);
+
+        assert!(text.contains("01:30"));
+    }
+
+    #[test]
     fn test_parse_args_allows_headless_playback() {
-        let (mode, rom_path, _config) = parse_args_for_test(&[
-            "autorunner",
-            "--playback",
-            "--headless",
-            "roms/test.nes",
-        ])
-        .unwrap();
+        let (mode, rom_path, _config) =
+            parse_args_for_test(&["autorunner", "--playback", "--headless", "roms/test.nes"])
+                .unwrap();
         assert_eq!(mode, Mode::Playback);
         assert_eq!(rom_path, PathBuf::from("roms/test.nes"));
     }
