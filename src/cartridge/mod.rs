@@ -29,4 +29,5 @@ mod vrc6;
 pub use cartridge::{Cartridge, MirroringMode};
 #[allow(unused_imports)]
 pub use mapper::{Mapper, MapperContext};
+#[allow(unused_imports)]
 pub(crate) use rom_db::calculate_rom_crc32;
