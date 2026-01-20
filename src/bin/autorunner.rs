@@ -87,7 +87,8 @@ enum ExitReason {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let Some((mode, rom_path, config, headless, overwrite_recording)) = parse_args(&args)? else {
+    let Some((mode, rom_path, config, headless, overwrite_recording, extend)) = parse_args(&args)?
+    else {
         return Ok(());
     };
 
@@ -97,7 +98,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     nes.reset(false);
 
     let autorun_path = autorun_path_for_rom(&rom_path);
-    let mut state = RunnerState::new(mode, autorun_path, overwrite_recording)?;
+    let mut state = RunnerState::new_with_extend(mode, autorun_path, overwrite_recording, extend)?;
 
     if headless {
         run_headless_loop(&mut nes, mode, &mut state)?;
@@ -113,7 +114,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config, bool, bool)>, String> {
+fn parse_args(
+    args: &[String],
+) -> Result<Option<(Mode, PathBuf, Config, bool, bool, bool)>, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(None);
@@ -129,8 +132,12 @@ fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config, bool, bo
 
     let headless = args.iter().any(|arg| arg == "--headless");
     let overwrite_recording = args.iter().any(|arg| arg == "--overwrite-recording");
+    let extend = args.iter().any(|arg| arg == "--extend");
     if headless && mode == Mode::Record {
         return Err("Headless mode is only supported for --playback".to_string());
+    }
+    if extend && mode != Mode::Record {
+        return Err("--extend is only supported for --record".to_string());
     }
 
     let filtered_args: Vec<String> = args
@@ -140,6 +147,7 @@ fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config, bool, bo
                 && *arg != "--playback"
                 && *arg != "--headless"
                 && *arg != "--overwrite-recording"
+                && *arg != "--extend"
         })
         .cloned()
         .collect();
@@ -163,6 +171,7 @@ fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config, bool, bo
         config,
         headless,
         overwrite_recording,
+        extend,
     )))
 }
 
@@ -174,6 +183,7 @@ fn print_help() {
     println!("  --playback         Play back joypad input from <ROM>.autorun");
     println!("  --headless         Run playback without a window (requires --playback)");
     println!("  --overwrite-recording  Replace existing autorun recording");
+    println!("  --extend           Extend an existing autorun recording");
     println!("  --pal              Use PAL TV system (default: NTSC)");
     println!("  --no-vsync         Disable VSync (default: enabled)");
     println!("  --video-scale <N>  Window scaling factor (default: 4.0)");
@@ -188,6 +198,7 @@ struct RunnerState {
     controller_player_map: HashMap<u32, u8>,
     _controllers: Vec<sdl2::controller::GameController>,
     frame_index: usize,
+    extending_playback: bool,
 }
 
 impl RunnerState {
@@ -224,7 +235,44 @@ impl RunnerState {
             controller_player_map: HashMap::new(),
             _controllers: Vec::new(),
             frame_index: 0,
+            extending_playback: false,
         })
+    }
+
+    fn new_with_extend(
+        mode: Mode,
+        autorun_path: PathBuf,
+        overwrite_recording: bool,
+        extend: bool,
+    ) -> Result<Self, String> {
+        if mode == Mode::Record && extend {
+            if autorun_path.exists() {
+                let autorun = load_autorun_file(&autorun_path)?;
+                return Ok(Self {
+                    autorun,
+                    autorun_path,
+                    controller_player_map: HashMap::new(),
+                    _controllers: Vec::new(),
+                    frame_index: 0,
+                    extending_playback: true,
+                });
+            }
+
+            return Ok(Self {
+                autorun: AutorunFile {
+                    version: AUTORUN_VERSION,
+                    frames: Vec::new(),
+                    checksum: 0,
+                },
+                autorun_path,
+                controller_player_map: HashMap::new(),
+                _controllers: Vec::new(),
+                frame_index: 0,
+                extending_playback: false,
+            });
+        }
+
+        Self::new(mode, autorun_path, overwrite_recording)
     }
 
     fn init_gamepads(&mut self, sdl_context: &sdl2::Sdl) -> Result<(), String> {
@@ -273,7 +321,7 @@ fn run_loop(
 
         match mode {
             Mode::Record => {
-                state.record_frame(player1, player2);
+                process_record_mode(nes, state, &mut player1, &mut player2);
             }
             Mode::Playback => {
                 if let Some(frame) = state.next_playback_frame() {
@@ -299,9 +347,27 @@ fn run_loop(
 
         let overlay_text = match mode {
             Mode::Playback => Some(playback_overlay_text(state.frame_index, total_frames)),
-            Mode::Record => Some(record_overlay_text(state.autorun.frames.len())),
+            Mode::Record => {
+                let current_frames = if state.extending_playback {
+                    state.frame_index
+                } else {
+                    state.autorun.frames.len()
+                };
+                if state.extending_playback {
+                    Some(record_overlay_text_with_total(
+                        current_frames,
+                        total_frames,
+                        true,
+                    ))
+                } else {
+                    Some(record_overlay_text_with_mode(current_frames, false))
+                }
+            }
         };
-        let _ = gl_backend.render(nes, false, overlay_text.as_deref());
+        let overlay_blink_red = matches!(mode, Mode::Record)
+            && state.extending_playback
+            && extend_playback_blink_red(state.frame_index, total_frames);
+        let _ = gl_backend.render(nes, false, overlay_text.as_deref(), overlay_blink_red);
     }
 }
 
@@ -359,7 +425,11 @@ fn handle_event(
         } => {
             if mode == Mode::Record {
                 if let Some(button) = map_key_to_button(keycode) {
-                    apply_button_change(nes, player1, player2, button, true);
+                    if state.extending_playback {
+                        update_input_state(1, button, true, player1, player2);
+                    } else {
+                        apply_button_change(nes, player1, player2, button, true);
+                    }
                 }
             }
         }
@@ -369,7 +439,11 @@ fn handle_event(
         } => {
             if mode == Mode::Record {
                 if let Some(button) = map_key_to_button(keycode) {
-                    apply_button_change(nes, player1, player2, button, false);
+                    if state.extending_playback {
+                        update_input_state(1, button, false, player1, player2);
+                    } else {
+                        apply_button_change(nes, player1, player2, button, false);
+                    }
                 }
             }
         }
@@ -377,7 +451,11 @@ fn handle_event(
             if mode == Mode::Record {
                 if let Some(player) = state.controller_player_map.get(&which).copied() {
                     if let Some(nes_button) = map_controller_button(button) {
-                        set_button_state(nes, player, nes_button, true, player1, player2);
+                        if state.extending_playback {
+                            update_input_state(player, nes_button, true, player1, player2);
+                        } else {
+                            set_button_state(nes, player, nes_button, true, player1, player2);
+                        }
                     }
                 }
             }
@@ -386,7 +464,11 @@ fn handle_event(
             if mode == Mode::Record {
                 if let Some(player) = state.controller_player_map.get(&which).copied() {
                     if let Some(nes_button) = map_controller_button(button) {
-                        set_button_state(nes, player, nes_button, false, player1, player2);
+                        if state.extending_playback {
+                            update_input_state(player, nes_button, false, player1, player2);
+                        } else {
+                            set_button_state(nes, player, nes_button, false, player1, player2);
+                        }
                     }
                 }
             }
@@ -482,9 +564,35 @@ fn playback_overlay_text(current_frames: usize, total_frames: usize) -> String {
     format!("Playback\n{elapsed} / {total}")
 }
 
+#[cfg(test)]
 fn record_overlay_text(current_frames: usize) -> String {
+    record_overlay_text_with_mode(current_frames, false)
+}
+
+fn record_overlay_text_with_mode(current_frames: usize, playback: bool) -> String {
     let (elapsed, _) = format_time_pair(current_frames, current_frames);
-    format!("Recording\n{elapsed} / {elapsed}")
+    let label = if playback { "Playback" } else { "Recording" };
+    format!("{label}\n{elapsed} / {elapsed}")
+}
+
+fn record_overlay_text_with_total(
+    current_frames: usize,
+    total_frames: usize,
+    playback: bool,
+) -> String {
+    let (elapsed, total) = format_time_pair(current_frames, total_frames);
+    let label = if playback { "Playback" } else { "Recording" };
+    format!("{label}\n{elapsed} / {total}")
+}
+
+fn extend_playback_blink_red(current_frames: usize, total_frames: usize) -> bool {
+    const BLINK_WINDOW_FRAMES: usize = 60 * 3;
+    const BLINK_HALF_PERIOD_FRAMES: usize = 15;
+    let frames_remaining = total_frames.saturating_sub(current_frames);
+    if frames_remaining > BLINK_WINDOW_FRAMES {
+        return false;
+    }
+    (current_frames / BLINK_HALF_PERIOD_FRAMES) % 2 == 0
 }
 
 fn apply_button_change(
@@ -506,6 +614,16 @@ fn set_button_state(
     player2: &mut u8,
 ) {
     nes.set_button(player, button, pressed);
+    update_input_state(player, button, pressed, player1, player2);
+}
+
+fn update_input_state(
+    player: u8,
+    button: Button,
+    pressed: bool,
+    player1: &mut u8,
+    player2: &mut u8,
+) {
     let mask = 1u8 << button as u8;
     let state = if player == 1 { player1 } else { player2 };
     if pressed {
@@ -520,6 +638,28 @@ fn apply_buttons(nes: &mut Nes, player1: u8, player2: u8) {
         let mask = 1u8 << button as u8;
         nes.set_button(1, button, player1 & mask != 0);
         nes.set_button(2, button, player2 & mask != 0);
+    }
+}
+
+fn process_record_mode(nes: &mut Nes, state: &mut RunnerState, player1: &mut u8, player2: &mut u8) {
+    if state.extending_playback {
+        if let Some(frame) = state.next_playback_frame() {
+            apply_buttons(nes, frame.player1, frame.player2);
+        } else {
+            state.extending_playback = false;
+            clear_joypad_state(nes);
+            apply_buttons(nes, *player1, *player2);
+            state.record_frame(*player1, *player2);
+        }
+    } else {
+        state.record_frame(*player1, *player2);
+    }
+}
+
+fn clear_joypad_state(nes: &mut Nes) {
+    for button in all_buttons() {
+        nes.set_button(1, button, false);
+        nes.set_button(2, button, false);
     }
 }
 
@@ -583,7 +723,9 @@ mod tests {
     fn parse_args_for_test(args: &[&str]) -> Result<(Mode, PathBuf, Config), String> {
         let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
         match parse_args(&args)? {
-            Some((mode, rom_path, config, _headless, _overwrite)) => Ok((mode, rom_path, config)),
+            Some((mode, rom_path, config, _headless, _overwrite, _extend)) => {
+                Ok((mode, rom_path, config))
+            }
             None => Err("Expected arguments to return config".to_string()),
         }
     }
@@ -655,5 +797,134 @@ mod tests {
             .expect("should allow overwrite");
         assert!(!autorun_path.exists());
         assert!(state.autorun.frames.is_empty());
+    }
+
+    #[test]
+    fn test_extend_flag_no_existing_recording_behaves_like_record() {
+        let temp = tempdir().expect("temp dir");
+        let rom_path = temp.path().join("test.nes");
+        let autorun_path = autorun_path_for_rom(&rom_path);
+
+        let result = RunnerState::new_with_extend(Mode::Record, autorun_path.clone(), false, true);
+        match result {
+            Ok(state) => {
+                assert!(state.autorun.frames.is_empty());
+                assert!(!state.extending_playback);
+            }
+            Err(err) => panic!("unexpected error: {err}"),
+        }
+    }
+
+    #[test]
+    fn test_extend_flag_existing_recording_starts_with_playback() {
+        let temp = tempdir().expect("temp dir");
+        let rom_path = temp.path().join("test.nes");
+        let autorun_path = autorun_path_for_rom(&rom_path);
+        let autorun = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![AutorunFrame {
+                player1: 1,
+                player2: 2,
+            }],
+            checksum: 0,
+        };
+        save_autorun_file(&autorun_path, &autorun).expect("write autorun");
+
+        let result = RunnerState::new_with_extend(Mode::Record, autorun_path.clone(), false, true);
+        match result {
+            Ok(state) => {
+                assert_eq!(state.autorun.frames.len(), 1);
+                assert!(state.extending_playback);
+            }
+            Err(err) => panic!("unexpected error: {err}"),
+        }
+    }
+
+    #[test]
+    fn test_extend_overlay_label_switches_between_playback_and_recording() {
+        let playback_text = record_overlay_text_with_mode(0, true);
+        assert!(playback_text.starts_with("Playback\n"));
+
+        let recording_text = record_overlay_text_with_mode(0, false);
+        assert!(recording_text.starts_with("Recording\n"));
+    }
+
+    #[test]
+    fn test_extend_playback_overlay_uses_total_recording_length() {
+        let text = record_overlay_text_with_total(30 * 60, 120 * 60, true);
+        assert_eq!(text, "Playback\n00:30 / 02:00");
+    }
+
+    #[test]
+    fn test_extend_transition_applies_live_inputs() {
+        let mut nes = Nes::new(neser::nes::TvSystem::Ntsc);
+        apply_buttons(&mut nes, 1u8 << Button::A as u8, 0);
+
+        let mut state = RunnerState {
+            autorun: AutorunFile {
+                version: AUTORUN_VERSION,
+                frames: Vec::new(),
+                checksum: 0,
+            },
+            autorun_path: PathBuf::from("test.autorun"),
+            controller_player_map: HashMap::new(),
+            _controllers: Vec::new(),
+            frame_index: 0,
+            extending_playback: true,
+        };
+        let mut player1 = 1u8 << Button::B as u8;
+        let mut player2 = 0u8;
+
+        process_record_mode(&mut nes, &mut state, &mut player1, &mut player2);
+
+        let state_after = nes.save_state();
+        assert_eq!(
+            state_after.bus.joypad1.button_states,
+            1u8 << Button::B as u8
+        );
+        assert_eq!(state_after.bus.joypad2.button_states, 0);
+        assert_eq!(player1, 1u8 << Button::B as u8);
+        assert_eq!(player2, 0);
+    }
+
+    #[test]
+    fn test_extend_transition_records_live_input() {
+        let mut nes = Nes::new(neser::nes::TvSystem::Ntsc);
+        let mut state = RunnerState {
+            autorun: AutorunFile {
+                version: AUTORUN_VERSION,
+                frames: Vec::new(),
+                checksum: 0,
+            },
+            autorun_path: PathBuf::from("test.autorun"),
+            controller_player_map: HashMap::new(),
+            _controllers: Vec::new(),
+            frame_index: 0,
+            extending_playback: true,
+        };
+        let mut player1 = 1u8 << Button::A as u8;
+        let mut player2 = 1u8 << Button::B as u8;
+
+        process_record_mode(&mut nes, &mut state, &mut player1, &mut player2);
+
+        assert!(!state.extending_playback);
+        assert_eq!(player1, 1u8 << Button::A as u8);
+        assert_eq!(player2, 1u8 << Button::B as u8);
+        assert_eq!(state.autorun.frames.len(), 1);
+        let frame = &state.autorun.frames[0];
+        assert_eq!(frame.player1, 1u8 << Button::A as u8);
+        assert_eq!(frame.player2, 1u8 << Button::B as u8);
+    }
+
+    #[test]
+    fn test_extend_playback_blink_active_only_in_last_three_seconds() {
+        assert!(!extend_playback_blink_red(0, 500));
+        assert!(extend_playback_blink_red(0, 180));
+    }
+
+    #[test]
+    fn test_extend_playback_blink_toggles() {
+        assert!(extend_playback_blink_red(0, 180));
+        assert!(!extend_playback_blink_red(15, 180));
     }
 }

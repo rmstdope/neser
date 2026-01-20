@@ -47,6 +47,14 @@ impl OverlayTextColor {
     }
 }
 
+fn overlay_text_rgba(text_color: OverlayTextColor, blink_red: bool) -> [f32; 4] {
+    if blink_red {
+        [1.0, 0.0, 0.0, 1.0]
+    } else {
+        text_color.rgba()
+    }
+}
+
 fn overlay_background_color_for(text_color: OverlayTextColor) -> [f32; 4] {
     match text_color {
         OverlayTextColor::White => [0.0, 0.0, 0.0, 0.5],
@@ -332,6 +340,7 @@ impl GlBackend {
         nes: &crate::nes::Nes,
         show_debugger: bool,
         overlay_text: Option<&str>,
+        overlay_blink_red: bool,
     ) -> crate::debugger::ui::DebuggerUiAction {
         let mut action = crate::debugger::ui::DebuggerUiAction::default();
 
@@ -494,7 +503,11 @@ impl GlBackend {
                     )
                     .filled(true)
                     .build();
-                draw_list.add_text(text_pos, self.overlay_text_color.rgba(), text);
+                draw_list.add_text(
+                    text_pos,
+                    overlay_text_rgba(self.overlay_text_color, overlay_blink_red),
+                    text,
+                );
             }
 
             if show_debugger {
@@ -554,6 +567,18 @@ mod tests {
         assert_eq!(
             overlay_background_color_for(OverlayTextColor::Black),
             [1.0, 1.0, 1.0, 0.5]
+        );
+    }
+
+    #[test]
+    fn test_overlay_text_color_blink_red() {
+        assert_eq!(
+            overlay_text_rgba(OverlayTextColor::White, true),
+            [1.0, 0.0, 0.0, 1.0]
+        );
+        assert_eq!(
+            overlay_text_rgba(OverlayTextColor::Black, false),
+            [0.0, 0.0, 0.0, 1.0]
         );
     }
 }
