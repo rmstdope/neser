@@ -31,7 +31,6 @@ Or after building:
 
 ## Configuration
 
-
 NESER can be configured via config files and/or command-line arguments.
 
 ### Config File Locations & Priority
@@ -58,7 +57,6 @@ cp neser.conf.example ~/.neser/neser.conf
 # Or for directory-specific settings
 cp neser.conf.example neser.conf
 ```
-
 
 ### Command-Line Options
 
@@ -92,7 +90,6 @@ Options:
   --config <path>       Specify config file path (overrides default locations)
   --video-scale <N>     Window scaling factor, windowed mode only (e.g., 4.0)
 ```
-
 
 ### Shaders
 
