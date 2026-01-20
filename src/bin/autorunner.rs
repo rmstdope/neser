@@ -407,3 +407,40 @@ fn finalize_run(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_args_for_test(args: &[&str]) -> Result<(Mode, PathBuf, Config), String> {
+        let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        match parse_args(&args)? {
+            Some(result) => Ok(result),
+            None => Err("Expected arguments to return config".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_parse_args_allows_headless_playback() {
+        let (mode, rom_path, _config) = parse_args_for_test(&[
+            "autorunner",
+            "--playback",
+            "--headless",
+            "roms/test.nes",
+        ])
+        .unwrap();
+        assert_eq!(mode, Mode::Playback);
+        assert_eq!(rom_path, PathBuf::from("roms/test.nes"));
+    }
+
+    #[test]
+    fn test_parse_args_rejects_headless_record() {
+        let args = vec![
+            "autorunner".to_string(),
+            "--record".to_string(),
+            "--headless".to_string(),
+            "roms/test.nes".to_string(),
+        ];
+        assert!(parse_args(&args).is_err());
+    }
+}
