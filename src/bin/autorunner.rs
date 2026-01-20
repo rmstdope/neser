@@ -21,12 +21,13 @@ struct ProgressBar {
 }
 
 impl ProgressBar {
+    const MIN_TOTAL_FRAMES: usize = 1;
     const UPDATE_FRAME_INTERVAL: usize = 60;
     const UPDATE_TIME_INTERVAL: Duration = Duration::from_millis(100);
 
     fn new(total: usize) -> Self {
         Self {
-            total: total.max(1),
+            total: total.max(Self::MIN_TOTAL_FRAMES),
             width: 40,
             last_frame: 0,
             last_update: Instant::now(),
@@ -265,7 +266,9 @@ fn run_headless_loop(
     mode: Mode,
     state: &mut RunnerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    debug_assert!(matches!(mode, Mode::Playback));
+    if !matches!(mode, Mode::Playback) {
+        return Err("Headless mode is only supported for --playback".to_string().into());
+    }
     let total_frames = state.autorun.frames.len();
     let mut progress = ProgressBar::new(total_frames);
     let mut last_frame_crc = 0u32;
