@@ -265,8 +265,6 @@ fn run_headless_loop(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let total_frames = state.autorun.frames.len();
     let mut progress = ProgressBar::new(total_frames);
-    let mut player1 = 0u8;
-    let mut player2 = 0u8;
     let mut last_frame_crc = 0u32;
 
     progress.update(0);
@@ -277,8 +275,6 @@ fn run_headless_loop(
             Mode::Playback => {
                 if let Some(frame) = state.next_playback_frame() {
                     apply_buttons(nes, frame.player1, frame.player2);
-                    player1 = frame.player1;
-                    player2 = frame.player2;
                 } else {
                     progress.finish();
                     finalize_run(mode, state, last_frame_crc, nes)?;
@@ -297,9 +293,6 @@ fn run_headless_loop(
         nes.clear_ready_to_render();
         last_frame_crc = frame_checksum(nes);
         progress.update(state.frame_index);
-
-        let _ = player1;
-        let _ = player2;
     }
 }
 
