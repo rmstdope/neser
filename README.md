@@ -21,6 +21,7 @@ Record or play back joypad input alongside a ROM:
 ```bash
 cargo run --release --features sdl --bin autorunner -- --record roms/games/pac-man.nes
 cargo run --release --features sdl --bin autorunner -- --playback roms/games/pac-man.nes
+cargo run --release --features sdl --bin autorunner -- --playback --headless roms/games/pac-man.nes
 ```
 
 Or after building:
