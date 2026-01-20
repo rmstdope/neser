@@ -38,6 +38,11 @@ name = "joysticks"
 path = "src/bin/joysticks.rs"
 required-features = ["sdl"]
 
+[[bin]]
+name = "autorunner"
+path = "src/bin/autorunner.rs"
+required-features = ["sdl"]
+
 [dev-dependencies]
 serial_test = "3.2"
 png = "0.17"
