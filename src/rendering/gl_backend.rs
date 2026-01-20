@@ -9,7 +9,7 @@ use crate::debugger::ui as debugger_ui;
 use crate::rendering::shader_manager::ShaderManager;
 use std::time::Instant;
 
-pub(crate) struct GlBackend {
+pub struct GlBackend {
     window: Window,
     gl_context: GLContext,
     glow_context: std::sync::Arc<glow::Context>,
@@ -27,7 +27,7 @@ impl GlBackend {
     const MIN_SCALE: f32 = 1.0;
     const MAX_SCALE: f32 = 5.0;
 
-    pub(crate) fn new(sdl_context: &sdl2::Sdl, config: &Config) -> Result<Self, String> {
+    pub fn new(sdl_context: &sdl2::Sdl, config: &Config) -> Result<Self, String> {
         let tv_system = config.tv_system;
         let scale = Self::clamp_scale(config.video_scale);
         let vsync_enabled = config.vsync_enabled;
@@ -201,7 +201,7 @@ impl GlBackend {
         }
     }
 
-    pub(crate) fn handle_event(&mut self, event: &Event) {
+    pub fn handle_event(&mut self, event: &Event) {
         let io = self.imgui.io_mut();
 
         match *event {
@@ -280,7 +280,7 @@ impl GlBackend {
         }
     }
 
-    pub(crate) fn render(
+    pub fn render(
         &mut self,
         nes: &crate::nes::Nes,
         show_debugger: bool,
@@ -440,7 +440,7 @@ impl GlBackend {
         action
     }
 
-    pub(crate) fn cycle_shader(&mut self) {
+    pub fn cycle_shader(&mut self) {
         if let Err(e) = self.shader_manager.cycle_shader(self.glow_context.clone()) {
             eprintln!("Error cycling shader: {}", e);
         } else if let Some(name) = self.shader_manager.current_preset_name() {

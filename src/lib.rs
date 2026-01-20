@@ -26,4 +26,4 @@ pub mod game_verification;
 pub mod eventloop;
 
 #[cfg(feature = "sdl")]
-pub(crate) mod rendering;
+pub mod rendering;
