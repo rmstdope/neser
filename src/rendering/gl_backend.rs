@@ -17,10 +17,41 @@ pub struct GlBackend {
     renderer: imgui_opengl_renderer::Renderer,
     nes_texture: gl::types::GLuint,
     nes_texture_id: imgui::TextureId,
+    overlay_font: imgui::FontId,
+    overlay_text_color: OverlayTextColor,
     framebuffer: Vec<u8>,
     last_frame: Instant,
     debugger_view_state: debugger::DebuggerViewState,
     shader_manager: ShaderManager,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OverlayTextColor {
+    White,
+    Black,
+}
+
+fn toggle_overlay_text_color(color: OverlayTextColor) -> OverlayTextColor {
+    match color {
+        OverlayTextColor::White => OverlayTextColor::Black,
+        OverlayTextColor::Black => OverlayTextColor::White,
+    }
+}
+
+impl OverlayTextColor {
+    fn rgba(self) -> [f32; 4] {
+        match self {
+            OverlayTextColor::White => [1.0, 1.0, 1.0, 1.0],
+            OverlayTextColor::Black => [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+}
+
+fn overlay_background_color_for(text_color: OverlayTextColor) -> [f32; 4] {
+    match text_color {
+        OverlayTextColor::White => [0.0, 0.0, 0.0, 0.5],
+        OverlayTextColor::Black => [1.0, 1.0, 1.0, 0.5],
+    }
 }
 
 impl GlBackend {
@@ -114,6 +145,17 @@ impl GlBackend {
         let mut imgui = imgui::Context::create();
         imgui.set_ini_filename(None);
 
+        let overlay_font = {
+            let font_size = 26.0;
+            let sources = [imgui::FontSource::DefaultFontData {
+                config: Some(imgui::FontConfig {
+                    size_pixels: font_size,
+                    ..Default::default()
+                }),
+            }];
+            imgui.fonts().add_font(&sources)
+        };
+
         let renderer = imgui_opengl_renderer::Renderer::new(&mut imgui, |s| {
             video_subsystem.gl_get_proc_address(s) as _
         });
@@ -170,6 +212,8 @@ impl GlBackend {
             renderer,
             nes_texture,
             nes_texture_id,
+            overlay_font,
+            overlay_text_color: OverlayTextColor::White,
             framebuffer: vec![0u8; 256 * 240 * 3],
             last_frame: Instant::now(),
             debugger_view_state: debugger::DebuggerViewState::default(),
@@ -234,6 +278,9 @@ impl GlBackend {
                 repeat: false,
                 ..
             } => {
+                if keycode == Keycode::F1 {
+                    self.overlay_text_color = toggle_overlay_text_color(self.overlay_text_color);
+                }
                 Self::map_key(io, keycode, true);
             }
             Event::KeyUp {
@@ -284,6 +331,7 @@ impl GlBackend {
         &mut self,
         nes: &crate::nes::Nes,
         show_debugger: bool,
+        overlay_text: Option<&str>,
     ) -> crate::debugger::ui::DebuggerUiAction {
         let mut action = crate::debugger::ui::DebuggerUiAction::default();
 
@@ -427,6 +475,28 @@ impl GlBackend {
                     .build();
             }
 
+            if let Some(text) = overlay_text {
+                let draw_list = ui.get_background_draw_list();
+                let _font = ui.push_font(self.overlay_font);
+                let text_size = ui.calc_text_size(text);
+                let padding = [6.0, 4.0];
+                let text_pos = [x0 + 8.0, y0 + 8.0];
+                let rect_min = [text_pos[0] - padding[0], text_pos[1] - padding[1]];
+                let rect_max = [
+                    text_pos[0] + text_size[0] + padding[0],
+                    text_pos[1] + text_size[1] + padding[1],
+                ];
+                draw_list
+                    .add_rect(
+                        rect_min,
+                        rect_max,
+                        overlay_background_color_for(self.overlay_text_color),
+                    )
+                    .filled(true)
+                    .build();
+                draw_list.add_text(text_pos, self.overlay_text_color.rgba(), text);
+            }
+
             if show_debugger {
                 let snapshot = self.debugger_view_state.snapshot(nes);
                 action = debugger_ui::render(ui, &snapshot);
@@ -456,5 +526,34 @@ impl Drop for GlBackend {
         unsafe {
             gl::DeleteTextures(1, &self.nes_texture);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_overlay_text_color_toggle() {
+        assert_eq!(
+            toggle_overlay_text_color(OverlayTextColor::White),
+            OverlayTextColor::Black
+        );
+        assert_eq!(
+            toggle_overlay_text_color(OverlayTextColor::Black),
+            OverlayTextColor::White
+        );
+    }
+
+    #[test]
+    fn test_overlay_background_color_is_half_alpha_black() {
+        assert_eq!(
+            overlay_background_color_for(OverlayTextColor::White),
+            [0.0, 0.0, 0.0, 0.5]
+        );
+        assert_eq!(
+            overlay_background_color_for(OverlayTextColor::Black),
+            [1.0, 1.0, 1.0, 0.5]
+        );
     }
 }

@@ -477,7 +477,7 @@ impl EventLoop {
                         nes,
                     );
 
-                    let action = gl_backend.render(nes, self.debugger_open_requested);
+                    let action = gl_backend.render(nes, self.debugger_open_requested, None);
                     self.apply_debugger_ui_action(nes, action);
                     std::thread::sleep(std::time::Duration::from_millis(16));
                     continue;
@@ -541,7 +541,7 @@ impl EventLoop {
                 // );
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
-                let _ = gl_backend.render(nes, self.debugger_open_requested);
+                let _ = gl_backend.render(nes, self.debugger_open_requested, None);
                 // println!("Frame rendered.");
 
                 // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)

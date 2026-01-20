@@ -220,6 +220,7 @@ fn run_loop(
     let mut player1 = 0u8;
     let mut player2 = 0u8;
     let mut last_frame_crc = 0u32;
+    let total_frames = state.autorun.frames.len();
 
     loop {
         let events: Vec<_> = event_pump.poll_iter().collect();
@@ -257,7 +258,12 @@ fn run_loop(
         nes.clear_ready_to_render();
         last_frame_crc = frame_checksum(nes);
 
-        let _ = gl_backend.render(nes, false);
+        let overlay_text = if mode == Mode::Playback {
+            Some(playback_overlay_text(state.frame_index, total_frames))
+        } else {
+            None
+        };
+        let _ = gl_backend.render(nes, false, overlay_text.as_deref());
     }
 }
 
@@ -433,6 +439,11 @@ fn format_mm_ss(seconds: usize) -> String {
     format!("{minutes:02}:{secs:02}")
 }
 
+fn playback_overlay_text(current_frames: usize, total_frames: usize) -> String {
+    let (elapsed, total) = format_time_pair(current_frames, total_frames);
+    format!("{elapsed} / {total}")
+}
+
 fn apply_button_change(
     nes: &mut Nes,
     player1: &mut u8,
@@ -530,10 +541,17 @@ mod tests {
 
     #[test]
     fn test_progress_bar_formats_time() {
-        let mut progress = ProgressBar::new(120);
-        let text = progress.format_bar(90);
+        let progress = ProgressBar::new(120 * 60);
+        let text = progress.format_bar(90 * 60);
 
         assert!(text.contains("01:30"));
+    }
+
+    #[test]
+    fn test_playback_overlay_formats_time_pair() {
+        let text = playback_overlay_text(90 * 60, 120 * 60);
+
+        assert_eq!(text, "01:30 / 02:00");
     }
 
     #[test]
