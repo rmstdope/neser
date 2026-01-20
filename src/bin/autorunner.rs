@@ -265,6 +265,7 @@ fn run_headless_loop(
     mode: Mode,
     state: &mut RunnerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    debug_assert!(matches!(mode, Mode::Playback));
     let total_frames = state.autorun.frames.len();
     let mut progress = ProgressBar::new(total_frames);
     let mut last_frame_crc = 0u32;
