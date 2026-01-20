@@ -75,10 +75,6 @@ impl Mapper for NROMMapper {
         self.chr_memory.write(addr, value);
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {
-        // NROM doesn't care about PPU address changes
-    }
-
     fn get_mirroring(&self) -> MirroringMode {
         self.mirroring
     }

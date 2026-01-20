@@ -96,10 +96,6 @@ impl Mapper for CamericaMapper {
         self.chr_memory.write(addr, value);
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {
-        // Mapper 71 doesn't care about PPU address changes (no IRQ)
-    }
-
     fn get_mirroring(&self) -> MirroringMode {
         // Bit 4 of mirroring register determines one-screen mode
         if self.one_screen_upper {

@@ -93,10 +93,6 @@ impl Mapper for ColorDreamsMapper {
         // ColorDreams uses CHR-ROM, writes are ignored.
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {
-        // No IRQ functionality.
-    }
-
     fn get_mirroring(&self) -> MirroringMode {
         self.mirroring
     }

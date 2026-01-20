@@ -236,8 +236,6 @@ impl Mapper for Namco118Mapper {
         }
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {}
-
     fn get_mirroring(&self) -> MirroringMode {
         self.mirroring
     }

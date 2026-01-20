@@ -364,10 +364,6 @@ impl Mapper for Vrc2Vrc4Mapper {
         }
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {
-        // VRC2/VRC4 does not use A12 edge IRQs (VRC IRQ is CPU-cycle based).
-    }
-
     fn cpu_cycle(&mut self) {
         trace_mapper!(5; "[vrc2_vrc4] cpu_cycle (irq)");
         if self.variant.has_irq() {

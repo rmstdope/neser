@@ -80,10 +80,6 @@ impl Mapper for AxROMMapper {
         self.chr_memory.write(addr, value);
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {
-        // AxROM doesn't care about PPU address changes (no IRQ)
-    }
-
     fn get_mirroring(&self) -> MirroringMode {
         // Bit 4 determines one-screen mirroring mode
         // We use SingleScreen for both modes (PPU memory will handle the actual mirroring)

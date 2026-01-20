@@ -281,10 +281,6 @@ impl Mapper for BandaiFcgMapper {
         self.write_chr_byte(bank, offset, value);
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {
-        // Not used for this mapper
-    }
-
     fn cpu_cycle(&mut self) {
         trace_mapper!(5; "[bandai_fcg] cpu_cycle");
         // IRQ counter decrements every CPU cycle when enabled

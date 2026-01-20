@@ -372,10 +372,6 @@ impl Mapper for MMC1Mapper {
         }
     }
 
-    fn ppu_address_changed(&mut self, _addr: u16) {
-        // MMC1 doesn't use PPU address changes
-    }
-
     fn get_mirroring(&self) -> MirroringMode {
         self.get_mirroring_mode()
     }
