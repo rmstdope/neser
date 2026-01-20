@@ -637,9 +637,11 @@ mod tests {
         let autorun_path = autorun_path_for_rom(&rom_path);
         fs::write(&autorun_path, b"existing").expect("write autorun");
 
-        let err = RunnerState::new(Mode::Record, autorun_path, false)
-            .expect_err("should error without overwrite");
-        assert!(err.contains("overwrite"));
+        let result = RunnerState::new(Mode::Record, autorun_path, false);
+        match result {
+            Ok(_) => panic!("should error without overwrite"),
+            Err(err) => assert!(err.contains("overwrite")),
+        }
     }
 
     #[test]
