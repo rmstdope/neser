@@ -92,8 +92,148 @@ Options:
   --video-scale <N>     Window scaling factor, windowed mode only (e.g., 4.0)
 ```
 
-### Shaders
 
+### Blargg NES Test Suite Status
+
+NESER is tested against Blargg’s (and Blargg compatible) NES test ROMs to verify CPU, PPU, APU, DMA, and mapper correctness. The following test suites are currently passing in the main branch:
+
+**Test Suites (by directory and ROM file):**
+
+- **apu_mixer/**
+  - dmc.nes
+  - noise.nes
+  - triangle.nes
+  - square.nes
+- **apu_reset/**
+  - 4015_cleared.nes
+  - 4017_timing.nes
+  - 4017_written.nes
+  - irq_flag_cleared.nes
+  - len_ctrs_enabled.nes
+  - works_immediately.nes
+- **apu_test/rom_singles/**
+  - 1-len_ctr.nes
+  - 2-len_table.nes
+  - 3-irq_flag.nes
+  - 4-jitter.nes
+  - 5-len_timing.nes
+  - 6-irq_flag_timing.nes
+  - 7-dmc_basics.nes
+  - 8-dmc_rates.nes
+- **blargg_ppu_tests_2005.09.15b/**
+  - palette_ram.nes
+  - sprite_ram.nes
+  - vbl_clear_time.nes
+  - vram_access.nes
+- **branch_timing_tests/**
+  - 1.Branch_Basics.nes
+  - 2.Backward_Branch.nes
+  - 3.Forward_Branch.nes
+- **cpu_dummy_reads/**
+  - cpu_dummy_reads.nes
+- **cpu_dummy_writes/**
+  - cpu_dummy_writes_oam.nes
+  - cpu_dummy_writes_ppumem.nes
+- **cpu_exec_space/**
+  - test_cpu_exec_space_ppuio.nes
+  - test_cpu_exec_space_apu.nes
+- **cpu_interrupts_v2/rom_singles/**
+  - 1-cli_latency.nes
+  - 2-nmi_and_brk.nes
+  - 3-nmi_and_irq.nes
+  - 4-irq_and_dma.nes
+  - 5-branch_delays_irq.nes
+- **cpu_reset/**
+  - registers.nes
+  - ram_after_reset.nes
+- **cpu_timing_test6/**
+  - cpu_timing_test.nes
+- **dmc_dma_during_read4/**
+  - dma_2007_read.nes
+  - dma_2007_write.nes
+  - dma_4016_read.nes
+  - double_2007_read.nes
+  - read_write_2007.nes
+- **instr_misc/rom_singles/**
+  - 01-abs_x_wrap.nes
+  - 02-branch_wrap.nes
+  - 03-dummy_reads.nes
+  - 04-dummy_reads_apu.nes
+- **instr_test-v5/rom_singles/**
+  - 01-basics.nes
+  - 02-implied.nes
+  - 03-immediate.nes
+  - 04-zero_page.nes
+  - 05-zp_xy.nes
+  - 06-absolute.nes
+  - 07-abs_xy.nes
+  - 08-ind_x.nes
+  - 09-ind_y.nes
+  - 10-branches.nes
+  - 11-stack.nes
+  - 12-jmp_jsr.nes
+  - 13-rts.nes
+  - 14-rti.nes
+  - 15-brk.nes
+  - 16-special.nes
+- **instr_timing/rom_singles/**
+  - 1-instr_timing.nes
+  - 2-branch_timing.nes
+- **mmc3_irq_tests/**
+  - 1.Clocking.nes
+  - 2.Details.nes
+  - 3.A12_clocking.nes
+  - 4.Scanline_timing.nes
+  - 5.MMC3_rev_A.nes
+  - 6.MMC3_rev_B.nes
+- **mmc3_test_2/rom_singles/**
+  - 1-clocking.nes
+  - 2-details.nes
+  - 3-A12_clocking.nes
+  - 4-scanline_timing.nes
+  - 5-MMC3.nes
+  - 6-MMC3_alt.nes
+- **oam_read/**
+  - oam_read.nes
+- **oam_stress/**
+  - oam_stress.nes
+- **ppu_open_bus/**
+  - ppu_open_bus.nes
+- **ppu_read_buffer/**
+  - test_ppu_read_buffer.nes
+- **ppu_sprite_hit/rom_singles/**
+  - 01-basics.nes
+  - 02-alignment.nes
+  - 03-corners.nes
+  - 04-flip.nes
+  - 05-left_clip.nes
+  - 06-right_edge.nes
+  - 07-screen_bottom.nes
+  - 08-double_height.nes
+  - 09-timing.nes
+  - 10-timing_order.nes
+- **ppu_sprite_overflow/rom_singles/**
+  - 01-basics.nes
+  - 02-details.nes
+  - 03-timing.nes
+  - 04-obscure.nes
+  - 05-emulator.nes
+- **ppu_vbl_nmi/rom_singles/**
+  - 01-vbl_basics.nes
+  - 02-vbl_set_time.nes
+  - 03-vbl_clear_time.nes
+  - 04-nmi_control.nes
+  - 05-nmi_timing.nes
+  - 06-suppression.nes
+  - 07-nmi_on_timing.nes
+  - 08-nmi_off_timing.nes
+  - 09-even_odd_frames.nes
+  - 10-even_odd_timing.nes
+- **sprdma_and_dmc_dma/**
+  - sprdma_and_dmc_dma.nes
+  - sprdma_and_dmc_dma_512.nes
+
+> See src/blargg_tests.rs for the full list of passing tests and ROM paths.
 NESER supports shader presets for visual effects:
 
 - `shaders/stock.slangp`               No effect (raw pixels)
