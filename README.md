@@ -120,6 +120,12 @@ NESER is tested against Blargg’s (and Blargg compatible) NES test ROMs to veri
   - 6-irq_flag_timing.nes
   - 7-dmc_basics.nes
   - 8-dmc_rates.nes
+- **dmc_dma_during_read4/**
+  - dma_2007_read.nes
+  - dma_2007_write.nes
+  - dma_4016_read.nes
+  - double_2007_read.nes
+  - read_write_2007.nes
 - **blargg_ppu_tests_2005.09.15b/**
   - palette_ram.nes
   - sprite_ram.nes
@@ -148,12 +154,6 @@ NESER is tested against Blargg’s (and Blargg compatible) NES test ROMs to veri
   - ram_after_reset.nes
 - **cpu_timing_test6/**
   - cpu_timing_test.nes
-- **dmc_dma_during_read4/**
-  - dma_2007_read.nes
-  - dma_2007_write.nes
-  - dma_4016_read.nes
-  - double_2007_read.nes
-  - read_write_2007.nes
 - **instr_misc/rom_singles/**
   - 01-abs_x_wrap.nes
   - 02-branch_wrap.nes
