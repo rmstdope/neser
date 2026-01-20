@@ -43,7 +43,7 @@ impl ProgressBar {
         }
         self.last_frame = frame;
         self.last_update = now;
-        let ratio = (frame.min(self.total)) as f32 / self.total as f32;
+        let ratio = frame.min(self.total) as f32 / self.total as f32;
         let filled = (ratio * self.width as f32).round() as usize;
         let empty = self.width.saturating_sub(filled);
         let percent = (ratio * 100.0).round() as u32;
@@ -265,9 +265,6 @@ fn run_headless_loop(
     mode: Mode,
     state: &mut RunnerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let Mode::Playback = mode else {
-        return Err("Headless mode is only supported for --playback".to_string().into());
-    };
     let total_frames = state.autorun.frames.len();
     let mut progress = ProgressBar::new(total_frames);
     let mut last_frame_crc = 0u32;
