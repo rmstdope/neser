@@ -2,7 +2,6 @@ use crate::cartridge::MirroringMode;
 use std::io;
 
 use super::axrom::AxROMMapper;
-use super::rom_db;
 use super::bandai_fcg::BandaiFcgMapper;
 use super::bnrom_nina::BnromNinaMapper;
 use super::camerica::CamericaMapper;
@@ -20,6 +19,7 @@ use super::namco118::Namco118Mapper;
 use super::namco163::Namco163Mapper;
 use super::nina_tengen::NinaTengenMapper;
 use super::nrom::NROMMapper;
+use super::rom_db;
 use super::sunsoft_fme7::SunsoftFme7Mapper;
 use super::uxrom::UxROMMapper;
 use super::vrc2_vrc4::Vrc2Vrc4Mapper;
@@ -487,7 +487,7 @@ mod tests {
         let metadata = MapperContext::new(0, prg_rom, chr_rom, MirroringMode::Horizontal);
 
         let mut mapper = create_mapper(metadata).expect("NROM mapper should be created");
-        
+
         // Call ppu_address_changed - should be a no-op and not panic
         mapper.ppu_address_changed(0x0000);
         mapper.ppu_address_changed(0x1000);
