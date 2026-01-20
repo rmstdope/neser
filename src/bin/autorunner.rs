@@ -9,6 +9,7 @@ use neser::nes::Nes;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;
+use std::fs;
 use std::io::{Write, stdout};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -78,9 +79,15 @@ enum Mode {
     Playback,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExitReason {
+    Continue,
+    UserRequested,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let Some((mode, rom_path, config, headless)) = parse_args(&args)? else {
+    let Some((mode, rom_path, config, headless, overwrite_recording)) = parse_args(&args)? else {
         return Ok(());
     };
 
@@ -90,7 +97,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     nes.reset(false);
 
     let autorun_path = autorun_path_for_rom(&rom_path);
-    let mut state = RunnerState::new(mode, autorun_path)?;
+    let mut state = RunnerState::new(mode, autorun_path, overwrite_recording)?;
 
     if headless {
         run_headless_loop(&mut nes, mode, &mut state)?;
@@ -106,7 +113,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config, bool)>, String> {
+fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config, bool, bool)>, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(None);
@@ -121,13 +128,19 @@ fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config, bool)>, 
     };
 
     let headless = args.iter().any(|arg| arg == "--headless");
+    let overwrite_recording = args.iter().any(|arg| arg == "--overwrite-recording");
     if headless && mode == Mode::Record {
         return Err("Headless mode is only supported for --playback".to_string());
     }
 
     let filtered_args: Vec<String> = args
         .iter()
-        .filter(|arg| *arg != "--record" && *arg != "--playback" && *arg != "--headless")
+        .filter(|arg| {
+            *arg != "--record"
+                && *arg != "--playback"
+                && *arg != "--headless"
+                && *arg != "--overwrite-recording"
+        })
         .cloned()
         .collect();
 
@@ -144,7 +157,13 @@ fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config, bool)>, 
         .clone()
         .ok_or_else(|| "Missing ROM path argument".to_string())?;
 
-    Ok(Some((mode, PathBuf::from(rom_path), config, headless)))
+    Ok(Some((
+        mode,
+        PathBuf::from(rom_path),
+        config,
+        headless,
+        overwrite_recording,
+    )))
 }
 
 fn print_help() {
@@ -154,6 +173,7 @@ fn print_help() {
     println!("  --record           Record joypad input to <ROM>.autorun");
     println!("  --playback         Play back joypad input from <ROM>.autorun");
     println!("  --headless         Run playback without a window (requires --playback)");
+    println!("  --overwrite-recording  Replace existing autorun recording");
     println!("  --pal              Use PAL TV system (default: NTSC)");
     println!("  --no-vsync         Disable VSync (default: enabled)");
     println!("  --video-scale <N>  Window scaling factor (default: 4.0)");
@@ -171,13 +191,30 @@ struct RunnerState {
 }
 
 impl RunnerState {
-    fn new(mode: Mode, autorun_path: PathBuf) -> Result<Self, String> {
+    fn new(mode: Mode, autorun_path: PathBuf, overwrite_recording: bool) -> Result<Self, String> {
         let autorun = match mode {
-            Mode::Record => AutorunFile {
-                version: AUTORUN_VERSION,
-                frames: Vec::new(),
-                checksum: 0,
-            },
+            Mode::Record => {
+                if autorun_path.exists() {
+                    if overwrite_recording {
+                        fs::remove_file(&autorun_path).map_err(|e| {
+                            format!(
+                                "Failed to remove existing recording {}: {e}",
+                                autorun_path.display()
+                            )
+                        })?;
+                    } else {
+                        return Err(format!(
+                            "Recording already exists: {} (use --overwrite-recording to replace)",
+                            autorun_path.display()
+                        ));
+                    }
+                }
+                AutorunFile {
+                    version: AUTORUN_VERSION,
+                    frames: Vec::new(),
+                    checksum: 0,
+                }
+            }
             Mode::Playback => load_autorun_file(&autorun_path)?,
         };
 
@@ -226,8 +263,10 @@ fn run_loop(
         let events: Vec<_> = event_pump.poll_iter().collect();
         for event in events {
             gl_backend.handle_event(&event);
-            if handle_event(nes, mode, state, &mut player1, &mut player2, event)? {
-                finalize_run(mode, state, last_frame_crc, nes)?;
+            if handle_event(nes, mode, state, &mut player1, &mut player2, event)?
+                == ExitReason::UserRequested
+            {
+                finalize_run(mode, state, last_frame_crc, nes, true)?;
                 return Ok(());
             }
         }
@@ -242,7 +281,7 @@ fn run_loop(
                     player1 = frame.player1;
                     player2 = frame.player2;
                 } else {
-                    finalize_run(mode, state, last_frame_crc, nes)?;
+                    finalize_run(mode, state, last_frame_crc, nes, false)?;
                     return Ok(());
                 }
             }
@@ -258,10 +297,9 @@ fn run_loop(
         nes.clear_ready_to_render();
         last_frame_crc = frame_checksum(nes);
 
-        let overlay_text = if mode == Mode::Playback {
-            Some(playback_overlay_text(state.frame_index, total_frames))
-        } else {
-            None
+        let overlay_text = match mode {
+            Mode::Playback => Some(playback_overlay_text(state.frame_index, total_frames)),
+            Mode::Record => Some(record_overlay_text(state.autorun.frames.len())),
         };
         let _ = gl_backend.render(nes, false, overlay_text.as_deref());
     }
@@ -283,7 +321,7 @@ fn run_headless_loop(
             apply_buttons(nes, frame.player1, frame.player2);
         } else {
             progress.finish();
-            finalize_run(mode, state, last_frame_crc, nes)?;
+            finalize_run(mode, state, last_frame_crc, nes, false)?;
             return Ok(());
         }
 
@@ -307,13 +345,13 @@ fn handle_event(
     player1: &mut u8,
     player2: &mut u8,
     event: Event,
-) -> Result<bool, Box<dyn std::error::Error>> {
+) -> Result<ExitReason, Box<dyn std::error::Error>> {
     match event {
-        Event::Quit { .. } => return Ok(true),
+        Event::Quit { .. } => return Ok(ExitReason::UserRequested),
         Event::KeyDown {
             keycode: Some(Keycode::Escape),
             ..
-        } => return Ok(true),
+        } => return Ok(ExitReason::UserRequested),
         Event::KeyDown {
             keycode: Some(keycode),
             repeat: false,
@@ -356,7 +394,7 @@ fn handle_event(
         _ => {}
     }
 
-    Ok(false)
+    Ok(ExitReason::Continue)
 }
 
 fn map_key_to_button(keycode: Keycode) -> Option<Button> {
@@ -441,7 +479,12 @@ fn format_mm_ss(seconds: usize) -> String {
 
 fn playback_overlay_text(current_frames: usize, total_frames: usize) -> String {
     let (elapsed, total) = format_time_pair(current_frames, total_frames);
-    format!("{elapsed} / {total}")
+    format!("Playback\n{elapsed} / {total}")
+}
+
+fn record_overlay_text(current_frames: usize) -> String {
+    let (elapsed, _) = format_time_pair(current_frames, current_frames);
+    format!("Recording\n{elapsed} / {elapsed}")
 }
 
 fn apply_button_change(
@@ -505,6 +548,7 @@ fn finalize_run(
     state: &mut RunnerState,
     last_frame_crc: u32,
     _nes: &Nes,
+    interrupted_by_user: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         Mode::Record => {
@@ -513,6 +557,10 @@ fn finalize_run(
             println!("Autorun recorded to {}", state.autorun_path.display());
         }
         Mode::Playback => {
+            if interrupted_by_user {
+                println!("Playback interrupted by user");
+                return Ok(());
+            }
             if state.autorun.checksum != last_frame_crc {
                 return Err(format!(
                     "Checksum mismatch: expected {:08X} got {:08X}",
@@ -530,11 +578,12 @@ fn finalize_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::tempdir;
 
     fn parse_args_for_test(args: &[&str]) -> Result<(Mode, PathBuf, Config), String> {
         let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
         match parse_args(&args)? {
-            Some((mode, rom_path, config, _headless)) => Ok((mode, rom_path, config)),
+            Some((mode, rom_path, config, _headless, _overwrite)) => Ok((mode, rom_path, config)),
             None => Err("Expected arguments to return config".to_string()),
         }
     }
@@ -551,7 +600,14 @@ mod tests {
     fn test_playback_overlay_formats_time_pair() {
         let text = playback_overlay_text(90 * 60, 120 * 60);
 
-        assert_eq!(text, "01:30 / 02:00");
+        assert_eq!(text, "Playback\n01:30 / 02:00");
+    }
+
+    #[test]
+    fn test_record_overlay_formats_time_pair() {
+        let text = record_overlay_text(90 * 60);
+
+        assert_eq!(text, "Recording\n01:30 / 01:30");
     }
 
     #[test]
@@ -572,5 +628,30 @@ mod tests {
             "roms/test.nes".to_string(),
         ];
         assert!(parse_args(&args).is_err());
+    }
+
+    #[test]
+    fn test_recording_errors_when_existing_without_overwrite() {
+        let temp = tempdir().expect("temp dir");
+        let rom_path = temp.path().join("test.nes");
+        let autorun_path = autorun_path_for_rom(&rom_path);
+        fs::write(&autorun_path, b"existing").expect("write autorun");
+
+        let err = RunnerState::new(Mode::Record, autorun_path, false)
+            .expect_err("should error without overwrite");
+        assert!(err.contains("overwrite"));
+    }
+
+    #[test]
+    fn test_recording_overwrites_existing_when_flag_set() {
+        let temp = tempdir().expect("temp dir");
+        let rom_path = temp.path().join("test.nes");
+        let autorun_path = autorun_path_for_rom(&rom_path);
+        fs::write(&autorun_path, b"existing").expect("write autorun");
+
+        let state = RunnerState::new(Mode::Record, autorun_path.clone(), true)
+            .expect("should allow overwrite");
+        assert!(!autorun_path.exists());
+        assert!(state.autorun.frames.is_empty());
     }
 }
