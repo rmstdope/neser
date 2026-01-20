@@ -9,6 +9,7 @@
 /// - Length counter
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
+use crate::trace_apu;
 
 // Period lookup table for NTSC (in CPU cycles)
 const NOISE_PERIOD_TABLE: [u16; 16] = [
@@ -53,6 +54,7 @@ impl Noise {
 
     /// Reset noise channel to initial state
     pub fn reset(&mut self) {
+        trace_apu!(2; "noise reset");
         *self = Self::new();
     }
 
@@ -61,6 +63,7 @@ impl Noise {
         if self.timer == 0 {
             self.timer = self.timer_period;
             self.clock_shift_register();
+            trace_apu!(5; "noise clock_timer reload period={} shift=0x{:04X}", self.timer_period, self.shift_register);
         } else {
             self.timer -= 1;
         }
@@ -82,6 +85,7 @@ impl Noise {
 
         // 3. Set bit 14 to the feedback value
         self.shift_register = (self.shift_register & 0x3FFF) | (feedback << 14);
+        trace_apu!(5; "noise shift_register mode={} feedback={} value=0x{:04X}", self.mode, feedback, self.shift_register);
     }
 
     /// Clock the envelope generator
@@ -103,6 +107,7 @@ impl Noise {
         let halt = (value >> 5) & 1 == 1;
         self.length_counter.set_halt(halt);
         self.envelope.write_control(value);
+        trace_apu!(3; "noise write_envelope value=0x{:02X} halt={}", value, halt);
     }
 
     /// Write to period register ($400E)
@@ -113,6 +118,7 @@ impl Noise {
         self.mode = (value >> 7) & 1 == 1;
         let period_index = (value & 0x0F) as usize;
         self.timer_period = NOISE_PERIOD_TABLE[period_index];
+        trace_apu!(3; "noise write_period value=0x{:02X} mode={} period_index={} period={}", value, self.mode, period_index, self.timer_period);
     }
 
     /// Write to length register ($400F)
@@ -123,6 +129,7 @@ impl Noise {
         let length_index = (value >> 3) & 0x1F;
         self.length_counter.load_from_index(length_index);
         self.envelope.restart();
+        trace_apu!(3; "noise write_length value=0x{:02X} length_index={}", value, length_index);
     }
 
     /// Get the current output sample (0-15)
@@ -144,6 +151,7 @@ impl Noise {
     /// When disabled, the length counter is immediately cleared
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         self.length_counter.set_enabled(enabled);
+        trace_apu!(2; "noise set_length_counter_enabled {}", enabled);
     }
 
     /// Get whether length counter is enabled (from $4015)

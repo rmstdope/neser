@@ -8,6 +8,7 @@
 //! - Output unit (shift register + 7-bit output level 0-127)
 //! - IRQ flag
 //! - Loop flag for sample restart
+use crate::trace_apu;
 
 // NTSC rate periods (in CPU cycles)
 const DMC_RATE_TABLE: [u16; 16] = [
@@ -79,6 +80,7 @@ impl Dmc {
 
     /// Reset DMC channel to initial state
     pub fn reset(&mut self) {
+        trace_apu!(2; "dmc reset");
         *self = Self::new();
     }
 
@@ -115,6 +117,7 @@ impl Dmc {
 
         self.dma_pending = false;
         self.sample_buffer = Some(value);
+        trace_apu!(3; "dmc complete_dma_read value=0x{:02X}", value);
         self.advance_reader_after_fetch();
     }
 
@@ -131,6 +134,7 @@ impl Dmc {
         self.loop_flag = (value >> 6) & 1 == 1;
         let rate_index = (value & 0x0F) as usize;
         self.timer_period = DMC_RATE_TABLE[rate_index];
+        trace_apu!(2; "dmc write_flags_and_rate value=0x{:02X} irq_enabled={} loop={} rate_index={} period={}", value, self.irq_enabled, self.loop_flag, rate_index, self.timer_period);
 
         // If IRQ is disabled, clear the interrupt flag
         if !self.irq_enabled {
@@ -142,6 +146,7 @@ impl Dmc {
     /// Format: -DDD.DDDD (7-bit output level)
     pub fn write_direct_load(&mut self, value: u8) {
         self.output_level = value & 0x7F;
+        trace_apu!(2; "dmc write_direct_load value=0x{:02X} output_level={}", value, self.output_level);
     }
 
     /// Write to sample address register ($4012)
@@ -149,6 +154,7 @@ impl Dmc {
     /// Sample address = $C000 + (A * 64)
     pub fn write_sample_address(&mut self, value: u8) {
         self.sample_address = 0xC000 + (value as u16 * 64);
+        trace_apu!(2; "dmc write_sample_address value=0x{:02X} address=0x{:04X}", value, self.sample_address);
     }
 
     /// Write to sample length register ($4013)
@@ -156,6 +162,7 @@ impl Dmc {
     /// Sample length = (L * 16) + 1 bytes
     pub fn write_sample_length(&mut self, value: u8) {
         self.sample_length = (value as u16 * 16) + 1;
+        trace_apu!(2; "dmc write_sample_length value=0x{:02X} length={}", value, self.sample_length);
     }
 
     /// Clock the timer. When it reaches zero, clock the output unit.
@@ -175,6 +182,7 @@ impl Dmc {
         if self.timer == 0 {
             self.timer = self.timer_period.saturating_sub(1);
             self.clock_output_unit();
+            trace_apu!(5; "dmc clock_timer reload period={} output_level={}", self.timer_period, self.output_level);
         } else {
             self.timer -= 1;
         }
@@ -191,6 +199,7 @@ impl Dmc {
         // Request a CPU-side DMA read. The CPU will stall and provide the byte.
         if !self.dma_pending {
             self.dma_pending = true;
+            trace_apu!(4; "dmc dma_pending address=0x{:04X} bytes_remaining={}", self.current_address, self.bytes_remaining);
         }
     }
 
@@ -210,6 +219,7 @@ impl Dmc {
 
         // Decrement bytes remaining and handle completion
         self.bytes_remaining -= 1;
+        trace_apu!(4; "dmc advance_reader address=0x{:04X} bytes_remaining={}", self.current_address, self.bytes_remaining);
 
         if self.bytes_remaining == 0 {
             // Sample finished (at end of memory fetch of the last byte)
@@ -219,6 +229,7 @@ impl Dmc {
             } else if self.irq_enabled {
                 // No loop: set IRQ flag if enabled
                 self.interrupt_flag = true;
+                trace_apu!(3; "dmc irq_flag set (sample complete)");
             }
         }
     }
@@ -265,8 +276,10 @@ impl Dmc {
             self.silence_flag = false;
             self.shift_register = sample;
             self.sample_buffer = None;
+            trace_apu!(4; "dmc start_output_cycle shift=0x{:02X}", self.shift_register);
         } else {
             self.silence_flag = true;
+            trace_apu!(4; "dmc start_output_cycle silence");
         }
     }
 
@@ -274,11 +287,13 @@ impl Dmc {
     fn restart_sample(&mut self) {
         self.current_address = self.sample_address;
         self.bytes_remaining = self.sample_length;
+        trace_apu!(3; "dmc restart_sample address=0x{:04X} length={}", self.current_address, self.bytes_remaining);
     }
 
     /// Enable or disable the channel (called from $4015 status register)
     /// cpu_cycle is the current CPU cycle count for accurate delay timing
     pub fn set_enabled(&mut self, enabled: bool, cpu_cycle: u64) {
+        trace_apu!(2; "dmc set_enabled {} cpu_cycle={}", enabled, cpu_cycle);
         if enabled {
             // If bytes_remaining is 0, restart the sample
             if self.bytes_remaining == 0 {
@@ -289,6 +304,7 @@ impl Dmc {
                 } else {
                     self.transfer_start_delay = 2;
                 }
+                trace_apu!(4; "dmc transfer_start_delay {}", self.transfer_start_delay);
             }
         } else {
             // Disable: clear bytes remaining
@@ -306,6 +322,7 @@ impl Dmc {
             if self.transfer_start_delay == 0 {
                 // Delay expired, now trigger DMA if buffer is still empty
                 self.fill_sample_buffer_if_needed();
+                trace_apu!(4; "dmc transfer_start_delay expired");
             }
         }
     }
@@ -338,6 +355,7 @@ impl Dmc {
     /// Clear the IRQ flag (side effect of writing to $4015)
     pub fn clear_irq_flag(&mut self) {
         self.interrupt_flag = false;
+        trace_apu!(3; "dmc clear_irq_flag");
     }
 
     /// Check if the channel has bytes remaining (for status register $4015 bit 4)

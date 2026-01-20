@@ -1,6 +1,7 @@
 /// Triangle wave channel for the NES APU
 /// Generates triangle waves with a 32-step linear sequence
 use super::length_counter::LengthCounter;
+use crate::trace_apu;
 
 pub struct Triangle {
     // Timer fields (11-bit)
@@ -56,6 +57,7 @@ impl Triangle {
     /// Unlike other channels, the triangle channel is mostly preserved across reset,
     /// but the length counter is disabled.
     pub fn reset(&mut self) {
+        trace_apu!(2; "triangle reset");
         self.length_counter.set_enabled(false);
     }
 
@@ -67,6 +69,7 @@ impl Triangle {
             // and both the length counter and linear counter are non-zero.
             if self.linear_counter != 0 && self.length_counter.value() != 0 {
                 self.clock_sequencer();
+                trace_apu!(5; "triangle clock_timer advance seq_pos={} timer_period=0x{:03X}", self.sequence_position, self.timer_period);
             }
         } else {
             self.timer_counter -= 1;
@@ -98,11 +101,13 @@ impl Triangle {
         self.control_flag = (value & 0x80) != 0;
         self.length_counter.set_halt(self.control_flag);
         self.linear_counter_reload_value = value & 0x7F;
+        trace_apu!(3; "triangle write_linear_counter value=0x{:02X} control={} reload={}", value, self.control_flag, self.linear_counter_reload_value);
     }
 
     /// Write to $400A register (timer low 8 bits)
     pub fn write_timer_low(&mut self, value: u8) {
         self.timer_period = (self.timer_period & 0xFF00) | (value as u16);
+        trace_apu!(4; "triangle write_timer_low value=0x{:02X} period=0x{:03X}", value, self.timer_period);
     }
 
     /// Write to $400B register (length counter load and timer high 3 bits)
@@ -117,6 +122,7 @@ impl Triangle {
 
         // Set linear counter reload flag
         self.linear_counter_reload_flag = true;
+        trace_apu!(3; "triangle write_length_counter_timer_high value=0x{:02X} length_index={} period=0x{:03X}", value, length_index, self.timer_period);
     }
 
     /// Set the linear counter reload value
@@ -143,8 +149,10 @@ impl Triangle {
     pub fn clock_linear_counter_with_reload(&mut self) {
         if self.linear_counter_reload_flag {
             self.linear_counter = self.linear_counter_reload_value;
+            trace_apu!(5; "triangle linear_counter reload value={}", self.linear_counter);
         } else if self.linear_counter > 0 {
             self.linear_counter -= 1;
+            trace_apu!(5; "triangle linear_counter decrement value={}", self.linear_counter);
         }
 
         if !self.control_flag {
@@ -174,6 +182,7 @@ impl Triangle {
     /// Load the length counter from the lookup table
     pub fn load_length_counter(&mut self, index: u8) {
         self.length_counter.load_from_index(index);
+        trace_apu!(3; "triangle load_length_counter index={}", index);
     }
 
     /// Get the current length counter value
@@ -201,6 +210,7 @@ impl Triangle {
     /// When disabled, the length counter is cleared.
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         self.length_counter.set_enabled(enabled);
+        trace_apu!(2; "triangle set_length_counter_enabled {}", enabled);
     }
 
     /// Get whether length counter is enabled (from $4015)

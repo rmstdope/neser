@@ -2,6 +2,7 @@
 /// Generates square waves with variable duty cycle
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
+use crate::trace_apu;
 
 pub struct Pulse {
     // Channel identifier (true = Pulse 1, false = Pulse 2)
@@ -73,6 +74,7 @@ impl Pulse {
 
     /// Reset pulse channel to initial state (preserves is_pulse1 identity)
     pub fn reset(&mut self) {
+        trace_apu!(2; "{} reset", if self.is_pulse1 { "pulse1" } else { "pulse2" });
         self.timer_period = 0;
         self.timer_counter = 0;
         self.duty_mode = 0;
@@ -90,11 +92,13 @@ impl Pulse {
     /// Write to timer low register ($4002 for Pulse 1)
     pub fn write_timer_low(&mut self, value: u8) {
         self.timer_period = (self.timer_period & 0x0700) | (value as u16);
+        trace_apu!(4; "{} write_timer_low value=0x{:02X} period=0x{:03X}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, value, self.timer_period);
     }
 
     /// Write to timer high register ($4003 bits 2-0 for Pulse 1)
     pub fn write_timer_high(&mut self, value: u8) {
         self.timer_period = (self.timer_period & 0x00FF) | (((value & 0x07) as u16) << 8);
+        trace_apu!(4; "{} write_timer_high value=0x{:02X} period=0x{:03X}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, value, self.timer_period);
     }
 
     /// Get current timer period (for testing)
@@ -108,6 +112,7 @@ impl Pulse {
         if self.timer_counter == 0 {
             self.timer_counter = self.timer_period;
             self.clock_sequencer();
+            trace_apu!(5; "{} clock_timer reload period=0x{:03X} seq_pos={}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, self.timer_period, self.sequence_position);
         } else {
             self.timer_counter -= 1;
         }
@@ -138,6 +143,7 @@ impl Pulse {
         self.duty_mode = (value >> 6) & 0x03;
         self.length_counter.set_halt((value & 0x20) != 0); // Same bit as envelope loop
         self.envelope.write_control(value);
+        trace_apu!(3; "{} write_control value=0x{:02X} duty={} halt={}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, value, self.duty_mode, (value & 0x20) != 0);
     }
 
     /// Write to $4003 register (loads length counter, sets start flag, sets timer high)
@@ -147,6 +153,7 @@ impl Pulse {
         // Load length counter from bits 7-3 (only if channel is enabled via $4015)
         let index = value >> 3;
         self.length_counter.load_from_index(index);
+        trace_apu!(3; "{} write_length_counter_timer_high value=0x{:02X} length_index={}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, value, index);
     }
 
     /// Clock the envelope (called by quarter frame from frame counter)
@@ -161,6 +168,12 @@ impl Pulse {
 
     /// Clock the length counter (called by half frame from frame counter)
     pub fn clock_length_counter(&mut self) {
+        trace_apu!(
+            3; "{} length_clock halt={} value={}",
+            if self.is_pulse1 { "pulse1" } else { "pulse2" },
+            self.length_counter.is_halted(),
+            self.length_counter.value()
+        );
         self.length_counter.clock();
     }
 
@@ -190,6 +203,7 @@ impl Pulse {
     /// When disabled, the channel is silenced but the length counter value is preserved
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
         self.length_counter.set_enabled(enabled);
+        trace_apu!(2; "{} set_length_counter_enabled {}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, enabled);
     }
 
     /// Get whether length counter is enabled (from $4015)
@@ -208,6 +222,7 @@ impl Pulse {
         self.sweep_negate = (value & 0x08) != 0;
         self.sweep_shift = value & 0x07;
         self.sweep_reload = true;
+        trace_apu!(3; "{} write_sweep value=0x{:02X} enabled={} period={} negate={} shift={}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, value, self.sweep_enabled, self.sweep_divider_period, self.sweep_negate, self.sweep_shift);
     }
 
     /// Calculate target period for sweep
@@ -256,6 +271,7 @@ impl Pulse {
             if self.timer_period >= 8 && target_period <= 0x7FF {
                 self.timer_period = target_period;
                 self.timer_counter = self.timer_period;
+                trace_apu!(5; "{} sweep_update period=0x{:03X}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, self.timer_period);
             }
         }
     }

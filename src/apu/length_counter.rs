@@ -1,6 +1,7 @@
 //! APU length counter
 //!
 //! Specs: https://www.nesdev.org/apu_ref.txt
+use crate::trace_apu;
 
 /// Length counter lookup table (32 entries), indexed by bits 7-3 of $4003/$4007/$400B/$400F.
 const LENGTH_COUNTER_TABLE: [u8; 32] = [
@@ -30,6 +31,7 @@ impl LengthCounter {
     }
 
     pub fn set_enabled(&mut self, enabled: bool) {
+        trace_apu!(2; "length_counter set_enabled {}", enabled);
         self.enabled = enabled;
         if !enabled {
             // NESDev: when a channel is disabled via $4015, its length counter is cleared.
@@ -42,20 +44,22 @@ impl LengthCounter {
     }
 
     pub fn set_halt(&mut self, halt: bool) {
+        trace_apu!(3; "length_counter set_halt {}", halt);
         self.halt = halt;
     }
 
-    #[cfg(test)]
     pub fn is_halted(&self) -> bool {
         self.halt
     }
 
     pub fn clear(&mut self) {
+        trace_apu!(4; "length_counter clear");
         self.value = 0;
     }
 
     pub fn load_from_index(&mut self, index: u8) {
         if self.enabled {
+            trace_apu!(3; "length_counter load index={} value={}", index & 0x1F, Self::lookup(index));
             self.value = Self::lookup(index);
         }
     }
@@ -63,6 +67,7 @@ impl LengthCounter {
     pub fn clock(&mut self) {
         if !self.halt && self.value > 0 {
             self.value -= 1;
+            trace_apu!(5; "length_counter clock value={}", self.value);
         }
     }
 

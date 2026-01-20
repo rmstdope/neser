@@ -934,15 +934,16 @@ impl Cpu {
 
         #[cfg(test)]
         {
-            if (addr == 0x4015 || addr == 0x4003 || addr == 0x4017)
+            if (addr == 0x4015 || addr == 0x4003 || addr == 0x4017 || addr == 0x4000)
                 && std::env::var("NESER_TRACE_4015").is_ok()
             {
                 let apu = self.apu.borrow();
                 eprintln!(
-                    "[trace write] cpu_cycle={} addr=0x{:04X} value=0x{:02X} apu_fc_cycle={} apu_fc_irq_inhibit={} apu_fc_irq_flag={} pulse1_len_en={} pulse1_len={}",
+                    "[trace write] cpu_cycle={} addr=0x{:04X} value=0x{:02X} apu_cycle={} apu_fc_cycle={} apu_fc_irq_inhibit={} apu_fc_irq_flag={} pulse1_len_en={} pulse1_len={}",
                     self.total_cycles,
                     addr,
                     value,
+                    apu.apu_cycle(),
                     apu.debug_frame_counter_cycle(),
                     apu.debug_frame_counter_irq_inhibit(),
                     apu.debug_frame_counter_irq_flag(),

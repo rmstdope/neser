@@ -184,6 +184,7 @@ impl Apu {
     /// - `cpu_cycle`: The total CPU cycles executed before this reset (for coordinated timing)
     /// - `soft_reset`: true for a reset-button style reset, false for power-on
     pub fn reset(&mut self, cpu_cycle: u64, soft_reset: bool) {
+        trace_apu!(1; "reset cpu_cycle={} soft_reset={} last_4017_write=0x{:02X}", cpu_cycle, soft_reset, self.last_4017_write);
         self.frame_counter.reset();
         self.pulse1.reset();
         self.pulse2.reset();
@@ -324,6 +325,7 @@ impl Apu {
 
         // Jitter: writing $4017 on an odd CPU cycle delays the reset by 1 CPU cycle.
         let write_on_odd_cpu_cycle = !self.apu_cycle.is_multiple_of(2);
+        trace_apu!(1; "write $4017 value=0x{:02X} apu_cycle={} delay={} odd_cpu_cycle={}", value, self.apu_cycle, write_delay, write_on_odd_cpu_cycle);
         self.frame_counter.queue_delayed_write_with_jitter(
             value,
             write_delay,
@@ -376,14 +378,25 @@ impl Apu {
     /// `expansion_audio` is expected to be a small linear contribution (e.g. 0.0..~0.5)
     /// that will be added to the base APU mix when a sample is generated.
     pub fn clock_with_expansion(&mut self, expansion_audio: f32) {
-        // Trace APU tick with cycle and frame counter state
+        // Trace APU tick with cycle and frame counter state (verbose)
         trace_apu!(
-            "tick apu_cycle={} frame_counter_cycle={}",
+            5; "tick apu_cycle={} frame_counter_cycle={}",
             self.apu_cycle,
             self.frame_counter.get_cycle_counter()
         );
 
         let (quarter_frame, half_frame) = self.frame_counter.clock();
+
+        if quarter_frame || half_frame {
+            trace_apu!(
+                3; "frame_counter clock quarter={} half={} cycle={} cpu_cycle={} apu_cycle={}",
+                quarter_frame,
+                half_frame,
+                self.frame_counter.get_cycle_counter(),
+                self.cpu_cycle,
+                self.apu_cycle
+            );
+        }
 
         // Quarter frame: clock envelopes and linear counter
         if quarter_frame {
@@ -499,6 +512,12 @@ impl Apu {
         // Side effect: Clear frame counter interrupt flag
         self.frame_counter.clear_irq_flag();
 
+        trace_apu!(
+            3; "read $4015 status=0b{:08b} open_bus=0x{:02X}",
+            status,
+            open_bus
+        );
+
         status
     }
 
@@ -516,6 +535,7 @@ impl Apu {
     ///
     /// Side effect: Clears the DMC interrupt flag
     pub fn write_enable(&mut self, value: u8) {
+        trace_apu!(1; "write $4015 value=0x{:02X}", value);
         // Pulse 1
         let pulse1_enabled = value & STATUS_PULSE1 != 0;
         if !pulse1_enabled {

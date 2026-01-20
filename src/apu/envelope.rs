@@ -12,6 +12,7 @@
 /// When the "disable" flag is set, the channel volume is the constant `n`
 /// (the low 4 bits of the channel's first register). Otherwise it is the
 /// counter value.
+use crate::trace_apu;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Envelope {
     start_flag: bool,
@@ -39,12 +40,14 @@ impl Envelope {
         self.loop_flag = (value & 0x20) != 0;
         self.disable_flag = (value & 0x10) != 0;
         self.n = value & 0x0F;
+        trace_apu!(3; "envelope write_control loop={} disable={} n={}", self.loop_flag, self.disable_flag, self.n);
     }
 
     /// Indicates that the channel's 4th register was written.
     /// This causes the envelope to restart on the next clock.
     pub fn restart(&mut self) {
         self.start_flag = true;
+        trace_apu!(3; "envelope restart");
     }
 
     /// Clocked by the frame sequencer (quarter frame).
@@ -58,6 +61,7 @@ impl Envelope {
             self.start_flag = false;
             self.counter = 15;
             self.divider = self.n;
+            trace_apu!(5; "envelope clock restart counter=15 divider={}", self.divider);
             return;
         }
 
@@ -66,8 +70,10 @@ impl Envelope {
 
             if self.counter > 0 {
                 self.counter -= 1;
+                trace_apu!(5; "envelope clock decay counter={}", self.counter);
             } else if self.loop_flag {
                 self.counter = 15;
+                trace_apu!(5; "envelope clock loop counter=15");
             }
         } else {
             self.divider -= 1;

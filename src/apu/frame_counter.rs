@@ -1,6 +1,7 @@
 /// Frame Counter for the NES APU
 /// Sequences envelope, sweep, and length counter clocks
 /// Operates in two modes: 4-step and 5-step
+use crate::trace_apu;
 pub struct FrameCounter {
     mode: Mode,
     irq_inhibit: bool,
@@ -62,6 +63,12 @@ impl FrameCounter {
         } else {
             Mode::FourStep
         };
+        trace_apu!(
+            2; "frame_counter write_register value=0x{:02X} mode={} irq_inhibit={}",
+            value,
+            if new_mode == Mode::FiveStep { "5-step" } else { "4-step" },
+            (value & 0x40) != 0
+        );
         self.mode = new_mode;
         self.irq_inhibit = (value & 0x40) != 0;
         self.cycle_counter = 0;
@@ -206,6 +213,7 @@ impl FrameCounter {
 
     /// Clear the IRQ flag
     pub fn clear_irq_flag(&mut self) {
+        trace_apu!(2; "frame_counter clear_irq_flag");
         self.irq_flag = false;
     }
 
@@ -213,6 +221,7 @@ impl FrameCounter {
     /// This is used for power-on/reset timing where the write takes effect after a delay
     /// delay: number of CPU cycles before the write takes effect (typically 3-4)
     pub fn queue_delayed_write(&mut self, value: u8, delay: u8) {
+        trace_apu!(2; "frame_counter queue_delayed_write value=0x{:02X} delay={}", value, delay);
         self.pending_write = Some(value);
         self.write_delay = delay;
         self.pending_write_on_odd_cpu_cycle = false;
@@ -226,6 +235,12 @@ impl FrameCounter {
         delay: u8,
         write_on_odd_cpu_cycle: bool,
     ) {
+        trace_apu!(
+            2; "frame_counter queue_delayed_write_with_jitter value=0x{:02X} delay={} odd_cpu_cycle={}",
+            value,
+            delay,
+            write_on_odd_cpu_cycle
+        );
         self.pending_write = Some(value);
         self.write_delay = delay;
         self.pending_write_on_odd_cpu_cycle = write_on_odd_cpu_cycle;
@@ -256,6 +271,13 @@ impl FrameCounter {
         } else {
             Mode::FourStep
         };
+
+        trace_apu!(
+            2; "frame_counter delayed_write_effect value=0x{:02X} mode={} irq_inhibit={}",
+            value,
+            if new_mode == Mode::FiveStep { "5-step" } else { "4-step" },
+            (value & 0x40) != 0
+        );
 
         // Apply the delayed write
         self.mode = new_mode;
@@ -309,10 +331,18 @@ impl FrameCounter {
         let (immediate_quarter, immediate_half) = self.pending_immediate_clock;
         self.pending_immediate_clock = (false, false);
 
-        (
-            quarter_frame || immediate_quarter,
-            half_frame || immediate_half,
-        )
+        let quarter = quarter_frame || immediate_quarter;
+        let half = half_frame || immediate_half;
+        if quarter || half {
+            trace_apu!(
+                3; "frame_counter clock quarter={} half={} cycle={}",
+                quarter,
+                half,
+                self.cycle_counter
+            );
+        }
+
+        (quarter, half)
     }
 
     /// Clock the 4-step sequencer
@@ -349,6 +379,7 @@ impl FrameCounter {
         // Start the IRQ asserting window at the designated cycle.
         // See doc comment above for why we use a multi-cycle window instead of a one-shot.
         if self.cycle_counter == IRQ_CYCLE && !self.irq_inhibit {
+            trace_apu!(2; "frame_counter irq_assert start cycle={}", self.cycle_counter);
             self.irq_assert_cycles_remaining = IRQ_ASSERT_CYCLES;
         }
 
