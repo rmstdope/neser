@@ -281,17 +281,17 @@ impl BankedRom {
         self.read(bank, offset)
     }
 
-    /// Get the total size of the ROM data.
-    #[inline]
-    pub fn size(&self) -> usize {
-        self.data.len()
-    }
+    // /// Get the total size of the ROM data.
+    // #[inlines]
+    // pub fn size(&self) -> usize {
+    //     self.data.len()
+    // }
 
-    /// Get the bank size.
-    #[inline]
-    pub fn bank_size(&self) -> usize {
-        self.bank_size
-    }
+    // /// Get the bank size.
+    // #[inline]
+    // pub fn bank_size(&self) -> usize {
+    //     self.bank_size
+    // }
 }
 
 #[cfg(test)]

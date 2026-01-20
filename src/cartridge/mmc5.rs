@@ -1175,6 +1175,15 @@ impl Mapper for MMC5Mapper {
 
     fn read_chr(&self, addr: u16) -> u8 {
         let bank = self.get_chr_bank(addr);
+
+        // Trace CHR reads in extended attribute mode to debug fine_y issues (issue #385)
+        if self.is_extended_attribute_mode_chr_active() {
+            let fine_y = addr & 0x07;
+            let tile_in_pattern = (addr >> 4) & 0xFF;
+            trace_mapper!(4; "MMC5 exattr CHR read addr=${:04X} bank={} tile={} fine_y={} tile_idx={}",
+                addr, bank, tile_in_pattern, fine_y, self.last_bg_tile_index);
+        }
+
         self.read_chr_banked(bank, addr)
     }
 
@@ -1245,21 +1254,26 @@ impl Mapper for MMC5Mapper {
 
         // MMC5 scanline detection sequence: three consecutive reads from the same
         // nametable address, followed by another PPU read (typically attribute fetch).
+        //
+        // Note: The scanline counter and IRQ triggering are handled by ppu_scanline()
+        // callback, which is called at pixel 0 of each scanline with the correct
+        // scanline number. The hardware detection here is only used for:
+        // 1. Detecting frame start (in_frame flag)
+        // 2. Resetting the tile counter for split screen calculations
+        //
+        // Issue #385: Previously this code also incremented scanline_counter, which
+        // caused double-counting since ppu_scanline() already sets it correctly.
         if self.ppu_scanline_ready {
             self.ppu_scanline_ready = false;
             self.ppu_nametable_match_count = 0;
+            // Reset tile counter at start of new scanline (issue #385)
+            self.split_tile_count = 0;
 
             if !self.in_frame {
                 self.in_frame = true;
-                self.scanline_counter = 0;
-            } else {
-                self.scanline_counter = self.scanline_counter.wrapping_add(1);
-                if self.irq_scanline_compare != 0
-                    && (self.scanline_counter as u8) == self.irq_scanline_compare
-                {
-                    self.irq_pending.set(true);
-                }
+                trace_mapper!(2; "MMC5 frame start detected");
             }
+            // Note: scanline_counter is set by ppu_scanline() callback, not here
         } else if self.last_ppu_nametable_addr == Some(addr) {
             self.ppu_nametable_match_count = (self.ppu_nametable_match_count + 1).min(2);
             if self.ppu_nametable_match_count == 2 {
@@ -1461,6 +1475,8 @@ impl Mapper for MMC5Mapper {
             && self.irq_scanline_compare != 0
             && (scanline as u8) == self.irq_scanline_compare
         {
+            trace_mapper!(2; "MMC5 scanline IRQ fired scanline={} compare={}",
+                scanline, self.irq_scanline_compare);
             self.irq_pending.set(true);
         }
     }
@@ -3473,6 +3489,103 @@ mod tests {
             status & 0x40,
             0x00,
             "in_frame bit should clear after 3 CPU cycles"
+        );
+    }
+
+    #[test]
+    fn test_mmc5_split_tile_count_resets_on_hardware_scanline_detection() {
+        // Issue #385: Castlevania III vertical scrolling bug
+        // The split_tile_count must reset to 0 when hardware scanline detection triggers
+        // (3 consecutive reads from same nametable address followed by another read).
+        // Without this reset, tile counting accumulates across scanlines, causing
+        // incorrect split scroll calculations and misaligned backgrounds.
+
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        // Enable rendering so split logic is active
+        mmc5.ppu_write_mask(0x18); // Show sprites and background
+
+        // Simulate first scanline: read multiple nametable tile addresses
+        // Each tile fetch reads from $2000-$23BF range
+        for tile in 0..32 {
+            let addr = 0x2000 + tile;
+            let _ = mmc5.read_nametable(addr);
+        }
+
+        // After 32 tile fetches, split_tile_count should be 32
+        assert_eq!(
+            mmc5.split_tile_count, 32,
+            "split_tile_count should be 32 after 32 tile fetches"
+        );
+
+        // Trigger hardware scanline detection: 3 consecutive reads from same address
+        // This simulates the PPU's "idle" nametable fetches at end of scanline
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        // Fourth read triggers scanline increment
+        let _ = mmc5.read_nametable(0x23C0); // Attribute fetch
+
+        // After hardware scanline detection, split_tile_count should reset to 0
+        // (or 1 if the attribute fetch also counts - but definitely not 36!)
+        assert!(
+            mmc5.split_tile_count < 2,
+            "split_tile_count should reset on scanline detection, got {}",
+            mmc5.split_tile_count
+        );
+    }
+
+    #[test]
+    fn test_mmc5_scanline_counter_matches_ppu_scanline_when_irq_fires() {
+        // Issue #385: Castlevania III vertical scrolling bug
+        // The scanline counter was being double-counted:
+        // 1. ppu_scanline() callback sets scanline_counter = N at pixel 0
+        // 2. Hardware detection in read_nametable() then incremented it to N+1
+        // This caused IRQs to fire one scanline early.
+        //
+        // This test verifies that when both ppu_scanline() and hardware detection
+        // are used together (as happens in real emulation), the IRQ fires at the
+        // correct scanline.
+
+        let mut mmc5 = new_mmc5_for_irq_test();
+
+        // Enable rendering and set up IRQ for scanline 46
+        mmc5.ppu_write_mask(0x18); // Show sprites and background
+        mmc5.write_prg(0x5203, 46); // Scanline compare = 46
+        mmc5.write_prg(0x5204, 0x80); // Enable IRQ
+
+        // Simulate frame start: ppu_scanline(0) followed by hardware detection
+        mmc5.ppu_scanline(0, true);
+        // Hardware detection sees 3 consecutive reads (simulating PPU dummy fetches)
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x2000);
+        let _ = mmc5.read_nametable(0x23C0);
+
+        // Simulate scanlines 1-45 with both callback and hardware detection
+        for scanline in 1..=45u16 {
+            mmc5.ppu_scanline(scanline, true);
+            // Hardware detection sees 3 consecutive reads
+            let _ = mmc5.read_nametable(0x2000);
+            let _ = mmc5.read_nametable(0x2000);
+            let _ = mmc5.read_nametable(0x2000);
+            let _ = mmc5.read_nametable(0x23C0);
+
+            // IRQ should NOT fire yet (we're before scanline 46)
+            assert!(
+                !mmc5.irq_pending(),
+                "IRQ should not fire on scanline {}, expected scanline 46",
+                scanline
+            );
+        }
+
+        // Simulate scanline 46: this is when IRQ should fire
+        mmc5.ppu_scanline(46, true);
+        // The IRQ should fire based on ppu_scanline() callback, not hardware detection
+        assert!(
+            mmc5.irq_pending(),
+            "IRQ should fire when ppu_scanline(46) is called, scanline_counter={}",
+            mmc5.scanline_counter
         );
     }
 }
