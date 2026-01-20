@@ -21,6 +21,9 @@ struct ProgressBar {
 }
 
 impl ProgressBar {
+    const UPDATE_FRAME_INTERVAL: usize = 60;
+    const UPDATE_TIME_INTERVAL: Duration = Duration::from_millis(100);
+
     fn new(total: usize) -> Self {
         Self {
             total: total.max(1),
@@ -32,8 +35,10 @@ impl ProgressBar {
 
     fn update(&mut self, frame: usize) {
         let now = Instant::now();
-        let force = frame == 0 || frame == self.total || frame.saturating_sub(self.last_frame) >= 60;
-        if !force && now.duration_since(self.last_update) < Duration::from_millis(100) {
+        let force = frame == 0
+            || frame == self.total
+            || frame.saturating_sub(self.last_frame) >= Self::UPDATE_FRAME_INTERVAL;
+        if !force && now.duration_since(self.last_update) < Self::UPDATE_TIME_INTERVAL {
             return;
         }
         self.last_frame = frame;
@@ -81,9 +86,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = RunnerState::new(mode, autorun_path)?;
 
     if headless {
-        if mode == Mode::Record {
-            return Err("Headless mode is only supported for --playback".to_string().into());
-        }
         run_headless_loop(&mut nes, mode, &mut state)?;
     } else {
         let sdl_context = sdl2::init()?;
@@ -263,6 +265,9 @@ fn run_headless_loop(
     mode: Mode,
     state: &mut RunnerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let Mode::Playback = mode else {
+        return Err("Headless mode is only supported for --playback".to_string().into());
+    };
     let total_frames = state.autorun.frames.len();
     let mut progress = ProgressBar::new(total_frames);
     let mut last_frame_crc = 0u32;
@@ -270,17 +275,12 @@ fn run_headless_loop(
     progress.update(0);
 
     loop {
-        match mode {
-            Mode::Record => {}
-            Mode::Playback => {
-                if let Some(frame) = state.next_playback_frame() {
-                    apply_buttons(nes, frame.player1, frame.player2);
-                } else {
-                    progress.finish();
-                    finalize_run(mode, state, last_frame_crc, nes)?;
-                    return Ok(());
-                }
-            }
+        if let Some(frame) = state.next_playback_frame() {
+            apply_buttons(nes, frame.player1, frame.player2);
+        } else {
+            progress.finish();
+            finalize_run(mode, state, last_frame_crc, nes)?;
+            return Ok(());
         }
 
         while !nes.is_ready_to_render() {
