@@ -440,7 +440,7 @@ impl GlBackend {
         action
     }
 
-    pub(crate) fn cycle_shader(&mut self) {
+    pub fn cycle_shader(&mut self) {
         if let Err(e) = self.shader_manager.cycle_shader(self.glow_context.clone()) {
             eprintln!("Error cycling shader: {}", e);
         } else if let Some(name) = self.shader_manager.current_preset_name() {

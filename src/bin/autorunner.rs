@@ -6,11 +6,65 @@ use neser::cartridge::Cartridge;
 use neser::config::{Config, ParseResult};
 use neser::input::Button;
 use neser::nes::Nes;
-use neser::rendering::GlBackend;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
+use std::io::{stdout, Write};
+
+struct ProgressBar {
+    total: usize,
+    width: usize,
+    last_frame: usize,
+    last_update: Instant,
+}
+
+impl ProgressBar {
+    const MIN_TOTAL_FRAMES: usize = 1;
+    const UPDATE_FRAME_INTERVAL: usize = 60;
+    const UPDATE_TIME_INTERVAL: Duration = Duration::from_millis(100);
+
+    fn new(total: usize) -> Self {
+        Self {
+            total: total.max(Self::MIN_TOTAL_FRAMES),
+            width: 40,
+            last_frame: 0,
+            last_update: Instant::now(),
+        }
+    }
+
+    fn update(&mut self, frame: usize) {
+        let now = Instant::now();
+        let force = frame == 0
+            || frame == self.total
+            || frame.saturating_sub(self.last_frame) >= Self::UPDATE_FRAME_INTERVAL;
+        if !force && now.duration_since(self.last_update) < Self::UPDATE_TIME_INTERVAL {
+            return;
+        }
+        self.last_frame = frame;
+        self.last_update = now;
+        let ratio = frame.min(self.total) as f32 / self.total as f32;
+        let filled = (ratio * self.width as f32).round() as usize;
+        let empty = self.width.saturating_sub(filled);
+        let percent = (ratio * 100.0).round() as u32;
+        let bar = format!(
+            "[{}{}] {:3}% ({}/{})",
+            "#".repeat(filled),
+            "-".repeat(empty),
+            percent,
+            frame,
+            self.total
+        );
+        print!("\r{bar}");
+        let _ = stdout().flush();
+    }
+
+    fn finish(&mut self) {
+        self.update(self.total);
+        println!();
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -20,7 +74,7 @@ enum Mode {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let Some((mode, rom_path, config)) = parse_args(&args)? else {
+    let Some((mode, rom_path, config, headless)) = parse_args(&args)? else {
         return Ok(());
     };
 
@@ -29,25 +83,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     nes.insert_cartridge(cart);
     nes.reset(false);
 
-    let sdl_context = sdl2::init()?;
-    let mut event_pump = sdl_context.event_pump()?;
     let autorun_path = autorun_path_for_rom(&rom_path);
-    let mut state = RunnerState::new(mode, autorun_path, &sdl_context)?;
+    let mut state = RunnerState::new(mode, autorun_path)?;
 
-    let mut gl_backend = GlBackend::new(&sdl_context, &config)?;
+    if headless {
+        run_headless_loop(&mut nes, mode, &mut state)?;
+    } else {
+        let sdl_context = sdl2::init()?;
+        let mut event_pump = sdl_context.event_pump()?;
+        let mut gl_backend = neser::rendering::GlBackend::new(&sdl_context, &config)?;
+        state.init_gamepads(&sdl_context)?;
 
-    run_loop(
-        &mut nes,
-        &mut gl_backend,
-        &mut event_pump,
-        mode,
-        &mut state,
-    )?;
+        run_loop(
+            &mut nes,
+            &mut gl_backend,
+            &mut event_pump,
+            mode,
+            &mut state,
+        )?;
+    }
 
     Ok(())
 }
 
-fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config)>, String> {
+fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config, bool)>, String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(None);
@@ -61,9 +120,14 @@ fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config)>, String
         return Err("Missing --record or --playback argument".to_string());
     };
 
+    let headless = args.iter().any(|arg| arg == "--headless");
+    if headless && mode == Mode::Record {
+        return Err("Headless mode is only supported for --playback".to_string());
+    }
+
     let filtered_args: Vec<String> = args
         .iter()
-        .filter(|arg| *arg != "--record" && *arg != "--playback")
+        .filter(|arg| *arg != "--record" && *arg != "--playback" && *arg != "--headless")
         .cloned()
         .collect();
 
@@ -80,7 +144,7 @@ fn parse_args(args: &[String]) -> Result<Option<(Mode, PathBuf, Config)>, String
         .clone()
         .ok_or_else(|| "Missing ROM path argument".to_string())?;
 
-    Ok(Some((mode, PathBuf::from(rom_path), config)))
+    Ok(Some((mode, PathBuf::from(rom_path), config, headless)))
 }
 
 fn print_help() {
@@ -89,6 +153,7 @@ fn print_help() {
     println!("\nOptions:");
     println!("  --record           Record joypad input to <ROM>.autorun");
     println!("  --playback         Play back joypad input from <ROM>.autorun");
+    println!("  --headless         Run playback without a window (requires --playback)");
     println!("  --pal              Use PAL TV system (default: NTSC)");
     println!("  --no-vsync         Disable VSync (default: enabled)");
     println!("  --video-scale <N>  Window scaling factor (default: 4.0)");
@@ -106,11 +171,7 @@ struct RunnerState {
 }
 
 impl RunnerState {
-    fn new(
-        mode: Mode,
-        autorun_path: PathBuf,
-        sdl_context: &sdl2::Sdl,
-    ) -> Result<Self, String> {
+    fn new(mode: Mode, autorun_path: PathBuf) -> Result<Self, String> {
         let autorun = match mode {
             Mode::Record => AutorunFile {
                 version: AUTORUN_VERSION,
@@ -120,15 +181,20 @@ impl RunnerState {
             Mode::Playback => load_autorun_file(&autorun_path)?,
         };
 
-        let (controllers, controller_player_map) = init_gamepads(sdl_context)?;
-
         Ok(Self {
             autorun,
             autorun_path,
-            controller_player_map,
-            _controllers: controllers,
+            controller_player_map: HashMap::new(),
+            _controllers: Vec::new(),
             frame_index: 0,
         })
+    }
+
+    fn init_gamepads(&mut self, sdl_context: &sdl2::Sdl) -> Result<(), String> {
+        let (controllers, controller_player_map) = init_gamepads(sdl_context)?;
+        self.controller_player_map = controller_player_map;
+        self._controllers = controllers;
+        Ok(())
     }
 
     fn record_frame(&mut self, player1: u8, player2: u8) {
@@ -146,7 +212,7 @@ impl RunnerState {
 
 fn run_loop(
     nes: &mut Nes,
-    gl_backend: &mut GlBackend,
+    gl_backend: &mut neser::rendering::GlBackend,
     event_pump: &mut sdl2::EventPump,
     mode: Mode,
     state: &mut RunnerState,
@@ -192,6 +258,39 @@ fn run_loop(
         last_frame_crc = frame_checksum(nes);
 
         let _ = gl_backend.render(nes, false);
+    }
+}
+
+fn run_headless_loop(
+    nes: &mut Nes,
+    mode: Mode,
+    state: &mut RunnerState,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let total_frames = state.autorun.frames.len();
+    let mut progress = ProgressBar::new(total_frames);
+    let mut last_frame_crc = 0u32;
+
+    progress.update(0);
+
+    loop {
+        if let Some(frame) = state.next_playback_frame() {
+            apply_buttons(nes, frame.player1, frame.player2);
+        } else {
+            progress.finish();
+            finalize_run(mode, state, last_frame_crc, nes)?;
+            return Ok(());
+        }
+
+        while !nes.is_ready_to_render() {
+            nes.run_cpu_tick();
+            while nes.sample_ready() {
+                nes.get_sample();
+            }
+        }
+
+        nes.clear_ready_to_render();
+        last_frame_crc = frame_checksum(nes);
+        progress.update(state.frame_index);
     }
 }
 
@@ -384,7 +483,7 @@ fn finalize_run(
     mode: Mode,
     state: &mut RunnerState,
     last_frame_crc: u32,
-    nes: &Nes,
+    _nes: &Nes,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match mode {
         Mode::Record => {
@@ -406,4 +505,41 @@ fn finalize_run(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_args_for_test(args: &[&str]) -> Result<(Mode, PathBuf, Config), String> {
+        let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        match parse_args(&args)? {
+            Some((mode, rom_path, config, _headless)) => Ok((mode, rom_path, config)),
+            None => Err("Expected arguments to return config".to_string()),
+        }
+    }
+
+    #[test]
+    fn test_parse_args_allows_headless_playback() {
+        let (mode, rom_path, _config) = parse_args_for_test(&[
+            "autorunner",
+            "--playback",
+            "--headless",
+            "roms/test.nes",
+        ])
+        .unwrap();
+        assert_eq!(mode, Mode::Playback);
+        assert_eq!(rom_path, PathBuf::from("roms/test.nes"));
+    }
+
+    #[test]
+    fn test_parse_args_rejects_headless_record() {
+        let args = vec![
+            "autorunner".to_string(),
+            "--record".to_string(),
+            "--headless".to_string(),
+            "roms/test.nes".to_string(),
+        ];
+        assert!(parse_args(&args).is_err());
+    }
 }
