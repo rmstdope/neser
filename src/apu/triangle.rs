@@ -206,6 +206,10 @@ impl Triangle {
         self.length_counter.clock();
     }
 
+    pub fn apply_pending_length_halt(&mut self) {
+        self.length_counter.apply_pending_halt();
+    }
+
     /// Set length counter enabled/disabled (from $4015)
     /// When disabled, the length counter is cleared.
     pub fn set_length_counter_enabled(&mut self, enabled: bool) {
@@ -225,6 +229,8 @@ impl Triangle {
             timer_period: self.timer_period,
             length_counter: self.length_counter.value(),
             length_counter_enabled: self.length_counter.is_enabled(),
+            length_counter_halt: self.length_counter.is_halted(),
+            length_counter_pending_halt: self.length_counter.pending_halt(),
             linear_counter: self.linear_counter,
             linear_counter_reload: self.linear_counter_reload_value,
             linear_counter_reload_flag: self.linear_counter_reload_flag,
@@ -243,6 +249,8 @@ impl Triangle {
         } else {
             self.length_counter.disable();
         }
+        self.length_counter
+            .set_halt_state(state.length_counter_halt, state.length_counter_pending_halt);
         self.linear_counter = state.linear_counter;
         self.linear_counter_reload_value = state.linear_counter_reload;
         self.linear_counter_reload_flag = state.linear_counter_reload_flag;
@@ -525,6 +533,7 @@ mod tests {
 
         // Set control flag (which also acts as length counter halt)
         triangle.set_control_flag(true);
+        triangle.apply_pending_length_halt();
 
         // Clock the length counter - should NOT decrement when halted
         triangle.clock_length_counter();
@@ -535,6 +544,7 @@ mod tests {
 
         // Clear control flag - should resume counting
         triangle.set_control_flag(false);
+        triangle.apply_pending_length_halt();
 
         triangle.clock_length_counter();
         assert_eq!(triangle.get_length_counter(), 3);

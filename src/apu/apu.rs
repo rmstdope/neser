@@ -416,6 +416,12 @@ impl Apu {
             self.noise.clock_length_counter();
         }
 
+        // Apply pending halt changes after any length clocks for this CPU cycle.
+        self.pulse1.apply_pending_length_halt();
+        self.pulse2.apply_pending_length_halt();
+        self.triangle.apply_pending_length_halt();
+        self.noise.apply_pending_length_halt();
+
         // Clock timers every APU cycle (every 2 CPU cycles)
         // APU runs at half the CPU clock rate
         // Use dedicated apu_cycle counter to ensure consistent timing
@@ -826,6 +832,10 @@ mod tests {
         apu.dmc.debug_set_dma_pending(true);
         apu.dmc.debug_set_transfer_start_delay(2);
 
+        apu.pulse1_mut().write_control(0x30); // queue halt=true
+        apu.pulse1_mut().apply_pending_length_halt(); // apply
+        apu.pulse1_mut().write_control(0x10); // queue halt=false
+
         let state = apu.capture_state();
 
         let mut restored = Apu::new_for_testing();
@@ -862,6 +872,12 @@ mod tests {
 
         assert!(restored.dmc.dma_pending());
         assert_eq!(restored.dmc.debug_transfer_start_delay(), 2);
+
+        assert!(restored.pulse1().debug_length_counter_halt());
+        assert_eq!(
+            restored.pulse1().debug_length_counter_pending_halt(),
+            Some(false)
+        );
 
         let sample1 = restored.get_sample();
         let sample2 = restored.get_sample();
@@ -958,6 +974,29 @@ mod tests {
         // Correct jitter behavior: on odd-cycle writes the reset is effectively delayed by 1
         // cycle, meaning the frame counter starts at 0 on the effect cycle (not 1).
         assert_eq!(apu.frame_counter().get_cycle_counter(), 0);
+    }
+
+    #[test]
+    fn test_length_halt_change_applies_after_half_frame_clock() {
+        let mut apu = Apu::new_for_testing();
+
+        apu.write_enable(STATUS_PULSE1);
+        apu.pulse1_mut().write_control(0x10); // unhalt
+        apu.pulse1_mut().write_length_counter_timer_high(0x18); // length index 3 -> 2
+
+        while apu.frame_counter().get_cycle_counter() < 14912 {
+            apu.clock();
+        }
+
+        // Writing halt just before the half-frame clock should not prevent this clock.
+        apu.pulse1_mut().write_control(0x30); // halt
+        apu.clock(); // half-frame at 14913
+
+        assert_eq!(
+            apu.pulse1().get_length_counter(),
+            1,
+            "halt should apply after the half-frame length clock"
+        );
     }
 
     #[test]

@@ -11,6 +11,7 @@ mod tests {
     /// - $6001-$6003: Additional error information or text output
     use crate::cartridge::Cartridge;
     use crate::nes::{Nes, TvSystem};
+    use crate::tracing::{self, Tracing};
     use std::fs;
 
     /// Result of running an OAM test ROM
@@ -69,6 +70,7 @@ mod tests {
         ///
         /// Returns `Timeout` if no result is found within max_frames.
         pub fn run_test(&mut self) -> BlarggTestResult {
+            init_apu_tracing_from_env();
             // Load ROM
             let rom_data = match fs::read(&self.rom_path) {
                 Ok(data) => data,
@@ -218,6 +220,23 @@ mod tests {
             // No result found within timeout
             BlarggTestResult::Timeout
         }
+    }
+
+    fn init_apu_tracing_from_env() {
+        let level = match std::env::var("NESER_TRACE_APU") {
+            Ok(value) => value.parse::<u8>().unwrap_or(1),
+            Err(_) => return,
+        };
+
+        if level == 0 {
+            return;
+        }
+
+        tracing::init_tracing(Tracing {
+            enabled: true,
+            apu: level,
+            ..Tracing::default()
+        });
     }
 
     fn parse_crc32_from_console_text(text: &str) -> Option<u32> {
@@ -394,7 +413,7 @@ mod tests {
         "roms/blargg/instr_misc/rom_singles/03-dummy_reads.nes"
     );
     blargg_test!(
-        test_instr_misc_4,
+        test_instr_misc_04,
         "roms/blargg/instr_misc/rom_singles/04-dummy_reads_apu.nes"
     );
     blargg_test!(
@@ -708,7 +727,10 @@ mod tests {
         test_blargg_apu_09,
         "roms/blargg/blargg_apu_2005.07.30/09.reset_timing.nes"
     );
-    // blargg_console_test!(test_blargg_apu_10, "roms/blargg/blargg_apu_2005.07.30/10.len_halt_timing.nes");
+    blargg_console_test!(
+        test_blargg_apu_10,
+        "roms/blargg/blargg_apu_2005.07.30/10.len_halt_timing.nes"
+    );
     // blargg_console_test!(test_blargg_apu_11, "roms/blargg/blargg_apu_2005.07.30/11.len_reload_timing.nes");
 
     // Tests for OAM DMA and DMC DMA collision handling

@@ -177,6 +177,10 @@ impl Pulse {
         self.length_counter.clock();
     }
 
+    pub fn apply_pending_length_halt(&mut self) {
+        self.length_counter.apply_pending_halt();
+    }
+
     /// Get the current length counter value
     pub fn get_length_counter(&self) -> u8 {
         self.length_counter.value()
@@ -197,6 +201,16 @@ impl Pulse {
     #[cfg(test)]
     pub fn get_sweep_reload(&self) -> bool {
         self.sweep_reload
+    }
+
+    #[cfg(test)]
+    pub fn debug_length_counter_halt(&self) -> bool {
+        self.length_counter.is_halted()
+    }
+
+    #[cfg(test)]
+    pub fn debug_length_counter_pending_halt(&self) -> Option<bool> {
+        self.length_counter.pending_halt()
     }
 
     /// Set length counter enabled/disabled (from $4015)
@@ -305,6 +319,8 @@ impl Pulse {
             timer_period: self.timer_period,
             length_counter: self.length_counter.value(),
             length_counter_enabled: self.length_counter.is_enabled(),
+            length_counter_halt: self.length_counter.is_halted(),
+            length_counter_pending_halt: self.length_counter.pending_halt(),
             duty: self.duty_mode,
             duty_position: self.sequence_position,
             envelope: self.envelope.capture_state(),
@@ -327,6 +343,8 @@ impl Pulse {
         } else {
             self.length_counter.disable();
         }
+        self.length_counter
+            .set_halt_state(state.length_counter_halt, state.length_counter_pending_halt);
         self.duty_mode = state.duty;
         self.sequence_position = state.duty_position;
         self.envelope.restore_state(&state.envelope);
@@ -724,6 +742,7 @@ mod tests {
     fn test_length_counter_halt_flag() {
         let mut pulse = Pulse::default();
         pulse.write_control(0b0010_0000); // Set halt flag
+        pulse.apply_pending_length_halt();
         pulse.set_length_counter_enabled(true);
         pulse.write_length_counter_timer_high(0b00010_000); // Load value 20 (index 2)
 
@@ -778,12 +797,14 @@ mod tests {
     fn test_length_counter_halt_flag_shared_with_envelope_loop() {
         let mut pulse = Pulse::default();
         pulse.write_control(0b0010_0000); // Bit 5 set
+        pulse.apply_pending_length_halt();
 
         // Both flags should be set from same bit
         assert!(pulse.length_counter.is_halted());
         assert!(pulse.envelope.debug_loop_flag());
 
         pulse.write_control(0b0000_0000); // Bit 5 clear
+        pulse.apply_pending_length_halt();
 
         assert!(!pulse.length_counter.is_halted());
         assert!(!pulse.envelope.debug_loop_flag());
@@ -814,6 +835,7 @@ mod tests {
     fn test_length_counter_with_halt_then_unhalt() {
         let mut pulse = Pulse::default();
         pulse.write_control(0b0010_0000); // Halt flag set
+        pulse.apply_pending_length_halt();
         pulse.set_length_counter_enabled(true);
         pulse.write_length_counter_timer_high(0b00000_000); // Load 10
 
@@ -822,6 +844,7 @@ mod tests {
 
         // Clear halt flag
         pulse.write_control(0b0000_0000);
+        pulse.apply_pending_length_halt();
 
         pulse.clock_length_counter();
         assert_eq!(pulse.get_length_counter(), 9); // Now decrements

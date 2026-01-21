@@ -13,6 +13,7 @@ const LENGTH_COUNTER_TABLE: [u8; 32] = [
 pub struct LengthCounter {
     enabled: bool,
     halt: bool,
+    pending_halt: Option<bool>,
     value: u8,
 }
 
@@ -45,16 +46,32 @@ impl LengthCounter {
 
     pub fn set_halt(&mut self, halt: bool) {
         trace_apu!(3; "length_counter set_halt {}", halt);
-        self.halt = halt;
+        self.pending_halt = Some(halt);
     }
 
     pub fn is_halted(&self) -> bool {
         self.halt
     }
 
+    pub fn pending_halt(&self) -> Option<bool> {
+        self.pending_halt
+    }
+
     pub fn clear(&mut self) {
         trace_apu!(4; "length_counter clear");
         self.value = 0;
+    }
+
+    pub fn apply_pending_halt(&mut self) {
+        if let Some(halt) = self.pending_halt.take() {
+            self.halt = halt;
+            trace_apu!(4; "length_counter apply_pending_halt {}", halt);
+        }
+    }
+
+    pub fn set_halt_state(&mut self, halt: bool, pending_halt: Option<bool>) {
+        self.halt = halt;
+        self.pending_halt = pending_halt;
     }
 
     pub fn load_from_index(&mut self, index: u8) {
@@ -134,6 +151,7 @@ mod tests {
         let mut lc = LengthCounter::new();
         lc.set_enabled(true);
         lc.set_halt(false);
+        lc.apply_pending_halt();
 
         lc.load_from_index(0); // 10
         lc.clock();
@@ -145,6 +163,7 @@ mod tests {
         let mut lc = LengthCounter::new();
         lc.set_enabled(true);
         lc.set_halt(true);
+        lc.apply_pending_halt();
 
         lc.load_from_index(0); // 10
         lc.clock();
@@ -168,6 +187,7 @@ mod tests {
         // Modify all fields
         lc.set_enabled(true);
         lc.set_halt(true);
+        lc.apply_pending_halt();
         lc.load_from_index(1); // 254
 
         // Verify state changed

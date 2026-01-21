@@ -98,6 +98,10 @@ impl Noise {
         self.length_counter.clock();
     }
 
+    pub fn apply_pending_length_halt(&mut self) {
+        self.length_counter.apply_pending_halt();
+    }
+
     /// Write to envelope register ($400C)
     /// Format: --lc vvvv
     /// l = length counter halt / envelope loop
@@ -176,6 +180,8 @@ impl Noise {
             timer_period: self.timer_period,
             length_counter: self.length_counter.value(),
             length_counter_enabled: self.length_counter.is_enabled(),
+            length_counter_halt: self.length_counter.is_halted(),
+            length_counter_pending_halt: self.length_counter.pending_halt(),
             envelope: self.envelope.capture_state(),
             mode_flag: self.mode,
             shift_register: self.shift_register,
@@ -192,6 +198,8 @@ impl Noise {
         } else {
             self.length_counter.disable();
         }
+        self.length_counter
+            .set_halt_state(state.length_counter_halt, state.length_counter_pending_halt);
         self.envelope.restore_state(&state.envelope);
         self.mode = state.mode_flag;
         self.shift_register = state.shift_register;
@@ -299,6 +307,7 @@ mod tests {
         noise.set_length_counter_enabled(true);
         noise.length_counter.load_from_index(0); // 10
         noise.length_counter.set_halt(false);
+        noise.length_counter.apply_pending_halt();
 
         noise.clock_length_counter();
         assert_eq!(noise.get_length_counter(), 9);
@@ -313,6 +322,7 @@ mod tests {
         noise.set_length_counter_enabled(true);
         noise.length_counter.load_from_index(0); // 10
         noise.length_counter.set_halt(true);
+        noise.length_counter.apply_pending_halt();
 
         noise.clock_length_counter();
         assert_eq!(noise.get_length_counter(), 10); // Should not decrement when halted
