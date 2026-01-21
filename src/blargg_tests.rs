@@ -25,6 +25,8 @@ mod tests {
         Timeout,
     }
 
+    const NTSC_CPU_CYCLES_PER_FRAME: u32 = 29_780;
+
     /// Test verification method
     #[derive(Debug, PartialEq, Eq)]
     pub enum BlarggTestVerification {
@@ -109,7 +111,7 @@ mod tests {
                     first_nonzero_status = Some((frame, current_status));
                 }
                 const STATUS_POLL_INTERVAL: u32 = 256;
-                for cpu_cycle in 0..29780 {
+                for cpu_cycle in 0..NTSC_CPU_CYCLES_PER_FRAME {
                     nes.run_cpu_tick();
 
                     if cpu_cycle != 0 && cpu_cycle % STATUS_POLL_INTERVAL == 0 {
@@ -222,6 +224,72 @@ mod tests {
         }
     }
 
+    fn run_address_test(
+        rom_path: &str,
+        max_frames: u32,
+        stop_address: u16,
+        verifier: fn(&mut Nes) -> bool,
+    ) -> BlarggTestResult {
+        init_apu_tracing_from_env();
+
+        let rom_data = match fs::read(rom_path) {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("Failed to load ROM {}: {}", rom_path, e);
+                return BlarggTestResult::Fail(0x80_u8);
+            }
+        };
+
+        let cartridge = match Cartridge::new(&rom_data) {
+            Ok(cart) => cart,
+            Err(e) => {
+                eprintln!("Failed to parse ROM {}: {}", rom_path, e);
+                return BlarggTestResult::Fail(0x81_u8);
+            }
+        };
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        for _frame in 1..=max_frames {
+            for _cpu_cycle in 0..NTSC_CPU_CYCLES_PER_FRAME {
+                if nes.cpu.pc() == stop_address {
+                    // while nes.sample_ready() {
+                    //     println!("SampleX: {}", nes.get_sample().unwrap());
+                    // }
+                    return if verifier(&mut nes) {
+                        BlarggTestResult::Pass
+                    } else {
+                        BlarggTestResult::Fail(1)
+                    };
+                }
+                nes.run_cpu_tick();
+            }
+
+            if nes.is_ready_to_render() {
+                nes.clear_ready_to_render();
+            }
+            // while nes.sample_ready() {
+            //     nes.get_sample().unwrap();
+            // }
+        }
+
+        BlarggTestResult::Timeout
+    }
+
+    fn verify_always_pass(_nes: &mut Nes) -> bool {
+        true
+    }
+
+    fn verify_always_fail(_nes: &mut Nes) -> bool {
+        false
+    }
+
+    fn verify_mutating(_nes: &mut Nes) -> bool {
+        true
+    }
+
     fn init_apu_tracing_from_env() {
         let level = match std::env::var("NESER_TRACE_APU") {
             Ok(value) => value.parse::<u8>().unwrap_or(1),
@@ -305,10 +373,45 @@ mod tests {
         };
     }
 
+    macro_rules! blargg_address_test {
+        ($test_name:ident, $rom_path:expr, $stop_address:expr, $verify_fn:expr, $timeout:expr) => {
+            #[test]
+            fn $test_name() {
+                let result = run_address_test($rom_path, $timeout, $stop_address, $verify_fn);
+                let rom_name = $rom_path.split('/').last().unwrap();
+                assert_eq!(result, BlarggTestResult::Pass, "{} should pass", rom_name);
+            }
+        };
+        ($test_name:ident, $rom_path:expr, $stop_address:expr, $verify_fn:expr) => {
+            blargg_address_test!($test_name, $rom_path, $stop_address, $verify_fn, 180);
+        };
+    }
+
+    #[test]
+    fn test_address_test_verifier_failure() {
+        let result = run_address_test(
+            "roms/blargg/dmc_tests/buffer_retained.nes",
+            300,
+            0xE149,
+            verify_always_fail,
+        );
+        assert_eq!(result, BlarggTestResult::Fail(1));
+    }
+
+    #[test]
+    fn test_address_test_verifier_accepts_mut_nes() {
+        let result = run_address_test(
+            "roms/blargg/dmc_tests/buffer_retained.nes",
+            300,
+            0xE149,
+            verify_mutating,
+        );
+        assert_eq!(result, BlarggTestResult::Pass);
+    }
+
     //
     // APU
     //
-
 
     // apu_mixer
     blargg_test!(test_apu_mixer_dmc, "roms/blargg/apu_mixer/dmc.nes", 60 * 10);
@@ -454,8 +557,115 @@ mod tests {
         300
     );
 
-    // dmc_tests
+    // Test that the dmc is processing exactly one byte (0x55) -> alternating eight times
+    // The final pulse tone will never play as we are stopping at first sight of the infinite loop
+    fn check_one_dmc_byte_processed(nes: &mut Nes) -> bool {
+        let mut samples = Vec::new();
+        while nes.sample_ready() {
+            samples.push(nes.get_sample().unwrap());
+        }
+        let mut expect_up = true;
+        // First sample is garbage (0)
+        let mut prev = samples[1];
+        let mut alternations = 0;
+        for &next in samples.iter().skip(2) {
+            if next == prev {
+                continue;
+            }
+            if expect_up {
+                assert!(next > prev, "expected up step: {} -> {}", prev, next);
+            } else {
+                assert!(next < prev, "expected down step: {} -> {}", prev, next);
+            }
+            expect_up = !expect_up;
+            prev = next;
+            alternations += 1;
+        }
+        assert_eq!(
+            alternations, 8,
+            "expected 8 alternations, got {}",
+            alternations
+        );
 
+        true
+    }
+
+    fn max_alternating_small_steps(samples: &[f32]) -> usize {
+        const MIN_STEP: f32 = 0.000_05;
+        const BIG_JUMP: f32 = 0.02;
+
+        let mut count = 0usize;
+        let mut last_dir: i32 = 0;
+        let mut prev = match samples.first() {
+            Some(value) => *value,
+            None => return 0,
+        };
+
+        for &next in samples.iter().skip(1) {
+            let delta = next - prev;
+            let abs_delta = delta.abs();
+
+            if abs_delta < MIN_STEP {
+                prev = next;
+                continue;
+            }
+
+            if abs_delta >= BIG_JUMP {
+                prev = next;
+                last_dir = 0;
+                // println!("Big jump to {}", next);
+                continue;
+            }
+
+            // println!("Processing {} count {}", next, count + 1);
+            let dir = if delta > 0.0 { 1 } else { -1 };
+            assert!(
+                last_dir == 0 || dir != last_dir,
+                "last_dir={}, dir={}, prev={}, next={}",
+                last_dir,
+                dir,
+                prev,
+                next
+            );
+            count += 1;
+            last_dir = dir;
+
+            prev = next;
+        }
+
+        count
+    }
+
+    // Test that the dmc is processing two bytes (0x55) four times
+    // Sometime during the first byte, the output will be set to 0x32 but the DMC will keep
+    // processing the remaining bits in that byte as well as the next byte already loaded into
+    // sample buffer.
+    // The final pulse tone will never play as we are stopping at first sight of the infinite loop
+    fn check_four_by_two_dmc_bytes_processed(nes: &mut Nes) -> bool {
+        let mut samples = Vec::new();
+        while nes.sample_ready() {
+            let sample = nes.get_sample().unwrap();
+            samples.push(sample);
+        }
+        let alternations = max_alternating_small_steps(&samples);
+        assert_eq!(alternations, 16 * 4);
+
+        true
+    }
+
+    // dmc_tests
+    blargg_address_test!(
+        test_dmc_tests_buffer_retained,
+        "roms/blargg/dmc_tests/buffer_retained.nes",
+        0xE149,
+        check_one_dmc_byte_processed
+    );
+    blargg_address_test!(
+        test_dmc_tests_latency,
+        "roms/blargg/dmc_tests/latency.nes",
+        0xE162,
+        check_four_by_two_dmc_bytes_processed
+    );
 
     blargg_console_test!(
         test_branch_timing,
@@ -749,8 +959,6 @@ mod tests {
         test_ppu_vbl_nmi_10,
         "roms/blargg/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
-
-
 
     // Tests for OAM DMA and DMC DMA collision handling
     blargg_test!(

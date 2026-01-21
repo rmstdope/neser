@@ -614,8 +614,6 @@ impl Apu {
             0
         };
 
-        trace_apu!(4; "dmc output={}", dmc);
-
         // Pulse mixing (table index is sum of both pulse channels)
         let pulse_index = pulse1 + pulse2;
         let pulse_out = if pulse_index < PULSE_TABLE.len() {
@@ -631,6 +629,8 @@ impl Apu {
         } else {
             0.0
         };
+
+        trace_apu!(5; "Mixing pulse1,pulse2,triangle,noise,dmc=({}, {}, {}, {}, {}) into {}", pulse1, pulse2, triangle, noise, dmc, pulse_out + tnd_out);
 
         // Combine outputs
         pulse_out + tnd_out

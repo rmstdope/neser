@@ -183,7 +183,7 @@ impl Dmc {
         if self.timer == 0 {
             self.timer = self.timer_period.saturating_sub(1);
             self.clock_output_unit();
-            trace_apu!(5; "dmc clock_timer reload period={} output_level={}", self.timer_period, self.output_level);
+            trace_apu!(4; "dmc clock_timer reload period={} output_level={}", self.timer_period, self.output_level);
         } else {
             self.timer -= 1;
         }
@@ -240,6 +240,7 @@ impl Dmc {
         // Step 1: If silence flag is clear, update output level based on bit 0
         if !self.silence_flag {
             let bit0 = self.shift_register & 1;
+            trace_apu!(4; "dmc clock_output_unit bit0={}", bit0);
             if bit0 == 1 {
                 // Add 2, but only if output level <= 125
                 if self.output_level <= 125 {
@@ -261,6 +262,7 @@ impl Dmc {
             self.bits_remaining -= 1;
         }
 
+        trace_apu!(4; "dmc clock_output_unit shift_register=0x{:02X}, bits_remaining={}", self.shift_register, self.bits_remaining);
         // When bits remaining reaches 0, start a new output cycle
         if self.bits_remaining == 0 {
             self.start_output_cycle();
@@ -309,13 +311,11 @@ impl Dmc {
                 trace_apu!(4; "dmc transfer_start_delay {}", self.transfer_start_delay);
             }
         } else {
-            // Disable: clear bytes remaining
+            // Disable: clear bytes remaining (retain any buffered sample)
             self.bytes_remaining = 0;
             if self.sample_buffer.is_some() {
-                trace_apu!(4; "dmc sample_buffer cleared (disable)");
+                trace_apu!(4; "dmc sample_buffer retained (disable)");
             }
-            self.sample_buffer = None;
-            self.silence_flag = true;
         }
     }
 
@@ -366,6 +366,12 @@ impl Dmc {
     /// Check if the channel has bytes remaining (for status register $4015 bit 4)
     pub fn has_bytes_remaining(&self) -> bool {
         self.bytes_remaining > 0
+    }
+
+    /// Get the number of bytes_remaining (for testing purposes)
+    #[cfg(test)]
+    pub fn get_bytes_remaining(&self) -> u16 {
+        self.bytes_remaining
     }
 
     /// Capture the current DMC channel state for save-state.
@@ -585,6 +591,30 @@ mod tests {
         dmc.start_output_cycle();
         assert!(dmc.silence_flag);
         assert_eq!(dmc.bits_remaining, 8);
+    }
+
+    #[test]
+    fn test_sample_buffer_retained_when_disabled() {
+        let mut dmc = Dmc::new();
+        dmc.sample_buffer = Some(0x55);
+
+        dmc.set_enabled(false, 0);
+
+        assert_eq!(dmc.sample_buffer, Some(0x55));
+    }
+
+    #[test]
+    fn test_disable_channel_does_not_force_silence_flag() {
+        let mut dmc = Dmc::new();
+        dmc.silence_flag = false;
+        dmc.shift_register = 0xAA;
+        dmc.bits_remaining = 4;
+
+        dmc.set_enabled(false, 0);
+
+        assert!(!dmc.silence_flag);
+        assert_eq!(dmc.shift_register, 0xAA);
+        assert_eq!(dmc.bits_remaining, 4);
     }
 }
 
