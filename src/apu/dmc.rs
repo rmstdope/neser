@@ -46,6 +46,9 @@ pub struct Dmc {
     // IRQ
     interrupt_flag: bool,
 
+    #[cfg(test)]
+    irq_trigger_count: u32,
+
     // Transfer start delay (2-3 cycles after enabling DMC via $4015)
     transfer_start_delay: u8,
 }
@@ -74,6 +77,8 @@ impl Dmc {
             bytes_remaining: 0,
             dma_pending: false,
             interrupt_flag: false,
+            #[cfg(test)]
+            irq_trigger_count: 0,
             transfer_start_delay: 0,
         }
     }
@@ -230,6 +235,10 @@ impl Dmc {
             } else if self.irq_enabled {
                 // No loop: set IRQ flag if enabled
                 self.interrupt_flag = true;
+                #[cfg(test)]
+                {
+                    self.irq_trigger_count += 1;
+                }
                 trace_apu!(3; "dmc irq_flag set (sample complete)");
             }
         }
@@ -347,6 +356,10 @@ impl Dmc {
                 } else if self.irq_enabled {
                     // No loop: set IRQ flag if enabled
                     self.interrupt_flag = true;
+                    #[cfg(test)]
+                    {
+                        self.irq_trigger_count += 1;
+                    }
                 }
             }
         }
@@ -355,6 +368,11 @@ impl Dmc {
     /// Get the IRQ flag status
     pub fn get_irq_flag(&self) -> bool {
         self.interrupt_flag
+    }
+
+    #[cfg(test)]
+    pub fn debug_irq_trigger_count(&self) -> u32 {
+        self.irq_trigger_count
     }
 
     /// Clear the IRQ flag (side effect of writing to $4015)
