@@ -14,6 +14,8 @@ pub struct LengthCounter {
     enabled: bool,
     halt: bool,
     pending_halt: Option<bool>,
+    reload_value: u8,
+    previous_value: u8,
     value: u8,
 }
 
@@ -62,6 +64,15 @@ impl LengthCounter {
         self.value = 0;
     }
 
+    pub fn reload_counter(&mut self) {
+        if self.reload_value != 0 {
+            if self.value == self.previous_value {
+                self.value = self.reload_value;
+            }
+            self.reload_value = 0;
+        }
+    }
+
     pub fn apply_pending_halt(&mut self) {
         if let Some(halt) = self.pending_halt.take() {
             self.halt = halt;
@@ -74,10 +85,16 @@ impl LengthCounter {
         self.pending_halt = pending_halt;
     }
 
+    pub fn set_reload_state(&mut self, reload_value: u8, previous_value: u8) {
+        self.reload_value = reload_value;
+        self.previous_value = previous_value;
+    }
+
     pub fn load_from_index(&mut self, index: u8) {
         if self.enabled {
             trace_apu!(3; "length_counter load index={} value={}", index & 0x1F, Self::lookup(index));
-            self.value = Self::lookup(index);
+            self.reload_value = Self::lookup(index);
+            self.previous_value = self.value;
         }
     }
 
@@ -90,6 +107,14 @@ impl LengthCounter {
 
     pub fn value(&self) -> u8 {
         self.value
+    }
+
+    pub fn reload_value(&self) -> u8 {
+        self.reload_value
+    }
+
+    pub fn previous_value(&self) -> u8 {
+        self.previous_value
     }
 
     /// Set the length counter value directly (for save-state restore).
@@ -131,6 +156,7 @@ mod tests {
         lc.set_enabled(false);
 
         lc.load_from_index(0);
+        lc.reload_counter();
         assert_eq!(lc.value(), 0);
     }
 
@@ -140,9 +166,11 @@ mod tests {
         lc.set_enabled(true);
 
         lc.load_from_index(0);
+        lc.reload_counter();
         assert_eq!(lc.value(), 10);
 
         lc.load_from_index(1);
+        lc.reload_counter();
         assert_eq!(lc.value(), 254);
     }
 
@@ -154,6 +182,7 @@ mod tests {
         lc.apply_pending_halt();
 
         lc.load_from_index(0); // 10
+        lc.reload_counter();
         lc.clock();
         assert_eq!(lc.value(), 9);
     }
@@ -166,6 +195,7 @@ mod tests {
         lc.apply_pending_halt();
 
         lc.load_from_index(0); // 10
+        lc.reload_counter();
         lc.clock();
         assert_eq!(lc.value(), 10);
     }
@@ -175,6 +205,7 @@ mod tests {
         let mut lc = LengthCounter::new();
         lc.set_enabled(true);
         lc.load_from_index(0);
+        lc.reload_counter();
         assert_eq!(lc.value(), 10);
 
         lc.set_enabled(false);
@@ -189,6 +220,7 @@ mod tests {
         lc.set_halt(true);
         lc.apply_pending_halt();
         lc.load_from_index(1); // 254
+        lc.reload_counter();
 
         // Verify state changed
         assert!(lc.is_enabled());

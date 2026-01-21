@@ -98,6 +98,11 @@ impl Noise {
         self.length_counter.clock();
     }
 
+    pub fn apply_pending_length_reload(&mut self) {
+        self.length_counter.reload_counter();
+    }
+
+
     pub fn apply_pending_length_halt(&mut self) {
         self.length_counter.apply_pending_halt();
     }
@@ -182,6 +187,8 @@ impl Noise {
             length_counter_enabled: self.length_counter.is_enabled(),
             length_counter_halt: self.length_counter.is_halted(),
             length_counter_pending_halt: self.length_counter.pending_halt(),
+            length_counter_reload_value: self.length_counter.reload_value(),
+            length_counter_previous_value: self.length_counter.previous_value(),
             envelope: self.envelope.capture_state(),
             mode_flag: self.mode,
             shift_register: self.shift_register,
@@ -200,6 +207,8 @@ impl Noise {
         }
         self.length_counter
             .set_halt_state(state.length_counter_halt, state.length_counter_pending_halt);
+        self.length_counter
+            .set_reload_state(state.length_counter_reload_value, state.length_counter_previous_value);
         self.envelope.restore_state(&state.envelope);
         self.mode = state.mode_flag;
         self.shift_register = state.shift_register;
@@ -210,6 +219,11 @@ impl Noise {
 #[allow(clippy::unusual_byte_groupings)]
 mod tests {
     use super::*;
+
+    fn write_length(noise: &mut Noise, value: u8) {
+        noise.write_length(value);
+        noise.apply_pending_length_reload();
+    }
 
     #[test]
     fn test_noise_new() {
@@ -306,6 +320,7 @@ mod tests {
         let mut noise = Noise::new();
         noise.set_length_counter_enabled(true);
         noise.length_counter.load_from_index(0); // 10
+        noise.length_counter.reload_counter();
         noise.length_counter.set_halt(false);
         noise.length_counter.apply_pending_halt();
 
@@ -321,6 +336,7 @@ mod tests {
         let mut noise = Noise::new();
         noise.set_length_counter_enabled(true);
         noise.length_counter.load_from_index(0); // 10
+        noise.length_counter.reload_counter();
         noise.length_counter.set_halt(true);
         noise.length_counter.apply_pending_halt();
 
@@ -364,7 +380,7 @@ mod tests {
         // $400F: llll l---
         // l = length counter load
         noise.set_length_counter_enabled(true);
-        noise.write_length(0b10110_000); // load index 22
+        write_length(&mut noise, 0b10110_000); // load index 22
 
         assert_eq!(noise.get_length_counter(), LengthCounter::lookup(22));
         assert!(noise.envelope.debug_start_flag()); // Should trigger envelope restart
@@ -397,7 +413,7 @@ mod tests {
         noise.length_counter.load_from_index(0); // 10
         noise.write_envelope(0b0000_0000); // decay mode, n=0
         // Trigger envelope restart like a real length write would.
-        noise.write_length(0b00000_000);
+        write_length(&mut noise, 0b00000_000);
         noise.clock_envelope();
 
         // With n=0, the counter decrements every envelope clock.
@@ -415,6 +431,7 @@ mod tests {
         let mut noise = Noise::new();
         noise.set_length_counter_enabled(true); // Must be enabled for output
         noise.length_counter.load_from_index(0); // 10
+        noise.length_counter.reload_counter();
         noise.write_envelope(0b0001_1100); // constant volume 12
         noise.shift_register = 0b0000_0000_0000_0010; // bit 0 clear
 
@@ -426,6 +443,7 @@ mod tests {
         let mut noise = Noise::new();
         noise.set_length_counter_enabled(true);
         noise.length_counter.load_from_index(0);
+        noise.length_counter.reload_counter();
         assert_eq!(noise.get_length_counter(), 10);
 
         // Disabling via $4015 clears length counter
@@ -443,7 +461,7 @@ mod tests {
         noise.write_period(0b1000_1111); // mode=1, period index=15
         noise.write_envelope(0b0011_1010); // halt=1, constant=1, volume=10
         noise.set_length_counter_enabled(true);
-        noise.write_length(0b00000_000); // length index=0 (value=10)
+        write_length(&mut noise, 0b00000_000); // length index=0 (value=10)
         for _ in 0..1000 {
             noise.clock_timer();
         }

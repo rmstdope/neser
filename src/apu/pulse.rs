@@ -177,6 +177,10 @@ impl Pulse {
         self.length_counter.clock();
     }
 
+    pub fn apply_pending_length_reload(&mut self) {
+        self.length_counter.reload_counter();
+    }
+
     pub fn apply_pending_length_halt(&mut self) {
         self.length_counter.apply_pending_halt();
     }
@@ -321,6 +325,8 @@ impl Pulse {
             length_counter_enabled: self.length_counter.is_enabled(),
             length_counter_halt: self.length_counter.is_halted(),
             length_counter_pending_halt: self.length_counter.pending_halt(),
+            length_counter_reload_value: self.length_counter.reload_value(),
+            length_counter_previous_value: self.length_counter.previous_value(),
             duty: self.duty_mode,
             duty_position: self.sequence_position,
             envelope: self.envelope.capture_state(),
@@ -345,6 +351,10 @@ impl Pulse {
         }
         self.length_counter
             .set_halt_state(state.length_counter_halt, state.length_counter_pending_halt);
+        self.length_counter.set_reload_state(
+            state.length_counter_reload_value,
+            state.length_counter_previous_value,
+        );
         self.duty_mode = state.duty;
         self.sequence_position = state.duty_position;
         self.envelope.restore_state(&state.envelope);
@@ -361,6 +371,11 @@ impl Pulse {
 #[allow(clippy::unusual_byte_groupings)]
 mod tests {
     use super::*;
+
+    fn write_length(pulse: &mut Pulse, value: u8) {
+        pulse.write_length_counter_timer_high(value);
+        pulse.apply_pending_length_reload();
+    }
 
     #[test]
     fn test_pulse_new() {
@@ -595,7 +610,7 @@ mod tests {
 
         assert!(!pulse.get_envelope_start_flag());
 
-        pulse.write_length_counter_timer_high(0x00);
+        write_length(&mut pulse, 0x00);
         assert!(pulse.get_envelope_start_flag());
     }
 
@@ -714,7 +729,7 @@ mod tests {
 
         for (i, &expected_value) in expected.iter().enumerate() {
             let value = (i as u8) << 3; // Put index in bits 7-3
-            pulse.write_length_counter_timer_high(value);
+            write_length(&mut pulse, value);
             assert_eq!(
                 pulse.get_length_counter(),
                 expected_value,
@@ -728,7 +743,7 @@ mod tests {
     fn test_length_counter_decrements() {
         let mut pulse = Pulse::default();
         pulse.set_length_counter_enabled(true);
-        pulse.write_length_counter_timer_high(0b00001_000); // Load value 2 (index 1)
+        write_length(&mut pulse, 0b00001_000); // Load value 2 (index 1)
         assert_eq!(pulse.get_length_counter(), 254);
 
         pulse.clock_length_counter();
@@ -744,7 +759,7 @@ mod tests {
         pulse.write_control(0b0010_0000); // Set halt flag
         pulse.apply_pending_length_halt();
         pulse.set_length_counter_enabled(true);
-        pulse.write_length_counter_timer_high(0b00010_000); // Load value 20 (index 2)
+        write_length(&mut pulse, 0b00010_000); // Load value 20 (index 2)
 
         assert_eq!(pulse.get_length_counter(), 20);
 
@@ -761,7 +776,7 @@ mod tests {
         let mut pulse = Pulse::default();
         pulse.write_control(0b0000_0000); // No halt
         pulse.set_length_counter_enabled(true);
-        pulse.write_length_counter_timer_high(0b00011_000); // Load value 2 (index 3)
+        write_length(&mut pulse, 0b00011_000); // Load value 2 (index 3)
 
         assert_eq!(pulse.get_length_counter(), 2);
 
@@ -780,7 +795,7 @@ mod tests {
     fn test_length_counter_can_be_reloaded() {
         let mut pulse = Pulse::default();
         pulse.set_length_counter_enabled(true);
-        pulse.write_length_counter_timer_high(0b00100_000); // Load value 40 (index 4)
+        write_length(&mut pulse, 0b00100_000); // Load value 40 (index 4)
         assert_eq!(pulse.get_length_counter(), 40);
 
         // Clock a few times
@@ -789,7 +804,7 @@ mod tests {
         assert_eq!(pulse.get_length_counter(), 38);
 
         // Reload with different value
-        pulse.write_length_counter_timer_high(0b00000_000); // Load value 10 (index 0)
+        write_length(&mut pulse, 0b00000_000); // Load value 10 (index 0)
         assert_eq!(pulse.get_length_counter(), 10);
     }
 
@@ -815,7 +830,7 @@ mod tests {
         let mut pulse = Pulse::default();
         // Enable first, then load
         pulse.set_length_counter_enabled(true);
-        pulse.write_length_counter_timer_high(0b01010_000); // Load some value
+        write_length(&mut pulse, 0b01010_000); // Load some value
         assert_eq!(pulse.get_length_counter(), 60);
 
         // Disabling via $4015 clears the length counter
@@ -827,7 +842,7 @@ mod tests {
         assert_eq!(pulse.get_length_counter(), 0);
 
         // Now we can load again since it's enabled
-        pulse.write_length_counter_timer_high(0b00100_000); // Load different value
+        write_length(&mut pulse, 0b00100_000); // Load different value
         assert_eq!(pulse.get_length_counter(), 40);
     }
 
@@ -837,7 +852,7 @@ mod tests {
         pulse.write_control(0b0010_0000); // Halt flag set
         pulse.apply_pending_length_halt();
         pulse.set_length_counter_enabled(true);
-        pulse.write_length_counter_timer_high(0b00000_000); // Load 10
+        write_length(&mut pulse, 0b00000_000); // Load 10
 
         pulse.clock_length_counter();
         assert_eq!(pulse.get_length_counter(), 10); // Halted, no change
@@ -1025,7 +1040,7 @@ mod tests {
         pulse.write_control(0b1011_1010); // Duty 50%, constant volume, volume=10
         pulse.write_timer_low(0x64); // Period = 100
         pulse.write_timer_high(0x00);
-        pulse.write_length_counter_timer_high(0b00000_000); // Load length counter (index 0 = 10)
+        write_length(&mut pulse, 0b00000_000); // Load length counter (index 0 = 10)
 
         // Advance to a point where sequencer outputs 1
         for _ in 0..=100 {
@@ -1045,7 +1060,7 @@ mod tests {
         pulse.write_control(0b0001_1111); // Duty 12.5%, constant volume, volume=15
         pulse.write_timer_low(0x64);
         pulse.write_timer_high(0x00);
-        pulse.write_length_counter_timer_high(0b00000_000); // Index 0 = 10
+        write_length(&mut pulse, 0b00000_000); // Index 0 = 10
 
         // Step until sequencer is at 0
         // Sequencer reads in reverse: 0,7,6,5,4,3,2,1
@@ -1088,7 +1103,7 @@ mod tests {
         pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
         pulse.write_timer_low(0x07); // Period = 7 (< 8)
         pulse.write_timer_high(0x00);
-        pulse.write_length_counter_timer_high(0b00000_000); // Load length counter (index 0 = 10)
+        write_length(&mut pulse, 0b00000_000); // Load length counter (index 0 = 10)
 
         assert_eq!(pulse.output(), 0);
     }
@@ -1099,7 +1114,7 @@ mod tests {
 
         // Setup with sweep that causes overflow
         pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
-        pulse.write_length_counter_timer_high(0b00000_111); // Index 0, sets timer high to 7
+        write_length(&mut pulse, 0b00000_111); // Index 0, sets timer high to 7
         pulse.write_timer_low(0xFF); // Set low 8 bits -> Period = $7FF
         pulse.write_sweep(0b1000_0001); // Enable, shift=1 (will overflow)
 
@@ -1116,7 +1131,7 @@ mod tests {
         pulse.write_control(0b1000_0101); // Duty 50%, decay mode, period=5
         pulse.write_timer_low(0x64);
         pulse.write_timer_high(0x00);
-        pulse.write_length_counter_timer_high(0b00000_000); // Sets start flag (index 0 = 10)
+        write_length(&mut pulse, 0b00000_000); // Sets start flag (index 0 = 10)
 
         // Clock envelope to start it
         pulse.clock_envelope();
@@ -1138,7 +1153,7 @@ mod tests {
         pulse.write_timer_low(0x0A); // Period = 10
         pulse.write_timer_high(0x00);
         pulse.set_length_counter_enabled(true);
-        pulse.write_length_counter_timer_high(0b00000_000); // Index 0 = 10
+        write_length(&mut pulse, 0b00000_000); // Index 0 = 10
 
         // Run through one complete waveform cycle (8 steps)
         let mut outputs = Vec::new();
@@ -1165,7 +1180,7 @@ mod tests {
         pulse.write_timer_low(0x64);
         pulse.write_timer_high(0x00);
         pulse.set_length_counter_enabled(true);
-        pulse.write_length_counter_timer_high(0b00000_000); // Load length=10 (index 0)
+        write_length(&mut pulse, 0b00000_000); // Load length=10 (index 0)
 
         // Initially should be able to output
         assert_eq!(pulse.get_length_counter(), 10);
@@ -1187,7 +1202,7 @@ mod tests {
         pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
         pulse.write_timer_low(0x10); // Period = 16
         pulse.write_timer_high(0x00);
-        pulse.write_length_counter_timer_high(0b00000_000); // Index 0 = 10
+        write_length(&mut pulse, 0b00000_000); // Index 0 = 10
         pulse.write_sweep(0b1000_0001); // Enable, period=0, shift=1
 
         let initial_period = pulse.get_timer_period();
@@ -1210,14 +1225,14 @@ mod tests {
         pulse.write_control(0b1011_1111); // Duty 50%, constant volume=15
         pulse.write_timer_low(0x64); // Period = 100
         pulse.write_timer_high(0x00);
-        pulse.write_length_counter_timer_high(0b00000_000); // Index 0 = 10
+        write_length(&mut pulse, 0b00000_000); // Index 0 = 10
 
         // Test 1: Mute by clearing length counter
         pulse.set_length_counter_enabled(false);
         assert_eq!(pulse.output(), 0);
 
         // Restore length counter
-        pulse.write_length_counter_timer_high(0b00000_000);
+        write_length(&mut pulse, 0b00000_000);
 
         // Test 2: Mute by setting period < 8
         pulse.write_timer_low(0x07);
@@ -1229,7 +1244,7 @@ mod tests {
         pulse.write_timer_high(0x00);
 
         // Test 3: Mute by sweep overflow
-        pulse.write_length_counter_timer_high(0b00000_111); // Index 0, sets timer high to 7
+        write_length(&mut pulse, 0b00000_111); // Index 0, sets timer high to 7
         pulse.write_timer_low(0xFF); // Period = $7FF
         pulse.write_sweep(0b1000_0001); // Causes overflow
         assert_eq!(pulse.output(), 0);
@@ -1246,7 +1261,7 @@ mod tests {
         pulse1.write_timer_high(0x03);
         pulse1.write_sweep(0b1000_0001);
         pulse1.set_length_counter_enabled(true);
-        pulse1.write_length_counter_timer_high(0b00000_000);
+        write_length(&mut pulse1, 0b00000_000);
         for _ in 0..100 {
             pulse1.clock_timer();
         }

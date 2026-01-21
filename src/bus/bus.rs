@@ -1397,6 +1397,7 @@ mod tests {
             // Set length counter to non-zero by writing to register 3
             apu.pulse1_mut()
                 .write_length_counter_timer_high(0b1111_1000);
+            apu.pulse1_mut().apply_pending_length_reload();
         }
 
         // Read status through memory controller - pulse 1 bit should be set
@@ -1438,6 +1439,12 @@ mod tests {
         // Write to $4003 (length/timer high)
         memory.write(0x4003, 0b11111000, false);
 
+        memory
+            .apu
+            .borrow_mut()
+            .pulse1_mut()
+            .apply_pending_length_reload();
+
         // Verify writes reached the APU by checking pulse1 length counter
         let apu = memory.apu.borrow();
         assert!(apu.pulse1().get_length_counter() > 0);
@@ -1456,6 +1463,12 @@ mod tests {
 
         // Write to $4007 (length/timer high)
         memory.write(0x4007, 0b11110000, false);
+
+        memory
+            .apu
+            .borrow_mut()
+            .pulse2_mut()
+            .apply_pending_length_reload();
 
         // Verify writes reached the APU
         let apu = memory.apu.borrow();
@@ -1476,6 +1489,12 @@ mod tests {
         // Write to $400B (length/timer high)
         memory.write(0x400B, 0b11110000, false);
 
+        memory
+            .apu
+            .borrow_mut()
+            .triangle_mut()
+            .apply_pending_length_reload();
+
         // Verify writes reached the APU
         let apu = memory.apu.borrow();
         assert!(apu.triangle().get_length_counter() > 0);
@@ -1495,6 +1514,11 @@ mod tests {
         // 3) Write $400B to load length counter and set linear reload flag.
         // length index = 1 (upper 5 bits), timer high = 0
         memory.write(0x400B, 0x08, false);
+        memory
+            .apu
+            .borrow_mut()
+            .triangle_mut()
+            .apply_pending_length_reload();
 
         // 4) Switch to 5-step mode ($4017) so the delayed-write effect produces an immediate
         // quarter-frame clock. This should quickly reload the linear counter.
@@ -1575,6 +1599,12 @@ mod tests {
         // Write to $400F (length counter load)
         memory.write(0x400F, 0b11110000, false);
 
+        memory
+            .apu
+            .borrow_mut()
+            .noise_mut()
+            .apply_pending_length_reload();
+
         // Verify writes reached the APU
         let apu = memory.apu.borrow();
         assert!(apu.noise().get_length_counter() > 0);
@@ -1611,6 +1641,12 @@ mod tests {
         // Write length counters to make them non-zero
         memory.write(0x4003, 0b11110000, false);
         memory.write(0x4007, 0b11110000, false);
+
+        {
+            let mut apu = memory.apu.borrow_mut();
+            apu.pulse1_mut().apply_pending_length_reload();
+            apu.pulse2_mut().apply_pending_length_reload();
+        }
 
         // Read status to verify both are enabled
         let status = memory.read(0x4015);

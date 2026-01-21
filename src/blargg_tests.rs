@@ -305,7 +305,158 @@ mod tests {
         };
     }
 
-    // Branch timing tests
+    //
+    // APU
+    //
+
+
+    // apu_mixer
+    blargg_test!(test_apu_mixer_dmc, "roms/blargg/apu_mixer/dmc.nes", 60 * 10);
+    blargg_test!(
+        test_apu_mixer_noise,
+        "roms/blargg/apu_mixer/noise.nes",
+        60 * 10
+    );
+    blargg_test!(
+        test_apu_mixer_square,
+        "roms/blargg/apu_mixer/square.nes",
+        60 * 10
+    );
+    blargg_test!(
+        test_apu_mixer_triangle,
+        "roms/blargg/apu_mixer/triangle.nes",
+        60 * 10
+    );
+
+    // apu_reset
+    blargg_test!(test_4015_cleared, "roms/blargg/apu_reset/4015_cleared.nes");
+    blargg_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
+    blargg_test!(test_4017_written, "roms/blargg/apu_reset/4017_written.nes");
+    blargg_test!(
+        test_irq_flag_cleared,
+        "roms/blargg/apu_reset/irq_flag_cleared.nes"
+    );
+    blargg_test!(
+        test_len_ctrs_enabled,
+        "roms/blargg/apu_reset/len_ctrs_enabled.nes"
+    );
+    blargg_test!(
+        test_works_immediately,
+        "roms/blargg/apu_reset/works_immediately.nes"
+    );
+
+    // apu_test
+    blargg_test!(
+        test_apu_test_1,
+        "roms/blargg/apu_test/rom_singles/1-len_ctr.nes"
+    );
+    blargg_test!(
+        test_apu_test_2,
+        "roms/blargg/apu_test/rom_singles/2-len_table.nes"
+    );
+    blargg_test!(
+        test_apu_test_3,
+        "roms/blargg/apu_test/rom_singles/3-irq_flag.nes"
+    );
+    blargg_test!(
+        test_apu_test_4,
+        "roms/blargg/apu_test/rom_singles/4-jitter.nes"
+    );
+    blargg_test!(
+        test_apu_test_5,
+        "roms/blargg/apu_test/rom_singles/5-len_timing.nes"
+    );
+    blargg_test!(
+        test_apu_test_6,
+        "roms/blargg/apu_test/rom_singles/6-irq_flag_timing.nes"
+    );
+    blargg_test!(
+        test_apu_test_7,
+        "roms/blargg/apu_test/rom_singles/7-dmc_basics.nes"
+    );
+    blargg_test!(
+        test_apu_test_8,
+        "roms/blargg/apu_test/rom_singles/8-dmc_rates.nes"
+    );
+
+    // blargg_apu_2005.07.30
+    blargg_console_test!(
+        test_blargg_apu_01,
+        "roms/blargg/blargg_apu_2005.07.30/01.len_ctr.nes"
+    );
+    blargg_console_test!(
+        test_blargg_apu_02,
+        "roms/blargg/blargg_apu_2005.07.30/02.len_table.nes"
+    );
+    blargg_console_test!(
+        test_blargg_apu_03,
+        "roms/blargg/blargg_apu_2005.07.30/03.irq_flag.nes"
+    );
+    blargg_console_test!(
+        test_blargg_apu_04,
+        "roms/blargg/blargg_apu_2005.07.30/04.clock_jitter.nes"
+    );
+    blargg_console_test!(
+        test_blargg_apu_05,
+        "roms/blargg/blargg_apu_2005.07.30/05.len_timing_mode0.nes"
+    );
+    blargg_console_test!(
+        test_blargg_apu_06,
+        "roms/blargg/blargg_apu_2005.07.30/06.len_timing_mode1.nes"
+    );
+    blargg_console_test!(
+        test_blargg_apu_07,
+        "roms/blargg/blargg_apu_2005.07.30/07.irq_flag_timing.nes"
+    );
+    blargg_console_test!(
+        test_blargg_apu_08,
+        "roms/blargg/blargg_apu_2005.07.30/08.irq_timing.nes"
+    );
+    blargg_console_test!(
+        test_blargg_apu_09,
+        "roms/blargg/blargg_apu_2005.07.30/09.reset_timing.nes"
+    );
+    blargg_console_test!(
+        test_blargg_apu_10,
+        "roms/blargg/blargg_apu_2005.07.30/10.len_halt_timing.nes"
+    );
+    blargg_console_test!(
+        test_blargg_apu_11,
+        "roms/blargg/blargg_apu_2005.07.30/11.len_reload_timing.nes"
+    );
+
+    // dmc_dma_during_read4
+    blargg_console_crc_test!(
+        test_dmc_dma_during_read4_2007_read,
+        "roms/blargg/dmc_dma_during_read4/dma_2007_read.nes",
+        300,
+        &[0x159A7A8F, 0x5E3DF9C4]
+    );
+    blargg_console_test!(
+        test_dmc_dma_during_read4_2007_write,
+        "roms/blargg/dmc_dma_during_read4/dma_2007_write.nes",
+        300
+    );
+    blargg_console_test!(
+        test_dmc_dma_during_read4_4016_read,
+        "roms/blargg/dmc_dma_during_read4/dma_4016_read.nes",
+        300
+    );
+    blargg_console_crc_test!(
+        test_dmc_dma_during_read4_double_2007_read,
+        "roms/blargg/dmc_dma_during_read4/double_2007_read.nes",
+        300,
+        &[0xF018C287, 0xD84F6815] //CRC1 - Mesen, loopyNES, etc., CRC2 - Nintendulator, FCEUX
+    );
+    blargg_console_test!(
+        test_dmc_dma_during_read4_read_write_2007,
+        "roms/blargg/dmc_dma_during_read4/read_write_2007.nes",
+        300
+    );
+
+    // dmc_tests
+
+
     blargg_console_test!(
         test_branch_timing,
         "roms/blargg/branch_timing_tests/1.Branch_Basics.nes"
@@ -339,34 +490,6 @@ mod tests {
         "roms/blargg/cpu_exec_space/test_cpu_exec_space_apu.nes"
     );
 
-    // DMC DMA "register conflicts" and related timing edge cases
-    blargg_console_crc_test!(
-        test_dmc_dma_during_read4_2007_read,
-        "roms/blargg/dmc_dma_during_read4/dma_2007_read.nes",
-        300,
-        &[0x159A7A8F, 0x5E3DF9C4]
-    );
-    blargg_console_test!(
-        test_dmc_dma_during_read4_2007_write,
-        "roms/blargg/dmc_dma_during_read4/dma_2007_write.nes",
-        300
-    );
-    blargg_console_test!(
-        test_dmc_dma_during_read4_4016_read,
-        "roms/blargg/dmc_dma_during_read4/dma_4016_read.nes",
-        300
-    );
-    blargg_console_crc_test!(
-        test_dmc_dma_during_read4_double_2007_read,
-        "roms/blargg/dmc_dma_during_read4/double_2007_read.nes",
-        300,
-        &[0xF018C287, 0xD84F6815] //CRC1 - Mesen, loopyNES, etc., CRC2 - Nintendulator, FCEUX
-    );
-    blargg_console_test!(
-        test_dmc_dma_during_read4_read_write_2007,
-        "roms/blargg/dmc_dma_during_read4/read_write_2007.nes",
-        300
-    );
     blargg_test!(
         test_cpu_cli_latency,
         "roms/blargg/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"
@@ -586,21 +709,6 @@ mod tests {
         "roms/blargg/ppu_sprite_overflow/rom_singles/05-emulator.nes"
     );
 
-    blargg_test!(test_4015_cleared, "roms/blargg/apu_reset/4015_cleared.nes");
-    blargg_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
-    blargg_test!(test_4017_written, "roms/blargg/apu_reset/4017_written.nes");
-    blargg_test!(
-        test_irq_flag_cleared,
-        "roms/blargg/apu_reset/irq_flag_cleared.nes"
-    );
-    blargg_test!(
-        test_len_ctrs_enabled,
-        "roms/blargg/apu_reset/len_ctrs_enabled.nes"
-    );
-    blargg_test!(
-        test_works_immediately,
-        "roms/blargg/apu_reset/works_immediately.nes"
-    );
     blargg_test!(
         test_ppu_vbl_nmi_01,
         "roms/blargg/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes"
@@ -641,97 +749,8 @@ mod tests {
         test_ppu_vbl_nmi_10,
         "roms/blargg/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
-    blargg_test!(
-        test_apu_test_1,
-        "roms/blargg/apu_test/rom_singles/1-len_ctr.nes"
-    );
-    blargg_test!(
-        test_apu_test_2,
-        "roms/blargg/apu_test/rom_singles/2-len_table.nes"
-    );
-    blargg_test!(
-        test_apu_test_3,
-        "roms/blargg/apu_test/rom_singles/3-irq_flag.nes"
-    );
-    blargg_test!(
-        test_apu_test_4,
-        "roms/blargg/apu_test/rom_singles/4-jitter.nes"
-    );
-    blargg_test!(
-        test_apu_test_5,
-        "roms/blargg/apu_test/rom_singles/5-len_timing.nes"
-    );
-    blargg_test!(
-        test_apu_test_6,
-        "roms/blargg/apu_test/rom_singles/6-irq_flag_timing.nes"
-    );
-    blargg_test!(
-        test_apu_test_7,
-        "roms/blargg/apu_test/rom_singles/7-dmc_basics.nes"
-    );
-    blargg_test!(
-        test_apu_test_8,
-        "roms/blargg/apu_test/rom_singles/8-dmc_rates.nes"
-    );
 
-    blargg_test!(test_apu_mixer_dmc, "roms/blargg/apu_mixer/dmc.nes", 60 * 10);
-    blargg_test!(
-        test_apu_mixer_noise,
-        "roms/blargg/apu_mixer/noise.nes",
-        60 * 10
-    );
-    blargg_test!(
-        test_apu_mixer_triangle,
-        "roms/blargg/apu_mixer/triangle.nes",
-        60 * 10
-    );
-    blargg_test!(
-        test_apu_mixer_square,
-        "roms/blargg/apu_mixer/square.nes",
-        60 * 10
-    );
 
-    blargg_console_test!(
-        test_blargg_apu_01,
-        "roms/blargg/blargg_apu_2005.07.30/01.len_ctr.nes"
-    );
-    blargg_console_test!(
-        test_blargg_apu_02,
-        "roms/blargg/blargg_apu_2005.07.30/02.len_table.nes"
-    );
-    blargg_console_test!(
-        test_blargg_apu_03,
-        "roms/blargg/blargg_apu_2005.07.30/03.irq_flag.nes"
-    );
-    blargg_console_test!(
-        test_blargg_apu_04,
-        "roms/blargg/blargg_apu_2005.07.30/04.clock_jitter.nes"
-    );
-    blargg_console_test!(
-        test_blargg_apu_05,
-        "roms/blargg/blargg_apu_2005.07.30/05.len_timing_mode0.nes"
-    );
-    blargg_console_test!(
-        test_blargg_apu_06,
-        "roms/blargg/blargg_apu_2005.07.30/06.len_timing_mode1.nes"
-    );
-    blargg_console_test!(
-        test_blargg_apu_07,
-        "roms/blargg/blargg_apu_2005.07.30/07.irq_flag_timing.nes"
-    );
-    blargg_console_test!(
-        test_blargg_apu_08,
-        "roms/blargg/blargg_apu_2005.07.30/08.irq_timing.nes"
-    );
-    blargg_console_test!(
-        test_blargg_apu_09,
-        "roms/blargg/blargg_apu_2005.07.30/09.reset_timing.nes"
-    );
-    blargg_console_test!(
-        test_blargg_apu_10,
-        "roms/blargg/blargg_apu_2005.07.30/10.len_halt_timing.nes"
-    );
-    // blargg_console_test!(test_blargg_apu_11, "roms/blargg/blargg_apu_2005.07.30/11.len_reload_timing.nes");
 
     // Tests for OAM DMA and DMC DMA collision handling
     blargg_test!(

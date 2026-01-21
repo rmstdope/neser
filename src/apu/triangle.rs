@@ -206,6 +206,11 @@ impl Triangle {
         self.length_counter.clock();
     }
 
+    pub fn apply_pending_length_reload(&mut self) {
+        self.length_counter.reload_counter();
+    }
+
+
     pub fn apply_pending_length_halt(&mut self) {
         self.length_counter.apply_pending_halt();
     }
@@ -231,6 +236,8 @@ impl Triangle {
             length_counter_enabled: self.length_counter.is_enabled(),
             length_counter_halt: self.length_counter.is_halted(),
             length_counter_pending_halt: self.length_counter.pending_halt(),
+            length_counter_reload_value: self.length_counter.reload_value(),
+            length_counter_previous_value: self.length_counter.previous_value(),
             linear_counter: self.linear_counter,
             linear_counter_reload: self.linear_counter_reload_value,
             linear_counter_reload_flag: self.linear_counter_reload_flag,
@@ -251,6 +258,8 @@ impl Triangle {
         }
         self.length_counter
             .set_halt_state(state.length_counter_halt, state.length_counter_pending_halt);
+        self.length_counter
+            .set_reload_state(state.length_counter_reload_value, state.length_counter_previous_value);
         self.linear_counter = state.linear_counter;
         self.linear_counter_reload_value = state.linear_counter_reload;
         self.linear_counter_reload_flag = state.linear_counter_reload_flag;
@@ -264,10 +273,20 @@ impl Triangle {
 mod tests {
     use super::*;
 
+    fn load_length(triangle: &mut Triangle, index: u8) {
+        triangle.load_length_counter(index);
+        triangle.apply_pending_length_reload();
+    }
+
+    fn write_length_high(triangle: &mut Triangle, value: u8) {
+        triangle.write_length_counter_timer_high(value);
+        triangle.apply_pending_length_reload();
+    }
+
     fn enabled_triangle_with_counters() -> Triangle {
         let mut triangle = Triangle::new();
         triangle.set_length_counter_enabled(true);
-        triangle.load_length_counter(1); // Large non-zero length value
+        load_length(&mut triangle, 1); // Large non-zero length value
         triangle.write_linear_counter(0x7F); // control=0 (no halt), reload=max
         triangle.trigger_linear_counter_reload();
         triangle
@@ -291,7 +310,7 @@ mod tests {
         // Set counters to non-zero to enable output
         triangle.linear_counter = 1;
         triangle.set_length_counter_enabled(true);
-        triangle.load_length_counter(0); // 10
+        load_length(&mut triangle, 0); // 10
 
         // The triangle wave should produce values 0-15 ascending, then 15-0 descending
         // Creating a 32-step sequence: 15,14,13,...,1,0,0,1,2,...,14,15
@@ -404,7 +423,7 @@ mod tests {
         assert!(!triangle.is_linear_counter_reload_flag_set());
 
         // Now set the reload flag via $400B and verify reload happens on quarter frame.
-        triangle.write_length_counter_timer_high(0b0000_0000);
+        write_length_high(&mut triangle, 0b0000_0000);
         assert!(triangle.is_linear_counter_reload_flag_set());
 
         triangle.clock_linear_counter_with_reload();
@@ -427,7 +446,7 @@ mod tests {
         triangle.write_linear_counter(0b1000_0111);
 
         // Set reload flag via $400B.
-        triangle.write_length_counter_timer_high(0b0000_0000);
+        write_length_high(&mut triangle, 0b0000_0000);
         assert!(triangle.is_linear_counter_reload_flag_set());
 
         // While halt/control is set, reload flag persists and the counter reloads each quarter frame.
@@ -457,7 +476,7 @@ mod tests {
 
         // Load length counter with value (index 5 = value 4)
         triangle.set_length_counter_enabled(true);
-        triangle.load_length_counter(5);
+        load_length(&mut triangle, 5);
         assert_eq!(triangle.get_length_counter(), 4);
 
         // Clock the length counter - it should decrement
@@ -484,7 +503,7 @@ mod tests {
 
         // Set length to a small value: table index 3 => length 2.
         triangle.set_length_counter_enabled(true);
-        triangle.load_length_counter(3);
+        load_length(&mut triangle, 3);
         assert_eq!(triangle.get_length_counter(), 2);
 
         // Set linear reload=3 (control/halt clear) and perform a quarter-frame clock
@@ -528,7 +547,7 @@ mod tests {
 
         // Load length counter
         triangle.set_length_counter_enabled(true);
-        triangle.load_length_counter(5);
+        load_length(&mut triangle, 5);
         assert_eq!(triangle.get_length_counter(), 4);
 
         // Set control flag (which also acts as length counter halt)
@@ -599,7 +618,7 @@ mod tests {
         // Write 0b1010_1101 (length index=21, timer high=0b101)
         triangle.set_length_counter_enabled(true);
         triangle.write_timer_low(0xFF); // Set low bits first
-        triangle.write_length_counter_timer_high(0b1010_1101);
+        write_length_high(&mut triangle, 0b1010_1101);
 
         // Check length counter loaded from table (index 21 = value 20)
         assert_eq!(triangle.get_length_counter(), 20);
@@ -621,7 +640,7 @@ mod tests {
         // Triangle should be muted when linear counter is 0
         triangle.set_linear_counter_reload(0);
         triangle.trigger_linear_counter_reload();
-        triangle.load_length_counter(1); // Length counter = 254
+        load_length(&mut triangle, 1); // Length counter = 254
         assert_eq!(triangle.output(), 0); // Muted
 
         // Triangle should be muted when length counter is 0
@@ -632,7 +651,7 @@ mod tests {
 
         // Triangle should output when both counters are non-zero
         triangle.linear_counter = 5;
-        triangle.load_length_counter(1); // Length counter = 254
+        load_length(&mut triangle, 1); // Length counter = 254
         assert_eq!(triangle.output(), 15); // Not muted, returns sequence value
     }
 
@@ -640,7 +659,7 @@ mod tests {
     fn test_output_mutes_immediately_when_linear_counter_zero_and_recovers() {
         let mut triangle = Triangle::new();
         triangle.set_length_counter_enabled(true);
-        triangle.load_length_counter(1); // Non-zero length
+        load_length(&mut triangle, 1); // Non-zero length
 
         // Start audible.
         triangle.linear_counter = 5;
@@ -662,7 +681,7 @@ mod tests {
 
         // Start audible.
         triangle.linear_counter = 5;
-        triangle.load_length_counter(3); // index 3 => length 2
+        load_length(&mut triangle, 3); // index 3 => length 2
         assert_ne!(triangle.output(), 0);
 
         // Force length counter to zero: output must go silent immediately.
@@ -670,7 +689,7 @@ mod tests {
         assert_eq!(triangle.output(), 0);
 
         // Recover by reloading length to a non-zero value.
-        triangle.load_length_counter(3);
+        load_length(&mut triangle, 3);
         assert_ne!(triangle.output(), 0);
     }
 
@@ -680,7 +699,7 @@ mod tests {
 
         // Enable first, then load a length counter value
         triangle.set_length_counter_enabled(true);
-        triangle.load_length_counter(5);
+        load_length(&mut triangle, 5);
         assert_eq!(triangle.get_length_counter(), 4);
 
         // Disabling via $4015 clears the length counter
@@ -689,7 +708,7 @@ mod tests {
 
         // Load again while disabled - should NOT load (NES hardware behavior)
         // Length counter can only be loaded when channel is enabled via $4015
-        triangle.load_length_counter(10);
+        load_length(&mut triangle, 10);
         assert_eq!(triangle.get_length_counter(), 0); // Cleared when disabled
 
         // Enabling should not affect the counter (stays at 4)
@@ -697,7 +716,7 @@ mod tests {
         assert_eq!(triangle.get_length_counter(), 0);
 
         // Now that it's enabled, we can load a value
-        triangle.load_length_counter(11);
+        load_length(&mut triangle, 11);
         assert_eq!(triangle.get_length_counter(), 10); // Index 11 = value 10
     }
 
@@ -818,7 +837,7 @@ mod tests {
         // Set up triangle with various state
         triangle.write_linear_counter(0b1000_0111); // control=1, reload=7
         triangle.write_timer_low(0x50);
-        triangle.write_length_counter_timer_high(0b00001_010); // length index=0, timer high=2
+        write_length_high(&mut triangle, 0b00001_010); // length index=0, timer high=2
         triangle.set_length_counter_enabled(true);
 
         // Clock a bit to build state

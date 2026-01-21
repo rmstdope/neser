@@ -416,6 +416,12 @@ impl Apu {
             self.noise.clock_length_counter();
         }
 
+        // Apply pending length counter reloads after any length clocks for this CPU cycle.
+        self.pulse1.apply_pending_length_reload();
+        self.pulse2.apply_pending_length_reload();
+        self.triangle.apply_pending_length_reload();
+        self.noise.apply_pending_length_reload();
+
         // Apply pending halt changes after any length clocks for this CPU cycle.
         self.pulse1.apply_pending_length_halt();
         self.pulse2.apply_pending_length_halt();
@@ -786,6 +792,31 @@ impl Default for Apu {
 mod tests {
     use super::*;
 
+    fn write_pulse1_length(apu: &mut Apu, value: u8) {
+        apu.pulse1_mut().write_length_counter_timer_high(value);
+        apu.pulse1_mut().apply_pending_length_reload();
+    }
+
+    fn write_pulse2_length(apu: &mut Apu, value: u8) {
+        apu.pulse2_mut().write_length_counter_timer_high(value);
+        apu.pulse2_mut().apply_pending_length_reload();
+    }
+
+    fn write_triangle_length(apu: &mut Apu, value: u8) {
+        apu.triangle_mut().write_length_counter_timer_high(value);
+        apu.triangle_mut().apply_pending_length_reload();
+    }
+
+    fn load_triangle_length(apu: &mut Apu, index: u8) {
+        apu.triangle_mut().load_length_counter(index);
+        apu.triangle_mut().apply_pending_length_reload();
+    }
+
+    fn write_noise_length(apu: &mut Apu, value: u8) {
+        apu.noise_mut().write_length(value);
+        apu.noise_mut().apply_pending_length_reload();
+    }
+
     #[test]
     fn test_clock_with_expansion_adds_to_mix() {
         let mut apu = Apu::new_for_testing();
@@ -982,7 +1013,7 @@ mod tests {
 
         apu.write_enable(STATUS_PULSE1);
         apu.pulse1_mut().write_control(0x10); // unhalt
-        apu.pulse1_mut().write_length_counter_timer_high(0x18); // length index 3 -> 2
+        write_pulse1_length(&mut apu, 0x18); // length index 3 -> 2
 
         while apu.frame_counter().get_cycle_counter() < 14912 {
             apu.clock();
@@ -996,6 +1027,55 @@ mod tests {
             apu.pulse1().get_length_counter(),
             1,
             "halt should apply after the half-frame length clock"
+        );
+    }
+
+    #[test]
+    fn test_length_reload_during_half_frame_with_nonzero_counter_is_ignored() {
+        let mut apu = Apu::new_for_testing();
+
+        apu.write_enable(STATUS_PULSE1);
+        apu.pulse1_mut().write_control(0x10); // unhalt
+        write_pulse1_length(&mut apu, 0x38); // length index 7 -> 6
+
+        while apu.frame_counter().get_cycle_counter() < 14912 {
+            apu.clock();
+        }
+
+        // Write during the half-frame length clock (same CPU cycle).
+        apu.pulse1_mut().write_length_counter_timer_high(0x18); // length index 3 -> 2
+        apu.clock(); // half-frame at 14913 (length clocks + pending reload apply)
+
+        assert_eq!(
+            apu.pulse1().get_length_counter(),
+            5,
+            "reload during length clock with nonzero counter should be ignored"
+        );
+    }
+
+    #[test]
+    fn test_length_reload_during_half_frame_with_zero_counter_is_allowed() {
+        let mut apu = Apu::new_for_testing();
+
+        apu.write_enable(STATUS_PULSE1);
+        apu.pulse1_mut().write_control(0x10); // unhalt
+        write_pulse1_length(&mut apu, 0x38); // length index 7 -> 6
+
+        apu.write_enable(0x00); // disable, clearing length counter
+        apu.write_enable(STATUS_PULSE1); // re-enable with length=0
+
+        while apu.frame_counter().get_cycle_counter() < 14912 {
+            apu.clock();
+        }
+
+        // Write during the half-frame length clock (same CPU cycle).
+        apu.pulse1_mut().write_length_counter_timer_high(0x18); // length index 3 -> 2
+        apu.clock(); // half-frame at 14913 (length clocks + pending reload apply)
+
+        assert_eq!(
+            apu.pulse1().get_length_counter(),
+            2,
+            "reload during length clock with zero counter should be allowed"
         );
     }
 
@@ -1109,8 +1189,7 @@ mod tests {
         // Set up pulse with length counter = 1
         apu.write_enable(STATUS_PULSE1);
         apu.pulse1_mut().write_control(0b0000_0000); // halt=0
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00010_000); // Index 2 = length 20
+        write_pulse1_length(&mut apu, 0b00010_000); // Index 2 = length 20
 
         let initial_length = apu.pulse1().get_length_counter();
         assert_eq!(initial_length, 20);
@@ -1163,8 +1242,8 @@ mod tests {
         let mut apu = Apu::new_for_testing();
         apu.write_enable(0b0001_1111); // Enable all channels
         // Set up both pulses
-        apu.pulse1_mut().write_length_counter_timer_high(0xFF);
-        apu.pulse2_mut().write_length_counter_timer_high(0xFF);
+        write_pulse1_length(&mut apu, 0xFF);
+        write_pulse2_length(&mut apu, 0xFF);
 
         assert!(apu.pulse1().get_envelope_start_flag());
         assert!(apu.pulse2().get_envelope_start_flag());
@@ -1217,7 +1296,7 @@ mod tests {
 
         // Set up triangle with a linear counter reload value
         apu.triangle_mut().write_linear_counter(0x7F); // Max reload value (127), control flag off
-        apu.triangle_mut().write_length_counter_timer_high(0x08); // Sets reload flag
+        write_triangle_length(&mut apu, 0x08); // Sets reload flag
 
         // Check initial state after setting reload flag
         assert!(apu.triangle_mut().is_linear_counter_reload_flag_set());
@@ -1266,7 +1345,7 @@ mod tests {
         // Enable triangle and configure linear counter reload value = 3.
         apu.write_enable(STATUS_TRIANGLE);
         apu.triangle_mut().write_linear_counter(0b0000_0011); // reload=3, control off
-        apu.triangle_mut().write_length_counter_timer_high(0x00); // sets reload flag
+        write_triangle_length(&mut apu, 0x00); // sets reload flag
         assert!(apu.triangle().is_linear_counter_reload_flag_set());
 
         // Before the first quarter frame, the linear counter must not change.
@@ -1294,7 +1373,7 @@ mod tests {
 
         // Load length counter (index 5 = value 4)
         apu.write_enable(STATUS_TRIANGLE);
-        apu.triangle_mut().load_length_counter(5);
+        load_triangle_length(&mut apu, 5);
         assert_eq!(apu.triangle().get_length_counter(), 4);
 
         // Clock to first half frame (14913 cycles in 4-step mode)
@@ -1329,7 +1408,7 @@ mod tests {
         assert_eq!(apu.debug_frame_counter_cycle(), 0);
 
         apu.write_enable(STATUS_TRIANGLE);
-        apu.triangle_mut().load_length_counter(3); // index 3 => length 2
+        load_triangle_length(&mut apu, 3); // index 3 => length 2
         assert_eq!(apu.triangle().get_length_counter(), 2);
 
         // At cycle 7457 (quarter frame only), length must not decrement.
@@ -1375,7 +1454,7 @@ mod tests {
 
         // Set up noise with envelope that will be clocked
         apu.noise_mut().write_envelope(0b0000_0101); // Volume 5, constant volume
-        apu.noise_mut().write_length(0xFF); // Set length and envelope start flag
+        write_noise_length(&mut apu, 0xFF); // Set length and envelope start flag
 
         // Clock to first quarter frame
         for _ in 0..7457 {
@@ -1392,7 +1471,7 @@ mod tests {
 
         // Set up noise with length counter (index 2 = length 20)
         apu.noise_mut().write_envelope(0b0000_0000); // halt=0
-        apu.noise_mut().write_length(0b00010_000); // Index 2
+        write_noise_length(&mut apu, 0b00010_000); // Index 2
 
         // Length counter should be loaded
         // Output will be 0 because shift register bit 0 might be set
@@ -1459,8 +1538,7 @@ mod tests {
         // Enable pulse 1 channel first
         apu.write_enable(STATUS_PULSE1);
         // Load length counter for pulse 1
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000); // Index 1 = length 254
+        write_pulse1_length(&mut apu, 0b00001_000); // Index 1 = length 254
         // Bit 0 should be set
         assert_eq!(apu.read_status(0) & 0b0000_0001, 0b0000_0001);
     }
@@ -1471,8 +1549,7 @@ mod tests {
         // Enable pulse 2 channel first
         apu.write_enable(STATUS_PULSE2);
         // Load length counter for pulse 2
-        apu.pulse2_mut()
-            .write_length_counter_timer_high(0b00001_000); // Index 1 = length 254
+        write_pulse2_length(&mut apu, 0b00001_000); // Index 1 = length 254
         // Bit 1 should be set
         assert_eq!(apu.read_status(0) & 0b0000_0010, 0b0000_0010);
     }
@@ -1483,7 +1560,7 @@ mod tests {
         // Enable triangle channel first
         apu.write_enable(STATUS_TRIANGLE);
         // Load length counter for triangle
-        apu.triangle_mut().load_length_counter(1); // Index 1 = length 254
+        load_triangle_length(&mut apu, 1); // Index 1 = length 254
         // Bit 2 should be set
         assert_eq!(apu.read_status(0) & 0b0000_0100, 0b0000_0100);
     }
@@ -1494,7 +1571,7 @@ mod tests {
         // Enable noise channel first
         apu.write_enable(STATUS_NOISE);
         // Load length counter for noise (index 1 = length 254)
-        apu.noise_mut().write_length(0b00001_000);
+        write_noise_length(&mut apu, 0b00001_000);
         // Bit 3 should be set
         assert_eq!(apu.read_status(0) & 0b0000_1000, 0b0000_1000);
     }
@@ -1504,12 +1581,10 @@ mod tests {
         let mut apu = Apu::new_for_testing();
         // Load length counters for all channels
         apu.write_enable(0b0001_1111);
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000);
-        apu.pulse2_mut()
-            .write_length_counter_timer_high(0b00001_000);
-        apu.triangle_mut().load_length_counter(1);
-        apu.noise_mut().write_length(0b00001_000);
+        write_pulse1_length(&mut apu, 0b00001_000);
+        write_pulse2_length(&mut apu, 0b00001_000);
+        load_triangle_length(&mut apu, 1);
+        write_noise_length(&mut apu, 0b00001_000);
         // Bits 0-3 should be set (no DMC, no interrupts yet)
         assert_eq!(apu.read_status(0) & 0b0000_1111, 0b0000_1111);
     }
@@ -1519,8 +1594,7 @@ mod tests {
         let mut apu = Apu::new_for_testing();
         // Load pulse 1 length counter
         apu.write_enable(STATUS_PULSE1);
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000);
+        write_pulse1_length(&mut apu, 0b00001_000);
         assert_eq!(apu.read_status(0) & STATUS_PULSE1, STATUS_PULSE1);
 
         // Disable pulse 1
@@ -1534,8 +1608,7 @@ mod tests {
         // Enable pulse 1
         apu.write_enable(STATUS_PULSE1);
         // Load length counter should work
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000);
+        write_pulse1_length(&mut apu, 0b00001_000);
         assert_eq!(apu.read_status(0) & STATUS_PULSE1, STATUS_PULSE1);
     }
 
@@ -1545,12 +1618,10 @@ mod tests {
         // Enable all channels
         apu.write_enable(0b0001_1111);
         // Load all length counters
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000);
-        apu.pulse2_mut()
-            .write_length_counter_timer_high(0b00001_000);
-        apu.triangle_mut().load_length_counter(1);
-        apu.noise_mut().write_length(0b00001_000);
+        write_pulse1_length(&mut apu, 0b00001_000);
+        write_pulse2_length(&mut apu, 0b00001_000);
+        load_triangle_length(&mut apu, 1);
+        write_noise_length(&mut apu, 0b00001_000);
         // All should be active
         assert_eq!(apu.read_status(0) & 0b0000_1111, 0b0000_1111);
     }
@@ -1560,12 +1631,10 @@ mod tests {
         let mut apu = Apu::new_for_testing();
         // Load all length counters
         apu.write_enable(0b0001_1111);
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000);
-        apu.pulse2_mut()
-            .write_length_counter_timer_high(0b00001_000);
-        apu.triangle_mut().load_length_counter(1);
-        apu.noise_mut().write_length(0b00001_000);
+        write_pulse1_length(&mut apu, 0b00001_000);
+        write_pulse2_length(&mut apu, 0b00001_000);
+        load_triangle_length(&mut apu, 1);
+        write_noise_length(&mut apu, 0b00001_000);
         // Verify all active
         assert_eq!(apu.read_status(0) & 0b0000_1111, 0b0000_1111);
 
@@ -1631,8 +1700,7 @@ mod tests {
         apu.write_enable(STATUS_PULSE1);
         apu.pulse1_mut().write_control(0b1111_1111); // Duty 3, constant volume 15
         apu.pulse1_mut().write_timer_low(0x08); // Timer period >= 8
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000); // Load length counter
+        write_pulse1_length(&mut apu, 0b00001_000); // Load length counter
         // Pulse generates square wave, output should be non-zero when high
         let output = apu.mix();
         assert!(output > 0.0);
@@ -1653,9 +1721,7 @@ mod tests {
         triangle_only.write_enable(STATUS_TRIANGLE);
         triangle_only.triangle_mut().write_linear_counter(0x7F);
         triangle_only.triangle_mut().trigger_linear_counter_reload();
-        triangle_only
-            .triangle_mut()
-            .write_length_counter_timer_high(0b00001_000);
+        write_triangle_length(&mut triangle_only, 0b00001_000);
 
         let baseline = triangle_only.mix();
         assert!(baseline > 0.0, "Expected non-zero triangle-only mix output");
@@ -1674,25 +1740,19 @@ mod tests {
         loud_but_muted
             .triangle_mut()
             .trigger_linear_counter_reload();
-        loud_but_muted
-            .triangle_mut()
-            .write_length_counter_timer_high(0b00001_000);
+        write_triangle_length(&mut loud_but_muted, 0b00001_000);
 
         // Pulse channels (would be non-zero if enabled)
         loud_but_muted.pulse1_mut().write_control(0b1111_1111);
         loud_but_muted.pulse1_mut().write_timer_low(0x08);
-        loud_but_muted
-            .pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000);
+        write_pulse1_length(&mut loud_but_muted, 0b00001_000);
         loud_but_muted.pulse2_mut().write_control(0b1111_1111);
         loud_but_muted.pulse2_mut().write_timer_low(0x08);
-        loud_but_muted
-            .pulse2_mut()
-            .write_length_counter_timer_high(0b00001_000);
+        write_pulse2_length(&mut loud_but_muted, 0b00001_000);
 
         // Noise channel (would be non-zero if enabled)
         loud_but_muted.noise_mut().write_envelope(0b0011_1111);
-        loud_but_muted.noise_mut().write_length(0xFF);
+        write_noise_length(&mut loud_but_muted, 0xFF);
 
         // DMC channel (would be non-zero if not muted)
         loud_but_muted.dmc_mut().write_direct_load(0b0111_1111);
@@ -1712,16 +1772,14 @@ mod tests {
         // Set all channels to max with duty 3 (starts high) for pulse channels
         apu.pulse1_mut().write_control(0b1111_1111); // Duty 3, constant volume 15
         apu.pulse1_mut().write_timer_low(0x08); // Timer period >= 8
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000);
+        write_pulse1_length(&mut apu, 0b00001_000);
         apu.pulse2_mut().write_control(0b1111_1111); // Duty 3, constant volume 15
         apu.pulse2_mut().write_timer_low(0x08); // Timer period >= 8
-        apu.pulse2_mut()
-            .write_length_counter_timer_high(0b00001_000);
+        write_pulse2_length(&mut apu, 0b00001_000);
         apu.triangle_mut().write_linear_counter(0xFF);
-        apu.triangle_mut().write_length_counter_timer_high(0xFF);
+        write_triangle_length(&mut apu, 0xFF);
         apu.noise_mut().write_envelope(0b0011_1111);
-        apu.noise_mut().write_length(0xFF);
+        write_noise_length(&mut apu, 0xFF);
         apu.dmc_mut().write_direct_load(0b0111_1111); // Max DMC output (127)
 
         let output = apu.mix();
@@ -1746,8 +1804,7 @@ mod tests {
         // Set pulse 1 with duty 3 (starts high)
         apu.pulse1_mut().write_control(0b1111_0101); // Duty 3, constant volume 5
         apu.pulse1_mut().write_timer_low(0x08); // Timer period >= 8
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000);
+        write_pulse1_length(&mut apu, 0b00001_000);
         let pulse_only = apu.mix();
 
         // Add DMC
@@ -1801,8 +1858,7 @@ mod tests {
         apu.write_enable(STATUS_PULSE1);
         apu.pulse1_mut().write_control(0b1011_1111); // Duty 2 (50%), constant volume 15
         apu.pulse1_mut().write_timer_low(0x08); // Timer = 8
-        apu.pulse1_mut()
-            .write_length_counter_timer_high(0b00001_000);
+        write_pulse1_length(&mut apu, 0b00001_000);
 
         // Clock enough to generate multiple samples - at least one should be non-zero
         // With duty 2 (50%), half the samples should be non-zero
