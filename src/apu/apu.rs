@@ -614,6 +614,8 @@ impl Apu {
             0
         };
 
+        trace_apu!(4; "dmc output={}", dmc);
+
         // Pulse mixing (table index is sum of both pulse channels)
         let pulse_index = pulse1 + pulse2;
         let pulse_out = if pulse_index < PULSE_TABLE.len() {

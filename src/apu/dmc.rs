@@ -117,6 +117,7 @@ impl Dmc {
 
         self.dma_pending = false;
         self.sample_buffer = Some(value);
+        trace_apu!(4; "dmc sample_buffer set value=0x{:02X}", value);
         trace_apu!(3; "dmc complete_dma_read value=0x{:02X}", value);
         self.advance_reader_after_fetch();
     }
@@ -277,6 +278,7 @@ impl Dmc {
             self.shift_register = sample;
             self.sample_buffer = None;
             trace_apu!(4; "dmc start_output_cycle shift=0x{:02X}", self.shift_register);
+            trace_apu!(4; "dmc sample_buffer cleared (loaded into shift)");
         } else {
             self.silence_flag = true;
             trace_apu!(4; "dmc start_output_cycle silence");
@@ -309,6 +311,9 @@ impl Dmc {
         } else {
             // Disable: clear bytes remaining
             self.bytes_remaining = 0;
+            if self.sample_buffer.is_some() {
+                trace_apu!(4; "dmc sample_buffer cleared (disable)");
+            }
             self.sample_buffer = None;
             self.silence_flag = true;
         }

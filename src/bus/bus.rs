@@ -298,6 +298,7 @@ impl Bus {
             .map(|cart| cart.borrow().mapper().mapper_number())
             .unwrap_or(0);
 
+        // TODO Clean up old MMC5 trace code or move them to the mmc5 mapper module
         if addr == 0x5105 && mapper_number == 5 {
             self.mmc5_scroll_log_active = value == 0x55;
         }
@@ -310,6 +311,7 @@ impl Bus {
             );
         }
 
+        // println!("Write to {:04X}: {:02X}", addr, value);
         let wrote = self.write_to_devices(addr, value, is_dummy_write);
         if wrote
             && Self::should_log_mmc5_ppu_scroll_write(
@@ -335,7 +337,6 @@ impl Bus {
             return self.dma_triggered.replace(false);
         }
 
-        // println!("Write to {:04X}: {:02X}", addr, value);
         {
             eprintln!(
                 "Warning: Write to unimplemented address {:04X} ignored",

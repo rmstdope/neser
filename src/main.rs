@@ -77,16 +77,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let default_rom_path = "roms/games/donkey kong.nes";
     // let default_rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
     // let default_rom_path = "roms/games/Mike Tyson's Punch-Out!! (Japan, USA) (Rev 1).nes";
-    let default_rom_path = "roms/games/Castlevania III - Dracula's Curse (USA).nes";
+    // let default_rom_path = "roms/games/Castlevania III - Dracula's Curse (USA).nes";
     // let default_rom_path = "roms/games/Akumajyou_Densetsu_(Tr).nes";
     // let default_rom_path = "roms/games/Dragon_Ball_Z_Gaiden_(Tr).nes";
     // let default_rom_path = "roms/games/Super Mario Bros. 3 (USA) (Rev 1).nes";
     // let default_rom_path = "roms/games/Super Mario Bros. 3 (USA) (Rev 1).nes";
     // let default_rom_path = "roms/games/Super Chinese 3 (J) [p1].nes";
-    let rom_path = config.rom_path.as_deref().unwrap_or(default_rom_path);
 
     // Manual testing of Blargg
-    // let rom_path = "roms/blargg/mmc3_irq_tests/2.Details.nes";
+    let default_rom_path = "roms/blargg/dmc_tests/buffer_retained.nes";
     // let rom_path = "roms/manual_testing/exram/mmc5exram.nes";
 
     // let rom_data = manual_test_cartridges::triangle_only_nrom_128();
@@ -94,6 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
+    let rom_path = config.rom_path.as_deref().unwrap_or(default_rom_path);
     let cart = cartridge::Cartridge::load_from_file(rom_path)?;
     nes_instance.insert_cartridge(cart);
 
