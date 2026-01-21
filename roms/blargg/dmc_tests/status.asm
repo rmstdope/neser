@@ -14,7 +14,7 @@
         STA $4015        ; APU status: disable all channels (DMC, pulse, triangle, noise)
 
         ; Configure DMC playback parameters.
-        ; $4010 = DMC control (irq enable, loop, rate)
+        ; $4010 = DMC control (irq enable, loop, rate) - NOTE IRQ
         ; $4012 = sample address (in units of $40 bytes, base $C000)
         ; $4013 = sample length (in units of $10 bytes, +1)
         LDA $E11F

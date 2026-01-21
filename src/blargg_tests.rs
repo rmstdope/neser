@@ -660,6 +660,13 @@ mod tests {
         true
     }
 
+    // Check that exaclty zero IRQ has been fired from the DMC
+    fn check_zero_irq_fired(nes: &mut Nes) -> bool {
+        let irq_count = nes.apu.borrow().dmc().debug_irq_trigger_count();
+        assert_eq!(irq_count, 0, "expected 0 IRQ fired, got {}", irq_count);
+        true
+    }
+
     // dmc_tests
     blargg_address_test!(
         test_dmc_tests_buffer_retained,
@@ -678,6 +685,12 @@ mod tests {
         "roms/blargg/dmc_tests/status_irq.nes",
         0xE154,
         check_one_irq_fired
+    );
+    blargg_address_test!(
+        test_dmc_tests_status,
+        "roms/blargg/dmc_tests/status.nes",
+        0xE14E,
+        check_zero_irq_fired
     );
 
     blargg_console_test!(
