@@ -79,12 +79,13 @@ pub fn lookup(code: u8) -> Option<&'static OpCode> {
 ```
 
 **Suggested Refactoring:**
-- Since `OPCODE_TABLE` is indexed by opcode value (0-255), use direct array indexing:
+- Since `OPCODE_TABLE` is declared as `&[OpCode; 256]` and contains all 256 opcodes (including illegal/undocumented ones), direct array indexing is safe:
 ```rust
 pub fn lookup(code: u8) -> &'static OpCode {
     &OPCODE_TABLE[code as usize]
 }
 ```
+- Note: The return type changes from `Option<&'static OpCode>` to `&'static OpCode`, which is valid because the NES 6502 defines behavior for all 256 possible opcodes. Callers would need to be updated accordingly.
 
 ### 3. Many Test-Only Setter Methods
 
