@@ -310,7 +310,7 @@ fn format_hexdump_lines(base_addr: u16, bytes: &[u8]) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::console::{Nes, TvSystem};
-    use crate::debugger;
+    use crate::debugging::snapshot;
 
     fn assert_close(actual: f32, expected: f32) {
         let eps = 0.0001;
@@ -325,7 +325,7 @@ mod tests {
     #[test]
     fn test_window_models_have_three_debug_windows_with_text() {
         let nes = Nes::new(TvSystem::Ntsc);
-        let snapshot = debugger::snapshot(&nes);
+        let snapshot = snapshot(&nes);
 
         let windows = window_models(&snapshot);
         assert_eq!(windows.len(), 3);
@@ -388,7 +388,7 @@ mod tests {
         nes.cpu.set_sp(0xFD);
         nes.cpu.set_p(0b1010_0101);
 
-        let snapshot = debugger::snapshot(&nes);
+        let snapshot = snapshot(&nes);
         let lines = cpu_register_lines(&snapshot);
 
         assert!(lines.iter().any(|l| l.contains("PC: C000")));

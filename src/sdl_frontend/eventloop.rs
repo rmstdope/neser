@@ -7,9 +7,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use std::{fs, usize};
 
+use crate::debugging::{DebuggerSnapshot, Tracing, snapshot, ui};
 use crate::input::Button;
 use crate::savestate::SaveState;
-use crate::tracing::Tracing;
 
 /// EventLoop manages the SDL2 event loop for the application.
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
@@ -44,7 +44,7 @@ struct TemporaryBreakpoint {
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) trait DebuggerRenderer {
-    fn render(&mut self, snapshot: &crate::debugger::DebuggerSnapshot);
+    fn render(&mut self, snapshot: &DebuggerSnapshot);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -649,7 +649,7 @@ impl EventLoop {
             return;
         };
 
-        let snapshot = crate::debugger::snapshot(nes);
+        let snapshot = snapshot(nes);
         renderer.render(&snapshot);
     }
 
@@ -714,15 +714,11 @@ impl EventLoop {
             return;
         };
 
-        let snapshot = crate::debugger::snapshot(nes);
+        let snapshot = snapshot(nes);
         renderer.render(&snapshot);
     }
 
-    fn apply_debugger_ui_action(
-        &mut self,
-        nes: &mut Nes,
-        action: crate::debugger::ui::DebuggerUiAction,
-    ) {
+    fn apply_debugger_ui_action(&mut self, nes: &mut Nes, action: ui::DebuggerUiAction) {
         if !self.debugger_open_requested {
             return;
         }
@@ -786,7 +782,7 @@ impl EventLoop {
         if keycode == Keycode::F5 && self.debugger_open_requested {
             self.apply_debugger_ui_action(
                 nes,
-                crate::debugger::ui::DebuggerUiAction {
+                ui::DebuggerUiAction {
                     continue_run: true,
                     step_over: false,
                     step_into: false,
@@ -1819,7 +1815,7 @@ mod tests {
 
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger::ui::DebuggerUiAction {
+            crate::debugging::ui::DebuggerUiAction {
                 continue_run: true,
                 step_over: false,
                 step_into: false,
@@ -1858,7 +1854,7 @@ mod tests {
         // Continue should unpause and not instantly re-break at the same PC.
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger::ui::DebuggerUiAction {
+            crate::debugging::ui::DebuggerUiAction {
                 continue_run: true,
                 step_over: false,
                 step_into: false,
@@ -1939,7 +1935,7 @@ mod tests {
         event_loop.request_debugger_open();
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger::ui::DebuggerUiAction {
+            crate::debugging::ui::DebuggerUiAction {
                 continue_run: false,
                 step_over: false,
                 step_into: false,
@@ -2011,7 +2007,7 @@ mod tests {
         event_loop.request_debugger_open();
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger::ui::DebuggerUiAction {
+            crate::debugging::ui::DebuggerUiAction {
                 continue_run: false,
                 step_over: false,
                 step_into: false,
@@ -2083,7 +2079,7 @@ mod tests {
         event_loop.request_debugger_open();
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger::ui::DebuggerUiAction {
+            crate::debugging::ui::DebuggerUiAction {
                 continue_run: false,
                 step_over: false,
                 step_into: false,
@@ -2179,7 +2175,7 @@ mod tests {
         event_loop.request_debugger_open();
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger::ui::DebuggerUiAction {
+            crate::debugging::ui::DebuggerUiAction {
                 continue_run: false,
                 step_over: false,
                 step_into: false,
@@ -2282,7 +2278,7 @@ mod tests {
         event_loop.request_debugger_open();
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger::ui::DebuggerUiAction {
+            crate::debugging::ui::DebuggerUiAction {
                 continue_run: false,
                 step_over: false,
                 step_into: false,
@@ -2341,7 +2337,7 @@ mod tests {
 
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger::ui::DebuggerUiAction {
+            crate::debugging::ui::DebuggerUiAction {
                 step_into: true,
                 step_over: false,
                 continue_run: false,
@@ -2387,7 +2383,7 @@ mod tests {
 
         event_loop.apply_debugger_ui_action(
             &mut nes,
-            crate::debugger::ui::DebuggerUiAction {
+            crate::debugging::ui::DebuggerUiAction {
                 step_over: true,
                 step_into: false,
                 continue_run: false,
@@ -2673,7 +2669,7 @@ mod tests {
         }
 
         impl DebuggerRenderer for Spy {
-            fn render(&mut self, _snapshot: &crate::debugger::DebuggerSnapshot) {
+            fn render(&mut self, _snapshot: &crate::debugging::DebuggerSnapshot) {
                 *self.calls.borrow_mut() += 1;
             }
         }
@@ -2701,7 +2697,7 @@ mod tests {
         }
 
         impl DebuggerRenderer for Spy {
-            fn render(&mut self, _snapshot: &crate::debugger::DebuggerSnapshot) {
+            fn render(&mut self, _snapshot: &crate::debugging::DebuggerSnapshot) {
                 *self.calls.borrow_mut() += 1;
             }
         }
@@ -2758,7 +2754,7 @@ mod tests {
         }
 
         impl DebuggerRenderer for Spy {
-            fn render(&mut self, _snapshot: &crate::debugger::DebuggerSnapshot) {
+            fn render(&mut self, _snapshot: &crate::debugging::DebuggerSnapshot) {
                 *self.calls.borrow_mut() += 1;
             }
         }
@@ -2816,7 +2812,7 @@ mod tests {
         }
 
         impl DebuggerRenderer for Spy {
-            fn render(&mut self, _snapshot: &crate::debugger::DebuggerSnapshot) {
+            fn render(&mut self, _snapshot: &crate::debugging::DebuggerSnapshot) {
                 *self.calls.borrow_mut() += 1;
             }
         }

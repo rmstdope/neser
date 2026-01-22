@@ -1537,7 +1537,7 @@ impl Cpu {
         // Use read_for_testing to avoid affecting the open bus state
         // Only execute this code when CPU tracing is actually enabled
         #[cfg(debug_assertions)]
-        if crate::tracing::is_cpu_tracing_enabled() {
+        if crate::debugging::is_cpu_tracing_enabled() {
             let pc = self.pc;
             let mut memory = self.memory.borrow_mut();
             let opcode_byte = memory.read_for_testing(pc);

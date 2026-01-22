@@ -4,7 +4,7 @@ use crate::cartridge::Cartridge;
 use crate::cpu::Cpu;
 use crate::cpu::lookup;
 use crate::ppu::Ppu;
-use crate::tracing::Tracing;
+use crate::debugging::Tracing;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -663,7 +663,7 @@ pub use savestate_error::SaveStateError;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tracing::Tracing;
+    use crate::debugging::Tracing;
     use std::fs;
 
     #[test]

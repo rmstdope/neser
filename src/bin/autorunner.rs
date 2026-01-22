@@ -1,10 +1,10 @@
-use neser::autorun::{
-    AUTORUN_VERSION, AutorunFile, AutorunFrame, autorun_path_for_rom, crc32, load_autorun_file,
-    save_autorun_file,
-};
 use neser::cartridge::Cartridge;
 use neser::console::{Config, Nes, ParseResult};
 use neser::input::Button;
+use neser::integration_tests::autorun::{
+    AUTORUN_VERSION, AutorunFile, AutorunFrame, autorun_path_for_rom, crc32, load_autorun_file,
+    save_autorun_file,
+};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;

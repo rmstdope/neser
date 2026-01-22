@@ -3,13 +3,12 @@ mod bus;
 mod cartridge;
 mod console;
 mod cpu;
-mod debugger;
+mod debugging;
 mod input;
 mod ppu;
 mod rendering;
 mod savestate;
 mod sdl_frontend;
-mod tracing;
 
 use console::{ApuChannels, Config, Nes, ParseResult};
 use savestate::SaveState;
@@ -28,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Initialize global tracing state (only active in debug builds)
-    tracing::init_tracing(config.tracing);
+    debugging::init_tracing(config.tracing);
 
     // Initialize SDL2
     let sdl_context = sdl2::init()?;

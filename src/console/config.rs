@@ -7,7 +7,7 @@
 //! 3. Default values
 
 use crate::console::TvSystem;
-use crate::tracing::Tracing;
+use crate::debugging::Tracing;
 use bitflags::bitflags;
 use std::fs;
 use std::path::Path;
@@ -683,7 +683,7 @@ impl Config {
             }
             "trace-ppu" => {
                 if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.ppu = crate::tracing::Tracing::clamp_ppu_level(level);
+                    self.tracing.ppu = crate::debugging::Tracing::clamp_ppu_level(level);
                     if level > 0 {
                         self.tracing.enabled = true;
                     }
@@ -699,7 +699,7 @@ impl Config {
             }
             "trace-mapper" => {
                 if let Ok(level) = value.parse::<u8>() {
-                    self.tracing.mapper = crate::tracing::Tracing::clamp_mapper_level(level);
+                    self.tracing.mapper = crate::debugging::Tracing::clamp_mapper_level(level);
                     if level > 0 {
                         self.tracing.enabled = true;
                     }

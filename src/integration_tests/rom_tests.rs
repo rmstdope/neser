@@ -23,7 +23,7 @@ mod tests {
     ///
     use crate::cartridge::Cartridge;
     use crate::console::{Nes, TvSystem};
-    use crate::tracing::{self, Tracing};
+    use crate::debugging::{Tracing, init_tracing};
     use std::fs;
 
     /// Result of running an test ROM
@@ -295,7 +295,7 @@ mod tests {
             return;
         }
 
-        tracing::init_tracing(Tracing {
+        init_tracing(Tracing {
             enabled: true,
             apu: level,
             ..Tracing::default()

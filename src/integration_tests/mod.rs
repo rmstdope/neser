@@ -1,3 +1,4 @@
+pub mod autorun;
 pub mod golden_screenshots;
 pub mod manual_test_cartridges;
 

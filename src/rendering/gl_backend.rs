@@ -4,8 +4,8 @@ use sdl2::mouse::MouseButton;
 use sdl2::video::{FullscreenType, GLContext, GLProfile, Window, WindowPos};
 
 use crate::console::{Config, Nes};
-use crate::debugger;
-use crate::debugger::ui as debugger_ui;
+use crate::debugging::DebuggerViewState;
+use crate::debugging::ui as debugger_ui;
 use crate::rendering::shader_manager::ShaderManager;
 use std::time::Instant;
 
@@ -21,7 +21,7 @@ pub struct GlBackend {
     overlay_text_color: OverlayTextColor,
     framebuffer: Vec<u8>,
     last_frame: Instant,
-    debugger_view_state: debugger::DebuggerViewState,
+    debugger_view_state: DebuggerViewState,
     shader_manager: ShaderManager,
 }
 
@@ -224,7 +224,7 @@ impl GlBackend {
             overlay_text_color: OverlayTextColor::White,
             framebuffer: vec![0u8; 256 * 240 * 3],
             last_frame: Instant::now(),
-            debugger_view_state: debugger::DebuggerViewState::default(),
+            debugger_view_state: DebuggerViewState::default(),
             shader_manager,
         })
     }
@@ -341,8 +341,8 @@ impl GlBackend {
         show_debugger: bool,
         overlay_text: Option<&str>,
         overlay_blink_red: bool,
-    ) -> crate::debugger::ui::DebuggerUiAction {
-        let mut action = crate::debugger::ui::DebuggerUiAction::default();
+    ) -> debugger_ui::DebuggerUiAction {
+        let mut action = debugger_ui::DebuggerUiAction::default();
 
         // Per-frame IO updates
         let now = Instant::now();

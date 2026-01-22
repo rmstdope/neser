@@ -1955,7 +1955,7 @@ mod tests {
     use crate::cartridge::cartridge::Cartridge;
     use crate::cartridge::cartridge::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-    use crate::tracing::{Tracing, clear_mapper_traces, init_tracing, take_mapper_traces};
+    use crate::debugging::*;
 
     use super::MMC5Mapper;
 
