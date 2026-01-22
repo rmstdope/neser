@@ -1,5 +1,5 @@
 use crate::cartridge::{Cartridge, MirroringMode};
-use crate::nes::TvSystem;
+use crate::console::TvSystem;
 use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
 use crate::trace_ppu;
 use std::cell::RefCell;
@@ -797,6 +797,7 @@ impl Ppu {
 mod tests {
     use super::*;
     use crate::cartridge::MirroringMode;
+    use crate::console::Nes;
     use crate::ppu::{
         background, memory, registers, rendering, screen_buffer, sprites, status, timing,
     };
@@ -2175,10 +2176,10 @@ mod tests {
         let screen_buffer = ppu.screen_buffer();
 
         // Get the system palette colors for our palette entries
-        let (red_r, red_g, red_b) = crate::nes::Nes::lookup_system_palette(0x16);
-        let (green_r, green_g, green_b) = crate::nes::Nes::lookup_system_palette(0x2A);
-        let (blue_r, blue_g, blue_b) = crate::nes::Nes::lookup_system_palette(0x12);
-        let (black_r, black_g, black_b) = crate::nes::Nes::lookup_system_palette(0x0F);
+        let (red_r, red_g, red_b) = Nes::lookup_system_palette(0x16);
+        let (green_r, green_g, green_b) = Nes::lookup_system_palette(0x2A);
+        let (blue_r, blue_g, blue_b) = Nes::lookup_system_palette(0x12);
+        let (black_r, black_g, black_b) = Nes::lookup_system_palette(0x0F);
 
         // Debug: Print first 32 pixels of row 0 for analysis
         // println!("\nFirst 32 pixels of row 0:");
@@ -2340,10 +2341,10 @@ mod tests {
         let screen_buffer = ppu.screen_buffer();
 
         // Get the system palette colors for our sprite palette entries
-        let (yellow_r, yellow_g, yellow_b) = crate::nes::Nes::lookup_system_palette(0x28);
-        let (cyan_r, cyan_g, cyan_b) = crate::nes::Nes::lookup_system_palette(0x2C);
-        let (magenta_r, magenta_g, magenta_b) = crate::nes::Nes::lookup_system_palette(0x14);
-        let (black_r, black_g, black_b) = crate::nes::Nes::lookup_system_palette(0x0F);
+        let (yellow_r, yellow_g, yellow_b) = Nes::lookup_system_palette(0x28);
+        let (cyan_r, cyan_g, cyan_b) = Nes::lookup_system_palette(0x2C);
+        let (magenta_r, magenta_g, magenta_b) = Nes::lookup_system_palette(0x14);
+        let (black_r, black_g, black_b) = Nes::lookup_system_palette(0x0F);
 
         // Verify sprite rendering according to NES hardware specification:
         // - X coordinate: Direct mapping, screen_x = OAM.X (no offset)

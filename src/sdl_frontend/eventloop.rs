@@ -1,12 +1,12 @@
-use crate::config::Config;
+use super::audio::NesAudio;
+use crate::console::{Config, Nes};
 use crate::rendering::GlBackend;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;
-use std::fs;
 use std::time::{Duration, Instant};
+use std::{fs, usize};
 
-use crate::audio::NesAudio;
 use crate::input::Button;
 use crate::savestate::SaveState;
 use crate::tracing::Tracing;
@@ -76,8 +76,8 @@ impl EventLoop {
     /// # Examples
     ///
     /// ```no_run
-    /// use neser::config::Config;
-    /// use neser::eventloop::EventLoop;
+    /// use console::Config;
+    /// use sdl_frontend::EventLoop;
     ///
     /// let config = Config::default();
     /// // Create a headless EventLoop for testing
@@ -213,7 +213,7 @@ impl EventLoop {
         self.debugger_open_requested = true;
     }
 
-    fn read_vector_target(nes: &crate::nes::Nes, vector_addr: u16) -> u16 {
+    fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
         let memory = nes.memory.borrow();
         let lo = memory.read_cpu_for_debugger(vector_addr);
         let hi = memory.read_cpu_for_debugger(vector_addr.wrapping_add(1));
@@ -247,7 +247,7 @@ impl EventLoop {
 
     fn set_temporary_breakpoint_for_interrupt(
         &mut self,
-        nes: &crate::nes::Nes,
+        nes: &Nes,
         pc: u16,
         required_interrupt: crate::cpu::InterruptKind,
     ) {
@@ -275,7 +275,7 @@ impl EventLoop {
         self.arm_temporary_breakpoint_after_next_instruction = true;
     }
 
-    fn maybe_arm_temporary_breakpoint_after_instruction(&mut self, nes: &crate::nes::Nes) {
+    fn maybe_arm_temporary_breakpoint_after_instruction(&mut self, nes: &Nes) {
         if !self.arm_temporary_breakpoint_after_next_instruction {
             return;
         }
@@ -284,7 +284,7 @@ impl EventLoop {
         self.set_temporary_breakpoint(nes.cpu.pc());
     }
 
-    fn continue_from_debugger(&mut self, nes: &crate::nes::Nes) {
+    fn continue_from_debugger(&mut self, nes: &Nes) {
         // Prevent immediately re-breaking on the same instruction.
         if self.breakpoints.contains(&nes.cpu.pc()) {
             self.breakpoint_ignore_once_at_pc = Some(nes.cpu.pc());
@@ -391,7 +391,7 @@ impl EventLoop {
     /// # Errors
     ///
     /// Currently returns Ok(()) in all cases, but the Result type is kept for future error handling.
-    pub fn run(&mut self, nes: &mut crate::nes::Nes, tracing: Tracing) -> Result<(), String> {
+    pub fn run(&mut self, nes: &mut Nes, tracing: Tracing) -> Result<(), String> {
         let mut last_audio_stats_print = Instant::now();
         let mut last_cpu_cycles = nes.cpu.get_total_cycles();
         let mut last_perf_instant = Instant::now();
@@ -640,7 +640,7 @@ impl EventLoop {
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn render_debugger_if_needed(&mut self, nes: &crate::nes::Nes) {
+    pub(crate) fn render_debugger_if_needed(&mut self, nes: &Nes) {
         if !self.debugger_open_requested {
             return;
         }
@@ -663,7 +663,7 @@ impl EventLoop {
         self.debugger_open_requested
     }
 
-    fn tick_headless_once_for_run(&mut self, nes: &mut crate::nes::Nes) -> bool {
+    fn tick_headless_once_for_run(&mut self, nes: &mut Nes) -> bool {
         // Returns `true` if the caller should quit the event loop.
         let events: Vec<_> = self.event_pump.poll_iter().collect();
         for event in events {
@@ -704,7 +704,7 @@ impl EventLoop {
     fn tick_windowed_paused_for_run(
         debugger_open_requested: bool,
         debugger_renderer: &mut Option<Box<dyn DebuggerRenderer>>,
-        nes: &crate::nes::Nes,
+        nes: &Nes,
     ) {
         if !debugger_open_requested {
             return;
@@ -720,7 +720,7 @@ impl EventLoop {
 
     fn apply_debugger_ui_action(
         &mut self,
-        nes: &mut crate::nes::Nes,
+        nes: &mut Nes,
         action: crate::debugger::ui::DebuggerUiAction,
     ) {
         if !self.debugger_open_requested {
@@ -780,11 +780,7 @@ impl EventLoop {
         }
     }
 
-    fn handle_key_down_for_run(
-        &mut self,
-        nes: &mut crate::nes::Nes,
-        keycode: Keycode,
-    ) -> KeyDownOutcome {
+    fn handle_key_down_for_run(&mut self, nes: &mut Nes, keycode: Keycode) -> KeyDownOutcome {
         // When the debugger is open, make F5 behave exactly like the Continue button.
         // This ensures breakpoint ignore-once semantics apply equally.
         if keycode == Keycode::F5 && self.debugger_open_requested {
@@ -816,7 +812,7 @@ impl EventLoop {
         )
     }
 
-    fn debugger_run_to_next_frame(nes: &mut crate::nes::Nes) {
+    fn debugger_run_to_next_frame(nes: &mut Nes) {
         const MAX_STEPS: usize = 2_000_000;
 
         let mut previous_scanline = {
@@ -850,7 +846,7 @@ impl EventLoop {
         }
     }
 
-    fn debugger_step_over(nes: &mut crate::nes::Nes) {
+    fn debugger_step_over(nes: &mut Nes) {
         const JSR_OPCODE: u8 = 0x20;
 
         let pc = nes.cpu.pc();
@@ -899,7 +895,7 @@ impl EventLoop {
     /// - F6: Save state (when a ROM is loaded)
     /// - F7: Load state (when a ROM is loaded)
     fn handle_key_down(
-        nes: &mut crate::nes::Nes,
+        nes: &mut Nes,
         keycode: Keycode,
         audio: Option<&NesAudio>,
         paused: &mut bool,
@@ -968,7 +964,7 @@ impl EventLoop {
         KeyDownOutcome::Continue
     }
 
-    fn handle_key_up(nes: &mut crate::nes::Nes, keycode: Keycode) {
+    fn handle_key_up(nes: &mut Nes, keycode: Keycode) {
         match keycode {
             Keycode::W => nes.set_button(1, Button::Up, false),
             Keycode::S => nes.set_button(1, Button::Down, false),
@@ -1014,7 +1010,7 @@ T: Start"
         }
     }
 
-    fn save_state_to_disk(nes: &mut crate::nes::Nes) {
+    fn save_state_to_disk(nes: &mut Nes) {
         let Some(state_path) = nes.state_path() else {
             return;
         };
@@ -1048,7 +1044,7 @@ T: Start"
         }
     }
 
-    fn load_state_from_disk(nes: &mut crate::nes::Nes) {
+    fn load_state_from_disk(nes: &mut Nes) {
         let Some(state_path) = nes.state_path() else {
             return;
         };
@@ -1144,7 +1140,7 @@ T: Start"
     /// Handle controller button press/release
     fn handle_controller_button(
         &self,
-        nes: &mut crate::nes::Nes,
+        nes: &mut Nes,
         which: u32,
         button: sdl2::controller::Button,
         pressed: bool,
@@ -1195,8 +1191,7 @@ fn apply_volume_hotkey(audio: &NesAudio, keycode: Keycode) {
 mod tests {
     use super::*;
     use crate::cartridge::Cartridge;
-    use crate::config::Config;
-    use crate::nes::{Nes, TvSystem};
+    use crate::console::TvSystem;
     use serial_test::serial;
     use std::cell::RefCell;
     use std::env;

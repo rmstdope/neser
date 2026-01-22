@@ -1,5 +1,5 @@
 use super::Ppu;
-use crate::nes::TvSystem;
+use crate::console::{Nes, TvSystem};
 use crate::trace_ppu;
 
 pub(super) fn prerender_scanline(tv_system: TvSystem) -> u16 {
@@ -437,7 +437,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
             // Look up color in palette (convert index to address)
             let palette_addr = palette_base_u16 + final_palette_index_u16;
             let color_value = ppu.memory.read_palette(palette_addr);
-            let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
+            let (r, g, b) = Nes::lookup_system_palette(color_value);
 
             // Apply color emphasis/tint
             let (final_r, final_g, final_b) = if color_emphasis != 0 {
@@ -539,7 +539,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
         } else {
             // When rendering is disabled, output the backdrop color
             let color_value = ppu.memory.read_palette(palette_base);
-            let (r, g, b) = crate::nes::Nes::lookup_system_palette(color_value);
+            let (r, g, b) = Nes::lookup_system_palette(color_value);
 
             // Write backdrop color to screen buffer
             ppu.rendering

@@ -97,7 +97,7 @@ impl BusDevice for PpuDevice {
 mod tests {
     use super::*;
     use crate::cartridge::{Cartridge, Mapper, MirroringMode};
-    use crate::nes::TvSystem;
+    use crate::console::TvSystem;
     use std::cell::Cell;
 
     struct MaskTrackingMapper {

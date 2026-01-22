@@ -6,7 +6,7 @@
 //! 2. Config file (neser.conf)
 //! 3. Default values
 
-use crate::nes::TvSystem;
+use crate::console::TvSystem;
 use crate::tracing::Tracing;
 use bitflags::bitflags;
 use std::fs;

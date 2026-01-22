@@ -3,9 +3,8 @@ use neser::autorun::{
     save_autorun_file,
 };
 use neser::cartridge::Cartridge;
-use neser::config::{Config, ParseResult};
+use neser::console::{Config, Nes, ParseResult};
 use neser::input::Button;
-use neser::nes::Nes;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;
@@ -716,6 +715,7 @@ fn finalize_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use neser::console::TvSystem;
     use tempfile::tempdir;
 
     fn parse_args_for_test(args: &[&str]) -> Result<(Mode, PathBuf, Config), String> {
@@ -855,7 +855,7 @@ mod tests {
 
     #[test]
     fn test_extend_transition_applies_live_inputs() {
-        let mut nes = Nes::new(neser::nes::TvSystem::Ntsc);
+        let mut nes = Nes::new(TvSystem::Ntsc);
         apply_buttons(&mut nes, 1u8 << Button::A as u8, 0);
 
         let mut state = RunnerState {
@@ -887,7 +887,7 @@ mod tests {
 
     #[test]
     fn test_extend_transition_records_live_input() {
-        let mut nes = Nes::new(neser::nes::TvSystem::Ntsc);
+        let mut nes = Nes::new(TvSystem::Ntsc);
         let mut state = RunnerState {
             autorun: AutorunFile {
                 version: AUTORUN_VERSION,

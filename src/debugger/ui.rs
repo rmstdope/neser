@@ -309,8 +309,8 @@ fn format_hexdump_lines(base_addr: u16, bytes: &[u8]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::console::{Nes, TvSystem};
     use crate::debugger;
-    use crate::nes::{Nes, TvSystem};
 
     fn assert_close(actual: f32, expected: f32) {
         let eps = 0.0001;

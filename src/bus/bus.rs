@@ -495,7 +495,7 @@ impl Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::nes::TvSystem;
+    use crate::console::TvSystem;
     use std::rc::Rc;
 
     struct TestBusDevice {
@@ -739,7 +739,7 @@ mod tests {
     }
 
     fn create_test_memory() -> Bus {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(crate::nes::TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         Bus::new(ppu, apu)
     }
@@ -959,7 +959,7 @@ mod tests {
         // If we only set PPU mirroring once at cartridge load, scrolling across
         // a nametable boundary can show duplicated screens.
 
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(crate::nes::TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let mut mem = Bus::new(ppu.clone(), apu);
 

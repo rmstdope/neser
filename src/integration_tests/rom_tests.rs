@@ -22,7 +22,7 @@ mod tests {
     /// function is called to determine pass/fail.
     ///
     use crate::cartridge::Cartridge;
-    use crate::nes::{Nes, TvSystem};
+    use crate::console::{Nes, TvSystem};
     use crate::tracing::{self, Tracing};
     use std::fs;
 

@@ -1,19 +1,17 @@
 mod apu;
-mod audio;
 mod bus;
 mod cartridge;
-mod config;
+mod console;
 mod cpu;
 mod debugger;
-mod eventloop;
 mod input;
-mod nes;
 mod ppu;
 mod rendering;
 mod savestate;
+mod sdl_frontend;
 mod tracing;
 
-use config::{ApuChannels, Config, ParseResult};
+use console::{ApuChannels, Config, Nes, ParseResult};
 use savestate::SaveState;
 use std::fs;
 
@@ -34,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize SDL2
     let sdl_context = sdl2::init()?;
-    let mut nes_instance = nes::Nes::new(config.tv_system);
+    let mut nes_instance = Nes::new(config.tv_system);
 
     // Create audio output (request 44.1 kHz) unless disabled.
     // SDL may open the device at a different rate; always sync the APU to the actual rate
@@ -42,13 +40,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let audio = if !config.audio_enabled {
         None
     } else {
-        let audio = audio::NesAudio::new(&sdl_context, 44100)?;
+        let audio = sdl_frontend::NesAudio::new(&sdl_context, 44100)?;
         let actual_rate = audio.actual_sample_rate() as f32;
         nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
         Some(audio)
     };
 
-    let mut event_loop = eventloop::EventLoop::new(false, audio, &config)?;
+    let mut event_loop = sdl_frontend::EventLoop::new(false, audio, &config)?;
 
     // Request debugger open if enabled via CLI
     if config.debugger_enabled {
@@ -141,7 +139,7 @@ mod tests {
             ParseResult::Help => panic!("Expected Config"),
         };
 
-        let mut event_loop = crate::eventloop::EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = sdl_frontend::EventLoop::new(true, None, &config).unwrap();
 
         if config.debugger_enabled {
             event_loop.request_debugger_open();

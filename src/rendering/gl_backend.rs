@@ -3,7 +3,7 @@ use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
 use sdl2::video::{FullscreenType, GLContext, GLProfile, Window, WindowPos};
 
-use crate::config::Config;
+use crate::console::{Config, Nes};
 use crate::debugger;
 use crate::debugger::ui as debugger_ui;
 use crate::rendering::shader_manager::ShaderManager;
@@ -337,7 +337,7 @@ impl GlBackend {
 
     pub fn render(
         &mut self,
-        nes: &crate::nes::Nes,
+        nes: &Nes,
         show_debugger: bool,
         overlay_text: Option<&str>,
         overlay_blink_red: bool,

@@ -1,4 +1,4 @@
-use crate::nes::TvSystem;
+use crate::console::TvSystem;
 
 /// Number of PPU cycles (pixels) per scanline
 const PIXELS_PER_SCANLINE: u16 = 341;

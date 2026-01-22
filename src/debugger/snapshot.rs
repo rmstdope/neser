@@ -1,4 +1,4 @@
-use crate::nes::Nes;
+use crate::console::Nes;
 
 use super::disasm::{DisasmWindowConfig, disassemble_window, disassemble_window_with_state};
 use super::types::{
@@ -166,7 +166,7 @@ mod tests {
     use super::*;
     use crate::cartridge::Cartridge;
     use crate::cartridge::MirroringMode;
-    use crate::nes::{Nes, TvSystem};
+    use crate::console::{Nes, TvSystem};
 
     #[test]
     fn test_snapshot_contains_basic_cpu_ppu_apu_info() {

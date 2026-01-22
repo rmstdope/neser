@@ -2,7 +2,7 @@ use super::master_clock::MasterClock;
 use super::opcode::*;
 use crate::apu::Apu;
 use crate::bus::Bus;
-use crate::nes::TvSystem;
+use crate::console::TvSystem;
 use crate::ppu::Ppu;
 use crate::trace_cpu;
 use std::cell::RefCell;
@@ -2705,9 +2705,7 @@ mod tests {
 
     #[test]
     fn test_cpu_new_stores_provided_ppu_and_apu_instances() {
-        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(
-            crate::nes::TvSystem::Ntsc,
-        )));
+        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu))));
 
@@ -3191,9 +3189,7 @@ mod tests {
 
     // Test helper function to create a Memory instance with a PPU/APU for testing
     fn create_test_memory() -> TestMemory {
-        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(
-            crate::nes::TvSystem::Ntsc,
-        )));
+        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu))));
         (ppu, apu, memory)

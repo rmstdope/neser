@@ -1,4 +1,4 @@
-use crate::nes::TvSystem;
+use crate::console::TvSystem;
 
 /// Tracks the master clock used to derive CPU/PPU timing.
 ///
@@ -83,7 +83,7 @@ impl MasterClock {
 #[cfg(test)]
 mod tests {
     use super::MasterClock;
-    use crate::nes::TvSystem;
+    use crate::console::TvSystem;
 
     #[test]
     fn test_ppu_cycles_since_last_ntsc_rounds_down_and_tracks_remainder() {
