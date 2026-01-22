@@ -92,7 +92,6 @@ Options:
   --video-scale <N>     Window scaling factor, windowed mode only (e.g., 4.0)
 ```
 
-
 ### Blargg NES Test Suite Status
 
 NESER is tested against Blargg’s (and Blargg compatible) NES test ROMs to verify CPU, PPU, APU, DMA, and mapper correctness. The following test suites are currently passing in the main branch:

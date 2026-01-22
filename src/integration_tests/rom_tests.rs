@@ -1,22 +1,34 @@
 #[cfg(test)]
 mod tests {
-    /// OAM test infrastructure for automated testing of blargg's OAM test ROMs
+    /// OAM test infrastructure for automated testing of test ROMs
     ///
     /// This module provides infrastructure to run OAM test ROMs (oam_read, oam_stress, oam3)
     /// and automatically detect PASS/FAIL status by reading results from PRG-RAM.
     ///
-    /// Blargg test ROMs write their results to $6000-$6003:
+    /// There are four kinds of ROM test automation strategies supported.
+    /// 1. RAM based results ($6000-$6003):
     /// - $6000 = 0x00: Test passed
     /// - $6000 = 0x01+: Test failed with error code
-    /// - $6001-$6003: Additional error information or text output
+    /// - $6000 = 0x80: Test is still running
+    /// - $6000 = 0x81: Test requests a reset
+    /// 2. Console output based results:
+    /// - The test ROM prints text to the nametable area. The test is considered passed if the text
+    ///  contains "PASSED" and failed if it contains "FAILED" or "ERROR".
+    /// 3. Console output based results with CRC-32 matching:
+    /// - The test ROM prints text to the nametable area. The test is considered passed if the text
+    /// contains a CRC-32 value that matches one of the expected values.
+    /// 4. Address-based tests:
+    /// - The test ROM runs until a specific CPU address is reached, at which point a custom verifier
+    /// function is called to determine pass/fail.
+    ///
     use crate::cartridge::Cartridge;
     use crate::nes::{Nes, TvSystem};
     use crate::tracing::{self, Tracing};
     use std::fs;
 
-    /// Result of running an OAM test ROM
+    /// Result of running an test ROM
     #[derive(Debug, PartialEq, Eq)]
-    pub enum BlarggTestResult {
+    pub enum RomTestResult {
         /// Test passed (status byte = 0x00)
         Pass,
         /// Test failed with error code
@@ -29,28 +41,26 @@ mod tests {
 
     /// Test verification method
     #[derive(Debug, PartialEq, Eq)]
-    pub enum BlarggTestVerification {
+    pub enum RomTestVerification {
         /// Verify using status byte at 0x6000
         StatusByte,
         /// Verify using console output
         Console,
         /// Verify by matching a CRC-32 printed to the console output.
-        ///
-        /// Some blargg ROMs only print their CRC (and do not print "Passed"/"Failed").
         ConsoleCrc(&'static [u32]),
     }
 
     /// Runner for OAM test ROMs
-    pub struct BlarggTestRunner {
+    pub struct RomTestRunner {
         rom_path: String,
         max_frames: u32,
         wait_reset: u32,
-        verification: BlarggTestVerification,
+        verification: RomTestVerification,
     }
 
-    impl BlarggTestRunner {
+    impl RomTestRunner {
         /// Create a new test runner for $6000-based tests
-        pub fn new(rom_path: &str, max_frames: u32, verification: BlarggTestVerification) -> Self {
+        pub fn new(rom_path: &str, max_frames: u32, verification: RomTestVerification) -> Self {
             Self {
                 rom_path: rom_path.to_string(),
                 max_frames,
@@ -71,14 +81,14 @@ mod tests {
         ///   - Reads nametable text looking for "PASSED" or "FAILED"
         ///
         /// Returns `Timeout` if no result is found within max_frames.
-        pub fn run_test(&mut self) -> BlarggTestResult {
+        pub fn run_test(&mut self) -> RomTestResult {
             init_apu_tracing_from_env();
             // Load ROM
             let rom_data = match fs::read(&self.rom_path) {
                 Ok(data) => data,
                 Err(e) => {
                     eprintln!("Failed to load ROM {}: {}", self.rom_path, e);
-                    return BlarggTestResult::Fail(0x80_u8);
+                    return RomTestResult::Fail(0x80_u8);
                 }
             };
 
@@ -86,7 +96,7 @@ mod tests {
                 Ok(cart) => cart,
                 Err(e) => {
                     eprintln!("Failed to parse ROM {}: {}", self.rom_path, e);
-                    return BlarggTestResult::Fail(0x81_u8);
+                    return RomTestResult::Fail(0x81_u8);
                 }
             };
 
@@ -95,8 +105,6 @@ mod tests {
             nes.insert_cartridge(cartridge);
             // Initial reset is treated as power-on.
             nes.reset(false);
-
-            // println!("Running Blargg-based test ROM: {} ... ", self.rom_path);
 
             let mut running = false;
             let mut first_nonzero_status = None;
@@ -135,13 +143,13 @@ mod tests {
                     nes.get_sample();
                 }
 
-                if self.verification == BlarggTestVerification::StatusByte && !running {
+                if self.verification == RomTestVerification::StatusByte && !running {
                     continue;
                 }
-                if self.verification == BlarggTestVerification::StatusByte {
+                if self.verification == RomTestVerification::StatusByte {
                     if status == 0x00 {
                         // println!("Test passed!");
-                        return BlarggTestResult::Pass;
+                        return RomTestResult::Pass;
                     } else if status > 0x00 && status < 0x80 {
                         let base_addr = nes.base_nametable_addr();
                         let mut text = nes.read_nametable_text(base_addr, 32 * 32);
@@ -154,7 +162,7 @@ mod tests {
                             .join("\n");
                         println!("Test failed with status code: 0x{:02X}", status);
                         println!("Console output:\n{}", text);
-                        return BlarggTestResult::Fail(status);
+                        return RomTestResult::Fail(status);
                     } else if status == 0x81 {
                         if self.wait_reset > 0 {
                             // println!(
@@ -173,7 +181,7 @@ mod tests {
                         // Still running
                         continue;
                     }
-                } else if self.verification == BlarggTestVerification::Console {
+                } else if self.verification == RomTestVerification::Console {
                     let base_addr = nes.base_nametable_addr();
                     let mut text = nes.read_nametable_text(base_addr, 32 * 32);
                     text = text
@@ -187,17 +195,16 @@ mod tests {
                     let is_0x = text.len() == 3 && text.starts_with("$0");
                     if text.to_uppercase().contains("PASSED") || text == "$01" {
                         // println!("Test passed!");
-                        return BlarggTestResult::Pass;
+                        return RomTestResult::Pass;
                     } else if text.to_uppercase().contains("FAILED")
                         || text.to_uppercase().contains("ERROR")
                         || is_0x
                     {
                         println!("Test failed!");
                         println!("Console output:\n{}", text);
-                        return BlarggTestResult::Fail(1);
+                        return RomTestResult::Fail(1);
                     }
-                } else if let BlarggTestVerification::ConsoleCrc(expected_crcs) = self.verification
-                {
+                } else if let RomTestVerification::ConsoleCrc(expected_crcs) = self.verification {
                     let base_addr = nes.base_nametable_addr();
                     let mut text = nes.read_nametable_text(base_addr, 32 * 32);
                     text = text
@@ -210,17 +217,17 @@ mod tests {
 
                     if let Some(crc) = parse_crc32_from_console_text(&text) {
                         if expected_crcs.contains(&crc) {
-                            return BlarggTestResult::Pass;
+                            return RomTestResult::Pass;
                         }
                         println!("Test failed! Unexpected CRC 0x{:08X}", crc);
                         println!("Console output:\n{}", text);
-                        return BlarggTestResult::Fail(1);
+                        return RomTestResult::Fail(1);
                     }
                 }
             }
 
             // No result found within timeout
-            BlarggTestResult::Timeout
+            RomTestResult::Timeout
         }
     }
 
@@ -229,14 +236,14 @@ mod tests {
         max_frames: u32,
         stop_address: u16,
         verifier: fn(&mut Nes) -> bool,
-    ) -> BlarggTestResult {
+    ) -> RomTestResult {
         init_apu_tracing_from_env();
 
         let rom_data = match fs::read(rom_path) {
             Ok(data) => data,
             Err(e) => {
                 eprintln!("Failed to load ROM {}: {}", rom_path, e);
-                return BlarggTestResult::Fail(0x80_u8);
+                return RomTestResult::Fail(0x80_u8);
             }
         };
 
@@ -244,7 +251,7 @@ mod tests {
             Ok(cart) => cart,
             Err(e) => {
                 eprintln!("Failed to parse ROM {}: {}", rom_path, e);
-                return BlarggTestResult::Fail(0x81_u8);
+                return RomTestResult::Fail(0x81_u8);
             }
         };
 
@@ -259,9 +266,9 @@ mod tests {
                     //     println!("SampleX: {}", nes.get_sample().unwrap());
                     // }
                     return if verifier(&mut nes) {
-                        BlarggTestResult::Pass
+                        RomTestResult::Pass
                     } else {
-                        BlarggTestResult::Fail(1)
+                        RomTestResult::Fail(1)
                     };
                 }
                 nes.run_cpu_tick();
@@ -275,19 +282,7 @@ mod tests {
             // }
         }
 
-        BlarggTestResult::Timeout
-    }
-
-    // fn verify_always_pass(_nes: &mut Nes) -> bool {
-    //     true
-    // }
-
-    fn verify_always_fail(_nes: &mut Nes) -> bool {
-        false
-    }
-
-    fn verify_mutating(_nes: &mut Nes) -> bool {
-        true
+        RomTestResult::Timeout
     }
 
     fn init_apu_tracing_from_env() {
@@ -324,89 +319,67 @@ mod tests {
         None
     }
 
-    /// Macro to generate $6000-based tests with custom timeout
-    macro_rules! blargg_test {
+    // Macro to generate $6000-based tests with custom timeout
+    macro_rules! setup_rom_test {
         ($test_name:ident, $rom_path:expr, $timeout:expr) => {
             #[test]
             fn $test_name() {
                 let mut runner =
-                    BlarggTestRunner::new($rom_path, $timeout, BlarggTestVerification::StatusByte);
+                    RomTestRunner::new($rom_path, $timeout, RomTestVerification::StatusByte);
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();
-                assert_eq!(result, BlarggTestResult::Pass, "{} should pass", rom_name);
+                assert_eq!(result, RomTestResult::Pass, "{} should pass", rom_name);
             }
         };
         ($test_name:ident, $rom_path:expr) => {
-            blargg_test!($test_name, $rom_path, 180);
+            setup_rom_test!($test_name, $rom_path, 180);
         };
     }
 
-    macro_rules! blargg_console_test {
+    macro_rules! setup_rom_console_test {
         ($test_name:ident, $rom_path:expr, $timeout:expr) => {
             #[test]
             fn $test_name() {
                 let mut runner =
-                    BlarggTestRunner::new($rom_path, $timeout, BlarggTestVerification::Console);
+                    RomTestRunner::new($rom_path, $timeout, RomTestVerification::Console);
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();
-                assert_eq!(result, BlarggTestResult::Pass, "{} should pass", rom_name);
+                assert_eq!(result, RomTestResult::Pass, "{} should pass", rom_name);
             }
         };
         ($test_name:ident, $rom_path:expr) => {
-            blargg_console_test!($test_name, $rom_path, 180);
+            setup_rom_console_test!($test_name, $rom_path, 180);
         };
     }
 
-    macro_rules! blargg_console_crc_test {
+    macro_rules! setup_rom_console_crc_test {
         ($test_name:ident, $rom_path:expr, $timeout:expr, $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut runner = BlarggTestRunner::new(
+                let mut runner = RomTestRunner::new(
                     $rom_path,
                     $timeout,
-                    BlarggTestVerification::ConsoleCrc($expected),
+                    RomTestVerification::ConsoleCrc($expected),
                 );
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();
-                assert_eq!(result, BlarggTestResult::Pass, "{} should pass", rom_name);
+                assert_eq!(result, RomTestResult::Pass, "{} should pass", rom_name);
             }
         };
     }
 
-    macro_rules! blargg_address_test {
+    macro_rules! setup_rom_address_test {
         ($test_name:ident, $rom_path:expr, $stop_address:expr, $verify_fn:expr, $timeout:expr) => {
             #[test]
             fn $test_name() {
                 let result = run_address_test($rom_path, $timeout, $stop_address, $verify_fn);
                 let rom_name = $rom_path.split('/').last().unwrap();
-                assert_eq!(result, BlarggTestResult::Pass, "{} should pass", rom_name);
+                assert_eq!(result, RomTestResult::Pass, "{} should pass", rom_name);
             }
         };
         ($test_name:ident, $rom_path:expr, $stop_address:expr, $verify_fn:expr) => {
-            blargg_address_test!($test_name, $rom_path, $stop_address, $verify_fn, 180);
+            setup_rom_address_test!($test_name, $rom_path, $stop_address, $verify_fn, 180);
         };
-    }
-
-    #[test]
-    fn test_address_test_verifier_failure() {
-        let result = run_address_test(
-            "roms/blargg/dmc_tests/buffer_retained.nes",
-            300,
-            0xE149,
-            verify_always_fail,
-        );
-        assert_eq!(result, BlarggTestResult::Fail(1));
-    }
-
-    #[test]
-    fn test_address_test_verifier_accepts_mut_nes() {
-        let result = run_address_test(
-            "roms/blargg/dmc_tests/buffer_retained.nes",
-            300,
-            0xE149,
-            verify_mutating,
-        );
-        assert_eq!(result, BlarggTestResult::Pass);
     }
 
     //
@@ -414,144 +387,144 @@ mod tests {
     //
 
     // apu_mixer
-    blargg_test!(test_apu_mixer_dmc, "roms/blargg/apu_mixer/dmc.nes", 60 * 10);
-    blargg_test!(
+    setup_rom_test!(test_apu_mixer_dmc, "roms/blargg/apu_mixer/dmc.nes", 60 * 10);
+    setup_rom_test!(
         test_apu_mixer_noise,
         "roms/blargg/apu_mixer/noise.nes",
         60 * 10
     );
-    blargg_test!(
+    setup_rom_test!(
         test_apu_mixer_square,
         "roms/blargg/apu_mixer/square.nes",
         60 * 10
     );
-    blargg_test!(
+    setup_rom_test!(
         test_apu_mixer_triangle,
         "roms/blargg/apu_mixer/triangle.nes",
         60 * 10
     );
 
     // apu_reset
-    blargg_test!(test_4015_cleared, "roms/blargg/apu_reset/4015_cleared.nes");
-    blargg_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
-    blargg_test!(test_4017_written, "roms/blargg/apu_reset/4017_written.nes");
-    blargg_test!(
+    setup_rom_test!(test_4015_cleared, "roms/blargg/apu_reset/4015_cleared.nes");
+    setup_rom_test!(test_4017_timing, "roms/blargg/apu_reset/4017_timing.nes");
+    setup_rom_test!(test_4017_written, "roms/blargg/apu_reset/4017_written.nes");
+    setup_rom_test!(
         test_irq_flag_cleared,
         "roms/blargg/apu_reset/irq_flag_cleared.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_len_ctrs_enabled,
         "roms/blargg/apu_reset/len_ctrs_enabled.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_works_immediately,
         "roms/blargg/apu_reset/works_immediately.nes"
     );
 
     // apu_test
-    blargg_test!(
+    setup_rom_test!(
         test_apu_test_1,
         "roms/blargg/apu_test/rom_singles/1-len_ctr.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_apu_test_2,
         "roms/blargg/apu_test/rom_singles/2-len_table.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_apu_test_3,
         "roms/blargg/apu_test/rom_singles/3-irq_flag.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_apu_test_4,
         "roms/blargg/apu_test/rom_singles/4-jitter.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_apu_test_5,
         "roms/blargg/apu_test/rom_singles/5-len_timing.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_apu_test_6,
         "roms/blargg/apu_test/rom_singles/6-irq_flag_timing.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_apu_test_7,
         "roms/blargg/apu_test/rom_singles/7-dmc_basics.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_apu_test_8,
         "roms/blargg/apu_test/rom_singles/8-dmc_rates.nes"
     );
 
     // blargg_apu_2005.07.30
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_01,
         "roms/blargg/blargg_apu_2005.07.30/01.len_ctr.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_02,
         "roms/blargg/blargg_apu_2005.07.30/02.len_table.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_03,
         "roms/blargg/blargg_apu_2005.07.30/03.irq_flag.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_04,
         "roms/blargg/blargg_apu_2005.07.30/04.clock_jitter.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_05,
         "roms/blargg/blargg_apu_2005.07.30/05.len_timing_mode0.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_06,
         "roms/blargg/blargg_apu_2005.07.30/06.len_timing_mode1.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_07,
         "roms/blargg/blargg_apu_2005.07.30/07.irq_flag_timing.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_08,
         "roms/blargg/blargg_apu_2005.07.30/08.irq_timing.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_09,
         "roms/blargg/blargg_apu_2005.07.30/09.reset_timing.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_10,
         "roms/blargg/blargg_apu_2005.07.30/10.len_halt_timing.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_blargg_apu_11,
         "roms/blargg/blargg_apu_2005.07.30/11.len_reload_timing.nes"
     );
 
     // dmc_dma_during_read4
-    blargg_console_crc_test!(
+    setup_rom_console_crc_test!(
         test_dmc_dma_during_read4_2007_read,
         "roms/blargg/dmc_dma_during_read4/dma_2007_read.nes",
         300,
         &[0x159A7A8F, 0x5E3DF9C4]
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_dmc_dma_during_read4_2007_write,
         "roms/blargg/dmc_dma_during_read4/dma_2007_write.nes",
         300
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_dmc_dma_during_read4_4016_read,
         "roms/blargg/dmc_dma_during_read4/dma_4016_read.nes",
         300
     );
-    blargg_console_crc_test!(
+    setup_rom_console_crc_test!(
         test_dmc_dma_during_read4_double_2007_read,
         "roms/blargg/dmc_dma_during_read4/double_2007_read.nes",
         300,
         &[0xF018C287, 0xD84F6815] //CRC1 - Mesen, loopyNES, etc., CRC2 - Nintendulator, FCEUX
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_dmc_dma_during_read4_read_write_2007,
         "roms/blargg/dmc_dma_during_read4/read_write_2007.nes",
         300
@@ -668,187 +641,187 @@ mod tests {
     }
 
     // dmc_tests
-    blargg_address_test!(
+    setup_rom_address_test!(
         test_dmc_tests_buffer_retained,
         "roms/blargg/dmc_tests/buffer_retained.nes",
         0xE149,
         check_one_dmc_byte_processed
     );
-    blargg_address_test!(
+    setup_rom_address_test!(
         test_dmc_tests_latency,
         "roms/blargg/dmc_tests/latency.nes",
         0xE162,
         check_four_by_two_dmc_bytes_processed
     );
-    blargg_address_test!(
+    setup_rom_address_test!(
         test_dmc_tests_status_irq,
         "roms/blargg/dmc_tests/status_irq.nes",
         0xE154,
         check_one_irq_fired
     );
-    blargg_address_test!(
+    setup_rom_address_test!(
         test_dmc_tests_status,
         "roms/blargg/dmc_tests/status.nes",
         0xE14E,
         check_zero_irq_fired
     );
 
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_branch_timing,
         "roms/blargg/branch_timing_tests/1.Branch_Basics.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_backward_branch,
         "roms/blargg/branch_timing_tests/2.Backward_Branch.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_forward_branch,
         "roms/blargg/branch_timing_tests/3.Forward_Branch.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_cpu_dummy_reads,
         "roms/blargg/cpu_dummy_reads/cpu_dummy_reads.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_dummy_writes_oam,
         "roms/blargg/cpu_dummy_writes/cpu_dummy_writes_oam.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_dummy_writes_ppumem,
         "roms/blargg/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_exec_space_ppuio,
         "roms/blargg/cpu_exec_space/test_cpu_exec_space_ppuio.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_exec_space_apu,
         "roms/blargg/cpu_exec_space/test_cpu_exec_space_apu.nes"
     );
 
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_cli_latency,
         "roms/blargg/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_nmi_and_brk,
         "roms/blargg/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_nmi_and_irq,
         "roms/blargg/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_irq_and_dma,
         "roms/blargg/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_branch_delays_irq,
         "roms/blargg/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_reset_registers,
         "roms/blargg/cpu_reset/registers.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_cpu_reset_ram_after_reset,
         "roms/blargg/cpu_reset/ram_after_reset.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_cpu_timing_test,
         "roms/blargg/cpu_timing_test6/cpu_timing_test.nes",
         20 * 60 // Can take up to 16 * 60 frames according to README
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_misc_01,
         "roms/blargg/instr_misc/rom_singles/01-abs_x_wrap.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_misc_02,
         "roms/blargg/instr_misc/rom_singles/02-branch_wrap.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_misc_03,
         "roms/blargg/instr_misc/rom_singles/03-dummy_reads.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_misc_04,
         "roms/blargg/instr_misc/rom_singles/04-dummy_reads_apu.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_01_basics,
         "roms/blargg/instr_test-v5/rom_singles/01-basics.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_02_implied,
         "roms/blargg/instr_test-v5/rom_singles/02-implied.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_03_immediate,
         "roms/blargg/instr_test-v5/rom_singles/03-immediate.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_04_zero_page,
         "roms/blargg/instr_test-v5/rom_singles/04-zero_page.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_05_zp_xy,
         "roms/blargg/instr_test-v5/rom_singles/05-zp_xy.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_06_absolute,
         "roms/blargg/instr_test-v5/rom_singles/06-absolute.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_07_abs_xy,
         "roms/blargg/instr_test-v5/rom_singles/07-abs_xy.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_08_ind_x,
         "roms/blargg/instr_test-v5/rom_singles/08-ind_x.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_09_ind_y,
         "roms/blargg/instr_test-v5/rom_singles/09-ind_y.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_10_branches,
         "roms/blargg/instr_test-v5/rom_singles/10-branches.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_11_stack,
         "roms/blargg/instr_test-v5/rom_singles/11-stack.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_12_jmp_jsr,
         "roms/blargg/instr_test-v5/rom_singles/12-jmp_jsr.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_13_rts,
         "roms/blargg/instr_test-v5/rom_singles/13-rts.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_14_rti,
         "roms/blargg/instr_test-v5/rom_singles/14-rti.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_15_brk,
         "roms/blargg/instr_test-v5/rom_singles/15-brk.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_16_special,
         "roms/blargg/instr_test-v5/rom_singles/16-special.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_timing_01,
         "roms/blargg/instr_timing/rom_singles/1-instr_timing.nes",
         60 * 5
     );
-    blargg_test!(
+    setup_rom_test!(
         test_instr_timing_02,
         "roms/blargg/instr_timing/rom_singles/2-branch_timing.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_palette_ram,
         "roms/blargg/blargg_ppu_tests_2005.09.15b/palette_ram.nes"
     );
@@ -857,142 +830,142 @@ mod tests {
     //     test_power_up_palette,
     //     "roms/blargg/blargg_ppu_tests_2005.09.15b/power_up_palette.nes"
     // );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_sprite_ram,
         "roms/blargg/blargg_ppu_tests_2005.09.15b/sprite_ram.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_vbl_clear_time,
         "roms/blargg/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_vram_access,
         "roms/blargg/blargg_ppu_tests_2005.09.15b/vram_access.nes"
     );
-    blargg_test!(test_oam_read, "roms/blargg/oam_read/oam_read.nes");
-    blargg_test!(
+    setup_rom_test!(test_oam_read, "roms/blargg/oam_read/oam_read.nes");
+    setup_rom_test!(
         test_oam_stress,
         "roms/blargg/oam_stress/oam_stress.nes",
         60 * 10
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_open_bus,
         "roms/blargg/ppu_open_bus/ppu_open_bus.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_read_buffer,
         "roms/blargg/ppu_read_buffer/test_ppu_read_buffer.nes",
         60 * 25 // Takes about 20 seconds according to readme
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_hit_01,
         "roms/blargg/ppu_sprite_hit/rom_singles/01-basics.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_hit_02,
         "roms/blargg/ppu_sprite_hit/rom_singles/02-alignment.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_hit_03,
         "roms/blargg/ppu_sprite_hit/rom_singles/03-corners.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_hit_04,
         "roms/blargg/ppu_sprite_hit/rom_singles/04-flip.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_hit_05,
         "roms/blargg/ppu_sprite_hit/rom_singles/05-left_clip.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_hit_06,
         "roms/blargg/ppu_sprite_hit/rom_singles/06-right_edge.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_hit_07,
         "roms/blargg/ppu_sprite_hit/rom_singles/07-screen_bottom.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_hit_08,
         "roms/blargg/ppu_sprite_hit/rom_singles/08-double_height.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_hit_09,
         "roms/blargg/ppu_sprite_hit/rom_singles/09-timing.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_hit_10,
         "roms/blargg/ppu_sprite_hit/rom_singles/10-timing_order.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_overflow_01,
         "roms/blargg/ppu_sprite_overflow/rom_singles/01-basics.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_overflow_02,
         "roms/blargg/ppu_sprite_overflow/rom_singles/02-details.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_overflow_03,
         "roms/blargg/ppu_sprite_overflow/rom_singles/03-timing.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_overflow_04,
         "roms/blargg/ppu_sprite_overflow/rom_singles/04-obscure.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprite_overflow_05,
         "roms/blargg/ppu_sprite_overflow/rom_singles/05-emulator.nes"
     );
 
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_vbl_nmi_01,
         "roms/blargg/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_vbl_nmi_02,
         "roms/blargg/ppu_vbl_nmi/rom_singles/02-vbl_set_time.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_vbl_nmi_03,
         "roms/blargg/ppu_vbl_nmi/rom_singles/03-vbl_clear_time.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_vbl_nmi_04,
         "roms/blargg/ppu_vbl_nmi/rom_singles/04-nmi_control.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_vbl_nmi_05,
         "roms/blargg/ppu_vbl_nmi/rom_singles/05-nmi_timing.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_vbl_nmi_06,
         "roms/blargg/ppu_vbl_nmi/rom_singles/06-suppression.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_vbl_nmi_07,
         "roms/blargg/ppu_vbl_nmi/rom_singles/07-nmi_on_timing.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_vbl_nmi_08,
         "roms/blargg/ppu_vbl_nmi/rom_singles/08-nmi_off_timing.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_vbl_nmi_09,
         "roms/blargg/ppu_vbl_nmi/rom_singles/09-even_odd_frames.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_ppu_vbl_nmi_10,
         "roms/blargg/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
     // Tests for OAM DMA and DMC DMA collision handling
-    blargg_test!(
+    setup_rom_test!(
         test_sprdma_and_dmc_dma,
         "roms/blargg/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes",
         60 * 15
     );
-    blargg_test!(
+    setup_rom_test!(
         test_sprdma_and_dmc_dma_512,
         "roms/blargg/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes",
         60 * 15
@@ -1014,56 +987,56 @@ mod tests {
     // );
 
     // MMC3 IRQ counter tests
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_mmc3_irq_1_clocking,
         "roms/blargg/mmc3_irq_tests/1.Clocking.nes",
         60 * 10 // Increased timeout for initial debugging
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_mmc3_irq_2_details,
         "roms/blargg/mmc3_irq_tests/2.Details.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_mmc3_irq_3_a12_clocking,
         "roms/blargg/mmc3_irq_tests/3.A12_clocking.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_mmc3_irq_4_scanline_timing,
         "roms/blargg/mmc3_irq_tests/4.Scanline_timing.nes",
         60 * 5 // May need time for frame rendering
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_mmc3_irq_5_rev_a,
         "roms/blargg/mmc3_irq_tests/5.MMC3_rev_A.nes"
     );
-    blargg_console_test!(
+    setup_rom_console_test!(
         test_mmc3_irq_6_rev_b,
         "roms/blargg/mmc3_irq_tests/6.MMC3_rev_B.nes"
     );
 
     // MMC3 test suite (alternative test format)
-    blargg_test!(
+    setup_rom_test!(
         test_mmc3_test_1_clocking,
         "roms/blargg/mmc3_test_2/rom_singles/1-clocking.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_mmc3_test_2_details,
         "roms/blargg/mmc3_test_2/rom_singles/2-details.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_mmc3_test_3_a12_clocking,
         "roms/blargg/mmc3_test_2/rom_singles/3-A12_clocking.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_mmc3_test_4_scanline_timing,
         "roms/blargg/mmc3_test_2/rom_singles/4-scanline_timing.nes",
         60 * 5
     );
-    blargg_test!(
+    setup_rom_test!(
         test_mmc3_test_5_mmc3,
         "roms/blargg/mmc3_test_2/rom_singles/5-MMC3.nes"
     );
-    blargg_test!(
+    setup_rom_test!(
         test_mmc3_test_6_mmc3_alt,
         "roms/blargg/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
     );

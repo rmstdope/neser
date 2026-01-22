@@ -3,11 +3,11 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::cartridge::Cartridge;
-    use crate::game_verification::golden_screenshots::{
+    use crate::integration_tests::golden_screenshots::{
         GoldenScreenshotPolicy, assert_matches_golden_screenshot_byte_exact,
         ensure_golden_screenshot, golden_screenshot_path_for_rom,
     };
-    use crate::game_verification::manual_test_cartridges;
+    use crate::integration_tests::manual_test_cartridges;
     use crate::nes::{Nes, TvSystem};
 
     const FRAMES_TO_RUN: u32 = 60 * 5;

@@ -1,8 +1,9 @@
-use crate::apu;
-use crate::bus::bus::Bus;
+use crate::apu::Apu;
+use crate::bus::Bus;
 use crate::cartridge::Cartridge;
-use crate::cpu;
-use crate::ppu;
+use crate::cpu::Cpu;
+use crate::cpu::lookup;
+use crate::ppu::Ppu;
 use crate::tracing::Tracing;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -55,20 +56,20 @@ impl TvSystem {
 }
 
 pub struct Nes {
-    pub ppu: Rc<RefCell<ppu::Ppu>>,
-    pub apu: Rc<RefCell<apu::Apu>>,
+    pub ppu: Rc<RefCell<Ppu>>,
+    pub apu: Rc<RefCell<Apu>>,
     pub memory: Rc<RefCell<Bus>>,
-    pub cpu: cpu::Cpu,
+    pub cpu: Cpu,
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
 }
 
 impl Nes {
     pub fn new(tv_system: TvSystem) -> Self {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(tv_system)));
-        let apu = Rc::new(RefCell::new(apu::Apu::new()));
+        let ppu = Rc::new(RefCell::new(Ppu::new(tv_system)));
+        let apu = Rc::new(RefCell::new(Apu::new()));
         let memory = Rc::new(RefCell::new(Bus::new(ppu.clone(), apu.clone())));
-        let cpu = cpu::Cpu::new(tv_system, memory.clone(), ppu.clone(), apu.clone());
+        let cpu = Cpu::new(tv_system, memory.clone(), ppu.clone(), apu.clone());
 
         // Initialize PPU 1 cycle ahead for proper sprite 0 hit timing
         // This creates a one-cycle offset where PPU state changes become
@@ -243,8 +244,8 @@ impl Nes {
         let mut memory = self.memory.borrow_mut();
         // Read the opcode and determine instruction size
         let opcode_byte = memory.read(pc);
-        let instruction = cpu::lookup(opcode_byte)
-            .unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
+        let instruction =
+            lookup(opcode_byte).unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
 
         // Read operand bytes
         let byte1 = if instruction.bytes() > 1 {

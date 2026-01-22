@@ -1,7 +1,7 @@
 use super::master_clock::MasterClock;
 use super::opcode::*;
 use crate::apu::Apu;
-use crate::bus::bus::Bus;
+use crate::bus::Bus;
 use crate::nes::TvSystem;
 use crate::ppu::Ppu;
 use crate::trace_cpu;
