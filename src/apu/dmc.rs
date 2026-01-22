@@ -371,6 +371,7 @@ impl Dmc {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn debug_irq_trigger_count(&self) -> u32 {
         self.irq_trigger_count
     }
@@ -388,6 +389,7 @@ impl Dmc {
 
     /// Get the number of bytes_remaining (for testing purposes)
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn get_bytes_remaining(&self) -> u16 {
         self.bytes_remaining
     }
