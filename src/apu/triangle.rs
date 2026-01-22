@@ -210,7 +210,6 @@ impl Triangle {
         self.length_counter.reload_counter();
     }
 
-
     pub fn apply_pending_length_halt(&mut self) {
         self.length_counter.apply_pending_halt();
     }
@@ -258,8 +257,10 @@ impl Triangle {
         }
         self.length_counter
             .set_halt_state(state.length_counter_halt, state.length_counter_pending_halt);
-        self.length_counter
-            .set_reload_state(state.length_counter_reload_value, state.length_counter_previous_value);
+        self.length_counter.set_reload_state(
+            state.length_counter_reload_value,
+            state.length_counter_previous_value,
+        );
         self.linear_counter = state.linear_counter;
         self.linear_counter_reload_value = state.linear_counter_reload;
         self.linear_counter_reload_flag = state.linear_counter_reload_flag;

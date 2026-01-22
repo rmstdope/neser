@@ -32,7 +32,7 @@ pub static TRACING: std::sync::OnceLock<std::sync::RwLock<Tracing>> = std::sync:
 #[cfg(all(debug_assertions, test))]
 thread_local! {
     static TRACING: std::cell::RefCell<Tracing> = std::cell::RefCell::new(Tracing::default());
-    static MAPPER_TRACE_OUTPUT: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
+    static MAPPER_TRACE_OUTPUT: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Initialize the global tracing state. Call this once at startup.

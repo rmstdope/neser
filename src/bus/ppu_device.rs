@@ -44,19 +44,19 @@ impl BusDevice for PpuDevice {
         match reg {
             0x2000 => {
                 self.ppu.borrow_mut().write_control(value);
-                if addr == 0x2000 {
-                    if let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() {
-                        cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
-                    }
+                if addr == 0x2000
+                    && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
+                {
+                    cartridge.borrow_mut().mapper_mut().ppu_write_ctrl(value);
                 }
                 true
             }
             0x2001 => {
                 self.ppu.borrow_mut().write_mask(value);
-                if addr == 0x2001 {
-                    if let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() {
-                        cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
-                    }
+                if addr == 0x2001
+                    && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
+                {
+                    cartridge.borrow_mut().mapper_mut().ppu_write_mask(value);
                 }
                 true
             }

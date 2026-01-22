@@ -114,9 +114,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn parse_args(
-    args: &[String],
-) -> Result<Option<(Mode, PathBuf, Config, bool, bool, bool)>, String> {
+type ParseArgsResult = Result<Option<(Mode, PathBuf, Config, bool, bool, bool)>, String>;
+
+fn parse_args(args: &[String]) -> ParseArgsResult {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return Ok(None);
@@ -423,13 +423,13 @@ fn handle_event(
             repeat: false,
             ..
         } => {
-            if mode == Mode::Record {
-                if let Some(button) = map_key_to_button(keycode) {
-                    if state.extending_playback {
-                        update_input_state(1, button, true, player1, player2);
-                    } else {
-                        apply_button_change(nes, player1, player2, button, true);
-                    }
+            if mode == Mode::Record
+                && let Some(button) = map_key_to_button(keycode)
+            {
+                if state.extending_playback {
+                    update_input_state(1, button, true, player1, player2);
+                } else {
+                    apply_button_change(nes, player1, player2, button, true);
                 }
             }
         }
@@ -437,39 +437,37 @@ fn handle_event(
             keycode: Some(keycode),
             ..
         } => {
-            if mode == Mode::Record {
-                if let Some(button) = map_key_to_button(keycode) {
-                    if state.extending_playback {
-                        update_input_state(1, button, false, player1, player2);
-                    } else {
-                        apply_button_change(nes, player1, player2, button, false);
-                    }
+            if mode == Mode::Record
+                && let Some(button) = map_key_to_button(keycode)
+            {
+                if state.extending_playback {
+                    update_input_state(1, button, false, player1, player2);
+                } else {
+                    apply_button_change(nes, player1, player2, button, false);
                 }
             }
         }
         Event::ControllerButtonDown { which, button, .. } => {
-            if mode == Mode::Record {
-                if let Some(player) = state.controller_player_map.get(&which).copied() {
-                    if let Some(nes_button) = map_controller_button(button) {
-                        if state.extending_playback {
-                            update_input_state(player, nes_button, true, player1, player2);
-                        } else {
-                            set_button_state(nes, player, nes_button, true, player1, player2);
-                        }
-                    }
+            if mode == Mode::Record
+                && let Some(player) = state.controller_player_map.get(&which).copied()
+                && let Some(nes_button) = map_controller_button(button)
+            {
+                if state.extending_playback {
+                    update_input_state(player, nes_button, true, player1, player2);
+                } else {
+                    set_button_state(nes, player, nes_button, true, player1, player2);
                 }
             }
         }
         Event::ControllerButtonUp { which, button, .. } => {
-            if mode == Mode::Record {
-                if let Some(player) = state.controller_player_map.get(&which).copied() {
-                    if let Some(nes_button) = map_controller_button(button) {
-                        if state.extending_playback {
-                            update_input_state(player, nes_button, false, player1, player2);
-                        } else {
-                            set_button_state(nes, player, nes_button, false, player1, player2);
-                        }
-                    }
+            if mode == Mode::Record
+                && let Some(player) = state.controller_player_map.get(&which).copied()
+                && let Some(nes_button) = map_controller_button(button)
+            {
+                if state.extending_playback {
+                    update_input_state(player, nes_button, false, player1, player2);
+                } else {
+                    set_button_state(nes, player, nes_button, false, player1, player2);
                 }
             }
         }
@@ -592,7 +590,7 @@ fn extend_playback_blink_red(current_frames: usize, total_frames: usize) -> bool
     if frames_remaining > BLINK_WINDOW_FRAMES {
         return false;
     }
-    (current_frames / BLINK_HALF_PERIOD_FRAMES) % 2 == 0
+    (current_frames / BLINK_HALF_PERIOD_FRAMES).is_multiple_of(2)
 }
 
 fn apply_button_change(
@@ -693,7 +691,7 @@ fn finalize_run(
     match mode {
         Mode::Record => {
             state.autorun.checksum = last_frame_crc;
-            save_autorun_file(&state.autorun_path, &state.autorun).map_err(|e| format!("{e}"))?;
+            save_autorun_file(&state.autorun_path, &state.autorun).map_err(|e| e.to_string())?;
             println!("Autorun recorded to {}", state.autorun_path.display());
         }
         Mode::Playback => {

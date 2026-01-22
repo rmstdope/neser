@@ -71,10 +71,10 @@ When creating issues, always add the appropriate labels to the issue using gh:
 
 Before merging or committing to main, the following checkpoint shall pass:
 
-- Run `cargo check --all-targets --all-features` and fix all warnings.
-- Run `cargo clippy --all-targets --all-features -- -D warnings` and fix all warnings. -->
-- Run `cargo fmt -- --check` and fix all warnings.
-- Run `cargo test --all-features` and ensure all tests pass.
+- Run `cargo check --all-targets --all-features` and fix all warnings
+- Run `cargo clippy --all-targets --all-features -- -D warnings` and fix all warnings
+- Run `cargo fmt -- --check` and fix all warnings
+- Run `cargo test --all-features` and ensure all tests pass
 
 ### Fixing Bugs
 

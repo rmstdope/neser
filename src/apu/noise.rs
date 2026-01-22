@@ -102,7 +102,6 @@ impl Noise {
         self.length_counter.reload_counter();
     }
 
-
     pub fn apply_pending_length_halt(&mut self) {
         self.length_counter.apply_pending_halt();
     }
@@ -207,8 +206,10 @@ impl Noise {
         }
         self.length_counter
             .set_halt_state(state.length_counter_halt, state.length_counter_pending_halt);
-        self.length_counter
-            .set_reload_state(state.length_counter_reload_value, state.length_counter_previous_value);
+        self.length_counter.set_reload_state(
+            state.length_counter_reload_value,
+            state.length_counter_previous_value,
+        );
         self.envelope.restore_state(&state.envelope);
         self.mode = state.mode_flag;
         self.shift_register = state.shift_register;

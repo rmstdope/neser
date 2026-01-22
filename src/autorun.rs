@@ -27,10 +27,7 @@ pub fn crc32(data: &[u8]) -> u32 {
 
 pub fn save_autorun_file(path: &Path, file: &AutorunFile) -> Result<(), String> {
     if file.version != AUTORUN_VERSION {
-        return Err(format!(
-            "Unsupported autorun version: {}",
-            file.version
-        ));
+        return Err(format!("Unsupported autorun version: {}", file.version));
     }
 
     let data = serde_json::to_vec_pretty(file)
@@ -49,10 +46,7 @@ pub fn load_autorun_file(path: &Path) -> Result<AutorunFile, String> {
     let file: AutorunFile = serde_json::from_slice(&data)
         .map_err(|e| format!("Failed to deserialize autorun file: {e}"))?;
     if file.version != AUTORUN_VERSION {
-        return Err(format!(
-            "Unsupported autorun version: {}",
-            file.version
-        ));
+        return Err(format!("Unsupported autorun version: {}", file.version));
     }
     Ok(file)
 }

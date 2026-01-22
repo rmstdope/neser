@@ -278,9 +278,9 @@ mod tests {
         BlarggTestResult::Timeout
     }
 
-    fn verify_always_pass(_nes: &mut Nes) -> bool {
-        true
-    }
+    // fn verify_always_pass(_nes: &mut Nes) -> bool {
+    //     true
+    // }
 
     fn verify_always_fail(_nes: &mut Nes) -> bool {
         false
