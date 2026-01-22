@@ -20,6 +20,7 @@ pub struct EventLoop {
     timing_scale: f32,
     vsync_enabled: bool,
     paused: bool,
+    help_overlay_visible: bool,
     debugger_open_requested: bool,
     breakpoints: Vec<u16>,
     temporary_breakpoint: Option<TemporaryBreakpoint>,
@@ -112,6 +113,7 @@ impl EventLoop {
             timing_scale: clamped_timing_scale,
             vsync_enabled: config.vsync_enabled,
             paused: false,
+            help_overlay_visible: false,
             debugger_open_requested: false,
             breakpoints: Vec::new(),
             temporary_breakpoint: None,
@@ -477,7 +479,9 @@ impl EventLoop {
                         nes,
                     );
 
-                    let action = gl_backend.render(nes, self.debugger_open_requested, None, false);
+                    let overlay_text = self.help_overlay_render_text();
+                    let action =
+                        gl_backend.render(nes, self.debugger_open_requested, overlay_text, false);
                     self.apply_debugger_ui_action(nes, action);
                     std::thread::sleep(std::time::Duration::from_millis(16));
                     continue;
@@ -541,7 +545,8 @@ impl EventLoop {
                 // );
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
-                let _ = gl_backend.render(nes, self.debugger_open_requested, None, false);
+                let overlay_text = self.help_overlay_render_text();
+                let _ = gl_backend.render(nes, self.debugger_open_requested, overlay_text, false);
                 // println!("Frame rendered.");
 
                 // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
@@ -797,6 +802,11 @@ impl EventLoop {
             return KeyDownOutcome::Continue;
         }
 
+        if keycode == Keycode::H {
+            self.help_overlay_visible = !self.help_overlay_visible;
+            return KeyDownOutcome::Continue;
+        }
+
         Self::handle_key_down(
             nes,
             keycode,
@@ -969,6 +979,38 @@ impl EventLoop {
             Keycode::R => nes.set_button(1, Button::Select, false),
             Keycode::T => nes.set_button(1, Button::Start, false),
             _ => {}
+        }
+    }
+
+    fn help_overlay_text() -> &'static str {
+        "Controls\n\
+Esc: Quit\n\
+Space: Pause\n\
+H: Toggle help\n\
+\n\
+System\n\
+F1: Reset\n\
+F2/F3: Volume up/down\n\
+F4: Cycle shader\n\
+F5: Debugger (open/continue)\n\
+F6: Save state\n\
+F7: Load state\n\
+F10: Step over\n\
+F11: Step into\n\
+\n\
+Controller (Player 1)\n\
+W/A/S/D: D-Pad\n\
+F: A\n\
+G: B\n\
+R: Select\n\
+T: Start"
+    }
+
+    fn help_overlay_render_text(&self) -> Option<&'static str> {
+        if self.help_overlay_visible {
+            Some(Self::help_overlay_text())
+        } else {
+            None
         }
     }
 
@@ -1486,6 +1528,56 @@ mod tests {
             &mut debugger_open_requested,
         );
         assert!(!paused);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_key_down_h_toggles_help_overlay() {
+        let config = default_config();
+        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::H);
+        assert!(event_loop.help_overlay_visible);
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::H);
+        assert!(!event_loop.help_overlay_visible);
+    }
+
+    #[test]
+    fn test_help_overlay_text_mentions_shortcuts() {
+        let text = EventLoop::help_overlay_text();
+        assert!(text.contains("Esc"));
+        assert!(text.contains("Space"));
+        assert!(text.contains("F1"));
+        assert!(text.contains("F2"));
+        assert!(text.contains("F3"));
+        assert!(text.contains("F5"));
+        assert!(text.contains("F6"));
+        assert!(text.contains("F7"));
+        assert!(text.contains("F10"));
+        assert!(text.contains("F11"));
+        assert!(text.contains("W/A/S/D"));
+        assert!(text.contains("G"));
+        assert!(text.contains("F"));
+        assert!(text.contains("R"));
+        assert!(text.contains("T"));
+        assert!(text.contains("H"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_help_overlay_text_for_rendering() {
+        let config = default_config();
+        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+
+        assert_eq!(event_loop.help_overlay_render_text(), None);
+
+        event_loop.help_overlay_visible = true;
+        assert_eq!(
+            event_loop.help_overlay_render_text(),
+            Some(EventLoop::help_overlay_text())
+        );
     }
 
     fn nes_with_jsr_program() -> Nes {
