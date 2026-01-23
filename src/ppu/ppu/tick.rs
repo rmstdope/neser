@@ -427,16 +427,16 @@ pub(super) fn tick(ppu: &mut Ppu) {
             };
             let palette_index_u16 = u16::from(palette_index);
 
-            // Apply grayscale if enabled (mask to monochrome palette)
-            let final_palette_index_u16 = if grayscale {
-                palette_index_u16 & 0x0030
-            } else {
-                palette_index_u16
-            };
+            ppu.track_recent_pixel(screen_x, screen_y, palette_index);
 
             // Look up color in palette (convert index to address)
-            let palette_addr = palette_base_u16 + final_palette_index_u16;
-            let color_value = ppu.memory.read_palette(palette_addr);
+            let palette_addr = palette_base_u16 + palette_index_u16;
+            let mut color_value = ppu.memory.read_palette(palette_addr);
+            // PPUMASK grayscale removes color by masking the palette *value* (hardware behavior),
+            // which affects only chroma while preserving brightness selection.
+            if grayscale {
+                color_value &= 0x30;
+            }
             let (r, g, b) = Nes::lookup_system_palette(color_value);
 
             // Apply color emphasis/tint

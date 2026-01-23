@@ -288,6 +288,66 @@ mod tests {
         RomTestResult::Timeout
     }
 
+    fn run_nes_for_frames(nes: &mut Nes, frames: u32) {
+        if frames == 0 {
+            return;
+        }
+
+        let max_ticks: u64 = 200_000_000;
+
+        let mut frames_completed = 0u32;
+        let mut ticks = 0u64;
+
+        while frames_completed < frames {
+            nes.run_cpu_tick();
+            ticks += 1;
+            if ticks > max_ticks {
+                panic!(
+                    "Timed out running {} frames (only reached {})",
+                    frames, frames_completed
+                );
+            }
+
+            while nes.sample_ready() {
+                nes.get_sample();
+            }
+
+            if nes.is_ready_to_render() {
+                frames_completed += 1;
+                nes.clear_ready_to_render();
+            }
+        }
+    }
+
+    fn capture_scanline_rgb(nes: &Nes, y: u32) -> Vec<(u8, u8, u8)> {
+        let screen_buffer = nes.get_screen_buffer();
+        (0..TvSystem::Ntsc.screen_width())
+            .map(|x| screen_buffer.get_pixel(x, y))
+            .collect()
+    }
+
+    fn matches_white_run(
+        line: &[(u8, u8, u8)],
+        start_x: usize,
+        end_x: usize,
+        white: (u8, u8, u8),
+        black: (u8, u8, u8),
+    ) -> bool {
+        if start_x > end_x || end_x >= line.len() {
+            return false;
+        }
+
+        if start_x > 0 && line[start_x - 1] != black {
+            return false;
+        }
+
+        if end_x + 1 < line.len() && line[end_x + 1] != black {
+            return false;
+        }
+
+        line[start_x..=end_x].iter().all(|&pixel| pixel == white)
+    }
+
     fn init_apu_tracing_from_env() {
         let level = match std::env::var("NESER_TRACE_APU") {
             Ok(value) => value.parse::<u8>().unwrap_or(1),
@@ -1035,7 +1095,7 @@ mod tests {
     setup_rom_console_test!(
         test_mmc3_irq_tests_1_clocking,
         "roms/automated_tests/mmc3_irq_tests/1.Clocking.nes",
-        60 * 10 
+        60 * 10
     );
     setup_rom_console_test!(
         test_mmc3_irq_tests_2_details,
@@ -1086,7 +1146,6 @@ mod tests {
         "roms/automated_tests/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
     );
 
-
     /////////////////////////////////////
     // PPU
     /////////////////////////////////////
@@ -1114,10 +1173,40 @@ mod tests {
     );
 
     // nmi_sync
-    // setup_rom_console_test!(
-    //     test_nmi_sync_demo_ntsc,
-    //     "roms/automated_tests/nmi_sync/demo_ntsc.nes"
-    // );
+    #[test]
+    fn test_nmi_sync_demo_ntsc() {
+        let rom_path = "roms/automated_tests/nmi_sync/demo_ntsc.nes";
+        let rom_data = fs::read(rom_path).expect("demo_ntsc ROM should load");
+        let cartridge = Cartridge::new(&rom_data).expect("demo_ntsc ROM should parse");
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        const WARMUP_FRAMES: u32 = 25;
+        run_nes_for_frames(&mut nes, WARMUP_FRAMES);
+
+        run_nes_for_frames(&mut nes, 1);
+        let line_frame_a = capture_scanline_rgb(&nes, 121);
+
+        run_nes_for_frames(&mut nes, 1);
+        let line_frame_b = capture_scanline_rgb(&nes, 121);
+
+        let white = Nes::lookup_system_palette(0x30);
+        let black = Nes::lookup_system_palette(0x0D);
+
+        let a_80 = matches_white_run(&line_frame_a, 80, 103, white, black);
+        let a_81 = matches_white_run(&line_frame_a, 81, 103, white, black);
+        let b_80 = matches_white_run(&line_frame_b, 80, 103, white, black);
+        let b_81 = matches_white_run(&line_frame_b, 81, 103, white, black);
+
+        assert!(
+            (a_80 && b_81) || (a_81 && b_80),
+            "expected scanline 124 to alternate between white runs at x=80..103 and x=81..103, but got {:?} and {:?}",
+            line_frame_a,
+            line_frame_b
+        );
+    }
 
     setup_rom_test!(test_oam_read, "roms/automated_tests/oam_read/oam_read.nes");
     setup_rom_test!(
@@ -1262,6 +1351,4 @@ mod tests {
     //     "roms/automated_tests/mmc5test_v2/mmc5test.nes",
     //     60 * 10
     // );
-
-
 }

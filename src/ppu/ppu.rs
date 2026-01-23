@@ -1,5 +1,5 @@
 use crate::cartridge::{Cartridge, MirroringMode};
-use crate::console::TvSystem;
+use crate::console::{Nes, TvSystem};
 use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
 use crate::trace_ppu;
 use std::cell::RefCell;
@@ -32,6 +32,8 @@ pub struct Ppu {
     sprites: Sprites,
     /// Final rendering and screen output
     rendering: Rendering,
+    /// Recently rendered pixels (last two) for mid-scanline color effect adjustments
+    recent_pixels: [Option<RecentPixel>; 2],
     /// Previous A12 state for change detection (bit 12 of PPU address)
     prev_a12: bool,
     /// Cartridge reference for dynamic CHR ROM/RAM access through mapper
@@ -92,6 +94,7 @@ impl Ppu {
             background: Background::new(),
             sprites: Sprites::new(),
             rendering: Rendering::new(),
+            recent_pixels: [None, None],
             prev_a12: false,
             cartridge: None,
         }
@@ -108,6 +111,7 @@ impl Ppu {
         self.background.reset();
         self.sprites.reset();
         self.prev_a12 = false;
+        self.recent_pixels = [None, None];
     }
 
     pub fn io_bus(&self) -> u8 {
@@ -156,6 +160,7 @@ impl Ppu {
         let nmi_is_enabled = self.registers.should_generate_nmi();
 
         // NMI-off timing quirk: disabling NMI right around VBlank start can suppress
+
         // the VBlank NMI edge (blargg ppu_vbl_nmi 08).
         let is_disabling_nmi_at_vblank_nmi_latch_dot = nmi_was_enabled
             && !nmi_is_enabled
@@ -174,6 +179,7 @@ impl Ppu {
 
     /// Write to mask register ($2001)
     pub fn write_mask(&mut self, value: u8) {
+        let grayscale_before = self.registers.is_grayscale();
         trace_ppu!(3; "ppumask write value={:02X} y={} x={} render_before={} bg_before={} sp_before={} t={:04X} v={:04X}",
             value,
             self.timing.scanline(),
@@ -185,6 +191,13 @@ impl Ppu {
             self.registers.v(),
         );
         self.registers.write_mask(value);
+        let grayscale_after = self.registers.is_grayscale();
+        // Mid-scanline grayscale toggles take effect essentially immediately on real hardware.
+        // To approximate that timing without re-rendering the whole scanline, re-apply grayscale
+        // to the most recently drawn pixels (see `track_recent_pixel`). This matches demo_ntsc.
+        if grayscale_before != grayscale_after {
+            self.apply_grayscale_to_recent_pixels(grayscale_after);
+        }
         trace_ppu!(3; "ppumask write value={:02X} y={} x={} render_after={} bg_after={} sp_after={} t={:04X} v={:04X}",
             value,
             self.timing.scanline(),
@@ -196,6 +209,33 @@ impl Ppu {
             self.registers.v(),
         );
         self.registers.set_io_bus(value); // Update I/O bus
+    }
+
+    fn track_recent_pixel(&mut self, x: u32, y: u32, palette_index: u8) {
+        // Keep the last two pixels around so late PPUMASK changes (grayscale/emphasis)
+        // can be applied retroactively for tight timing demos.
+        self.recent_pixels[0] = self.recent_pixels[1];
+        self.recent_pixels[1] = Some(RecentPixel {
+            x,
+            y,
+            palette_index,
+        });
+    }
+
+    fn apply_grayscale_to_recent_pixels(&mut self, grayscale: bool) {
+        for entry in self.recent_pixels.iter().flatten() {
+            let palette_addr = 0x3F00u16 + entry.palette_index as u16;
+            let mut color_value = self.memory.read_palette(palette_addr);
+            // Grayscale masks the palette *output*, not the palette index.
+            // This preserves correct brightness selection while removing chroma.
+            if grayscale {
+                color_value &= 0x30;
+            }
+            let (r, g, b) = Nes::lookup_system_palette(color_value);
+            self.rendering
+                .screen_buffer_mut()
+                .set_pixel(entry.x, entry.y, r, g, b);
+        }
     }
 
     /// Read status register ($2002)
@@ -745,6 +785,13 @@ impl Ppu {
     pub fn scroll_state(&self) -> (u16, u16, u8, bool) {
         self.registers.scroll_state()
     }
+}
+
+#[derive(Clone, Copy)]
+struct RecentPixel {
+    x: u32,
+    y: u32,
+    palette_index: u8,
 }
 
 #[cfg(test)]

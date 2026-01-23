@@ -344,7 +344,7 @@ mod tests {
     fn test_memory_new() {
         let mut mem = Memory::new();
         assert_eq!(mem.read_chr(0, &None), 0);
-        assert_eq!(mem.read_palette(0x3F00), 0);
+        assert_eq!(mem.read_palette(0x3F00), DEFAULT_PALETTE_RAM[0]);
     }
 
     #[test]
@@ -446,7 +446,7 @@ mod tests {
         let mut mem = Memory::new();
         mem.write_palette(0x3F00, 0x42);
         mem.reset();
-        assert_eq!(mem.read_palette(0x3F00), 0);
+        assert_eq!(mem.read_palette(0x3F00), DEFAULT_PALETTE_RAM[0]);
     }
 
     #[test]

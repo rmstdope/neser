@@ -108,15 +108,15 @@ impl ScreenBuffer {
         // let len = self.buffer.len();
         // dest[..len].copy_from_slice(&self.buffer);
 
-        // // Set pixels at y = 3, x = [0..7] to yellow (255, 255, 0) in the destination buffer.
-        // for x in 0usize..8 {
-        //     let offset = ((3 * Self::WIDTH as usize) + x) * Self::BYTES_PER_PIXEL;
-        //     dest[offset] = 0xFF;
-        //     dest[offset + 1] = 0xFF;
-        //     dest[offset + 2] = 0x00;
-        // }
-
         dest[..self.buffer.len()].copy_from_slice(&self.buffer);
+        // // Display debug pixels to help count and pinpoint positions
+        // for x in 80usize..=103 {
+        //     const Y_LINE: usize = 124;
+        //     let offset = ((Y_LINE * Self::WIDTH as usize) + x) * Self::BYTES_PER_PIXEL;
+        //     dest[offset] = if x.is_multiple_of(2) { 0xFF } else { 0x00 };
+        //     dest[offset + 1] = 0xFF;
+        //     dest[offset + 2] = if x.is_multiple_of(2) { 0x00 } else { 0xFF };
+        // }
     }
 
     pub fn snapshot(&self) -> Vec<u8> {
