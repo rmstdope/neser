@@ -1031,27 +1031,94 @@ mod tests {
     // exram
     // Not automated yet. Should be possible using the autorunner
 
+    // mmc3_irq_tests
     setup_rom_console_test!(
-        test_palette_ram,
+        test_mmc3_irq_tests_1_clocking,
+        "roms/automated_tests/mmc3_irq_tests/1.Clocking.nes",
+        60 * 10 
+    );
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_2_details,
+        "roms/automated_tests/mmc3_irq_tests/2.Details.nes"
+    );
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_3_a12_clocking,
+        "roms/automated_tests/mmc3_irq_tests/3.A12_clocking.nes"
+    );
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_4_scanline_timing,
+        "roms/automated_tests/mmc3_irq_tests/4.Scanline_timing.nes",
+        60 * 5
+    );
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_5_rev_a,
+        "roms/automated_tests/mmc3_irq_tests/5.MMC3_rev_A.nes"
+    );
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_6_rev_b,
+        "roms/automated_tests/mmc3_irq_tests/6.MMC3_rev_B.nes"
+    );
+
+    // mmc3_test
+    setup_rom_test!(
+        test_mmc3_test_1_clocking,
+        "roms/automated_tests/mmc3_test_2/rom_singles/1-clocking.nes"
+    );
+    setup_rom_test!(
+        test_mmc3_test_2_details,
+        "roms/automated_tests/mmc3_test_2/rom_singles/2-details.nes"
+    );
+    setup_rom_test!(
+        test_mmc3_test_3_a12_clocking,
+        "roms/automated_tests/mmc3_test_2/rom_singles/3-A12_clocking.nes"
+    );
+    setup_rom_test!(
+        test_mmc3_test_4_scanline_timing,
+        "roms/automated_tests/mmc3_test_2/rom_singles/4-scanline_timing.nes",
+        60 * 5
+    );
+    setup_rom_test!(
+        test_mmc3_test_5_mmc3,
+        "roms/automated_tests/mmc3_test_2/rom_singles/5-MMC3.nes"
+    );
+    setup_rom_test!(
+        test_mmc3_test_6_mmc3_alt,
+        "roms/automated_tests/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
+    );
+
+
+    /////////////////////////////////////
+    // PPU
+    /////////////////////////////////////
+
+    // blargg_ppu_tests_2005.09.15b
+    setup_rom_console_test!(
+        test_blargg_ppu_tests_2005_09_15b_palette_ram,
         "roms/automated_tests/blargg_ppu_tests_2005.09.15b/palette_ram.nes"
     );
-    // DISABLED since it matches against the palette values of Blargg's NES
-    // blargg_console_test!(
-    //     test_power_up_palette,
-    //     "roms/automated_tests/blargg_ppu_tests_2005.09.15b/power_up_palette.nes"
-    // );
     setup_rom_console_test!(
-        test_sprite_ram,
+        test_blargg_ppu_tests_2005_09_15b_power_up_palette,
+        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/power_up_palette.nes"
+    );
+    setup_rom_console_test!(
+        test_blargg_ppu_tests_2005_09_15b_sprite_ram,
         "roms/automated_tests/blargg_ppu_tests_2005.09.15b/sprite_ram.nes"
     );
     setup_rom_console_test!(
-        test_vbl_clear_time,
+        test_blargg_ppu_tests_2005_09_15b_vbl_clear_time,
         "roms/automated_tests/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes"
     );
     setup_rom_console_test!(
-        test_vram_access,
+        test_blargg_ppu_tests_2005_09_15b_vram_access,
         "roms/automated_tests/blargg_ppu_tests_2005.09.15b/vram_access.nes"
     );
+
+    // nmi_sync
+    // setup_rom_console_test!(
+    //     test_nmi_sync_demo_ntsc,
+    //     "roms/automated_tests/nmi_sync/demo_ntsc.nes"
+    // );
+
     setup_rom_test!(test_oam_read, "roms/automated_tests/oam_read/oam_read.nes");
     setup_rom_test!(
         test_oam_stress,
@@ -1196,58 +1263,5 @@ mod tests {
     //     60 * 10
     // );
 
-    // MMC3 IRQ counter tests
-    setup_rom_console_test!(
-        test_mmc3_irq_1_clocking,
-        "roms/automated_tests/mmc3_irq_tests/1.Clocking.nes",
-        60 * 10 // Increased timeout for initial debugging
-    );
-    setup_rom_console_test!(
-        test_mmc3_irq_2_details,
-        "roms/automated_tests/mmc3_irq_tests/2.Details.nes"
-    );
-    setup_rom_console_test!(
-        test_mmc3_irq_3_a12_clocking,
-        "roms/automated_tests/mmc3_irq_tests/3.A12_clocking.nes"
-    );
-    setup_rom_console_test!(
-        test_mmc3_irq_4_scanline_timing,
-        "roms/automated_tests/mmc3_irq_tests/4.Scanline_timing.nes",
-        60 * 5 // May need time for frame rendering
-    );
-    setup_rom_console_test!(
-        test_mmc3_irq_5_rev_a,
-        "roms/automated_tests/mmc3_irq_tests/5.MMC3_rev_A.nes"
-    );
-    setup_rom_console_test!(
-        test_mmc3_irq_6_rev_b,
-        "roms/automated_tests/mmc3_irq_tests/6.MMC3_rev_B.nes"
-    );
 
-    // MMC3 test suite (alternative test format)
-    setup_rom_test!(
-        test_mmc3_test_1_clocking,
-        "roms/automated_tests/mmc3_test_2/rom_singles/1-clocking.nes"
-    );
-    setup_rom_test!(
-        test_mmc3_test_2_details,
-        "roms/automated_tests/mmc3_test_2/rom_singles/2-details.nes"
-    );
-    setup_rom_test!(
-        test_mmc3_test_3_a12_clocking,
-        "roms/automated_tests/mmc3_test_2/rom_singles/3-A12_clocking.nes"
-    );
-    setup_rom_test!(
-        test_mmc3_test_4_scanline_timing,
-        "roms/automated_tests/mmc3_test_2/rom_singles/4-scanline_timing.nes",
-        60 * 5
-    );
-    setup_rom_test!(
-        test_mmc3_test_5_mmc3,
-        "roms/automated_tests/mmc3_test_2/rom_singles/5-MMC3.nes"
-    );
-    setup_rom_test!(
-        test_mmc3_test_6_mmc3_alt,
-        "roms/automated_tests/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
-    );
 }

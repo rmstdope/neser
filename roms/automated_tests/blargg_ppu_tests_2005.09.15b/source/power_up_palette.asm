@@ -22,7 +22,7 @@ reset:
 :     lda   $2007
       cmp   table,x
       jsr   error_if_ne
-      inx
+      inx 
       cpx   #$20
       bne   -
       
