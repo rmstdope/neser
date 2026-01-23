@@ -743,10 +743,10 @@ mod tests {
     );
 
     // dpcmletterbox
-    // Not automated yet. Should be possible using the autorunner
+    // TODO Not automated yet. Should be possible using the autorunner
 
     // volume_tests
-    // Not automated yet. Requires audio output analysis
+    // TODO Not automated yet. Requires audio output analysis
 
     /////////////////////////////////////
     // CPU
@@ -1089,7 +1089,7 @@ mod tests {
     /////////////////////////////////////
 
     // exram
-    // Not automated yet. Should be possible using the autorunner
+    // TODO Not automated yet. Should be possible using the autorunner
 
     // mmc3_irq_tests
     setup_rom_console_test!(
@@ -1337,10 +1337,10 @@ mod tests {
         "roms/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
-    // scanline
-    // scrolltest
+    // TODO integrate scanline ROM suite
+    // TODO integrate scrolltest ROM suite
 
-    // sprdma_and_dmc DMA
+    // sprdma_and_dmc_dma
     setup_rom_test!(
         test_sprdma_and_dmc_dma,
         "roms/automated_tests/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes",
@@ -1352,20 +1352,20 @@ mod tests {
         60 * 15
     );
 
-    // Include sprite_hit_tests_2005.10.05 and sprite_overflow_tests?
+    // TODO Include sprite_hit_tests_2005.10.05 and sprite_overflow_tests?
     // I assume they are older versions of ppu_sprite_hit and ppu_sprite_overflow
     // but may be good to include if timing differs anywhere.
 
-    // tvpassfail/tv
-    // vbl_nmi_timing
+    // TODO integrate tvpassfail/tv ROM suite
+    // TODO integrate vbl_nmi_timing ROM suite
 
     /////////////////////////////////////
-    /// Miscellaneous
+    // Miscellaneous
     /////////////////////////////////////
     
-    // PaddleTest3
-    // read_joy3
-    // full_palette
-    // full_nes_palette
+    // TODO integrate PaddleTest3 ROM suite
+    // TODO integrate read_joy3 ROM suite
+    // TODO integrate full_palette ROM suite
+    // TODO integrate full_nes_palette ROM suite
 
 }
