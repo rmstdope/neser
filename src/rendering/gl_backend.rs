@@ -23,6 +23,7 @@ pub struct GlBackend {
     last_frame: Instant,
     debugger_view_state: DebuggerViewState,
     shader_manager: ShaderManager,
+    fullscreen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,12 +66,36 @@ fn overlay_background_color_for(text_color: OverlayTextColor) -> [f32; 4] {
 impl GlBackend {
     const MIN_SCALE: f32 = 1.0;
     const MAX_SCALE: f32 = 5.0;
+    const NTSC_ASPECT: f32 = 4.0 / 3.0;
+    const NES_PIXEL_ASPECT: f32 = 256.0 / 240.0;
+
+    fn target_aspect(&self) -> f32 {
+        if self.fullscreen {
+            Self::NTSC_ASPECT
+        } else {
+            Self::NES_PIXEL_ASPECT
+        }
+    }
+
+    fn letterbox_size(container_w: f32, container_h: f32, aspect: f32) -> (f32, f32) {
+        if container_h == 0.0 {
+            return (container_w, 0.0);
+        }
+
+        let container_aspect = container_w / container_h;
+        if container_aspect > aspect {
+            (container_h * aspect, container_h)
+        } else {
+            (container_w, container_w / aspect)
+        }
+    }
 
     pub fn new(sdl_context: &sdl2::Sdl, config: &Config) -> Result<Self, String> {
         let tv_system = config.tv_system;
         let scale = Self::clamp_scale(config.video_scale);
         let vsync_enabled = config.vsync_enabled;
         let shader_path = config.shader_path.as_deref();
+        let fullscreen = config.fullscreen;
 
         let video_subsystem = sdl_context.video()?;
 
@@ -94,13 +119,13 @@ impl GlBackend {
         window_builder.opengl();
 
         window_builder.position_centered();
-        if !config.fullscreen {
+        if !fullscreen {
             window_builder.resizable();
         }
 
         let mut window = window_builder.build().map_err(|e| e.to_string())?;
 
-        if config.fullscreen {
+        if fullscreen {
             let display_count = video_subsystem.num_video_displays().unwrap_or(1);
             let target_display = match config.fullscreen_display {
                 Some(display) => display,
@@ -226,6 +251,7 @@ impl GlBackend {
             last_frame: Instant::now(),
             debugger_view_state: DebuggerViewState::default(),
             shader_manager,
+            fullscreen,
         })
     }
 
@@ -403,6 +429,8 @@ impl GlBackend {
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
 
+        let target_aspect = self.target_aspect();
+
         // Apply shader post-processing if a shader is loaded
         // The shader will render the NES texture to the screen with filtering applied
         // Note: librashader's OpenGL runtime renders into a texture-backed output, not
@@ -413,24 +441,10 @@ impl GlBackend {
             // Compute a drawable-space letterbox size for the shader output.
             let drawable_w_f = drawable_w as f32;
             let drawable_h_f = drawable_h as f32;
-            let nes_aspect = 256.0 / 240.0;
-            let drawable_aspect = if drawable_h_f == 0.0 {
-                nes_aspect
-            } else {
-                drawable_w_f / drawable_h_f
-            };
-
-            let (shader_out_w, shader_out_h) = if drawable_aspect > nes_aspect {
-                (
-                    ((drawable_h_f * nes_aspect) as u32).max(1),
-                    drawable_h.max(1),
-                )
-            } else {
-                (
-                    drawable_w.max(1),
-                    ((drawable_w_f / nes_aspect) as u32).max(1),
-                )
-            };
+            let (shader_out_w_f, shader_out_h_f) =
+                Self::letterbox_size(drawable_w_f, drawable_h_f, target_aspect);
+            let shader_out_w = (shader_out_w_f as u32).max(1);
+            let shader_out_h = (shader_out_h_f as u32).max(1);
 
             if let Err(e) =
                 self.shader_manager
@@ -449,20 +463,7 @@ impl GlBackend {
             // Draw NES frame as a background image, preserving aspect ratio with letterboxing.
             let win_w = win_w as f32;
             let win_h = win_h as f32;
-            let nes_aspect = 256.0 / 240.0;
-            let win_aspect = if win_h == 0.0 {
-                nes_aspect
-            } else {
-                win_w / win_h
-            };
-
-            let (draw_w, draw_h) = if win_aspect > nes_aspect {
-                // Window is wider than NES: fit height.
-                (win_h * nes_aspect, win_h)
-            } else {
-                // Window is taller than NES: fit width.
-                (win_w, win_w / nes_aspect)
-            };
+            let (draw_w, draw_h) = Self::letterbox_size(win_w, win_h, target_aspect);
 
             let x0 = (win_w - draw_w) * 0.5;
             let y0 = (win_h - draw_h) * 0.5;
@@ -529,6 +530,32 @@ impl GlBackend {
         } else if let Some(name) = self.shader_manager.current_preset_name() {
             println!("Switched to shader: {}", name);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests_letterbox {
+    use super::GlBackend;
+
+    #[test]
+    fn test_letterbox_size_wide_container() {
+        let (w, h) = GlBackend::letterbox_size(1920.0, 1080.0, GlBackend::NTSC_ASPECT);
+        assert_eq!(w, 1440.0);
+        assert_eq!(h, 1080.0);
+    }
+
+    #[test]
+    fn test_letterbox_size_matches_aspect() {
+        let (w, h) = GlBackend::letterbox_size(800.0, 600.0, GlBackend::NTSC_ASPECT);
+        assert_eq!(w, 800.0);
+        assert_eq!(h, 600.0);
+    }
+
+    #[test]
+    fn test_letterbox_size_zero_height() {
+        let (w, h) = GlBackend::letterbox_size(800.0, 0.0, GlBackend::NTSC_ASPECT);
+        assert_eq!(w, 800.0);
+        assert_eq!(h, 0.0);
     }
 }
 
