@@ -193,7 +193,10 @@ mod tests {
                         .join("\n");
                     // Check if $0x test
                     let is_0x = text.len() == 3 && text.starts_with("$0");
-                    if text.to_uppercase().contains("PASSED") || text == "$01" {
+                    if text.to_uppercase().contains("PASSED")
+                        || text == "$01"
+                        || text.to_uppercase().contains("ALL TESTS COMPLETE")
+                    {
                         // println!("Test passed!");
                         return RomTestResult::Pass;
                     } else if text.to_uppercase().contains("FAILED")
@@ -689,11 +692,20 @@ mod tests {
     // CPU
     /////////////////////////////////////
 
-    // setup_rom_test!(
-    //     test_blargg_nes_cpu_test5_cpu,
-    //     "roms/automated_tests/blargg_nes_cpu_test5/cpu.nes"
-    // );
+    // blargg_nes_cpu_test5
+    setup_rom_console_test!(
+        test_blargg_nes_cpu_test5_cpu,
+        "roms/automated_tests/blargg_nes_cpu_test5/cpu.nes",
+        60 * 20
+    );
 
+    setup_rom_console_test!(
+        test_blargg_nes_cpu_test5_official,
+        "roms/automated_tests/blargg_nes_cpu_test5/official.nes",
+        60 * 20
+    );
+
+    // branch_timing_tests
     setup_rom_console_test!(
         test_branch_timing,
         "roms/automated_tests/branch_timing_tests/1.Branch_Basics.nes"
@@ -706,10 +718,14 @@ mod tests {
         test_forward_branch,
         "roms/automated_tests/branch_timing_tests/3.Forward_Branch.nes"
     );
+
+    // cpu_dummy_reads
     setup_rom_console_test!(
         test_cpu_dummy_reads,
         "roms/automated_tests/cpu_dummy_reads/cpu_dummy_reads.nes"
     );
+
+    // cpu_dummy_writes
     setup_rom_test!(
         test_cpu_dummy_writes_oam,
         "roms/automated_tests/cpu_dummy_writes/cpu_dummy_writes_oam.nes"
@@ -718,6 +734,8 @@ mod tests {
         test_cpu_dummy_writes_ppumem,
         "roms/automated_tests/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes"
     );
+
+    // cpu_exec_space
     setup_rom_test!(
         test_cpu_exec_space_ppuio,
         "roms/automated_tests/cpu_exec_space/test_cpu_exec_space_ppuio.nes"
@@ -727,38 +745,54 @@ mod tests {
         "roms/automated_tests/cpu_exec_space/test_cpu_exec_space_apu.nes"
     );
 
+    // cpu_interrupts_v2
     setup_rom_test!(
-        test_cpu_cli_latency,
+        test_cpu_interrupts_v2_cpu_interrupts,
+        "roms/automated_tests/cpu_interrupts_v2/cpu_interrupts.nes",
+        60 * 20
+    );
+    setup_rom_test!(
+        test_cpu_interrupts_v2_cli_latency,
         "roms/automated_tests/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"
     );
     setup_rom_test!(
-        test_cpu_nmi_and_brk,
+        test_cpu_interrupts_v2_nmi_and_brk,
         "roms/automated_tests/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes"
     );
     setup_rom_test!(
-        test_cpu_nmi_and_irq,
+        test_cpu_interrupts_v2_nmi_and_irq,
         "roms/automated_tests/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes"
     );
     setup_rom_test!(
-        test_cpu_irq_and_dma,
+        test_cpu_interrupts_v2_irq_and_dma,
         "roms/automated_tests/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes"
     );
     setup_rom_test!(
-        test_cpu_branch_delays_irq,
+        test_cpu_interrupts_v2_branch_delays_irq,
         "roms/automated_tests/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes"
     );
-    setup_rom_test!(
-        test_cpu_reset_registers,
-        "roms/automated_tests/cpu_reset/registers.nes"
-    );
+
+    // cpu_reset
     setup_rom_test!(
         test_cpu_reset_ram_after_reset,
         "roms/automated_tests/cpu_reset/ram_after_reset.nes"
     );
+    setup_rom_test!(
+        test_cpu_reset_reset_registers,
+        "roms/automated_tests/cpu_reset/registers.nes"
+    );
+
+    // cpu_timing_test6
     setup_rom_console_test!(
-        test_cpu_timing_test,
+        test_cpu_timing_test6,
         "roms/automated_tests/cpu_timing_test6/cpu_timing_test.nes",
         20 * 60 // Can take up to 16 * 60 frames according to README
+    );
+
+    // instr_misc
+    setup_rom_test!(
+        test_instr_misc,
+        "roms/automated_tests/instr_misc/instr_misc.nes"
     );
     setup_rom_test!(
         test_instr_misc_01,
@@ -776,70 +810,156 @@ mod tests {
         test_instr_misc_04,
         "roms/automated_tests/instr_misc/rom_singles/04-dummy_reads_apu.nes"
     );
+
+    // test_instr_v3
     setup_rom_test!(
-        test_instr_01_basics,
+        test_instr_v3_01_implied,
+        "roms/automated_tests/instr_test-v3/rom_singles/01-implied.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_02_immediate,
+        "roms/automated_tests/instr_test-v3/rom_singles/02-immediate.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_03_zero_page,
+        "roms/automated_tests/instr_test-v3/rom_singles/03-zero_page.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_04_zp_xy,
+        "roms/automated_tests/instr_test-v3/rom_singles/04-zp_xy.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_05_absolute,
+        "roms/automated_tests/instr_test-v3/rom_singles/05-absolute.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_06_abs_xy,
+        "roms/automated_tests/instr_test-v3/rom_singles/06-abs_xy.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_07_ind_x,
+        "roms/automated_tests/instr_test-v3/rom_singles/07-ind_x.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_08_ind_y,
+        "roms/automated_tests/instr_test-v3/rom_singles/08-ind_y.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_09_branches,
+        "roms/automated_tests/instr_test-v3/rom_singles/09-branches.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_10_stack,
+        "roms/automated_tests/instr_test-v3/rom_singles/10-stack.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_11_jmp_jsr,
+        "roms/automated_tests/instr_test-v3/rom_singles/11-jmp_jsr.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_12_rts,
+        "roms/automated_tests/instr_test-v3/rom_singles/12-rts.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_13_rti,
+        "roms/automated_tests/instr_test-v3/rom_singles/13-rti.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_14_brk,
+        "roms/automated_tests/instr_test-v3/rom_singles/14-brk.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_15_special,
+        "roms/automated_tests/instr_test-v3/rom_singles/15-special.nes"
+    );
+    setup_rom_test!(
+        test_instr_v3_all_instrs,
+        "roms/automated_tests/instr_test-v3/all_instrs.nes",
+        60 * 30
+    );
+    setup_rom_test!(
+        test_instr_v3_official_only,
+        "roms/automated_tests/instr_test-v3/official_only.nes",
+        60 * 30
+    );
+
+    // test_instr_v5
+    setup_rom_test!(
+        test_instr_v5_01_basics,
         "roms/automated_tests/instr_test-v5/rom_singles/01-basics.nes"
     );
     setup_rom_test!(
-        test_instr_02_implied,
+        test_instr_v5_02_implied,
         "roms/automated_tests/instr_test-v5/rom_singles/02-implied.nes"
     );
     setup_rom_test!(
-        test_instr_03_immediate,
+        test_instr_v5_03_immediate,
         "roms/automated_tests/instr_test-v5/rom_singles/03-immediate.nes"
     );
     setup_rom_test!(
-        test_instr_04_zero_page,
+        test_instr_v5_04_zero_page,
         "roms/automated_tests/instr_test-v5/rom_singles/04-zero_page.nes"
     );
     setup_rom_test!(
-        test_instr_05_zp_xy,
+        test_instr_v5_05_zp_xy,
         "roms/automated_tests/instr_test-v5/rom_singles/05-zp_xy.nes"
     );
     setup_rom_test!(
-        test_instr_06_absolute,
+        test_instr_v5_06_absolute,
         "roms/automated_tests/instr_test-v5/rom_singles/06-absolute.nes"
     );
     setup_rom_test!(
-        test_instr_07_abs_xy,
+        test_instr_v5_07_abs_xy,
         "roms/automated_tests/instr_test-v5/rom_singles/07-abs_xy.nes"
     );
     setup_rom_test!(
-        test_instr_08_ind_x,
+        test_instr_v5_08_ind_x,
         "roms/automated_tests/instr_test-v5/rom_singles/08-ind_x.nes"
     );
     setup_rom_test!(
-        test_instr_09_ind_y,
+        test_instr_v5_09_ind_y,
         "roms/automated_tests/instr_test-v5/rom_singles/09-ind_y.nes"
     );
     setup_rom_test!(
-        test_instr_10_branches,
+        test_instr_v5_10_branches,
         "roms/automated_tests/instr_test-v5/rom_singles/10-branches.nes"
     );
     setup_rom_test!(
-        test_instr_11_stack,
+        test_instr_v5_11_stack,
         "roms/automated_tests/instr_test-v5/rom_singles/11-stack.nes"
     );
     setup_rom_test!(
-        test_instr_12_jmp_jsr,
+        test_instr_v5_12_jmp_jsr,
         "roms/automated_tests/instr_test-v5/rom_singles/12-jmp_jsr.nes"
     );
     setup_rom_test!(
-        test_instr_13_rts,
+        test_instr_v5_13_rts,
         "roms/automated_tests/instr_test-v5/rom_singles/13-rts.nes"
     );
     setup_rom_test!(
-        test_instr_14_rti,
+        test_instr_v5_14_rti,
         "roms/automated_tests/instr_test-v5/rom_singles/14-rti.nes"
     );
     setup_rom_test!(
-        test_instr_15_brk,
+        test_instr_v5_15_brk,
         "roms/automated_tests/instr_test-v5/rom_singles/15-brk.nes"
     );
     setup_rom_test!(
-        test_instr_16_special,
+        test_instr_v5_16_special,
         "roms/automated_tests/instr_test-v5/rom_singles/16-special.nes"
     );
+    setup_rom_test!(
+        test_instr_v5_all_instrs,
+        "roms/automated_tests/instr_test-v5/all_instrs.nes",
+        60 * 30
+    );
+    setup_rom_test!(
+        test_instr_v5_official_only,
+        "roms/automated_tests/instr_test-v5/official_only.nes",
+        60 * 30
+    );
+
+    // instr_timing
     setup_rom_test!(
         test_instr_timing_01,
         "roms/automated_tests/instr_timing/rom_singles/1-instr_timing.nes",
@@ -849,6 +969,68 @@ mod tests {
         test_instr_timing_02,
         "roms/automated_tests/instr_timing/rom_singles/2-branch_timing.nes"
     );
+    setup_rom_test!(
+        test_instr_timing,
+        "roms/automated_tests/instr_timing/instr_timing.nes",
+        60 * 20
+    );
+
+    // nestest
+    // Move nestest from nes.rs here
+
+    // test_instr_v3
+    setup_rom_test!(
+        test_nes_instr_01_implied,
+        "roms/automated_tests/nes_instr_test/rom_singles/01-implied.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_02_immediate,
+        "roms/automated_tests/nes_instr_test/rom_singles/02-immediate.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_03_zero_page,
+        "roms/automated_tests/nes_instr_test/rom_singles/03-zero_page.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_04_zp_xy,
+        "roms/automated_tests/nes_instr_test/rom_singles/04-zp_xy.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_05_absolute,
+        "roms/automated_tests/nes_instr_test/rom_singles/05-absolute.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_06_abs_xy,
+        "roms/automated_tests/nes_instr_test/rom_singles/06-abs_xy.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_07_ind_x,
+        "roms/automated_tests/nes_instr_test/rom_singles/07-ind_x.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_08_ind_y,
+        "roms/automated_tests/nes_instr_test/rom_singles/08-ind_y.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_09_branches,
+        "roms/automated_tests/nes_instr_test/rom_singles/09-branches.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_10_stack,
+        "roms/automated_tests/nes_instr_test/rom_singles/10-stack.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_11_special,
+        "roms/automated_tests/nes_instr_test/rom_singles/11-special.nes"
+    );
+
+    /////////////////////////////////////
+    // Mapper
+    /////////////////////////////////////
+
+    // exram
+    // Not automated yet. Should be possible using the autorunner
+
     setup_rom_console_test!(
         test_palette_ram,
         "roms/automated_tests/blargg_ppu_tests_2005.09.15b/palette_ram.nes"

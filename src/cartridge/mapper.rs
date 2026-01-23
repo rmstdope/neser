@@ -416,12 +416,12 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         let crc32 = metadata.crc32;
         let use_alternate_irq = rom_db::requires_mmc3_alternate_irq(crc32);
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        if use_alternate_irq {
-            eprintln!(
-                "MMC3: Using alternate (NEC) IRQ behavior for CRC 0x{:08X}",
-                crc32
-            );
-        }
+        // if use_alternate_irq {
+        //     eprintln!(
+        //         "MMC3: Using alternate (NEC) IRQ behavior for CRC 0x{:08X}",
+        //         crc32
+        //     );
+        // }
         return Ok(Box::new(MMC3Mapper::new_with_irq_mode(
             prg_rom,
             chr_rom,
