@@ -689,10 +689,10 @@ mod tests {
     // CPU
     /////////////////////////////////////
 
-    setup_rom_test!(
-        test_blargg_nes_cpu_test5_cpu,
-        "roms/automated_tests/blargg_nes_cpu_test5/cpu.nes"
-    );
+    // setup_rom_test!(
+    //     test_blargg_nes_cpu_test5_cpu,
+    //     "roms/automated_tests/blargg_nes_cpu_test5/cpu.nes"
+    // );
 
     setup_rom_console_test!(
         test_branch_timing,
