@@ -1208,21 +1208,30 @@ mod tests {
         );
     }
 
+    // oam_read
     setup_rom_test!(test_oam_read, "roms/automated_tests/oam_read/oam_read.nes");
+
+    // oam_stress
     setup_rom_test!(
         test_oam_stress,
         "roms/automated_tests/oam_stress/oam_stress.nes",
         60 * 10
     );
+
+    // ppu_open_bus
     setup_rom_test!(
         test_ppu_open_bus,
         "roms/automated_tests/ppu_open_bus/ppu_open_bus.nes"
     );
+
+    // ppu_read_buffer
     setup_rom_test!(
         test_ppu_read_buffer,
         "roms/automated_tests/ppu_read_buffer/test_ppu_read_buffer.nes",
         60 * 25 // Takes about 20 seconds according to readme
     );
+
+    // ppu_sprite_hit
     setup_rom_test!(
         test_sprite_hit_01,
         "roms/automated_tests/ppu_sprite_hit/rom_singles/01-basics.nes"
@@ -1263,6 +1272,8 @@ mod tests {
         test_sprite_hit_10,
         "roms/automated_tests/ppu_sprite_hit/rom_singles/10-timing_order.nes"
     );
+
+    // ppu_sprite_overflow
     setup_rom_test!(
         test_sprite_overflow_01,
         "roms/automated_tests/ppu_sprite_overflow/rom_singles/01-basics.nes"
@@ -1284,6 +1295,7 @@ mod tests {
         "roms/automated_tests/ppu_sprite_overflow/rom_singles/05-emulator.nes"
     );
 
+    // ppu_vbl_nmi
     setup_rom_test!(
         test_ppu_vbl_nmi_01,
         "roms/automated_tests/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes"
@@ -1325,7 +1337,10 @@ mod tests {
         "roms/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
-    // Tests for OAM DMA and DMC DMA collision handling
+    // scanline
+    // scrolltest
+
+    // sprdma_and_dmc DMA
     setup_rom_test!(
         test_sprdma_and_dmc_dma,
         "roms/automated_tests/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes",
@@ -1337,18 +1352,20 @@ mod tests {
         60 * 15
     );
 
-    // MMC5 tests
-    // NOTE: These tests are currently commented out because they timeout.
-    // MMC5 implementation is partial - core registers work but these tests require:
-    // - Scanline IRQ tracking integrated with PPU rendering
-    // - CHR BG/sprite banking split (needs PPU fetch type detection)
-    // - ExRAM as nametable memory (needs PPU nametable hooks)
-    // See issue #XXX for details on remaining MMC5 work.
-    //
-    // blargg_test!(test_mmc5, "roms/automated_tests/mmc5test/mmc5test.nes", 60 * 10);
-    // blargg_test!(
-    //     test_mmc5_v2,
-    //     "roms/automated_tests/mmc5test_v2/mmc5test.nes",
-    //     60 * 10
-    // );
+    // Include sprite_hit_tests_2005.10.05 and sprite_overflow_tests?
+    // I assume they are older versions of ppu_sprite_hit and ppu_sprite_overflow
+    // but may be good to include if timing differs anywhere.
+
+    // tvpassfail/tv
+    // vbl_nmi_timing
+
+    /////////////////////////////////////
+    /// Miscellaneous
+    /////////////////////////////////////
+    
+    // PaddleTest3
+    // read_joy3
+    // full_palette
+    // full_nes_palette
+
 }
