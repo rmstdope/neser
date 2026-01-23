@@ -492,13 +492,16 @@ mod tests {
         true
     }
 
-
     /////////////////////////////////////
     // APU
     /////////////////////////////////////
 
     // apu_mixer
-    setup_rom_test!(test_apu_mixer_dmc, "roms/automated_tests/apu_mixer/dmc.nes", 60 * 10);
+    setup_rom_test!(
+        test_apu_mixer_dmc,
+        "roms/automated_tests/apu_mixer/dmc.nes",
+        60 * 10
+    );
     setup_rom_test!(
         test_apu_mixer_noise,
         "roms/automated_tests/apu_mixer/noise.nes",
@@ -516,9 +519,18 @@ mod tests {
     );
 
     // apu_reset
-    setup_rom_test!(test_4015_cleared, "roms/automated_tests/apu_reset/4015_cleared.nes");
-    setup_rom_test!(test_4017_timing, "roms/automated_tests/apu_reset/4017_timing.nes");
-    setup_rom_test!(test_4017_written, "roms/automated_tests/apu_reset/4017_written.nes");
+    setup_rom_test!(
+        test_4015_cleared,
+        "roms/automated_tests/apu_reset/4015_cleared.nes"
+    );
+    setup_rom_test!(
+        test_4017_timing,
+        "roms/automated_tests/apu_reset/4017_timing.nes"
+    );
+    setup_rom_test!(
+        test_4017_written,
+        "roms/automated_tests/apu_reset/4017_written.nes"
+    );
     setup_rom_test!(
         test_irq_flag_cleared,
         "roms/automated_tests/apu_reset/irq_flag_cleared.nes"
@@ -673,10 +685,14 @@ mod tests {
     // volume_tests
     // Not automated yet. Requires audio output analysis
 
-/////////////////////////////////////
-    // APU
+    /////////////////////////////////////
+    // CPU
     /////////////////////////////////////
 
+    setup_rom_test!(
+        test_blargg_nes_cpu_test5_cpu,
+        "roms/automated_tests/blargg_nes_cpu_test5/cpu.nes"
+    );
 
     setup_rom_console_test!(
         test_branch_timing,
