@@ -2,12 +2,16 @@ use crate::cartridge::{Cartridge, MirroringMode};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+const DEFAULT_PALETTE_RAM: [u8; 32] = [
+    0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, 0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C,
+    0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, 0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
+];
 /// Manages PPU memory including VRAM, palette RAM, and CHR ROM
 pub struct Memory {
     /// Nametables - 4KB (supports all four nametables for FourScreen mode)
     ppu_ram: [u8; 4096],
     /// Palette RAM - 32 bytes
-    palette: [u8; 32],
+    palette_ram: [u8; 32],
     /// Cached palette entry (mirrored index) for hot-path reads
     last_palette_index: Option<u8>,
     /// Cached palette value for last_palette_index
@@ -27,7 +31,7 @@ impl Memory {
     pub fn new() -> Self {
         Self {
             ppu_ram: [0; 4096],
-            palette: [0; 32],
+            palette_ram: DEFAULT_PALETTE_RAM,
             last_palette_index: None,
             last_palette_value: 0,
             mirroring_mode: MirroringMode::Horizontal,
@@ -35,9 +39,10 @@ impl Memory {
     }
 
     /// Reset memory to initial state
+    /// TODO Retain RAM if soft reset
     pub fn reset(&mut self) {
         self.ppu_ram = [0; 4096];
-        self.palette = [0; 32];
+        self.palette_ram = DEFAULT_PALETTE_RAM;
         self.last_palette_index = None;
         self.last_palette_value = 0;
     }
@@ -159,7 +164,7 @@ impl Memory {
             return self.last_palette_value;
         }
 
-        let value = self.palette[mirrored as usize];
+        let value = self.palette_ram[mirrored as usize];
         self.last_palette_index = Some(mirrored);
         self.last_palette_value = value;
         value
@@ -170,7 +175,7 @@ impl Memory {
     pub fn write_palette(&mut self, addr: u16, value: u8) {
         let mirrored = self.mirror_palette_address(addr);
         let masked = value & 0x3F; // Only store bits 5-0
-        self.palette[mirrored] = masked;
+        self.palette_ram[mirrored] = masked;
         if self.last_palette_index == Some(mirrored as u8) {
             self.last_palette_value = masked;
         }
@@ -236,7 +241,7 @@ impl Memory {
 
     /// Create a snapshot of palette for save-state.
     pub fn palette_snapshot(&self) -> Vec<u8> {
-        self.palette.to_vec()
+        self.palette_ram.to_vec()
     }
 
     /// Restore VRAM from a save-state.
@@ -247,8 +252,8 @@ impl Memory {
 
     /// Restore palette from a save-state.
     pub fn restore_palette(&mut self, data: &[u8]) {
-        let len = data.len().min(self.palette.len());
-        self.palette[..len].copy_from_slice(&data[..len]);
+        let len = data.len().min(self.palette_ram.len());
+        self.palette_ram[..len].copy_from_slice(&data[..len]);
         self.last_palette_index = None; // Invalidate cache
     }
 
@@ -285,7 +290,7 @@ impl Memory {
     pub fn debug_state(&self) -> MemoryDebugState {
         MemoryDebugState {
             ppu_ram: self.ppu_ram,
-            palette: self.palette,
+            palette: self.palette_ram,
             last_palette_index: self.last_palette_index,
             last_palette_value: self.last_palette_value,
             mirroring_mode: self.mirroring_mode,
@@ -294,7 +299,7 @@ impl Memory {
 
     pub fn set_debug_state(&mut self, state: MemoryDebugState) {
         self.ppu_ram = state.ppu_ram;
-        self.palette = state.palette;
+        self.palette_ram = state.palette;
         self.last_palette_index = state.last_palette_index;
         self.last_palette_value = state.last_palette_value;
         self.mirroring_mode = state.mirroring_mode;
