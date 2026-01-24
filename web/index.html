@@ -109,24 +109,31 @@
         } catch (err) {
           const msg =
             typeof err === "string"
-              ? err
-              : err && err.message
-                ? err.message
-                : `${err}`;
-          const friendly =
-            msg.toLowerCase().includes("invalid") || msg.toLowerCase().includes("file too small")
-              ? "Invalid ROM file format"
-              : msg.toLowerCase().includes("unsupported mapper")
-                ? "Unsupported ROM mapper"
-                : msg;
-          setStatus(`Failed to load ROM: ${friendly}`, true);
+        // Prevent concurrent starts by disabling the button immediately.
+        if (startBtn.disabled) {
+          return;
+        }
+        startBtn.disabled = true;
+        if (!romBytes) {
+          setStatus("Please choose a ROM first", true);
+          startBtn.disabled = false;
+          return;
+        }
+        setStatus("Initializing emulator...");
+        try {
+          if (!nes) {
+            await init();
+            nes = new WasmNes();
+          }
+          nes.load_rom(romBytes);
+        } catch (err) {
+          setStatus(`Failed to load ROM: ${err}`, true);
           startBtn.disabled = false;
           return;
         }
         running = true;
         paused = false;
-        lastFrameTime = 0;
-        startBtn.disabled = true;
+        // Keep start button disabled while running; it is re-enabled in stop().
         setStatus("Running...");
         requestAnimationFrame(step);
       }
