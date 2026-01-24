@@ -1206,9 +1206,9 @@ mod tests {
         rom_path
     }
 
-    fn config_with_video_scale(scale: f32) -> Config {
+    fn config_with_window_height(height: u32) -> Config {
         let mut config = Config::with_defaults();
-        config.video_scale = scale;
+        config.window_height = height;
         config
     }
 
@@ -2573,39 +2573,23 @@ mod tests {
     #[test]
     #[serial]
     fn test_new_headless() {
-        let config = config_with_video_scale(2.0);
+        let config = config_with_window_height(960);
         let event_loop = EventLoop::new(true, None, &config);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
-    fn test_scaling_below_minimum() {
-        let config = config_with_video_scale(0.5);
+    fn test_window_height_small() {
+        let config = config_with_window_height(240);
         let event_loop = EventLoop::new(true, None, &config);
         assert!(event_loop.is_ok());
     }
 
     #[test]
     #[serial]
-    fn test_scaling_above_maximum() {
-        let config = config_with_video_scale(6.0);
-        let event_loop = EventLoop::new(true, None, &config);
-        assert!(event_loop.is_ok());
-    }
-
-    #[test]
-    #[serial]
-    fn test_scaling_at_minimum() {
-        let config = config_with_video_scale(1.0);
-        let event_loop = EventLoop::new(true, None, &config);
-        assert!(event_loop.is_ok());
-    }
-
-    #[test]
-    #[serial]
-    fn test_scaling_at_maximum() {
-        let config = config_with_video_scale(5.0);
+    fn test_window_height_large() {
+        let config = config_with_window_height(1200);
         let event_loop = EventLoop::new(true, None, &config);
         assert!(event_loop.is_ok());
     }

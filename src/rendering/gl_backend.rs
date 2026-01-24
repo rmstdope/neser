@@ -64,17 +64,22 @@ fn overlay_background_color_for(text_color: OverlayTextColor) -> [f32; 4] {
 }
 
 impl GlBackend {
-    const MIN_SCALE: f32 = 1.0;
-    const MAX_SCALE: f32 = 5.0;
-    const NTSC_ASPECT: f32 = 4.0 / 3.0;
-    const NES_PIXEL_ASPECT: f32 = 256.0 / 240.0;
+    // NES pixel aspect (8:7) times NTSC display correction (16:15).
+    const FULLSCREEN_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
+    const WINDOWED_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
 
     fn target_aspect(&self) -> f32 {
         if self.fullscreen {
-            Self::NTSC_ASPECT
+            Self::FULLSCREEN_ASPECT
         } else {
-            Self::NES_PIXEL_ASPECT
+            Self::WINDOWED_ASPECT
         }
+    }
+
+    fn windowed_dimensions(height: u32) -> (u32, u32) {
+        let clamped_height = height.max(1);
+        let width = (clamped_height as f32 * Self::WINDOWED_ASPECT).round() as u32;
+        (width.max(1), clamped_height)
     }
 
     fn letterbox_size(container_w: f32, container_h: f32, aspect: f32) -> (f32, f32) {
@@ -91,11 +96,10 @@ impl GlBackend {
     }
 
     pub fn new(sdl_context: &sdl2::Sdl, config: &Config) -> Result<Self, String> {
-        let tv_system = config.tv_system;
-        let scale = Self::clamp_scale(config.video_scale);
         let vsync_enabled = config.vsync_enabled;
         let shader_path = config.shader_path.as_deref();
         let fullscreen = config.fullscreen;
+        let window_height = config.window_height;
 
         let video_subsystem = sdl_context.video()?;
 
@@ -109,23 +113,7 @@ impl GlBackend {
             gl_attr.set_stencil_size(0);
         }
 
-        let base_width = tv_system.screen_width();
-        let base_height = tv_system.screen_height();
-        let scaled_width = (base_width as f32 * scale) as u32;
-        let scaled_height = (base_height as f32 * scale) as u32;
-
-        let mut window_builder =
-            video_subsystem.window("NES Emulator in Rust", scaled_width, scaled_height);
-        window_builder.opengl();
-
-        window_builder.position_centered();
-        if !fullscreen {
-            window_builder.resizable();
-        }
-
-        let mut window = window_builder.build().map_err(|e| e.to_string())?;
-
-        if fullscreen {
+        let target_display = if fullscreen {
             let display_count = video_subsystem.num_video_displays().unwrap_or(1);
             let target_display = match config.fullscreen_display {
                 Some(display) => display,
@@ -145,9 +133,36 @@ impl GlBackend {
                 ));
             }
 
-            if let Ok(bounds) = video_subsystem.display_bounds(target_display) {
-                let x = bounds.x() + (bounds.width() as i32 - scaled_width as i32) / 2;
-                let y = bounds.y() + (bounds.height() as i32 - scaled_height as i32) / 2;
+            Some(target_display)
+        } else {
+            None
+        };
+
+        let (window_width, window_height) = if let Some(display) = target_display {
+            if let Ok(bounds) = video_subsystem.display_bounds(display) {
+                (bounds.width() as u32, bounds.height() as u32)
+            } else {
+                Self::windowed_dimensions(window_height)
+            }
+        } else {
+            Self::windowed_dimensions(window_height)
+        };
+
+        let mut window_builder =
+            video_subsystem.window("NES Emulator in Rust", window_width, window_height);
+        window_builder.opengl();
+
+        window_builder.position_centered();
+        if !fullscreen {
+            window_builder.resizable();
+        }
+
+        let mut window = window_builder.build().map_err(|e| e.to_string())?;
+
+        if let Some(display) = target_display {
+            if let Ok(bounds) = video_subsystem.display_bounds(display) {
+                let x = bounds.x() + (bounds.width() as i32 - window_width as i32) / 2;
+                let y = bounds.y() + (bounds.height() as i32 - window_height as i32) / 2;
                 window.set_position(WindowPos::Positioned(x), WindowPos::Positioned(y));
             }
 
@@ -253,30 +268,6 @@ impl GlBackend {
             shader_manager,
             fullscreen,
         })
-    }
-
-    /// Clamps the video scaling factor to the valid range [1.0, 5.0].
-    /// Prints a warning to stderr if clamping occurs.
-    fn clamp_scale(scale: f32) -> f32 {
-        if scale < Self::MIN_SCALE {
-            eprintln!(
-                "Warning: Video scaling factor {} is below minimum {}. Clamping to {}.",
-                scale,
-                Self::MIN_SCALE,
-                Self::MIN_SCALE
-            );
-            Self::MIN_SCALE
-        } else if scale > Self::MAX_SCALE {
-            eprintln!(
-                "Warning: Video scaling factor {} is above maximum {}. Clamping to {}.",
-                scale,
-                Self::MAX_SCALE,
-                Self::MAX_SCALE
-            );
-            Self::MAX_SCALE
-        } else {
-            scale
-        }
     }
 
     pub fn handle_event(&mut self, event: &Event) {
@@ -539,23 +530,42 @@ mod tests_letterbox {
 
     #[test]
     fn test_letterbox_size_wide_container() {
-        let (w, h) = GlBackend::letterbox_size(1920.0, 1080.0, GlBackend::NTSC_ASPECT);
+        let (w, h) = GlBackend::letterbox_size(1920.0, 1080.0, GlBackend::FULLSCREEN_ASPECT);
         assert_eq!(w, 1440.0);
         assert_eq!(h, 1080.0);
     }
 
     #[test]
     fn test_letterbox_size_matches_aspect() {
-        let (w, h) = GlBackend::letterbox_size(800.0, 600.0, GlBackend::NTSC_ASPECT);
+        let (w, h) = GlBackend::letterbox_size(800.0, 600.0, GlBackend::FULLSCREEN_ASPECT);
         assert_eq!(w, 800.0);
         assert_eq!(h, 600.0);
     }
 
     #[test]
     fn test_letterbox_size_zero_height() {
-        let (w, h) = GlBackend::letterbox_size(800.0, 0.0, GlBackend::NTSC_ASPECT);
+        let (w, h) = GlBackend::letterbox_size(800.0, 0.0, GlBackend::FULLSCREEN_ASPECT);
         assert_eq!(w, 800.0);
         assert_eq!(h, 0.0);
+    }
+}
+
+#[cfg(test)]
+mod tests_windowed_dimensions {
+    use super::GlBackend;
+
+    #[test]
+    fn test_windowed_dimensions_from_height_240() {
+        let (w, h) = GlBackend::windowed_dimensions(240);
+        assert_eq!(h, 240);
+        assert_eq!(w, 293);
+    }
+
+    #[test]
+    fn test_windowed_dimensions_from_height_960() {
+        let (w, h) = GlBackend::windowed_dimensions(960);
+        assert_eq!(h, 960);
+        assert_eq!(w, 1170);
     }
 }
 
