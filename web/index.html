@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NESER Web</title>
+    <style>
+      body {
+        margin: 0;
+        background: #111;
+        color: #eee;
+        font-family: system-ui, -apple-system, sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 16px;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      canvas {
+        image-rendering: pixelated;
+        border: 1px solid #444;
+      }
+      #status {
+        font-size: 0.9rem;
+        color: #8fe28f;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>NESER Web (MVP)</h1>
+      <input type="file" id="rom" accept=".nes" />
+      <button id="start">Start</button>
+      <span id="status">Load a ROM to begin</span>
+    </header>
+    <canvas id="screen" width="256" height="240"></canvas>
+    <script type="module" src="./pkg/neser.js"></script>
+    <script type="module">
+      import init, { WasmNes } from "./pkg/neser.js";
+
+      const statusEl = document.getElementById("status");
+      const startBtn = document.getElementById("start");
+      const romInput = document.getElementById("rom");
+      const canvas = document.getElementById("screen");
+      const ctx = canvas.getContext("2d");
+      const imageData = ctx.createImageData(256, 240);
+      let nes;
+      let romBytes;
+      let running = false;
+
+      function setStatus(msg, isError = false) {
+        statusEl.textContent = msg;
+        statusEl.style.color = isError ? "#f88" : "#8fe28f";
+      }
+
+      romInput.addEventListener("change", async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        romBytes = new Uint8Array(await file.arrayBuffer());
+        setStatus(`Loaded ROM: ${file.name} (${romBytes.length} bytes)`);
+      });
+
+      async function start() {
+        if (!romBytes) {
+          setStatus("Please choose a ROM first", true);
+          return;
+        }
+        setStatus("Initializing emulator...");
+        if (!nes) {
+          await init();
+          nes = new WasmNes();
+        }
+        try {
+          nes.load_rom(romBytes);
+        } catch (err) {
+          setStatus(`Failed to load ROM: ${err}`, true);
+          return;
+        }
+        running = true;
+        setStatus("Running...");
+        requestAnimationFrame(step);
+      }
+
+      function step() {
+        if (!running) return;
+        const frame = nes.render_frame();
+        // frame is RGB888; convert to RGBA for canvas
+        const data = imageData.data;
+        for (let i = 0, j = 0; i < frame.length; i += 3, j += 4) {
+          data[j] = frame[i];
+          data[j + 1] = frame[i + 1];
+          data[j + 2] = frame[i + 2];
+          data[j + 3] = 0xff;
+        }
+        ctx.putImageData(imageData, 0, 0);
+        requestAnimationFrame(step);
+      }
+
+      startBtn.addEventListener("click", start);
+    </script>
+  </body>
+</html>

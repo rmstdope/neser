@@ -3,6 +3,9 @@ name = "neser"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+crate-type = ["cdylib", "rlib"]
+
 [dependencies]
 bitflags = "2.9"
 pixels = "0.13"
@@ -12,12 +15,18 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sdl2 = { version = "0.37", optional = true, features = ["ttf"] }
 winit = "0.28"
-imgui = "0.11"
 gl = { version = "0.14", optional = true }
 imgui-opengl-renderer = { version = "0.12.1", optional = true }
 glow = { version = "0.14", optional = true }
 librashader = { version = "0.5", optional = true, default-features = false, features = ["runtime-gl", "presets", "stable"] }
 png = "0.17"
+wasm-bindgen = { version = "0.2.108", optional = true }
+wasm-bindgen-futures = { version = "0.4.45", optional = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["Window"] }
+getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
+imgui = { version = "0.11", optional = true }
 
 [features]
 default = []
@@ -27,6 +36,14 @@ sdl = [
 	"dep:glow",
 	"dep:imgui-opengl-renderer",
 	"dep:librashader",
+]
+wasm = [
+	"dep:wasm-bindgen",
+	"dep:wasm-bindgen-futures",
+	"dep:console_error_panic_hook",
+	"dep:getrandom",
+	"dep:js-sys",
+	"dep:web-sys",
 ]
 
 [[bin]]

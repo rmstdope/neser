@@ -9,6 +9,8 @@ pub mod cpu;
 pub mod debugging;
 pub mod input;
 pub mod ppu;
+#[cfg(feature = "wasm")]
+pub mod wasm;
 
 pub mod integration_tests;
 #[cfg(feature = "sdl")]
