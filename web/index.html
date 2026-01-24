@@ -90,31 +90,6 @@
       }
 
       async function start() {
-        if (startBtn.disabled) {
-          return;
-        }
-        startBtn.disabled = true;
-        if (!romBytes) {
-          setStatus("Please choose a ROM first", true);
-          startBtn.disabled = false;
-          return;
-        }
-        setStatus("Initializing emulator...");
-        if (!nes) {
-          try {
-            await init();
-            nes = new WasmNes();
-          } catch (err) {
-            setStatus(`Failed to initialize emulator: ${err}`, true);
-            startBtn.disabled = false;
-            return;
-          }
-        }
-        try {
-          nes.load_rom(romBytes);
-        } catch (err) {
-          const msg =
-            typeof err === "string"
         // Prevent concurrent starts by disabling the button immediately.
         if (startBtn.disabled) {
           return;
