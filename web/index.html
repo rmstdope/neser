@@ -156,6 +156,7 @@
         } catch (err) {
           running = false;
           startBtn.disabled = false;
+          romInput.disabled = false;
           setStatus(`Emulation error: ${err}`, true);
           if (console && typeof console.error === "function") {
             console.error("Emulation error during render_frame", err);
