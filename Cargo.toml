@@ -34,6 +34,7 @@ sdl = [
 	"dep:sdl2",
 	"dep:gl",
 	"dep:glow",
+	"dep:imgui",
 	"dep:imgui-opengl-renderer",
 	"dep:librashader",
 ]
