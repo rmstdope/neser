@@ -186,7 +186,6 @@ fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32
 }
 
 #[cfg(feature = "sdl")]
-#[cfg(feature = "sdl")]
 fn render_cpu_right_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32; 2], gap: f32) {
     ui.child_window("cpu_right")
         .size(size)
