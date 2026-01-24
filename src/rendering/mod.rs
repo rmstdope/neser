@@ -1,4 +1,6 @@
 pub mod gl_backend;
+pub mod input;
 mod shader_manager;
 
-pub use gl_backend::GlBackend;
+#[allow(unused_imports)]
+pub use gl_backend::{GlBackend, ProcAddressLoader, RenderTarget};
