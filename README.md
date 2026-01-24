@@ -89,7 +89,7 @@ Options:
   --display <N>         Select display index for fullscreen (default: 0)
   --filter <path>       Specify shader preset path (see Shaders below)
   --config <path>       Specify config file path (overrides default locations)
-  --video-scale <N>     Window scaling factor, windowed mode only (e.g., 4.0)
+  --window-height <N>   Window height in pixels, windowed mode only (e.g., 720)
 ```
 
 ### Blargg NES Test Suite Status
