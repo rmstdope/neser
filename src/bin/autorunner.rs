@@ -185,7 +185,7 @@ fn print_help() {
     println!("  --extend           Extend an existing autorun recording");
     println!("  --pal              Use PAL TV system (default: NTSC)");
     println!("  --no-vsync         Disable VSync (default: enabled)");
-    println!("  --video-scale <N>  Window scaling factor (default: 4.0)");
+    println!("  --window-height <N>  Window height in pixels (default: 960)");
     println!("  --fullscreen       Run emulator in fullscreen mode");
     println!("  --display <N>      Select display index for fullscreen");
     println!("  --filter <path>    Specify shader preset path");

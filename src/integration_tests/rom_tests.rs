@@ -1356,7 +1356,14 @@ mod tests {
     // I assume they are older versions of ppu_sprite_hit and ppu_sprite_overflow
     // but may be good to include if timing differs anywhere.
 
-    // TODO integrate tvpassfail/tv ROM suite
+    // tvpassfail/tv ROM suite not automated yet
+    // We will need to capture the screen post filtering (need NTSC filtering turned on)
+    // For the first test, we should be able to find nearest color of each 8x8 tile and 
+    // parse PASS
+    // For the second test, we should be able to count the height and width of the left
+    // rectangle (filtering off) and match
+
+    // vbl_nmi_timing
     setup_rom_console_test!(
         test_vbl_nmi_timing_frame_basics,
         "roms/automated_tests/vbl_nmi_timing/1.frame_basics.nes"

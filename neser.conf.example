@@ -55,7 +55,7 @@ vsync=true
 # The NES outputs 256x240 pixels. This multiplies the window size.
 # Example: 4.0 = 1024x960 window
 # Note: Only applies in windowed mode, ignored in fullscreen.
-video_scale=4.0
+window_height=960
 
 # Run in fullscreen mode.
 fullscreen=false

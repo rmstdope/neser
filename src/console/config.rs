@@ -137,8 +137,8 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
-        flag: "--video-scale",
-        help: Some("Window scaling factor, windowed mode only (e.g., --video-scale 4.0)"),
+        flag: "--window-height",
+        help: Some("Window height in pixels (windowed mode only, e.g., --window-height 720)"),
         has_value: true,
     },
     // NOTE: --timing-scale is disabled as it doesn't work with the current eventloop design
@@ -183,8 +183,8 @@ pub struct Config {
     pub tracing: Tracing,
     /// APU channel enable flags.
     pub apu_channels: ApuChannels,
-    /// Window scaling factor (1.0 to 5.0). Only applies in windowed mode.
-    pub video_scale: f32,
+    /// Window height in pixels (windowed mode only).
+    pub window_height: u32,
     /// Emulation speed multiplier.
     pub timing_scale: f32,
     /// Optional ROM path from CLI positional argument.
@@ -217,7 +217,7 @@ impl Default for Config {
             load_state: false,
             tracing: Tracing::default(),
             apu_channels: ApuChannels::ALL,
-            video_scale: 4.0,
+            window_height: 960,
             timing_scale: 1.0,
             rom_path: None,
         }
@@ -352,9 +352,9 @@ impl Config {
             self.apu_channels.remove(ApuChannels::DMC);
         }
 
-        // Video scale
-        if let Some(scale) = Self::parse_float_arg(args, "--video-scale")? {
-            self.video_scale = scale;
+        // Window height
+        if let Some(height) = Self::parse_u32_arg(args, "--window-height")? {
+            self.window_height = height;
         }
 
         // NOTE: timing_scale is disabled as it doesn't work with the current eventloop design
@@ -507,12 +507,12 @@ impl Config {
         Ok(rom_path)
     }
 
-    /// Parse a float argument from command-line args.
-    fn parse_float_arg(args: &[String], flag: &str) -> Result<Option<f32>, String> {
+    /// Parse a u32 argument from command-line args.
+    fn parse_u32_arg(args: &[String], flag: &str) -> Result<Option<u32>, String> {
         for i in 0..args.len() {
             if args[i] == flag && i + 1 < args.len() {
                 let value = &args[i + 1];
-                let parsed: f32 = value
+                let parsed: u32 = value
                     .parse()
                     .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
                 return Ok(Some(parsed));
@@ -542,6 +542,9 @@ impl Config {
     /// # Fullscreen settings
     /// fullscreen=false
     /// display=0
+    ///
+    /// # Window settings (windowed mode only)
+    /// window_height=960
     ///
     /// # Shader/filter path
     /// filter=shaders/crt-lottes.slangp
@@ -668,9 +671,9 @@ impl Config {
                     }
                 }
             }
-            "video_scale" => {
-                if let Ok(s) = value.parse::<f32>() {
-                    self.video_scale = s;
+            "window_height" => {
+                if let Ok(s) = value.parse::<u32>() {
+                    self.window_height = s;
                 }
             }
             "trace-cpu" => {
@@ -767,6 +770,7 @@ mod tests {
         assert!(config.apu_channels.contains(ApuChannels::TRIANGLE));
         assert!(config.apu_channels.contains(ApuChannels::NOISE));
         assert!(config.apu_channels.contains(ApuChannels::DMC));
+        assert_eq!(config.window_height, 960);
         assert_eq!(config.rom_path, None);
     }
 
@@ -779,6 +783,7 @@ mod tests {
         assert!(config.vsync_enabled);
         assert!(config.gamepads_enabled);
         assert!(!config.fullscreen);
+        assert_eq!(config.window_height, 960);
     }
 
     #[test]
@@ -1109,14 +1114,14 @@ mod tests {
     }
 
     #[test]
-    fn test_config_video_scale() {
+    fn test_config_window_height() {
         let args = vec![
             "neser".to_string(),
-            "--video-scale".to_string(),
-            "2.5".to_string(),
+            "--window-height".to_string(),
+            "720".to_string(),
         ];
         let config = parse_config(args);
-        assert!((config.video_scale - 2.5).abs() < 0.001);
+        assert_eq!(config.window_height, 720);
     }
 
     // NOTE: timing_scale tests disabled as the feature doesn't work with current eventloop design
@@ -1132,11 +1137,22 @@ mod tests {
     // }
 
     #[test]
-    fn test_config_video_scale_invalid_errors() {
+    fn test_config_window_height_invalid_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--window-height".to_string(),
+            "not_a_number".to_string(),
+        ];
+        let result = Config::new(&args);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_video_scale_flag_is_unknown() {
         let args = vec![
             "neser".to_string(),
             "--video-scale".to_string(),
-            "not_a_number".to_string(),
+            "2.5".to_string(),
         ];
         let result = Config::new(&args);
         assert!(result.is_err());
@@ -1277,10 +1293,10 @@ mod tests {
     }
 
     #[test]
-    fn test_config_file_video_scale() {
+    fn test_config_file_window_height() {
         let mut config = Config::default();
-        config.apply_config_value("video_scale", "2.5");
-        assert!((config.video_scale - 2.5).abs() < 0.001);
+        config.apply_config_value("window_height", "720");
+        assert_eq!(config.window_height, 720);
     }
 
     #[test]
