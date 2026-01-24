@@ -49,8 +49,14 @@
       const canvas = document.getElementById("screen");
       if (!(canvas instanceof HTMLCanvasElement)) {
         throw new Error("Canvas element with id 'screen' not found or not a canvas");
+      const canvas = document.getElementById("screen");
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("Canvas element with id 'screen' not found or not a canvas");
       }
       const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        throw new Error("2D rendering context not available for canvas 'screen'");
+      }
       if (!ctx) {
         throw new Error("2D rendering context not available for canvas 'screen'");
       }
