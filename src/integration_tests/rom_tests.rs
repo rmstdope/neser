@@ -1337,7 +1337,7 @@ mod tests {
         "roms/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
-    // TODO integrate scanline ROM suite
+    // TODO scanline ROM suite is not working yet
     // TODO integrate scrolltest ROM suite
 
     // sprdma_and_dmc_dma
