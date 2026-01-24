@@ -65,20 +65,15 @@ fn overlay_background_color_for(text_color: OverlayTextColor) -> [f32; 4] {
 
 impl GlBackend {
     // NES pixel aspect (8:7) times NTSC display correction (16:15).
-    const FULLSCREEN_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
-    const WINDOWED_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
+    const NTSC_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
 
     fn target_aspect(&self) -> f32 {
-        if self.fullscreen {
-            Self::FULLSCREEN_ASPECT
-        } else {
-            Self::WINDOWED_ASPECT
-        }
+        Self::NTSC_ASPECT
     }
 
     fn windowed_dimensions(height: u32) -> (u32, u32) {
         let clamped_height = height.max(1);
-        let width = (clamped_height as f32 * Self::WINDOWED_ASPECT).round() as u32;
+        let width = (clamped_height as f32 * Self::NTSC_ASPECT).round() as u32;
         (width.max(1), clamped_height)
     }
 
@@ -530,21 +525,21 @@ mod tests_letterbox {
 
     #[test]
     fn test_letterbox_size_wide_container() {
-        let (w, h) = GlBackend::letterbox_size(1920.0, 1080.0, GlBackend::FULLSCREEN_ASPECT);
+        let (w, h) = GlBackend::letterbox_size(1920.0, 1080.0, GlBackend::NTSC_ASPECT);
         assert_eq!(w, 1440.0);
         assert_eq!(h, 1080.0);
     }
 
     #[test]
     fn test_letterbox_size_matches_aspect() {
-        let (w, h) = GlBackend::letterbox_size(800.0, 600.0, GlBackend::FULLSCREEN_ASPECT);
+        let (w, h) = GlBackend::letterbox_size(800.0, 600.0, GlBackend::NTSC_ASPECT);
         assert_eq!(w, 800.0);
         assert_eq!(h, 600.0);
     }
 
     #[test]
     fn test_letterbox_size_zero_height() {
-        let (w, h) = GlBackend::letterbox_size(800.0, 0.0, GlBackend::FULLSCREEN_ASPECT);
+        let (w, h) = GlBackend::letterbox_size(800.0, 0.0, GlBackend::NTSC_ASPECT);
         assert_eq!(w, 800.0);
         assert_eq!(h, 0.0);
     }
