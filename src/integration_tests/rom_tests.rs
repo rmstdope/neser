@@ -1361,7 +1361,7 @@ mod tests {
     // For the first test, we should be able to find nearest color of each 8x8 tile and 
     // parse PASS
     // For the second test, we should be able to count the height and width of the left
-    // recangle (filtering off) and match
+    // rectangle (filtering off) and match
     // TODO integrate vbl_nmi_timing ROM suite
 
     /////////////////////////////////////
