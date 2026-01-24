@@ -139,10 +139,13 @@ impl GlBackend {
         };
 
         let (window_width, window_height) = if let Some(display) = target_display {
-            if let Ok(bounds) = video_subsystem.display_bounds(display) {
-                (bounds.width() as u32, bounds.height() as u32)
-            } else {
-                Self::windowed_dimensions(window_height)
+            match video_subsystem.display_bounds(display) {
+                Ok(bounds) => (bounds.width() as u32, bounds.height() as u32),
+                Err(e) => {
+                    return Err(format!(
+                        "Failed to query bounds for display {display}: {e}. Cannot enter fullscreen mode."
+                    ));
+                }
             }
         } else {
             Self::windowed_dimensions(window_height)
