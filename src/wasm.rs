@@ -12,6 +12,10 @@ pub struct WasmNes {
 
 #[wasm_bindgen]
 impl WasmNes {
+    pub fn default() -> WasmNes {
+        WasmNes::new()
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new() -> WasmNes {
         console_error_panic_hook::set_once();

@@ -47,7 +47,13 @@
       const startBtn = document.getElementById("start");
       const romInput = document.getElementById("rom");
       const canvas = document.getElementById("screen");
+      if (!(canvas instanceof HTMLCanvasElement)) {
+        throw new Error("Canvas element with id 'screen' not found or not a canvas");
+      }
       const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        throw new Error("2D rendering context not available for canvas 'screen'");
+      }
       const imageData = ctx.createImageData(256, 240);
       let nes;
       let romBytes;
@@ -73,8 +79,13 @@
       }
 
       async function start() {
+        if (startBtn.disabled) {
+          return;
+        }
+        startBtn.disabled = true;
         if (!romBytes) {
           setStatus("Please choose a ROM first", true);
+          startBtn.disabled = false;
           return;
         }
         setStatus("Initializing emulator...");
@@ -84,17 +95,32 @@
             nes = new WasmNes();
           } catch (err) {
             setStatus(`Failed to initialize emulator: ${err}`, true);
+            startBtn.disabled = false;
             return;
           }
         }
         try {
           nes.load_rom(romBytes);
         } catch (err) {
-          setStatus(`Failed to load ROM: ${err}`, true);
+          const msg =
+            typeof err === "string"
+              ? err
+              : err && err.message
+                ? err.message
+                : `${err}`;
+          const friendly =
+            msg.toLowerCase().includes("invalid") || msg.toLowerCase().includes("file too small")
+              ? "Invalid ROM file format"
+              : msg.toLowerCase().includes("unsupported mapper")
+                ? "Unsupported ROM mapper"
+                : msg;
+          setStatus(`Failed to load ROM: ${friendly}`, true);
+          startBtn.disabled = false;
           return;
         }
         running = true;
         paused = false;
+        lastFrameTime = 0;
         startBtn.disabled = true;
         setStatus("Running...");
         requestAnimationFrame(step);
@@ -103,9 +129,12 @@
       function pauseResume() {
         if (!nes || !running) return;
         paused = !paused;
-        setStatus(paused ? "Paused" : "Running...");
         if (!paused) {
+          lastFrameTime = 0;
+          setStatus("Running...");
           requestAnimationFrame(step);
+        } else {
+          setStatus("Paused");
         }
       }
 
@@ -114,6 +143,10 @@
         paused = false;
         startBtn.disabled = false;
         clearCanvas();
+        romBytes = null;
+        romInput.value = "";
+        romInput.disabled = false;
+        lastFrameTime = 0;
         setStatus("Stopped. Load a ROM to begin");
       }
 
