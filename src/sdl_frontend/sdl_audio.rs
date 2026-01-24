@@ -11,7 +11,7 @@ use std::sync::{
 };
 
 /// Audio output handler that receives samples from the NES APU
-pub struct NesAudio {
+pub struct SdlNesAudio {
     device: AudioDevice<AudioCallbackImpl>,
     sample_sender: SyncSender<f32>,
     volume: Arc<AtomicU32>,
@@ -26,7 +26,7 @@ struct AudioStats {
     underrun_samples: AtomicU64,
 }
 
-impl NesAudio {
+impl SdlNesAudio {
     /// Audio buffer size in samples
     /// At 44.1kHz, this provides ~0.5 seconds of buffering (22050 samples / 44100 Hz)
     const BUFFER_SIZE: usize = 22050;
@@ -241,7 +241,7 @@ mod tests {
         // Combine into one test to avoid SDL2 thread issues
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
 
-        let audio = NesAudio::new(&sdl_context, 44100);
+        let audio = SdlNesAudio::new(&sdl_context, 44100);
         assert!(audio.is_ok(), "Audio initialization should succeed");
 
         let mut audio = audio.unwrap();

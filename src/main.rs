@@ -12,6 +12,7 @@ mod sdl_frontend;
 
 use console::{ApuChannels, Config, Nes, ParseResult};
 use savestate::SaveState;
+use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::fs;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,13 +40,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let audio = if !config.audio_enabled {
         None
     } else {
-        let audio = sdl_frontend::NesAudio::new(&sdl_context, 44100)?;
+        let audio = SdlNesAudio::new(&sdl_context, 44100)?;
         let actual_rate = audio.actual_sample_rate() as f32;
         nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
         Some(audio)
     };
 
-    let mut event_loop = sdl_frontend::EventLoop::new(false, audio, &config)?;
+    let mut event_loop = SdlEventLoop::new(false, audio, &config)?;
 
     // Request debugger open if enabled via CLI
     if config.debugger_enabled {
@@ -138,7 +139,7 @@ mod tests {
             ParseResult::Help => panic!("Expected Config"),
         };
 
-        let mut event_loop = sdl_frontend::EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
 
         if config.debugger_enabled {
             event_loop.request_debugger_open();

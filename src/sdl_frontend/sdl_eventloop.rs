@@ -1,4 +1,4 @@
-use super::audio::NesAudio;
+use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::console::{Config, Nes};
 use sdl2::event::Event;
@@ -13,7 +13,7 @@ use crate::savestate::SaveState;
 
 /// EventLoop manages the SDL2 event loop for the application.
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
-pub struct EventLoop {
+pub struct SdlEventLoop {
     _sdl_context: sdl2::Sdl,
     gl_backend: Option<SdlGlWrapper>,
     event_pump: sdl2::EventPump,
@@ -28,7 +28,7 @@ pub struct EventLoop {
     breakpoint_ignore_once_at_pc: Option<u16>,
     #[cfg_attr(not(test), allow(dead_code))]
     debugger_renderer: Option<Box<dyn DebuggerRenderer>>,
-    audio: Option<NesAudio>,
+    audio: Option<SdlNesAudio>,
     controllers: Vec<sdl2::controller::GameController>,
     controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
 }
@@ -53,7 +53,7 @@ enum KeyDownOutcome {
     Quit,
 }
 
-impl EventLoop {
+impl SdlEventLoop {
     const MIN_TIMING_SCALE: f32 = 0.001;
     const MAX_TIMING_SCALE: f32 = 100.0;
 
@@ -87,7 +87,11 @@ impl EventLoop {
     /// let windowed = EventLoop::new(false, None, &config)?;
     /// # Ok::<(), String>(())
     /// ```
-    pub fn new(headless: bool, audio: Option<NesAudio>, config: &Config) -> Result<Self, String> {
+    pub fn new(
+        headless: bool,
+        audio: Option<SdlNesAudio>,
+        config: &Config,
+    ) -> Result<Self, String> {
         let clamped_timing_scale = Self::clamp_timing_scale(config.timing_scale);
 
         let sdl_context = sdl2::init()?;
@@ -106,7 +110,7 @@ impl EventLoop {
             (Vec::new(), HashMap::new())
         };
 
-        Ok(EventLoop {
+        Ok(SdlEventLoop {
             _sdl_context: sdl_context,
             gl_backend,
             event_pump,
@@ -893,7 +897,7 @@ impl EventLoop {
     fn handle_key_down(
         nes: &mut Nes,
         keycode: Keycode,
-        audio: Option<&NesAudio>,
+        audio: Option<&SdlNesAudio>,
         paused: &mut bool,
         debugger_open_requested: &mut bool,
     ) -> KeyDownOutcome {
@@ -1170,7 +1174,7 @@ T: Start"
     }
 }
 
-fn apply_volume_hotkey(audio: &NesAudio, keycode: Keycode) {
+fn apply_volume_hotkey(audio: &SdlNesAudio, keycode: Keycode) {
     const STEP: f32 = 0.1;
 
     let current = audio.get_volume();
@@ -1254,7 +1258,7 @@ mod tests {
         out
     }
 
-    fn tick_headless_once(event_loop: &mut EventLoop, nes: &mut Nes) {
+    fn tick_headless_once(event_loop: &mut SdlEventLoop, nes: &mut Nes) {
         let _should_quit = event_loop.tick_headless_once_for_run(nes);
     }
 
@@ -1262,7 +1266,7 @@ mod tests {
     #[serial]
     fn test_breakpoint_hit_pauses_and_opens_debugger() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
@@ -1289,7 +1293,7 @@ mod tests {
     #[serial]
     fn test_remove_breakpoint_allows_execution_to_continue() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
@@ -1307,19 +1311,19 @@ mod tests {
 
     #[test]
     fn test_manual_frame_limiting_is_disabled_with_vsync() {
-        assert!(!EventLoop::should_manual_frame_limit(true));
+        assert!(!SdlEventLoop::should_manual_frame_limit(true));
     }
 
     #[test]
     fn test_manual_frame_limiting_is_enabled_without_vsync() {
-        assert!(EventLoop::should_manual_frame_limit(false));
+        assert!(SdlEventLoop::should_manual_frame_limit(false));
     }
 
     #[test]
     #[serial]
     fn test_eventloop_creation() {
         let config = default_config();
-        let event_loop = EventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, &config);
         assert!(event_loop.is_ok());
     }
 
@@ -1350,7 +1354,7 @@ mod tests {
             env::set_var("SDL_AUDIODRIVER", "dummy");
         }
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
-        let audio = NesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
+        let audio = SdlNesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
 
         // Default volume is 0.25.
         assert!((audio.get_volume() - 0.25).abs() < 1e-6);
@@ -1395,13 +1399,13 @@ mod tests {
             env::set_var("SDL_AUDIODRIVER", "dummy");
         }
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
-        let audio = NesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
+        let audio = SdlNesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
         let mut nes = Nes::new(TvSystem::Ntsc);
         let mut paused = false;
         let mut debugger_open_requested = false;
 
         let before = audio.get_volume();
-        EventLoop::handle_key_down(
+        SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F2,
             Some(&audio),
@@ -1409,7 +1413,7 @@ mod tests {
             &mut debugger_open_requested,
         );
         assert!((audio.get_volume() - (before + 0.1)).abs() < 1e-6);
-        EventLoop::handle_key_down(
+        SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F3,
             Some(&audio),
@@ -1433,7 +1437,7 @@ mod tests {
 
         let mut paused = false;
         let mut debugger_open_requested = false;
-        EventLoop::handle_key_down(
+        SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F6,
             None,
@@ -1458,7 +1462,7 @@ mod tests {
         let saved_pc = nes.cpu.pc();
         let mut paused = false;
         let mut debugger_open_requested = false;
-        EventLoop::handle_key_down(
+        SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F6,
             None,
@@ -1467,7 +1471,7 @@ mod tests {
         );
 
         nes.cpu.set_pc(saved_pc.wrapping_add(1));
-        EventLoop::handle_key_down(
+        SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F7,
             None,
@@ -1486,7 +1490,7 @@ mod tests {
         let mut paused = false;
         let mut debugger_open_requested = false;
 
-        let outcome = EventLoop::handle_key_down(
+        let outcome = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::Escape,
             None,
@@ -1503,7 +1507,7 @@ mod tests {
         let mut paused = false;
         let mut debugger_open_requested = false;
 
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::Space,
             None,
@@ -1511,7 +1515,7 @@ mod tests {
             &mut debugger_open_requested,
         );
         assert!(paused);
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::Space,
             None,
@@ -1525,7 +1529,7 @@ mod tests {
     #[serial]
     fn test_handle_key_down_h_toggles_help_overlay() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::H);
@@ -1537,7 +1541,7 @@ mod tests {
 
     #[test]
     fn test_help_overlay_text_mentions_shortcuts() {
-        let text = EventLoop::help_overlay_text();
+        let text = SdlEventLoop::help_overlay_text();
         assert!(text.contains("Esc"));
         assert!(text.contains("Space"));
         assert!(text.contains("F1"));
@@ -1560,14 +1564,14 @@ mod tests {
     #[serial]
     fn test_help_overlay_text_for_rendering() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
 
         assert_eq!(event_loop.help_overlay_render_text(), None);
 
         event_loop.help_overlay_visible = true;
         assert_eq!(
             event_loop.help_overlay_render_text(),
-            Some(EventLoop::help_overlay_text())
+            Some(SdlEventLoop::help_overlay_text())
         );
     }
 
@@ -1657,7 +1661,7 @@ mod tests {
         let mut paused = false;
         let mut debugger_open_requested = false;
 
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F5,
             None,
@@ -1674,7 +1678,7 @@ mod tests {
         let mut paused = true;
         let mut debugger_open_requested = true;
 
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F5,
             None,
@@ -1718,7 +1722,7 @@ mod tests {
         );
 
         let cpu_cycles_before = nes_actual.cpu.get_total_cycles();
-        EventLoop::debugger_run_to_next_frame(&mut nes_actual);
+        SdlEventLoop::debugger_run_to_next_frame(&mut nes_actual);
         let cpu_cycles_after = nes_actual.cpu.get_total_cycles();
 
         let (actual_scanline, actual_pixel) = {
@@ -1746,7 +1750,7 @@ mod tests {
         let mut paused = true;
         let mut debugger_open_requested = true;
 
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F10,
             None,
@@ -1779,7 +1783,7 @@ mod tests {
         let mut paused = true;
         let mut debugger_open_requested = true;
 
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F11,
             None,
@@ -1808,7 +1812,7 @@ mod tests {
     #[serial]
     fn test_continue_action_unpauses_and_closes_debugger() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         event_loop.request_debugger_open();
@@ -1836,7 +1840,7 @@ mod tests {
     #[serial]
     fn test_continue_skips_breakpoint_once_on_same_pc() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
@@ -1877,7 +1881,7 @@ mod tests {
     #[serial]
     fn test_f5_when_debugger_open_behaves_like_continue_for_breakpoints() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
@@ -1907,7 +1911,7 @@ mod tests {
     #[serial]
     fn test_run_to_nmi_action_runs_until_nmi_vector_pc() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Minimal cartridge with vectors.
@@ -1976,7 +1980,7 @@ mod tests {
     #[serial]
     fn test_run_to_irq_action_runs_until_irq_vector_pc() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Minimal cartridge with vectors.
@@ -2048,7 +2052,7 @@ mod tests {
     #[serial]
     fn test_run_to_irq_requires_actual_irq_entry_not_just_pc_match() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Minimal cartridge where IRQ vector points at the reset entrypoint.
@@ -2113,7 +2117,7 @@ mod tests {
     #[serial]
     fn test_run_to_nmi_when_already_in_nmi_waits_for_next_nmi_entry() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Cartridge with RESET=$8000, NMI=$9000.
@@ -2227,7 +2231,7 @@ mod tests {
     #[serial]
     fn test_run_to_nmi_ignores_other_breakpoints_until_next_nmi_entry() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Cartridge with RESET=$8000, NMI=$9000.
@@ -2325,7 +2329,7 @@ mod tests {
     #[serial]
     fn test_step_into_action_runs_via_temporary_breakpoint_and_reopens_debugger() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
@@ -2373,7 +2377,7 @@ mod tests {
     #[serial]
     fn test_step_over_action_runs_via_temporary_breakpoint_and_reopens_debugger() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = nes_with_jsr_program();
         nes.cpu.set_x(0);
 
@@ -2428,7 +2432,7 @@ mod tests {
     #[serial]
     fn test_request_debugger_open_pauses_and_sets_request_flag() {
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
 
         assert!(!event_loop.paused);
         assert!(!event_loop.debugger_open_requested);
@@ -2460,7 +2464,7 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         nes.cpu.set_pc(0x1234);
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F1,
             None,
@@ -2483,7 +2487,7 @@ mod tests {
 
         // W => Up
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::W,
             None,
@@ -2494,7 +2498,7 @@ mod tests {
 
         // S => Down
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::S,
             None,
@@ -2505,7 +2509,7 @@ mod tests {
 
         // A => Left
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::A,
             None,
@@ -2516,7 +2520,7 @@ mod tests {
 
         // D => Right
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::D,
             None,
@@ -2527,7 +2531,7 @@ mod tests {
 
         // R => Select
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::R,
             None,
@@ -2538,7 +2542,7 @@ mod tests {
 
         // T => Start
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::T,
             None,
@@ -2549,7 +2553,7 @@ mod tests {
 
         // F => A
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F,
             None,
@@ -2560,7 +2564,7 @@ mod tests {
 
         // G => B
         let mut nes = Nes::new(TvSystem::Ntsc);
-        let _ = EventLoop::handle_key_down(
+        let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::G,
             None,
@@ -2574,7 +2578,7 @@ mod tests {
     #[serial]
     fn test_new_headless() {
         let config = config_with_window_height(960);
-        let event_loop = EventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, &config);
         assert!(event_loop.is_ok());
     }
 
@@ -2582,7 +2586,7 @@ mod tests {
     #[serial]
     fn test_window_height_small() {
         let config = config_with_window_height(240);
-        let event_loop = EventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, &config);
         assert!(event_loop.is_ok());
     }
 
@@ -2590,7 +2594,7 @@ mod tests {
     #[serial]
     fn test_window_height_large() {
         let config = config_with_window_height(1200);
-        let event_loop = EventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, &config);
         assert!(event_loop.is_ok());
     }
 
@@ -2598,7 +2602,7 @@ mod tests {
     #[serial]
     fn test_run_with_nes() {
         let config = default_config();
-        let _event_loop = EventLoop::new(true, None, &config).unwrap();
+        let _event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance
@@ -2624,7 +2628,7 @@ mod tests {
     fn test_gamepad_disabled_by_default() {
         // When gamepads are disabled, no controllers should be initialized
         let config = config_with_gamepads(false);
-        let event_loop = EventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, &config);
         assert!(event_loop.is_ok());
         let event_loop = event_loop.unwrap();
         assert_eq!(event_loop.controllers.len(), 0);
@@ -2636,7 +2640,7 @@ mod tests {
     fn test_gamepad_enabled_no_controllers_present() {
         // When gamepads are enabled but no controllers are present, should still work
         let config = config_with_gamepads(true);
-        let event_loop = EventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, &config);
         // This may succeed or fail depending on whether controllers are actually present
         // We just verify it doesn't panic
         if let Ok(event_loop) = event_loop {
@@ -2660,7 +2664,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -2688,7 +2692,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -2745,7 +2749,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -2803,7 +2807,7 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let config = default_config();
-        let mut event_loop = EventLoop::new(true, None, &config).unwrap();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
@@ -2811,7 +2815,7 @@ mod tests {
         let nes = Nes::new(TvSystem::Ntsc);
 
         event_loop.request_debugger_open();
-        EventLoop::tick_windowed_paused_for_run(
+        SdlEventLoop::tick_windowed_paused_for_run(
             event_loop.debugger_open_requested,
             &mut event_loop.debugger_renderer,
             &nes,
