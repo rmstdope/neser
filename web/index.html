@@ -88,17 +88,27 @@
 
       function step() {
         if (!running) return;
-        const frame = nes.render_frame();
-        // frame is RGB888; convert to RGBA for canvas
-        const data = imageData.data;
-        for (let i = 0, j = 0; i < frame.length; i += 3, j += 4) {
-          data[j] = frame[i];
-          data[j + 1] = frame[i + 1];
-          data[j + 2] = frame[i + 2];
-          data[j + 3] = 0xff;
+        try {
+          const frame = nes.render_frame();
+          // frame is RGB888; convert to RGBA for canvas
+          const data = imageData.data;
+          for (let i = 0, j = 0; i < frame.length; i += 3, j += 4) {
+            data[j] = frame[i];
+            data[j + 1] = frame[i + 1];
+            data[j + 2] = frame[i + 2];
+            data[j + 3] = 0xff;
+          }
+          ctx.putImageData(imageData, 0, 0);
+        } catch (err) {
+          running = false;
+          setStatus(`Emulation error: ${err}`, true);
+          if (console && typeof console.error === "function") {
+            console.error("Emulation error during render_frame", err);
+          }
         }
-        ctx.putImageData(imageData, 0, 0);
-        requestAnimationFrame(step);
+        if (running) {
+          requestAnimationFrame(step);
+        }
       }
 
       startBtn.addEventListener("click", start);
