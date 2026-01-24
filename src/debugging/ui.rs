@@ -40,6 +40,7 @@ pub fn layout_models(display_size: [f32; 2]) -> [(&'static str, [f32; 2], [f32; 
     ]
 }
 
+#[cfg(feature = "sdl")]
 pub fn window_models(snapshot: &DebuggerSnapshot) -> [(&'static str, &str); 3] {
     [
         ("CPU", snapshot.cpu.as_str()),
@@ -87,6 +88,7 @@ struct CpuWindowLayout {
     right_pos: [f32; 2],
 }
 
+#[cfg(feature = "sdl")]
 fn cpu_window_layout(avail: [f32; 2], cursor: [f32; 2]) -> CpuWindowLayout {
     // Layout: left code view, right column split into registers (top) + PRG hexdump (bottom)
     let gap = 8.0;

@@ -38,6 +38,9 @@ impl WasmNes {
     /// Returns a Uint8Array with length 256*240*3.
     #[wasm_bindgen]
     pub fn render_frame(&mut self) -> Vec<u8> {
+        // NOTE: MVP implementation runs a synchronous loop until a frame is ready.
+        // For browser responsiveness, this could be broken into smaller chunks via
+        // async/yield in a future enhancement.
         while !self.nes.is_ready_to_render() {
             self.nes.run_cpu_tick();
         }

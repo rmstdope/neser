@@ -89,9 +89,11 @@
           return;
         }
         startBtn.disabled = true;
+        romInput.disabled = true;
         if (!romBytes) {
           setStatus("Please choose a ROM first", true);
           startBtn.disabled = false;
+          romInput.disabled = false;
           return;
         }
         setStatus("Initializing emulator...");
@@ -130,11 +132,9 @@
         paused = false;
         startBtn.disabled = false;
         clearCanvas();
-        romBytes = null;
-        romInput.value = "";
-        romInput.disabled = false;
         lastFrameTime = 0;
-        setStatus("Stopped. Load a ROM to begin");
+        setStatus("Stopped. You can restart or load a new ROM");
+        romInput.disabled = false;
       }
 
       function step(timestamp) {
@@ -168,11 +168,13 @@
 
       startBtn.addEventListener("click", start);
       const pauseBtn = document.createElement("button");
+      pauseBtn.id = "pause";
       pauseBtn.textContent = "Pause/Resume";
       pauseBtn.addEventListener("click", pauseResume);
       startBtn.insertAdjacentElement("afterend", pauseBtn);
 
       const stopBtn = document.createElement("button");
+      stopBtn.id = "stop";
       stopBtn.textContent = "Stop";
       stopBtn.addEventListener("click", stop);
       pauseBtn.insertAdjacentElement("afterend", stopBtn);
