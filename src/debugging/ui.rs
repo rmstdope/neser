@@ -1,3 +1,4 @@
+#[cfg(feature = "sdl")]
 use super::DebuggerSnapshot;
 
 const DEBUGGER_OUTER_MARGIN: f32 = 10.0;
@@ -121,6 +122,7 @@ fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, action: &mut D
 }
 
 #[cfg(feature = "sdl")]
+#[cfg(feature = "sdl")]
 fn render_cpu_controls(ui: &imgui::Ui, action: &mut DebuggerUiAction) {
     if ui.button("Step over") {
         action.step_over = true;
@@ -147,6 +149,7 @@ fn render_cpu_controls(ui: &imgui::Ui, action: &mut DebuggerUiAction) {
     }
 }
 
+#[cfg(feature = "sdl")]
 #[cfg(feature = "sdl")]
 fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32; 2]) {
     ui.child_window("cpu_code")
@@ -182,6 +185,7 @@ fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32
         });
 }
 
+#[cfg(feature = "sdl")]
 #[cfg(feature = "sdl")]
 fn render_cpu_right_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32; 2], gap: f32) {
     ui.child_window("cpu_right")
@@ -234,6 +238,7 @@ fn format_disasm_bytes(bytes: &[u8]) -> String {
     }
 }
 
+#[cfg(feature = "sdl")]
 #[cfg(feature = "sdl")]
 fn render_cpu_registers(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) {
     for line in cpu_register_lines(snapshot) {

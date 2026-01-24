@@ -3,6 +3,8 @@ use crate::console::{Nes, TvSystem};
 use wasm_bindgen::prelude::*;
 
 /// Provides a minimal WASM bridge for running the emulator in the browser.
+///
+/// Note: NTSC timing is hardcoded for the MVP; PAL titles will run at the wrong speed.
 #[wasm_bindgen]
 pub struct WasmNes {
     nes: Nes,

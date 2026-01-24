@@ -25,7 +25,7 @@ wasm-bindgen-futures = { version = "0.4.45", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 js-sys = { version = "0.3", optional = true }
 web-sys = { version = "0.3", optional = true, features = ["Window"] }
-getrandom = { version = "0.3", features = ["wasm_js"], optional = true }
+wasm-bindgen-test = { version = "0.3.45", optional = true }
 imgui = { version = "0.11", optional = true }
 
 [features]
@@ -42,10 +42,13 @@ wasm = [
 	"dep:wasm-bindgen",
 	"dep:wasm-bindgen-futures",
 	"dep:console_error_panic_hook",
-	"dep:getrandom",
 	"dep:js-sys",
 	"dep:web-sys",
+	"dep:wasm-bindgen-test",
 ]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [[bin]]
 name = "neser"

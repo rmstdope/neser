@@ -11,6 +11,8 @@ pub mod input;
 pub mod ppu;
 #[cfg(feature = "wasm")]
 pub mod wasm;
+#[cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
+mod wasm_tests;
 
 pub mod integration_tests;
 #[cfg(feature = "sdl")]

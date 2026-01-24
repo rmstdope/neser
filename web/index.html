@@ -52,6 +52,9 @@
       let nes;
       let romBytes;
       let running = false;
+      let paused = false;
+      let lastFrameTime = 0;
+      const frameInterval = 1000 / 60.0988; // approx NTSC
 
       function setStatus(msg, isError = false) {
         statusEl.textContent = msg;
@@ -64,6 +67,10 @@
         romBytes = new Uint8Array(await file.arrayBuffer());
         setStatus(`Loaded ROM: ${file.name} (${romBytes.length} bytes)`);
       });
+
+      function clearCanvas() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
 
       async function start() {
         if (!romBytes) {
@@ -82,12 +89,36 @@
           return;
         }
         running = true;
+        paused = false;
+        startBtn.disabled = true;
         setStatus("Running...");
         requestAnimationFrame(step);
       }
 
-      function step() {
-        if (!running) return;
+      function pauseResume() {
+        if (!nes || !running) return;
+        paused = !paused;
+        setStatus(paused ? "Paused" : "Running...");
+        if (!paused) {
+          requestAnimationFrame(step);
+        }
+      }
+
+      function stop() {
+        running = false;
+        paused = false;
+        startBtn.disabled = false;
+        clearCanvas();
+        setStatus("Stopped. Load a ROM to begin");
+      }
+
+      function step(timestamp) {
+        if (!running || paused) return;
+        if (timestamp - lastFrameTime < frameInterval) {
+          requestAnimationFrame(step);
+          return;
+        }
+        lastFrameTime = timestamp;
         try {
           const frame = nes.render_frame();
           // frame is RGB888; convert to RGBA for canvas
@@ -112,6 +143,15 @@
       }
 
       startBtn.addEventListener("click", start);
+      const pauseBtn = document.createElement("button");
+      pauseBtn.textContent = "Pause/Resume";
+      pauseBtn.addEventListener("click", pauseResume);
+      startBtn.insertAdjacentElement("afterend", pauseBtn);
+
+      const stopBtn = document.createElement("button");
+      stopBtn.textContent = "Stop";
+      stopBtn.addEventListener("click", stop);
+      pauseBtn.insertAdjacentElement("afterend", stopBtn);
     </script>
   </body>
 </html>
