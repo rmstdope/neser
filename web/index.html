@@ -79,8 +79,13 @@
         }
         setStatus("Initializing emulator...");
         if (!nes) {
-          await init();
-          nes = new WasmNes();
+          try {
+            await init();
+            nes = new WasmNes();
+          } catch (err) {
+            setStatus(`Failed to initialize emulator: ${err}`, true);
+            return;
+          }
         }
         try {
           nes.load_rom(romBytes);
