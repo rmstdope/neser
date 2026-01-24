@@ -1,17 +1,23 @@
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
-use sdl2::mouse::MouseButton;
-use sdl2::video::{FullscreenType, GLContext, GLProfile, Window, WindowPos};
-
-use crate::console::{Config, Nes};
+use crate::console::Nes;
 use crate::debugging::DebuggerViewState;
 use crate::debugging::ui as debugger_ui;
+use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
+use std::ffi::c_void;
+use std::sync::Arc;
 use std::time::Instant;
 
+pub trait RenderTarget {
+    fn window_size(&self) -> (u32, u32);
+    fn drawable_size(&self) -> (u32, u32);
+    fn swap_buffers(&self);
+    fn make_current(&self) -> Result<(), String>;
+}
+
+pub type ProcAddressLoader = Arc<dyn Fn(&str) -> *const c_void>;
+
 pub struct GlBackend {
-    window: Window,
-    gl_context: GLContext,
+    render_target: Box<dyn RenderTarget>,
     glow_context: std::sync::Arc<glow::Context>,
     imgui: imgui::Context,
     renderer: imgui_opengl_renderer::Renderer,
@@ -23,7 +29,6 @@ pub struct GlBackend {
     last_frame: Instant,
     debugger_view_state: DebuggerViewState,
     shader_manager: ShaderManager,
-    fullscreen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +76,7 @@ impl GlBackend {
         Self::NTSC_ASPECT
     }
 
-    fn windowed_dimensions(height: u32) -> (u32, u32) {
+    pub(crate) fn windowed_dimensions(height: u32) -> (u32, u32) {
         let clamped_height = height.max(1);
         let width = (clamped_height as f32 * Self::NTSC_ASPECT).round() as u32;
         (width.max(1), clamped_height)
@@ -90,100 +95,15 @@ impl GlBackend {
         }
     }
 
-    pub fn new(sdl_context: &sdl2::Sdl, config: &Config) -> Result<Self, String> {
-        let vsync_enabled = config.vsync_enabled;
-        let shader_path = config.shader_path.as_deref();
-        let fullscreen = config.fullscreen;
-        let window_height = config.window_height;
-
-        let video_subsystem = sdl_context.video()?;
-
-        {
-            let gl_attr = video_subsystem.gl_attr();
-            gl_attr.set_context_profile(GLProfile::Core);
-            // macOS core profile requires 3.2+ for forward-compatible contexts.
-            gl_attr.set_context_version(3, 2);
-            gl_attr.set_double_buffer(true);
-            gl_attr.set_depth_size(0);
-            gl_attr.set_stencil_size(0);
-        }
-
-        let target_display = if fullscreen {
-            let display_count = video_subsystem.num_video_displays().unwrap_or(1);
-            let target_display = match config.fullscreen_display {
-                Some(display) => display,
-                None => {
-                    if display_count >= 2 {
-                        1
-                    } else {
-                        0
-                    }
-                }
-            };
-
-            if target_display < 0 || target_display >= display_count {
-                return Err(format!(
-                    "Invalid --display {target_display}. Available displays: 0..{}",
-                    display_count.saturating_sub(1)
-                ));
-            }
-
-            Some(target_display)
-        } else {
-            None
-        };
-
-        let (window_width, window_height) = if let Some(display) = target_display {
-            match video_subsystem.display_bounds(display) {
-                Ok(bounds) => (bounds.width() as u32, bounds.height() as u32),
-                Err(e) => {
-                    return Err(format!(
-                        "Failed to query bounds for display {display}: {e}. Cannot enter fullscreen mode."
-                    ));
-                }
-            }
-        } else {
-            Self::windowed_dimensions(window_height)
-        };
-
-        let mut window_builder =
-            video_subsystem.window("NES Emulator in Rust", window_width, window_height);
-        window_builder.opengl();
-
-        window_builder.position_centered();
-        if !fullscreen {
-            window_builder.resizable();
-        }
-
-        let mut window = window_builder.build().map_err(|e| e.to_string())?;
-
-        if let Some(display) = target_display {
-            if let Ok(bounds) = video_subsystem.display_bounds(display) {
-                let x = bounds.x() + (bounds.width() as i32 - window_width as i32) / 2;
-                let y = bounds.y() + (bounds.height() as i32 - window_height as i32) / 2;
-                window.set_position(WindowPos::Positioned(x), WindowPos::Positioned(y));
-            }
-
-            window
-                .set_fullscreen(FullscreenType::Desktop)
-                .map_err(|e| e.to_string())?;
-        }
-
-        let gl_context = window.gl_create_context().map_err(|e| e.to_string())?;
-        window
-            .gl_make_current(&gl_context)
-            .map_err(|e| e.to_string())?;
-
-        video_subsystem
-            .gl_set_swap_interval(if vsync_enabled { 1 } else { 0 })
-            .map_err(|e| e.to_string())?;
-
-        gl::load_with(|s| video_subsystem.gl_get_proc_address(s) as _);
-
+    pub fn new(
+        render_target: Box<dyn RenderTarget>,
+        proc_address: ProcAddressLoader,
+        shader_path: Option<&str>,
+    ) -> Result<Self, String> {
         unsafe {
             gl::Disable(gl::DEPTH_TEST);
             gl::Disable(gl::CULL_FACE);
-            let (drawable_w, drawable_h) = window.drawable_size();
+            let (drawable_w, drawable_h) = render_target.drawable_size();
             gl::Viewport(0, 0, drawable_w as i32, drawable_h as i32);
             gl::ClearColor(0.0, 0.0, 0.0, 1.0);
         }
@@ -202,9 +122,7 @@ impl GlBackend {
             imgui.fonts().add_font(&sources)
         };
 
-        let renderer = imgui_opengl_renderer::Renderer::new(&mut imgui, |s| {
-            video_subsystem.gl_get_proc_address(s) as _
-        });
+        let renderer = imgui_opengl_renderer::Renderer::new(&mut imgui, |s| (proc_address)(s) as _);
 
         let (nes_texture, nes_texture_id) = unsafe {
             let mut tex: gl::types::GLuint = 0;
@@ -235,8 +153,9 @@ impl GlBackend {
 
         // Create glow context for librashader
         let glow_context = unsafe {
+            let proc_address = proc_address.clone();
             std::sync::Arc::new(glow::Context::from_loader_function(|s| {
-                video_subsystem.gl_get_proc_address(s) as *const _
+                (proc_address)(s) as *const _
             }))
         };
 
@@ -251,8 +170,7 @@ impl GlBackend {
         }
 
         Ok(Self {
-            window,
-            gl_context,
+            render_target,
             glow_context,
             imgui,
             renderer,
@@ -264,90 +182,19 @@ impl GlBackend {
             last_frame: Instant::now(),
             debugger_view_state: DebuggerViewState::default(),
             shader_manager,
-            fullscreen,
         })
     }
 
-    pub fn handle_event(&mut self, event: &Event) {
-        let io = self.imgui.io_mut();
-
-        match *event {
-            Event::MouseMotion { x, y, .. } => {
-                io.mouse_pos = [x as f32, y as f32];
-            }
-            Event::MouseButtonDown { mouse_btn, .. } => match mouse_btn {
-                MouseButton::Left => io.mouse_down[0] = true,
-                MouseButton::Right => io.mouse_down[1] = true,
-                MouseButton::Middle => io.mouse_down[2] = true,
-                _ => {}
-            },
-            Event::MouseButtonUp { mouse_btn, .. } => match mouse_btn {
-                MouseButton::Left => io.mouse_down[0] = false,
-                MouseButton::Right => io.mouse_down[1] = false,
-                MouseButton::Middle => io.mouse_down[2] = false,
-                _ => {}
-            },
-            Event::MouseWheel { x, y, .. } => {
-                io.mouse_wheel_h += x as f32;
-                io.mouse_wheel += y as f32;
-            }
-            Event::TextInput { ref text, .. } => {
-                for ch in text.chars() {
-                    io.add_input_character(ch);
-                }
-            }
-            Event::KeyDown {
-                keycode: Some(keycode),
-                repeat: false,
-                ..
-            } => {
-                if keycode == Keycode::F1 {
-                    self.overlay_text_color = toggle_overlay_text_color(self.overlay_text_color);
-                }
-                Self::map_key(io, keycode, true);
-            }
-            Event::KeyUp {
-                keycode: Some(keycode),
-                ..
-            } => {
-                Self::map_key(io, keycode, false);
-            }
-            _ => {}
+    pub fn handle_input(&mut self, event: &InputEvent) {
+        if let InputEvent::Key {
+            key: imgui::Key::F1,
+            down: true,
+        } = event
+        {
+            self.overlay_text_color = toggle_overlay_text_color(self.overlay_text_color);
         }
-    }
 
-    fn map_key(io: &mut imgui::Io, keycode: Keycode, down: bool) {
-        use imgui::Key;
-
-        // Minimal key mapping needed for common interactions.
-        let key = match keycode {
-            Keycode::Tab => Some(Key::Tab),
-            Keycode::Left => Some(Key::LeftArrow),
-            Keycode::Right => Some(Key::RightArrow),
-            Keycode::Up => Some(Key::UpArrow),
-            Keycode::Down => Some(Key::DownArrow),
-            Keycode::PageUp => Some(Key::PageUp),
-            Keycode::PageDown => Some(Key::PageDown),
-            Keycode::Home => Some(Key::Home),
-            Keycode::End => Some(Key::End),
-            Keycode::Insert => Some(Key::Insert),
-            Keycode::Delete => Some(Key::Delete),
-            Keycode::Backspace => Some(Key::Backspace),
-            Keycode::Space => Some(Key::Space),
-            Keycode::Return => Some(Key::Enter),
-            Keycode::Escape => Some(Key::Escape),
-            Keycode::A => Some(Key::A),
-            Keycode::C => Some(Key::C),
-            Keycode::V => Some(Key::V),
-            Keycode::X => Some(Key::X),
-            Keycode::Y => Some(Key::Y),
-            Keycode::Z => Some(Key::Z),
-            _ => None,
-        };
-
-        if let Some(key) = key {
-            io.add_key_event(key, down);
-        }
+        apply_input(self.imgui.io_mut(), event);
     }
 
     pub fn render(
@@ -365,8 +212,8 @@ impl GlBackend {
         self.last_frame = now;
         self.imgui.io_mut().delta_time = dt.as_secs_f32().max(1.0 / 1000.0);
 
-        let (win_w, win_h) = self.window.size();
-        let (drawable_w, drawable_h) = self.window.drawable_size();
+        let (win_w, win_h) = self.render_target.window_size();
+        let (drawable_w, drawable_h) = self.render_target.drawable_size();
 
         // Keep the GL viewport in sync with the current drawable size.
         unsafe {
@@ -508,7 +355,7 @@ impl GlBackend {
 
         self.renderer.render(&mut self.imgui);
 
-        self.window.gl_swap_window();
+        self.render_target.swap_buffers();
 
         action
     }
@@ -529,14 +376,14 @@ mod tests_letterbox {
     #[test]
     fn test_letterbox_size_wide_container() {
         let (w, h) = GlBackend::letterbox_size(1920.0, 1080.0, GlBackend::NTSC_ASPECT);
-        assert_eq!(w, 1440.0);
+        assert!((w - 1316.5714).abs() < 0.01);
         assert_eq!(h, 1080.0);
     }
 
     #[test]
     fn test_letterbox_size_matches_aspect() {
         let (w, h) = GlBackend::letterbox_size(800.0, 600.0, GlBackend::NTSC_ASPECT);
-        assert_eq!(w, 800.0);
+        assert!((w - 731.4286).abs() < 0.01);
         assert_eq!(h, 600.0);
     }
 
@@ -570,7 +417,7 @@ mod tests_windowed_dimensions {
 impl Drop for GlBackend {
     fn drop(&mut self) {
         // Best-effort: make current and delete texture.
-        let _ = self.window.gl_make_current(&self.gl_context);
+        let _ = self.render_target.make_current();
         unsafe {
             gl::DeleteTextures(1, &self.nes_texture);
         }

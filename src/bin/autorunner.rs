@@ -5,6 +5,7 @@ use neser::integration_tests::autorun::{
     AUTORUN_VERSION, AutorunFile, AutorunFrame, autorun_path_for_rom, crc32, load_autorun_file,
     save_autorun_file,
 };
+use neser::sdl_frontend::SdlGlBackend;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;
@@ -104,7 +105,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         let sdl_context = sdl2::init()?;
         let mut event_pump = sdl_context.event_pump()?;
-        let mut gl_backend = neser::rendering::GlBackend::new(&sdl_context, &config)?;
+        let mut gl_backend = SdlGlBackend::new(&sdl_context, &config)?;
         state.init_gamepads(&sdl_context)?;
 
         run_loop(&mut nes, &mut gl_backend, &mut event_pump, mode, &mut state)?;
@@ -296,7 +297,7 @@ impl RunnerState {
 
 fn run_loop(
     nes: &mut Nes,
-    gl_backend: &mut neser::rendering::GlBackend,
+    gl_backend: &mut neser::sdl_frontend::SdlGlBackend,
     event_pump: &mut sdl2::EventPump,
     mode: Mode,
     state: &mut RunnerState,

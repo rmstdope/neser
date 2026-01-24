@@ -42,6 +42,7 @@ impl TvSystem {
     /// Returns the screen width for this TV system
     ///
     /// Both NTSC and PAL use 256 pixels width
+    #[allow(dead_code)]
     pub fn screen_width(&self) -> u32 {
         256
     }
@@ -50,6 +51,7 @@ impl TvSystem {
     ///
     /// NTSC: 240 pixels
     /// PAL: 240 pixels (visible area, though PAL has more scanlines)
+    #[allow(dead_code)]
     pub fn screen_height(&self) -> u32 {
         240
     }
