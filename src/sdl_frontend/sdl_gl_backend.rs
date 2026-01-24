@@ -9,11 +9,16 @@ use sdl2::mouse::MouseButton;
 use sdl2::video::{FullscreenType, GLProfile, Window, WindowPos};
 use std::sync::Arc;
 
+/// SDL-specific wrapper that owns a `GlBackend` and SDL window/context.
+///
+/// This module translates SDL events into renderer input events and
+/// configures the GL context/window settings based on emulator config.
 pub struct SdlGlBackend {
     gl_backend: GlBackend,
 }
 
 impl SdlGlBackend {
+    /// Creates a new SDL-backed renderer instance.
     pub fn new(sdl_context: &sdl2::Sdl, config: &Config) -> Result<Self, String> {
         let video_subsystem = sdl_context.video()?;
 
@@ -76,12 +81,14 @@ impl SdlGlBackend {
         Ok(Self { gl_backend })
     }
 
+    /// Handles an SDL event and forwards input to the renderer.
     pub fn handle_event(&mut self, event: &Event) {
         if let Some(input_event) = translate_event(event) {
             self.gl_backend.handle_input(&input_event);
         }
     }
 
+    /// Renders a frame and optional debugger overlay.
     pub fn render(
         &mut self,
         nes: &crate::console::Nes,
@@ -93,11 +100,13 @@ impl SdlGlBackend {
             .render(nes, show_debugger, overlay_text, overlay_blink_red)
     }
 
+    /// Cycles through available shader presets.
     pub fn cycle_shader(&mut self) {
         self.gl_backend.cycle_shader();
     }
 }
 
+/// Chooses which display to use for fullscreen rendering.
 fn select_target_display(
     video_subsystem: &sdl2::VideoSubsystem,
     config: &Config,
@@ -128,6 +137,7 @@ fn select_target_display(
     Ok(Some(target_display))
 }
 
+/// Resolves window size based on fullscreen state and aspect policy.
 fn resolve_window_size(
     video_subsystem: &sdl2::VideoSubsystem,
     config: &Config,
@@ -145,6 +155,7 @@ fn resolve_window_size(
     }
 }
 
+/// Centers the SDL window within the selected display bounds.
 fn center_fullscreen_window(
     video_subsystem: &sdl2::VideoSubsystem,
     window: &mut Window,
@@ -159,6 +170,7 @@ fn center_fullscreen_window(
     }
 }
 
+/// Converts SDL input events into renderer input events.
 fn translate_event(event: &Event) -> Option<InputEvent> {
     match event {
         Event::MouseMotion { x, y, .. } => Some(InputEvent::MouseMotion {
@@ -191,6 +203,7 @@ fn translate_event(event: &Event) -> Option<InputEvent> {
     }
 }
 
+/// Maps SDL mouse button identifiers to renderer mouse buttons.
 fn map_mouse_button(button: MouseButton) -> Option<RenderMouseButton> {
     match button {
         MouseButton::Left => Some(RenderMouseButton::Left),
@@ -200,6 +213,7 @@ fn map_mouse_button(button: MouseButton) -> Option<RenderMouseButton> {
     }
 }
 
+/// Maps SDL keycodes into ImGui keys used by the renderer.
 fn map_key(keycode: Keycode) -> Option<imgui::Key> {
     // Minimal key mapping needed for common interactions.
     match keycode {

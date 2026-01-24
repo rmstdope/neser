@@ -1,6 +1,7 @@
 use imgui::Io;
 use imgui::Key;
 
+/// Mouse buttons relevant to the renderer input layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseButton {
     Left,
@@ -8,15 +9,22 @@ pub enum MouseButton {
     Middle,
 }
 
+/// Input events forwarded to the renderer (backend-agnostic).
 #[derive(Debug, Clone, PartialEq)]
 pub enum InputEvent {
+    /// Mouse movement in window coordinates.
     MouseMotion { x: f32, y: f32 },
+    /// Mouse button press/release.
     MouseButton { button: MouseButton, pressed: bool },
+    /// Mouse wheel scroll delta.
     MouseWheel { x: f32, y: f32 },
+    /// Text input for ImGui.
     TextInput(String),
+    /// Key press/release events routed to ImGui.
     Key { key: Key, down: bool },
 }
 
+/// Applies a single input event to the ImGui IO state.
 pub fn apply_input(io: &mut Io, event: &InputEvent) {
     match event {
         InputEvent::MouseMotion { x, y } => {

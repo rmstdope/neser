@@ -7,15 +7,25 @@ use std::ffi::c_void;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Backend-agnostic surface for presenting rendered frames.
+///
+/// Implementations provide window sizing information and GL context handling
+/// without exposing SDL or platform-specific types to the renderer.
 pub trait RenderTarget {
+    /// Returns the logical window size in pixels.
     fn window_size(&self) -> (u32, u32);
+    /// Returns the drawable framebuffer size in pixels (may differ on HiDPI).
     fn drawable_size(&self) -> (u32, u32);
+    /// Swaps the front/back buffers to present the rendered frame.
     fn swap_buffers(&self);
+    /// Makes the render target's GL context current.
     fn make_current(&self) -> Result<(), String>;
 }
 
+/// Loader for GL procedure addresses used by OpenGL and related backends.
 pub type ProcAddressLoader = Arc<dyn Fn(&str) -> *const c_void>;
 
+/// OpenGL renderer that draws the NES frame and optional debugger UI.
 pub struct GlBackend {
     render_target: Box<dyn RenderTarget>,
     glow_context: std::sync::Arc<glow::Context>,
@@ -72,16 +82,19 @@ impl GlBackend {
     // NES pixel aspect (8:7) times NTSC display correction (16:15).
     const NTSC_ASPECT: f32 = 8.0 / 7.0 * 16.0 / 15.0;
 
+    /// Returns the aspect ratio used for rendering the NES output.
     fn target_aspect(&self) -> f32 {
         Self::NTSC_ASPECT
     }
 
+    /// Computes windowed mode dimensions preserving the target aspect ratio.
     pub(crate) fn windowed_dimensions(height: u32) -> (u32, u32) {
         let clamped_height = height.max(1);
         let width = (clamped_height as f32 * Self::NTSC_ASPECT).round() as u32;
         (width.max(1), clamped_height)
     }
 
+    /// Returns the largest size that fits inside the container while preserving aspect.
     fn letterbox_size(container_w: f32, container_h: f32, aspect: f32) -> (f32, f32) {
         if container_h == 0.0 {
             return (container_w, 0.0);
@@ -95,6 +108,7 @@ impl GlBackend {
         }
     }
 
+    /// Creates a new OpenGL renderer bound to the provided render target.
     pub fn new(
         render_target: Box<dyn RenderTarget>,
         proc_address: ProcAddressLoader,
@@ -185,6 +199,7 @@ impl GlBackend {
         })
     }
 
+    /// Applies an input event to ImGui and handles renderer-local shortcuts.
     pub fn handle_input(&mut self, event: &InputEvent) {
         if let InputEvent::Key {
             key: imgui::Key::F1,
@@ -197,6 +212,7 @@ impl GlBackend {
         apply_input(self.imgui.io_mut(), event);
     }
 
+    /// Renders the current NES frame and optional debugger overlay.
     pub fn render(
         &mut self,
         nes: &Nes,
@@ -360,6 +376,7 @@ impl GlBackend {
         action
     }
 
+    /// Cycles through available shader presets, if any.
     pub fn cycle_shader(&mut self) {
         if let Err(e) = self.shader_manager.cycle_shader(self.glow_context.clone()) {
             eprintln!("Error cycling shader: {}", e);
