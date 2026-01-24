@@ -54,7 +54,12 @@
       if (!ctx) {
         throw new Error("2D rendering context not available for canvas 'screen'");
       }
-      const imageData = ctx.createImageData(256, 240);
+      const width = 256;
+      const height = 240;
+      const imageData = ctx.createImageData(width, height);
+      const rgba = new Uint8ClampedArray(width * height * 4);
+      // Set alpha once
+      for (let a = 3; a < rgba.length; a += 4) rgba[a] = 0xff;
       let nes;
       let romBytes;
       let running = false;
@@ -158,15 +163,13 @@
         }
         lastFrameTime = timestamp;
         try {
-          const frame = nes.render_frame();
-          // frame is RGB888; convert to RGBA for canvas
-          const data = imageData.data;
+          const frame = nes.render_frame(); // RGB888
           for (let i = 0, j = 0; i < frame.length; i += 3, j += 4) {
-            data[j] = frame[i];
-            data[j + 1] = frame[i + 1];
-            data[j + 2] = frame[i + 2];
-            data[j + 3] = 0xff;
+            rgba[j] = frame[i];
+            rgba[j + 1] = frame[i + 1];
+            rgba[j + 2] = frame[i + 2];
           }
+          imageData.data.set(rgba);
           ctx.putImageData(imageData, 0, 0);
         } catch (err) {
           running = false;
