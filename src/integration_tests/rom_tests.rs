@@ -1357,15 +1357,41 @@ mod tests {
     // but may be good to include if timing differs anywhere.
 
     // TODO integrate tvpassfail/tv ROM suite
-    // TODO integrate vbl_nmi_timing ROM suite
+    setup_rom_console_test!(
+        test_vbl_nmi_timing_frame_basics,
+        "roms/automated_tests/vbl_nmi_timing/1.frame_basics.nes"
+    );
+    setup_rom_console_test!(
+        test_vbl_nmi_timing_vbl_timing,
+        "roms/automated_tests/vbl_nmi_timing/2.vbl_timing.nes"
+    );
+    setup_rom_console_test!(
+        test_vbl_nmi_timing_even_odd_frames,
+        "roms/automated_tests/vbl_nmi_timing/3.even_odd_frames.nes"
+    );
+    setup_rom_console_test!(
+        test_vbl_nmi_timing_vbl_clear_timing,
+        "roms/automated_tests/vbl_nmi_timing/4.vbl_clear_timing.nes"
+    );
+    setup_rom_console_test!(
+        test_vbl_nmi_timing_nmi_suppression,
+        "roms/automated_tests/vbl_nmi_timing/5.nmi_suppression.nes"
+    );
+    setup_rom_console_test!(
+        test_vbl_nmi_timing_nmi_disable,
+        "roms/automated_tests/vbl_nmi_timing/6.nmi_disable.nes"
+    );
+    setup_rom_console_test!(
+        test_vbl_nmi_timing_nmi_timing,
+        "roms/automated_tests/vbl_nmi_timing/7.nmi_timing.nes"
+    );
 
     /////////////////////////////////////
     // Miscellaneous
     /////////////////////////////////////
-    
+
     // TODO integrate PaddleTest3 ROM suite
     // TODO integrate read_joy3 ROM suite
     // TODO integrate full_palette ROM suite
     // TODO integrate full_nes_palette ROM suite
-
 }
