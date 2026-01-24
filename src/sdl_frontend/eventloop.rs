@@ -1,6 +1,6 @@
 use super::audio::NesAudio;
+use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::console::{Config, Nes};
-use super::sdl_gl_backend::SdlGlBackend;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;
@@ -15,7 +15,7 @@ use crate::savestate::SaveState;
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
 pub struct EventLoop {
     _sdl_context: sdl2::Sdl,
-    gl_backend: Option<SdlGlBackend>,
+    gl_backend: Option<SdlGlWrapper>,
     event_pump: sdl2::EventPump,
     timing_scale: f32,
     vsync_enabled: bool,
@@ -96,7 +96,7 @@ impl EventLoop {
         let gl_backend = if headless {
             None
         } else {
-            Some(SdlGlBackend::new(&sdl_context, config)?)
+            Some(SdlGlWrapper::new(&sdl_context, config)?)
         };
 
         // Initialize gamepads if enabled

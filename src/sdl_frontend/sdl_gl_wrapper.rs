@@ -13,11 +13,11 @@ use std::sync::Arc;
 ///
 /// This module translates SDL events into renderer input events and
 /// configures the GL context/window settings based on emulator config.
-pub struct SdlGlBackend {
+pub struct SdlGlWrapper {
     gl_backend: GlBackend,
 }
 
-impl SdlGlBackend {
+impl SdlGlWrapper {
     /// Creates a new SDL-backed renderer instance.
     pub fn new(sdl_context: &sdl2::Sdl, config: &Config) -> Result<Self, String> {
         let video_subsystem = sdl_context.video()?;
