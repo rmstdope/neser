@@ -1,5 +1,5 @@
 use crate::cartridge::{Cartridge, MirroringMode};
-use crate::console::{Nes, TvSystem};
+use crate::console::{Nes, PpuRegisterState, PpuState, PpuTimingState, SpritesState, TvSystem};
 use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
 use crate::trace_ppu;
 use std::cell::RefCell;
@@ -610,12 +610,12 @@ impl Ppu {
     }
 
     /// Capture the current PPU state for save-state.
-    pub fn capture_state(&self) -> crate::savestate::PpuState {
+    pub fn capture_state(&self) -> PpuState {
         let (rendering_enabled_d1, rendering_enabled_d2) = self.timing.rendering_enabled_delays();
         let bg_state = self.background.capture_state();
         let sprites_state = self.sprites.capture_state();
-        crate::savestate::PpuState {
-            timing: crate::savestate::PpuTimingState {
+        PpuState {
+            timing: PpuTimingState {
                 scanline: self.timing.scanline,
                 pixel: self.timing.pixel,
                 total_cycles: self.timing.total_cycles(),
@@ -623,7 +623,7 @@ impl Ppu {
                 rendering_enabled_d1,
                 rendering_enabled_d2,
             },
-            registers: crate::savestate::PpuRegisterState {
+            registers: PpuRegisterState {
                 control: self.registers.control(),
                 mask: self.registers.mask(),
                 oam_addr: self.registers.oam_address,
@@ -683,7 +683,7 @@ impl Ppu {
     }
 
     /// Restore PPU state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::savestate::PpuState) {
+    pub fn restore_state(&mut self, state: &PpuState) {
         // Restore timing
         self.timing.restore_state(
             state.timing.scanline,
@@ -728,29 +728,28 @@ impl Ppu {
         let sec_len = state.secondary_oam.len().min(secondary_oam.len());
         secondary_oam[..sec_len].copy_from_slice(&state.secondary_oam[..sec_len]);
 
-        self.sprites
-            .restore_state(&crate::ppu::sprites::SpritesState {
-                oam_data,
-                secondary_oam,
-                sprites_found: state.sprites_found,
-                sprite_count: state.sprite_count,
-                next_sprite_count: state.next_sprite_count,
-                sprite_buffers_ready: state.sprite_buffers_ready,
-                sprite_0_index: state.sprite_0_index,
-                next_sprite_0_index: state.next_sprite_0_index,
-                sprite_eval_n: state.sprite_eval_n,
-                sprite_eval_m: state.sprite_eval_m,
-                sprite_eval_cycle: state.sprite_eval_cycle,
-                sprite_eval_in_range: state.sprite_eval_in_range,
-                sprite_pattern_shift_lo: state.sprite_pattern_shift_lo,
-                sprite_pattern_shift_hi: state.sprite_pattern_shift_hi,
-                sprite_x_positions: state.sprite_x_positions,
-                sprite_attributes: state.sprite_attributes,
-                next_sprite_pattern_shift_lo: state.next_sprite_pattern_shift_lo,
-                next_sprite_pattern_shift_hi: state.next_sprite_pattern_shift_hi,
-                next_sprite_x_positions: state.next_sprite_x_positions,
-                next_sprite_attributes: state.next_sprite_attributes,
-            });
+        self.sprites.restore_state(&SpritesState {
+            oam_data,
+            secondary_oam,
+            sprites_found: state.sprites_found,
+            sprite_count: state.sprite_count,
+            next_sprite_count: state.next_sprite_count,
+            sprite_buffers_ready: state.sprite_buffers_ready,
+            sprite_0_index: state.sprite_0_index,
+            next_sprite_0_index: state.next_sprite_0_index,
+            sprite_eval_n: state.sprite_eval_n,
+            sprite_eval_m: state.sprite_eval_m,
+            sprite_eval_cycle: state.sprite_eval_cycle,
+            sprite_eval_in_range: state.sprite_eval_in_range,
+            sprite_pattern_shift_lo: state.sprite_pattern_shift_lo,
+            sprite_pattern_shift_hi: state.sprite_pattern_shift_hi,
+            sprite_x_positions: state.sprite_x_positions,
+            sprite_attributes: state.sprite_attributes,
+            next_sprite_pattern_shift_lo: state.next_sprite_pattern_shift_lo,
+            next_sprite_pattern_shift_hi: state.next_sprite_pattern_shift_hi,
+            next_sprite_x_positions: state.next_sprite_x_positions,
+            next_sprite_attributes: state.next_sprite_attributes,
+        });
 
         // Restore status flags
         self.status.restore_state(

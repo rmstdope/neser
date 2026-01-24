@@ -9,6 +9,7 @@
 /// - Length counter
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
+use crate::console::NoiseState;
 use crate::trace_apu;
 
 // Period lookup table for NTSC (in CPU cycles)
@@ -178,8 +179,8 @@ impl Noise {
     }
 
     /// Capture the current noise channel state for save-state.
-    pub fn capture_state(&self) -> crate::savestate::NoiseState {
-        crate::savestate::NoiseState {
+    pub fn capture_state(&self) -> NoiseState {
+        NoiseState {
             timer: self.timer,
             timer_period: self.timer_period,
             length_counter: self.length_counter.value(),
@@ -195,7 +196,7 @@ impl Noise {
     }
 
     /// Restore noise channel state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::savestate::NoiseState) {
+    pub fn restore_state(&mut self, state: &NoiseState) {
         self.timer = state.timer;
         self.timer_period = state.timer_period;
         self.length_counter.set_value(state.length_counter);

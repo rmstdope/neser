@@ -1,3 +1,6 @@
+use crate::console::EnvelopeState;
+use crate::trace_apu;
+
 /// Envelope Generator
 ///
 /// Based on https://www.nesdev.org/apu_ref.txt ("Envelope Generator" section).
@@ -12,7 +15,7 @@
 /// When the "disable" flag is set, the channel volume is the constant `n`
 /// (the low 4 bits of the channel's first register). Otherwise it is the
 /// counter value.
-use crate::trace_apu;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Envelope {
     start_flag: bool,
@@ -120,8 +123,8 @@ impl Envelope {
     }
 
     /// Capture the current envelope state for save-state.
-    pub fn capture_state(&self) -> crate::savestate::EnvelopeState {
-        crate::savestate::EnvelopeState {
+    pub fn capture_state(&self) -> EnvelopeState {
+        EnvelopeState {
             start_flag: self.start_flag,
             divider: self.divider,
             decay_level: self.counter,
@@ -132,7 +135,7 @@ impl Envelope {
     }
 
     /// Restore envelope state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::savestate::EnvelopeState) {
+    pub fn restore_state(&mut self, state: &EnvelopeState) {
         self.start_flag = state.start_flag;
         self.divider = state.divider;
         self.counter = state.decay_level;

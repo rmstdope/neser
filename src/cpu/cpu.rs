@@ -2,6 +2,7 @@ use super::master_clock::MasterClock;
 use super::opcode::*;
 use crate::apu::Apu;
 use crate::bus::Bus;
+use crate::console::CpuState;
 use crate::console::TvSystem;
 use crate::ppu::Ppu;
 use crate::trace_cpu;
@@ -113,7 +114,7 @@ pub enum InterruptKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CpuState {
+pub struct CpuRegisters {
     pub a: u8,
     pub x: u8,
     pub y: u8,
@@ -127,8 +128,8 @@ impl Cpu {
         self.interrupt_stack.last().copied()
     }
 
-    pub fn state(&self) -> CpuState {
-        CpuState {
+    pub fn state(&self) -> CpuRegisters {
+        CpuRegisters {
             a: self.a,
             x: self.x,
             y: self.y,
@@ -258,8 +259,8 @@ impl Cpu {
     }
 
     /// Capture the current CPU state for save-state.
-    pub fn capture_state(&self) -> crate::savestate::CpuState {
-        crate::savestate::CpuState {
+    pub fn capture_state(&self) -> CpuState {
+        CpuState {
             a: self.a,
             x: self.x,
             y: self.y,
@@ -289,7 +290,7 @@ impl Cpu {
     }
 
     /// Restore CPU state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::savestate::CpuState) {
+    pub fn restore_state(&mut self, state: &CpuState) {
         self.a = state.a;
         self.x = state.x;
         self.y = state.y;

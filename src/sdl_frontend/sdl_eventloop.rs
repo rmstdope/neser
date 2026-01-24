@@ -1,6 +1,6 @@
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
-use crate::console::{Config, Nes};
+use crate::console::{Config, Nes, SaveState};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;
@@ -9,7 +9,6 @@ use std::{fs, usize};
 
 use crate::debugging::{DebuggerSnapshot, Tracing, snapshot, ui};
 use crate::input::Button;
-use crate::savestate::SaveState;
 
 /// EventLoop manages the SDL2 event loop for the application.
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
@@ -140,10 +139,10 @@ impl SdlEventLoop {
         sdl_context: &sdl2::Sdl,
     ) -> Result<(Vec<sdl2::controller::GameController>, HashMap<u32, u8>), String> {
         let game_controller_subsystem = sdl_context.game_controller()?;
-        let num = game_controller_subsystem
+        let _num = game_controller_subsystem
             .load_mappings("gamecontrollerdb.txt")
             .unwrap_or(0);
-        println!("Loaded {} game controller mappings", num);
+        // println!("Loaded {} game controller mappings", num);
         let available = game_controller_subsystem
             .num_joysticks()
             .map_err(|e| format!("Failed to enumerate joysticks: {}", e))?;
@@ -931,7 +930,7 @@ impl SdlEventLoop {
                 nes.run_cpu_tick();
             }
             Keycode::F1 => {
-                println!("Resetting NES...");
+                // println!("Resetting NES...");
                 nes.reset(true);
             }
             Keycode::F2 => {

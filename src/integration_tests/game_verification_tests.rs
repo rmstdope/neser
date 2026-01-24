@@ -199,12 +199,12 @@ mod tests {
 
         let total = roms.len();
         for (idx, rom_path) in roms.into_iter().enumerate() {
-            println!(
-                "[game verification] ({}/{}) {}",
-                idx + 1,
-                total,
-                rom_path.display()
-            );
+            // println!(
+            //     "[game verification] ({}/{}) {}",
+            //     idx + 1,
+            //     total,
+            //     rom_path.display()
+            // );
             let (rgb, width, height) = run_rom_for_frames(&rom_path, FRAMES_TO_RUN)
                 .unwrap_or_else(|e| panic!("{}: {e}", rom_path.display()));
 
@@ -214,12 +214,16 @@ mod tests {
                 assert_matches_golden_screenshot_byte_exact(&rom_path, &rgb, width, height)
                     .unwrap_or_else(|e| panic!("{}: {e}", rom_path.display()));
                 println!(
-                    "[game verification] PASS - Screenshot matched saved file: {}",
-                    golden_path.display()
+                    "[game verification] ({}/{}) PASS - {}",
+                    idx + 1,
+                    total,
+                    rom_path.display()
                 );
             } else if policy == GoldenScreenshotPolicy::AutoAccept {
                 println!(
-                    "[game verification] writing golden to {}",
+                    "[game verification] ({}/{}) writing golden to {}",
+                    idx + 1,
+                    total,
                     golden_path.display()
                 );
                 ensure_golden_screenshot(&rom_path, &rgb, width, height, policy)

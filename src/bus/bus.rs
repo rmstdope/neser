@@ -6,6 +6,7 @@ use super::ppu_device::PpuDevice;
 use super::ram_device::RamDevice;
 use crate::apu;
 use crate::cartridge::Cartridge;
+use crate::console::{BusState, MapperState};
 use crate::input::Joypad;
 use crate::ppu;
 use crate::trace_mapper;
@@ -434,18 +435,18 @@ impl Bus {
     }
 
     /// Capture mapper state for save-state.
-    pub fn capture_mapper_state(&self) -> crate::savestate::MapperState {
+    pub fn capture_mapper_state(&self) -> MapperState {
         if let Some(ref cartridge_opt) = *self.cartridge.borrow() {
             let cartridge = cartridge_opt.borrow();
             let mapper = cartridge.mapper();
-            crate::savestate::MapperState {
+            MapperState {
                 mapper_number: mapper.mapper_number(),
                 prg_ram: mapper.prg_ram_snapshot(),
                 chr_ram: mapper.chr_ram_snapshot(),
                 registers: mapper.registers_snapshot(),
             }
         } else {
-            crate::savestate::MapperState {
+            MapperState {
                 mapper_number: 0,
                 prg_ram: vec![],
                 chr_ram: vec![],
@@ -455,7 +456,7 @@ impl Bus {
     }
 
     /// Restore mapper state from a save-state.
-    pub fn restore_mapper_state(&mut self, state: &crate::savestate::MapperState) {
+    pub fn restore_mapper_state(&mut self, state: &MapperState) {
         if let Some(ref cartridge_opt) = *self.cartridge.borrow() {
             let mut cartridge = cartridge_opt.borrow_mut();
             let mapper = cartridge.mapper_mut();
@@ -468,8 +469,8 @@ impl Bus {
     }
 
     /// Capture bus state for save-state.
-    pub fn capture_state(&self) -> crate::savestate::BusState {
-        crate::savestate::BusState {
+    pub fn capture_state(&self) -> BusState {
+        BusState {
             open_bus: self.open_bus,
             oam_dma_page: *self.oam_dma_page.borrow(),
             joypad1: self.joypad1.borrow().capture_state(),
@@ -478,7 +479,7 @@ impl Bus {
     }
 
     /// Restore bus state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::savestate::BusState) {
+    pub fn restore_state(&mut self, state: &BusState) {
         self.open_bus = state.open_bus;
         *self.oam_dma_page.borrow_mut() = state.oam_dma_page;
         self.dma_triggered.replace(false);

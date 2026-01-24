@@ -137,6 +137,31 @@ pub struct PpuState {
     pub read_buffer: u8,
 }
 
+// TODO We are duplicating a lot of sprite state info in PpuState
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpritesState {
+    pub oam_data: [u8; 256],
+    pub secondary_oam: [u8; 32],
+    pub sprites_found: u8,
+    pub sprite_count: u8,
+    pub next_sprite_count: u8,
+    pub sprite_buffers_ready: bool,
+    pub sprite_0_index: Option<usize>,
+    pub next_sprite_0_index: Option<usize>,
+    pub sprite_eval_n: u8,
+    pub sprite_eval_m: u8,
+    pub sprite_eval_cycle: u8,
+    pub sprite_eval_in_range: bool,
+    pub sprite_pattern_shift_lo: [u8; 8],
+    pub sprite_pattern_shift_hi: [u8; 8],
+    pub sprite_x_positions: [u8; 8],
+    pub sprite_attributes: [u8; 8],
+    pub next_sprite_pattern_shift_lo: [u8; 8],
+    pub next_sprite_pattern_shift_hi: [u8; 8],
+    pub next_sprite_x_positions: [u8; 8],
+    pub next_sprite_attributes: [u8; 8],
+}
+
 /// APU channel envelope state.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct EnvelopeState {

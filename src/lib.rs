@@ -9,7 +9,6 @@ pub mod cpu;
 pub mod debugging;
 pub mod input;
 pub mod ppu;
-pub mod savestate;
 
 pub mod integration_tests;
 #[cfg(feature = "sdl")]

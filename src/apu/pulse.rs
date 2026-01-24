@@ -2,6 +2,7 @@
 /// Generates square waves with variable duty cycle
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
+use crate::console::PulseState;
 use crate::trace_apu;
 
 pub struct Pulse {
@@ -317,8 +318,8 @@ impl Pulse {
     }
 
     /// Capture the current pulse channel state for save-state.
-    pub fn capture_state(&self) -> crate::savestate::PulseState {
-        crate::savestate::PulseState {
+    pub fn capture_state(&self) -> PulseState {
+        PulseState {
             timer: self.timer_counter,
             timer_period: self.timer_period,
             length_counter: self.length_counter.value(),
@@ -340,7 +341,7 @@ impl Pulse {
     }
 
     /// Restore pulse channel state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::savestate::PulseState) {
+    pub fn restore_state(&mut self, state: &PulseState) {
         self.timer_counter = state.timer;
         self.timer_period = state.timer_period;
         self.length_counter.set_value(state.length_counter);

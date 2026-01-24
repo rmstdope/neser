@@ -3,6 +3,7 @@ use super::frame_counter::FrameCounter;
 use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
+use crate::console::{ApuState, FrameCounterState};
 use crate::trace_apu;
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, RingBuffer};
@@ -706,9 +707,9 @@ impl Apu {
     }
 
     /// Capture the current APU state for save-state.
-    pub fn capture_state(&self) -> crate::savestate::ApuState {
-        crate::savestate::ApuState {
-            frame_counter: crate::savestate::FrameCounterState {
+    pub fn capture_state(&self) -> ApuState {
+        ApuState {
+            frame_counter: FrameCounterState {
                 cycle_counter: self.frame_counter.get_cycle_counter(),
                 mode: self.frame_counter.get_mode(),
                 irq_inhibit: self.frame_counter.get_irq_inhibit(),
@@ -741,7 +742,7 @@ impl Apu {
     }
 
     /// Restore APU state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::savestate::ApuState) {
+    pub fn restore_state(&mut self, state: &ApuState) {
         // Restore frame counter
         self.frame_counter.restore_state(
             state.frame_counter.cycle_counter,

@@ -56,7 +56,9 @@ pub fn apply_input(io: &mut Io, event: &InputEvent) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
+    #[serial]
     #[test]
     fn apply_input_sets_mouse_position() {
         let mut imgui = imgui::Context::create();
@@ -65,6 +67,7 @@ mod tests {
         assert_eq!(io.mouse_pos, [10.0, 20.0]);
     }
 
+    #[serial]
     #[test]
     fn apply_input_sets_mouse_button_down() {
         let mut imgui = imgui::Context::create();
@@ -79,6 +82,7 @@ mod tests {
         assert!(io.mouse_down[0]);
     }
 
+    #[serial]
     #[test]
     fn apply_input_updates_mouse_wheel() {
         let mut imgui = imgui::Context::create();
@@ -88,6 +92,7 @@ mod tests {
         assert_eq!(io.mouse_wheel, -2.0);
     }
 
+    #[serial]
     #[test]
     fn apply_input_sets_key_state() {
         let mut imgui = imgui::Context::create();
@@ -99,6 +104,10 @@ mod tests {
                 down: true,
             },
         );
+        let io = imgui.io_mut();
+        io.display_size = [1.0, 1.0];
+        io.delta_time = 1.0 / 60.0;
+        let _ = imgui.fonts().build_rgba32_texture();
         imgui.frame();
         assert!(imgui.io().keys_down[Key::Space as usize]);
     }

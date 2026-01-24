@@ -1,4 +1,6 @@
 /// NES Controller Button
+use crate::console::JoypadState;
+
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Button {
     A = 0,
@@ -92,8 +94,8 @@ impl Joypad {
     }
 
     /// Capture current joypad state for save-state.
-    pub fn capture_state(&self) -> crate::savestate::JoypadState {
-        crate::savestate::JoypadState {
+    pub fn capture_state(&self) -> JoypadState {
+        JoypadState {
             strobe: self.strobe,
             button_index: self.button_index,
             button_states: self.button_states,
@@ -101,7 +103,7 @@ impl Joypad {
     }
 
     /// Restore joypad state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::savestate::JoypadState) {
+    pub fn restore_state(&mut self, state: &JoypadState) {
         self.strobe = state.strobe;
         self.button_index = state.button_index;
         self.button_states = state.button_states;

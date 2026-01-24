@@ -1,10 +1,11 @@
 use crate::apu::Apu;
 use crate::bus::Bus;
 use crate::cartridge::Cartridge;
+use crate::console::{SAVESTATE_VERSION, SaveState};
 use crate::cpu::Cpu;
 use crate::cpu::lookup;
-use crate::ppu::Ppu;
 use crate::debugging::Tracing;
+use crate::ppu::Ppu;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -569,8 +570,8 @@ impl Nes {
     ///
     /// This captures the full state of CPU, PPU, APU, RAM, and mapper,
     /// allowing the emulator to be restored to this exact state later.
-    pub fn save_state(&self) -> crate::savestate::SaveState {
-        crate::savestate::SaveState::new(
+    pub fn save_state(&self) -> SaveState {
+        SaveState::new(
             self.cpu.capture_state(),
             self.ppu.borrow().capture_state(),
             self.apu.borrow().capture_state(),
@@ -589,14 +590,11 @@ impl Nes {
     ///
     /// Returns an error if the save-state version is incompatible or if
     /// the mapper number doesn't match the currently loaded cartridge.
-    pub fn load_state(
-        &mut self,
-        state: &crate::savestate::SaveState,
-    ) -> Result<(), SaveStateError> {
+    pub fn load_state(&mut self, state: &SaveState) -> Result<(), SaveStateError> {
         // Check version compatibility
-        if state.version != crate::savestate::SAVESTATE_VERSION {
+        if state.version != SAVESTATE_VERSION {
             return Err(SaveStateError::IncompatibleVersion {
-                expected: crate::savestate::SAVESTATE_VERSION,
+                expected: SAVESTATE_VERSION,
                 found: state.version,
             });
         }
@@ -1463,7 +1461,7 @@ mod tests {
         assert!(result.is_err());
 
         if let Err(super::SaveStateError::IncompatibleVersion { expected, found }) = result {
-            assert_eq!(expected, crate::savestate::SAVESTATE_VERSION);
+            assert_eq!(expected, SAVESTATE_VERSION);
             assert_eq!(found, 9999);
         } else {
             panic!("Expected IncompatibleVersion error");

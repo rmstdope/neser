@@ -7,11 +7,9 @@ mod debugging;
 mod input;
 mod ppu;
 mod rendering;
-mod savestate;
 mod sdl_frontend;
 
-use console::{ApuChannels, Config, Nes, ParseResult};
-use savestate::SaveState;
+use console::{ApuChannels, Config, Nes, ParseResult, SaveState};
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::fs;
 

@@ -8,6 +8,7 @@
 //! - Output unit (shift register + 7-bit output level 0-127)
 //! - IRQ flag
 //! - Loop flag for sample restart
+use crate::console::DmcState;
 use crate::trace_apu;
 
 // NTSC rate periods (in CPU cycles)
@@ -395,8 +396,8 @@ impl Dmc {
     }
 
     /// Capture the current DMC channel state for save-state.
-    pub fn capture_state(&self) -> crate::savestate::DmcState {
-        crate::savestate::DmcState {
+    pub fn capture_state(&self) -> DmcState {
+        DmcState {
             timer: self.timer,
             timer_period: self.timer_period,
             output_level: self.output_level,
@@ -417,7 +418,7 @@ impl Dmc {
     }
 
     /// Restore DMC channel state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::savestate::DmcState) {
+    pub fn restore_state(&mut self, state: &DmcState) {
         self.timer = state.timer;
         self.timer_period = state.timer_period;
         self.output_level = state.output_level;
