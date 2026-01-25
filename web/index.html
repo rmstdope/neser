@@ -99,7 +99,8 @@
         setStatus("Initializing emulator...");
         try {
           if (!nes) {
-            await init();
+            const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
+            await init(wasmUrl);
             nes = new WasmNes();
           }
           nes.load_rom(romBytes);
