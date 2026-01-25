@@ -72,15 +72,18 @@
       const width = 256;
       const height = 240;
       const imageData = ctx.createImageData(width, height);
-      const rgba = new Uint8ClampedArray(width * height * 4);
+      const imageDataBuffer = imageData.data;
       // Set alpha once
-      for (let a = 3; a < rgba.length; a += 4) rgba[a] = 0xff;
+      for (let a = 3; a < imageDataBuffer.length; a += 4) imageDataBuffer[a] = 0xff;
       let nes;
       let romBytes;
       let running = false;
       let paused = false;
       let lastFrameTime = 0;
       const frameInterval = 1000 / 60.0988; // approx NTSC
+      const fpsLogIntervalMs = 1000;
+      let fpsLastTime = 0;
+      let fpsFrames = 0;
 
       function setStatus(msg, isError = false) {
         statusEl.textContent = msg;
@@ -164,12 +167,22 @@
         try {
           const frame = nes.render_frame(); // RGB888
           for (let i = 0, j = 0; i < frame.length; i += 3, j += 4) {
-            rgba[j] = frame[i];
-            rgba[j + 1] = frame[i + 1];
-            rgba[j + 2] = frame[i + 2];
+            imageDataBuffer[j] = frame[i];
+            imageDataBuffer[j + 1] = frame[i + 1];
+            imageDataBuffer[j + 2] = frame[i + 2];
           }
-          imageData.data.set(rgba);
           ctx.putImageData(imageData, 0, 0);
+          fpsFrames += 1;
+          if (fpsLastTime === 0) {
+            fpsLastTime = timestamp;
+          }
+          const fpsElapsed = timestamp - fpsLastTime;
+          if (fpsElapsed >= fpsLogIntervalMs) {
+            const fps = (fpsFrames * 1000) / fpsElapsed;
+            console.log(`FPS: ${fps.toFixed(1)}`);
+            fpsFrames = 0;
+            fpsLastTime = timestamp;
+          }
         } catch (err) {
           running = false;
           startBtn.disabled = false;
