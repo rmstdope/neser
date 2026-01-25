@@ -124,11 +124,11 @@
         const channelData = buffer.getChannelData(0);
 
         // Normalize and copy samples to the buffer
-        // NES APU outputs 0.0 to ~1.177, need to normalize to -1.0 to 1.0 for Web Audio
+        // NES APU outputs 0.0 to ~1.177, normalize to 0.0 to 1.0 for Web Audio
         for (let i = 0; i < samples.length; i++) {
-          // Map NES 0.0-1.177 to Web Audio 0.0-1.0, then center around 0
+          // Map NES 0.0-1.177 to Web Audio 0.0-1.0 (0.0 represents silence)
           const normalized = samples[i] / NES_APU_MAX;
-          channelData[i] = normalized * 2.0 - 1.0; // Convert 0.0-1.0 to -1.0 to 1.0
+          channelData[i] = Math.min(1.0, Math.max(0.0, normalized));
         }
 
         // Create a buffer source and schedule it
