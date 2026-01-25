@@ -3,6 +3,7 @@ mod snapshot;
 mod tracing;
 mod types;
 
+#[cfg(feature = "sdl")]
 pub mod ui;
 
 pub use snapshot::{DebuggerViewState, snapshot};

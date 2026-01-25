@@ -39,3 +39,6 @@ roms/games
 
 # NESER config
 neser.conf
+
+# wasm-bindgen output
+web/pkg/
