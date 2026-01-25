@@ -78,7 +78,6 @@
       let running = false;
       let paused = false;
       let lastFrameTime = 0;
-      const frameInterval = 500 / 60.0988; // approx NTSC
       const fpsLogIntervalMs = 1000;
       let fpsLastTime = 0;
       let fpsFrames = 0;
@@ -157,10 +156,6 @@
 
       function step(timestamp) {
         if (!running || paused) return;
-        if (timestamp - lastFrameTime < frameInterval) {
-          requestAnimationFrame(step);
-          return;
-        }
         lastFrameTime = timestamp;
         try {
           const frame = nes.render_frame_rgba(); // RGBA8888
