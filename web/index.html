@@ -239,6 +239,7 @@
       const screenPlusBtn = document.getElementById("screen-plus");
       const fullscreenBtn = document.getElementById("fullscreen");
       
+      // NES native resolution is 256x240 pixels
       const NES_ASPECT_RATIO = 256 / 240;
       const SCALE_STEP = 120; // Change height by 120px each step
       let currentHeight = 720; // Initial height
@@ -262,21 +263,6 @@
         if (!document.fullscreenElement) {
           try {
             await canvas.requestFullscreen();
-            // In fullscreen, calculate size to maintain aspect ratio
-            const screenWidth = window.screen.width;
-            const screenHeight = window.screen.height;
-            const canvasAspect = NES_ASPECT_RATIO;
-            const screenAspect = screenWidth / screenHeight;
-            
-            if (screenAspect > canvasAspect) {
-              // Screen is wider, fit to height
-              canvas.style.height = "100vh";
-              canvas.style.width = `${screenHeight * canvasAspect}px`;
-            } else {
-              // Screen is taller, fit to width
-              canvas.style.width = "100vw";
-              canvas.style.height = `${screenWidth / canvasAspect}px`;
-            }
           } catch (err) {
             console.error("Failed to enter fullscreen:", err);
             setStatus("Failed to enter fullscreen mode", true);
@@ -291,9 +277,26 @@
         }
       });
 
-      // Reset canvas size when exiting fullscreen
+      // Handle canvas resizing when entering/exiting fullscreen
       document.addEventListener("fullscreenchange", () => {
-        if (!document.fullscreenElement) {
+        if (document.fullscreenElement) {
+          // Entered fullscreen - calculate size to maintain aspect ratio
+          const viewportWidth = window.innerWidth;
+          const viewportHeight = window.innerHeight;
+          const canvasAspect = NES_ASPECT_RATIO;
+          const viewportAspect = viewportWidth / viewportHeight;
+          
+          if (viewportAspect > canvasAspect) {
+            // Viewport is wider, fit to height
+            canvas.style.height = "100vh";
+            canvas.style.width = `${viewportHeight * canvasAspect}px`;
+          } else {
+            // Viewport is taller, fit to width
+            canvas.style.width = "100vw";
+            canvas.style.height = `${viewportWidth / canvasAspect}px`;
+          }
+        } else {
+          // Exited fullscreen - restore previous size
           updateCanvasSize(currentHeight);
         }
       });
