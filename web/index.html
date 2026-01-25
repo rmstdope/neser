@@ -34,6 +34,7 @@
   <body>
     <header>
       <h1>NESER Web (MVP)</h1>
+      <label for="rom">ROM file:</label>
       <input type="file" id="rom" accept=".nes" />
       <button id="start">Start</button>
       <span id="status">Load a ROM to begin</span>
@@ -171,12 +172,14 @@
       const pauseBtn = document.createElement("button");
       pauseBtn.id = "pause";
       pauseBtn.textContent = "Pause/Resume";
+      pauseBtn.setAttribute("aria-label", "Pause or resume emulation");
       pauseBtn.addEventListener("click", pauseResume);
       startBtn.insertAdjacentElement("afterend", pauseBtn);
 
       const stopBtn = document.createElement("button");
       stopBtn.id = "stop";
       stopBtn.textContent = "Stop";
+      stopBtn.setAttribute("aria-label", "Stop emulation");
       stopBtn.addEventListener("click", stop);
       pauseBtn.insertAdjacentElement("afterend", stopBtn);
     </script>

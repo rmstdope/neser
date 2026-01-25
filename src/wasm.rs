@@ -36,7 +36,8 @@ impl WasmNes {
     pub fn render_frame(&mut self) -> Vec<u8> {
         // NOTE: MVP implementation runs a synchronous loop until a frame is ready.
         // For browser responsiveness, this could be broken into smaller chunks via
-        // async/yield in a future enhancement.
+        // async/yield in a future enhancement. See web/README.md for notes about
+        // potential main-thread blocking with heavy frames.
         while !self.nes.is_ready_to_render() {
             self.nes.run_cpu_tick();
         }

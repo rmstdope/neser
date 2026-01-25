@@ -44,3 +44,10 @@ fn render_frame_returns_expected_size() {
     let frame = nes.render_frame();
     assert_eq!(frame.len(), 256 * 240 * 3);
 }
+
+#[wasm_bindgen_test]
+fn render_frame_without_rom_succeeds() {
+    let mut nes = WasmNes::new();
+    let frame = nes.render_frame();
+    assert_eq!(frame.len(), 256 * 240 * 3);
+}
