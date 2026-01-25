@@ -46,6 +46,11 @@
       <button id="start">Start</button>
       <span id="status">Load a ROM to begin</span>
     </header>
+    <div id="screen-controls" style="display: flex; gap: 8px; margin-bottom: 8px;">
+      <button id="screen-minus">Screen -</button>
+      <button id="screen-plus">Screen +</button>
+      <button id="fullscreen">Fullscreen</button>
+    </div>
     <canvas id="screen" width="256" height="240"></canvas>
     <div id="controls">
       <strong>Controls:</strong> W = Up | A = Left | S = Down | D = Right | F = A | G = B | R = Select | T = Start
@@ -224,6 +229,83 @@
         if (mapping) {
           e.preventDefault();
           nes.set_button(1, mapping.button, false);
+        }
+      });
+
+      // Screen size controls
+      const screenMinusBtn = document.getElementById("screen-minus");
+      const screenPlusBtn = document.getElementById("screen-plus");
+      const fullscreenBtn = document.getElementById("fullscreen");
+      
+      // NES native resolution is 256x240 pixels
+      const NES_ASPECT_RATIO = 256 / 240;
+      const SCALE_STEP = 120; // Change height by 120px each step
+      const INITIAL_HEIGHT = 720; // Initial display height in pixels
+      let currentHeight = INITIAL_HEIGHT;
+
+      function updateCanvasSize(newHeight) {
+        currentHeight = Math.max(240, Math.min(newHeight, 1440)); // Clamp between 240 and 1440
+        const newWidth = Math.round(currentHeight * NES_ASPECT_RATIO);
+        canvas.style.width = `${newWidth}px`;
+        canvas.style.height = `${currentHeight}px`;
+      }
+
+      // Update fullscreen button text based on state
+      function updateFullscreenButton() {
+        fullscreenBtn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
+      }
+
+      // Set initial canvas size and button text
+      updateCanvasSize(INITIAL_HEIGHT);
+      updateFullscreenButton();
+
+      screenMinusBtn.addEventListener("click", () => {
+        updateCanvasSize(currentHeight - SCALE_STEP);
+      });
+
+      screenPlusBtn.addEventListener("click", () => {
+        updateCanvasSize(currentHeight + SCALE_STEP);
+      });
+
+      fullscreenBtn.addEventListener("click", async () => {
+        if (!document.fullscreenElement) {
+          try {
+            await canvas.requestFullscreen();
+          } catch (err) {
+            console.error("Failed to enter fullscreen:", err);
+            setStatus("Failed to enter fullscreen mode", true);
+          }
+        } else {
+          try {
+            await document.exitFullscreen();
+          } catch (err) {
+            console.error("Failed to exit fullscreen:", err);
+            setStatus("Failed to exit fullscreen mode", true);
+          }
+        }
+      });
+
+      // Handle canvas resizing when entering/exiting fullscreen
+      document.addEventListener("fullscreenchange", () => {
+        updateFullscreenButton();
+        if (document.fullscreenElement) {
+          // Entered fullscreen - calculate size to maintain aspect ratio
+          const viewportWidth = window.innerWidth;
+          const viewportHeight = window.innerHeight;
+          const viewportAspect = viewportWidth / viewportHeight;
+          
+          if (viewportAspect > NES_ASPECT_RATIO) {
+            // Viewport is wider, fit to height
+            canvas.style.height = "100vh";
+            canvas.style.width = `${viewportHeight * NES_ASPECT_RATIO}px`;
+          } else {
+            // Viewport is taller, fit to width
+            canvas.style.width = "100vw";
+            canvas.style.height = `${viewportWidth / NES_ASPECT_RATIO}px`;
+          }
+        } else {
+          // Exited fullscreen - restore previous size
+          updateCanvasSize(currentHeight);
         }
       });
     </script>
