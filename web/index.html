@@ -250,8 +250,14 @@
         canvas.style.height = `${currentHeight}px`;
       }
 
-      // Set initial canvas size
+      // Update fullscreen button text based on state
+      function updateFullscreenButton() {
+        fullscreenBtn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
+      }
+
+      // Set initial canvas size and button text
       updateCanvasSize(INITIAL_HEIGHT);
+      updateFullscreenButton();
 
       screenMinusBtn.addEventListener("click", () => {
         updateCanvasSize(currentHeight - SCALE_STEP);
@@ -278,11 +284,6 @@
           }
         }
       });
-
-      // Update fullscreen button text based on state
-      function updateFullscreenButton() {
-        fullscreenBtn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
-      }
 
       // Handle canvas resizing when entering/exiting fullscreen
       document.addEventListener("fullscreenchange", () => {
