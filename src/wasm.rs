@@ -90,4 +90,21 @@ impl WasmNes {
         };
         self.nes.set_button(controller, nes_button, pressed);
     }
+
+    /// Get all available audio samples from the emulator.
+    ///
+    /// Returns a Float32Array containing all pending audio samples.
+    /// Each sample is typically in the range 0.0 to ~1.177. The base APU mixer
+    /// (pulse + TND) produces values up to roughly 0.966, and expansion audio
+    /// from certain mappers (e.g., VRC6, MMC5, Namco 163) can increase this
+    /// further. A conservative maximum of 1.177 is used for normalization.
+    /// Call this after each frame to retrieve accumulated audio samples.
+    #[wasm_bindgen]
+    pub fn get_audio_samples(&mut self) -> Vec<f32> {
+        let mut samples = Vec::new();
+        while let Some(sample) = self.nes.get_sample() {
+            samples.push(sample);
+        }
+        samples
+    }
 }
