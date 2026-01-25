@@ -51,3 +51,25 @@ fn render_frame_without_rom_succeeds() {
     let frame = nes.render_frame();
     assert_eq!(frame.len(), 256 * 240 * 3);
 }
+
+#[wasm_bindgen_test]
+fn set_button_accepts_valid_inputs() {
+    let mut nes = WasmNes::new();
+    // Test all valid button values (0-7) and controller values (1-2)
+    for controller in 1..=2 {
+        for button in 0..=7 {
+            nes.set_button(controller, button, true);
+            nes.set_button(controller, button, false);
+        }
+    }
+    // If we reach here without panicking, the test passes
+}
+
+#[wasm_bindgen_test]
+fn set_button_ignores_invalid_button() {
+    let mut nes = WasmNes::new();
+    // Invalid button numbers should be ignored without panicking
+    nes.set_button(1, 8, true);
+    nes.set_button(1, 255, true);
+}
+

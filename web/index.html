@@ -29,6 +29,13 @@
         font-size: 0.9rem;
         color: #8fe28f;
       }
+      #controls {
+        font-size: 0.85rem;
+        color: #999;
+        text-align: center;
+        max-width: 600px;
+        margin-top: 8px;
+      }
     </style>
   </head>
   <body>
@@ -40,6 +47,9 @@
       <span id="status">Load a ROM to begin</span>
     </header>
     <canvas id="screen" width="256" height="240"></canvas>
+    <div id="controls">
+      <strong>Controls:</strong> W/A/S/D = Up/Left/Down/Right | F = A | G = B | R = Select | T = Start
+    </div>
     <script type="module">
       import init, { WasmNes } from "./pkg/neser.js";
 
@@ -182,6 +192,39 @@
       stopBtn.setAttribute("aria-label", "Stop emulation");
       stopBtn.addEventListener("click", stop);
       pauseBtn.insertAdjacentElement("afterend", stopBtn);
+
+      // Keyboard input for controller 1
+      // Mapping: W=Up, S=Down, A=Left, D=Right, G=B, F=A, R=Select, T=Start
+      const keyToButton = {
+        'w': { button: 4, name: 'Up' },      // Button 4 = Up
+        's': { button: 5, name: 'Down' },    // Button 5 = Down
+        'a': { button: 6, name: 'Left' },    // Button 6 = Left
+        'd': { button: 7, name: 'Right' },   // Button 7 = Right
+        'g': { button: 1, name: 'B' },       // Button 1 = B
+        'f': { button: 0, name: 'A' },       // Button 0 = A
+        'r': { button: 2, name: 'Select' },  // Button 2 = Select
+        't': { button: 3, name: 'Start' }    // Button 3 = Start
+      };
+
+      document.addEventListener('keydown', (e) => {
+        if (!nes) return;
+        const key = e.key.toLowerCase();
+        const mapping = keyToButton[key];
+        if (mapping) {
+          e.preventDefault(); // Prevent default browser behavior
+          nes.set_button(1, mapping.button, true);
+        }
+      });
+
+      document.addEventListener('keyup', (e) => {
+        if (!nes) return;
+        const key = e.key.toLowerCase();
+        const mapping = keyToButton[key];
+        if (mapping) {
+          e.preventDefault();
+          nes.set_button(1, mapping.button, false);
+        }
+      });
     </script>
   </body>
 </html>
