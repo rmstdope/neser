@@ -83,6 +83,13 @@
       let fpsLastTime = 0;
       let fpsFrames = 0;
 
+      // Web Audio API setup
+      let audioContext = null;
+      let audioBufferQueue = [];
+      let nextAudioTime = 0;
+      const AUDIO_SAMPLE_RATE = 44100; // Match NES APU sample rate
+      const NES_APU_MAX = 1.177; // Max output from NES APU mixer
+
       function setStatus(msg, isError = false) {
         statusEl.textContent = msg;
         statusEl.style.color = isError ? "#f88" : "#8fe28f";
@@ -97,6 +104,47 @@
 
       function clearCanvas() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      function initAudioContext() {
+        if (!audioContext) {
+          // Create AudioContext on first user interaction (required by browsers)
+          audioContext = new (window.AudioContext || window.webkitAudioContext)({
+            sampleRate: AUDIO_SAMPLE_RATE
+          });
+          nextAudioTime = audioContext.currentTime;
+          console.log(`Audio initialized: ${audioContext.sampleRate} Hz`);
+        }
+      }
+
+      function playAudioSamples(samples) {
+        if (!audioContext || samples.length === 0) return;
+
+        // Create an audio buffer for the samples
+        const buffer = audioContext.createBuffer(1, samples.length, audioContext.sampleRate);
+        const channelData = buffer.getChannelData(0);
+
+        // Normalize and copy samples to the buffer
+        // NES APU outputs 0.0 to ~1.177, need to normalize to -1.0 to 1.0 for Web Audio
+        for (let i = 0; i < samples.length; i++) {
+          // Map NES 0.0-1.177 to Web Audio 0.0-1.0, then center around 0
+          const normalized = samples[i] / NES_APU_MAX;
+          channelData[i] = normalized * 2.0 - 1.0; // Convert 0.0-1.0 to -1.0 to 1.0
+        }
+
+        // Create a buffer source and schedule it
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
+
+        // Schedule playback at the next available time
+        // Ensure smooth continuous playback by scheduling samples back-to-back
+        const now = audioContext.currentTime;
+        if (nextAudioTime < now) {
+          nextAudioTime = now;
+        }
+        source.start(nextAudioTime);
+        nextAudioTime += buffer.duration;
       }
 
       async function start() {
@@ -120,6 +168,8 @@
             nes = new WasmNes();
           }
           nes.load_rom(romBytes);
+          // Initialize audio context on user interaction (browser requirement)
+          initAudioContext();
         } catch (err) {
           setStatus(`Failed to load ROM: ${err}`, true);
           startBtn.disabled = false;
@@ -166,6 +216,13 @@
           const frame = nes.render_frame_rgba(); // RGBA8888
           imageDataBuffer.set(frame);
           ctx.putImageData(imageData, 0, 0);
+          
+          // Get and play audio samples
+          const audioSamples = nes.get_audio_samples();
+          if (audioSamples.length > 0) {
+            playAudioSamples(audioSamples);
+          }
+          
           fpsFrames += 1;
           if (fpsLastTime === 0) {
             fpsLastTime = timestamp;
