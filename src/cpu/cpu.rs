@@ -586,6 +586,7 @@ impl Cpu {
                 total,
                 self.total_cycles
             );
+            let _ = total;
             *tick += 1;
         } else {
             trace_cpu!(2; "tick cyc={} [internal]", self.total_cycles);
@@ -863,6 +864,7 @@ impl Cpu {
                     self.total_cycles,
                     addr
                 );
+                let _ = total;
                 *tick += 1;
             } else {
                 trace_cpu!(2; "tick cyc={} [read] addr=0x{:04X}", self.total_cycles, addr);
@@ -920,6 +922,7 @@ impl Cpu {
                 addr,
                 value
             );
+            let _ = total;
             *tick += 1;
         } else {
             trace_cpu!(2;

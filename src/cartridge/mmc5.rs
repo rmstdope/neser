@@ -1182,6 +1182,7 @@ impl Mapper for MMC5Mapper {
             let tile_in_pattern = (addr >> 4) & 0xFF;
             trace_mapper!(4; "MMC5 exattr CHR read addr=${:04X} bank={} tile={} fine_y={} tile_idx={}",
                 addr, bank, tile_in_pattern, fine_y, self.last_bg_tile_index);
+            let _ = (fine_y, tile_in_pattern);
         }
 
         self.read_chr_banked(bank, addr)

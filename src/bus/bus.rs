@@ -310,6 +310,7 @@ impl Bus {
             trace_mapper!(1; "[mmc5][scroll] $5105=0x55 t=0x{:04X} v=0x{:04X} fine_x={} w={}",
                 t, v, fine_x, w
             );
+            let _ = (t, v, fine_x, w);
         }
 
         // println!("Write to {:04X}: {:02X}", addr, value);
@@ -326,6 +327,7 @@ impl Bus {
             trace_mapper!(4; "[mmc5][scroll] ${:04X}={:#04X} t=0x{:04X} v=0x{:04X} fine_x={} w={}",
                 addr, value, t, v, fine_x, w
             );
+            let _ = (t, v, fine_x, w);
         }
 
         if wrote {
