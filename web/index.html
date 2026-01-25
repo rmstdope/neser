@@ -85,10 +85,9 @@
 
       // Web Audio API setup
       let audioContext = null;
-      let audioBufferQueue = [];
       let nextAudioTime = 0;
-      const AUDIO_SAMPLE_RATE = 44100; // Match NES APU sample rate
-      const NES_APU_MAX = 1.177; // Max output from NES APU mixer
+      const AUDIO_SAMPLE_RATE = 44100; // Target output sample rate for Web Audio (NES audio is downsampled to this rate)
+      const NES_APU_MAX = 1.177; // Conservative max output from NES APU mixer including expansion audio
 
       function setStatus(msg, isError = false) {
         statusEl.textContent = msg;
@@ -142,6 +141,11 @@
         const now = audioContext.currentTime;
         if (nextAudioTime < now) {
           nextAudioTime = now;
+        }
+        // Cap how far ahead of real-time we schedule audio to avoid unbounded latency
+        const MAX_AUDIO_LOOKAHEAD = 0.5; // seconds
+        if (nextAudioTime - now > MAX_AUDIO_LOOKAHEAD) {
+          nextAudioTime = now + MAX_AUDIO_LOOKAHEAD;
         }
         source.start(nextAudioTime);
         nextAudioTime += buffer.duration;
