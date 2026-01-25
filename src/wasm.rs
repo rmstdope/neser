@@ -1,5 +1,6 @@
 use crate::cartridge::Cartridge;
 use crate::console::{Nes, TvSystem};
+use crate::input::Button;
 use wasm_bindgen::prelude::*;
 
 /// Provides a minimal WASM bridge for running the emulator in the browser.
@@ -43,5 +44,27 @@ impl WasmNes {
         }
         self.nes.clear_ready_to_render();
         self.nes.get_screen_buffer().snapshot()
+    }
+
+    /// Set button state for a controller.
+    ///
+    /// # Arguments
+    /// * `controller` - Controller number (1 or 2)
+    /// * `button` - Button number (0=A, 1=B, 2=Select, 3=Start, 4=Up, 5=Down, 6=Left, 7=Right)
+    /// * `pressed` - true if pressed, false if released
+    #[wasm_bindgen]
+    pub fn set_button(&mut self, controller: u8, button: u8, pressed: bool) {
+        let nes_button = match button {
+            0 => Button::A,
+            1 => Button::B,
+            2 => Button::Select,
+            3 => Button::Start,
+            4 => Button::Up,
+            5 => Button::Down,
+            6 => Button::Left,
+            7 => Button::Right,
+            _ => return, // Invalid button, ignore
+        };
+        self.nes.set_button(controller, nes_button, pressed);
     }
 }

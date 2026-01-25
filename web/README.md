@@ -27,5 +27,6 @@ python -m http.server 8000
 
 ## Notes
 - Generated artifacts under `web/pkg/` are ignored in git; regenerate locally via the steps above.
-- The MVP is graphics-only: no audio or input.
+- Keyboard input is supported for controller 1 using keys: W/A/S/D (directional), F (A button), G (B button), R (Select), T (Start).
+- Audio is not yet implemented.
 - Rendering runs on the browser main thread; heavy frames or slow hosts can briefly block UI/event handling.
