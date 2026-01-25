@@ -262,23 +262,38 @@
         if (!document.fullscreenElement) {
           try {
             await canvas.requestFullscreen();
-            // In fullscreen, make canvas fill the screen while maintaining aspect ratio
-            canvas.style.width = "100vw";
-            canvas.style.height = "100vh";
-            canvas.style.objectFit = "contain";
+            // In fullscreen, calculate size to maintain aspect ratio
+            const screenWidth = window.screen.width;
+            const screenHeight = window.screen.height;
+            const canvasAspect = NES_ASPECT_RATIO;
+            const screenAspect = screenWidth / screenHeight;
+            
+            if (screenAspect > canvasAspect) {
+              // Screen is wider, fit to height
+              canvas.style.height = "100vh";
+              canvas.style.width = `${screenHeight * canvasAspect}px`;
+            } else {
+              // Screen is taller, fit to width
+              canvas.style.width = "100vw";
+              canvas.style.height = `${screenWidth / canvasAspect}px`;
+            }
           } catch (err) {
             console.error("Failed to enter fullscreen:", err);
             setStatus("Failed to enter fullscreen mode", true);
           }
         } else {
-          await document.exitFullscreen();
+          try {
+            await document.exitFullscreen();
+          } catch (err) {
+            console.error("Failed to exit fullscreen:", err);
+            setStatus("Failed to exit fullscreen mode", true);
+          }
         }
       });
 
       // Reset canvas size when exiting fullscreen
       document.addEventListener("fullscreenchange", () => {
         if (!document.fullscreenElement) {
-          canvas.style.objectFit = "";
           updateCanvasSize(currentHeight);
         }
       });
