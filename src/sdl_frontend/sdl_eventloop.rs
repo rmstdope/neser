@@ -4,8 +4,8 @@ use crate::console::{Config, Nes, SaveState};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use std::collections::HashMap;
+use std::fs;
 use std::time::{Duration, Instant};
-use std::{fs, usize};
 
 use crate::debugging::{DebuggerSnapshot, Tracing, snapshot, ui};
 use crate::input::Button;
@@ -75,15 +75,15 @@ impl SdlEventLoop {
     /// # Examples
     ///
     /// ```no_run
-    /// use console::Config;
-    /// use sdl_frontend::EventLoop;
+    /// use neser::console::Config;
+    /// use neser::sdl_frontend::SdlEventLoop;
     ///
     /// let config = Config::default();
     /// // Create a headless EventLoop for testing
-    /// let headless = EventLoop::new(true, None, &config)?;
+    /// let headless = SdlEventLoop::new(true, None, &config)?;
     ///
     /// // Create an EventLoop with a window
-    /// let windowed = EventLoop::new(false, None, &config)?;
+    /// let windowed = SdlEventLoop::new(false, None, &config)?;
     /// # Ok::<(), String>(())
     /// ```
     pub fn new(

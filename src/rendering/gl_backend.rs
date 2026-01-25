@@ -4,7 +4,7 @@ use crate::debugging::ui as debugger_ui;
 use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;
-use std::sync::Arc;
+use std::rc::Rc;
 use std::time::Instant;
 
 /// Backend-agnostic surface for presenting rendered frames.
@@ -23,7 +23,7 @@ pub trait RenderTarget {
 }
 
 /// Loader for GL procedure addresses used by OpenGL and related backends.
-pub type ProcAddressLoader = Arc<dyn Fn(&str) -> *const c_void>;
+pub type ProcAddressLoader = Rc<dyn Fn(&str) -> *const c_void>;
 
 /// OpenGL renderer that draws the NES frame and optional debugger UI.
 pub struct GlBackend {

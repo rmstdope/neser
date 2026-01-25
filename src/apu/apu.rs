@@ -681,7 +681,7 @@ impl Apu {
     }
 
     #[cfg(test)]
-    fn push_sample_for_test(&mut self, sample: f32) {
+    pub(crate) fn push_sample_for_test(&mut self, sample: f32) {
         self.push_pending_sample(sample);
     }
 

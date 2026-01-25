@@ -9,15 +9,27 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 pub struct WasmNes {
     nes: Nes,
+    audio_muted: bool,
+}
+
+impl Default for WasmNes {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[wasm_bindgen]
 impl WasmNes {
+    fn drain_audio_samples(&mut self) {
+        while self.nes.get_sample().is_some() {}
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new() -> WasmNes {
         console_error_panic_hook::set_once();
         WasmNes {
             nes: Nes::new(TvSystem::Ntsc),
+            audio_muted: false,
         }
     }
 
@@ -101,10 +113,35 @@ impl WasmNes {
     /// Call this after each frame to retrieve accumulated audio samples.
     #[wasm_bindgen]
     pub fn get_audio_samples(&mut self) -> Vec<f32> {
+        if self.audio_muted {
+            self.drain_audio_samples();
+            return Vec::new();
+        }
         let mut samples = Vec::new();
         while let Some(sample) = self.nes.get_sample() {
             samples.push(sample);
         }
         samples
+    }
+
+    /// Set audio mute state.
+    #[wasm_bindgen]
+    pub fn set_audio_muted(&mut self, muted: bool) {
+        self.audio_muted = muted;
+        if muted {
+            self.drain_audio_samples();
+        }
+    }
+
+    /// Returns true if audio is muted.
+    #[wasm_bindgen]
+    pub fn is_audio_muted(&self) -> bool {
+        self.audio_muted
+    }
+
+    #[cfg(test)]
+    #[wasm_bindgen]
+    pub fn push_audio_sample_for_test(&mut self, sample: f32) {
+        self.nes.apu.borrow_mut().push_sample_for_test(sample);
     }
 }

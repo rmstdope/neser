@@ -1,8 +1,8 @@
 #![cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
 
+use crate::wasm::WasmNes;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
-use crate::wasm::WasmNes;
 
 wasm_bindgen_test_configure!(run_in_browser);
 
@@ -33,7 +33,14 @@ fn load_rom_rejects_invalid_header() {
     let mut rom = minimal_nrom();
     rom[0] = 0; // break magic
     let err = nes.load_rom(&rom).expect_err("invalid rom should error");
-    assert!(err.as_string().unwrap_or_default().to_lowercase().contains("invalid"), "unexpected err: {:?}", err.as_string());
+    assert!(
+        err.as_string()
+            .unwrap_or_default()
+            .to_lowercase()
+            .contains("invalid"),
+        "unexpected err: {:?}",
+        err.as_string()
+    );
 }
 
 #[wasm_bindgen_test]
@@ -97,24 +104,46 @@ fn get_audio_samples_returns_vec() {
     let mut nes = WasmNes::new();
     let rom = minimal_nrom();
     nes.load_rom(&rom).expect("valid rom should load");
-    
+
     // Run a frame to generate some audio samples
     let _frame = nes.render_frame_rgba();
-    
+
     // Get audio samples - should return a valid vector
     // Note: May be empty or have data depending on timing
     let _samples = nes.get_audio_samples();
-    
+
     // Just verify it doesn't panic - actual sample count depends on emulator timing
+}
+
+#[wasm_bindgen_test]
+fn audio_samples_unmuted_returns_samples() {
+    let mut nes = WasmNes::new();
+    nes.push_audio_sample_for_test(0.5);
+    nes.set_audio_muted(false);
+    let samples = nes.get_audio_samples();
+    assert_eq!(samples.len(), 1);
+    assert!((samples[0] - 0.5).abs() < f32::EPSILON);
+}
+
+#[wasm_bindgen_test]
+fn audio_samples_muted_drops_samples() {
+    let mut nes = WasmNes::new();
+    nes.push_audio_sample_for_test(0.5);
+    nes.set_audio_muted(true);
+    let samples = nes.get_audio_samples();
+    assert!(samples.is_empty());
+
+    nes.set_audio_muted(false);
+    let samples_after_unmute = nes.get_audio_samples();
+    assert!(samples_after_unmute.is_empty());
 }
 
 #[wasm_bindgen_test]
 fn get_audio_samples_without_rom_succeeds() {
     let mut nes = WasmNes::new();
-    
+
     // Should be able to call get_audio_samples even without a ROM
     let _samples = nes.get_audio_samples();
-    
+
     // Should not panic
 }
-

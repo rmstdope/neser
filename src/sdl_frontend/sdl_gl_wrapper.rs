@@ -7,7 +7,7 @@ use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
 use sdl2::video::{FullscreenType, GLProfile, Window, WindowPos};
-use std::sync::Arc;
+use std::rc::Rc;
 
 /// SDL-specific wrapper that owns a `GlBackend` and SDL window/context.
 ///
@@ -72,7 +72,7 @@ impl SdlGlWrapper {
         gl::load_with(|s| video_subsystem.gl_get_proc_address(s) as _);
 
         let proc_address: ProcAddressLoader =
-            Arc::new(move |s| video_subsystem.gl_get_proc_address(s) as *const _);
+            Rc::new(move |s| video_subsystem.gl_get_proc_address(s) as *const _);
 
         let render_target = Box::new(SdlRenderTarget { window, gl_context });
         let gl_backend =
@@ -145,7 +145,7 @@ fn resolve_window_size(
 ) -> Result<(u32, u32), String> {
     if let Some(display) = target_display {
         match video_subsystem.display_bounds(display) {
-            Ok(bounds) => Ok((bounds.width() as u32, bounds.height() as u32)),
+            Ok(bounds) => Ok((bounds.width(), bounds.height())),
             Err(e) => Err(format!(
                 "Failed to query bounds for display {display}: {e}. Cannot enter fullscreen mode."
             )),

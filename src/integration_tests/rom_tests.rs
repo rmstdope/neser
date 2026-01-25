@@ -13,13 +13,13 @@ mod tests {
     /// - $6000 = 0x81: Test requests a reset
     /// 2. Console output based results:
     /// - The test ROM prints text to the nametable area. The test is considered passed if the text
-    ///  contains "PASSED" and failed if it contains "FAILED" or "ERROR".
+    ///   contains "PASSED" and failed if it contains "FAILED" or "ERROR".
     /// 3. Console output based results with CRC-32 matching:
     /// - The test ROM prints text to the nametable area. The test is considered passed if the text
-    /// contains a CRC-32 value that matches one of the expected values.
+    ///   contains a CRC-32 value that matches one of the expected values.
     /// 4. Address-based tests:
     /// - The test ROM runs until a specific CPU address is reached, at which point a custom verifier
-    /// function is called to determine pass/fail.
+    ///   function is called to determine pass/fail.
     ///
     use crate::cartridge::Cartridge;
     use crate::console::{Nes, TvSystem};
@@ -1358,7 +1358,7 @@ mod tests {
 
     // tvpassfail/tv ROM suite not automated yet
     // We will need to capture the screen post filtering (need NTSC filtering turned on)
-    // For the first test, we should be able to find nearest color of each 8x8 tile and 
+    // For the first test, we should be able to find nearest color of each 8x8 tile and
     // parse PASS
     // For the second test, we should be able to count the height and width of the left
     // rectangle (filtering off) and match
