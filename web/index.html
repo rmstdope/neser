@@ -107,6 +107,7 @@
         } catch (err) {
           setStatus(`Failed to load ROM: ${err}`, true);
           startBtn.disabled = false;
+          romInput.disabled = false;
           return;
         }
         running = true;

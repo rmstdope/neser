@@ -28,3 +28,4 @@ python -m http.server 8000
 ## Notes
 - Generated artifacts under `web/pkg/` are ignored in git; regenerate locally via the steps above.
 - The MVP is graphics-only: no audio or input.
+- Rendering runs on the browser main thread; heavy frames (large scaling, debug overlays, or slow hosts) can briefly block UI/event handling. If you notice jank, lower canvas scale or disable expensive overlays.
