@@ -24,8 +24,6 @@
       canvas {
         image-rendering: pixelated;
         border: 1px solid #444;
-        width: 768px;
-        height: 720px;
       }
       #status {
         font-size: 0.9rem;
@@ -252,6 +250,9 @@
         canvas.style.height = `${currentHeight}px`;
       }
 
+      // Set initial canvas size
+      updateCanvasSize(INITIAL_HEIGHT);
+
       screenMinusBtn.addEventListener("click", () => {
         updateCanvasSize(currentHeight - SCALE_STEP);
       });
@@ -278,23 +279,28 @@
         }
       });
 
+      // Update fullscreen button text based on state
+      function updateFullscreenButton() {
+        fullscreenBtn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
+      }
+
       // Handle canvas resizing when entering/exiting fullscreen
       document.addEventListener("fullscreenchange", () => {
+        updateFullscreenButton();
         if (document.fullscreenElement) {
           // Entered fullscreen - calculate size to maintain aspect ratio
           const viewportWidth = window.innerWidth;
           const viewportHeight = window.innerHeight;
-          const canvasAspect = NES_ASPECT_RATIO;
           const viewportAspect = viewportWidth / viewportHeight;
           
-          if (viewportAspect > canvasAspect) {
+          if (viewportAspect > NES_ASPECT_RATIO) {
             // Viewport is wider, fit to height
             canvas.style.height = "100vh";
-            canvas.style.width = `${viewportHeight * canvasAspect}px`;
+            canvas.style.width = `${viewportHeight * NES_ASPECT_RATIO}px`;
           } else {
             // Viewport is taller, fit to width
             canvas.style.width = "100vw";
-            canvas.style.height = `${viewportWidth / canvasAspect}px`;
+            canvas.style.height = `${viewportWidth / NES_ASPECT_RATIO}px`;
           }
         } else {
           // Exited fullscreen - restore previous size
