@@ -94,7 +94,8 @@ impl WasmNes {
     /// Get all available audio samples from the emulator.
     ///
     /// Returns a Float32Array containing all pending audio samples.
-    /// Each sample is in the range 0.0 to ~1.177.
+    /// Each sample is in the range 0.0 to ~1.177 (base APU is 0.0-0.966,
+    /// but expansion audio from certain mappers can push values higher).
     /// Call this after each frame to retrieve accumulated audio samples.
     #[wasm_bindgen]
     pub fn get_audio_samples(&mut self) -> Vec<f32> {

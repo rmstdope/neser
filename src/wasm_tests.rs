@@ -101,12 +101,11 @@ fn get_audio_samples_returns_vec() {
     // Run a frame to generate some audio samples
     let _frame = nes.render_frame_rgba();
     
-    // Get audio samples
-    let samples = nes.get_audio_samples();
+    // Get audio samples - should return a valid vector
+    // Note: May be empty or have data depending on timing
+    let _samples = nes.get_audio_samples();
     
-    // Samples should be a valid vector (could be empty or have data)
-    // Just verify it doesn't panic and returns a vector
-    assert!(samples.len() >= 0);
+    // Just verify it doesn't panic - actual sample count depends on emulator timing
 }
 
 #[wasm_bindgen_test]
@@ -114,9 +113,8 @@ fn get_audio_samples_without_rom_succeeds() {
     let mut nes = WasmNes::new();
     
     // Should be able to call get_audio_samples even without a ROM
-    let samples = nes.get_audio_samples();
+    let _samples = nes.get_audio_samples();
     
-    // Should return empty or default samples
-    assert!(samples.len() >= 0);
+    // Should not panic
 }
 
