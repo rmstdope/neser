@@ -242,7 +242,8 @@
       // NES native resolution is 256x240 pixels
       const NES_ASPECT_RATIO = 256 / 240;
       const SCALE_STEP = 120; // Change height by 120px each step
-      let currentHeight = 720; // Initial height
+      const INITIAL_HEIGHT = 720; // Initial display height in pixels
+      let currentHeight = INITIAL_HEIGHT;
 
       function updateCanvasSize(newHeight) {
         currentHeight = Math.max(240, Math.min(newHeight, 1440)); // Clamp between 240 and 1440
