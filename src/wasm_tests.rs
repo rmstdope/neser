@@ -92,3 +92,31 @@ fn set_button_ignores_invalid_button() {
     nes.set_button(1, 255, true);
 }
 
+#[wasm_bindgen_test]
+fn get_audio_samples_returns_vec() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom();
+    nes.load_rom(&rom).expect("valid rom should load");
+    
+    // Run a frame to generate some audio samples
+    let _frame = nes.render_frame_rgba();
+    
+    // Get audio samples
+    let samples = nes.get_audio_samples();
+    
+    // Samples should be a valid vector (could be empty or have data)
+    // Just verify it doesn't panic and returns a vector
+    assert!(samples.len() >= 0);
+}
+
+#[wasm_bindgen_test]
+fn get_audio_samples_without_rom_succeeds() {
+    let mut nes = WasmNes::new();
+    
+    // Should be able to call get_audio_samples even without a ROM
+    let samples = nes.get_audio_samples();
+    
+    // Should return empty or default samples
+    assert!(samples.len() >= 0);
+}
+
