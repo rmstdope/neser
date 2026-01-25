@@ -73,14 +73,12 @@
       const height = 240;
       const imageData = ctx.createImageData(width, height);
       const imageDataBuffer = imageData.data;
-      // Set alpha once
-      for (let a = 3; a < imageDataBuffer.length; a += 4) imageDataBuffer[a] = 0xff;
       let nes;
       let romBytes;
       let running = false;
       let paused = false;
       let lastFrameTime = 0;
-      const frameInterval = 1000 / 60.0988; // approx NTSC
+      const frameInterval = 500 / 60.0988; // approx NTSC
       const fpsLogIntervalMs = 1000;
       let fpsLastTime = 0;
       let fpsFrames = 0;
@@ -165,12 +163,8 @@
         }
         lastFrameTime = timestamp;
         try {
-          const frame = nes.render_frame(); // RGB888
-          for (let i = 0, j = 0; i < frame.length; i += 3, j += 4) {
-            imageDataBuffer[j] = frame[i];
-            imageDataBuffer[j + 1] = frame[i + 1];
-            imageDataBuffer[j + 2] = frame[i + 2];
-          }
+          const frame = nes.render_frame_rgba(); // RGBA8888
+          imageDataBuffer.set(frame);
           ctx.putImageData(imageData, 0, 0);
           fpsFrames += 1;
           if (fpsLastTime === 0) {

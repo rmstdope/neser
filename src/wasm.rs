@@ -46,6 +46,29 @@ impl WasmNes {
         self.nes.get_screen_buffer().snapshot()
     }
 
+    /// Step the emulator until a full frame is ready and return the pixel buffer (RGBA8888).
+    ///
+    /// Returns a Uint8Array with length 256*240*4 (alpha set to 0xFF).
+    #[wasm_bindgen]
+    pub fn render_frame_rgba(&mut self) -> Vec<u8> {
+        while !self.nes.is_ready_to_render() {
+            self.nes.run_cpu_tick();
+        }
+        self.nes.clear_ready_to_render();
+        let rgb = self.nes.get_screen_buffer().snapshot();
+        let pixel_count = rgb.len() / 3;
+        let mut rgba = vec![0u8; pixel_count * 4];
+        for i in 0..pixel_count {
+            let rgb_idx = i * 3;
+            let rgba_idx = i * 4;
+            rgba[rgba_idx] = rgb[rgb_idx];
+            rgba[rgba_idx + 1] = rgb[rgb_idx + 1];
+            rgba[rgba_idx + 2] = rgb[rgb_idx + 2];
+            rgba[rgba_idx + 3] = 0xFF;
+        }
+        rgba
+    }
+
     /// Set button state for a controller.
     ///
     /// # Arguments
