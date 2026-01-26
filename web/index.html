@@ -261,6 +261,7 @@
         gl.compileShader(vertexShader);
         if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
           console.error("Vertex shader compilation failed:", gl.getShaderInfoLog(vertexShader));
+          gl.deleteShader(vertexShader);
           return false;
         }
         
@@ -318,33 +319,34 @@
           return false;
         }
         
-        // Create shader program
-        if (shaderProgram) {
-          gl.deleteProgram(shaderProgram);
-          shaderProgram = null;
-        }
-        shaderProgram = gl.createProgram();
-        gl.attachShader(shaderProgram, vertexShader);
-        gl.attachShader(shaderProgram, fragmentShader);
-        gl.linkProgram(shaderProgram);
+        // Create shader program into a temporary program first
+        const newProgram = gl.createProgram();
+        gl.attachShader(newProgram, vertexShader);
+        gl.attachShader(newProgram, fragmentShader);
+        gl.linkProgram(newProgram);
         
-        // Delete shaders after linking to avoid resource leaks
+        // Delete fragment shader after linking to avoid resource leaks
         gl.deleteShader(fragmentShader);
         
-        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
-          console.error("Shader program linking failed:", gl.getProgramInfoLog(shaderProgram));
-          gl.deleteProgram(shaderProgram);
-          shaderProgram = null;
+        if (!gl.getProgramParameter(newProgram, gl.LINK_STATUS)) {
+          console.error("Shader program linking failed:", gl.getProgramInfoLog(newProgram));
+          gl.deleteProgram(newProgram);
           return false;
         }
         
-        // Cache uniform and attribute locations on the program
-        shaderProgram._uTextureLocation = gl.getUniformLocation(shaderProgram, 'u_texture');
-        shaderProgram._uTextureSizeLocation = gl.getUniformLocation(shaderProgram, 'u_textureSize');
-        shaderProgram._uOutputSizeLocation = gl.getUniformLocation(shaderProgram, 'u_outputSize');
-        shaderProgram._uFrameCountLocation = gl.getUniformLocation(shaderProgram, 'u_frameCount');
-        shaderProgram._aPositionLocation = gl.getAttribLocation(shaderProgram, 'a_position');
-        shaderProgram._aTexCoordLocation = gl.getAttribLocation(shaderProgram, 'a_texCoord');
+        // Cache uniform and attribute locations on the new program
+        newProgram._uTextureLocation = gl.getUniformLocation(newProgram, 'u_texture');
+        newProgram._uTextureSizeLocation = gl.getUniformLocation(newProgram, 'u_textureSize');
+        newProgram._uOutputSizeLocation = gl.getUniformLocation(newProgram, 'u_outputSize');
+        newProgram._uFrameCountLocation = gl.getUniformLocation(newProgram, 'u_frameCount');
+        newProgram._aPositionLocation = gl.getAttribLocation(newProgram, 'a_position');
+        newProgram._aTexCoordLocation = gl.getAttribLocation(newProgram, 'a_texCoord');
+        
+        // At this point linking succeeded; safely replace the old program
+        if (shaderProgram) {
+          gl.deleteProgram(shaderProgram);
+        }
+        shaderProgram = newProgram;
         
         return true;
       }
@@ -352,7 +354,7 @@
       function cycleFilter() {
         const currentIndex = filterKeys.indexOf(currentFilter);
         const nextIndex = (currentIndex + 1) % filterKeys.length;
-        currentFilter = filterKeys[nextIndex];
+        const nextFilter = filterKeys[nextIndex];
         
         // Recompile shader with new filter
         const vertexShader = gl.createShader(gl.VERTEX_SHADER);
@@ -363,18 +365,21 @@
           console.error("Vertex shader compilation failed:", gl.getShaderInfoLog(vertexShader));
           gl.deleteShader(vertexShader);
           console.error("Failed to switch filter");
-          return;
+          return false;
         }
         
-        if (compileShaderProgram(vertexShader, currentFilter)) {
-          // Update button text only, don't interfere with emulator status
-          document.getElementById('filter-toggle').textContent = filters[currentFilter].name;
+        if (compileShaderProgram(vertexShader, nextFilter)) {
+          // Only update currentFilter after successful compilation
+          currentFilter = nextFilter;
+          // Delete the vertex shader after use (it's been attached to the program)
+          gl.deleteShader(vertexShader);
+          return true;
         } else {
           console.error("Failed to switch filter");
+          // Delete the vertex shader after failed use
+          gl.deleteShader(vertexShader);
+          return false;
         }
-        
-        // Delete the vertex shader after use (it's been attached to the program)
-        gl.deleteShader(vertexShader);
       }
       
       let nes;
@@ -485,12 +490,13 @@
           if (!nes) {
             const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
             await init(wasmUrl);
-            nes = new WasmNes();
             
-            // Initialize WebGL shaders
+            // Initialize WebGL shaders before creating NES instance
             if (!initWebGL()) {
               throw new Error("Failed to initialize WebGL");
             }
+            
+            nes = new WasmNes();
           }
           nes.load_rom(romBytes);
           // Initialize audio context on user interaction (browser requirement)
@@ -500,6 +506,8 @@
           setStatus(`Failed to load ROM: ${err}`, true);
           startBtn.disabled = false;
           romInput.disabled = false;
+          // Reset nes on failure so we retry WebGL init next time
+          nes = null;
           return;
         }
         running = true;
@@ -539,6 +547,12 @@
             pollGamepad();
           }
           const frame = nes.render_frame_rgba(); // RGBA8888
+          
+          // Guard against null shaderProgram
+          if (!shaderProgram) {
+            console.error("Shader program is null, cannot render");
+            return;
+          }
           
           // Upload frame data to WebGL texture using texSubImage2D (more efficient)
           gl.bindTexture(gl.TEXTURE_2D, nesTexture);
