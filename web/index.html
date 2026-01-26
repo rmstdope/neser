@@ -105,129 +105,49 @@
             
             #define PI 3.14159265359
             
-            // RGB to YIQ conversion matrix
-            mat3 rgb2yiq = mat3(
-              0.299, 0.596, 0.211,
-              0.587, -0.274, -0.523,
-              0.114, -0.322, 0.312
-            );
-            
-            // YIQ to RGB conversion matrix
-            mat3 yiq2rgb = mat3(
-              1.0, 1.0, 1.0,
-              0.956, -0.272, -1.106,
-              0.621, -0.647, 1.703
-            );
-            
-            // Luma FIR filter coefficients (25 taps)
-            float lumaCoeff(int i) {
-              if (i == 0) return -0.000174;
-              if (i == 1) return -0.000205;
-              if (i == 2) return -0.000149;
-              if (i == 3) return -0.000051;
-              if (i == 4) return 0.000000;
-              if (i == 5) return -0.000019;
-              if (i == 6) return -0.000089;
-              if (i == 7) return -0.000198;
-              if (i == 8) return -0.000338;
-              if (i == 9) return -0.000477;
-              if (i == 10) return -0.000591;
-              if (i == 11) return -0.000656;
-              if (i == 12) return -0.000652;
-              if (i == 13) return 0.386923;
-              if (i == 14) return -0.000652;
-              if (i == 15) return -0.000656;
-              if (i == 16) return -0.000591;
-              if (i == 17) return -0.000477;
-              if (i == 18) return -0.000338;
-              if (i == 19) return -0.000198;
-              if (i == 20) return -0.000089;
-              if (i == 21) return -0.000019;
-              if (i == 22) return 0.000000;
-              if (i == 23) return -0.000051;
-              if (i == 24) return -0.000149;
-              return 0.0;
-            }
-            
-            // Chroma FIR filter coefficients (25 taps)
-            float chromaCoeff(int i) {
-              if (i == 0) return 0.001384;
-              if (i == 1) return 0.001678;
-              if (i == 2) return 0.002004;
-              if (i == 3) return 0.002350;
-              if (i == 4) return 0.002680;
-              if (i == 5) return 0.002985;
-              if (i == 6) return 0.003244;
-              if (i == 7) return 0.003443;
-              if (i == 8) return 0.003565;
-              if (i == 9) return 0.003596;
-              if (i == 10) return 0.003525;
-              if (i == 11) return 0.003348;
-              if (i == 12) return 0.003063;
-              if (i == 13) return 0.002674;
-              if (i == 14) return 0.002188;
-              if (i == 15) return 0.001616;
-              if (i == 16) return 0.000971;
-              if (i == 17) return 0.000274;
-              if (i == 18) return -0.000457;
-              if (i == 19) return -0.001199;
-              if (i == 20) return -0.001925;
-              if (i == 21) return -0.002590;
-              if (i == 22) return -0.003161;
-              if (i == 23) return -0.003605;
-              if (i == 24) return -0.003904;
-              return 0.0;
-            }
-            
             void main() {
-              vec2 pixelSize = 1.0 / u_textureSize;
+              vec2 uv = v_texCoord;
+              float x = v_pixelCoord.x;
+              float y = v_pixelCoord.y;
               
-              // Calculate 3-phase chroma phase
-              float chroma_phase = 0.6667 * PI * (mod(v_pixelCoord.y, 3.0) + u_frameCount);
+              // Sample center pixel and neighbors for NTSC encoding simulation
+              vec3 colorC = texture2D(u_texture, uv).rgb;
+              vec3 colorL = texture2D(u_texture, uv + vec2(-1.0/u_textureSize.x, 0.0)).rgb;
+              vec3 colorR = texture2D(u_texture, uv + vec2( 1.0/u_textureSize.x, 0.0)).rgb;
               
-              // Sample and modulate
-              float luma = 0.0;
-              float i_mod = 0.0;
-              float q_mod = 0.0;
+              // NTSC uses 3-phase color encoding (phase shifts every 3 scanlines)
+              // This creates the characteristic dot crawl pattern
+              float linePhase = mod(y, 3.0) * 2.0943951; // 120 degrees in radians
+              float temporalPhase = mod(u_frameCount, 3.0) * 2.0943951;
+              float totalPhase = linePhase + temporalPhase;
               
-              for (int i = 0; i < 25; i++) {
-                float offset = float(i - 12);
-                vec2 samplePos = v_texCoord + vec2(offset * pixelSize.x, 0.0);
-                vec3 rgb = texture2D(u_texture, samplePos).rgb;
-                vec3 yiq = rgb2yiq * rgb;
-                
-                float phase = chroma_phase + offset * PI / 3.0;
-                float i_signal = yiq.y * cos(phase) - yiq.z * sin(phase);
-                float q_signal = yiq.y * sin(phase) + yiq.z * cos(phase);
-                
-                luma += yiq.x * lumaCoeff(i);
-                i_mod += i_signal * chromaCoeff(i);
-                q_mod += q_signal * chromaCoeff(i);
-              }
+              // Create color carrier signal
+              float carrier = sin(x * PI * 8.0 + totalPhase);
               
-              // Demodulate
-              float i_chroma = i_mod * 2.0 * cos(chroma_phase) + q_mod * 2.0 * sin(chroma_phase);
-              float q_chroma = q_mod * 2.0 * cos(chroma_phase) - i_mod * 2.0 * sin(chroma_phase);
+              // Simulate chroma crosstalk/bleeding
+              float chromaL = (colorL.r - colorL.g) * carrier;
+              float chromaC = (colorC.r - colorC.g) * carrier;
+              float chromaR = (colorR.r - colorR.g) * carrier;
               
-              // Mix with artifacting/fringing controls
-              float brightness = 1.0;
-              float saturation = 1.0;
-              float artifact = 0.5;
-              float fringing = 0.5;
+              // Mix chroma signals (this creates NTSC artifacts)
+              float chromaBleed = (chromaL * 0.25 + chromaC * 0.5 + chromaR * 0.25);
               
-              vec3 yiq_result = vec3(
-                luma * brightness,
-                i_chroma * saturation * (1.0 - artifact) + i_mod * artifact,
-                q_chroma * saturation * (1.0 - fringing) + q_mod * fringing
-              );
+              // Apply artifacts to create dot crawl and color bleeding
+              vec3 artifacts = vec3(
+                chromaBleed * cos(totalPhase),
+                chromaBleed * cos(totalPhase + 2.0943951),
+                chromaBleed * cos(totalPhase + 4.1887902)
+              ) * 0.25;
               
-              // Convert back to RGB
-              vec3 rgb_result = yiq2rgb * yiq_result;
+              vec3 result = colorC + artifacts;
               
-              // Gamma correction (CRT 2.5 -> Monitor 2.0)
-              rgb_result = pow(max(rgb_result, vec3(0.0)), vec3(0.8));
+              // Slight color desaturation and gamma adjustment for CRT look
+              float luma = dot(result, vec3(0.299, 0.587, 0.114));
+              result = mix(vec3(luma), result, 1.1);
+              result = pow(max(result, vec3(0.0)), vec3(0.9));
+              result = clamp(result, 0.0, 1.0);
               
-              gl_FragColor = vec4(rgb_result, 1.0);
+              gl_FragColor = vec4(result, 1.0);
             }
           `
         },
@@ -240,173 +160,61 @@
             uniform vec2 u_textureSize;
             uniform vec2 u_outputSize;
             
-            // CRT Lottes shader parameters
-            #define hardScan -8.0
-            #define hardPix -3.0
-            #define warp vec2(1.0/32.0, 1.0/24.0)
-            #define maskDark 0.5
-            #define maskLight 1.5
-            #define scaleInLinearGamma 1.0
-            #define shadowMask 3.0
-            #define brightboost 1.0
-            #define hardBloomPix -1.5
-            #define hardBloomScan -2.0
-            #define bloomAmount 0.15
-            #define shape 2.0
+            #define PI 3.14159265359
             
-            // sRGB to Linear
-            vec3 ToLinear(vec3 c) {
-              return pow(c, vec3(2.2));
-            }
-            
-            // Linear to sRGB
-            vec3 ToSrgb(vec3 c) {
-              return pow(c, vec3(1.0/2.2));
-            }
-            
-            // Fetch with sub-pixel positioning
-            vec3 Fetch(vec2 pos, vec2 off) {
-              pos = floor(pos * u_textureSize + off) / u_textureSize;
-              return ToLinear(brightboost * texture2D(u_texture, pos.xy).rgb);
-            }
-            
-            // Distance
-            float Dist(vec2 pos) {
-              pos = pos * u_textureSize;
-              return sqrt(dot(pos, pos));
-            }
-            
-            // Gaussian
-            float Gaus(float pos, float scale) {
-              return exp2(scale * pow(abs(pos), shape));
-            }
-            
-            // 3-tap Gaussian filter along X
-            vec3 Horz3(vec2 pos, float off) {
-              vec3 b = Fetch(pos, vec2(-1.0, off));
-              vec3 c = Fetch(pos, vec2( 0.0, off));
-              vec3 d = Fetch(pos, vec2( 1.0, off));
-              float dst = Dist(fract(pos) - vec2(0.5));
-              float scale = hardPix;
-              float wb = Gaus(dst - 1.0, scale);
-              float wc = Gaus(dst + 0.0, scale);
-              float wd = Gaus(dst + 1.0, scale);
-              return (b * wb + c * wc + d * wd) / (wb + wc + wd);
-            }
-            
-            // 5-tap Gaussian filter along X
-            vec3 Horz5(vec2 pos, float off) {
-              vec3 a = Fetch(pos, vec2(-2.0, off));
-              vec3 b = Fetch(pos, vec2(-1.0, off));
-              vec3 c = Fetch(pos, vec2( 0.0, off));
-              vec3 d = Fetch(pos, vec2( 1.0, off));
-              vec3 e = Fetch(pos, vec2( 2.0, off));
-              float dst = Dist(fract(pos) - vec2(0.5));
-              float scale = hardPix;
-              float wa = Gaus(dst - 2.0, scale);
-              float wb = Gaus(dst - 1.0, scale);
-              float wc = Gaus(dst + 0.0, scale);
-              float wd = Gaus(dst + 1.0, scale);
-              float we = Gaus(dst + 2.0, scale);
-              return (a * wa + b * wb + c * wc + d * wd + e * we) / (wa + wb + wc + wd + we);
-            }
-            
-            // 7-tap Gaussian filter (for bloom)
-            vec3 Horz7(vec2 pos, float off) {
-              vec3 a = Fetch(pos, vec2(-3.0, off));
-              vec3 b = Fetch(pos, vec2(-2.0, off));
-              vec3 c = Fetch(pos, vec2(-1.0, off));
-              vec3 d = Fetch(pos, vec2( 0.0, off));
-              vec3 e = Fetch(pos, vec2( 1.0, off));
-              vec3 f = Fetch(pos, vec2( 2.0, off));
-              vec3 g = Fetch(pos, vec2( 3.0, off));
-              float dst = Dist(fract(pos) - vec2(0.5));
-              float scale = hardBloomPix;
-              float wa = Gaus(dst - 3.0, scale);
-              float wb = Gaus(dst - 2.0, scale);
-              float wc = Gaus(dst - 1.0, scale);
-              float wd = Gaus(dst + 0.0, scale);
-              float we = Gaus(dst + 1.0, scale);
-              float wf = Gaus(dst + 2.0, scale);
-              float wg = Gaus(dst + 3.0, scale);
-              return (a * wa + b * wb + c * wc + d * wd + e * we + f * wf + g * wg) / (wa + wb + wc + wd + we + wf + wg);
-            }
-            
-            // Return scanline weight
-            float Scan(vec2 pos, float off) {
-              float dst = Dist(fract(pos) - vec2(0.5));
-              return Gaus(dst + off, hardScan);
-            }
-            
-            // Return bloom scanline weight
-            float BloomScan(vec2 pos, float off) {
-              float dst = Dist(fract(pos) - vec2(0.5));
-              return Gaus(dst + off, hardBloomScan);
-            }
-            
-            // Tri-filter (3 lines)
-            vec3 Tri(vec2 pos) {
-              vec3 a = Horz3(pos, -1.0);
-              vec3 b = Horz5(pos,  0.0);
-              vec3 c = Horz3(pos,  1.0);
-              float wa = Scan(pos, -1.0);
-              float wb = Scan(pos,  0.0);
-              float wc = Scan(pos,  1.0);
-              return a * wa + b * wb + c * wc;
-            }
-            
-            // Bloom
-            vec3 Bloom(vec2 pos) {
-              vec3 a = Horz5(pos, -2.0);
-              vec3 b = Horz7(pos, -1.0);
-              vec3 c = Horz7(pos,  0.0);
-              vec3 d = Horz7(pos,  1.0);
-              vec3 e = Horz5(pos,  2.0);
-              float wa = BloomScan(pos, -2.0);
-              float wb = BloomScan(pos, -1.0);
-              float wc = BloomScan(pos,  0.0);
-              float wd = BloomScan(pos,  1.0);
-              float we = BloomScan(pos,  2.0);
-              return a * wa + b * wb + c * wc + d * wd + e * we;
-            }
-            
-            // Distortion
-            vec2 Warp(vec2 pos) {
-              pos = pos * 2.0 - 1.0;
-              pos *= vec2(1.0 + (pos.y * pos.y) * warp.x, 1.0 + (pos.x * pos.x) * warp.y);
-              return pos * 0.5 + 0.5;
-            }
-            
-            // Shadow mask
-            vec3 Mask(vec2 pos) {
-              pos.x += pos.y * 3.0;
-              vec3 mask = vec3(maskDark, maskDark, maskDark);
-              pos.x = fract(pos.x / 6.0);
-              if (pos.x < 0.333) mask.r = maskLight;
-              else if (pos.x < 0.666) mask.g = maskLight;
-              else mask.b = maskLight;
-              return mask;
-            }
-            
+            // Simplified but effective CRT simulation
             void main() {
-              vec2 pos = Warp(v_texCoord);
+              vec2 uv = v_texCoord;
               
-              // Early exit if warped outside bounds
-              if (pos.x < 0.0 || pos.x > 1.0 || pos.y < 0.0 || pos.y > 1.0) {
+              // Slight barrel distortion (CRT curvature)
+              vec2 centered = uv * 2.0 - 1.0;
+              float r2 = dot(centered, centered);
+              centered *= 1.0 + r2 * 0.05;
+              uv = centered * 0.5 + 0.5;
+              
+              // Check if warped outside bounds
+              if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
                 gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
                 return;
               }
               
-              vec3 color = Tri(pos);
-              if (bloomAmount > 0.0) {
-                color += Bloom(pos) * bloomAmount;
+              // Sample texture with slight blur for glow effect
+              vec3 color = texture2D(u_texture, uv).rgb;
+              vec3 bloom = vec3(0.0);
+              for (float dx = -1.5; dx <= 1.5; dx += 0.75) {
+                for (float dy = -1.5; dy <= 1.5; dy += 0.75) {
+                  vec2 offset = vec2(dx, dy) / u_textureSize;
+                  bloom += texture2D(u_texture, uv + offset).rgb;
+                }
               }
+              bloom /= 16.0;
+              color += bloom * 0.4; // Add bloom/glow
               
-              if (shadowMask > 0.0) {
-                color *= Mask(gl_FragCoord.xy);
+              // Scanlines (based on screen Y position)
+              float y = gl_FragCoord.y;
+              float scanline = sin(y * PI) * 0.08 + 0.92;
+              color *= scanline;
+              
+              // Shadow mask (RGB sub-pixel aperture grille pattern)
+              float x = gl_FragCoord.x;
+              vec3 mask = vec3(0.8);
+              float maskPhase = mod(x, 3.0);
+              if (maskPhase < 1.0) {
+                mask.r = 1.3;
+              } else if (maskPhase < 2.0) {
+                mask.g = 1.3;
+              } else {
+                mask.b = 1.3;
               }
+              color *= mask;
               
-              gl_FragColor = vec4(ToSrgb(color), 1.0);
+              // Gamma correction for CRT
+              color = pow(color, vec3(1.0/2.2)); // sRGB gamma
+              color = pow(color, vec3(2.4));     // CRT gamma
+              color = pow(color, vec3(1.0/2.2)); // Back to sRGB
+              
+              color = clamp(color, 0.0, 1.0);
+              gl_FragColor = vec4(color, 1.0);
             }
           `
         }
