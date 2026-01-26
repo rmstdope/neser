@@ -16,7 +16,9 @@ pub const DEFAULT_CHR_RAM_SIZE: usize = 8192;
 /// - WRAM snapshot/restore for save persistence
 ///
 /// # Example
-/// ```ignore
+/// ```rust
+/// use neser::cartridge::PrgRam;
+///
 /// struct MyMapper {
 ///     prg_ram: PrgRam,
 ///     // ...
@@ -28,14 +30,14 @@ pub const DEFAULT_CHR_RAM_SIZE: usize = 8192;
 ///             prg_ram: PrgRam::new(8192),
 ///         }
 ///     }
-/// }
 ///
-/// // In Mapper trait impl:
-/// fn read_prg(&self, addr: u16) -> u8 {
-///     if let Some(value) = self.prg_ram.try_read(addr) {
-///         return value;
+///     // In Mapper trait impl:
+///     fn read_prg(&self, addr: u16) -> u8 {
+///         if let Some(value) = self.prg_ram.try_read(addr) {
+///             return value;
+///         }
+///         0
 ///     }
-///     // ... handle other addresses
 /// }
 /// ```
 #[derive(Clone)]
@@ -203,7 +205,12 @@ impl ChrMemory {
 /// - Bounds checking
 ///
 /// # Example
-/// ```ignore
+/// ```rust
+/// use neser::cartridge::BankedRom;
+///
+/// let prg_rom = vec![0u8; 0x8000];
+/// let bank = 3usize;
+///
 /// // Create a helper for 16KB PRG banks
 /// let banked_prg = BankedRom::new(prg_rom, 0x4000);
 ///
@@ -212,6 +219,7 @@ impl ChrMemory {
 ///
 /// // Or use with address calculation
 /// let value = banked_prg.read_with_base(bank, 0x8000, 0x9000);
+/// let _ = value;
 /// ```
 #[derive(Clone)]
 pub struct BankedRom {

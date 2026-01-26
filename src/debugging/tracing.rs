@@ -13,7 +13,16 @@
 //!
 //! Use the trace macros to emit debug output:
 //!
-//! ```ignore
+//! ```rust
+//! use neser::{trace_apu, trace_cpu, trace_mapper, trace_ppu};
+//!
+//! let pc = 0u16;
+//! let opcode = 0u8;
+//! let scanline = 0u16;
+//! let pixel = 0u16;
+//! let cycle = 0u64;
+//! let bank = 0usize;
+//!
 //! trace_cpu!("PC={:04X} opcode={:02X}", pc, opcode);
 //! trace_ppu!("scanline={} pixel={}", scanline, pixel);
 //! trace_apu!("frame_counter={}", cycle);
@@ -124,7 +133,10 @@ pub fn is_cpu_tracing_enabled() -> bool {
 /// Trace CPU operations. Only active in debug builds when CPU tracing is enabled.
 ///
 /// # Example
-/// ```ignore
+/// ```rust
+/// use neser::trace_cpu;
+/// let pc = 0u16;
+/// let a = 0u8;
 /// trace_cpu!("PC={:04X} A={:02X}", pc, a);  // defaults to level 1
 /// trace_cpu!(2; "detailed info");           // only prints at level 2+
 /// ```
@@ -173,7 +185,10 @@ pub fn ppu_trace_level() -> u8 {
 /// Trace PPU operations. Only active in debug builds when PPU tracing is enabled.
 ///
 /// # Example
-/// ```ignore
+/// ```rust
+/// use neser::trace_ppu;
+/// let scanline = 0u16;
+/// let pixel = 0u16;
 /// trace_ppu!("scanline={} pixel={}", scanline, pixel);  // defaults to level 1
 /// trace_ppu!(2; "detailed info");                       // only prints at level 2+
 /// ```
@@ -222,7 +237,10 @@ pub fn apu_trace_level() -> u8 {
 /// Trace APU operations. Only active in debug builds when APU tracing is enabled.
 ///
 /// # Example
-/// ```ignore
+/// ```rust
+/// use neser::trace_apu;
+/// let fc = 0u64;
+/// let cycle = 0u64;
 /// trace_apu!("frame_counter={} cycle={}", fc, cycle);  // defaults to level 1
 /// trace_apu!(2; "detailed info");                      // only prints at level 2+
 /// ```
@@ -271,7 +289,10 @@ pub fn mapper_trace_level() -> u8 {
 /// Trace mapper operations. Only active in debug builds when mapper tracing is enabled.
 ///
 /// # Example
-/// ```ignore
+/// ```rust
+/// use neser::trace_mapper;
+/// let bank = 0usize;
+/// let addr = 0u16;
 /// trace_mapper!("bank switch: PRG bank {} -> ${:04X}", bank, addr);  // defaults to level 1
 /// trace_mapper!(2; "detailed info");                                 // only prints at level 2+
 /// ```

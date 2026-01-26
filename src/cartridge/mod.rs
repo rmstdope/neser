@@ -28,6 +28,8 @@ mod vrc6;
 
 pub use cartridge::{Cartridge, MirroringMode};
 #[allow(unused_imports)]
+pub use common::{BankedRom, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
+#[allow(unused_imports)]
 pub use mapper::{Mapper, MapperContext};
 #[allow(unused_imports)]
 pub(crate) use rom_db::calculate_rom_crc32;
