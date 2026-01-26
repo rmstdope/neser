@@ -253,8 +253,21 @@
       let positionBuffer = null;
       let texCoordBuffer = null;
       let frameCount = 0; // For NTSC phase animation
+      let webglInitialized = false; // Track WebGL initialization state
       
       function initWebGL() {
+        // Make this function idempotent - clean up if re-initializing
+        if (webglInitialized) {
+          if (nesTexture) gl.deleteTexture(nesTexture);
+          if (positionBuffer) gl.deleteBuffer(positionBuffer);
+          if (texCoordBuffer) gl.deleteBuffer(texCoordBuffer);
+          if (shaderProgram) gl.deleteProgram(shaderProgram);
+          nesTexture = null;
+          positionBuffer = null;
+          texCoordBuffer = null;
+          shaderProgram = null;
+        }
+        
         // Create vertex shader
         const vertexShader = gl.createShader(gl.VERTEX_SHADER);
         gl.shaderSource(vertexShader, vertexShaderSource);
@@ -262,12 +275,14 @@
         if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
           console.error("Vertex shader compilation failed:", gl.getShaderInfoLog(vertexShader));
           gl.deleteShader(vertexShader);
+          webglInitialized = false;
           return false;
         }
         
         // Create and compile initial fragment shader
         if (!compileShaderProgram(vertexShader, currentFilter)) {
           gl.deleteShader(vertexShader);
+          webglInitialized = false;
           return false;
         }
         
@@ -306,6 +321,7 @@
         ]);
         gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
         
+        webglInitialized = true;
         return true;
       }
       
@@ -506,8 +522,12 @@
           setStatus(`Failed to load ROM: ${err}`, true);
           startBtn.disabled = false;
           romInput.disabled = false;
-          // Reset nes on failure so we retry WebGL init next time
-          nes = null;
+          // Only reset nes if wasm/webgl initialization failed
+          // Don't reset on simple ROM load errors so we can retry
+          if (err.message && err.message.includes("WebGL")) {
+            nes = null;
+            webglInitialized = false;
+          }
           return;
         }
         running = true;
@@ -551,6 +571,10 @@
           // Guard against null shaderProgram
           if (!shaderProgram) {
             console.error("Shader program is null, cannot render");
+            // Stop the emulator loop to keep state consistent
+            running = false;
+            setStatus("Rendering error occurred. Please restart.", true);
+            stop();
             return;
           }
           
@@ -576,7 +600,8 @@
           }
           
           // Increment frame counter for NTSC phase animation
-          frameCount++;
+          // Wrap at 3600 to prevent float precision issues (60 frames/sec * 60 sec = 3600 frames/min)
+          frameCount = (frameCount + 1) % 3600;
           
           // Set up vertex attributes using cached locations
           if (shaderProgram._aPositionLocation !== -1 && shaderProgram._aPositionLocation !== null) {
