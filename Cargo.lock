@@ -1940,6 +1940,7 @@ name = "neser"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.10.0",
+ "bytemuck",
  "console_error_panic_hook",
  "getrandom 0.3.4",
  "gl",
