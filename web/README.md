@@ -28,5 +28,6 @@ python -m http.server 8000
 ## Notes
 - Generated artifacts under `web/pkg/` are ignored in git; regenerate locally via the steps above.
 - Keyboard input is supported for controller 1 using keys: W/A/S/D (directional), F (A button), G (B button), R (Select), T (Start).
-- Audio is not yet implemented.
+- Optional gamepad input uses the Gamepad API (toggle in UI).
+- Audio is supported via Web Audio.
 - Rendering runs on the browser main thread; heavy frames or slow hosts can briefly block UI/event handling.
