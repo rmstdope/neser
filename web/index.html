@@ -83,6 +83,7 @@
       const filters = {
         stock: {
           name: "Stock (No Filter)",
+          type: "single",
           fragmentShader: `
             #ifdef GL_FRAGMENT_PRECISION_HIGH
               precision highp float;
@@ -99,68 +100,11 @@
         },
         ntsc: {
           name: "NTSC Composite",
-          fragmentShader: `
-            #ifdef GL_FRAGMENT_PRECISION_HIGH
-              precision highp float;
-            #else
-              precision mediump float;
-            #endif
-            varying vec2 v_texCoord;
-            varying vec2 v_pixelCoord;
-            uniform sampler2D u_texture;
-            uniform vec2 u_textureSize;
-            uniform float u_frameCount;
-            
-            #define PI 3.14159265359
-            
-            void main() {
-              vec2 uv = v_texCoord;
-              float x = v_pixelCoord.x;
-              float y = v_pixelCoord.y;
-              
-              // Sample center pixel and neighbors for NTSC encoding simulation
-              vec3 colorC = texture2D(u_texture, uv).rgb;
-              vec3 colorL = texture2D(u_texture, uv + vec2(-1.0/u_textureSize.x, 0.0)).rgb;
-              vec3 colorR = texture2D(u_texture, uv + vec2( 1.0/u_textureSize.x, 0.0)).rgb;
-              
-              // NTSC uses 3-phase color encoding (phase shifts every 3 scanlines)
-              // This creates the characteristic dot crawl pattern
-              float linePhase = mod(y, 3.0) * 2.0943951; // 120 degrees in radians
-              float temporalPhase = mod(u_frameCount, 3.0) * 2.0943951;
-              float totalPhase = linePhase + temporalPhase;
-              
-              // Create color carrier signal
-              float carrier = sin(x * PI * 8.0 + totalPhase);
-              
-              // Simulate chroma crosstalk/bleeding
-              float chromaL = (colorL.r - colorL.g) * carrier;
-              float chromaC = (colorC.r - colorC.g) * carrier;
-              float chromaR = (colorR.r - colorR.g) * carrier;
-              
-              // Mix chroma signals (this creates NTSC artifacts)
-              float chromaBleed = (chromaL * 0.25 + chromaC * 0.5 + chromaR * 0.25);
-              
-              // Apply artifacts to create dot crawl and color bleeding
-              vec3 artifacts = vec3(
-                chromaBleed * cos(totalPhase),
-                chromaBleed * cos(totalPhase + 2.0943951),
-                chromaBleed * cos(totalPhase + 4.1887902)
-              ) * 0.25;
-              
-              vec3 result = colorC + artifacts;
-              
-              // Slight color desaturation and gamma adjustment for CRT look
-              float luma = dot(result, vec3(0.299, 0.587, 0.114));
-              result = mix(vec3(luma), result, 1.1);
-              result = pow(max(result, vec3(0.0)), vec3(0.9));
-              result = clamp(result, 0.0, 1.0);
-              
-              gl_FragColor = vec4(result, 1.0);
-            }
-          `
+          type: "ntsc"
         },
         crt: {
           name: "CRT Lottes",
+          type: "single",
           fragmentShader: `
             #ifdef GL_FRAGMENT_PRECISION_HIGH
               precision highp float;
@@ -245,50 +189,352 @@
           v_pixelCoord = a_texCoord * u_textureSize;
         }
       `;
+
+      const ntscPass1VertexShaderSource = `
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_texCoord;
+        varying vec2 v_pixNo;
+        uniform vec2 u_outputSize;
+
+        void main() {
+          gl_Position = vec4(a_position, 0.0, 1.0);
+          v_texCoord = a_texCoord;
+          v_pixNo = a_texCoord * u_outputSize;
+        }
+      `;
+
+      const ntscPass1FragmentShaderSource = `
+        #ifdef GL_FRAGMENT_PRECISION_HIGH
+          precision highp float;
+        #else
+          precision mediump float;
+        #endif
+        varying vec2 v_texCoord;
+        varying vec2 v_pixNo;
+        uniform sampler2D u_texture;
+        uniform float u_frameCount;
+        uniform float u_chromaEncode;
+
+        #define PI 3.14159265
+        #define CHROMA_MOD_FREQ (PI / 3.0)
+        #define SATURATION 1.0
+        #define BRIGHTNESS 1.0
+        #define ARTIFACTING 1.0
+        #define FRINGING 1.0
+
+        const mat3 mix_mat = mat3(
+          BRIGHTNESS, FRINGING, FRINGING,
+          ARTIFACTING, 2.0 * SATURATION, 0.0,
+          ARTIFACTING, 0.0, 2.0 * SATURATION
+        );
+
+        const mat3 yiq_mat = mat3(
+          0.2989, 0.5870, 0.1140,
+          0.5959, -0.2744, -0.3216,
+          0.2115, -0.5229, 0.3114
+        );
+
+        vec3 rgb2yiq(vec3 col) {
+          return col * yiq_mat;
+        }
+
+        void main() {
+          vec3 col = texture2D(u_texture, v_texCoord).rgb;
+          vec3 yiq = rgb2yiq(col);
+
+          float chroma_phase = 0.6667 * PI * (mod(v_pixNo.y, 3.0) + u_frameCount);
+          float mod_phase = chroma_phase + v_pixNo.x * CHROMA_MOD_FREQ;
+          float i_mod = cos(mod_phase);
+          float q_mod = sin(mod_phase);
+
+          yiq.yz *= vec2(i_mod, q_mod); // Modulate.
+          yiq *= mix_mat; // Cross-talk.
+          yiq.yz *= vec2(i_mod, q_mod); // Demodulate.
+
+          // Optional encoding for UNORM render targets: pack I/Q into 0..1
+          yiq.yz = mix(yiq.yz, yiq.yz * 0.5 + 0.5, u_chromaEncode);
+
+          gl_FragColor = vec4(yiq, 1.0);
+        }
+      `;
+
+      const ntscPass2VertexShaderSource = `
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_texCoord;
+        uniform vec2 u_sourceSize;
+
+        void main() {
+          gl_Position = vec4(a_position, 0.0, 1.0);
+          vec2 flipped = vec2(a_texCoord.x, 1.0 - a_texCoord.y);
+          v_texCoord = flipped - vec2(0.5 / u_sourceSize.x, 0.0);
+        }
+      `;
+
+      const ntscPass2FragmentShaderSource = `
+        #ifdef GL_FRAGMENT_PRECISION_HIGH
+          precision highp float;
+        #else
+          precision mediump float;
+        #endif
+        varying vec2 v_texCoord;
+        uniform sampler2D u_texture;
+        uniform vec2 u_sourceSize;
+        uniform float u_chromaEncode;
+        uniform float u_chromaSum;
+
+        #define TAPS 24
+        #define NTSC_CRT_GAMMA 2.5
+        #define NTSC_MONITOR_GAMMA 2.0
+
+        float lumaTap(int i) {
+          if (i == 0) return -0.000012020;
+          if (i == 1) return -0.000022146;
+          if (i == 2) return -0.000013155;
+          if (i == 3) return -0.000012020;
+          if (i == 4) return -0.000049979;
+          if (i == 5) return -0.000113940;
+          if (i == 6) return -0.000122150;
+          if (i == 7) return -0.000005612;
+          if (i == 8) return 0.000170516;
+          if (i == 9) return 0.000237199;
+          if (i == 10) return 0.000169640;
+          if (i == 11) return 0.000285688;
+          if (i == 12) return 0.000984574;
+          if (i == 13) return 0.002018683;
+          if (i == 14) return 0.002002275;
+          if (i == 15) return -0.000909882;
+          if (i == 16) return -0.007049081;
+          if (i == 17) return -0.013222860;
+          if (i == 18) return -0.012606931;
+          if (i == 19) return 0.002460860;
+          if (i == 20) return 0.035868225;
+          if (i == 21) return 0.084016453;
+          if (i == 22) return 0.135563500;
+          if (i == 23) return 0.175261268;
+          return 0.190176552;
+        }
+
+        float chromaTap(int i) {
+          if (i == 0) return -0.000118847;
+          if (i == 1) return -0.000271306;
+          if (i == 2) return -0.000502642;
+          if (i == 3) return -0.000930833;
+          if (i == 4) return -0.001451013;
+          if (i == 5) return -0.002064744;
+          if (i == 6) return -0.002700432;
+          if (i == 7) return -0.003241276;
+          if (i == 8) return -0.003524948;
+          if (i == 9) return -0.003350284;
+          if (i == 10) return -0.002491729;
+          if (i == 11) return -0.000721149;
+          if (i == 12) return 0.002164659;
+          if (i == 13) return 0.006313635;
+          if (i == 14) return 0.011789103;
+          if (i == 15) return 0.018545660;
+          if (i == 16) return 0.026414396;
+          if (i == 17) return 0.035100710;
+          if (i == 18) return 0.044196567;
+          if (i == 19) return 0.053207202;
+          if (i == 20) return 0.061590275;
+          if (i == 21) return 0.068803602;
+          if (i == 22) return 0.074356193;
+          if (i == 23) return 0.077856564;
+          return 0.079052396;
+        }
+
+        const mat3 yiq2rgb_mat = mat3(
+          1.0, 0.956, 0.6210,
+          1.0, -0.2720, -0.6474,
+          1.0, -1.1060, 1.7046
+        );
+
+        vec3 yiq2rgb(vec3 yiq) {
+          return yiq * yiq2rgb_mat;
+        }
+
+        vec3 fetch_offset(float offset, float one_x) {
+          return texture2D(u_texture, v_texCoord + vec2(offset * one_x, 0.0)).xyz;
+        }
+
+        void main() {
+          float one_x = 1.0 / u_sourceSize.x;
+          vec3 signal = vec3(0.0);
+          for (int i = 0; i < TAPS; i++) {
+            float offset = float(i);
+            vec3 sums = fetch_offset(offset - float(TAPS), one_x) +
+              fetch_offset(float(TAPS) - offset, one_x);
+            float luma = lumaTap(i);
+            float chroma = chromaTap(i);
+            signal += sums * vec3(luma, chroma, chroma);
+          }
+          signal += texture2D(u_texture, v_texCoord).xyz *
+            vec3(lumaTap(TAPS), chromaTap(TAPS), chromaTap(TAPS));
+
+          // Optional decoding for UNORM render targets
+          signal.yz = mix(signal.yz, signal.yz * 2.0 - vec2(u_chromaSum), u_chromaEncode);
+
+          vec3 rgb = yiq2rgb(signal);
+          gl_FragColor = vec4(pow(rgb, vec3(NTSC_CRT_GAMMA / NTSC_MONITOR_GAMMA)), 1.0);
+        }
+      `;
       
       let currentFilter = 'ntsc'; // Start with NTSC filter as requested
       const filterKeys = Object.keys(filters);
       let shaderProgram = null;
+      let ntscPass1Program = null;
+      let ntscPass2Program = null;
+      let ntscPass1Texture = null;
+      let ntscPass1Framebuffer = null;
+      let ntscPass1TextureType = null;
+      let ntscPass1Width = width * 4;
+      let ntscPass1Height = height;
+      let ntscChromaEncode = 0.0;
+      const ntscChromaSum = 0.538021759;
       let nesTexture = null;
       let positionBuffer = null;
       let texCoordBuffer = null;
       let frameCount = 0; // For NTSC phase animation
       let webglInitialized = false; // Track WebGL initialization state
       
-      function initWebGL() {
-        // Make this function idempotent - clean up if re-initializing
-        if (webglInitialized) {
-          if (nesTexture) gl.deleteTexture(nesTexture);
-          if (positionBuffer) gl.deleteBuffer(positionBuffer);
-          if (texCoordBuffer) gl.deleteBuffer(texCoordBuffer);
-          if (shaderProgram) gl.deleteProgram(shaderProgram);
-          nesTexture = null;
-          positionBuffer = null;
-          texCoordBuffer = null;
-          shaderProgram = null;
-        }
-        
-        // Create vertex shader
+      function resetWebGLResources() {
+        if (nesTexture) gl.deleteTexture(nesTexture);
+        if (positionBuffer) gl.deleteBuffer(positionBuffer);
+        if (texCoordBuffer) gl.deleteBuffer(texCoordBuffer);
+        if (shaderProgram) gl.deleteProgram(shaderProgram);
+        if (ntscPass1Program) gl.deleteProgram(ntscPass1Program);
+        if (ntscPass2Program) gl.deleteProgram(ntscPass2Program);
+        if (ntscPass1Texture) gl.deleteTexture(ntscPass1Texture);
+        if (ntscPass1Framebuffer) gl.deleteFramebuffer(ntscPass1Framebuffer);
+        nesTexture = null;
+        positionBuffer = null;
+        texCoordBuffer = null;
+        shaderProgram = null;
+        ntscPass1Program = null;
+        ntscPass2Program = null;
+        ntscPass1Texture = null;
+        ntscPass1Framebuffer = null;
+        ntscPass1TextureType = null;
+      }
+
+      function cacheProgramLocations(program) {
+        program._uTextureLocation = gl.getUniformLocation(program, 'u_texture');
+        program._uTextureSizeLocation = gl.getUniformLocation(program, 'u_textureSize');
+        program._uOutputSizeLocation = gl.getUniformLocation(program, 'u_outputSize');
+        program._uFrameCountLocation = gl.getUniformLocation(program, 'u_frameCount');
+        program._uSourceSizeLocation = gl.getUniformLocation(program, 'u_sourceSize');
+        program._uChromaEncodeLocation = gl.getUniformLocation(program, 'u_chromaEncode');
+        program._uChromaSumLocation = gl.getUniformLocation(program, 'u_chromaSum');
+        program._aPositionLocation = gl.getAttribLocation(program, 'a_position');
+        program._aTexCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
+      }
+
+      function createProgram(vertexSource, fragmentSource) {
         const vertexShader = gl.createShader(gl.VERTEX_SHADER);
-        gl.shaderSource(vertexShader, vertexShaderSource);
+        gl.shaderSource(vertexShader, vertexSource);
         gl.compileShader(vertexShader);
         if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
           console.error("Vertex shader compilation failed:", gl.getShaderInfoLog(vertexShader));
           gl.deleteShader(vertexShader);
-          webglInitialized = false;
-          return false;
+          return null;
         }
-        
-        // Create and compile initial fragment shader
-        if (!compileShaderProgram(vertexShader, currentFilter)) {
+
+        const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fragmentShader, fragmentSource);
+        gl.compileShader(fragmentShader);
+        if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+          console.error("Fragment shader compilation failed:", gl.getShaderInfoLog(fragmentShader));
+          gl.deleteShader(fragmentShader);
           gl.deleteShader(vertexShader);
-          webglInitialized = false;
+          return null;
+        }
+
+        const program = gl.createProgram();
+        gl.attachShader(program, vertexShader);
+        gl.attachShader(program, fragmentShader);
+        gl.linkProgram(program);
+        gl.deleteShader(vertexShader);
+        gl.deleteShader(fragmentShader);
+
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+          console.error("Shader program linking failed:", gl.getProgramInfoLog(program));
+          gl.deleteProgram(program);
+          return null;
+        }
+
+        cacheProgramLocations(program);
+        return program;
+      }
+
+      function createNtscPass1Target() {
+        ntscPass1Width = width * 4;
+        ntscPass1Height = height;
+        const floatTexExt = gl.getExtension('OES_texture_float');
+        const colorBufferFloatExt = gl.getExtension('WEBGL_color_buffer_float') || gl.getExtension('EXT_color_buffer_float');
+        const useFloat = Boolean(floatTexExt && colorBufferFloatExt);
+
+        ntscPass1TextureType = useFloat ? gl.FLOAT : gl.UNSIGNED_BYTE;
+        ntscChromaEncode = useFloat ? 0.0 : 1.0;
+        ntscPass1Texture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, ntscPass1Texture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, ntscPass1Width, ntscPass1Height, 0, gl.RGBA, ntscPass1TextureType, null);
+
+        ntscPass1Framebuffer = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, ntscPass1Framebuffer);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, ntscPass1Texture, 0);
+
+        const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+        if (status !== gl.FRAMEBUFFER_COMPLETE) {
+          console.warn("NTSC pass1 framebuffer incomplete, falling back to UNSIGNED_BYTE", status);
+          gl.bindTexture(gl.TEXTURE_2D, ntscPass1Texture);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, ntscPass1Width, ntscPass1Height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+          ntscPass1TextureType = gl.UNSIGNED_BYTE;
+          ntscChromaEncode = 1.0;
+          const retryStatus = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
+          if (retryStatus !== gl.FRAMEBUFFER_COMPLETE) {
+            console.error("NTSC pass1 framebuffer still incomplete", retryStatus);
+            return false;
+          }
+        }
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        return true;
+      }
+
+      function setupFilterPrograms(filterName) {
+        const filter = filters[filterName];
+        if (!filter) {
+          console.error("Unknown filter:", filterName);
           return false;
         }
-        
-        // Delete the vertex shader after it's been attached to the program
-        gl.deleteShader(vertexShader);
-        
+
+        if (filter.type === "ntsc") {
+          ntscPass1Program = createProgram(ntscPass1VertexShaderSource, ntscPass1FragmentShaderSource);
+          ntscPass2Program = createProgram(ntscPass2VertexShaderSource, ntscPass2FragmentShaderSource);
+          if (!ntscPass1Program || !ntscPass2Program) {
+            return false;
+          }
+          if (!createNtscPass1Target()) {
+            return false;
+          }
+          shaderProgram = null;
+          return true;
+        }
+
+        shaderProgram = createProgram(vertexShaderSource, filter.fragmentShader);
+        return Boolean(shaderProgram);
+      }
+
+      function initWebGL() {
+        // Make this function idempotent - clean up if re-initializing
+        if (webglInitialized) {
+          resetWebGLResources();
+        }
+
         // Create texture for NES framebuffer
         nesTexture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, nesTexture);
@@ -296,10 +542,10 @@
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        
+
         // Allocate texture storage once (we'll update with texSubImage2D per frame)
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-        
+
         // Create vertex buffers for a full-screen quad
         positionBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
@@ -310,7 +556,7 @@
            1.0,  1.0
         ]);
         gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-        
+
         texCoordBuffer = gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
         const texCoords = new Float32Array([
@@ -320,82 +566,29 @@
           1.0, 0.0
         ]);
         gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
-        
+
+        if (!setupFilterPrograms(currentFilter)) {
+          webglInitialized = false;
+          return false;
+        }
+
         webglInitialized = true;
         return true;
       }
-      
-      function compileShaderProgram(vertexShader, filterName) {
-        const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
-        gl.shaderSource(fragmentShader, filters[filterName].fragmentShader);
-        gl.compileShader(fragmentShader);
-        if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
-          console.error("Fragment shader compilation failed:", gl.getShaderInfoLog(fragmentShader));
-          gl.deleteShader(fragmentShader);
-          return false;
-        }
-        
-        // Create shader program into a temporary program first
-        const newProgram = gl.createProgram();
-        gl.attachShader(newProgram, vertexShader);
-        gl.attachShader(newProgram, fragmentShader);
-        gl.linkProgram(newProgram);
-        
-        // Delete fragment shader after linking to avoid resource leaks
-        gl.deleteShader(fragmentShader);
-        
-        if (!gl.getProgramParameter(newProgram, gl.LINK_STATUS)) {
-          console.error("Shader program linking failed:", gl.getProgramInfoLog(newProgram));
-          gl.deleteProgram(newProgram);
-          return false;
-        }
-        
-        // Cache uniform and attribute locations on the new program
-        newProgram._uTextureLocation = gl.getUniformLocation(newProgram, 'u_texture');
-        newProgram._uTextureSizeLocation = gl.getUniformLocation(newProgram, 'u_textureSize');
-        newProgram._uOutputSizeLocation = gl.getUniformLocation(newProgram, 'u_outputSize');
-        newProgram._uFrameCountLocation = gl.getUniformLocation(newProgram, 'u_frameCount');
-        newProgram._aPositionLocation = gl.getAttribLocation(newProgram, 'a_position');
-        newProgram._aTexCoordLocation = gl.getAttribLocation(newProgram, 'a_texCoord');
-        
-        // At this point linking succeeded; safely replace the old program
-        if (shaderProgram) {
-          gl.deleteProgram(shaderProgram);
-        }
-        shaderProgram = newProgram;
-        
-        return true;
-      }
-      
+
       function cycleFilter() {
         const currentIndex = filterKeys.indexOf(currentFilter);
         const nextIndex = (currentIndex + 1) % filterKeys.length;
         const nextFilter = filterKeys[nextIndex];
-        
-        // Recompile shader with new filter
-        const vertexShader = gl.createShader(gl.VERTEX_SHADER);
-        gl.shaderSource(vertexShader, vertexShaderSource);
-        gl.compileShader(vertexShader);
-        
-        if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
-          console.error("Vertex shader compilation failed:", gl.getShaderInfoLog(vertexShader));
-          gl.deleteShader(vertexShader);
+        currentFilter = nextFilter;
+
+        // Recreate buffers and textures but keep running state
+        if (!initWebGL()) {
           console.error("Failed to switch filter");
           return false;
         }
-        
-        if (compileShaderProgram(vertexShader, nextFilter)) {
-          // Only update currentFilter after successful compilation
-          currentFilter = nextFilter;
-          // Delete the vertex shader after use (it's been attached to the program)
-          gl.deleteShader(vertexShader);
-          return true;
-        } else {
-          console.error("Failed to switch filter");
-          // Delete the vertex shader after failed use
-          gl.deleteShader(vertexShader);
-          return false;
-        }
+
+        return true;
       }
       
       let nes;
@@ -559,6 +752,101 @@
         romInput.disabled = false;
       }
 
+      function bindQuadAttributes(program) {
+        if (program._aPositionLocation !== -1 && program._aPositionLocation !== null) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+          gl.enableVertexAttribArray(program._aPositionLocation);
+          gl.vertexAttribPointer(program._aPositionLocation, 2, gl.FLOAT, false, 0, 0);
+        }
+        if (program._aTexCoordLocation !== -1 && program._aTexCoordLocation !== null) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+          gl.enableVertexAttribArray(program._aTexCoordLocation);
+          gl.vertexAttribPointer(program._aTexCoordLocation, 2, gl.FLOAT, false, 0, 0);
+        }
+      }
+
+      function renderSinglePass(frame) {
+        if (!shaderProgram) {
+          console.error("Shader program is null, cannot render");
+          return false;
+        }
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+
+        gl.useProgram(shaderProgram);
+        if (shaderProgram._uTextureSizeLocation) {
+          gl.uniform2f(shaderProgram._uTextureSizeLocation, width, height);
+        }
+        if (shaderProgram._uOutputSizeLocation) {
+          gl.uniform2f(shaderProgram._uOutputSizeLocation, canvas.width, canvas.height);
+        }
+        if (shaderProgram._uFrameCountLocation) {
+          gl.uniform1f(shaderProgram._uFrameCountLocation, frameCount);
+        }
+        if (shaderProgram._uTextureLocation) {
+          gl.uniform1i(shaderProgram._uTextureLocation, 0);
+        }
+
+        bindQuadAttributes(shaderProgram);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        return true;
+      }
+
+      function renderNtscPass(frame) {
+        if (!ntscPass1Program || !ntscPass2Program || !ntscPass1Framebuffer || !ntscPass1Texture) {
+          console.error("NTSC programs or targets are not initialized");
+          return false;
+        }
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+
+        // Pass 1: encode/demodulate to YIQ
+        gl.bindFramebuffer(gl.FRAMEBUFFER, ntscPass1Framebuffer);
+        gl.viewport(0, 0, ntscPass1Width, ntscPass1Height);
+        gl.useProgram(ntscPass1Program);
+        if (ntscPass1Program._uOutputSizeLocation) {
+          gl.uniform2f(ntscPass1Program._uOutputSizeLocation, ntscPass1Width, ntscPass1Height);
+        }
+        if (ntscPass1Program._uFrameCountLocation) {
+          gl.uniform1f(ntscPass1Program._uFrameCountLocation, frameCount % 2);
+        }
+        if (ntscPass1Program._uChromaEncodeLocation) {
+          gl.uniform1f(ntscPass1Program._uChromaEncodeLocation, ntscChromaEncode);
+        }
+        if (ntscPass1Program._uTextureLocation) {
+          gl.uniform1i(ntscPass1Program._uTextureLocation, 0);
+        }
+        bindQuadAttributes(ntscPass1Program);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        // Pass 2: decode/filter to RGB
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        gl.bindTexture(gl.TEXTURE_2D, ntscPass1Texture);
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.useProgram(ntscPass2Program);
+        if (ntscPass2Program._uSourceSizeLocation) {
+          gl.uniform2f(ntscPass2Program._uSourceSizeLocation, ntscPass1Width, ntscPass1Height);
+        }
+        if (ntscPass2Program._uChromaEncodeLocation) {
+          gl.uniform1f(ntscPass2Program._uChromaEncodeLocation, ntscChromaEncode);
+        }
+        if (ntscPass2Program._uChromaSumLocation) {
+          gl.uniform1f(ntscPass2Program._uChromaSumLocation, ntscChromaSum);
+        }
+        if (ntscPass2Program._uTextureLocation) {
+          gl.uniform1i(ntscPass2Program._uTextureLocation, 0);
+        }
+        bindQuadAttributes(ntscPass2Program);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        return true;
+      }
+
       function step(timestamp) {
         if (!running || paused) return;
         lastFrameTime = timestamp;
@@ -567,57 +855,23 @@
             pollGamepad();
           }
           const frame = nes.render_frame_rgba(); // RGBA8888
-          
-          // Guard against null shaderProgram
-          if (!shaderProgram) {
-            console.error("Shader program is null, cannot render");
-            // Stop the emulator loop to keep state consistent without overwriting the error status
+          const filter = filters[currentFilter];
+          let rendered = false;
+          if (filter?.type === "ntsc") {
+            rendered = renderNtscPass(frame);
+          } else {
+            rendered = renderSinglePass(frame);
+          }
+
+          if (!rendered) {
             running = false;
             setStatus("Rendering error occurred. Please restart.", true);
             return;
           }
-          
-          // Upload frame data to WebGL texture using texSubImage2D (more efficient)
-          gl.bindTexture(gl.TEXTURE_2D, nesTexture);
-          gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, frame);
-          
-          // Render with shader
-          gl.useProgram(shaderProgram);
-          
-          // Set uniforms using cached locations
-          if (shaderProgram._uTextureSizeLocation) {
-            gl.uniform2f(shaderProgram._uTextureSizeLocation, width, height);
-          }
-          if (shaderProgram._uOutputSizeLocation) {
-            gl.uniform2f(shaderProgram._uOutputSizeLocation, canvas.width, canvas.height);
-          }
-          if (shaderProgram._uFrameCountLocation) {
-            gl.uniform1f(shaderProgram._uFrameCountLocation, frameCount);
-          }
-          if (shaderProgram._uTextureLocation) {
-            gl.uniform1i(shaderProgram._uTextureLocation, 0);
-          }
-          
+
           // Increment frame counter for NTSC phase animation
           // Wrap at 3600 to prevent float precision issues (60 frames/sec * 60 sec = 3600 frames/min)
           frameCount = (frameCount + 1) % 3600;
-          
-          // Set up vertex attributes using cached locations
-          if (shaderProgram._aPositionLocation !== -1 && shaderProgram._aPositionLocation !== null) {
-            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-            gl.enableVertexAttribArray(shaderProgram._aPositionLocation);
-            gl.vertexAttribPointer(shaderProgram._aPositionLocation, 2, gl.FLOAT, false, 0, 0);
-          }
-          
-          if (shaderProgram._aTexCoordLocation !== -1 && shaderProgram._aTexCoordLocation !== null) {
-            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-            gl.enableVertexAttribArray(shaderProgram._aTexCoordLocation);
-            gl.vertexAttribPointer(shaderProgram._aTexCoordLocation, 2, gl.FLOAT, false, 0, 0);
-          }
-          
-          // Draw
-          gl.viewport(0, 0, canvas.width, canvas.height);
-          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
           
           // Get and play audio samples
           const audioSamples = nes.get_audio_samples();
