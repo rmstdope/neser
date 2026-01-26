@@ -51,6 +51,7 @@
       <button id="screen-minus">Screen -</button>
       <button id="screen-plus">Screen +</button>
       <button id="fullscreen">Fullscreen</button>
+      <button id="gamepad-toggle" aria-pressed="true">Gamepad On</button>
     </div>
     <canvas id="screen" width="256" height="240"></canvas>
     <div id="controls">
@@ -58,6 +59,7 @@
     </div>
     <script type="module">
       import init, { WasmNes } from "./pkg/neser.js";
+      import { mapStandardGamepadState, selectPrimaryGamepad } from "./gamepad.js";
 
       const statusEl = document.getElementById("status");
       const startBtn = document.getElementById("start");
@@ -89,6 +91,17 @@
       const AUDIO_SAMPLE_RATE = 44100; // Target output sample rate for Web Audio (NES audio is downsampled to this rate)
       const NES_APU_MAX = 1.177; // Conservative max output from NES APU mixer including expansion audio
       let audioMuted = false;
+      let gamepadEnabled = true;
+      let lastGamepadState = {
+        a: false,
+        b: false,
+        select: false,
+        start: false,
+        up: false,
+        down: false,
+        left: false,
+        right: false
+      };
 
       function setStatus(msg, isError = false) {
         statusEl.textContent = msg;
@@ -215,6 +228,9 @@
         if (!running || paused) return;
         lastFrameTime = timestamp;
         try {
+          if (gamepadEnabled && nes) {
+            pollGamepad();
+          }
           const frame = nes.render_frame_rgba(); // RGBA8888
           imageDataBuffer.set(frame);
           ctx.putImageData(imageData, 0, 0);
@@ -251,6 +267,19 @@
       }
 
       startBtn.addEventListener("click", start);
+      const gamepadToggleBtn = document.getElementById("gamepad-toggle");
+      function updateGamepadButton() {
+        gamepadToggleBtn.textContent = gamepadEnabled ? "Gamepad On" : "Gamepad Off";
+        gamepadToggleBtn.setAttribute("aria-pressed", gamepadEnabled ? "true" : "false");
+      }
+      gamepadToggleBtn.addEventListener("click", () => {
+        gamepadEnabled = !gamepadEnabled;
+        updateGamepadButton();
+        if (!gamepadEnabled) {
+          resetGamepadState();
+        }
+      });
+      updateGamepadButton();
       const muteBtn = document.getElementById("mute");
       function updateMuteButton() {
         muteBtn.textContent = audioMuted ? "Unmute" : "Mute";
@@ -373,6 +402,64 @@
             console.error("Failed to exit fullscreen:", err);
             setStatus("Failed to exit fullscreen mode", true);
           }
+        }
+      });
+
+      function pollGamepad() {
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const gamepad = selectPrimaryGamepad(gamepads);
+        if (!gamepad || !gamepad.connected) {
+          return;
+        }
+        const state = mapStandardGamepadState(gamepad);
+        applyGamepadState(state);
+      }
+
+      function applyGamepadState(state) {
+        if (!nes) return;
+        if (state.a !== lastGamepadState.a) {
+          nes.set_button(1, 0, state.a);
+        }
+        if (state.b !== lastGamepadState.b) {
+          nes.set_button(1, 1, state.b);
+        }
+        if (state.select !== lastGamepadState.select) {
+          nes.set_button(1, 2, state.select);
+        }
+        if (state.start !== lastGamepadState.start) {
+          nes.set_button(1, 3, state.start);
+        }
+        if (state.up !== lastGamepadState.up) {
+          nes.set_button(1, 4, state.up);
+        }
+        if (state.down !== lastGamepadState.down) {
+          nes.set_button(1, 5, state.down);
+        }
+        if (state.left !== lastGamepadState.left) {
+          nes.set_button(1, 6, state.left);
+        }
+        if (state.right !== lastGamepadState.right) {
+          nes.set_button(1, 7, state.right);
+        }
+        lastGamepadState = state;
+      }
+
+      function resetGamepadState() {
+        applyGamepadState({
+          a: false,
+          b: false,
+          select: false,
+          start: false,
+          up: false,
+          down: false,
+          left: false,
+          right: false
+        });
+      }
+
+      window.addEventListener("gamepadconnected", () => {
+        if (gamepadEnabled && running && !paused) {
+          pollGamepad();
         }
       });
 
