@@ -1,4 +1,8 @@
-export function mapStandardGamepadState(gamepad, axisThreshold = 0.5) {
+// Default analog stick axis threshold used to interpret directional input.
+// Callers can override this by passing a custom `axisThreshold` value.
+const DEFAULT_AXIS_THRESHOLD = 0.5;
+
+export function mapStandardGamepadState(gamepad, axisThreshold = DEFAULT_AXIS_THRESHOLD) {
     const buttons = gamepad?.buttons ?? [];
     const axes = gamepad?.axes ?? [];
 
