@@ -52,6 +52,7 @@
       <button id="screen-plus">Screen +</button>
       <button id="fullscreen">Fullscreen</button>
       <button id="gamepad-toggle" aria-pressed="true">Gamepad On</button>
+      <button id="filter-toggle">Filter: NTSC Composite</button>
     </div>
     <canvas id="screen" width="256" height="240"></canvas>
     <div id="controls">
@@ -68,14 +69,179 @@
       if (!(canvas instanceof HTMLCanvasElement)) {
         throw new Error("Canvas element with id 'screen' not found or not a canvas");
       }
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        throw new Error("2D rendering context not available for canvas 'screen'");
+      
+      // Use WebGL for rendering with filter support
+      const gl = canvas.getContext("webgl");
+      if (!gl) {
+        throw new Error("WebGL rendering context not available for canvas 'screen'");
       }
+      
       const width = 256;
       const height = 240;
-      const imageData = ctx.createImageData(width, height);
-      const imageDataBuffer = imageData.data;
+      
+      // WebGL shader setup for filters
+      const filters = {
+        stock: {
+          name: "Stock (No Filter)",
+          fragmentShader: `
+            precision mediump float;
+            varying vec2 v_texCoord;
+            uniform sampler2D u_texture;
+            
+            void main() {
+              gl_FragColor = texture2D(u_texture, v_texCoord);
+            }
+          `
+        },
+        ntsc: {
+          name: "NTSC Composite",
+          fragmentShader: `
+            precision mediump float;
+            varying vec2 v_texCoord;
+            uniform sampler2D u_texture;
+            uniform vec2 u_textureSize;
+            
+            void main() {
+              vec2 pixelSize = 1.0 / u_textureSize;
+              
+              // Simple horizontal blur to simulate NTSC composite bleeding
+              vec4 color = vec4(0.0);
+              color += texture2D(u_texture, v_texCoord + vec2(-pixelSize.x, 0.0)) * 0.15;
+              color += texture2D(u_texture, v_texCoord) * 0.70;
+              color += texture2D(u_texture, v_texCoord + vec2(pixelSize.x, 0.0)) * 0.15;
+              
+              gl_FragColor = color;
+            }
+          `
+        },
+        crt: {
+          name: "CRT Scanlines",
+          fragmentShader: `
+            precision mediump float;
+            varying vec2 v_texCoord;
+            uniform sampler2D u_texture;
+            uniform vec2 u_outputSize;
+            
+            void main() {
+              vec4 color = texture2D(u_texture, v_texCoord);
+              
+              // Add scanlines based on output pixel position
+              float scanline = sin(v_texCoord.y * u_outputSize.y * 3.14159) * 0.15 + 0.85;
+              color.rgb *= scanline;
+              
+              gl_FragColor = color;
+            }
+          `
+        }
+      };
+      
+      const vertexShaderSource = `
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_texCoord;
+        
+        void main() {
+          gl_Position = vec4(a_position, 0.0, 1.0);
+          v_texCoord = a_texCoord;
+        }
+      `;
+      
+      let currentFilter = 'ntsc'; // Start with NTSC filter as requested
+      const filterKeys = Object.keys(filters);
+      let shaderProgram = null;
+      let nesTexture = null;
+      let positionBuffer = null;
+      let texCoordBuffer = null;
+      
+      function initWebGL() {
+        // Create vertex shader
+        const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vertexShader, vertexShaderSource);
+        gl.compileShader(vertexShader);
+        if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+          console.error("Vertex shader compilation failed:", gl.getShaderInfoLog(vertexShader));
+          return false;
+        }
+        
+        // Create and compile initial fragment shader
+        if (!compileShaderProgram(vertexShader, currentFilter)) {
+          return false;
+        }
+        
+        // Create texture for NES framebuffer
+        nesTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        
+        // Create vertex buffers for a full-screen quad
+        positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        const positions = new Float32Array([
+          -1.0, -1.0,
+           1.0, -1.0,
+          -1.0,  1.0,
+           1.0,  1.0
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+        
+        texCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+        const texCoords = new Float32Array([
+          0.0, 1.0,
+          1.0, 1.0,
+          0.0, 0.0,
+          1.0, 0.0
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+        
+        return true;
+      }
+      
+      function compileShaderProgram(vertexShader, filterName) {
+        const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fragmentShader, filters[filterName].fragmentShader);
+        gl.compileShader(fragmentShader);
+        if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+          console.error("Fragment shader compilation failed:", gl.getShaderInfoLog(fragmentShader));
+          return false;
+        }
+        
+        // Create shader program
+        if (shaderProgram) {
+          gl.deleteProgram(shaderProgram);
+        }
+        shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+          console.error("Shader program linking failed:", gl.getProgramInfoLog(shaderProgram));
+          return false;
+        }
+        
+        return true;
+      }
+      
+      function cycleFilter() {
+        const currentIndex = filterKeys.indexOf(currentFilter);
+        const nextIndex = (currentIndex + 1) % filterKeys.length;
+        currentFilter = filterKeys[nextIndex];
+        
+        // Recompile shader with new filter
+        const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vertexShader, vertexShaderSource);
+        gl.compileShader(vertexShader);
+        
+        if (compileShaderProgram(vertexShader, currentFilter)) {
+          setStatus(`Filter: ${filters[currentFilter].name}`);
+        } else {
+          setStatus("Failed to switch filter", true);
+        }
+      }
+      
       let nes;
       let romBytes;
       let running = false;
@@ -116,7 +282,8 @@
       });
 
       function clearCanvas() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
       }
 
       function initAudioContext() {
@@ -184,6 +351,11 @@
             const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
             await init(wasmUrl);
             nes = new WasmNes();
+            
+            // Initialize WebGL shaders
+            if (!initWebGL()) {
+              throw new Error("Failed to initialize WebGL");
+            }
           }
           nes.load_rom(romBytes);
           // Initialize audio context on user interaction (browser requirement)
@@ -232,8 +404,40 @@
             pollGamepad();
           }
           const frame = nes.render_frame_rgba(); // RGBA8888
-          imageDataBuffer.set(frame);
-          ctx.putImageData(imageData, 0, 0);
+          
+          // Upload frame data to WebGL texture
+          gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+          
+          // Render with shader
+          gl.useProgram(shaderProgram);
+          
+          // Set uniforms
+          const textureSizeLocation = gl.getUniformLocation(shaderProgram, 'u_textureSize');
+          if (textureSizeLocation) {
+            gl.uniform2f(textureSizeLocation, width, height);
+          }
+          const outputSizeLocation = gl.getUniformLocation(shaderProgram, 'u_outputSize');
+          if (outputSizeLocation) {
+            gl.uniform2f(outputSizeLocation, canvas.width, canvas.height);
+          }
+          const textureLocation = gl.getUniformLocation(shaderProgram, 'u_texture');
+          gl.uniform1i(textureLocation, 0);
+          
+          // Set up vertex attributes
+          const positionLocation = gl.getAttribLocation(shaderProgram, 'a_position');
+          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+          gl.enableVertexAttribArray(positionLocation);
+          gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+          
+          const texCoordLocation = gl.getAttribLocation(shaderProgram, 'a_texCoord');
+          gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+          gl.enableVertexAttribArray(texCoordLocation);
+          gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+          
+          // Draw
+          gl.viewport(0, 0, canvas.width, canvas.height);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
           
           // Get and play audio samples
           const audioSamples = nes.get_audio_samples();
@@ -356,6 +560,7 @@
       const screenMinusBtn = document.getElementById("screen-minus");
       const screenPlusBtn = document.getElementById("screen-plus");
       const fullscreenBtn = document.getElementById("fullscreen");
+      const filterToggleBtn = document.getElementById("filter-toggle");
       
       // NES native resolution is 256x240 pixels
       const NES_ASPECT_RATIO = 256 / 240;
@@ -403,6 +608,11 @@
             setStatus("Failed to exit fullscreen mode", true);
           }
         }
+      });
+      
+      filterToggleBtn.addEventListener("click", () => {
+        cycleFilter();
+        filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
       });
 
       function pollGamepad() {
