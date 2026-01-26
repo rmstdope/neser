@@ -43,6 +43,34 @@ test("maps left stick axes to NES directions", () => {
   assert.equal(state.up, false);
 });
 
+test("does not trigger directions at exact axis threshold", () => {
+  const gamepad = {
+    buttons: makeButtons(),
+    axes: [0.5, -0.5, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad);
+
+  assert.equal(state.right, false);
+  assert.equal(state.left, false);
+  assert.equal(state.up, false);
+  assert.equal(state.down, false);
+});
+
+test("prefers pressed if both d-pad and axes active", () => {
+  const gamepad = {
+    buttons: makeButtons([12, 13, 14, 15]),
+    axes: [-1, -1, 0, 0]
+  };
+
+  const state = mapStandardGamepadState(gamepad);
+
+  assert.equal(state.up, true);
+  assert.equal(state.down, true);
+  assert.equal(state.left, true);
+  assert.equal(state.right, true);
+});
+
 test("selects first connected gamepad", () => {
   const gamepads = [
     null,
