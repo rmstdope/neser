@@ -84,7 +84,11 @@
         stock: {
           name: "Stock (No Filter)",
           fragmentShader: `
-            precision highp float;
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+              precision highp float;
+            #else
+              precision mediump float;
+            #endif
             varying vec2 v_texCoord;
             uniform sampler2D u_texture;
             
@@ -96,7 +100,11 @@
         ntsc: {
           name: "NTSC Composite",
           fragmentShader: `
-            precision highp float;
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+              precision highp float;
+            #else
+              precision mediump float;
+            #endif
             varying vec2 v_texCoord;
             varying vec2 v_pixelCoord;
             uniform sampler2D u_texture;
@@ -154,7 +162,11 @@
         crt: {
           name: "CRT Lottes",
           fragmentShader: `
-            precision highp float;
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+              precision highp float;
+            #else
+              precision mediump float;
+            #endif
             varying vec2 v_texCoord;
             uniform sampler2D u_texture;
             uniform vec2 u_textureSize;
@@ -187,7 +199,7 @@
                   bloom += texture2D(u_texture, uv + offset).rgb;
                 }
               }
-              bloom /= 16.0;
+              bloom /= 25.0;  // Normalize by actual sample count (5x5 = 25)
               color += bloom * 0.4; // Add bloom/glow
               
               // Scanlines (based on screen Y position)
@@ -254,8 +266,12 @@
         
         // Create and compile initial fragment shader
         if (!compileShaderProgram(vertexShader, currentFilter)) {
+          gl.deleteShader(vertexShader);
           return false;
         }
+        
+        // Delete the vertex shader after it's been attached to the program
+        gl.deleteShader(vertexShader);
         
         // Create texture for NES framebuffer
         nesTexture = gl.createTexture();
@@ -264,6 +280,9 @@
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        
+        // Allocate texture storage once (we'll update with texSubImage2D per frame)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
         
         // Create vertex buffers for a full-screen quad
         positionBuffer = gl.createBuffer();
@@ -295,21 +314,37 @@
         gl.compileShader(fragmentShader);
         if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
           console.error("Fragment shader compilation failed:", gl.getShaderInfoLog(fragmentShader));
+          gl.deleteShader(fragmentShader);
           return false;
         }
         
         // Create shader program
         if (shaderProgram) {
           gl.deleteProgram(shaderProgram);
+          shaderProgram = null;
         }
         shaderProgram = gl.createProgram();
         gl.attachShader(shaderProgram, vertexShader);
         gl.attachShader(shaderProgram, fragmentShader);
         gl.linkProgram(shaderProgram);
+        
+        // Delete shaders after linking to avoid resource leaks
+        gl.deleteShader(fragmentShader);
+        
         if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
           console.error("Shader program linking failed:", gl.getProgramInfoLog(shaderProgram));
+          gl.deleteProgram(shaderProgram);
+          shaderProgram = null;
           return false;
         }
+        
+        // Cache uniform and attribute locations on the program
+        shaderProgram._uTextureLocation = gl.getUniformLocation(shaderProgram, 'u_texture');
+        shaderProgram._uTextureSizeLocation = gl.getUniformLocation(shaderProgram, 'u_textureSize');
+        shaderProgram._uOutputSizeLocation = gl.getUniformLocation(shaderProgram, 'u_outputSize');
+        shaderProgram._uFrameCountLocation = gl.getUniformLocation(shaderProgram, 'u_frameCount');
+        shaderProgram._aPositionLocation = gl.getAttribLocation(shaderProgram, 'a_position');
+        shaderProgram._aTexCoordLocation = gl.getAttribLocation(shaderProgram, 'a_texCoord');
         
         return true;
       }
@@ -324,11 +359,22 @@
         gl.shaderSource(vertexShader, vertexShaderSource);
         gl.compileShader(vertexShader);
         
-        if (compileShaderProgram(vertexShader, currentFilter)) {
-          setStatus(`Filter: ${filters[currentFilter].name}`);
-        } else {
-          setStatus("Failed to switch filter", true);
+        if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+          console.error("Vertex shader compilation failed:", gl.getShaderInfoLog(vertexShader));
+          gl.deleteShader(vertexShader);
+          console.error("Failed to switch filter");
+          return;
         }
+        
+        if (compileShaderProgram(vertexShader, currentFilter)) {
+          // Update button text only, don't interfere with emulator status
+          document.getElementById('filter-toggle').textContent = filters[currentFilter].name;
+        } else {
+          console.error("Failed to switch filter");
+        }
+        
+        // Delete the vertex shader after use (it's been attached to the program)
+        gl.deleteShader(vertexShader);
       }
       
       let nes;
@@ -494,42 +540,42 @@
           }
           const frame = nes.render_frame_rgba(); // RGBA8888
           
-          // Upload frame data to WebGL texture
+          // Upload frame data to WebGL texture using texSubImage2D (more efficient)
           gl.bindTexture(gl.TEXTURE_2D, nesTexture);
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+          gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, frame);
           
           // Render with shader
           gl.useProgram(shaderProgram);
           
-          // Set uniforms
-          const textureSizeLocation = gl.getUniformLocation(shaderProgram, 'u_textureSize');
-          if (textureSizeLocation) {
-            gl.uniform2f(textureSizeLocation, width, height);
+          // Set uniforms using cached locations
+          if (shaderProgram._uTextureSizeLocation) {
+            gl.uniform2f(shaderProgram._uTextureSizeLocation, width, height);
           }
-          const outputSizeLocation = gl.getUniformLocation(shaderProgram, 'u_outputSize');
-          if (outputSizeLocation) {
-            gl.uniform2f(outputSizeLocation, canvas.width, canvas.height);
+          if (shaderProgram._uOutputSizeLocation) {
+            gl.uniform2f(shaderProgram._uOutputSizeLocation, canvas.width, canvas.height);
           }
-          const frameCountLocation = gl.getUniformLocation(shaderProgram, 'u_frameCount');
-          if (frameCountLocation) {
-            gl.uniform1f(frameCountLocation, frameCount);
+          if (shaderProgram._uFrameCountLocation) {
+            gl.uniform1f(shaderProgram._uFrameCountLocation, frameCount);
           }
-          const textureLocation = gl.getUniformLocation(shaderProgram, 'u_texture');
-          gl.uniform1i(textureLocation, 0);
+          if (shaderProgram._uTextureLocation) {
+            gl.uniform1i(shaderProgram._uTextureLocation, 0);
+          }
           
           // Increment frame counter for NTSC phase animation
           frameCount++;
           
-          // Set up vertex attributes
-          const positionLocation = gl.getAttribLocation(shaderProgram, 'a_position');
-          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-          gl.enableVertexAttribArray(positionLocation);
-          gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+          // Set up vertex attributes using cached locations
+          if (shaderProgram._aPositionLocation !== -1 && shaderProgram._aPositionLocation !== null) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.enableVertexAttribArray(shaderProgram._aPositionLocation);
+            gl.vertexAttribPointer(shaderProgram._aPositionLocation, 2, gl.FLOAT, false, 0, 0);
+          }
           
-          const texCoordLocation = gl.getAttribLocation(shaderProgram, 'a_texCoord');
-          gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
-          gl.enableVertexAttribArray(texCoordLocation);
-          gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+          if (shaderProgram._aTexCoordLocation !== -1 && shaderProgram._aTexCoordLocation !== null) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+            gl.enableVertexAttribArray(shaderProgram._aTexCoordLocation);
+            gl.vertexAttribPointer(shaderProgram._aTexCoordLocation, 2, gl.FLOAT, false, 0, 0);
+          }
           
           // Draw
           gl.viewport(0, 0, canvas.width, canvas.height);
