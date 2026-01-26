@@ -12,9 +12,6 @@ pub mod ppu;
 #[cfg(feature = "wasm")]
 #[path = "web_frontend/wasm.rs"]
 pub mod wasm;
-#[cfg(feature = "wasm")]
-#[path = "web_frontend/web_renderer.rs"]
-mod web_renderer;
 #[cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
 #[path = "web_frontend/wasm_tests.rs"]
 mod wasm_tests;

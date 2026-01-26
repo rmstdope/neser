@@ -70,8 +70,459 @@
         throw new Error("Canvas element with id 'screen' not found or not a canvas");
       }
       
+      // Use WebGL for rendering with filter support
+      const gl = canvas.getContext("webgl");
+      if (!gl) {
+        throw new Error("WebGL rendering context not available for canvas 'screen'");
+      }
+      
       const width = 256;
       const height = 240;
+      
+      // WebGL shader setup for filters - Thorough manual port from SDL .slang shaders
+      const filters = {
+        stock: {
+          name: "Stock (No Filter)",
+          fragmentShader: `
+            precision highp float;
+            varying vec2 v_texCoord;
+            uniform sampler2D u_texture;
+            
+            void main() {
+              gl_FragColor = texture2D(u_texture, v_texCoord);
+            }
+          `
+        },
+        ntsc: {
+          name: "NTSC Composite",
+          fragmentShader: `
+            precision highp float;
+            varying vec2 v_texCoord;
+            varying vec2 v_pixelCoord;
+            uniform sampler2D u_texture;
+            uniform vec2 u_textureSize;
+            uniform float u_frameCount;
+            
+            #define PI 3.14159265359
+            
+            // RGB to YIQ conversion matrix
+            mat3 rgb2yiq = mat3(
+              0.299, 0.596, 0.211,
+              0.587, -0.274, -0.523,
+              0.114, -0.322, 0.312
+            );
+            
+            // YIQ to RGB conversion matrix
+            mat3 yiq2rgb = mat3(
+              1.0, 1.0, 1.0,
+              0.956, -0.272, -1.106,
+              0.621, -0.647, 1.703
+            );
+            
+            // Luma FIR filter coefficients (25 taps)
+            float lumaCoeff(int i) {
+              if (i == 0) return -0.000174;
+              if (i == 1) return -0.000205;
+              if (i == 2) return -0.000149;
+              if (i == 3) return -0.000051;
+              if (i == 4) return 0.000000;
+              if (i == 5) return -0.000019;
+              if (i == 6) return -0.000089;
+              if (i == 7) return -0.000198;
+              if (i == 8) return -0.000338;
+              if (i == 9) return -0.000477;
+              if (i == 10) return -0.000591;
+              if (i == 11) return -0.000656;
+              if (i == 12) return -0.000652;
+              if (i == 13) return 0.386923;
+              if (i == 14) return -0.000652;
+              if (i == 15) return -0.000656;
+              if (i == 16) return -0.000591;
+              if (i == 17) return -0.000477;
+              if (i == 18) return -0.000338;
+              if (i == 19) return -0.000198;
+              if (i == 20) return -0.000089;
+              if (i == 21) return -0.000019;
+              if (i == 22) return 0.000000;
+              if (i == 23) return -0.000051;
+              if (i == 24) return -0.000149;
+              return 0.0;
+            }
+            
+            // Chroma FIR filter coefficients (25 taps)
+            float chromaCoeff(int i) {
+              if (i == 0) return 0.001384;
+              if (i == 1) return 0.001678;
+              if (i == 2) return 0.002004;
+              if (i == 3) return 0.002350;
+              if (i == 4) return 0.002680;
+              if (i == 5) return 0.002985;
+              if (i == 6) return 0.003244;
+              if (i == 7) return 0.003443;
+              if (i == 8) return 0.003565;
+              if (i == 9) return 0.003596;
+              if (i == 10) return 0.003525;
+              if (i == 11) return 0.003348;
+              if (i == 12) return 0.003063;
+              if (i == 13) return 0.002674;
+              if (i == 14) return 0.002188;
+              if (i == 15) return 0.001616;
+              if (i == 16) return 0.000971;
+              if (i == 17) return 0.000274;
+              if (i == 18) return -0.000457;
+              if (i == 19) return -0.001199;
+              if (i == 20) return -0.001925;
+              if (i == 21) return -0.002590;
+              if (i == 22) return -0.003161;
+              if (i == 23) return -0.003605;
+              if (i == 24) return -0.003904;
+              return 0.0;
+            }
+            
+            void main() {
+              vec2 pixelSize = 1.0 / u_textureSize;
+              
+              // Calculate 3-phase chroma phase
+              float chroma_phase = 0.6667 * PI * (mod(v_pixelCoord.y, 3.0) + u_frameCount);
+              
+              // Sample and modulate
+              float luma = 0.0;
+              float i_mod = 0.0;
+              float q_mod = 0.0;
+              
+              for (int i = 0; i < 25; i++) {
+                float offset = float(i - 12);
+                vec2 samplePos = v_texCoord + vec2(offset * pixelSize.x, 0.0);
+                vec3 rgb = texture2D(u_texture, samplePos).rgb;
+                vec3 yiq = rgb2yiq * rgb;
+                
+                float phase = chroma_phase + offset * PI / 3.0;
+                float i_signal = yiq.y * cos(phase) - yiq.z * sin(phase);
+                float q_signal = yiq.y * sin(phase) + yiq.z * cos(phase);
+                
+                luma += yiq.x * lumaCoeff(i);
+                i_mod += i_signal * chromaCoeff(i);
+                q_mod += q_signal * chromaCoeff(i);
+              }
+              
+              // Demodulate
+              float i_chroma = i_mod * 2.0 * cos(chroma_phase) + q_mod * 2.0 * sin(chroma_phase);
+              float q_chroma = q_mod * 2.0 * cos(chroma_phase) - i_mod * 2.0 * sin(chroma_phase);
+              
+              // Mix with artifacting/fringing controls
+              float brightness = 1.0;
+              float saturation = 1.0;
+              float artifact = 0.5;
+              float fringing = 0.5;
+              
+              vec3 yiq_result = vec3(
+                luma * brightness,
+                i_chroma * saturation * (1.0 - artifact) + i_mod * artifact,
+                q_chroma * saturation * (1.0 - fringing) + q_mod * fringing
+              );
+              
+              // Convert back to RGB
+              vec3 rgb_result = yiq2rgb * yiq_result;
+              
+              // Gamma correction (CRT 2.5 -> Monitor 2.0)
+              rgb_result = pow(max(rgb_result, vec3(0.0)), vec3(0.8));
+              
+              gl_FragColor = vec4(rgb_result, 1.0);
+            }
+          `
+        },
+        crt: {
+          name: "CRT Lottes",
+          fragmentShader: `
+            precision highp float;
+            varying vec2 v_texCoord;
+            uniform sampler2D u_texture;
+            uniform vec2 u_textureSize;
+            uniform vec2 u_outputSize;
+            
+            // CRT Lottes shader parameters
+            #define hardScan -8.0
+            #define hardPix -3.0
+            #define warp vec2(1.0/32.0, 1.0/24.0)
+            #define maskDark 0.5
+            #define maskLight 1.5
+            #define scaleInLinearGamma 1.0
+            #define shadowMask 3.0
+            #define brightboost 1.0
+            #define hardBloomPix -1.5
+            #define hardBloomScan -2.0
+            #define bloomAmount 0.15
+            #define shape 2.0
+            
+            // sRGB to Linear
+            vec3 ToLinear(vec3 c) {
+              return pow(c, vec3(2.2));
+            }
+            
+            // Linear to sRGB
+            vec3 ToSrgb(vec3 c) {
+              return pow(c, vec3(1.0/2.2));
+            }
+            
+            // Fetch with sub-pixel positioning
+            vec3 Fetch(vec2 pos, vec2 off) {
+              pos = floor(pos * u_textureSize + off) / u_textureSize;
+              return ToLinear(brightboost * texture2D(u_texture, pos.xy).rgb);
+            }
+            
+            // Distance
+            float Dist(vec2 pos) {
+              pos = pos * u_textureSize;
+              return sqrt(dot(pos, pos));
+            }
+            
+            // Gaussian
+            float Gaus(float pos, float scale) {
+              return exp2(scale * pow(abs(pos), shape));
+            }
+            
+            // 3-tap Gaussian filter along X
+            vec3 Horz3(vec2 pos, float off) {
+              vec3 b = Fetch(pos, vec2(-1.0, off));
+              vec3 c = Fetch(pos, vec2( 0.0, off));
+              vec3 d = Fetch(pos, vec2( 1.0, off));
+              float dst = Dist(fract(pos) - vec2(0.5));
+              float scale = hardPix;
+              float wb = Gaus(dst - 1.0, scale);
+              float wc = Gaus(dst + 0.0, scale);
+              float wd = Gaus(dst + 1.0, scale);
+              return (b * wb + c * wc + d * wd) / (wb + wc + wd);
+            }
+            
+            // 5-tap Gaussian filter along X
+            vec3 Horz5(vec2 pos, float off) {
+              vec3 a = Fetch(pos, vec2(-2.0, off));
+              vec3 b = Fetch(pos, vec2(-1.0, off));
+              vec3 c = Fetch(pos, vec2( 0.0, off));
+              vec3 d = Fetch(pos, vec2( 1.0, off));
+              vec3 e = Fetch(pos, vec2( 2.0, off));
+              float dst = Dist(fract(pos) - vec2(0.5));
+              float scale = hardPix;
+              float wa = Gaus(dst - 2.0, scale);
+              float wb = Gaus(dst - 1.0, scale);
+              float wc = Gaus(dst + 0.0, scale);
+              float wd = Gaus(dst + 1.0, scale);
+              float we = Gaus(dst + 2.0, scale);
+              return (a * wa + b * wb + c * wc + d * wd + e * we) / (wa + wb + wc + wd + we);
+            }
+            
+            // 7-tap Gaussian filter (for bloom)
+            vec3 Horz7(vec2 pos, float off) {
+              vec3 a = Fetch(pos, vec2(-3.0, off));
+              vec3 b = Fetch(pos, vec2(-2.0, off));
+              vec3 c = Fetch(pos, vec2(-1.0, off));
+              vec3 d = Fetch(pos, vec2( 0.0, off));
+              vec3 e = Fetch(pos, vec2( 1.0, off));
+              vec3 f = Fetch(pos, vec2( 2.0, off));
+              vec3 g = Fetch(pos, vec2( 3.0, off));
+              float dst = Dist(fract(pos) - vec2(0.5));
+              float scale = hardBloomPix;
+              float wa = Gaus(dst - 3.0, scale);
+              float wb = Gaus(dst - 2.0, scale);
+              float wc = Gaus(dst - 1.0, scale);
+              float wd = Gaus(dst + 0.0, scale);
+              float we = Gaus(dst + 1.0, scale);
+              float wf = Gaus(dst + 2.0, scale);
+              float wg = Gaus(dst + 3.0, scale);
+              return (a * wa + b * wb + c * wc + d * wd + e * we + f * wf + g * wg) / (wa + wb + wc + wd + we + wf + wg);
+            }
+            
+            // Return scanline weight
+            float Scan(vec2 pos, float off) {
+              float dst = Dist(fract(pos) - vec2(0.5));
+              return Gaus(dst + off, hardScan);
+            }
+            
+            // Return bloom scanline weight
+            float BloomScan(vec2 pos, float off) {
+              float dst = Dist(fract(pos) - vec2(0.5));
+              return Gaus(dst + off, hardBloomScan);
+            }
+            
+            // Tri-filter (3 lines)
+            vec3 Tri(vec2 pos) {
+              vec3 a = Horz3(pos, -1.0);
+              vec3 b = Horz5(pos,  0.0);
+              vec3 c = Horz3(pos,  1.0);
+              float wa = Scan(pos, -1.0);
+              float wb = Scan(pos,  0.0);
+              float wc = Scan(pos,  1.0);
+              return a * wa + b * wb + c * wc;
+            }
+            
+            // Bloom
+            vec3 Bloom(vec2 pos) {
+              vec3 a = Horz5(pos, -2.0);
+              vec3 b = Horz7(pos, -1.0);
+              vec3 c = Horz7(pos,  0.0);
+              vec3 d = Horz7(pos,  1.0);
+              vec3 e = Horz5(pos,  2.0);
+              float wa = BloomScan(pos, -2.0);
+              float wb = BloomScan(pos, -1.0);
+              float wc = BloomScan(pos,  0.0);
+              float wd = BloomScan(pos,  1.0);
+              float we = BloomScan(pos,  2.0);
+              return a * wa + b * wb + c * wc + d * wd + e * we;
+            }
+            
+            // Distortion
+            vec2 Warp(vec2 pos) {
+              pos = pos * 2.0 - 1.0;
+              pos *= vec2(1.0 + (pos.y * pos.y) * warp.x, 1.0 + (pos.x * pos.x) * warp.y);
+              return pos * 0.5 + 0.5;
+            }
+            
+            // Shadow mask
+            vec3 Mask(vec2 pos) {
+              pos.x += pos.y * 3.0;
+              vec3 mask = vec3(maskDark, maskDark, maskDark);
+              pos.x = fract(pos.x / 6.0);
+              if (pos.x < 0.333) mask.r = maskLight;
+              else if (pos.x < 0.666) mask.g = maskLight;
+              else mask.b = maskLight;
+              return mask;
+            }
+            
+            void main() {
+              vec2 pos = Warp(v_texCoord);
+              
+              // Early exit if warped outside bounds
+              if (pos.x < 0.0 || pos.x > 1.0 || pos.y < 0.0 || pos.y > 1.0) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                return;
+              }
+              
+              vec3 color = Tri(pos);
+              if (bloomAmount > 0.0) {
+                color += Bloom(pos) * bloomAmount;
+              }
+              
+              if (shadowMask > 0.0) {
+                color *= Mask(gl_FragCoord.xy);
+              }
+              
+              gl_FragColor = vec4(ToSrgb(color), 1.0);
+            }
+          `
+        }
+      };
+      
+      const vertexShaderSource = `
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_texCoord;
+        varying vec2 v_pixelCoord;
+        uniform vec2 u_textureSize;
+        
+        void main() {
+          gl_Position = vec4(a_position, 0.0, 1.0);
+          v_texCoord = a_texCoord;
+          v_pixelCoord = a_texCoord * u_textureSize;
+        }
+      `;
+      
+      let currentFilter = 'ntsc'; // Start with NTSC filter as requested
+      const filterKeys = Object.keys(filters);
+      let shaderProgram = null;
+      let nesTexture = null;
+      let positionBuffer = null;
+      let texCoordBuffer = null;
+      let frameCount = 0; // For NTSC phase animation
+      
+      function initWebGL() {
+        // Create vertex shader
+        const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vertexShader, vertexShaderSource);
+        gl.compileShader(vertexShader);
+        if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+          console.error("Vertex shader compilation failed:", gl.getShaderInfoLog(vertexShader));
+          return false;
+        }
+        
+        // Create and compile initial fragment shader
+        if (!compileShaderProgram(vertexShader, currentFilter)) {
+          return false;
+        }
+        
+        // Create texture for NES framebuffer
+        nesTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        
+        // Create vertex buffers for a full-screen quad
+        positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        const positions = new Float32Array([
+          -1.0, -1.0,
+           1.0, -1.0,
+          -1.0,  1.0,
+           1.0,  1.0
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+        
+        texCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+        const texCoords = new Float32Array([
+          0.0, 1.0,
+          1.0, 1.0,
+          0.0, 0.0,
+          1.0, 0.0
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+        
+        return true;
+      }
+      
+      function compileShaderProgram(vertexShader, filterName) {
+        const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fragmentShader, filters[filterName].fragmentShader);
+        gl.compileShader(fragmentShader);
+        if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+          console.error("Fragment shader compilation failed:", gl.getShaderInfoLog(fragmentShader));
+          return false;
+        }
+        
+        // Create shader program
+        if (shaderProgram) {
+          gl.deleteProgram(shaderProgram);
+        }
+        shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+          console.error("Shader program linking failed:", gl.getProgramInfoLog(shaderProgram));
+          return false;
+        }
+        
+        return true;
+      }
+      
+      function cycleFilter() {
+        const currentIndex = filterKeys.indexOf(currentFilter);
+        const nextIndex = (currentIndex + 1) % filterKeys.length;
+        currentFilter = filterKeys[nextIndex];
+        
+        // Recompile shader with new filter
+        const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vertexShader, vertexShaderSource);
+        gl.compileShader(vertexShader);
+        
+        if (compileShaderProgram(vertexShader, currentFilter)) {
+          setStatus(`Filter: ${filters[currentFilter].name}`);
+        } else {
+          setStatus("Failed to switch filter", true);
+        }
+      }
+      
       let nes;
       let romBytes;
       let running = false;
@@ -80,7 +531,6 @@
       const fpsLogIntervalMs = 1000;
       let fpsLastTime = 0;
       let fpsFrames = 0;
-      let useFilters = true; // Use librashader filters by default
 
       // Web Audio API setup
       let audioContext = null;
@@ -113,11 +563,8 @@
       });
 
       function clearCanvas() {
-        if (useFilters) {
-          // WebGL will clear automatically
-        } else if (window.fallbackCtx) {
-          window.fallbackCtx.clearRect(0, 0, canvas.width, canvas.height);
-        }
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
       }
 
       function initAudioContext() {
@@ -186,21 +633,9 @@
             await init(wasmUrl);
             nes = new WasmNes();
             
-            // Initialize the WebGL renderer with librashader
-            try {
-              nes.init_renderer("screen");
-              const filterName = nes.get_current_filter_name();
-              updateFilterButton(filterName);
-              useFilters = true;
-            } catch (err) {
-              console.warn("Failed to initialize WebGL renderer, falling back to 2D canvas:", err);
-              useFilters = false;
-              // Initialize 2D context as fallback
-              const ctx = canvas.getContext("2d");
-              if (ctx) {
-                window.fallbackCtx = ctx;
-                window.fallbackImageData = ctx.createImageData(width, height);
-              }
+            // Initialize WebGL shaders
+            if (!initWebGL()) {
+              throw new Error("Failed to initialize WebGL");
             }
           }
           nes.load_rom(romBytes);
@@ -249,20 +684,48 @@
           if (gamepadEnabled && nes) {
             pollGamepad();
           }
+          const frame = nes.render_frame_rgba(); // RGBA8888
           
-          if (useFilters) {
-            // Use librashader-based rendering
-            const viewportWidth = canvas.width;
-            const viewportHeight = canvas.height;
-            nes.render_frame_filtered(viewportWidth, viewportHeight);
-          } else {
-            // Fallback to 2D canvas rendering
-            const frame = nes.render_frame_rgba(); // RGBA8888
-            if (window.fallbackImageData && window.fallbackCtx) {
-              window.fallbackImageData.data.set(frame);
-              window.fallbackCtx.putImageData(window.fallbackImageData, 0, 0);
-            }
+          // Upload frame data to WebGL texture
+          gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+          
+          // Render with shader
+          gl.useProgram(shaderProgram);
+          
+          // Set uniforms
+          const textureSizeLocation = gl.getUniformLocation(shaderProgram, 'u_textureSize');
+          if (textureSizeLocation) {
+            gl.uniform2f(textureSizeLocation, width, height);
           }
+          const outputSizeLocation = gl.getUniformLocation(shaderProgram, 'u_outputSize');
+          if (outputSizeLocation) {
+            gl.uniform2f(outputSizeLocation, canvas.width, canvas.height);
+          }
+          const frameCountLocation = gl.getUniformLocation(shaderProgram, 'u_frameCount');
+          if (frameCountLocation) {
+            gl.uniform1f(frameCountLocation, frameCount);
+          }
+          const textureLocation = gl.getUniformLocation(shaderProgram, 'u_texture');
+          gl.uniform1i(textureLocation, 0);
+          
+          // Increment frame counter for NTSC phase animation
+          frameCount++;
+          
+          // Set up vertex attributes
+          const positionLocation = gl.getAttribLocation(shaderProgram, 'a_position');
+          gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+          gl.enableVertexAttribArray(positionLocation);
+          gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+          
+          const texCoordLocation = gl.getAttribLocation(shaderProgram, 'a_texCoord');
+          gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+          gl.enableVertexAttribArray(texCoordLocation);
+          gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+          
+          // Draw
+          gl.viewport(0, 0, canvas.width, canvas.height);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
           
           // Get and play audio samples
           const audioSamples = nes.get_audio_samples();
@@ -385,6 +848,7 @@
       const screenMinusBtn = document.getElementById("screen-minus");
       const screenPlusBtn = document.getElementById("screen-plus");
       const fullscreenBtn = document.getElementById("fullscreen");
+      const filterToggleBtn = document.getElementById("filter-toggle");
       
       // NES native resolution is 256x240 pixels
       const NES_ASPECT_RATIO = 256 / 240;
@@ -433,34 +897,11 @@
           }
         }
       });
-
-      // Filter toggle button
-      const filterToggleBtn = document.getElementById("filter-toggle");
       
-      function updateFilterButton(filterName) {
-        if (filterToggleBtn) {
-          // Convert filter name to friendly format
-          const friendlyName = filterName
-            .replace(/-/g, ' ')
-            .replace(/\b\w/g, c => c.toUpperCase());
-          filterToggleBtn.textContent = `Filter: ${friendlyName}`;
-        }
-      }
-      
-      if (filterToggleBtn) {
-        filterToggleBtn.addEventListener("click", () => {
-          if (nes && useFilters) {
-            try {
-              const newFilterName = nes.cycle_filter();
-              updateFilterButton(newFilterName);
-              setStatus(`Filter: ${newFilterName}`);
-            } catch (err) {
-              console.error("Failed to cycle filter:", err);
-              setStatus("Failed to switch filter", true);
-            }
-          }
-        });
-      }
+      filterToggleBtn.addEventListener("click", () => {
+        cycleFilter();
+        filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
+      });
 
       function pollGamepad() {
         const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];

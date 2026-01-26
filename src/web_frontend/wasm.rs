@@ -3,9 +3,6 @@ use crate::console::{Nes, TvSystem};
 use crate::input::Button;
 use wasm_bindgen::prelude::*;
 
-#[cfg(feature = "wasm")]
-use crate::web_renderer::WebRenderer;
-
 /// Provides a minimal WASM bridge for running the emulator in the browser.
 ///
 /// Note: NTSC timing is hardcoded for the MVP; PAL titles will run at the wrong speed.
@@ -13,8 +10,6 @@ use crate::web_renderer::WebRenderer;
 pub struct WasmNes {
     nes: Nes,
     audio_muted: bool,
-    #[cfg(feature = "wasm")]
-    renderer: Option<WebRenderer>,
 }
 
 impl Default for WasmNes {
@@ -35,91 +30,6 @@ impl WasmNes {
         WasmNes {
             nes: Nes::new(TvSystem::Ntsc),
             audio_muted: false,
-            #[cfg(feature = "wasm")]
-            renderer: None,
-        }
-    }
-
-    /// Initialize the WebGL renderer with the given canvas ID.
-    /// This must be called before calling render_frame_filtered.
-    #[wasm_bindgen]
-    pub fn init_renderer(&mut self, canvas_id: &str) -> Result<(), JsValue> {
-        #[cfg(feature = "wasm")]
-        {
-            let renderer = WebRenderer::new(canvas_id)
-                .map_err(|e| JsValue::from_str(&e))?;
-            self.renderer = Some(renderer);
-            Ok(())
-        }
-        #[cfg(not(feature = "wasm"))]
-        {
-            Err(JsValue::from_str("Renderer not available in this build"))
-        }
-    }
-
-    /// Cycle to the next filter and return the filter name.
-    #[wasm_bindgen]
-    pub fn cycle_filter(&mut self) -> Result<String, JsValue> {
-        #[cfg(feature = "wasm")]
-        {
-            if let Some(ref mut renderer) = self.renderer {
-                renderer.cycle_filter()
-                    .map_err(|e| JsValue::from_str(&e))
-            } else {
-                Err(JsValue::from_str("Renderer not initialized"))
-            }
-        }
-        #[cfg(not(feature = "wasm"))]
-        {
-            Err(JsValue::from_str("Renderer not available in this build"))
-        }
-    }
-
-    /// Get the current filter name.
-    #[wasm_bindgen]
-    pub fn get_current_filter_name(&self) -> Result<String, JsValue> {
-        #[cfg(feature = "wasm")]
-        {
-            if let Some(ref renderer) = self.renderer {
-                Ok(renderer.get_current_filter_name())
-            } else {
-                Err(JsValue::from_str("Renderer not initialized"))
-            }
-        }
-        #[cfg(not(feature = "wasm"))]
-        {
-            Err(JsValue::from_str("Renderer not available in this build"))
-        }
-    }
-
-    /// Render a frame with the current filter applied.
-    /// Returns () on success. The rendered output is displayed on the canvas.
-    #[wasm_bindgen]
-    pub fn render_frame_filtered(&mut self, viewport_width: u32, viewport_height: u32) -> Result<(), JsValue> {
-        #[cfg(feature = "wasm")]
-        {
-            // Run emulation until frame is ready
-            while !self.nes.is_ready_to_render() {
-                self.nes.run_cpu_tick();
-            }
-            self.nes.clear_ready_to_render();
-
-            // Get frame data and upload to renderer
-            let rgb = self.nes.get_screen_buffer().snapshot();
-            
-            if let Some(ref mut renderer) = self.renderer {
-                renderer.upload_frame(&rgb)
-                    .map_err(|e| JsValue::from_str(&e))?;
-                renderer.render(viewport_width, viewport_height)
-                    .map_err(|e| JsValue::from_str(&e))?;
-                Ok(())
-            } else {
-                Err(JsValue::from_str("Renderer not initialized"))
-            }
-        }
-        #[cfg(not(feature = "wasm"))]
-        {
-            Err(JsValue::from_str("Renderer not available in this build"))
         }
     }
 
