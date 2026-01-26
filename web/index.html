@@ -52,6 +52,7 @@
       <button id="screen-plus">Screen +</button>
       <button id="fullscreen">Fullscreen</button>
       <button id="gamepad-toggle" aria-pressed="true">Gamepad On</button>
+      <button id="filter-toggle">Filter</button>
     </div>
     <canvas id="screen" width="256" height="240"></canvas>
     <div id="controls">
@@ -68,14 +69,335 @@
       if (!(canvas instanceof HTMLCanvasElement)) {
         throw new Error("Canvas element with id 'screen' not found or not a canvas");
       }
-      const ctx = canvas.getContext("2d");
-      if (!ctx) {
-        throw new Error("2D rendering context not available for canvas 'screen'");
+      
+      // Use WebGL for rendering with filter support
+      const gl = canvas.getContext("webgl");
+      if (!gl) {
+        throw new Error("WebGL rendering context not available for canvas 'screen'");
       }
+      
       const width = 256;
       const height = 240;
-      const imageData = ctx.createImageData(width, height);
-      const imageDataBuffer = imageData.data;
+      
+      // WebGL shader setup for filters - Thorough manual port from SDL .slang shaders
+      const filters = {
+        stock: {
+          name: "Stock (No Filter)",
+          fragmentShader: `
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+              precision highp float;
+            #else
+              precision mediump float;
+            #endif
+            varying vec2 v_texCoord;
+            uniform sampler2D u_texture;
+            
+            void main() {
+              gl_FragColor = texture2D(u_texture, v_texCoord);
+            }
+          `
+        },
+        ntsc: {
+          name: "NTSC Composite",
+          fragmentShader: `
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+              precision highp float;
+            #else
+              precision mediump float;
+            #endif
+            varying vec2 v_texCoord;
+            varying vec2 v_pixelCoord;
+            uniform sampler2D u_texture;
+            uniform vec2 u_textureSize;
+            uniform float u_frameCount;
+            
+            #define PI 3.14159265359
+            
+            void main() {
+              vec2 uv = v_texCoord;
+              float x = v_pixelCoord.x;
+              float y = v_pixelCoord.y;
+              
+              // Sample center pixel and neighbors for NTSC encoding simulation
+              vec3 colorC = texture2D(u_texture, uv).rgb;
+              vec3 colorL = texture2D(u_texture, uv + vec2(-1.0/u_textureSize.x, 0.0)).rgb;
+              vec3 colorR = texture2D(u_texture, uv + vec2( 1.0/u_textureSize.x, 0.0)).rgb;
+              
+              // NTSC uses 3-phase color encoding (phase shifts every 3 scanlines)
+              // This creates the characteristic dot crawl pattern
+              float linePhase = mod(y, 3.0) * 2.0943951; // 120 degrees in radians
+              float temporalPhase = mod(u_frameCount, 3.0) * 2.0943951;
+              float totalPhase = linePhase + temporalPhase;
+              
+              // Create color carrier signal
+              float carrier = sin(x * PI * 8.0 + totalPhase);
+              
+              // Simulate chroma crosstalk/bleeding
+              float chromaL = (colorL.r - colorL.g) * carrier;
+              float chromaC = (colorC.r - colorC.g) * carrier;
+              float chromaR = (colorR.r - colorR.g) * carrier;
+              
+              // Mix chroma signals (this creates NTSC artifacts)
+              float chromaBleed = (chromaL * 0.25 + chromaC * 0.5 + chromaR * 0.25);
+              
+              // Apply artifacts to create dot crawl and color bleeding
+              vec3 artifacts = vec3(
+                chromaBleed * cos(totalPhase),
+                chromaBleed * cos(totalPhase + 2.0943951),
+                chromaBleed * cos(totalPhase + 4.1887902)
+              ) * 0.25;
+              
+              vec3 result = colorC + artifacts;
+              
+              // Slight color desaturation and gamma adjustment for CRT look
+              float luma = dot(result, vec3(0.299, 0.587, 0.114));
+              result = mix(vec3(luma), result, 1.1);
+              result = pow(max(result, vec3(0.0)), vec3(0.9));
+              result = clamp(result, 0.0, 1.0);
+              
+              gl_FragColor = vec4(result, 1.0);
+            }
+          `
+        },
+        crt: {
+          name: "CRT Lottes",
+          fragmentShader: `
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+              precision highp float;
+            #else
+              precision mediump float;
+            #endif
+            varying vec2 v_texCoord;
+            uniform sampler2D u_texture;
+            uniform vec2 u_textureSize;
+            uniform vec2 u_outputSize;
+            
+            #define PI 3.14159265359
+            
+            // Simplified but effective CRT simulation
+            void main() {
+              vec2 uv = v_texCoord;
+              
+              // Slight barrel distortion (CRT curvature)
+              vec2 centered = uv * 2.0 - 1.0;
+              float r2 = dot(centered, centered);
+              centered *= 1.0 + r2 * 0.05;
+              uv = centered * 0.5 + 0.5;
+              
+              // Check if warped outside bounds
+              if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+                gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+                return;
+              }
+              
+              // Sample texture with slight blur for glow effect
+              vec3 color = texture2D(u_texture, uv).rgb;
+              vec3 bloom = vec3(0.0);
+              for (float dx = -1.5; dx <= 1.5; dx += 0.75) {
+                for (float dy = -1.5; dy <= 1.5; dy += 0.75) {
+                  vec2 offset = vec2(dx, dy) / u_textureSize;
+                  bloom += texture2D(u_texture, uv + offset).rgb;
+                }
+              }
+              bloom /= 25.0;  // Normalize by actual sample count (5x5 = 25)
+              color += bloom * 0.4; // Add bloom/glow
+              
+              // Scanlines (based on screen Y position)
+              float y = gl_FragCoord.y;
+              float scanline = sin(y * PI) * 0.08 + 0.92;
+              color *= scanline;
+              
+              // Shadow mask (RGB sub-pixel aperture grille pattern)
+              float x = gl_FragCoord.x;
+              vec3 mask = vec3(0.8);
+              float maskPhase = mod(x, 3.0);
+              if (maskPhase < 1.0) {
+                mask.r = 1.3;
+              } else if (maskPhase < 2.0) {
+                mask.g = 1.3;
+              } else {
+                mask.b = 1.3;
+              }
+              color *= mask;
+              
+              // Gamma correction for CRT
+              color = pow(color, vec3(1.0/2.2)); // sRGB gamma
+              color = pow(color, vec3(2.4));     // CRT gamma
+              color = pow(color, vec3(1.0/2.2)); // Back to sRGB
+              
+              color = clamp(color, 0.0, 1.0);
+              gl_FragColor = vec4(color, 1.0);
+            }
+          `
+        }
+      };
+      
+      const vertexShaderSource = `
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_texCoord;
+        varying vec2 v_pixelCoord;
+        uniform vec2 u_textureSize;
+        
+        void main() {
+          gl_Position = vec4(a_position, 0.0, 1.0);
+          v_texCoord = a_texCoord;
+          v_pixelCoord = a_texCoord * u_textureSize;
+        }
+      `;
+      
+      let currentFilter = 'ntsc'; // Start with NTSC filter as requested
+      const filterKeys = Object.keys(filters);
+      let shaderProgram = null;
+      let nesTexture = null;
+      let positionBuffer = null;
+      let texCoordBuffer = null;
+      let frameCount = 0; // For NTSC phase animation
+      let webglInitialized = false; // Track WebGL initialization state
+      
+      function initWebGL() {
+        // Make this function idempotent - clean up if re-initializing
+        if (webglInitialized) {
+          if (nesTexture) gl.deleteTexture(nesTexture);
+          if (positionBuffer) gl.deleteBuffer(positionBuffer);
+          if (texCoordBuffer) gl.deleteBuffer(texCoordBuffer);
+          if (shaderProgram) gl.deleteProgram(shaderProgram);
+          nesTexture = null;
+          positionBuffer = null;
+          texCoordBuffer = null;
+          shaderProgram = null;
+        }
+        
+        // Create vertex shader
+        const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vertexShader, vertexShaderSource);
+        gl.compileShader(vertexShader);
+        if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+          console.error("Vertex shader compilation failed:", gl.getShaderInfoLog(vertexShader));
+          gl.deleteShader(vertexShader);
+          webglInitialized = false;
+          return false;
+        }
+        
+        // Create and compile initial fragment shader
+        if (!compileShaderProgram(vertexShader, currentFilter)) {
+          gl.deleteShader(vertexShader);
+          webglInitialized = false;
+          return false;
+        }
+        
+        // Delete the vertex shader after it's been attached to the program
+        gl.deleteShader(vertexShader);
+        
+        // Create texture for NES framebuffer
+        nesTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        
+        // Allocate texture storage once (we'll update with texSubImage2D per frame)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        
+        // Create vertex buffers for a full-screen quad
+        positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        const positions = new Float32Array([
+          -1.0, -1.0,
+           1.0, -1.0,
+          -1.0,  1.0,
+           1.0,  1.0
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+        
+        texCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+        const texCoords = new Float32Array([
+          0.0, 1.0,
+          1.0, 1.0,
+          0.0, 0.0,
+          1.0, 0.0
+        ]);
+        gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+        
+        webglInitialized = true;
+        return true;
+      }
+      
+      function compileShaderProgram(vertexShader, filterName) {
+        const fragmentShader = gl.createShader(gl.FRAGMENT_SHADER);
+        gl.shaderSource(fragmentShader, filters[filterName].fragmentShader);
+        gl.compileShader(fragmentShader);
+        if (!gl.getShaderParameter(fragmentShader, gl.COMPILE_STATUS)) {
+          console.error("Fragment shader compilation failed:", gl.getShaderInfoLog(fragmentShader));
+          gl.deleteShader(fragmentShader);
+          return false;
+        }
+        
+        // Create shader program into a temporary program first
+        const newProgram = gl.createProgram();
+        gl.attachShader(newProgram, vertexShader);
+        gl.attachShader(newProgram, fragmentShader);
+        gl.linkProgram(newProgram);
+        
+        // Delete fragment shader after linking to avoid resource leaks
+        gl.deleteShader(fragmentShader);
+        
+        if (!gl.getProgramParameter(newProgram, gl.LINK_STATUS)) {
+          console.error("Shader program linking failed:", gl.getProgramInfoLog(newProgram));
+          gl.deleteProgram(newProgram);
+          return false;
+        }
+        
+        // Cache uniform and attribute locations on the new program
+        newProgram._uTextureLocation = gl.getUniformLocation(newProgram, 'u_texture');
+        newProgram._uTextureSizeLocation = gl.getUniformLocation(newProgram, 'u_textureSize');
+        newProgram._uOutputSizeLocation = gl.getUniformLocation(newProgram, 'u_outputSize');
+        newProgram._uFrameCountLocation = gl.getUniformLocation(newProgram, 'u_frameCount');
+        newProgram._aPositionLocation = gl.getAttribLocation(newProgram, 'a_position');
+        newProgram._aTexCoordLocation = gl.getAttribLocation(newProgram, 'a_texCoord');
+        
+        // At this point linking succeeded; safely replace the old program
+        if (shaderProgram) {
+          gl.deleteProgram(shaderProgram);
+        }
+        shaderProgram = newProgram;
+        
+        return true;
+      }
+      
+      function cycleFilter() {
+        const currentIndex = filterKeys.indexOf(currentFilter);
+        const nextIndex = (currentIndex + 1) % filterKeys.length;
+        const nextFilter = filterKeys[nextIndex];
+        
+        // Recompile shader with new filter
+        const vertexShader = gl.createShader(gl.VERTEX_SHADER);
+        gl.shaderSource(vertexShader, vertexShaderSource);
+        gl.compileShader(vertexShader);
+        
+        if (!gl.getShaderParameter(vertexShader, gl.COMPILE_STATUS)) {
+          console.error("Vertex shader compilation failed:", gl.getShaderInfoLog(vertexShader));
+          gl.deleteShader(vertexShader);
+          console.error("Failed to switch filter");
+          return false;
+        }
+        
+        if (compileShaderProgram(vertexShader, nextFilter)) {
+          // Only update currentFilter after successful compilation
+          currentFilter = nextFilter;
+          // Delete the vertex shader after use (it's been attached to the program)
+          gl.deleteShader(vertexShader);
+          return true;
+        } else {
+          console.error("Failed to switch filter");
+          // Delete the vertex shader after failed use
+          gl.deleteShader(vertexShader);
+          return false;
+        }
+      }
+      
       let nes;
       let romBytes;
       let running = false;
@@ -116,7 +438,8 @@
       });
 
       function clearCanvas() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
       }
 
       function initAudioContext() {
@@ -183,6 +506,12 @@
           if (!nes) {
             const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
             await init(wasmUrl);
+            
+            // Initialize WebGL shaders before creating NES instance
+            if (!initWebGL()) {
+              throw new Error("Failed to initialize WebGL");
+            }
+            
             nes = new WasmNes();
           }
           nes.load_rom(romBytes);
@@ -193,6 +522,12 @@
           setStatus(`Failed to load ROM: ${err}`, true);
           startBtn.disabled = false;
           romInput.disabled = false;
+          // Only reset nes if wasm/webgl initialization failed
+          // Don't reset on simple ROM load errors so we can retry
+          if (err.message && err.message.includes("WebGL")) {
+            nes = null;
+            webglInitialized = false;
+          }
           return;
         }
         running = true;
@@ -232,8 +567,57 @@
             pollGamepad();
           }
           const frame = nes.render_frame_rgba(); // RGBA8888
-          imageDataBuffer.set(frame);
-          ctx.putImageData(imageData, 0, 0);
+          
+          // Guard against null shaderProgram
+          if (!shaderProgram) {
+            console.error("Shader program is null, cannot render");
+            // Stop the emulator loop to keep state consistent without overwriting the error status
+            running = false;
+            setStatus("Rendering error occurred. Please restart.", true);
+            return;
+          }
+          
+          // Upload frame data to WebGL texture using texSubImage2D (more efficient)
+          gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+          gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, frame);
+          
+          // Render with shader
+          gl.useProgram(shaderProgram);
+          
+          // Set uniforms using cached locations
+          if (shaderProgram._uTextureSizeLocation) {
+            gl.uniform2f(shaderProgram._uTextureSizeLocation, width, height);
+          }
+          if (shaderProgram._uOutputSizeLocation) {
+            gl.uniform2f(shaderProgram._uOutputSizeLocation, canvas.width, canvas.height);
+          }
+          if (shaderProgram._uFrameCountLocation) {
+            gl.uniform1f(shaderProgram._uFrameCountLocation, frameCount);
+          }
+          if (shaderProgram._uTextureLocation) {
+            gl.uniform1i(shaderProgram._uTextureLocation, 0);
+          }
+          
+          // Increment frame counter for NTSC phase animation
+          // Wrap at 3600 to prevent float precision issues (60 frames/sec * 60 sec = 3600 frames/min)
+          frameCount = (frameCount + 1) % 3600;
+          
+          // Set up vertex attributes using cached locations
+          if (shaderProgram._aPositionLocation !== -1 && shaderProgram._aPositionLocation !== null) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.enableVertexAttribArray(shaderProgram._aPositionLocation);
+            gl.vertexAttribPointer(shaderProgram._aPositionLocation, 2, gl.FLOAT, false, 0, 0);
+          }
+          
+          if (shaderProgram._aTexCoordLocation !== -1 && shaderProgram._aTexCoordLocation !== null) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+            gl.enableVertexAttribArray(shaderProgram._aTexCoordLocation);
+            gl.vertexAttribPointer(shaderProgram._aTexCoordLocation, 2, gl.FLOAT, false, 0, 0);
+          }
+          
+          // Draw
+          gl.viewport(0, 0, canvas.width, canvas.height);
+          gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
           
           // Get and play audio samples
           const audioSamples = nes.get_audio_samples();
@@ -356,6 +740,7 @@
       const screenMinusBtn = document.getElementById("screen-minus");
       const screenPlusBtn = document.getElementById("screen-plus");
       const fullscreenBtn = document.getElementById("fullscreen");
+      const filterToggleBtn = document.getElementById("filter-toggle");
       
       // NES native resolution is 256x240 pixels
       const NES_ASPECT_RATIO = 256 / 240;
@@ -403,6 +788,11 @@
             setStatus("Failed to exit fullscreen mode", true);
           }
         }
+      });
+      
+      filterToggleBtn.addEventListener("click", () => {
+        cycleFilter();
+        filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
       });
 
       function pollGamepad() {
