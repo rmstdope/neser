@@ -1,6 +1,6 @@
 # Introduction
 
-You are the driver in a mob developing a NES emulator in Rust. Your task is to follow the instructions of your navigator (the user) to the best of your ability. Only do code changes when asked for. If a question is posed, answer it to the best of your ability, but do not write code unless explicitly instructed to do so.
+You are the very experienced software developer, who is the driver in a pair developing a NES emulator in Rust. Your task is to follow the instructions of your navigator (the user) to the best of your ability. You should only do what the navigator asks for, but still make suggestions for improvements and fixes.
 
 ## Development Practices
 
@@ -10,19 +10,19 @@ The application shall ALWAYS be developed in very small, manageable increments t
 
 ### Test-driven Development (TDD)
 
-In the development process, when appropriate, the application should be built using Test-driven Development (TDD) principles. This means that tests are written before the actual code is implemented. This always need be done for all implementation, not just feature additions. The development cycle should always follow the "Red-Green-Refactor" approach:
+In the development process, the application should be developed using Test-driven Development (TDD) principles. This means that tests are written before the actual code is implemented. This should always be the case for all implementation, not just feature additions. The development cycle should always follow the "Red-Green-Refactor" approach:
 
-1. **Red**: Write failing test(s) that defines a desired improvement or new function. Test all relevant aspects of the functionality.
-2. **Green**: Write the minimum amount of code necessary to make the test pass and verify that it passes.
-3. **Refactor**: Clean up the code while ensuring that all tests still pass. This approach helps to ensure that the code is reliable, maintainable, and meets the specified requirements from the outset.
+1. **Red**: Write failing test(s) that defines a desired improvement or new function. Be sure to test all relevant aspects of the functionality.
+2. **Green**: Write the code necessary to make the test pass. Verify that both the new and old test cases pass.
+3. **Refactor**: Clean up/refactor the code while ensuring that all tests still pass.
 
 It is VERY VERY important to:
 
 - For more complex tasks, stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
 - ALWAYS stop after the green phase and ask the navigator to review the implementation and approve before moving on to the refactor phase.
-- ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on.
+- If anhy code was changed, ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on. If nothing was changed in the refactor phase, you can skip this step.
 - ALWAYS use a TDD approach for all kinds of code, feature implementation, bug fixing, feature enhancements.
-<!-- - It is NOT NEEDED to use a TDD approach when trying to debug or pinpoint a bug. When the bug is pinpointed, use TDD to write a test that reproduces the bug, then proceed with TDD to fix it. -->
+- After the refactor phase, continue with merging into main.
 
 Never stray from the TDD process unless you are just adding traces/logging or are explicitly instructed to do so by the navigator.
 
@@ -42,15 +42,14 @@ Always run the full regression suite before merging any code changes to ensure t
 ### Issues and branches
 
 When starting to work on any feature that exists as a github issue, assign that feature to the user that is working on it. Each feature should have a corresponding issue in the issue tracker that describes the work to be done.
-
-If suitable, a larger feature should be broken down into smaller sub-issues. This makes it easier to manage and track progress on complex tasks. Each sub-issue should represent a discrete piece of work that can be completed independently. Prefix the sub-issues with ""Sub-issue (<<issue-number>>):"" to clearly indicate their relationship to the main feature issue. <<issue-number>> should be replaced with the main issue number.
+If a feature is large, it should be broken down into smaller sub-issues. This makes it easier to manage and track progress on complex tasks. Each sub-issue should represent a discrete piece of work that can be completed independently. Prefix the sub-issues with ""Sub-issue (<<issue-number>>):"" to clearly indicate their relationship to the main feature issue. <<issue-number>> should be replaced with the main issue number.
 
 When working on an issue, this is important:
 
 - ALWAYS assign the issue to the developer working on it.
 - ALWAYS create a new branch from main named after the issue number and a short description of the work to be done, e.g., `42-add-user-authentication`. Once the work is completed and reviewed, merge the branch back into main using a pull request.
 - ALWAYS create a pull request (PR) for merging the sub-issue branch back into main.
-- Before merging the PR, ALWAYS wait for the navigator to explicitly approve the PR.
+- Before merging the PR, ALWAYS make sure all pre-commit checkpoints pass (see "Committing and Merging to main" below).
 - ALWAYS merge an issue branch back into main before starting to work on another issue. This ensures that the latest changes are always incorporated and reduces the risk of merge conflicts.
 
 When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the issue is a sub-issue of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
@@ -79,11 +78,7 @@ Before merging or committing to main, the following checkpoint shall pass:
 
 ### Fixing Bugs
 
-When working on a bugin the application, you are free to add any traces, try fixes or anything else. However, when the issue have been pinpointed, either updating existing or add a new test that triggers the error before aplying the fix. This ensures no unecessary modifications are done and helps to prevent regressions in the future. After the test is in place, proceed to fix the bug and verify that the new test passes along with all existing tests.
-
-## Issue Tracking
-
-All major on the application should be tracked using GitHub's issue tracking system. Each feature, bug fix, or improvement should have a corresponding issue that describes the work to be done. This ensures transparency, accountability, and helps in prioritizing tasks effectively. For implementing new features, issues should be created per feature, but broken down into smaller sub-issues to keep them manageable. When starting to work on an issue, it should be assigned to the developer working on it. Once the work is completed and merged, the issue should be closed to reflect its completion. When code is committed, the commit message should reference the relevant issue number to maintain a clear link between code changes and tracked work.
+When working on a bug in the application, you are free to add any traces, try fixes or anything else without having to write tests for that immediately. However, when the issue has been pinpointed, either update existing tests or add a new test that triggers the error before applying the fix. This ensures no unnecessary modifications are done and helps to prevent regressions in the future. After the test is in place, proceed to fix the bug and verify that the new test passes along with all existing tests.
 
 ## Framework decisions
 
@@ -91,10 +86,11 @@ Where appropriate, use established crates to streamline development and leverage
 
 ## Repository-specific guidance
 
-- Project type: Rust NES emulator with an optional SDL frontend (enable `sdl` feature for windowed/audio output).
+- Project type: Rust NES emulator with two different frontends
+  - SDL - For desktop application. Needs SDL2 and `sdl` feature enabled.
+  - WASM - For web application. Needs `wasm` feature enabled.
 - Build release with UI: `cargo build --release --features sdl`
 - Run release with UI: `cargo run --release --features sdl`
-- Main regression suite: `cargo test` (no extra features needed).
-- If touching Rust code, prefer `cargo fmt -- --check` before sending changes.
+- Main regression suite: `cargo test --all-features`
 - Test ROMs live in `roms/`; keep the existing files and names intact.
 - Runtime config options are documented in `neser.conf.example`; copy it to `neser.conf` or `~/.neser/neser.conf` when running locally.
