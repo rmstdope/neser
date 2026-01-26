@@ -571,10 +571,9 @@
           // Guard against null shaderProgram
           if (!shaderProgram) {
             console.error("Shader program is null, cannot render");
-            // Stop the emulator loop to keep state consistent
+            // Stop the emulator loop to keep state consistent without overwriting the error status
             running = false;
             setStatus("Rendering error occurred. Please restart.", true);
-            stop();
             return;
           }
           
