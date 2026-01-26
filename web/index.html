@@ -105,6 +105,21 @@
         crt: {
           name: "CRT Lottes",
           type: "single",
+          params: {
+            hardScan: -8.0,
+            hardPix: -3.0,
+            warpX: 0.031,
+            warpY: 0.041,
+            maskDark: 0.5,
+            maskLight: 1.5,
+            scaleInLinearGamma: 1.0,
+            shadowMask: 3.0,
+            brightBoost: 1.0,
+            hardBloomScan: -2.0,
+            hardBloomPix: -1.5,
+            bloomAmount: 0.15,
+            shape: 2.0
+          },
           fragmentShader: `
             #ifdef GL_FRAGMENT_PRECISION_HIGH
               precision highp float;
@@ -113,64 +128,224 @@
             #endif
             varying vec2 v_texCoord;
             uniform sampler2D u_texture;
-            uniform vec2 u_textureSize;
+            uniform vec2 u_sourceSize;
             uniform vec2 u_outputSize;
-            
-            #define PI 3.14159265359
-            
-            // Simplified but effective CRT simulation
+            uniform float u_hardScan;
+            uniform float u_hardPix;
+            uniform float u_warpX;
+            uniform float u_warpY;
+            uniform float u_maskDark;
+            uniform float u_maskLight;
+            uniform float u_scaleInLinearGamma;
+            uniform float u_shadowMask;
+            uniform float u_brightBoost;
+            uniform float u_hardBloomScan;
+            uniform float u_hardBloomPix;
+            uniform float u_bloomAmount;
+            uniform float u_shape;
+
+            #define DO_BLOOM 1
+
+            float ToLinear1(float c) {
+              if (u_scaleInLinearGamma == 0.0) {
+                return c;
+              }
+              return (c <= 0.04045) ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+            }
+
+            vec3 ToLinear(vec3 c) {
+              if (u_scaleInLinearGamma == 0.0) {
+                return c;
+              }
+              return vec3(ToLinear1(c.r), ToLinear1(c.g), ToLinear1(c.b));
+            }
+
+            float ToSrgb1(float c) {
+              if (u_scaleInLinearGamma == 0.0) {
+                return c;
+              }
+              return (c < 0.0031308) ? c * 12.92 : 1.055 * pow(c, 0.41666) - 0.055;
+            }
+
+            vec3 ToSrgb(vec3 c) {
+              if (u_scaleInLinearGamma == 0.0) {
+                return c;
+              }
+              return vec3(ToSrgb1(c.r), ToSrgb1(c.g), ToSrgb1(c.b));
+            }
+
+            vec3 Fetch(vec2 pos, vec2 off) {
+              pos = (floor(pos * u_sourceSize + off) + vec2(0.5, 0.5)) / u_sourceSize;
+              return ToLinear(u_brightBoost * texture2D(u_texture, pos.xy).rgb);
+            }
+
+            vec2 Dist(vec2 pos) {
+              pos = pos * u_sourceSize;
+              return -((pos - floor(pos)) - vec2(0.5));
+            }
+
+            float Gaus(float pos, float scale) {
+              return exp2(scale * pow(abs(pos), u_shape));
+            }
+
+            vec3 Horz3(vec2 pos, float off) {
+              vec3 b = Fetch(pos, vec2(-1.0, off));
+              vec3 c = Fetch(pos, vec2( 0.0, off));
+              vec3 d = Fetch(pos, vec2( 1.0, off));
+              float dst = Dist(pos).x;
+
+              float scale = u_hardPix;
+              float wb = Gaus(dst - 1.0, scale);
+              float wc = Gaus(dst + 0.0, scale);
+              float wd = Gaus(dst + 1.0, scale);
+
+              return (b * wb + c * wc + d * wd) / (wb + wc + wd);
+            }
+
+            vec3 Horz5(vec2 pos, float off) {
+              vec3 a = Fetch(pos, vec2(-2.0, off));
+              vec3 b = Fetch(pos, vec2(-1.0, off));
+              vec3 c = Fetch(pos, vec2( 0.0, off));
+              vec3 d = Fetch(pos, vec2( 1.0, off));
+              vec3 e = Fetch(pos, vec2( 2.0, off));
+
+              float dst = Dist(pos).x;
+              float scale = u_hardPix;
+              float wa = Gaus(dst - 2.0, scale);
+              float wb = Gaus(dst - 1.0, scale);
+              float wc = Gaus(dst + 0.0, scale);
+              float wd = Gaus(dst + 1.0, scale);
+              float we = Gaus(dst + 2.0, scale);
+
+              return (a * wa + b * wb + c * wc + d * wd + e * we) / (wa + wb + wc + wd + we);
+            }
+
+            vec3 Horz7(vec2 pos, float off) {
+              vec3 a = Fetch(pos, vec2(-3.0, off));
+              vec3 b = Fetch(pos, vec2(-2.0, off));
+              vec3 c = Fetch(pos, vec2(-1.0, off));
+              vec3 d = Fetch(pos, vec2( 0.0, off));
+              vec3 e = Fetch(pos, vec2( 1.0, off));
+              vec3 f = Fetch(pos, vec2( 2.0, off));
+              vec3 g = Fetch(pos, vec2( 3.0, off));
+
+              float dst = Dist(pos).x;
+              float scale = u_hardBloomPix;
+              float wa = Gaus(dst - 3.0, scale);
+              float wb = Gaus(dst - 2.0, scale);
+              float wc = Gaus(dst - 1.0, scale);
+              float wd = Gaus(dst + 0.0, scale);
+              float we = Gaus(dst + 1.0, scale);
+              float wf = Gaus(dst + 2.0, scale);
+              float wg = Gaus(dst + 3.0, scale);
+
+              return (a * wa + b * wb + c * wc + d * wd + e * we + f * wf + g * wg) /
+                (wa + wb + wc + wd + we + wf + wg);
+            }
+
+            float Scan(vec2 pos, float off) {
+              float dst = Dist(pos).y;
+              return Gaus(dst + off, u_hardScan);
+            }
+
+            float BloomScan(vec2 pos, float off) {
+              float dst = Dist(pos).y;
+              return Gaus(dst + off, u_hardBloomScan);
+            }
+
+            vec3 Tri(vec2 pos) {
+              vec3 a = Horz3(pos, -1.0);
+              vec3 b = Horz5(pos,  0.0);
+              vec3 c = Horz3(pos,  1.0);
+
+              float wa = Scan(pos, -1.0);
+              float wb = Scan(pos,  0.0);
+              float wc = Scan(pos,  1.0);
+
+              return a * wa + b * wb + c * wc;
+            }
+
+            vec3 Bloom(vec2 pos) {
+              vec3 a = Horz5(pos, -2.0);
+              vec3 b = Horz7(pos, -1.0);
+              vec3 c = Horz7(pos,  0.0);
+              vec3 d = Horz7(pos,  1.0);
+              vec3 e = Horz5(pos,  2.0);
+
+              float wa = BloomScan(pos, -2.0);
+              float wb = BloomScan(pos, -1.0);
+              float wc = BloomScan(pos,  0.0);
+              float wd = BloomScan(pos,  1.0);
+              float we = BloomScan(pos,  2.0);
+
+              return a * wa + b * wb + c * wc + d * wd + e * we;
+            }
+
+            vec2 Warp(vec2 pos) {
+              pos = pos * 2.0 - 1.0;
+              pos *= vec2(1.0 + (pos.y * pos.y) * u_warpX, 1.0 + (pos.x * pos.x) * u_warpY);
+              return pos * 0.5 + 0.5;
+            }
+
+            vec3 Mask(vec2 pos) {
+              vec3 mask = vec3(u_maskDark);
+
+              if (u_shadowMask == 1.0) {
+                float line = u_maskLight;
+                float odd = 0.0;
+
+                if (fract(pos.x * 0.166666666) < 0.5) odd = 1.0;
+                if (fract((pos.y + odd) * 0.5) < 0.5) line = u_maskDark;
+
+                pos.x = fract(pos.x * 0.333333333);
+
+                if (pos.x < 0.333) mask.r = u_maskLight;
+                else if (pos.x < 0.666) mask.g = u_maskLight;
+                else mask.b = u_maskLight;
+                mask *= line;
+              } else if (u_shadowMask == 2.0) {
+                pos.x = fract(pos.x * 0.333333333);
+
+                if (pos.x < 0.333) mask.r = u_maskLight;
+                else if (pos.x < 0.666) mask.g = u_maskLight;
+                else mask.b = u_maskLight;
+              } else if (u_shadowMask == 3.0) {
+                pos.x += pos.y * 3.0;
+                pos.x = fract(pos.x * 0.166666666);
+
+                if (pos.x < 0.333) mask.r = u_maskLight;
+                else if (pos.x < 0.666) mask.g = u_maskLight;
+                else mask.b = u_maskLight;
+              } else if (u_shadowMask == 4.0) {
+                pos = floor(pos * vec2(1.0, 0.5));
+                pos.x += pos.y * 3.0;
+                pos.x = fract(pos.x * 0.166666666);
+
+                if (pos.x < 0.333) mask.r = u_maskLight;
+                else if (pos.x < 0.666) mask.g = u_maskLight;
+                else mask.b = u_maskLight;
+              }
+
+              return mask;
+            }
+
             void main() {
-              vec2 uv = v_texCoord;
-              
-              // Slight barrel distortion (CRT curvature)
-              vec2 centered = uv * 2.0 - 1.0;
-              float r2 = dot(centered, centered);
-              centered *= 1.0 + r2 * 0.05;
-              uv = centered * 0.5 + 0.5;
-              
-              // Check if warped outside bounds
-              if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+              vec2 pos = Warp(v_texCoord);
+              if (pos.x < 0.0 || pos.x > 1.0 || pos.y < 0.0 || pos.y > 1.0) {
                 gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
                 return;
               }
-              
-              // Sample texture with slight blur for glow effect
-              vec3 color = texture2D(u_texture, uv).rgb;
-              vec3 bloom = vec3(0.0);
-              for (float dx = -1.5; dx <= 1.5; dx += 0.75) {
-                for (float dy = -1.5; dy <= 1.5; dy += 0.75) {
-                  vec2 offset = vec2(dx, dy) / u_textureSize;
-                  bloom += texture2D(u_texture, uv + offset).rgb;
-                }
+              vec3 outColor = Tri(pos);
+
+            #ifdef DO_BLOOM
+              outColor.rgb += Bloom(pos) * u_bloomAmount;
+            #endif
+
+              if (u_shadowMask > 0.0) {
+                outColor.rgb *= Mask(v_texCoord * u_outputSize * 1.000001);
               }
-              bloom /= 25.0;  // Normalize by actual sample count (5x5 = 25)
-              color += bloom * 0.4; // Add bloom/glow
-              
-              // Scanlines (based on screen Y position)
-              float y = gl_FragCoord.y;
-              float scanline = sin(y * PI) * 0.08 + 0.92;
-              color *= scanline;
-              
-              // Shadow mask (RGB sub-pixel aperture grille pattern)
-              float x = gl_FragCoord.x;
-              vec3 mask = vec3(0.8);
-              float maskPhase = mod(x, 3.0);
-              if (maskPhase < 1.0) {
-                mask.r = 1.3;
-              } else if (maskPhase < 2.0) {
-                mask.g = 1.3;
-              } else {
-                mask.b = 1.3;
-              }
-              color *= mask;
-              
-              // Gamma correction for CRT
-              color = pow(color, vec3(1.0/2.2)); // sRGB gamma
-              color = pow(color, vec3(2.4));     // CRT gamma
-              color = pow(color, vec3(1.0/2.2)); // Back to sRGB
-              
-              color = clamp(color, 0.0, 1.0);
-              gl_FragColor = vec4(color, 1.0);
+
+              gl_FragColor = vec4(ToSrgb(outColor.rgb), 1.0);
             }
           `
         }
@@ -426,6 +601,19 @@
         program._uSourceSizeLocation = gl.getUniformLocation(program, 'u_sourceSize');
         program._uChromaEncodeLocation = gl.getUniformLocation(program, 'u_chromaEncode');
         program._uChromaSumLocation = gl.getUniformLocation(program, 'u_chromaSum');
+        program._uHardScanLocation = gl.getUniformLocation(program, 'u_hardScan');
+        program._uHardPixLocation = gl.getUniformLocation(program, 'u_hardPix');
+        program._uWarpXLocation = gl.getUniformLocation(program, 'u_warpX');
+        program._uWarpYLocation = gl.getUniformLocation(program, 'u_warpY');
+        program._uMaskDarkLocation = gl.getUniformLocation(program, 'u_maskDark');
+        program._uMaskLightLocation = gl.getUniformLocation(program, 'u_maskLight');
+        program._uScaleInLinearGammaLocation = gl.getUniformLocation(program, 'u_scaleInLinearGamma');
+        program._uShadowMaskLocation = gl.getUniformLocation(program, 'u_shadowMask');
+        program._uBrightBoostLocation = gl.getUniformLocation(program, 'u_brightBoost');
+        program._uHardBloomScanLocation = gl.getUniformLocation(program, 'u_hardBloomScan');
+        program._uHardBloomPixLocation = gl.getUniformLocation(program, 'u_hardBloomPix');
+        program._uBloomAmountLocation = gl.getUniformLocation(program, 'u_bloomAmount');
+        program._uShapeLocation = gl.getUniformLocation(program, 'u_shape');
         program._aPositionLocation = gl.getAttribLocation(program, 'a_position');
         program._aTexCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
       }
@@ -779,6 +967,9 @@
         if (shaderProgram._uTextureSizeLocation) {
           gl.uniform2f(shaderProgram._uTextureSizeLocation, width, height);
         }
+        if (shaderProgram._uSourceSizeLocation) {
+          gl.uniform2f(shaderProgram._uSourceSizeLocation, width, height);
+        }
         if (shaderProgram._uOutputSizeLocation) {
           gl.uniform2f(shaderProgram._uOutputSizeLocation, canvas.width, canvas.height);
         }
@@ -787,6 +978,24 @@
         }
         if (shaderProgram._uTextureLocation) {
           gl.uniform1i(shaderProgram._uTextureLocation, 0);
+        }
+
+        const filter = filters[currentFilter];
+        if (filter && filter.params) {
+          const params = filter.params;
+          if (shaderProgram._uHardScanLocation) gl.uniform1f(shaderProgram._uHardScanLocation, params.hardScan);
+          if (shaderProgram._uHardPixLocation) gl.uniform1f(shaderProgram._uHardPixLocation, params.hardPix);
+          if (shaderProgram._uWarpXLocation) gl.uniform1f(shaderProgram._uWarpXLocation, params.warpX);
+          if (shaderProgram._uWarpYLocation) gl.uniform1f(shaderProgram._uWarpYLocation, params.warpY);
+          if (shaderProgram._uMaskDarkLocation) gl.uniform1f(shaderProgram._uMaskDarkLocation, params.maskDark);
+          if (shaderProgram._uMaskLightLocation) gl.uniform1f(shaderProgram._uMaskLightLocation, params.maskLight);
+          if (shaderProgram._uScaleInLinearGammaLocation) gl.uniform1f(shaderProgram._uScaleInLinearGammaLocation, params.scaleInLinearGamma);
+          if (shaderProgram._uShadowMaskLocation) gl.uniform1f(shaderProgram._uShadowMaskLocation, params.shadowMask);
+          if (shaderProgram._uBrightBoostLocation) gl.uniform1f(shaderProgram._uBrightBoostLocation, params.brightBoost);
+          if (shaderProgram._uHardBloomScanLocation) gl.uniform1f(shaderProgram._uHardBloomScanLocation, params.hardBloomScan);
+          if (shaderProgram._uHardBloomPixLocation) gl.uniform1f(shaderProgram._uHardBloomPixLocation, params.hardBloomPix);
+          if (shaderProgram._uBloomAmountLocation) gl.uniform1f(shaderProgram._uBloomAmountLocation, params.bloomAmount);
+          if (shaderProgram._uShapeLocation) gl.uniform1f(shaderProgram._uShapeLocation, params.shape);
         }
 
         bindQuadAttributes(shaderProgram);
@@ -1007,6 +1216,9 @@
         const newWidth = Math.round(currentHeight * NES_ASPECT_RATIO);
         canvas.style.width = `${newWidth}px`;
         canvas.style.height = `${currentHeight}px`;
+        const dpr = window.devicePixelRatio || 1;
+        canvas.width = Math.round(newWidth * dpr);
+        canvas.height = Math.round(currentHeight * dpr);
       }
 
       // Update fullscreen button text based on state
@@ -1115,15 +1327,20 @@
           const viewportWidth = window.innerWidth;
           const viewportHeight = window.innerHeight;
           const viewportAspect = viewportWidth / viewportHeight;
-          
+          const dpr = window.devicePixelRatio || 1;
+
           if (viewportAspect > NES_ASPECT_RATIO) {
             // Viewport is wider, fit to height
             canvas.style.height = "100vh";
             canvas.style.width = `${viewportHeight * NES_ASPECT_RATIO}px`;
+            canvas.width = Math.round(viewportHeight * NES_ASPECT_RATIO * dpr);
+            canvas.height = Math.round(viewportHeight * dpr);
           } else {
             // Viewport is taller, fit to width
             canvas.style.width = "100vw";
             canvas.style.height = `${viewportWidth / NES_ASPECT_RATIO}px`;
+            canvas.width = Math.round(viewportWidth * dpr);
+            canvas.height = Math.round((viewportWidth / NES_ASPECT_RATIO) * dpr);
           }
         } else {
           // Exited fullscreen - restore previous size
