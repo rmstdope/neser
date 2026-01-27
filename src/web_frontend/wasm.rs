@@ -1,5 +1,5 @@
 use crate::cartridge::Cartridge;
-use crate::console::{Nes, TvSystem};
+use crate::console::{Nes, SaveState, TvSystem};
 use crate::input::Button;
 use wasm_bindgen::prelude::*;
 
@@ -36,10 +36,17 @@ impl WasmNes {
     /// Load a ROM from raw bytes.
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), JsValue> {
+        self.nes = Nes::new(TvSystem::Ntsc);
         let cart = Cartridge::new(rom).map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.nes.insert_cartridge(cart);
         self.nes.reset(false);
         Ok(())
+    }
+
+    /// Reset the emulator without ejecting the cartridge.
+    #[wasm_bindgen]
+    pub fn reset(&mut self) {
+        self.nes.reset(true);
     }
 
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGB888).
@@ -122,6 +129,21 @@ impl WasmNes {
             samples.push(sample);
         }
         samples
+    }
+
+    /// Serialize the current emulator state to JSON bytes.
+    #[wasm_bindgen]
+    pub fn save_state_bytes(&self) -> Vec<u8> {
+        self.nes.save_state().to_bytes().unwrap_or_default()
+    }
+
+    /// Load a previously saved emulator state from JSON bytes.
+    #[wasm_bindgen]
+    pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        let state = SaveState::from_bytes(bytes).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.nes
+            .load_state(&state)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Set audio mute state.

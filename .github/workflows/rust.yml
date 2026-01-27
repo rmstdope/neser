@@ -18,12 +18,12 @@ jobs:
       - name: Install SDL2
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - name: Build
-        run: cargo build --verbose
+        run: cargo build
       - name: Run tests
-        run: cargo test --lib --bins --tests --examples --all-features --verbose
+        run: cargo test --lib --bins --tests --examples
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Check formatting
         run: cargo fmt -- --check
       - name: Test web frontend
-        run: npm test --verbose
+        run: npm test

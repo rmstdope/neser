@@ -1,9 +1,21 @@
-import init, { WasmNes } from "./pkg/neser.js";
+import init, { WasmNes } from "./pkg/neser.js?v=20260127";
 import { mapStandardGamepadState, selectPrimaryGamepad } from "./gamepad.js";
+import {
+    createRomSaveKey,
+    hasState,
+    loadState,
+    openSaveStateDb,
+    saveState
+} from "./save_state_storage.js";
+import { createSaveStateController } from "./save_state_controller.js";
+import { createSaveStateContext } from "./save_state_context.js";
+import { fetchRomList } from "./rom_list.js";
+import { handleRomSelection } from "./rom_selection.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
 const romInput = document.getElementById("rom");
+const romSelect = document.getElementById("rom-select");
 const canvas = document.getElementById("screen");
 if (!(canvas instanceof HTMLCanvasElement)) {
     throw new Error("Canvas element with id 'screen' not found or not a canvas");
@@ -21,7 +33,7 @@ const height = 240;
 // WebGL shader setup for filters - Thorough manual port from SDL .slang shaders
 const filters = {
     stock: {
-        name: "Stock (No Filter)",
+        name: "None",
         type: "single",
         fragmentShader: `
             #ifdef GL_FRAGMENT_PRECISION_HIGH
@@ -38,11 +50,11 @@ const filters = {
         `
     },
     ntsc: {
-        name: "NTSC Composite",
+        name: "NTSC",
         type: "ntsc"
     },
     crt: {
-        name: "CRT Lottes",
+        name: "CRT",
         type: "single",
         params: {
             hardScan: -8.0,
@@ -720,6 +732,9 @@ function cycleFilter() {
 
 let nes;
 let romBytes;
+let romMetadata;
+let saveStateController = null;
+let saveStateAvailable = false;
 let running = false;
 let paused = false;
 let lastFrameTime = 0;
@@ -750,12 +765,93 @@ function setStatus(msg, isError = false) {
     statusEl.style.color = isError ? "#f88" : "#8fe28f";
 }
 
+async function applyRomBytes(bytes, name) {
+    romBytes = bytes;
+    romMetadata = {
+        name,
+        size: romBytes.length,
+        bytes: romBytes
+    };
+    setStatus(`Loaded ROM: ${name} (${romBytes.length} bytes)`);
+    await refreshSaveStateController();
+}
+
+async function refreshSaveStateController() {
+    if (!nes || !romMetadata) {
+        saveStateController = null;
+        saveStateAvailable = false;
+        updateSaveStateButtons();
+        return;
+    }
+    try {
+        saveStateController = await createSaveStateContext({
+            nes,
+            romMetadata,
+            openDb: openSaveStateDb,
+            createRomSaveKey,
+            createSaveStateController,
+            saveStateFn: saveState,
+            loadStateFn: loadState,
+            setStatus
+        });
+        if (saveStateController) {
+            const db = await openSaveStateDb();
+            const key = await createRomSaveKey({
+                name: romMetadata.name,
+                size: romMetadata.size,
+                bytes: romMetadata.bytes
+            });
+            saveStateAvailable = await hasState(db, key);
+        } else {
+            saveStateAvailable = false;
+        }
+    } catch (error) {
+        console.error("Failed to initialize save state", error);
+        saveStateController = null;
+        saveStateAvailable = false;
+        setStatus("Failed to initialize save state", true);
+    }
+    updateSaveStateButtons();
+}
+
 romInput.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    romBytes = new Uint8Array(await file.arrayBuffer());
-    setStatus(`Loaded ROM: ${file.name} (${romBytes.length} bytes)`);
+    await handleRomSelection({
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        name: file.name,
+        running,
+        stop,
+        applyRomBytes,
+        start
+    });
 });
+
+if (romSelect) {
+    romSelect.addEventListener("change", async (e) => {
+        const value = e.target.value;
+        if (!value) return;
+        try {
+            const response = await fetch(value);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            const name = value.split("/").pop() || value;
+            await handleRomSelection({
+                bytes,
+                name,
+                running,
+                stop,
+                applyRomBytes,
+                start
+            });
+        } catch (error) {
+            console.error("Failed to load bundled ROM", error);
+            setStatus("Failed to load bundled ROM", true);
+        }
+    });
+}
 
 function clearCanvas() {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -814,18 +910,17 @@ async function start() {
         return;
     }
     startBtn.disabled = true;
-    romInput.disabled = true;
     if (!romBytes) {
         setStatus("Please choose a ROM first", true);
         startBtn.disabled = false;
-        romInput.disabled = false;
         return;
     }
     setStatus("Initializing emulator...");
     try {
         if (!nes) {
             const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
-            await init(wasmUrl);
+            wasmUrl.searchParams.set("v", "20260127");
+            await init({ module_or_path: wasmUrl });
 
             // Initialize WebGL shaders before creating NES instance
             if (!initWebGL()) {
@@ -838,10 +933,10 @@ async function start() {
         // Initialize audio context on user interaction (browser requirement)
         initAudioContext();
         nes.set_audio_muted(audioMuted);
+        await refreshSaveStateController();
     } catch (err) {
         setStatus(`Failed to load ROM: ${err}`, true);
         startBtn.disabled = false;
-        romInput.disabled = false;
         // Only reset nes if wasm/webgl initialization failed
         // Don't reset on simple ROM load errors so we can retry
         if (err.message && err.message.includes("WebGL")) {
@@ -876,7 +971,6 @@ function stop() {
     clearCanvas();
     lastFrameTime = 0;
     setStatus("Stopped. You can restart or load a new ROM");
-    romInput.disabled = false;
 }
 
 function bindQuadAttributes(program) {
@@ -1055,7 +1149,7 @@ function step(timestamp) {
 startBtn.addEventListener("click", start);
 const gamepadToggleBtn = document.getElementById("gamepad-toggle");
 function updateGamepadButton() {
-    gamepadToggleBtn.textContent = gamepadEnabled ? "Gamepad On" : "Gamepad Off";
+    gamepadToggleBtn.textContent = gamepadEnabled ? "Gamepad : On" : "Gamepad : Off";
     gamepadToggleBtn.setAttribute("aria-pressed", gamepadEnabled ? "true" : "false");
 }
 gamepadToggleBtn.addEventListener("click", () => {
@@ -1068,7 +1162,7 @@ gamepadToggleBtn.addEventListener("click", () => {
 updateGamepadButton();
 const muteBtn = document.getElementById("mute");
 function updateMuteButton() {
-    muteBtn.textContent = audioMuted ? "Unmute" : "Mute";
+    muteBtn.textContent = audioMuted ? "Audio: Off" : "Audio: On";
     muteBtn.setAttribute("aria-pressed", audioMuted ? "true" : "false");
 }
 muteBtn.addEventListener("click", async () => {
@@ -1091,19 +1185,37 @@ muteBtn.addEventListener("click", async () => {
     }
 });
 updateMuteButton();
-const pauseBtn = document.createElement("button");
-pauseBtn.id = "pause";
-pauseBtn.textContent = "Pause/Resume";
-pauseBtn.setAttribute("aria-label", "Pause or resume emulation");
+const pauseBtn = document.getElementById("pause");
+const stopBtn = document.getElementById("stop");
+const resetBtn = document.getElementById("reset");
+if (!pauseBtn || !stopBtn || !resetBtn) {
+    throw new Error("Pause/Stop/Reset buttons not found in DOM");
+}
 pauseBtn.addEventListener("click", pauseResume);
-startBtn.insertAdjacentElement("afterend", pauseBtn);
-
-const stopBtn = document.createElement("button");
-stopBtn.id = "stop";
-stopBtn.textContent = "Stop";
-stopBtn.setAttribute("aria-label", "Stop emulation");
 stopBtn.addEventListener("click", stop);
-pauseBtn.insertAdjacentElement("afterend", stopBtn);
+resetBtn.addEventListener("click", () => {
+    if (!nes) return;
+    nes.reset();
+    setStatus("Reset", false);
+});
+
+async function populateRomSelect() {
+    if (!romSelect) return;
+    const baseUrl = new URL("./roms/", window.location.href).toString();
+    try {
+        const entries = await fetchRomList(baseUrl);
+        for (const entry of entries) {
+            const option = document.createElement("option");
+            option.value = entry.url;
+            option.textContent = entry.path;
+            romSelect.appendChild(option);
+        }
+    } catch (error) {
+        console.error("Failed to load ROM list", error);
+    }
+}
+
+populateRomSelect();
 
 // Keyboard input for controller 1
 // Mapping: W=Up, S=Down, A=Left, D=Right, G=B, F=A, R=Select, T=Start
@@ -1143,6 +1255,8 @@ const screenMinusBtn = document.getElementById("screen-minus");
 const screenPlusBtn = document.getElementById("screen-plus");
 const fullscreenBtn = document.getElementById("fullscreen");
 const filterToggleBtn = document.getElementById("filter-toggle");
+const saveStateBtn = document.getElementById("save-state");
+const loadStateBtn = document.getElementById("load-state");
 
 // NES native resolution is 256x240 pixels
 const NES_ASPECT_RATIO = 256 / 240;
@@ -1165,10 +1279,17 @@ function updateFullscreenButton() {
     fullscreenBtn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
 }
 
+function updateSaveStateButtons() {
+    const enabled = Boolean(saveStateController);
+    if (saveStateBtn) saveStateBtn.disabled = !enabled;
+    if (loadStateBtn) loadStateBtn.disabled = !enabled || !saveStateAvailable;
+}
+
 // Set initial canvas size and button text
 updateCanvasSize(INITIAL_HEIGHT);
 updateFullscreenButton();
 filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
+updateSaveStateButtons();
 
 screenMinusBtn.addEventListener("click", () => {
     updateCanvasSize(currentHeight - SCALE_STEP);
@@ -1199,6 +1320,20 @@ fullscreenBtn.addEventListener("click", async () => {
 filterToggleBtn.addEventListener("click", () => {
     cycleFilter();
     filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
+});
+
+saveStateBtn?.addEventListener("click", async () => {
+    if (!saveStateController) return;
+    const ok = await saveStateController.save();
+    if (ok) {
+        saveStateAvailable = true;
+        updateSaveStateButtons();
+    }
+});
+
+loadStateBtn?.addEventListener("click", async () => {
+    if (!saveStateController) return;
+    await saveStateController.load();
 });
 
 function pollGamepad() {
