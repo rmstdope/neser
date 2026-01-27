@@ -162,3 +162,22 @@ fn save_state_roundtrip_returns_same_bytes() {
 
     assert_eq!(state1, state2);
 }
+
+#[wasm_bindgen_test]
+fn reset_restores_initial_state() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom();
+    nes.load_rom(&rom).expect("valid rom should load");
+
+    let initial = nes.save_state_bytes();
+    assert!(!initial.is_empty());
+
+    let _frame = nes.render_frame();
+    let modified = nes.save_state_bytes();
+    assert_ne!(initial, modified);
+
+    nes.reset();
+    let after_reset = nes.save_state_bytes();
+
+    assert_eq!(initial, after_reset);
+}

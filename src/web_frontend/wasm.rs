@@ -42,6 +42,12 @@ impl WasmNes {
         Ok(())
     }
 
+    /// Reset the emulator without ejecting the cartridge.
+    #[wasm_bindgen]
+    pub fn reset(&mut self) {
+        self.nes.reset(false);
+    }
+
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGB888).
     ///
     /// Returns a Uint8Array with length 256*240*3.

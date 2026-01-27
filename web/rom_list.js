@@ -1,11 +1,10 @@
 export function parseDirectoryListing(html) {
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const anchors = Array.from(doc.querySelectorAll("a"));
     const dirs = [];
     const roms = [];
-
-    for (const anchor of anchors) {
-        const href = anchor.getAttribute("href") || "";
+    const hrefRegex = /href\s*=\s*["']([^"']+)["']/gi;
+    let match;
+    while ((match = hrefRegex.exec(html)) !== null) {
+        const href = match[1] || "";
         if (!href || href === "../") continue;
         if (href.endsWith("/")) {
             dirs.push(href);
@@ -21,13 +20,14 @@ export function parseDirectoryListing(html) {
 }
 
 export async function fetchRomList(baseUrl, fetchFn = fetch, maxDepth = 4) {
-    const queue = [{ path: "", depth: 0 }];
+    const baseRoot = new URL(baseUrl);
+    const basePath = baseRoot.pathname.endsWith("/") ? baseRoot.pathname : `${baseRoot.pathname}/`;
+    const queue = [{ url: baseRoot.toString(), depth: 0 }];
     const results = [];
     const visited = new Set();
 
     while (queue.length > 0) {
-        const { path, depth } = queue.shift();
-        const url = new URL(path, baseUrl).toString();
+        const { url, depth } = queue.shift();
         if (visited.has(url)) continue;
         visited.add(url);
 
@@ -37,15 +37,46 @@ export async function fetchRomList(baseUrl, fetchFn = fetch, maxDepth = 4) {
         const { dirs, roms } = parseDirectoryListing(html);
 
         for (const rom of roms) {
-            results.push({ path: `${path}${rom}`, url: new URL(`${path}${rom}`, baseUrl).toString() });
+            const resolved = new URL(rom, url);
+            if (resolved.origin !== baseRoot.origin) continue;
+            if (!resolved.pathname.startsWith(basePath)) continue;
+            const relativePath = resolved.pathname.slice(basePath.length);
+            if (!relativePath) continue;
+            results.push({
+                path: relativePath,
+                url: resolved.toString()
+            });
         }
 
         if (depth < maxDepth) {
             for (const dir of dirs) {
-                queue.push({ path: `${path}${dir}`, depth: depth + 1 });
+                const resolved = new URL(dir, url);
+                if (resolved.origin !== baseRoot.origin) continue;
+                if (!resolved.pathname.startsWith(basePath)) continue;
+                if (resolved.pathname === basePath) continue;
+                const normalized = resolved.toString();
+                queue.push({ url: normalized, depth: depth + 1 });
             }
         }
     }
 
-    return results.sort((a, b) => a.path.localeCompare(b.path));
+    const sorted = results.sort((a, b) => a.path.localeCompare(b.path));
+    if (sorted.length > 0) {
+        return sorted;
+    }
+
+    const manifestUrl = new URL("roms.json", baseRoot).toString();
+    const manifestResponse = await fetchFn(manifestUrl);
+    if (!manifestResponse.ok) {
+        return [];
+    }
+    const manifest = await manifestResponse.json();
+    const roms = Array.isArray(manifest?.roms) ? manifest.roms : [];
+    return roms
+        .filter((rom) => typeof rom === "string" && rom.toLowerCase().endsWith(".nes"))
+        .map((rom) => ({
+            path: rom.replace(/^\//, ""),
+            url: new URL(rom.replace(/^\//, ""), baseRoot).toString()
+        }))
+        .sort((a, b) => a.path.localeCompare(b.path));
 }

@@ -43,3 +43,29 @@ test("fetchRomList walks directories and returns rom entries", async () => {
     const paths = entries.map((entry) => entry.path);
     assert.deepEqual(paths, ["cpu_reset/ram_after_reset.nes", "root.nes"]);
 });
+
+test("fetchRomList uses manifest when directory listing unavailable", async () => {
+    const base = "https://example.com/roms/";
+    const responses = new Map([
+        [base, ""],
+        [`${base}roms.json`, JSON.stringify({
+            roms: ["cpu_reset/ram_after_reset.nes", "root.nes"]
+        })]
+    ]);
+
+    const fetchFn = async (url) => {
+        const key = url.toString();
+        if (!responses.has(key)) {
+            return { ok: false, status: 404, text: async () => "" };
+        }
+        return {
+            ok: true,
+            text: async () => responses.get(key),
+            json: async () => JSON.parse(responses.get(key))
+        };
+    };
+
+    const entries = await fetchRomList(base, fetchFn, 4);
+    const paths = entries.map((entry) => entry.path);
+    assert.deepEqual(paths, ["cpu_reset/ram_after_reset.nes", "root.nes"]);
+});

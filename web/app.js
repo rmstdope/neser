@@ -1176,11 +1176,17 @@ muteBtn.addEventListener("click", async () => {
 updateMuteButton();
 const pauseBtn = document.getElementById("pause");
 const stopBtn = document.getElementById("stop");
-if (!pauseBtn || !stopBtn) {
-    throw new Error("Pause/Stop buttons not found in DOM");
+const resetBtn = document.getElementById("reset");
+if (!pauseBtn || !stopBtn || !resetBtn) {
+    throw new Error("Pause/Stop/Reset buttons not found in DOM");
 }
 pauseBtn.addEventListener("click", pauseResume);
 stopBtn.addEventListener("click", stop);
+resetBtn.addEventListener("click", () => {
+    if (!nes) return;
+    nes.reset();
+    setStatus("Reset", false);
+});
 
 async function populateRomSelect() {
     if (!romSelect) return;
