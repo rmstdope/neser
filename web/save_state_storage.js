@@ -18,12 +18,12 @@ export async function computeRomHash(bytes) {
     return hash;
 }
 
-export async function openSaveStateDb() {
+export async function openSaveStateDb(name = "neser") {
     if (!globalThis.indexedDB) {
         throw new Error("IndexedDB not available");
     }
     return new Promise((resolve, reject) => {
-        const request = globalThis.indexedDB.open("neser", 1);
+        const request = globalThis.indexedDB.open(name, 1);
         request.onerror = () => reject(request.error);
         request.onupgradeneeded = () => {
             const db = request.result;

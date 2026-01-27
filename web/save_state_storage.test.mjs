@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import assert from "node:assert/strict";
-import test, { beforeEach } from "node:test";
+import test from "node:test";
 import {
     buildSaveStateKey,
     createRomSaveKey,
@@ -11,18 +11,9 @@ import {
     loadState
 } from "./save_state_storage.js";
 
-async function deleteDatabase(name) {
-    await new Promise((resolve, reject) => {
-        const request = indexedDB.deleteDatabase(name);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve();
-        request.onblocked = () => resolve();
-    });
+function createDbName() {
+    return `neser-test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
-
-beforeEach(async () => {
-    await deleteDatabase("neser");
-});
 
 test("computeRomHash returns stable SHA-256 hex", async () => {
     const bytes = new Uint8Array([0, 1, 2]);
@@ -50,7 +41,7 @@ test("createRomSaveKey hashes and formats key", async () => {
 });
 
 test("saveState and loadState roundtrip bytes", async () => {
-    const db = await openSaveStateDb();
+    const db = await openSaveStateDb(createDbName());
     const key = "rom:Test.nes:3:abc123";
     const payload = new Uint8Array([9, 8, 7, 6]);
 
@@ -62,7 +53,7 @@ test("saveState and loadState roundtrip bytes", async () => {
 });
 
 test("hasState reports presence", async () => {
-    const db = await openSaveStateDb();
+    const db = await openSaveStateDb(createDbName());
     const key = "rom:Test.nes:3:abc123";
 
     const before = await hasState(db, key);
