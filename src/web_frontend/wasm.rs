@@ -36,6 +36,7 @@ impl WasmNes {
     /// Load a ROM from raw bytes.
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), JsValue> {
+        self.nes = Nes::new(TvSystem::Ntsc);
         let cart = Cartridge::new(rom).map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.nes.insert_cartridge(cart);
         self.nes.reset(false);
@@ -45,7 +46,7 @@ impl WasmNes {
     /// Reset the emulator without ejecting the cartridge.
     #[wasm_bindgen]
     pub fn reset(&mut self) {
-        self.nes.reset(false);
+        self.nes.reset(true);
     }
 
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGB888).

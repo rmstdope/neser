@@ -822,7 +822,8 @@ romInput.addEventListener("change", async (e) => {
         name: file.name,
         running,
         stop,
-        applyRomBytes
+        applyRomBytes,
+        start
     });
 });
 
@@ -842,7 +843,8 @@ if (romSelect) {
                 name,
                 running,
                 stop,
-                applyRomBytes
+                applyRomBytes,
+                start
             });
         } catch (error) {
             console.error("Failed to load bundled ROM", error);

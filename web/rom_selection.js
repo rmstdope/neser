@@ -3,10 +3,14 @@ export async function handleRomSelection({
     name,
     running,
     stop,
-    applyRomBytes
+    applyRomBytes,
+    start
 }) {
     if (running) {
         stop();
     }
     await applyRomBytes(bytes, name);
+    if (start) {
+        await start();
+    }
 }

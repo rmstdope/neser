@@ -33,3 +33,21 @@ test("handleRomSelection does not stop when not running", async () => {
 
     assert.deepEqual(calls, ["apply"]);
 });
+
+test("handleRomSelection auto-starts after loading", async () => {
+    const calls = [];
+    const stop = () => calls.push("stop");
+    const applyRomBytes = async () => calls.push("apply");
+    const start = async () => calls.push("start");
+
+    await handleRomSelection({
+        bytes: new Uint8Array([1, 2, 3]),
+        name: "Test.nes",
+        running: false,
+        stop,
+        applyRomBytes,
+        start
+    });
+
+    assert.deepEqual(calls, ["apply", "start"]);
+});
