@@ -10,6 +10,7 @@ import {
 import { createSaveStateController } from "./save_state_controller.js";
 import { createSaveStateContext } from "./save_state_context.js";
 import { fetchRomList } from "./rom_list.js";
+import { handleRomSelection } from "./rom_selection.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -816,7 +817,13 @@ async function refreshSaveStateController() {
 romInput.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    await applyRomBytes(new Uint8Array(await file.arrayBuffer()), file.name);
+    await handleRomSelection({
+        bytes: new Uint8Array(await file.arrayBuffer()),
+        name: file.name,
+        running,
+        stop,
+        applyRomBytes
+    });
 });
 
 if (romSelect) {
@@ -830,7 +837,13 @@ if (romSelect) {
             }
             const bytes = new Uint8Array(await response.arrayBuffer());
             const name = value.split("/").pop() || value;
-            await applyRomBytes(bytes, name);
+            await handleRomSelection({
+                bytes,
+                name,
+                running,
+                stop,
+                applyRomBytes
+            });
         } catch (error) {
             console.error("Failed to load bundled ROM", error);
             setStatus("Failed to load bundled ROM", true);
@@ -895,11 +908,9 @@ async function start() {
         return;
     }
     startBtn.disabled = true;
-    romInput.disabled = true;
     if (!romBytes) {
         setStatus("Please choose a ROM first", true);
         startBtn.disabled = false;
-        romInput.disabled = false;
         return;
     }
     setStatus("Initializing emulator...");
@@ -924,7 +935,6 @@ async function start() {
     } catch (err) {
         setStatus(`Failed to load ROM: ${err}`, true);
         startBtn.disabled = false;
-        romInput.disabled = false;
         // Only reset nes if wasm/webgl initialization failed
         // Don't reset on simple ROM load errors so we can retry
         if (err.message && err.message.includes("WebGL")) {
@@ -959,7 +969,6 @@ function stop() {
     clearCanvas();
     lastFrameTime = 0;
     setStatus("Stopped. You can restart or load a new ROM");
-    romInput.disabled = false;
 }
 
 function bindQuadAttributes(program) {

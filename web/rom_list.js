@@ -22,9 +22,28 @@ export function parseDirectoryListing(html) {
 export async function fetchRomList(baseUrl, fetchFn = fetch, maxDepth = 4) {
     const baseRoot = new URL(baseUrl);
     const basePath = baseRoot.pathname.endsWith("/") ? baseRoot.pathname : `${baseRoot.pathname}/`;
+    const basePathNoSlash = basePath.replace(/^\/+/, "");
     const queue = [{ url: baseRoot.toString(), depth: 0 }];
     const results = [];
     const visited = new Set();
+
+    const normalizeHref = (href) => {
+        if (!href) return href;
+        if (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("/")) {
+            return href;
+        }
+        const trimmed = href.replace(/^\.\//, "");
+        if (trimmed.startsWith(basePathNoSlash)) {
+            return `/${trimmed}`;
+        }
+        if (trimmed.startsWith(`roms/${basePathNoSlash}`)) {
+            return `/${trimmed.slice("roms/".length)}`;
+        }
+        if (trimmed.startsWith("roms/")) {
+            return `/${trimmed.slice("roms/".length)}`;
+        }
+        return trimmed;
+    };
 
     while (queue.length > 0) {
         const { url, depth } = queue.shift();
@@ -37,7 +56,8 @@ export async function fetchRomList(baseUrl, fetchFn = fetch, maxDepth = 4) {
         const { dirs, roms } = parseDirectoryListing(html);
 
         for (const rom of roms) {
-            const resolved = new URL(rom, url);
+            const normalizedRom = normalizeHref(rom);
+            const resolved = new URL(normalizedRom, url);
             if (resolved.origin !== baseRoot.origin) continue;
             if (!resolved.pathname.startsWith(basePath)) continue;
             const relativePath = resolved.pathname.slice(basePath.length);
@@ -50,7 +70,8 @@ export async function fetchRomList(baseUrl, fetchFn = fetch, maxDepth = 4) {
 
         if (depth < maxDepth) {
             for (const dir of dirs) {
-                const resolved = new URL(dir, url);
+                const normalizedDir = normalizeHref(dir);
+                const resolved = new URL(normalizedDir, url);
                 if (resolved.origin !== baseRoot.origin) continue;
                 if (!resolved.pathname.startsWith(basePath)) continue;
                 if (resolved.pathname === basePath) continue;

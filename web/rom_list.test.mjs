@@ -69,3 +69,58 @@ test("fetchRomList uses manifest when directory listing unavailable", async () =
     const paths = entries.map((entry) => entry.path);
     assert.deepEqual(paths, ["cpu_reset/ram_after_reset.nes", "root.nes"]);
 });
+
+test("fetchRomList normalizes base-relative hrefs", async () => {
+    const base = "https://example.com/roms/";
+    const responses = new Map([
+        [base, `
+            <a href="roms/automated_tests/">automated_tests/</a>
+        `],
+        [`${base}automated_tests/`, `
+            <a href="ram_after_reset.nes">ram_after_reset.nes</a>
+        `]
+    ]);
+
+    const fetchFn = async (url) => {
+        const key = url.toString();
+        if (!responses.has(key)) {
+            return { ok: false, status: 404, text: async () => "" };
+        }
+        return { ok: true, text: async () => responses.get(key) };
+    };
+
+    const entries = await fetchRomList(base, fetchFn, 4);
+    const paths = entries.map((entry) => entry.path);
+    assert.deepEqual(paths, ["automated_tests/ram_after_reset.nes"]);
+});
+
+test("fetchRomList avoids duplicating base paths", async () => {
+    const base = "https://example.com/roms/";
+    const responses = new Map([
+        [base, `
+            <a href="automated_tests/">automated_tests/</a>
+        `],
+        [`${base}automated_tests/`, `
+            <a href="instr_test-v5/">instr_test-v5/</a>
+        `],
+        [`${base}automated_tests/instr_test-v5/`, `
+            <a href="roms/automated_tests/">automated_tests/</a>
+            <a href="nestest.nes">nestest.nes</a>
+        `]
+    ]);
+
+    const fetchFn = async (url) => {
+        const key = url.toString();
+        if (key.includes("/roms/automated_tests/instr_test-v5/roms/automated_tests/")) {
+            throw new Error("duplicated base path detected");
+        }
+        if (!responses.has(key)) {
+            return { ok: false, status: 404, text: async () => "" };
+        }
+        return { ok: true, text: async () => responses.get(key) };
+    };
+
+    const entries = await fetchRomList(base, fetchFn, 4);
+    const paths = entries.map((entry) => entry.path);
+    assert.deepEqual(paths, ["automated_tests/instr_test-v5/nestest.nes"]);
+});
