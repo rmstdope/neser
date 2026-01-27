@@ -33,7 +33,7 @@ const height = 240;
 // WebGL shader setup for filters - Thorough manual port from SDL .slang shaders
 const filters = {
     stock: {
-        name: "Stock (No Filter)",
+        name: "None",
         type: "single",
         fragmentShader: `
             #ifdef GL_FRAGMENT_PRECISION_HIGH
@@ -50,11 +50,11 @@ const filters = {
         `
     },
     ntsc: {
-        name: "NTSC Composite",
+        name: "NTSC",
         type: "ntsc"
     },
     crt: {
-        name: "CRT Lottes",
+        name: "CRT",
         type: "single",
         params: {
             hardScan: -8.0,
@@ -1149,7 +1149,7 @@ function step(timestamp) {
 startBtn.addEventListener("click", start);
 const gamepadToggleBtn = document.getElementById("gamepad-toggle");
 function updateGamepadButton() {
-    gamepadToggleBtn.textContent = gamepadEnabled ? "Gamepad On" : "Gamepad Off";
+    gamepadToggleBtn.textContent = gamepadEnabled ? "Gamepad : On" : "Gamepad : Off";
     gamepadToggleBtn.setAttribute("aria-pressed", gamepadEnabled ? "true" : "false");
 }
 gamepadToggleBtn.addEventListener("click", () => {
@@ -1162,7 +1162,7 @@ gamepadToggleBtn.addEventListener("click", () => {
 updateGamepadButton();
 const muteBtn = document.getElementById("mute");
 function updateMuteButton() {
-    muteBtn.textContent = audioMuted ? "Unmute" : "Mute";
+    muteBtn.textContent = audioMuted ? "Audio: Off" : "Audio: On";
     muteBtn.setAttribute("aria-pressed", audioMuted ? "true" : "false");
 }
 muteBtn.addEventListener("click", async () => {
