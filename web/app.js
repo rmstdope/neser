@@ -9,10 +9,12 @@ import {
 } from "./save_state_storage.js";
 import { createSaveStateController } from "./save_state_controller.js";
 import { createSaveStateContext } from "./save_state_context.js";
+import { fetchRomList } from "./rom_list.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
 const romInput = document.getElementById("rom");
+const romSelect = document.getElementById("rom-select");
 const canvas = document.getElementById("screen");
 if (!(canvas instanceof HTMLCanvasElement)) {
     throw new Error("Canvas element with id 'screen' not found or not a canvas");
@@ -762,6 +764,17 @@ function setStatus(msg, isError = false) {
     statusEl.style.color = isError ? "#f88" : "#8fe28f";
 }
 
+async function applyRomBytes(bytes, name) {
+    romBytes = bytes;
+    romMetadata = {
+        name,
+        size: romBytes.length,
+        bytes: romBytes
+    };
+    setStatus(`Loaded ROM: ${name} (${romBytes.length} bytes)`);
+    await refreshSaveStateController();
+}
+
 async function refreshSaveStateController() {
     if (!nes || !romMetadata) {
         saveStateController = null;
@@ -803,15 +816,27 @@ async function refreshSaveStateController() {
 romInput.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    romBytes = new Uint8Array(await file.arrayBuffer());
-    romMetadata = {
-        name: file.name,
-        size: romBytes.length,
-        bytes: romBytes
-    };
-    setStatus(`Loaded ROM: ${file.name} (${romBytes.length} bytes)`);
-    await refreshSaveStateController();
+    await applyRomBytes(new Uint8Array(await file.arrayBuffer()), file.name);
 });
+
+if (romSelect) {
+    romSelect.addEventListener("change", async (e) => {
+        const value = e.target.value;
+        if (!value) return;
+        try {
+            const response = await fetch(value);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            const name = value.split("/").pop() || value;
+            await applyRomBytes(bytes, name);
+        } catch (error) {
+            console.error("Failed to load bundled ROM", error);
+            setStatus("Failed to load bundled ROM", true);
+        }
+    });
+}
 
 function clearCanvas() {
     gl.clearColor(0.0, 0.0, 0.0, 1.0);
@@ -1156,6 +1181,24 @@ if (!pauseBtn || !stopBtn) {
 }
 pauseBtn.addEventListener("click", pauseResume);
 stopBtn.addEventListener("click", stop);
+
+async function populateRomSelect() {
+    if (!romSelect) return;
+    const baseUrl = new URL("./roms/", window.location.href).toString();
+    try {
+        const entries = await fetchRomList(baseUrl);
+        for (const entry of entries) {
+            const option = document.createElement("option");
+            option.value = entry.url;
+            option.textContent = entry.path;
+            romSelect.appendChild(option);
+        }
+    } catch (error) {
+        console.error("Failed to load ROM list", error);
+    }
+}
+
+populateRomSelect();
 
 // Keyboard input for controller 1
 // Mapping: W=Up, S=Down, A=Left, D=Right, G=B, F=A, R=Select, T=Start

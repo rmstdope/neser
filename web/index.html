@@ -23,6 +23,9 @@
           <label for="rom" class="form-label mb-0">ROM file</label>
           <div class="d-flex flex-nowrap align-items-center gap-2">
             <input type="file" id="rom" accept=".nes" class="form-control form-control-sm" />
+            <select id="rom-select" class="form-select form-select-sm" aria-label="Select ROM from server">
+              <option value="">Select bundled ROM…</option>
+            </select>
             <button id="start" class="btn btn-success btn-sm">Start</button>
             <button id="pause" class="btn btn-outline-secondary btn-sm" aria-label="Pause or resume emulation">Pause/Resume</button>
             <button id="stop" class="btn btn-outline-danger btn-sm" aria-label="Stop emulation">Stop</button>
