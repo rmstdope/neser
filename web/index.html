@@ -4,29 +4,67 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>NESER Web</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+      crossorigin="anonymous"
+    />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <header>
-      <h1>NESER Web (MVP)</h1>
-      <label for="rom">ROM file:</label>
-      <input type="file" id="rom" accept=".nes" />
-      <button id="start">Start</button>
-      <button id="mute" aria-pressed="false">Mute</button>
-      <span id="status">Load a ROM to begin</span>
-    </header>
-    <div id="screen-controls" style="display: flex; gap: 8px; margin-bottom: 8px;">
-      <button id="screen-minus">Screen -</button>
-      <button id="screen-plus">Screen +</button>
-      <button id="fullscreen">Fullscreen</button>
-      <button id="gamepad-toggle" aria-pressed="true">Gamepad On</button>
-      <button id="filter-toggle">Filter</button>
-      <button id="save-state" disabled>Save State</button>
-      <button id="load-state" disabled>Load State</button>
-    </div>
-    <canvas id="screen" width="256" height="240"></canvas>
-    <div id="controls">
-      <strong>Controls:</strong> W = Up | A = Left | S = Down | D = Right | F = A | G = B | R = Select | T = Start
+    <div class="container py-4">
+      <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-3 mb-4">
+        <div>
+          <h1 class="h3 mb-1">NESER Web</h1>
+          <div class="text-body-secondary">Play classic ROMs with modern filters</div>
+        </div>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+          <label for="rom" class="form-label mb-0">ROM file</label>
+          <div class="d-flex flex-nowrap align-items-center gap-2">
+            <input type="file" id="rom" accept=".nes" class="form-control form-control-sm" />
+            <button id="start" class="btn btn-success btn-sm">Start</button>
+            <button id="pause" class="btn btn-outline-secondary btn-sm" aria-label="Pause or resume emulation">Pause/Resume</button>
+            <button id="stop" class="btn btn-outline-danger btn-sm" aria-label="Stop emulation">Stop</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card shadow-sm mb-3">
+        <div class="card-body">
+          <div class="row g-3 align-items-start">
+            <div class="col-12 col-lg-9">
+              <div class="screen-wrap">
+                <canvas id="screen" width="256" height="240"></canvas>
+              </div>
+              <div class="mt-3 d-flex flex-wrap align-items-center gap-2">
+                <span class="badge text-bg-dark">Status</span>
+                <span id="status" class="status">Load a ROM to begin</span>
+              </div>
+            </div>
+            <div class="col-12 col-lg-3">
+              <div class="d-grid gap-2" id="screen-controls">
+                <button id="screen-minus" class="btn btn-outline-light btn-sm">Screen -</button>
+                <button id="screen-plus" class="btn btn-outline-light btn-sm">Screen +</button>
+                <button id="fullscreen" class="btn btn-outline-light btn-sm">Fullscreen</button>
+                <button id="gamepad-toggle" class="btn btn-outline-light btn-sm" aria-pressed="true">Gamepad On</button>
+                <button id="filter-toggle" class="btn btn-outline-light btn-sm">Filter</button>
+                <button id="mute" class="btn btn-outline-secondary btn-sm" aria-pressed="false">Mute</button>
+                <button id="save-state" class="btn btn-outline-warning btn-sm" disabled>Save State</button>
+                <button id="load-state" class="btn btn-outline-warning btn-sm" disabled>Load State</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card bg-body-tertiary border-0">
+        <div class="card-body py-3">
+          <div id="controls">
+            <strong>Controls:</strong> W = Up | A = Left | S = Down | D = Right | F = A | G = B | R = Select | T = Start
+          </div>
+        </div>
+      </div>
     </div>
     <script type="module" src="./app.js"></script>
   </body>

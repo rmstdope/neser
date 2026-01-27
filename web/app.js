@@ -1149,19 +1149,13 @@ muteBtn.addEventListener("click", async () => {
     }
 });
 updateMuteButton();
-const pauseBtn = document.createElement("button");
-pauseBtn.id = "pause";
-pauseBtn.textContent = "Pause/Resume";
-pauseBtn.setAttribute("aria-label", "Pause or resume emulation");
+const pauseBtn = document.getElementById("pause");
+const stopBtn = document.getElementById("stop");
+if (!pauseBtn || !stopBtn) {
+    throw new Error("Pause/Stop buttons not found in DOM");
+}
 pauseBtn.addEventListener("click", pauseResume);
-startBtn.insertAdjacentElement("afterend", pauseBtn);
-
-const stopBtn = document.createElement("button");
-stopBtn.id = "stop";
-stopBtn.textContent = "Stop";
-stopBtn.setAttribute("aria-label", "Stop emulation");
 stopBtn.addEventListener("click", stop);
-pauseBtn.insertAdjacentElement("afterend", stopBtn);
 
 // Keyboard input for controller 1
 // Mapping: W=Up, S=Down, A=Left, D=Right, G=B, F=A, R=Select, T=Start
