@@ -147,3 +147,18 @@ fn get_audio_samples_without_rom_succeeds() {
 
     // Should not panic
 }
+
+#[wasm_bindgen_test]
+fn save_state_roundtrip_returns_same_bytes() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom();
+    nes.load_rom(&rom).expect("valid rom should load");
+
+    let state1 = nes.save_state_bytes();
+    assert!(!state1.is_empty());
+
+    nes.load_state_bytes(&state1).expect("state should load");
+    let state2 = nes.save_state_bytes();
+
+    assert_eq!(state1, state2);
+}

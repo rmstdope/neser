@@ -1,5 +1,5 @@
 use crate::cartridge::Cartridge;
-use crate::console::{Nes, TvSystem};
+use crate::console::{Nes, SaveState, TvSystem};
 use crate::input::Button;
 use wasm_bindgen::prelude::*;
 
@@ -122,6 +122,21 @@ impl WasmNes {
             samples.push(sample);
         }
         samples
+    }
+
+    /// Serialize the current emulator state to JSON bytes.
+    #[wasm_bindgen]
+    pub fn save_state_bytes(&self) -> Vec<u8> {
+        self.nes.save_state().to_bytes().unwrap_or_default()
+    }
+
+    /// Load a previously saved emulator state from JSON bytes.
+    #[wasm_bindgen]
+    pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), JsValue> {
+        let state = SaveState::from_bytes(bytes).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.nes
+            .load_state(&state)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     /// Set audio mute state.

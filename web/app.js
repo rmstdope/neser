@@ -1,5 +1,14 @@
-import init, { WasmNes } from "./pkg/neser.js";
+import init, { WasmNes } from "./pkg/neser.js?v=20260127";
 import { mapStandardGamepadState, selectPrimaryGamepad } from "./gamepad.js";
+import {
+    createRomSaveKey,
+    hasState,
+    loadState,
+    openSaveStateDb,
+    saveState
+} from "./save_state_storage.js";
+import { createSaveStateController } from "./save_state_controller.js";
+import { createSaveStateContext } from "./save_state_context.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -720,6 +729,9 @@ function cycleFilter() {
 
 let nes;
 let romBytes;
+let romMetadata;
+let saveStateController = null;
+let saveStateAvailable = false;
 let running = false;
 let paused = false;
 let lastFrameTime = 0;
@@ -750,11 +762,55 @@ function setStatus(msg, isError = false) {
     statusEl.style.color = isError ? "#f88" : "#8fe28f";
 }
 
+async function refreshSaveStateController() {
+    if (!nes || !romMetadata) {
+        saveStateController = null;
+        saveStateAvailable = false;
+        updateSaveStateButtons();
+        return;
+    }
+    try {
+        saveStateController = await createSaveStateContext({
+            nes,
+            romMetadata,
+            openDb: openSaveStateDb,
+            createRomSaveKey,
+            createSaveStateController,
+            saveStateFn: saveState,
+            loadStateFn: loadState,
+            setStatus
+        });
+        if (saveStateController) {
+            const db = await openSaveStateDb();
+            const key = await createRomSaveKey({
+                name: romMetadata.name,
+                size: romMetadata.size,
+                bytes: romMetadata.bytes
+            });
+            saveStateAvailable = await hasState(db, key);
+        } else {
+            saveStateAvailable = false;
+        }
+    } catch (error) {
+        console.error("Failed to initialize save state", error);
+        saveStateController = null;
+        saveStateAvailable = false;
+        setStatus("Failed to initialize save state", true);
+    }
+    updateSaveStateButtons();
+}
+
 romInput.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     romBytes = new Uint8Array(await file.arrayBuffer());
+    romMetadata = {
+        name: file.name,
+        size: romBytes.length,
+        bytes: romBytes
+    };
     setStatus(`Loaded ROM: ${file.name} (${romBytes.length} bytes)`);
+    await refreshSaveStateController();
 });
 
 function clearCanvas() {
@@ -825,7 +881,8 @@ async function start() {
     try {
         if (!nes) {
             const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
-            await init(wasmUrl);
+            wasmUrl.searchParams.set("v", "20260127");
+            await init({ module_or_path: wasmUrl });
 
             // Initialize WebGL shaders before creating NES instance
             if (!initWebGL()) {
@@ -838,6 +895,7 @@ async function start() {
         // Initialize audio context on user interaction (browser requirement)
         initAudioContext();
         nes.set_audio_muted(audioMuted);
+        await refreshSaveStateController();
     } catch (err) {
         setStatus(`Failed to load ROM: ${err}`, true);
         startBtn.disabled = false;
@@ -1143,6 +1201,8 @@ const screenMinusBtn = document.getElementById("screen-minus");
 const screenPlusBtn = document.getElementById("screen-plus");
 const fullscreenBtn = document.getElementById("fullscreen");
 const filterToggleBtn = document.getElementById("filter-toggle");
+const saveStateBtn = document.getElementById("save-state");
+const loadStateBtn = document.getElementById("load-state");
 
 // NES native resolution is 256x240 pixels
 const NES_ASPECT_RATIO = 256 / 240;
@@ -1165,10 +1225,17 @@ function updateFullscreenButton() {
     fullscreenBtn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
 }
 
+function updateSaveStateButtons() {
+    const enabled = Boolean(saveStateController);
+    if (saveStateBtn) saveStateBtn.disabled = !enabled;
+    if (loadStateBtn) loadStateBtn.disabled = !enabled || !saveStateAvailable;
+}
+
 // Set initial canvas size and button text
 updateCanvasSize(INITIAL_HEIGHT);
 updateFullscreenButton();
 filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
+updateSaveStateButtons();
 
 screenMinusBtn.addEventListener("click", () => {
     updateCanvasSize(currentHeight - SCALE_STEP);
@@ -1199,6 +1266,20 @@ fullscreenBtn.addEventListener("click", async () => {
 filterToggleBtn.addEventListener("click", () => {
     cycleFilter();
     filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
+});
+
+saveStateBtn?.addEventListener("click", async () => {
+    if (!saveStateController) return;
+    const ok = await saveStateController.save();
+    if (ok) {
+        saveStateAvailable = true;
+        updateSaveStateButtons();
+    }
+});
+
+loadStateBtn?.addEventListener("click", async () => {
+    if (!saveStateController) return;
+    await saveStateController.load();
 });
 
 function pollGamepad() {
