@@ -6,6 +6,6 @@
         "test": "node --test"
     },
     "devDependencies": {
-        "fake-indexeddb": "^5.0.0"
+        "fake-indexeddb": "^5.0.2"
     }
 }

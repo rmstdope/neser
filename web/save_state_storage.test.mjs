@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { beforeEach } from "node:test";
 import {
     buildSaveStateKey,
     createRomSaveKey,
@@ -10,6 +10,19 @@ import {
     saveState,
     loadState
 } from "./save_state_storage.js";
+
+async function deleteDatabase(name) {
+    await new Promise((resolve, reject) => {
+        const request = indexedDB.deleteDatabase(name);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve();
+        request.onblocked = () => resolve();
+    });
+}
+
+beforeEach(async () => {
+    await deleteDatabase("neser");
+});
 
 test("computeRomHash returns stable SHA-256 hex", async () => {
     const bytes = new Uint8Array([0, 1, 2]);

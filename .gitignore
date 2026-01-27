@@ -42,3 +42,4 @@ neser.conf
 
 # wasm-bindgen output
 web/pkg/
+node_modules/
