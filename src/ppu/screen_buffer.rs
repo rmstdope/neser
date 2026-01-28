@@ -109,9 +109,10 @@ impl ScreenBuffer {
         // dest[..len].copy_from_slice(&self.buffer);
 
         dest[..self.buffer.len()].copy_from_slice(&self.buffer);
+
         // // Display debug pixels to help count and pinpoint positions
-        // for x in 80usize..=103 {
-        //     const Y_LINE: usize = 124;
+        // for x in 11usize..=12 {
+        //     const Y_LINE: usize = 1;
         //     let offset = ((Y_LINE * Self::WIDTH as usize) + x) * Self::BYTES_PER_PIXEL;
         //     dest[offset] = if x.is_multiple_of(2) { 0xFF } else { 0x00 };
         //     dest[offset + 1] = 0xFF;
@@ -121,6 +122,10 @@ impl ScreenBuffer {
 
     pub fn snapshot(&self) -> Vec<u8> {
         self.buffer.clone()
+    }
+
+    pub fn crc32(&self) -> u32 {
+        crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&self.buffer)
     }
 
     pub fn restore_from_snapshot(&mut self, data: &[u8]) {
@@ -269,5 +274,12 @@ mod tests {
             after, before,
             "copy_buffer must not mutate the source buffer"
         );
+    }
+
+    #[test]
+    fn test_crc32_for_blank_frame() {
+        let screen_buffer = ScreenBuffer::new();
+        let crc = screen_buffer.crc32();
+        assert_eq!(crc, 0xB77D_18AB);
     }
 }

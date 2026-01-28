@@ -743,7 +743,22 @@ mod tests {
     );
 
     // dpcmletterbox
-    // TODO Not automated yet. Should be possible using the autorunner
+    #[test]
+    fn test_dpcmletterbox() {
+        let rom_path = "roms/automated_tests/dpcmletterbox/dpcmletterbox.nes";
+        let rom_data = fs::read(rom_path).expect("dpcmletterbox ROM should load");
+        let cartridge = Cartridge::new(&rom_data).expect("dpcmletterbox ROM should parse");
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        run_nes_for_frames(&mut nes, 60);
+
+        let crc = nes.get_screen_buffer().crc32();
+        // Golden CRC generated from a visually verified correct frame capture using --trace-ppu=1
+        assert_eq!(crc, 0x2813_2E95, "unexpected frame CRC for dpcmletterbox");
+    }
 
     // volume_tests
     // TODO Not automated yet. Requires audio output analysis
@@ -1089,7 +1104,30 @@ mod tests {
     /////////////////////////////////////
 
     // exram
-    // TODO Not automated yet. Should be possible using the autorunner
+    #[test]
+    fn test_mmc5_exram_crc_sequence() {
+        let rom_path = "roms/automated_tests/exram/mmc5exram.nes";
+        let rom_data = fs::read(rom_path).expect("mmc5exram ROM should load");
+        let cartridge = Cartridge::new(&rom_data).expect("mmc5exram ROM should parse");
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        let expected_crcs = [
+            0x90428465, 0x4E2BA407, 0x01ECA2E8, 0x138E5FE2, 0xC7C91CC3, 0xEFBFD0D1, 0xD57CD303,
+        ];
+        for (index, expected_crc) in expected_crcs.iter().enumerate() {
+            run_nes_for_frames(&mut nes, 60);
+            let crc = nes.get_screen_buffer().crc32();
+            assert_eq!(
+                crc,
+                *expected_crc,
+                "unexpected frame CRC at checkpoint {} for mmc5exram",
+                index + 1
+            );
+        }
+    }
 
     // mmc3_irq_tests
     setup_rom_console_test!(
@@ -1338,7 +1376,7 @@ mod tests {
     );
 
     // TODO scanline ROM suite is not working yet
-    // TODO integrate scrolltest ROM suite
+    // TODO There are glitches in the scrolltest ROM suite that need investigation
 
     // sprdma_and_dmc_dma
     setup_rom_test!(
@@ -1356,7 +1394,7 @@ mod tests {
     // I assume they are older versions of ppu_sprite_hit and ppu_sprite_overflow
     // but may be good to include if timing differs anywhere.
 
-    // tvpassfail/tv ROM suite not automated yet
+    // TODO tvpassfail/tv ROM suite not automated yet
     // We will need to capture the screen post filtering (need NTSC filtering turned on)
     // For the first test, we should be able to find nearest color of each 8x8 tile and
     // parse PASS

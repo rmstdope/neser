@@ -35,6 +35,10 @@ impl Rendering {
         self.screen_buffer.snapshot()
     }
 
+    pub fn screen_buffer_crc32(&self) -> u32 {
+        self.screen_buffer.crc32()
+    }
+
     pub fn restore_screen_buffer(&mut self, data: &[u8]) {
         self.screen_buffer.restore_from_snapshot(data);
     }

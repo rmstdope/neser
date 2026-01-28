@@ -1941,6 +1941,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.10.0",
  "console_error_panic_hook",
+ "crc",
  "getrandom 0.3.4",
  "gl",
  "glow 0.14.2",
