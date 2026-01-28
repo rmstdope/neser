@@ -1390,9 +1390,9 @@ mod tests {
         60 * 15
     );
 
-    // TODO Include sprite_hit_tests_2005.10.05 and sprite_overflow_tests?
-    // I assume they are older versions of ppu_sprite_hit and ppu_sprite_overflow
-    // but may be good to include if timing differs anywhere.
+    // sprite_hit_tests_2005
+    // These are included even though ppu_sprite_hit_tests are included
+    // as e.g. 09.timing-basics.nes found an issue that was not found earlier.
     setup_rom_console_test!(
         test_sprite_hit_tests_2005_10_05_01_basics,
         "roms/automated_tests/sprite_hit_tests_2005.10.05/01.basics.nes"
@@ -1425,7 +1425,6 @@ mod tests {
         test_sprite_hit_tests_2005_10_05_08_double_height,
         "roms/automated_tests/sprite_hit_tests_2005.10.05/08.double_height.nes"
     );
-    // TODO Fails unexpectedly
     setup_rom_console_test!(
         test_sprite_hit_tests_2005_10_05_09_timing_basics,
         "roms/automated_tests/sprite_hit_tests_2005.10.05/09.timing_basics.nes"
@@ -1438,6 +1437,10 @@ mod tests {
         test_sprite_hit_tests_2005_10_05_11_edge_timing,
         "roms/automated_tests/sprite_hit_tests_2005.10.05/11.edge_timing.nes"
     );
+
+    // TODO Include sprite_overflow_tests?
+    // I assume they are older versions of ppu_sprite_hit and ppu_sprite_overflow
+    // but may be good to include if timing differs anywhere.
 
     // TODO tvpassfail/tv ROM suite not automated yet
     // We will need to capture the screen post filtering (need NTSC filtering turned on)
