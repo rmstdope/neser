@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let default_rom_data = std::fs::read("roms/games/pac-man.nes")?;
     // let default_rom_data = std::fs::read("roms/games/Balloon_fight.nes")?;
     // let default_rom_path = "roms/games/donkey kong.nes";
-    let default_rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
+    // let default_rom_path = "roms/games/Legend of Zelda, The (USA) (Rev 1).nes";
     // let default_rom_path = "roms/games/Mike Tyson's Punch-Out!! (Japan, USA) (Rev 1).nes";
     // let default_rom_path = "roms/games/Castlevania III - Dracula's Curse (USA).nes";
     // let default_rom_path = "roms/games/Akumajyou_Densetsu_(Tr).nes";
@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let default_rom_path = "roms/games/Super Chinese 3 (J) [p1].nes";
 
     // Manual testing of Blargg
-    // let default_rom_path = "roms/blargg/dpcmletterbox/dpcmletterbox.nes";
+    let default_rom_path = "roms/manual_tests/dpcmletterbox/dpcmletterbox.nes";
 
     // let rom_data = manual_test_cartridges::triangle_only_nrom_128();
     // let rom_data = manual_test_cartridges::pulse1_only_nrom_128();

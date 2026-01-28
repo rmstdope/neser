@@ -1,5 +1,6 @@
 use super::Ppu;
 use crate::console::{Nes, TvSystem};
+use crate::debugging::ppu_trace_level;
 use crate::trace_ppu;
 
 pub(super) fn prerender_scanline(tv_system: TvSystem) -> u16 {
@@ -70,6 +71,10 @@ pub(super) fn tick(ppu: &mut Ppu) {
             ppu.timing.frame_count(),
             ppu.timing.total_cycles(),
         );
+        if ppu_trace_level() >= 1 {
+            let frame_crc = ppu.rendering.screen_buffer_crc32();
+            trace_ppu!(1; "frame crc={:08X}", frame_crc);
+        }
         ppu.with_mapper_mut(|mapper| mapper.ppu_end_frame());
     }
 
