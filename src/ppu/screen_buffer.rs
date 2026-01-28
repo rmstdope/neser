@@ -124,15 +124,13 @@ impl ScreenBuffer {
         self.buffer.clone()
     }
 
+    pub fn crc32(&self) -> u32 {
+        crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&self.buffer)
+    }
+
     pub fn restore_from_snapshot(&mut self, data: &[u8]) {
         let len = data.len().min(self.buffer.len());
         self.buffer[..len].copy_from_slice(&data[..len]);
-    }
-
-    #[cfg(test)]
-    #[allow(dead_code)]
-    pub fn crc32(&self) -> u32 {
-        crate::cartridge::calculate_rom_crc32(&self.buffer, &[])
     }
 }
 

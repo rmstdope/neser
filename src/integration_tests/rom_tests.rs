@@ -1114,7 +1114,9 @@ mod tests {
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
-        let expected_crcs = [0x9042_8465, 0x4E2B_A407, 0x01EC_A2E8, 0x138E_5FE2];
+        let expected_crcs = [
+            0x90428465, 0x4E2BA407, 0x01ECA2E8, 0x138E5FE2, 0xC7C91CC3, 0xEFBFD0D1, 0xD57CD303,
+        ];
         for (index, expected_crc) in expected_crcs.iter().enumerate() {
             run_nes_for_frames(&mut nes, 60);
             let crc = nes.get_screen_buffer().crc32();
