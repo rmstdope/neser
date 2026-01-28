@@ -1089,7 +1089,28 @@ mod tests {
     /////////////////////////////////////
 
     // exram
-    // TODO Not automated yet. Should be possible using the autorunner
+    #[test]
+    fn test_mmc5_exram_crc_sequence() {
+        let rom_path = "roms/automated_tests/exram/mmc5exram.nes";
+        let rom_data = fs::read(rom_path).expect("mmc5exram ROM should load");
+        let cartridge = Cartridge::new(&rom_data).expect("mmc5exram ROM should parse");
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        let expected_crcs = [0x9042_8465, 0x4E2B_A407, 0x01EC_A2E8, 0x138E_5FE2];
+        for (index, expected_crc) in expected_crcs.iter().enumerate() {
+            run_nes_for_frames(&mut nes, 60);
+            let crc = nes.get_screen_buffer().crc32();
+            assert_eq!(
+                crc,
+                *expected_crc,
+                "unexpected frame CRC at checkpoint {} for mmc5exram",
+                index + 1
+            );
+        }
+    }
 
     // mmc3_irq_tests
     setup_rom_console_test!(
