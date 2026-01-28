@@ -370,8 +370,8 @@ pub(super) fn tick(ppu: &mut Ppu) {
             }
         } else if pixel == 321 {
             // Swap sprite buffers for rendering
-            ppu.sprites.swap_buffers();
             ppu.sprites.mark_buffers_ready();
+            ppu.sprites.swap_buffers();
         }
     }
 

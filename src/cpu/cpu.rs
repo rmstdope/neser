@@ -817,7 +817,7 @@ impl Cpu {
                 }
                 self.ppu
                     .borrow_mut()
-                    .write_oam_data(sprite_dma_value.take().unwrap());
+                    .write_oam_data_dma(sprite_dma_value.take().unwrap());
                 self.tick_single_dma_cycle();
                 sprite_offset += 1;
                 if sprite_offset >= OAM_SIZE {

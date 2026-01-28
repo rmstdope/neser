@@ -505,6 +505,13 @@ impl Ppu {
         }
     }
 
+    /// Write to OAM via DMA (ignores rendering blocking).
+    pub fn write_oam_data_dma(&mut self, value: u8) {
+        self.registers.set_io_bus(value); // Update I/O bus
+        self.sprites.write_oam(self.registers.oam_address, value);
+        self.registers.oam_address = self.registers.oam_address.wrapping_add(1);
+    }
+
     /// Read from OAM data register ($2004)
     pub fn read_oam_data(&mut self) -> u8 {
         let value = self.sprites.read_oam(self.registers.oam_address);

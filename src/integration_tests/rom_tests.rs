@@ -1426,10 +1426,10 @@ mod tests {
         "roms/automated_tests/sprite_hit_tests_2005.10.05/08.double_height.nes"
     );
     // TODO Fails unexpectedly
-    // setup_rom_console_test!(
-    //     test_sprite_hit_tests_2005_10_05_09_timing_basics,
-    //     "roms/automated_tests/sprite_hit_tests_2005.10.05/09.timing_basics.nes"
-    // );
+    setup_rom_console_test!(
+        test_sprite_hit_tests_2005_10_05_09_timing_basics,
+        "roms/automated_tests/sprite_hit_tests_2005.10.05/09.timing_basics.nes"
+    );
     setup_rom_console_test!(
         test_sprite_hit_tests_2005_10_05_10_timing_order,
         "roms/automated_tests/sprite_hit_tests_2005.10.05/10.timing_order.nes"
