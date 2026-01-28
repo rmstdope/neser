@@ -26,4 +26,4 @@ jobs:
       - name: Check formatting
         run: cargo fmt -- --check
       - name: Test web frontend
-        run: npm test
+        run: npm ci && npm test
