@@ -1504,5 +1504,4 @@ mod tests {
     // TODO integrate PaddleTest3 ROM suite
     // TODO integrate read_joy3 ROM suite
     // TODO integrate full_palette ROM suite
-    // TODO integrate full_nes_palette ROM suite
 }
