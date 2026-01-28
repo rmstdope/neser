@@ -127,6 +127,12 @@ impl ScreenBuffer {
         let len = data.len().min(self.buffer.len());
         self.buffer[..len].copy_from_slice(&data[..len]);
     }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub fn crc32(&self) -> u32 {
+        crate::cartridge::calculate_rom_crc32(&self.buffer, &[])
+    }
 }
 
 #[cfg(test)]
