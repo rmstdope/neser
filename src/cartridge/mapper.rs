@@ -20,6 +20,7 @@ use super::namco163::Namco163Mapper;
 use super::nina_tengen::NinaTengenMapper;
 use super::nrom::NROMMapper;
 use super::rom_db;
+use super::sunsoft_4::Sunsoft4Mapper;
 use super::sunsoft_fme7::SunsoftFme7Mapper;
 use super::uxrom::UxROMMapper;
 use super::vrc2_vrc4::Vrc2Vrc4Mapper;
@@ -399,7 +400,8 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     4, // MMC3 is constructed with CRC-specific behavior.
-    0, 1, 2, 3, 5, 7, 9, 10, 11, 13, 15, 16, 19, 21, 22, 23, 24, 25, 26, 34, 66, 69, 71, 78, 206,
+    0, 1, 2, 3, 5, 7, 9, 10, 11, 13, 15, 16, 19, 21, 22, 23, 24, 25, 26, 34, 66, 68, 69, 71, 78,
+    206,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -434,6 +436,17 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         let prg_ram_banks_8k = metadata.prg_ram_banks_8k;
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
         return Ok(Box::new(MMC5Mapper::new_with_prg_ram_size(
+            prg_rom,
+            chr_rom,
+            mirroring,
+            prg_ram_banks_8k,
+        )));
+    }
+
+    if mapper_number == 68 {
+        let prg_ram_banks_8k = metadata.prg_ram_banks_8k;
+        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
+        return Ok(Box::new(Sunsoft4Mapper::new_with_prg_ram_banks(
             prg_rom,
             chr_rom,
             mirroring,
