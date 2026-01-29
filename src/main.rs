@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let default_rom_path = "roms/games/Super Chinese 3 (J) [p1].nes";
 
     // https://sourceforge.net/p/fceultra/bugs/710/
-    let default_rom_path = "roms/automated_tests/fadeout_and_triangle_tests/fadeout_and_triangle_test.nes";
+    let default_rom_path = "roms/automated_tests/square_timer_div2/square_timer_div2.nes";
 
     // let rom_data = manual_test_cartridges::triangle_only_nrom_128();
     // let rom_data = manual_test_cartridges::pulse1_only_nrom_128();
