@@ -76,7 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let default_rom_path = "roms/games/Super Chinese 3 (J) [p1].nes";
 
     // Manual testing of Blargg
-    let default_rom_path = "roms/automated_tests/sprite_overflow_tests/1.Basics.nes";
+    let default_rom_path = "roms/automated_tests/apu_phase_reset/apu_phase_reset.nes";
 
     // let rom_data = manual_test_cartridges::triangle_only_nrom_128();
     // let rom_data = manual_test_cartridges::pulse1_only_nrom_128();

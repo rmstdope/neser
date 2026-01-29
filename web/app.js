@@ -11,6 +11,7 @@ import { createSaveStateController } from "./save_state_controller.js";
 import { createSaveStateContext } from "./save_state_context.js";
 import { fetchRomList } from "./rom_list.js";
 import { handleRomSelection } from "./rom_selection.js";
+import { createFrameLimiter } from "./frame_limiter.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -522,6 +523,7 @@ let nesTexture = null;
 let positionBuffer = null;
 let texCoordBuffer = null;
 let frameCount = 0; // For NTSC phase animation
+const frameLimiter = createFrameLimiter(60);
 let webglInitialized = false; // Track WebGL initialization state
 
 function resetWebGLResources() {
@@ -957,6 +959,7 @@ function pauseResume() {
     paused = !paused;
     if (!paused) {
         lastFrameTime = 0;
+        frameLimiter.reset();
         setStatus("Running...");
         requestAnimationFrame(step);
     } else {
@@ -970,6 +973,7 @@ function stop() {
     startBtn.disabled = false;
     clearCanvas();
     lastFrameTime = 0;
+    frameLimiter.reset();
     setStatus("Stopped. You can restart or load a new ROM");
 }
 
@@ -1092,6 +1096,10 @@ function renderNtscPass(frame) {
 function step(timestamp) {
     if (!running || paused) return;
     lastFrameTime = timestamp;
+    if (!frameLimiter.shouldRender(timestamp)) {
+        requestAnimationFrame(step);
+        return;
+    }
     try {
         if (gamepadEnabled && nes) {
             pollGamepad();
