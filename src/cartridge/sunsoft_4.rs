@@ -1,0 +1,379 @@
+//! Mapper 68 (Sunsoft-4) Implementation
+//!
+//! Supports:
+//! - 16KB switchable PRG ROM at $8000-$BFFF
+//! - 16KB fixed PRG ROM at $C000-$FFFF (last bank)
+//! - 2KB CHR banks at $0000-$1FFF
+//! - Optional CHR-ROM nametable mapping at $2000-$2FFF
+//! - Switchable mirroring (H/V/1-screen)
+
+use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::{Mapper, MirroringMode};
+
+const PRG_BANK_SIZE: usize = 0x4000; // 16KB
+const CHR_BANK_SIZE_2K: usize = 0x0800; // 2KB
+const NAMETABLE_BANK_SIZE_1K: usize = 0x0400; // 1KB
+
+pub struct Sunsoft4Mapper {
+    prg_rom: BankedRom,
+    prg_ram: PrgRam,
+    chr_memory: ChrMemory,
+    mirroring: MirroringMode,
+    prg_bank: u8,
+    chr_banks_2k: [u8; 4],
+    nametable_banks_1k: [u8; 2],
+    nametable_rom_mode: bool,
+    prg_ram_enabled: bool,
+}
+
+impl Sunsoft4Mapper {
+    #[allow(dead_code)]
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        Self::new_with_prg_ram_banks(prg_rom, chr_rom, mirroring, 1)
+    }
+
+    pub fn new_with_prg_ram_banks(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
+        prg_ram_banks_8k: u8,
+    ) -> Self {
+        let prg_ram_size = (prg_ram_banks_8k.max(1) as usize) * DEFAULT_PRG_RAM_SIZE;
+        Self {
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
+            prg_ram: PrgRam::new(prg_ram_size),
+            chr_memory: ChrMemory::new(chr_rom),
+            mirroring,
+            prg_bank: 0,
+            chr_banks_2k: [0; 4],
+            nametable_banks_1k: [0; 2],
+            nametable_rom_mode: false,
+            prg_ram_enabled: false,
+        }
+    }
+
+    fn read_chr_indexed(&self, bank: u8, offset: usize, bank_size: usize) -> u8 {
+        let total_banks = self.chr_memory.size() / bank_size;
+        if total_banks == 0 {
+            return 0;
+        }
+        let bank_index = (bank as usize) % total_banks;
+        let index = bank_index * bank_size + offset;
+        self.chr_memory.read_at_index(index)
+    }
+
+    fn write_chr_indexed(&mut self, bank: u8, offset: usize, bank_size: usize, value: u8) {
+        if !self.chr_memory.is_ram() {
+            return;
+        }
+        let total_banks = self.chr_memory.size() / bank_size;
+        if total_banks == 0 {
+            return;
+        }
+        let bank_index = (bank as usize) % total_banks;
+        let index = bank_index * bank_size + offset;
+        self.chr_memory.write_at_index(index, value);
+    }
+
+    fn map_nametable_to_bank(&self, addr: u16) -> (usize, usize) {
+        let addr = addr & 0x2FFF;
+        let table = ((addr - 0x2000) / 0x0400) as usize;
+        let offset = (addr & 0x03FF) as usize;
+
+        let use_upper = match self.mirroring {
+            MirroringMode::Vertical => table == 1 || table == 3,
+            MirroringMode::Horizontal => table == 2 || table == 3,
+            MirroringMode::SingleScreenLower => false,
+            MirroringMode::SingleScreenUpper => true,
+            MirroringMode::FourScreen => table == 1 || table == 3,
+            MirroringMode::SingleScreen => false,
+        };
+
+        let bank_index = if use_upper { 1 } else { 0 };
+        (bank_index, offset)
+    }
+
+    fn chr_bank_for_addr(&self, addr: u16) -> (u8, usize) {
+        let bank_index = ((addr & 0x1FFF) / CHR_BANK_SIZE_2K as u16) as usize;
+        let offset = (addr as usize) & (CHR_BANK_SIZE_2K - 1);
+        (self.chr_banks_2k[bank_index], offset)
+    }
+
+    fn nametable_bank_for_addr(&self, addr: u16) -> (u8, usize) {
+        let (bank_index, offset) = self.map_nametable_to_bank(addr);
+        let bank = (self.nametable_banks_1k[bank_index] & 0x7F) | 0x80;
+        (bank, offset)
+    }
+}
+
+impl Mapper for Sunsoft4Mapper {
+    fn read_prg(&self, addr: u16) -> u8 {
+        if self.prg_ram_enabled
+            && let Some(value) = self.prg_ram.try_read(addr)
+        {
+            return value;
+        }
+
+        match addr {
+            0x8000..=0xBFFF => {
+                let bank = self.prg_bank as usize;
+                self.prg_rom.read_with_base(bank, 0x8000, addr)
+            }
+            0xC000..=0xFFFF => {
+                let last_bank = self.prg_rom.num_banks().saturating_sub(1);
+                self.prg_rom.read_with_base(last_bank, 0xC000, addr)
+            }
+            _ => 0,
+        }
+    }
+
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        if self.prg_ram_enabled && self.prg_ram.try_write(addr, value) {
+            return;
+        }
+
+        match addr {
+            0x8000..=0x8FFF => {
+                self.chr_banks_2k[0] = value;
+            }
+            0x9000..=0x9FFF => {
+                self.chr_banks_2k[1] = value;
+            }
+            0xA000..=0xAFFF => {
+                self.chr_banks_2k[2] = value;
+            }
+            0xB000..=0xBFFF => {
+                self.chr_banks_2k[3] = value;
+            }
+            0xC000..=0xCFFF => {
+                self.nametable_banks_1k[0] = value;
+            }
+            0xD000..=0xDFFF => {
+                self.nametable_banks_1k[1] = value;
+            }
+            0xE000..=0xEFFF => {
+                self.mirroring = match value & 0x03 {
+                    0 => MirroringMode::Vertical,
+                    1 => MirroringMode::Horizontal,
+                    2 => MirroringMode::SingleScreenLower,
+                    3 => MirroringMode::SingleScreenUpper,
+                    _ => MirroringMode::Horizontal,
+                };
+                self.nametable_rom_mode = (value & 0x10) != 0;
+            }
+            0xF000..=0xFFFF => {
+                self.prg_bank = value & 0x0F;
+                self.prg_ram_enabled = (value & 0x10) != 0;
+            }
+            _ => {}
+        }
+    }
+
+    fn read_chr(&self, addr: u16) -> u8 {
+        let (bank, offset) = self.chr_bank_for_addr(addr);
+        self.read_chr_indexed(bank, offset, CHR_BANK_SIZE_2K)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        let (bank, offset) = self.chr_bank_for_addr(addr);
+        self.write_chr_indexed(bank, offset, CHR_BANK_SIZE_2K, value);
+    }
+
+    fn read_nametable(&mut self, addr: u16) -> Option<u8> {
+        if !self.nametable_rom_mode {
+            return None;
+        }
+
+        if !(0x2000..=0x2FFF).contains(&addr) {
+            return None;
+        }
+
+        let (bank, offset) = self.nametable_bank_for_addr(addr);
+        Some(self.read_chr_indexed(bank, offset, NAMETABLE_BANK_SIZE_1K))
+    }
+
+    fn write_nametable(&mut self, addr: u16, value: u8) -> bool {
+        if !self.nametable_rom_mode {
+            return false;
+        }
+
+        if !(0x2000..=0x2FFF).contains(&addr) {
+            return false;
+        }
+
+        let (bank, offset) = self.nametable_bank_for_addr(addr);
+        self.write_chr_indexed(bank, offset, NAMETABLE_BANK_SIZE_1K, value);
+        true
+    }
+
+    fn get_mirroring(&self) -> MirroringMode {
+        self.mirroring
+    }
+
+    fn mapper_number(&self) -> u8 {
+        68
+    }
+
+    fn wram_size(&self) -> usize {
+        self.prg_ram.size()
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        self.prg_ram.snapshot()
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        self.prg_ram.load_snapshot(data);
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_memory.snapshot()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        self.chr_memory.load_snapshot(data);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        let mut snapshot = Vec::with_capacity(10);
+        snapshot.push(self.prg_bank);
+        snapshot.extend_from_slice(&self.chr_banks_2k);
+        snapshot.extend_from_slice(&self.nametable_banks_1k);
+        snapshot.push(self.nametable_rom_mode as u8);
+        snapshot.push(self.prg_ram_enabled as u8);
+        let mirroring_bits = match self.mirroring {
+            MirroringMode::Vertical => 0,
+            MirroringMode::Horizontal => 1,
+            MirroringMode::SingleScreenLower => 2,
+            MirroringMode::SingleScreenUpper => 3,
+            MirroringMode::FourScreen | MirroringMode::SingleScreen => 0,
+        };
+        snapshot.push(mirroring_bits);
+        snapshot
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() < 10 {
+            return;
+        }
+        self.prg_bank = data[0];
+        self.chr_banks_2k.copy_from_slice(&data[1..5]);
+        self.nametable_banks_1k.copy_from_slice(&data[5..7]);
+        self.nametable_rom_mode = data[7] != 0;
+        self.prg_ram_enabled = data[8] != 0;
+        self.mirroring = match data[9] & 0x03 {
+            0 => MirroringMode::Vertical,
+            1 => MirroringMode::Horizontal,
+            2 => MirroringMode::SingleScreenLower,
+            3 => MirroringMode::SingleScreenUpper,
+            _ => self.mirroring,
+        };
+    }
+
+    fn reset(&mut self) {
+        self.prg_bank = 0;
+        self.chr_banks_2k = [0; 4];
+        self.nametable_banks_1k = [0; 2];
+        self.nametable_rom_mode = false;
+        self.prg_ram_enabled = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prg_bank_switching_selects_16k_bank() {
+        let mut prg_rom = vec![0u8; 4 * PRG_BANK_SIZE];
+        for bank in 0..4 {
+            let start = bank * PRG_BANK_SIZE;
+            let end = start + PRG_BANK_SIZE;
+            for byte in &mut prg_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        let mut mapper =
+            Sunsoft4Mapper::new(prg_rom, vec![0u8; 8 * 1024], MirroringMode::Horizontal);
+
+        // Default power-on PRG bank is 0 in the switchable $8000-$BFFF window.
+        assert_eq!(mapper.read_prg(0x8000), 0);
+        // The fixed $C000-$FFFF window always maps the last 16KB PRG bank.
+        assert_eq!(mapper.read_prg(0xC000), 3);
+
+        mapper.write_prg(0xF000, 0x02);
+        // Writing to $F000 selects the 16KB PRG bank for $8000-$BFFF.
+        assert_eq!(mapper.read_prg(0x8000), 2);
+
+        mapper.write_prg(0xFFFF, 0x0F);
+        // Bank selection wraps by available banks (0x0F -> bank 3 for 4 banks).
+        assert_eq!(mapper.read_prg(0x8000), 3);
+    }
+
+    #[test]
+    fn chr_bank_switching_uses_2k_banks() {
+        let mut chr_rom = vec![0u8; 4 * 2 * 1024];
+        for bank in 0..4 {
+            let start = bank * 2 * 1024;
+            let end = start + 2 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        let mut mapper = Sunsoft4Mapper::new(
+            vec![0u8; 2 * PRG_BANK_SIZE],
+            chr_rom,
+            MirroringMode::Horizontal,
+        );
+        mapper.write_prg(0x8000, 0x00);
+        mapper.write_prg(0x9000, 0x01);
+        mapper.write_prg(0xA000, 0x02);
+        mapper.write_prg(0xB000, 0x03);
+
+        // Each 2KB CHR bank maps to a 2KB PPU window in order.
+        assert_eq!(mapper.read_chr(0x0000), 0);
+        // Bank 1 maps to $0800-$0FFF.
+        assert_eq!(mapper.read_chr(0x0800), 1);
+        // Bank 2 maps to $1000-$17FF.
+        assert_eq!(mapper.read_chr(0x1000), 2);
+        // Bank 3 maps to $1800-$1FFF.
+        assert_eq!(mapper.read_chr(0x1800), 3);
+    }
+
+    #[test]
+    fn nametable_rom_mode_follows_mirroring() {
+        let chr_bank_count = 256;
+        let mut chr_rom = vec![0u8; chr_bank_count * 1024];
+        for bank in 0..chr_bank_count {
+            let start = bank * 1024;
+            let end = start + 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        let mut mapper = Sunsoft4Mapper::new(
+            vec![0u8; 2 * PRG_BANK_SIZE],
+            chr_rom,
+            MirroringMode::Horizontal,
+        );
+
+        mapper.write_prg(0xC000, 0x01);
+        mapper.write_prg(0xD000, 0x02);
+
+        mapper.write_prg(0xE000, 0x10);
+        // ROM nametable mode uses CHR-ROM banks for $2000/$2800 based on mirroring.
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x81));
+        // Vertical mirroring: $2000 and $2800 share the lower bank.
+        assert_eq!(mapper.read_nametable(0x2800), Some(0x81));
+
+        mapper.write_prg(0xE000, 0x11);
+        // Horizontal mirroring: $2000 and $2400 share the lower bank.
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x81));
+        assert_eq!(mapper.read_nametable(0x2400), Some(0x81));
+        // Horizontal mirroring: $2800 uses the upper bank.
+        assert_eq!(mapper.read_nametable(0x2800), Some(0x82));
+    }
+}

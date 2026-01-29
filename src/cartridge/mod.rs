@@ -21,6 +21,7 @@ mod namco163;
 mod nina_tengen;
 mod nrom;
 mod rom_db;
+mod sunsoft_4;
 mod sunsoft_fme7;
 mod uxrom;
 mod vrc2_vrc4;
