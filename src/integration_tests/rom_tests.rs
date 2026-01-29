@@ -529,7 +529,7 @@ mod tests {
             }
         };
         ($test_name:ident, $rom_path:expr) => {
-            setup_rom_test!($test_name, $rom_path, 180);
+            setup_rom_test!($test_name, $rom_path, 60 * 30); // Wait for at least 30 s
         };
     }
 
@@ -545,7 +545,7 @@ mod tests {
             }
         };
         ($test_name:ident, $rom_path:expr) => {
-            setup_rom_console_test!($test_name, $rom_path, 180);
+            setup_rom_console_test!($test_name, $rom_path, 60 * 30); // Wait for at least 30 s
         };
     }
 
@@ -563,6 +563,9 @@ mod tests {
                 assert_eq!(result, RomTestResult::Pass, "{} should pass", rom_name);
             }
         };
+        ($test_name:ident, $rom_path:expr, $expected:expr) => {
+            setup_rom_console_crc_test!($test_name, $rom_path, 60 * 30, $expected); // Wait for at least 30 s
+        };
     }
 
     macro_rules! setup_rom_address_test {
@@ -575,7 +578,7 @@ mod tests {
             }
         };
         ($test_name:ident, $rom_path:expr, $stop_address:expr, $verify_fn:expr) => {
-            setup_rom_address_test!($test_name, $rom_path, $stop_address, $verify_fn, 180);
+            setup_rom_address_test!($test_name, $rom_path, $stop_address, $verify_fn, 60 * 30); // Wait for at least 30 s
         };
     }
 
@@ -694,25 +697,18 @@ mod tests {
     /////////////////////////////////////
 
     // apu_mixer
-    setup_rom_test!(
-        test_apu_mixer_dmc,
-        "roms/automated_tests/apu_mixer/dmc.nes",
-        60 * 10
-    );
+    setup_rom_test!(test_apu_mixer_dmc, "roms/automated_tests/apu_mixer/dmc.nes");
     setup_rom_test!(
         test_apu_mixer_noise,
-        "roms/automated_tests/apu_mixer/noise.nes",
-        60 * 10
+        "roms/automated_tests/apu_mixer/noise.nes"
     );
     setup_rom_test!(
         test_apu_mixer_square,
-        "roms/automated_tests/apu_mixer/square.nes",
-        60 * 10
+        "roms/automated_tests/apu_mixer/square.nes"
     );
     setup_rom_test!(
         test_apu_mixer_triangle,
-        "roms/automated_tests/apu_mixer/triangle.nes",
-        60 * 10
+        "roms/automated_tests/apu_mixer/triangle.nes"
     );
 
     // apu_phase_reset
@@ -978,8 +974,7 @@ mod tests {
     // cpu_interrupts_v2
     setup_rom_test!(
         test_cpu_interrupts_v2_cpu_interrupts,
-        "roms/automated_tests/cpu_interrupts_v2/cpu_interrupts.nes",
-        60 * 20
+        "roms/automated_tests/cpu_interrupts_v2/cpu_interrupts.nes"
     );
     setup_rom_test!(
         test_cpu_interrupts_v2_cli_latency,
@@ -1015,8 +1010,7 @@ mod tests {
     // cpu_timing_test6
     setup_rom_console_test!(
         test_cpu_timing_test6,
-        "roms/automated_tests/cpu_timing_test6/cpu_timing_test.nes",
-        20 * 60 // Can take up to 16 * 60 frames according to README
+        "roms/automated_tests/cpu_timing_test6/cpu_timing_test.nes"
     );
 
     // TODO dma_sync_test
@@ -1093,13 +1087,11 @@ mod tests {
     // test_instr_v3
     setup_rom_test!(
         test_instr_v3_all_instrs,
-        "roms/automated_tests/instr_test-v3/all_instrs.nes",
-        60 * 30
+        "roms/automated_tests/instr_test-v3/all_instrs.nes"
     );
     setup_rom_test!(
         test_instr_v3_official_only,
-        "roms/automated_tests/instr_test-v3/official_only.nes",
-        60 * 30
+        "roms/automated_tests/instr_test-v3/official_only.nes"
     );
     setup_rom_test!(
         test_instr_v3_01_implied,
@@ -1165,13 +1157,11 @@ mod tests {
     // test_instr_v5
     setup_rom_test!(
         test_instr_v5_all_instrs,
-        "roms/automated_tests/instr_test-v5/all_instrs.nes",
-        60 * 30
+        "roms/automated_tests/instr_test-v5/all_instrs.nes"
     );
     setup_rom_test!(
         test_instr_v5_official_only,
-        "roms/automated_tests/instr_test-v5/official_only.nes",
-        60 * 30
+        "roms/automated_tests/instr_test-v5/official_only.nes"
     );
     setup_rom_test!(
         test_instr_v5_01_basics,
@@ -1241,13 +1231,11 @@ mod tests {
     // instr_timing
     setup_rom_test!(
         test_instr_timing,
-        "roms/automated_tests/instr_timing/instr_timing.nes",
-        60 * 20
+        "roms/automated_tests/instr_timing/instr_timing.nes"
     );
     setup_rom_test!(
         test_instr_timing_01,
-        "roms/automated_tests/instr_timing/rom_singles/1-instr_timing.nes",
-        60 * 5
+        "roms/automated_tests/instr_timing/rom_singles/1-instr_timing.nes"
     );
     setup_rom_test!(
         test_instr_timing_02,
@@ -1260,15 +1248,12 @@ mod tests {
     // sprdma_and_dmc_dma
     setup_rom_test!(
         test_sprdma_and_dmc_dma,
-        "roms/automated_tests/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes",
-        60 * 15
+        "roms/automated_tests/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes"
     );
     setup_rom_test!(
         test_sprdma_and_dmc_dma_512,
-        "roms/automated_tests/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes",
-        60 * 15
+        "roms/automated_tests/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes"
     );
-
 
     /////////////////////////////////////
     // Input
@@ -1296,28 +1281,27 @@ mod tests {
 
     // MMC3
     setup_rom_test!(
-        test_mmc3_test_1_clocking,
+        test_mmc3_test_2_1_clocking,
         "roms/automated_tests/mmc3_test_2/rom_singles/1-clocking.nes"
     );
     setup_rom_test!(
-        test_mmc3_test_2_details,
+        test_mmc3_test_2_2_details,
         "roms/automated_tests/mmc3_test_2/rom_singles/2-details.nes"
     );
     setup_rom_test!(
-        test_mmc3_test_3_a12_clocking,
+        test_mmc3_test_2_3_a12_clocking,
         "roms/automated_tests/mmc3_test_2/rom_singles/3-A12_clocking.nes"
     );
     setup_rom_test!(
-        test_mmc3_test_4_scanline_timing,
-        "roms/automated_tests/mmc3_test_2/rom_singles/4-scanline_timing.nes",
-        60 * 5
+        test_mmc3_test_2_4_scanline_timing,
+        "roms/automated_tests/mmc3_test_2/rom_singles/4-scanline_timing.nes"
     );
     setup_rom_test!(
-        test_mmc3_test_5_mmc3,
+        test_mmc3_test_2_5_mmc3,
         "roms/automated_tests/mmc3_test_2/rom_singles/5-MMC3.nes"
     );
     setup_rom_test!(
-        test_mmc3_test_6_mmc3_alt,
+        test_mmc3_test_2_6_mmc3_alt,
         "roms/automated_tests/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
     );
     // TODO mmc3bigchrram
@@ -1353,7 +1337,6 @@ mod tests {
 
     // TODO VRC6
 
-
     /////////////////////////////////////
     // Miscellaneous
     /////////////////////////////////////
@@ -1361,7 +1344,6 @@ mod tests {
     // TODO allpads-r9
 
     // TODO read_joy3
-
 
     /////////////////////////////////////
     // PPU
@@ -1388,6 +1370,10 @@ mod tests {
         test_blargg_ppu_tests_2005_09_15b_vram_access,
         "roms/automated_tests/blargg_ppu_tests_2005.09.15b/vram_access.nes"
     );
+
+    // TODO full_palette
+
+    // TODO misc_oam_tests
 
     // nmi_sync
     #[test]
@@ -1424,6 +1410,7 @@ mod tests {
             line_frame_b
         );
     }
+    // TODO demo_pal
 
     // oam_read
     setup_rom_test!(test_oam_read, "roms/automated_tests/oam_read/oam_read.nes");
@@ -1431,9 +1418,10 @@ mod tests {
     // oam_stress
     setup_rom_test!(
         test_oam_stress,
-        "roms/automated_tests/oam_stress/oam_stress.nes",
-        60 * 10
+        "roms/automated_tests/oam_stress/oam_stress.nes"
     );
+
+    // TODO oamtest3
 
     // ppu_open_bus
     setup_rom_test!(
@@ -1444,11 +1432,14 @@ mod tests {
     // ppu_read_buffer
     setup_rom_test!(
         test_ppu_read_buffer,
-        "roms/automated_tests/ppu_read_buffer/test_ppu_read_buffer.nes",
-        60 * 25 // Takes about 20 seconds according to readme
+        "roms/automated_tests/ppu_read_buffer/test_ppu_read_buffer.nes"
     );
 
     // ppu_sprite_hit
+    setup_rom_test!(
+        test_sprite_hit,
+        "roms/automated_tests/ppu_sprite_hit/ppu_sprite_hit.nes"
+    );
     setup_rom_test!(
         test_sprite_hit_01,
         "roms/automated_tests/ppu_sprite_hit/rom_singles/01-basics.nes"
@@ -1492,6 +1483,10 @@ mod tests {
 
     // ppu_sprite_overflow
     setup_rom_test!(
+        test_sprite_overflow,
+        "roms/automated_tests/ppu_sprite_overflow/ppu_sprite_overflow.nes"
+    );
+    setup_rom_test!(
         test_sprite_overflow_01,
         "roms/automated_tests/ppu_sprite_overflow/rom_singles/01-basics.nes"
     );
@@ -1513,6 +1508,10 @@ mod tests {
     );
 
     // ppu_vbl_nmi
+    setup_rom_test!(
+        test_ppu_vbl_nmi,
+        "roms/automated_tests/ppu_vbl_nmi/ppu_vbl_nmi.nes"
+    );
     setup_rom_test!(
         test_ppu_vbl_nmi_01,
         "roms/automated_tests/ppu_vbl_nmi/rom_singles/01-vbl_basics.nes"
@@ -1554,8 +1553,127 @@ mod tests {
         "roms/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
-    // TODO scanline ROM suite is not working yet
-    // TODO There are glitches in the scrolltest ROM suite that need investigation
+    // TODO scanline-a1
+
+    // TODO tvpassfail/tv ROM suite not automated yet
+    // We will need to capture the screen post filtering (need NTSC filtering turned on)
+    // For the first test, we should be able to find nearest color of each 8x8 tile and
+    // parse PASS
+    // For the second test, we should be able to count the height and width of the left
+    // rectangle (filtering off) and match
+
+    /////////////////////////////////////
+    // Obsolete Tests
+    /////////////////////////////////////
+
+    // blargg_nes_cpu_test5
+    setup_rom_console_test!(
+        test_blargg_nes_cpu_test5_cpu,
+        "roms/automated_tests/blargg_nes_cpu_test5/cpu.nes"
+    );
+
+    setup_rom_console_test!(
+        test_blargg_nes_cpu_test5_official,
+        "roms/automated_tests/blargg_nes_cpu_test5/official.nes"
+    );
+
+    // mmc3_irq_tests
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_1_clocking,
+        "roms/automated_tests/mmc3_irq_tests/1.Clocking.nes"
+    );
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_2_details,
+        "roms/automated_tests/mmc3_irq_tests/2.Details.nes"
+    );
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_3_a12_clocking,
+        "roms/automated_tests/mmc3_irq_tests/3.A12_clocking.nes"
+    );
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_4_scanline_timing,
+        "roms/automated_tests/mmc3_irq_tests/4.Scanline_timing.nes"
+    );
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_5_rev_a,
+        "roms/automated_tests/mmc3_irq_tests/5.MMC3_rev_A.nes"
+    );
+    setup_rom_console_test!(
+        test_mmc3_irq_tests_6_rev_b,
+        "roms/automated_tests/mmc3_irq_tests/6.MMC3_rev_B.nes"
+    );
+
+    // MMC3
+    setup_rom_test!(
+        test_mmc3_test_1_clocking,
+        "roms/automated_tests/mmc3_test/1-clocking.nes"
+    );
+    setup_rom_test!(
+        test_mmc3_test_2_details,
+        "roms/automated_tests/mmc3_test/2-details.nes"
+    );
+    setup_rom_test!(
+        test_mmc3_test_3_a12_clocking,
+        "roms/automated_tests/mmc3_test/3-A12_clocking.nes"
+    );
+    setup_rom_test!(
+        test_mmc3_test_4_scanline_timing,
+        "roms/automated_tests/mmc3_test/4-scanline_timing.nes"
+    );
+    setup_rom_test!(
+        test_mmc3_test_5_mmc3,
+        "roms/automated_tests/mmc3_test/5-MMC3.nes"
+    );
+    setup_rom_test!(
+        test_mmc3_test_6_mmc3_alt,
+        "roms/automated_tests/mmc3_test/6-MMC6.nes"
+    );
+
+    // nes_instr_test
+    setup_rom_test!(
+        test_nes_instr_01_implied,
+        "roms/automated_tests/nes_instr_test/rom_singles/01-implied.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_02_immediate,
+        "roms/automated_tests/nes_instr_test/rom_singles/02-immediate.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_03_zero_page,
+        "roms/automated_tests/nes_instr_test/rom_singles/03-zero_page.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_04_zp_xy,
+        "roms/automated_tests/nes_instr_test/rom_singles/04-zp_xy.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_05_absolute,
+        "roms/automated_tests/nes_instr_test/rom_singles/05-absolute.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_06_abs_xy,
+        "roms/automated_tests/nes_instr_test/rom_singles/06-abs_xy.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_07_ind_x,
+        "roms/automated_tests/nes_instr_test/rom_singles/07-ind_x.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_08_ind_y,
+        "roms/automated_tests/nes_instr_test/rom_singles/08-ind_y.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_09_branches,
+        "roms/automated_tests/nes_instr_test/rom_singles/09-branches.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_10_stack,
+        "roms/automated_tests/nes_instr_test/rom_singles/10-stack.nes"
+    );
+    setup_rom_test!(
+        test_nes_instr_11_special,
+        "roms/automated_tests/nes_instr_test/rom_singles/11-special.nes"
+    );
 
     // sprite_hit_tests_2005
     // These are included even though ppu_sprite_hit_tests are included
@@ -1627,13 +1745,6 @@ mod tests {
         "roms/automated_tests/sprite_overflow_tests/5.Emulator.nes"
     );
 
-    // TODO tvpassfail/tv ROM suite not automated yet
-    // We will need to capture the screen post filtering (need NTSC filtering turned on)
-    // For the first test, we should be able to find nearest color of each 8x8 tile and
-    // parse PASS
-    // For the second test, we should be able to count the height and width of the left
-    // rectangle (filtering off) and match
-
     // vbl_nmi_timing
     setup_rom_console_test!(
         test_vbl_nmi_timing_frame_basics,
@@ -1663,97 +1774,4 @@ mod tests {
         test_vbl_nmi_timing_nmi_timing,
         "roms/automated_tests/vbl_nmi_timing/7.nmi_timing.nes"
     );
-
-
-    /////////////////////////////////////
-    // Obsolete Tests
-    /////////////////////////////////////
-
-    // blargg_nes_cpu_test5
-    setup_rom_console_test!(
-        test_blargg_nes_cpu_test5_cpu,
-        "roms/automated_tests/blargg_nes_cpu_test5/cpu.nes",
-        60 * 20
-    );
-
-    setup_rom_console_test!(
-        test_blargg_nes_cpu_test5_official,
-        "roms/automated_tests/blargg_nes_cpu_test5/official.nes",
-        60 * 20
-    );
-
-    // nes_instr_test
-    setup_rom_test!(
-        test_nes_instr_01_implied,
-        "roms/automated_tests/nes_instr_test/rom_singles/01-implied.nes"
-    );
-    setup_rom_test!(
-        test_nes_instr_02_immediate,
-        "roms/automated_tests/nes_instr_test/rom_singles/02-immediate.nes"
-    );
-    setup_rom_test!(
-        test_nes_instr_03_zero_page,
-        "roms/automated_tests/nes_instr_test/rom_singles/03-zero_page.nes"
-    );
-    setup_rom_test!(
-        test_nes_instr_04_zp_xy,
-        "roms/automated_tests/nes_instr_test/rom_singles/04-zp_xy.nes"
-    );
-    setup_rom_test!(
-        test_nes_instr_05_absolute,
-        "roms/automated_tests/nes_instr_test/rom_singles/05-absolute.nes"
-    );
-    setup_rom_test!(
-        test_nes_instr_06_abs_xy,
-        "roms/automated_tests/nes_instr_test/rom_singles/06-abs_xy.nes"
-    );
-    setup_rom_test!(
-        test_nes_instr_07_ind_x,
-        "roms/automated_tests/nes_instr_test/rom_singles/07-ind_x.nes"
-    );
-    setup_rom_test!(
-        test_nes_instr_08_ind_y,
-        "roms/automated_tests/nes_instr_test/rom_singles/08-ind_y.nes"
-    );
-    setup_rom_test!(
-        test_nes_instr_09_branches,
-        "roms/automated_tests/nes_instr_test/rom_singles/09-branches.nes"
-    );
-    setup_rom_test!(
-        test_nes_instr_10_stack,
-        "roms/automated_tests/nes_instr_test/rom_singles/10-stack.nes"
-    );
-    setup_rom_test!(
-        test_nes_instr_11_special,
-        "roms/automated_tests/nes_instr_test/rom_singles/11-special.nes"
-    );
-
-    // mmc3_irq_tests
-    setup_rom_console_test!(
-        test_mmc3_irq_tests_1_clocking,
-        "roms/automated_tests/mmc3_irq_tests/1.Clocking.nes",
-        60 * 10
-    );
-    setup_rom_console_test!(
-        test_mmc3_irq_tests_2_details,
-        "roms/automated_tests/mmc3_irq_tests/2.Details.nes"
-    );
-    setup_rom_console_test!(
-        test_mmc3_irq_tests_3_a12_clocking,
-        "roms/automated_tests/mmc3_irq_tests/3.A12_clocking.nes"
-    );
-    setup_rom_console_test!(
-        test_mmc3_irq_tests_4_scanline_timing,
-        "roms/automated_tests/mmc3_irq_tests/4.Scanline_timing.nes",
-        60 * 5
-    );
-    setup_rom_console_test!(
-        test_mmc3_irq_tests_5_rev_a,
-        "roms/automated_tests/mmc3_irq_tests/5.MMC3_rev_A.nes"
-    );
-    setup_rom_console_test!(
-        test_mmc3_irq_tests_6_rev_b,
-        "roms/automated_tests/mmc3_irq_tests/6.MMC3_rev_B.nes"
-    );
-
 }
