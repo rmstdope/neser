@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     /// OAM test infrastructure for automated testing of test ROMs
     ///
     /// This module provides infrastructure to run OAM test ROMs (oam_read, oam_stress, oam3)
@@ -28,7 +28,7 @@ mod tests {
 
     /// Result of running an test ROM
     #[derive(Debug, PartialEq, Eq)]
-    pub enum RomTestResult {
+    pub(crate) enum RomTestResult {
         /// Test passed (status byte = 0x00)
         Pass,
         /// Test failed with error code
@@ -41,7 +41,7 @@ mod tests {
 
     /// Test verification method
     #[derive(Debug, PartialEq, Eq)]
-    pub enum RomTestVerification {
+    pub(crate) enum RomTestVerification {
         /// Verify using status byte at 0x6000
         StatusByte,
         /// Verify using console output
@@ -51,7 +51,7 @@ mod tests {
     }
 
     /// Runner for OAM test ROMs
-    pub struct RomTestRunner {
+    pub(crate) struct RomTestRunner {
         rom_path: String,
         max_frames: u32,
         wait_reset: u32,
@@ -234,7 +234,7 @@ mod tests {
         }
     }
 
-    fn run_address_test(
+    pub(crate) fn run_address_test(
         rom_path: &str,
         max_frames: u32,
         stop_address: u16,
@@ -288,7 +288,7 @@ mod tests {
         RomTestResult::Timeout
     }
 
-    fn run_nes_for_frames(nes: &mut Nes, frames: u32) {
+    pub fn run_nes_for_frames(nes: &mut Nes, frames: u32) {
         if frames == 0 {
             return;
         }
@@ -382,150 +382,24 @@ mod tests {
         None
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    enum ApuPulseChannel {
-        Pulse1,
-        Pulse2,
-    }
-
-    #[derive(Debug, Clone, Copy)]
-    struct PulseAnalysis {
-        first_rising_edge: usize,
-        period_samples: f32,
-        duty_cycle: f32,
-        peak: f32,
-    }
-
-    const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
-    const SAMPLE_RATE_HZ: f32 = 44_100.0;
-
-    fn collect_apu_phase_reset_samples(channel: ApuPulseChannel) -> Vec<f32> {
-        let rom_path = "roms/automated_tests/apu_phase_reset/apu_phase_reset.nes";
-        let rom_data = fs::read(rom_path).expect("apu_phase_reset ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("apu_phase_reset ROM should parse");
-
-        let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
-        nes.reset(false);
-
-        {
-            let mut apu = nes.apu.borrow_mut();
-            apu.set_sample_rate(SAMPLE_RATE_HZ);
-            apu.set_triangle_enabled(false);
-            apu.set_noise_enabled(false);
-            apu.set_dmc_enabled(false);
-            match channel {
-                ApuPulseChannel::Pulse1 => {
-                    apu.set_pulse1_enabled(true);
-                    apu.set_pulse2_enabled(false);
-                }
-                ApuPulseChannel::Pulse2 => {
-                    apu.set_pulse1_enabled(false);
-                    apu.set_pulse2_enabled(true);
-                }
-            }
-        }
-
-        let mut samples = Vec::new();
-        let total_cycles = NTSC_CPU_CYCLES_PER_FRAME * 5;
-        for _cycle in 0..total_cycles {
-            nes.run_cpu_tick();
-            while nes.sample_ready() {
-                if let Some(sample) = nes.get_sample() {
-                    samples.push(sample);
-                }
-            }
-        }
-
-        samples
-    }
-
-    fn analyze_pulse_samples(samples: &[f32]) -> PulseAnalysis {
-        assert!(!samples.is_empty(), "no samples captured");
-
-        const WARMUP_SAMPLES: usize = 2_000;
-        let samples = if samples.len() > WARMUP_SAMPLES {
-            &samples[WARMUP_SAMPLES..]
-        } else {
-            samples
-        };
-
-        let mut min = f32::INFINITY;
-        let mut max = f32::NEG_INFINITY;
-        for &sample in samples {
-            if sample < min {
-                min = sample;
-            }
-            if sample > max {
-                max = sample;
-            }
-        }
-        assert!(max > min, "samples appear constant");
-
-        let threshold = (min + max) * 0.5;
-        let mut rising_edges = Vec::new();
-        for index in 1..samples.len() {
-            if samples[index - 1] < threshold && samples[index] >= threshold {
-                rising_edges.push(index);
-            }
-        }
-
-        assert!(
-            rising_edges.len() >= 3,
-            "expected at least 3 rising edges, got {}",
-            rising_edges.len()
-        );
-
-        let mut periods = Vec::new();
-        for window in rising_edges.windows(2).take(6) {
-            periods.push((window[1] - window[0]) as f32);
-        }
-        let period_samples = periods.iter().sum::<f32>() / periods.len() as f32;
-
-        let mut duty_cycles = Vec::new();
-        for window in rising_edges.windows(2).take(6) {
-            let start = window[0];
-            let end = window[1];
-            let mut high = 0usize;
-            for &sample in &samples[start..end] {
-                if sample >= threshold {
-                    high += 1;
-                }
-            }
-            let period = (end - start) as f32;
-            duty_cycles.push(high as f32 / period);
-        }
-        let duty_cycle = duty_cycles.iter().sum::<f32>() / duty_cycles.len() as f32;
-
-        PulseAnalysis {
-            first_rising_edge: rising_edges[0],
-            period_samples,
-            duty_cycle,
-            peak: max,
-        }
-    }
-
-    fn expected_pulse_period_samples(timer: u16) -> f32 {
-        let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
-        let period_cycles = 16.0 * (timer as f32 + 1.0);
-        period_cycles / cycles_per_sample
-    }
-
-    fn expected_phase_offset_samples(cpu_cycles: u32) -> f32 {
-        let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
-        cpu_cycles as f32 / cycles_per_sample
-    }
-
-    // Macro to generate $6000-based tests with custom timeout
+    #[macro_export]
     macro_rules! setup_rom_test {
         ($test_name:ident, $rom_path:expr, $timeout:expr) => {
             #[test]
             fn $test_name() {
-                let mut runner =
-                    RomTestRunner::new($rom_path, $timeout, RomTestVerification::StatusByte);
+                let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new(
+                    $rom_path,
+                    $timeout,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::StatusByte,
+                );
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();
-                assert_eq!(result, RomTestResult::Pass, "{} should pass", rom_name);
+                assert_eq!(
+                    result,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    "{} should pass",
+                    rom_name
+                );
             }
         };
         ($test_name:ident, $rom_path:expr) => {
@@ -533,15 +407,24 @@ mod tests {
         };
     }
 
+    #[macro_export]
     macro_rules! setup_rom_console_test {
         ($test_name:ident, $rom_path:expr, $timeout:expr) => {
             #[test]
             fn $test_name() {
-                let mut runner =
-                    RomTestRunner::new($rom_path, $timeout, RomTestVerification::Console);
+                let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new(
+                    $rom_path,
+                    $timeout,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::Console,
+                );
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();
-                assert_eq!(result, RomTestResult::Pass, "{} should pass", rom_name);
+                assert_eq!(
+                    result,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    "{} should pass",
+                    rom_name
+                );
             }
         };
         ($test_name:ident, $rom_path:expr) => {
@@ -549,18 +432,26 @@ mod tests {
         };
     }
 
+    #[macro_export]
     macro_rules! setup_rom_console_crc_test {
         ($test_name:ident, $rom_path:expr, $timeout:expr, $expected:expr) => {
             #[test]
             fn $test_name() {
-                let mut runner = RomTestRunner::new(
+                let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new(
                     $rom_path,
                     $timeout,
-                    RomTestVerification::ConsoleCrc($expected),
+                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::ConsoleCrc(
+                        $expected,
+                    ),
                 );
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();
-                assert_eq!(result, RomTestResult::Pass, "{} should pass", rom_name);
+                assert_eq!(
+                    result,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    "{} should pass",
+                    rom_name
+                );
             }
         };
         ($test_name:ident, $rom_path:expr, $expected:expr) => {
@@ -568,774 +459,30 @@ mod tests {
         };
     }
 
+    #[macro_export]
     macro_rules! setup_rom_address_test {
         ($test_name:ident, $rom_path:expr, $stop_address:expr, $verify_fn:expr, $timeout:expr) => {
             #[test]
             fn $test_name() {
-                let result = run_address_test($rom_path, $timeout, $stop_address, $verify_fn);
+                let result = $crate::integration_tests::rom_test_runner::tests::run_address_test(
+                    $rom_path,
+                    $timeout,
+                    $stop_address,
+                    $verify_fn,
+                );
                 let rom_name = $rom_path.split('/').last().unwrap();
-                assert_eq!(result, RomTestResult::Pass, "{} should pass", rom_name);
+                assert_eq!(
+                    result,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    "{} should pass",
+                    rom_name
+                );
             }
         };
         ($test_name:ident, $rom_path:expr, $stop_address:expr, $verify_fn:expr) => {
             setup_rom_address_test!($test_name, $rom_path, $stop_address, $verify_fn, 60 * 30); // Wait for at least 30 s
         };
     }
-
-    // Test that the dmc is processing exactly one byte (0x55) -> alternating eight times
-    // The final pulse tone will never play as we are stopping at first sight of the infinite loop
-    fn check_one_dmc_byte_processed(nes: &mut Nes) -> bool {
-        let mut samples = Vec::new();
-        while nes.sample_ready() {
-            samples.push(nes.get_sample().unwrap());
-        }
-        let mut expect_up = true;
-        // First sample is garbage (0)
-        let mut prev = samples[1];
-        let mut alternations = 0;
-        for &next in samples.iter().skip(2) {
-            if next == prev {
-                continue;
-            }
-            if expect_up {
-                assert!(next > prev, "expected up step: {} -> {}", prev, next);
-            } else {
-                assert!(next < prev, "expected down step: {} -> {}", prev, next);
-            }
-            expect_up = !expect_up;
-            prev = next;
-            alternations += 1;
-        }
-        assert_eq!(
-            alternations, 8,
-            "expected 8 alternations, got {}",
-            alternations
-        );
-
-        true
-    }
-
-    fn max_alternating_small_steps(samples: &[f32]) -> usize {
-        const MIN_STEP: f32 = 0.000_05;
-        const BIG_JUMP: f32 = 0.02;
-
-        let mut count = 0usize;
-        let mut last_dir: i32 = 0;
-        let mut prev = match samples.first() {
-            Some(value) => *value,
-            None => return 0,
-        };
-
-        for &next in samples.iter().skip(1) {
-            let delta = next - prev;
-            let abs_delta = delta.abs();
-
-            if abs_delta < MIN_STEP {
-                prev = next;
-                continue;
-            }
-
-            if abs_delta >= BIG_JUMP {
-                prev = next;
-                last_dir = 0;
-                // println!("Big jump to {}", next);
-                continue;
-            }
-
-            // println!("Processing {} count {}", next, count + 1);
-            let dir = if delta > 0.0 { 1 } else { -1 };
-            assert!(
-                last_dir == 0 || dir != last_dir,
-                "last_dir={}, dir={}, prev={}, next={}",
-                last_dir,
-                dir,
-                prev,
-                next
-            );
-            count += 1;
-            last_dir = dir;
-
-            prev = next;
-        }
-
-        count
-    }
-
-    // Test that the dmc is processing two bytes (0x55) four times
-    // Sometime during the first byte, the output will be set to 0x32 but the DMC will keep
-    // processing the remaining bits in that byte as well as the next byte already loaded into
-    // sample buffer.
-    // The final pulse tone will never play as we are stopping at first sight of the infinite loop
-    fn check_four_by_two_dmc_bytes_processed(nes: &mut Nes) -> bool {
-        let mut samples = Vec::new();
-        while nes.sample_ready() {
-            let sample = nes.get_sample().unwrap();
-            samples.push(sample);
-        }
-        let alternations = max_alternating_small_steps(&samples);
-        assert_eq!(alternations, 16 * 4);
-
-        true
-    }
-
-    // Check that exaclty one IRQ has been fired from the DMC
-    fn check_one_irq_fired(nes: &mut Nes) -> bool {
-        let irq_count = nes.apu.borrow().dmc().debug_irq_trigger_count();
-        assert_eq!(irq_count, 1, "expected 1 IRQ fired, got {}", irq_count);
-        true
-    }
-
-    // Check that exaclty zero IRQ has been fired from the DMC
-    fn check_zero_irq_fired(nes: &mut Nes) -> bool {
-        let irq_count = nes.apu.borrow().dmc().debug_irq_trigger_count();
-        assert_eq!(irq_count, 0, "expected 0 IRQ fired, got {}", irq_count);
-        true
-    }
-
-    /////////////////////////////////////
-    // APU Audio
-    /////////////////////////////////////
-
-    // apu_mixer
-    setup_rom_test!(test_apu_mixer_dmc, "roms/automated_tests/apu_mixer/dmc.nes");
-    setup_rom_test!(
-        test_apu_mixer_noise,
-        "roms/automated_tests/apu_mixer/noise.nes"
-    );
-    setup_rom_test!(
-        test_apu_mixer_square,
-        "roms/automated_tests/apu_mixer/square.nes"
-    );
-    setup_rom_test!(
-        test_apu_mixer_triangle,
-        "roms/automated_tests/apu_mixer/triangle.nes"
-    );
-
-    // apu_phase_reset
-    #[test]
-    fn test_apu_phase_reset() {
-        let pulse1_samples = collect_apu_phase_reset_samples(ApuPulseChannel::Pulse1);
-        let pulse2_samples = collect_apu_phase_reset_samples(ApuPulseChannel::Pulse2);
-
-        let pulse1 = analyze_pulse_samples(&pulse1_samples);
-        let pulse2 = analyze_pulse_samples(&pulse2_samples);
-
-        let expected_period = expected_pulse_period_samples(0x81);
-        let period_tolerance = 0.1;
-        assert!(
-            (pulse1.period_samples - expected_period).abs() <= period_tolerance,
-            "pulse1 period {} not within {} samples of expected {}",
-            pulse1.period_samples,
-            period_tolerance,
-            expected_period
-        );
-        assert!(
-            (pulse2.period_samples - expected_period).abs() <= period_tolerance,
-            "pulse2 period {} not within {} samples of expected {}",
-            pulse2.period_samples,
-            period_tolerance,
-            expected_period
-        );
-
-        let phase_offset_samples =
-            pulse2.first_rising_edge.abs_diff(pulse1.first_rising_edge) as f32;
-        let expected_phase_offset = expected_phase_offset_samples(256);
-        let phase_tolerance = 1.0;
-        assert!(
-            (phase_offset_samples - expected_phase_offset).abs() <= phase_tolerance,
-            "phase offset {} not within {} samples of expected {}",
-            phase_offset_samples,
-            phase_tolerance,
-            expected_phase_offset
-        );
-
-        let duty_tolerance = 0.01;
-        assert!(
-            (pulse1.duty_cycle - 0.5).abs() <= duty_tolerance,
-            "pulse1 duty {} not within {} of expected 0.5",
-            pulse1.duty_cycle,
-            duty_tolerance
-        );
-        assert!(
-            (pulse2.duty_cycle - 0.5).abs() <= duty_tolerance,
-            "pulse2 duty {} not within {} of expected 0.5",
-            pulse2.duty_cycle,
-            duty_tolerance
-        );
-
-        let peak_tolerance = 1e-4;
-        assert!(
-            (pulse1.peak - pulse2.peak).abs() <= peak_tolerance,
-            "pulse peaks differ more than tolerance: {} vs {}",
-            pulse1.peak,
-            pulse2.peak
-        );
-    }
-
-    // dmc_tests
-    setup_rom_address_test!(
-        test_dmc_tests_buffer_retained,
-        "roms/automated_tests/dmc_tests/buffer_retained.nes",
-        0xE149,
-        check_one_dmc_byte_processed
-    );
-    setup_rom_address_test!(
-        test_dmc_tests_latency,
-        "roms/automated_tests/dmc_tests/latency.nes",
-        0xE162,
-        check_four_by_two_dmc_bytes_processed
-    );
-    setup_rom_address_test!(
-        test_dmc_tests_status_irq,
-        "roms/automated_tests/dmc_tests/status_irq.nes",
-        0xE154,
-        check_one_irq_fired
-    );
-    setup_rom_address_test!(
-        test_dmc_tests_status,
-        "roms/automated_tests/dmc_tests/status.nes",
-        0xE14E,
-        check_zero_irq_fired
-    );
-
-    // TODO fadeout_and_triangle_tests
-
-    // TODO square_timer_div2
-
-    // TODO test_apu_env
-
-    // TODO test_apu_sweep
-
-    // TODO test_apu_timers
-
-    // TODO test_tri_lin_ctr
-
-    // TODO volume_tests
-
-    /////////////////////////////////////
-    // APU Visual
-    /////////////////////////////////////
-
-    // apu_reset
-    setup_rom_test!(
-        test_4015_cleared,
-        "roms/automated_tests/apu_reset/4015_cleared.nes"
-    );
-    setup_rom_test!(
-        test_4017_timing,
-        "roms/automated_tests/apu_reset/4017_timing.nes"
-    );
-    setup_rom_test!(
-        test_4017_written,
-        "roms/automated_tests/apu_reset/4017_written.nes"
-    );
-    setup_rom_test!(
-        test_irq_flag_cleared,
-        "roms/automated_tests/apu_reset/irq_flag_cleared.nes"
-    );
-    setup_rom_test!(
-        test_len_ctrs_enabled,
-        "roms/automated_tests/apu_reset/len_ctrs_enabled.nes"
-    );
-    setup_rom_test!(
-        test_works_immediately,
-        "roms/automated_tests/apu_reset/works_immediately.nes"
-    );
-
-    // apu_test
-    setup_rom_test!(test_apu_test, "roms/automated_tests/apu_test/apu_test.nes");
-    setup_rom_test!(
-        test_apu_test_1,
-        "roms/automated_tests/apu_test/rom_singles/1-len_ctr.nes"
-    );
-    setup_rom_test!(
-        test_apu_test_2,
-        "roms/automated_tests/apu_test/rom_singles/2-len_table.nes"
-    );
-    setup_rom_test!(
-        test_apu_test_3,
-        "roms/automated_tests/apu_test/rom_singles/3-irq_flag.nes"
-    );
-    setup_rom_test!(
-        test_apu_test_4,
-        "roms/automated_tests/apu_test/rom_singles/4-jitter.nes"
-    );
-    setup_rom_test!(
-        test_apu_test_5,
-        "roms/automated_tests/apu_test/rom_singles/5-len_timing.nes"
-    );
-    setup_rom_test!(
-        test_apu_test_6,
-        "roms/automated_tests/apu_test/rom_singles/6-irq_flag_timing.nes"
-    );
-    setup_rom_test!(
-        test_apu_test_7,
-        "roms/automated_tests/apu_test/rom_singles/7-dmc_basics.nes"
-    );
-    setup_rom_test!(
-        test_apu_test_8,
-        "roms/automated_tests/apu_test/rom_singles/8-dmc_rates.nes"
-    );
-
-    // blargg_apu_2005.07.30
-    setup_rom_console_test!(
-        test_blargg_apu_01,
-        "roms/automated_tests/blargg_apu_2005.07.30/01.len_ctr.nes"
-    );
-    setup_rom_console_test!(
-        test_blargg_apu_02,
-        "roms/automated_tests/blargg_apu_2005.07.30/02.len_table.nes"
-    );
-    setup_rom_console_test!(
-        test_blargg_apu_03,
-        "roms/automated_tests/blargg_apu_2005.07.30/03.irq_flag.nes"
-    );
-    setup_rom_console_test!(
-        test_blargg_apu_04,
-        "roms/automated_tests/blargg_apu_2005.07.30/04.clock_jitter.nes"
-    );
-    setup_rom_console_test!(
-        test_blargg_apu_05,
-        "roms/automated_tests/blargg_apu_2005.07.30/05.len_timing_mode0.nes"
-    );
-    setup_rom_console_test!(
-        test_blargg_apu_06,
-        "roms/automated_tests/blargg_apu_2005.07.30/06.len_timing_mode1.nes"
-    );
-    setup_rom_console_test!(
-        test_blargg_apu_07,
-        "roms/automated_tests/blargg_apu_2005.07.30/07.irq_flag_timing.nes"
-    );
-    setup_rom_console_test!(
-        test_blargg_apu_08,
-        "roms/automated_tests/blargg_apu_2005.07.30/08.irq_timing.nes"
-    );
-    setup_rom_console_test!(
-        test_blargg_apu_09,
-        "roms/automated_tests/blargg_apu_2005.07.30/09.reset_timing.nes"
-    );
-    setup_rom_console_test!(
-        test_blargg_apu_10,
-        "roms/automated_tests/blargg_apu_2005.07.30/10.len_halt_timing.nes"
-    );
-    setup_rom_console_test!(
-        test_blargg_apu_11,
-        "roms/automated_tests/blargg_apu_2005.07.30/11.len_reload_timing.nes"
-    );
-
-    // TODO pal_apu_tests
-
-    // TODO test_apu_2
-
-    /////////////////////////////////////
-    // CPU
-    /////////////////////////////////////
-
-    // branch_timing_tests
-    setup_rom_console_test!(
-        test_branch_timing,
-        "roms/automated_tests/branch_timing_tests/1.Branch_Basics.nes"
-    );
-    setup_rom_console_test!(
-        test_backward_branch,
-        "roms/automated_tests/branch_timing_tests/2.Backward_Branch.nes"
-    );
-    setup_rom_console_test!(
-        test_forward_branch,
-        "roms/automated_tests/branch_timing_tests/3.Forward_Branch.nes"
-    );
-
-    // cpu_dummy_reads
-    setup_rom_console_test!(
-        test_cpu_dummy_reads,
-        "roms/automated_tests/cpu_dummy_reads/cpu_dummy_reads.nes"
-    );
-
-    // cpu_dummy_writes
-    setup_rom_test!(
-        test_cpu_dummy_writes_oam,
-        "roms/automated_tests/cpu_dummy_writes/cpu_dummy_writes_oam.nes"
-    );
-    setup_rom_test!(
-        test_cpu_dummy_writes_ppumem,
-        "roms/automated_tests/cpu_dummy_writes/cpu_dummy_writes_ppumem.nes"
-    );
-
-    // cpu_exec_space
-    setup_rom_test!(
-        test_cpu_exec_space_ppuio,
-        "roms/automated_tests/cpu_exec_space/test_cpu_exec_space_ppuio.nes"
-    );
-    setup_rom_test!(
-        test_cpu_exec_space_apu,
-        "roms/automated_tests/cpu_exec_space/test_cpu_exec_space_apu.nes"
-    );
-
-    // cpu_interrupts_v2
-    setup_rom_test!(
-        test_cpu_interrupts_v2_cpu_interrupts,
-        "roms/automated_tests/cpu_interrupts_v2/cpu_interrupts.nes"
-    );
-    setup_rom_test!(
-        test_cpu_interrupts_v2_cli_latency,
-        "roms/automated_tests/cpu_interrupts_v2/rom_singles/1-cli_latency.nes"
-    );
-    setup_rom_test!(
-        test_cpu_interrupts_v2_nmi_and_brk,
-        "roms/automated_tests/cpu_interrupts_v2/rom_singles/2-nmi_and_brk.nes"
-    );
-    setup_rom_test!(
-        test_cpu_interrupts_v2_nmi_and_irq,
-        "roms/automated_tests/cpu_interrupts_v2/rom_singles/3-nmi_and_irq.nes"
-    );
-    setup_rom_test!(
-        test_cpu_interrupts_v2_irq_and_dma,
-        "roms/automated_tests/cpu_interrupts_v2/rom_singles/4-irq_and_dma.nes"
-    );
-    setup_rom_test!(
-        test_cpu_interrupts_v2_branch_delays_irq,
-        "roms/automated_tests/cpu_interrupts_v2/rom_singles/5-branch_delays_irq.nes"
-    );
-
-    // cpu_reset
-    setup_rom_test!(
-        test_cpu_reset_ram_after_reset,
-        "roms/automated_tests/cpu_reset/ram_after_reset.nes"
-    );
-    setup_rom_test!(
-        test_cpu_reset_reset_registers,
-        "roms/automated_tests/cpu_reset/registers.nes"
-    );
-
-    // cpu_timing_test6
-    setup_rom_console_test!(
-        test_cpu_timing_test6,
-        "roms/automated_tests/cpu_timing_test6/cpu_timing_test.nes"
-    );
-
-    // TODO dma_sync_test
-
-    // dmc_dma_during_read4
-    setup_rom_console_crc_test!(
-        test_dmc_dma_during_read4_2007_read,
-        "roms/automated_tests/dmc_dma_during_read4/dma_2007_read.nes",
-        300,
-        &[0x159A7A8F, 0x5E3DF9C4]
-    );
-    setup_rom_console_test!(
-        test_dmc_dma_during_read4_2007_write,
-        "roms/automated_tests/dmc_dma_during_read4/dma_2007_write.nes",
-        300
-    );
-    setup_rom_console_test!(
-        test_dmc_dma_during_read4_4016_read,
-        "roms/automated_tests/dmc_dma_during_read4/dma_4016_read.nes",
-        300
-    );
-    setup_rom_console_crc_test!(
-        test_dmc_dma_during_read4_double_2007_read,
-        "roms/automated_tests/dmc_dma_during_read4/double_2007_read.nes",
-        300,
-        &[0xF018C287, 0xD84F6815] //CRC1 - Mesen, loopyNES, etc., CRC2 - Nintendulator, FCEUX
-    );
-    setup_rom_console_test!(
-        test_dmc_dma_during_read4_read_write_2007,
-        "roms/automated_tests/dmc_dma_during_read4/read_write_2007.nes",
-        300
-    );
-
-    // dpcmletterbox
-    #[test]
-    fn test_dpcmletterbox() {
-        let rom_path = "roms/automated_tests/dpcmletterbox/dpcmletterbox.nes";
-        let rom_data = fs::read(rom_path).expect("dpcmletterbox ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("dpcmletterbox ROM should parse");
-
-        let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
-        nes.reset(false);
-
-        run_nes_for_frames(&mut nes, 60);
-
-        let crc = nes.get_screen_buffer().crc32();
-        // Golden CRC generated from a visually verified correct frame capture using --trace-ppu=1
-        assert_eq!(crc, 0x2813_2E95, "unexpected frame CRC for dpcmletterbox");
-    }
-
-    // instr_misc
-    setup_rom_test!(
-        test_instr_misc,
-        "roms/automated_tests/instr_misc/instr_misc.nes"
-    );
-    setup_rom_test!(
-        test_instr_misc_01,
-        "roms/automated_tests/instr_misc/rom_singles/01-abs_x_wrap.nes"
-    );
-    setup_rom_test!(
-        test_instr_misc_02,
-        "roms/automated_tests/instr_misc/rom_singles/02-branch_wrap.nes"
-    );
-    setup_rom_test!(
-        test_instr_misc_03,
-        "roms/automated_tests/instr_misc/rom_singles/03-dummy_reads.nes"
-    );
-    setup_rom_test!(
-        test_instr_misc_04,
-        "roms/automated_tests/instr_misc/rom_singles/04-dummy_reads_apu.nes"
-    );
-
-    // test_instr_v3
-    setup_rom_test!(
-        test_instr_v3_all_instrs,
-        "roms/automated_tests/instr_test-v3/all_instrs.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_official_only,
-        "roms/automated_tests/instr_test-v3/official_only.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_01_implied,
-        "roms/automated_tests/instr_test-v3/rom_singles/01-implied.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_02_immediate,
-        "roms/automated_tests/instr_test-v3/rom_singles/02-immediate.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_03_zero_page,
-        "roms/automated_tests/instr_test-v3/rom_singles/03-zero_page.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_04_zp_xy,
-        "roms/automated_tests/instr_test-v3/rom_singles/04-zp_xy.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_05_absolute,
-        "roms/automated_tests/instr_test-v3/rom_singles/05-absolute.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_06_abs_xy,
-        "roms/automated_tests/instr_test-v3/rom_singles/06-abs_xy.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_07_ind_x,
-        "roms/automated_tests/instr_test-v3/rom_singles/07-ind_x.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_08_ind_y,
-        "roms/automated_tests/instr_test-v3/rom_singles/08-ind_y.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_09_branches,
-        "roms/automated_tests/instr_test-v3/rom_singles/09-branches.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_10_stack,
-        "roms/automated_tests/instr_test-v3/rom_singles/10-stack.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_11_jmp_jsr,
-        "roms/automated_tests/instr_test-v3/rom_singles/11-jmp_jsr.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_12_rts,
-        "roms/automated_tests/instr_test-v3/rom_singles/12-rts.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_13_rti,
-        "roms/automated_tests/instr_test-v3/rom_singles/13-rti.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_14_brk,
-        "roms/automated_tests/instr_test-v3/rom_singles/14-brk.nes"
-    );
-    setup_rom_test!(
-        test_instr_v3_15_special,
-        "roms/automated_tests/instr_test-v3/rom_singles/15-special.nes"
-    );
-
-    // test_instr_v5
-    setup_rom_test!(
-        test_instr_v5_all_instrs,
-        "roms/automated_tests/instr_test-v5/all_instrs.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_official_only,
-        "roms/automated_tests/instr_test-v5/official_only.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_01_basics,
-        "roms/automated_tests/instr_test-v5/rom_singles/01-basics.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_02_implied,
-        "roms/automated_tests/instr_test-v5/rom_singles/02-implied.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_03_immediate,
-        "roms/automated_tests/instr_test-v5/rom_singles/03-immediate.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_04_zero_page,
-        "roms/automated_tests/instr_test-v5/rom_singles/04-zero_page.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_05_zp_xy,
-        "roms/automated_tests/instr_test-v5/rom_singles/05-zp_xy.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_06_absolute,
-        "roms/automated_tests/instr_test-v5/rom_singles/06-absolute.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_07_abs_xy,
-        "roms/automated_tests/instr_test-v5/rom_singles/07-abs_xy.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_08_ind_x,
-        "roms/automated_tests/instr_test-v5/rom_singles/08-ind_x.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_09_ind_y,
-        "roms/automated_tests/instr_test-v5/rom_singles/09-ind_y.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_10_branches,
-        "roms/automated_tests/instr_test-v5/rom_singles/10-branches.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_11_stack,
-        "roms/automated_tests/instr_test-v5/rom_singles/11-stack.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_12_jmp_jsr,
-        "roms/automated_tests/instr_test-v5/rom_singles/12-jmp_jsr.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_13_rts,
-        "roms/automated_tests/instr_test-v5/rom_singles/13-rts.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_14_rti,
-        "roms/automated_tests/instr_test-v5/rom_singles/14-rti.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_15_brk,
-        "roms/automated_tests/instr_test-v5/rom_singles/15-brk.nes"
-    );
-    setup_rom_test!(
-        test_instr_v5_16_special,
-        "roms/automated_tests/instr_test-v5/rom_singles/16-special.nes"
-    );
-
-    // instr_timing
-    setup_rom_test!(
-        test_instr_timing,
-        "roms/automated_tests/instr_timing/instr_timing.nes"
-    );
-    setup_rom_test!(
-        test_instr_timing_01,
-        "roms/automated_tests/instr_timing/rom_singles/1-instr_timing.nes"
-    );
-    setup_rom_test!(
-        test_instr_timing_02,
-        "roms/automated_tests/instr_timing/rom_singles/2-branch_timing.nes"
-    );
-
-    // nestest
-    // TODO Move nestest from nes.rs here
-
-    // sprdma_and_dmc_dma
-    setup_rom_test!(
-        test_sprdma_and_dmc_dma,
-        "roms/automated_tests/sprdma_and_dmc_dma/sprdma_and_dmc_dma.nes"
-    );
-    setup_rom_test!(
-        test_sprdma_and_dmc_dma_512,
-        "roms/automated_tests/sprdma_and_dmc_dma/sprdma_and_dmc_dma_512.nes"
-    );
-
-    /////////////////////////////////////
-    // Input
-    /////////////////////////////////////
-
-    // TODO integrate PaddleTest3 ROM suite
-
-    // TODO integrate ruder-0.03 ROM suite
-
-    // TODO integrate spadtest-nes-0.01 ROM suite
-
-    // TODO integrate vaus-test-0.02 ROM suite
-
-    /////////////////////////////////////
-    // Mapper
-    /////////////////////////////////////
-
-    // TODO bntest
-
-    // TODO FME7
-
-    // TODO holydiver
-
-    // TODO Homebrew Mappers
-
-    // MMC3
-    setup_rom_test!(
-        test_mmc3_test_2_1_clocking,
-        "roms/automated_tests/mmc3_test_2/rom_singles/1-clocking.nes"
-    );
-    setup_rom_test!(
-        test_mmc3_test_2_2_details,
-        "roms/automated_tests/mmc3_test_2/rom_singles/2-details.nes"
-    );
-    setup_rom_test!(
-        test_mmc3_test_2_3_a12_clocking,
-        "roms/automated_tests/mmc3_test_2/rom_singles/3-A12_clocking.nes"
-    );
-    setup_rom_test!(
-        test_mmc3_test_2_4_scanline_timing,
-        "roms/automated_tests/mmc3_test_2/rom_singles/4-scanline_timing.nes"
-    );
-    setup_rom_test!(
-        test_mmc3_test_2_5_mmc3,
-        "roms/automated_tests/mmc3_test_2/rom_singles/5-MMC3.nes"
-    );
-    setup_rom_test!(
-        test_mmc3_test_2_6_mmc3_alt,
-        "roms/automated_tests/mmc3_test_2/rom_singles/6-MMC3_alt.nes"
-    );
-    // TODO mmc3bigchrram
-
-    // MMC5
-    #[test]
-    fn test_mmc5_exram_crc_sequence() {
-        let rom_path = "roms/automated_tests/exram/mmc5exram.nes";
-        let rom_data = fs::read(rom_path).expect("mmc5exram ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("mmc5exram ROM should parse");
-
-        let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
-        nes.reset(false);
-
-        let expected_crcs = [
-            0x90428465, 0x4E2BA407, 0x01ECA2E8, 0x138E5FE2, 0xC7C91CC3, 0xEFBFD0D1, 0xD57CD303,
-        ];
-        for (index, expected_crc) in expected_crcs.iter().enumerate() {
-            run_nes_for_frames(&mut nes, 60);
-            let crc = nes.get_screen_buffer().crc32();
-            assert_eq!(
-                crc,
-                *expected_crc,
-                "unexpected frame CRC at checkpoint {} for mmc5exram",
-                index + 1
-            );
-        }
-    }
-    // TODO mmc5test_v2
-
-    // TODO Submappers
-
-    // TODO VRC6
 
     /////////////////////////////////////
     // Miscellaneous
