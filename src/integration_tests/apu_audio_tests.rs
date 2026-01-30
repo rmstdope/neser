@@ -269,6 +269,66 @@ mod tests {
         (samples, spec.sample_rate)
     }
 
+    /// Upsample a signal by an integer factor using sample repetition.
+    fn upsample_repeat(samples: &[f32], factor: usize) -> Vec<f32> {
+        if factor <= 1 {
+            return samples.to_vec();
+        }
+
+        let mut out = Vec::with_capacity(samples.len() * factor);
+        for &sample in samples {
+            out.extend(std::iter::repeat(sample).take(factor));
+        }
+        out
+    }
+
+    /// Find the first window index where the RMS stays above a threshold for a run.
+    fn steady_start_index(rms: &[f32], threshold_ratio: f32, min_run: usize) -> Option<usize> {
+        if rms.is_empty() || min_run == 0 {
+            return None;
+        }
+
+        let max_rms = rms.iter().copied().fold(0.0f32, f32::max);
+        if max_rms == 0.0 {
+            return None;
+        }
+
+        let threshold = max_rms * threshold_ratio;
+        let mut run = 0usize;
+        for (index, &value) in rms.iter().enumerate() {
+            if value >= threshold {
+                run += 1;
+                if run >= min_run {
+                    return Some(index + 1 - min_run);
+                }
+            } else {
+                run = 0;
+            }
+        }
+
+        None
+    }
+
+    /// Compute RMS values over sliding windows.
+    fn rms_windows(samples: &[f32], window_size: usize, hop_size: usize) -> Vec<f32> {
+        if window_size == 0 || hop_size == 0 || samples.len() < window_size {
+            return Vec::new();
+        }
+
+        let mut rms = Vec::new();
+        let mut start = 0usize;
+        while start + window_size <= samples.len() {
+            let mut sum = 0.0f32;
+            for &sample in &samples[start..start + window_size] {
+                sum += sample * sample;
+            }
+            rms.push((sum / window_size as f32).sqrt());
+            start += hop_size;
+        }
+
+        rms
+    }
+
     /// Skip an initial warmup window to avoid power-on transients.
     fn trim_warmup(samples: &[f32], warmup_samples: usize) -> &[f32] {
         if samples.len() > warmup_samples {
@@ -329,8 +389,9 @@ mod tests {
         cpu_cycles as f32 / cycles_per_sample
     }
 
-    // Test that the dmc is processing exactly one byte (0x55) -> alternating eight times
-    // The final pulse tone will never play as we are stopping at first sight of the infinite loop
+    /// Verify that exactly one DMC byte (0x55) was processed by alternating steps.
+    ///
+    /// The final pulse tone never plays because we stop at the infinite loop.
     fn check_one_dmc_byte_processed(nes: &mut Nes) -> bool {
         let mut samples = Vec::new();
         while nes.sample_ready() {
@@ -362,6 +423,7 @@ mod tests {
         true
     }
 
+    /// Count alternating small-amplitude steps while ignoring flat regions and large jumps.
     fn max_alternating_small_steps(samples: &[f32]) -> usize {
         const MIN_STEP: f32 = 0.000_05;
         const BIG_JUMP: f32 = 0.02;
@@ -408,11 +470,9 @@ mod tests {
         count
     }
 
-    // Test that the dmc is processing two bytes (0x55) four times
-    // Sometime during the first byte, the output will be set to 0x32 but the DMC will keep
-    // processing the remaining bits in that byte as well as the next byte already loaded into
-    // sample buffer.
-    // The final pulse tone will never play as we are stopping at first sight of the infinite loop
+    /// Verify that two DMC bytes (0x55) are processed four times.
+    ///
+    /// The DMC continues processing buffered bits even after the output is forced to 0x32.
     fn check_four_by_two_dmc_bytes_processed(nes: &mut Nes) -> bool {
         let mut samples = Vec::new();
         while nes.sample_ready() {
@@ -425,14 +485,14 @@ mod tests {
         true
     }
 
-    // Check that exaclty one IRQ has been fired from the DMC
+    /// Check that exactly one IRQ has been fired from the DMC.
     fn check_one_irq_fired(nes: &mut Nes) -> bool {
         let irq_count = nes.apu.borrow().dmc().debug_irq_trigger_count();
         assert_eq!(irq_count, 1, "expected 1 IRQ fired, got {}", irq_count);
         true
     }
 
-    // Check that exaclty zero IRQ has been fired from the DMC
+    /// Check that exactly zero IRQs have been fired from the DMC.
     fn check_zero_irq_fired(nes: &mut Nes) -> bool {
         let irq_count = nes.apu.borrow().dmc().debug_irq_trigger_count();
         assert_eq!(irq_count, 0, "expected 0 IRQ fired, got {}", irq_count);
@@ -640,7 +700,107 @@ mod tests {
         );
     }
 
-    // TODO test_apu_env
+    // test_apu_env
+    #[test]
+    fn test_apu_env() {
+        // Load the reference WAV and match sample rate to the emulator output.
+        let (wav_samples, wav_rate) =
+            read_wav_mono_samples("roms/automated_tests/test_apu_env/test_apu_env.wav");
+        let wav_samples = if wav_rate != SAMPLE_RATE_HZ as u32 {
+            let factor = (SAMPLE_RATE_HZ as u32 / wav_rate) as usize;
+            assert_eq!(
+                wav_rate * factor as u32,
+                SAMPLE_RATE_HZ as u32,
+                "wav sample rate mismatch"
+            );
+            upsample_repeat(&wav_samples, factor)
+        } else {
+            wav_samples
+        };
+
+        let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
+        const WARMUP_SAMPLES: usize = 2_000;
+        // Capture slightly longer than the WAV to allow warmup and alignment slack.
+        let capture_samples = wav_samples.len() + WARMUP_SAMPLES + 2_000;
+        let total_cycles = (capture_samples as f32 * cycles_per_sample) as u32;
+
+        let samples = collect_pulse_samples(
+            "roms/automated_tests/test_apu_env/test_apu_env.nes",
+            ApuPulseChannel::Pulse1,
+            total_cycles,
+        );
+        let samples = trim_warmup(&samples, WARMUP_SAMPLES);
+
+        // Align on the first rising edge to compare equivalent waveform segments.
+        let wav_edge =
+            first_rising_edge_index(&wav_samples).expect("failed to find rising edge in wav");
+        let emu_edge =
+            first_rising_edge_index(samples).expect("failed to find rising edge in emu output");
+
+        let max_len = (SAMPLE_RATE_HZ as usize)
+            .min(wav_samples.len().saturating_sub(wav_edge))
+            .min(samples.len().saturating_sub(emu_edge));
+        assert!(max_len > 1000, "not enough samples for correlation");
+
+        let wav_slice = &wav_samples[wav_edge..wav_edge + max_len];
+        let emu_slice = &samples[emu_edge..emu_edge + max_len];
+
+        // Compare envelope shapes using RMS windows.
+        let window_size = (SAMPLE_RATE_HZ as usize / 100).max(1); // 10ms
+        let hop_size = (window_size / 2).max(1);
+        let wav_rms = rms_windows(wav_slice, window_size, hop_size);
+        let emu_rms = rms_windows(emu_slice, window_size, hop_size);
+
+        assert!(!wav_rms.is_empty(), "wav rms windowing produced no samples");
+        assert!(!emu_rms.is_empty(), "emu rms windowing produced no samples");
+
+        let env_correlation = max_abs_correlation_with_lag(&wav_rms, &emu_rms, 20);
+        assert!(
+            env_correlation > 0.9,
+            "expected strong envelope correlation, got {}",
+            env_correlation
+        );
+
+        // Locate steady-state sections and compare waveform correlation there.
+        let wav_steady = steady_start_index(&wav_rms, 0.9, 10)
+            .expect("failed to find steady region in wav envelope");
+        let emu_steady = steady_start_index(&emu_rms, 0.9, 10)
+            .expect("failed to find steady region in emu envelope");
+
+        let wav_start = wav_steady * hop_size;
+        let emu_start = emu_steady * hop_size;
+        let steady_len = (SAMPLE_RATE_HZ as usize / 2)
+            .min(wav_slice.len().saturating_sub(wav_start))
+            .min(emu_slice.len().saturating_sub(emu_start));
+        assert!(
+            steady_len > 1000,
+            "not enough steady samples for correlation"
+        );
+
+        let wav_steady_slice = &wav_slice[wav_start..wav_start + steady_len];
+        let emu_steady_slice = &emu_slice[emu_start..emu_start + steady_len];
+        let correlation = max_abs_correlation_with_lag(wav_steady_slice, emu_steady_slice, 200);
+        assert!(
+            correlation > 0.8,
+            "expected strong wav correlation magnitude, got {}",
+            correlation
+        );
+
+        // Ensure the steady-state envelope stays within a tight band.
+        let steady_start = emu_rms.len() * 3 / 4;
+        let steady_slice = &emu_rms[steady_start..];
+        let mean = steady_slice.iter().sum::<f32>() / steady_slice.len() as f32;
+        let max_dev = steady_slice
+            .iter()
+            .map(|value| (value - mean).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_dev <= mean * 0.15,
+            "steady envelope deviates too much (max_dev={}, mean={})",
+            max_dev,
+            mean
+        );
+    }
 
     // TODO test_apu_sweep
 
