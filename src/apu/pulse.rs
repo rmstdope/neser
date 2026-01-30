@@ -150,6 +150,9 @@ impl Pulse {
     /// Write to $4003 register (loads length counter, sets start flag, sets timer high)
     pub fn write_length_counter_timer_high(&mut self, value: u8) {
         self.write_timer_high(value);
+        // NESdev: writing $4003/$4007 resets the sequencer and timer divider.
+        self.sequence_position = 0;
+        self.timer_counter = self.timer_period;
         self.envelope.restart();
         // Load length counter from bits 7-3 (only if channel is enabled via $4015)
         let index = value >> 3;
@@ -274,6 +277,7 @@ impl Pulse {
 
     /// Clock the sweep unit (called by half frame)
     pub fn clock_sweep(&mut self) {
+        trace_apu!(1; "{} sweep_clock divider={} reload={} enabled={} shift={} period=0x{:03X}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, self.sweep_divider, self.sweep_reload, self.sweep_enabled, self.sweep_shift, self.timer_period);
         // Decrement divider first (unless we're going to reload)
         let should_update = self.sweep_divider == 0 && !self.sweep_reload;
 
@@ -285,13 +289,25 @@ impl Pulse {
         }
 
         // Update period if divider reached 0 and all conditions are met
-        if should_update && self.sweep_enabled && self.sweep_shift != 0 {
-            let target_period = self.get_sweep_target_period();
-            if self.timer_period >= 8 && target_period <= 0x7FF {
-                self.timer_period = target_period;
-                self.timer_counter = self.timer_period;
-                trace_apu!(5; "{} sweep_update period=0x{:03X}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, self.timer_period);
+        if should_update {
+            if !self.sweep_enabled {
+                trace_apu!(1; "{} sweep_skip disabled", if self.is_pulse1 { "pulse1" } else { "pulse2" });
+                return;
             }
+            if self.sweep_shift == 0 {
+                trace_apu!(1; "{} sweep_skip shift=0", if self.is_pulse1 { "pulse1" } else { "pulse2" });
+                return;
+            }
+
+            let target_period = self.get_sweep_target_period();
+            if self.timer_period < 8 || target_period > 0x7FF {
+                trace_apu!(1; "{} sweep_mute curr=0x{:03X} target=0x{:03X}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, self.timer_period, target_period);
+                return;
+            }
+
+            self.timer_period = target_period;
+            self.timer_counter = self.timer_period;
+            trace_apu!(5; "{} sweep_update period=0x{:03X}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, self.timer_period);
         }
     }
 
@@ -305,11 +321,13 @@ impl Pulse {
     /// 4. Sweep target period > $7FF
     pub fn output(&self) -> u8 {
         // Check all muting conditions
+        let target_period = self.get_sweep_target_period();
         if self.get_sequencer_output() == 0
             || !self.length_counter.is_enabled() // Channel disabled via $4015
             || self.length_counter.value() == 0
             || self.timer_period < 8
-            || self.get_sweep_target_period() > 0x7FF
+            || target_period < 8
+            || target_period > 0x7FF
         {
             0
         } else {

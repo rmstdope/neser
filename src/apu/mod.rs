@@ -8,4 +8,7 @@ pub mod noise;
 pub mod pulse;
 pub mod triangle;
 
+#[cfg(test)]
+mod audio_analysis_test;
+
 pub use apu::Apu;

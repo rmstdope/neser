@@ -1,5 +1,6 @@
 use crate::apu;
 use crate::bus::bus::BusDevice;
+use crate::trace_apu;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
 use std::rc::Rc;
@@ -36,7 +37,10 @@ impl BusDevice for ApuDevice {
 
         match addr {
             0x4000 => self.apu.borrow_mut().pulse1_mut().write_control(value),
-            0x4001 => self.apu.borrow_mut().pulse1_mut().write_sweep(value),
+            0x4001 => {
+                trace_apu!(1; "write $4001 value=0x{:02X}", value);
+                self.apu.borrow_mut().pulse1_mut().write_sweep(value)
+            }
             0x4002 => self.apu.borrow_mut().pulse1_mut().write_timer_low(value),
             0x4003 => self
                 .apu
@@ -45,7 +49,10 @@ impl BusDevice for ApuDevice {
                 .write_length_counter_timer_high(value),
 
             0x4004 => self.apu.borrow_mut().pulse2_mut().write_control(value),
-            0x4005 => self.apu.borrow_mut().pulse2_mut().write_sweep(value),
+            0x4005 => {
+                trace_apu!(1; "write $4005 value=0x{:02X}", value);
+                self.apu.borrow_mut().pulse2_mut().write_sweep(value)
+            }
             0x4006 => self.apu.borrow_mut().pulse2_mut().write_timer_low(value),
             0x4007 => self
                 .apu

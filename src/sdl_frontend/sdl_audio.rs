@@ -55,8 +55,8 @@ impl SdlNesAudio {
         // This prevents unbounded memory growth if audio callback falls behind
         let (sender, receiver) = sync_channel(Self::BUFFER_SIZE);
 
-        // Create shared volume control (default 25% to avoid distortion)
-        let volume = Arc::new(AtomicU32::new(f32::to_bits(0.25)));
+        // Create shared volume control (default 75% to avoid distortion)
+        let volume = Arc::new(AtomicU32::new(f32::to_bits(0.75)));
         let volume_clone = Arc::clone(&volume);
 
         let stats = Arc::new(AudioStats::default());

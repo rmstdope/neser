@@ -319,7 +319,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn init_apu_tracing_from_env() {
+    pub(crate) fn init_apu_tracing_from_env() {
         let level = match std::env::var("NESER_TRACE_APU") {
             Ok(value) => value.parse::<u8>().unwrap_or(1),
             Err(_) => return,

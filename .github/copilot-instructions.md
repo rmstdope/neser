@@ -84,6 +84,18 @@ When working on a bug in the application, you are free to add any traces, try fi
 
 Where appropriate, use established crates to streamline development and leverage existing solutions. However, ensure that the chosen crates align with the project's requirements and do not introduce unnecessary complexity. Regularly evaluate the suitability of crates as the project evolves. Take all crate decisions in a collaborative way with the navigator.
 
+## Testing strategies
+
+Testing of the emulator should be done using a mix of unit and integration tests. Unit tests should be used to verify the correctness of individual components and modules, ensuring that each part of the emulator functions as intended in isolation. Integration tests should be employed to validate the interactions between different components, ensuring that they work together seamlessly to provide the desired functionality of the emulator as a whole.
+
+### Unit testing
+
+Unit test should be of both black and white box variety. Black box tests should focus on testing the public interfaces and behaviors of modules without knowledge of their internal workings. They should perferably be tested against the specifications found on https://www.nesdev.org/wiki/. White box tests should be used to test specific internal functions and logic, ensuring that the implementation details are correct. In such cases, the tests should have knowledge of the internal structure of the code being tested and can use internal variables and states to verify correctness.
+
+### Integration testing
+
+Integration tests should cover end-to-end scenarios that validate the overall functionality of the emulator. These tests should simulate real-world usage and interactions, ensuring that all components work together as expected. Integration tests can include running actual NES ROMs and verifying their output against known good results, as well as testing the emulator's performance and stability under various conditions. Integration tests should always be defined against either a well known ROMs behaviour or specifications found on https://www.nesdev.org/wiki/.
+
 ## Repository-specific guidance
 
 - Project type: Rust NES emulator with two different frontends
