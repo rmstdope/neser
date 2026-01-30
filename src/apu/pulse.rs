@@ -279,7 +279,10 @@ impl Pulse {
     pub fn clock_sweep(&mut self) {
         trace_apu!(1; "{} sweep_clock divider={} reload={} enabled={} shift={} period=0x{:03X}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, self.sweep_divider, self.sweep_reload, self.sweep_enabled, self.sweep_shift, self.timer_period);
         // Decrement divider first (unless we're going to reload)
-        let should_update = self.sweep_divider == 0 && !self.sweep_reload;
+        let should_update =
+            self.sweep_divider == 0 && (!self.sweep_reload || self.sweep_divider_period == 0);
+        let target_period = self.get_sweep_target_period();
+        trace_apu!(2; "{} sweep_state curr=0x{:03X} target=0x{:03X} divider={} reload={} enabled={} shift={}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, self.timer_period, target_period, self.sweep_divider, self.sweep_reload, self.sweep_enabled, self.sweep_shift);
 
         if self.sweep_divider == 0 || self.sweep_reload {
             self.sweep_divider = self.sweep_divider_period;
@@ -299,7 +302,6 @@ impl Pulse {
                 return;
             }
 
-            let target_period = self.get_sweep_target_period();
             if self.timer_period < 8 || target_period > 0x7FF {
                 trace_apu!(1; "{} sweep_mute curr=0x{:03X} target=0x{:03X}", if self.is_pulse1 { "pulse1" } else { "pulse2" }, self.timer_period, target_period);
                 return;
@@ -326,8 +328,7 @@ impl Pulse {
             || !self.length_counter.is_enabled() // Channel disabled via $4015
             || self.length_counter.value() == 0
             || self.timer_period < 8
-            || target_period < 8
-            || target_period > 0x7FF
+            || !(8..=0x7FF).contains(&target_period)
         {
             0
         } else {
@@ -995,14 +996,21 @@ mod tests {
         // Target = 16 + (16 >> 1) = 16 + 8 = 24
         assert_eq!(pulse.get_sweep_target_period(), 24);
 
-        // First clock reloads divider
+        // First clock: period should update immediately
         pulse.clock_sweep();
+        assert_eq!(
+            pulse.get_timer_period(),
+            24,
+            "Period should update to sweep target on first clock"
+        );
 
-        // Second clock should update period (divider=0, enabled, shift!=0, not muting)
+        // Second clock: period should remain the same
         pulse.clock_sweep();
-
-        // Period should now be 24
-        assert_eq!(pulse.get_timer_period(), 24);
+        assert_eq!(
+            pulse.get_timer_period(),
+            36,
+            "Period should update to sweep target on second clock"
+        );
     }
 
     #[test]
@@ -1227,13 +1235,13 @@ mod tests {
         let initial_period = pulse.get_timer_period();
         assert_eq!(initial_period, 16);
 
-        // Clock sweep twice (reload, then update)
+        // First sweep clock should update immediately (divider period 0)
         pulse.clock_sweep();
-        pulse.clock_sweep();
+        assert_eq!(pulse.get_timer_period(), 24);
 
-        let new_period = pulse.get_timer_period();
-        // Period should have increased: 16 + (16>>1) = 16 + 8 = 24
-        assert_eq!(new_period, 24);
+        // Next sweep clock should update again
+        pulse.clock_sweep();
+        assert_eq!(pulse.get_timer_period(), 36);
     }
 
     #[test]
@@ -1309,8 +1317,6 @@ mod tests {
         pulse2.write_sweep(0b1000_1001); // Enable, period=0, negate=1, shift=1
 
         pulse1.clock_sweep();
-        pulse1.clock_sweep();
-        pulse2.clock_sweep();
         pulse2.clock_sweep();
 
         // Pulse1 uses ones' complement: 16 - (16>>1) - 1 = 16 - 8 - 1 = 7

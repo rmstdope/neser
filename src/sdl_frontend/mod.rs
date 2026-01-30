@@ -1,4 +1,6 @@
 mod sdl_audio;
+mod sdl_audio_callback;
+mod sdl_audio_resampler;
 mod sdl_eventloop;
 mod sdl_gl_wrapper;
 mod sdl_render_target;
