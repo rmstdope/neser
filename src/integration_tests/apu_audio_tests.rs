@@ -133,18 +133,6 @@ mod tests {
         (threshold, rising_edges)
     }
 
-    /// Measure successive rising-edge periods in samples.
-    fn rising_edge_periods(samples: &[f32]) -> Vec<f32> {
-        let (_threshold, rising_edges) = rising_edges_with_threshold(samples);
-
-        let mut periods = Vec::new();
-        for window in rising_edges.windows(2) {
-            periods.push((window[1] - window[0]) as f32);
-        }
-
-        periods
-    }
-
     /// Return the first rising-edge index, if a crossing is found.
     fn first_rising_edge_index(samples: &[f32]) -> Option<usize> {
         let threshold = compute_threshold(samples)?;
@@ -240,8 +228,9 @@ mod tests {
             hound::SampleFormat::Int => {
                 if spec.bits_per_sample == 8 {
                     for sample in reader.samples::<i8>() {
-                        let value = sample.expect("failed to read wav sample") as f32;
-                        let centered = value / 128.0;
+                        let value = sample.expect("failed to read wav sample");
+                        let raw = value as u8;
+                        let centered = (raw as f32 - 128.0) / 128.0;
                         frame_sum += centered;
                         frame_count += 1;
                         if frame_count == channels {
@@ -267,6 +256,26 @@ mod tests {
         }
 
         (samples, spec.sample_rate)
+    }
+
+    /// Load a WAV file and return mono samples at the emulator sample rate.
+    fn load_wav_samples_at_rate(path: &str) -> Vec<f32> {
+        let (wav_samples, wav_rate) = read_wav_mono_samples(path);
+        if wav_rate != SAMPLE_RATE_HZ as u32 {
+            assert!(
+                wav_rate <= SAMPLE_RATE_HZ as u32,
+                "wav sample rate must not exceed emulator rate"
+            );
+            let factor = (SAMPLE_RATE_HZ as u32 / wav_rate) as usize;
+            assert_eq!(
+                wav_rate * factor as u32,
+                SAMPLE_RATE_HZ as u32,
+                "wav sample rate mismatch"
+            );
+            upsample_repeat(&wav_samples, factor)
+        } else {
+            wav_samples
+        }
     }
 
     /// Upsample a signal by an integer factor using sample repetition.
@@ -327,6 +336,44 @@ mod tests {
         }
 
         rms
+    }
+
+    /// Build a period series from rising edges.
+    fn period_series(samples: &[f32]) -> Vec<f32> {
+        let (_threshold, rising_edges) = rising_edges_with_threshold(samples);
+        let mut periods = Vec::new();
+        for window in rising_edges.windows(2) {
+            periods.push((window[1] - window[0]) as f32);
+        }
+        periods
+    }
+
+    /// Find the period index where the pitch drops (period increases) beyond a threshold.
+    fn pitch_drop_period_index(
+        periods: &[f32],
+        baseline_count: usize,
+        ratio: f32,
+    ) -> Option<usize> {
+        if periods.len() < baseline_count + 2 {
+            return None;
+        }
+
+        let baseline = periods.iter().take(baseline_count).sum::<f32>() / baseline_count as f32;
+        let threshold = baseline * ratio;
+        for (index, period) in periods.iter().enumerate().skip(baseline_count) {
+            if *period > threshold {
+                return Some(index);
+            }
+        }
+
+        None
+    }
+
+    fn average_chunks(series: &[f32], chunk: usize) -> Vec<f32> {
+        series
+            .chunks(chunk)
+            .map(|window| window.iter().sum::<f32>() / window.len() as f32)
+            .collect()
     }
 
     /// Skip an initial warmup window to avoid power-on transients.
@@ -642,7 +689,7 @@ mod tests {
         );
 
         let window = &samples[window_start..window_end];
-        let periods = rising_edge_periods(window);
+        let periods = period_series(window);
 
         let expected_223 = expected_pulse_period_samples(223);
         let expected_255 = expected_pulse_period_samples(255);
@@ -676,9 +723,8 @@ mod tests {
         );
 
         // WAV correlation: compare a aligned window to the golden reference.
-        let (wav_samples, wav_rate) =
-            read_wav_mono_samples("roms/automated_tests/square_timer_div2/correct.wav");
-        assert_eq!(wav_rate, SAMPLE_RATE_HZ as u32, "wav sample rate mismatch");
+        let wav_samples =
+            load_wav_samples_at_rate("roms/automated_tests/square_timer_div2/correct.wav");
 
         let wav_edge =
             first_rising_edge_index(&wav_samples).expect("failed to find rising edge in wav");
@@ -704,19 +750,8 @@ mod tests {
     #[test]
     fn test_apu_env() {
         // Load the reference WAV and match sample rate to the emulator output.
-        let (wav_samples, wav_rate) =
-            read_wav_mono_samples("roms/automated_tests/test_apu_env/test_apu_env.wav");
-        let wav_samples = if wav_rate != SAMPLE_RATE_HZ as u32 {
-            let factor = (SAMPLE_RATE_HZ as u32 / wav_rate) as usize;
-            assert_eq!(
-                wav_rate * factor as u32,
-                SAMPLE_RATE_HZ as u32,
-                "wav sample rate mismatch"
-            );
-            upsample_repeat(&wav_samples, factor)
-        } else {
-            wav_samples
-        };
+        let wav_samples =
+            load_wav_samples_at_rate("roms/automated_tests/test_apu_env/test_apu_env.wav");
 
         let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
         const WARMUP_SAMPLES: usize = 2_000;
@@ -802,7 +837,95 @@ mod tests {
         );
     }
 
-    // TODO test_apu_sweep
+    // test_apu_sweep
+    #[test]
+    fn test_apu_sweep_sub() {
+        // Load reference waveform and ensure it matches the emulator sample rate.
+        let wav_samples =
+            load_wav_samples_at_rate("roms/automated_tests/test_apu_sweep/sweep_sub.wav");
+
+        let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
+        const WARMUP_SAMPLES: usize = 2_000;
+        let capture_samples = wav_samples.len() + WARMUP_SAMPLES + 2_000;
+        let total_cycles = (capture_samples as f32 * cycles_per_sample) as u32;
+
+        let samples = collect_pulse_samples(
+            "roms/automated_tests/test_apu_sweep/sweep_sub.nes",
+            ApuPulseChannel::Pulse1,
+            total_cycles,
+        );
+        let samples = trim_warmup(&samples, WARMUP_SAMPLES);
+
+        // Align both waveforms on the first rising edge.
+        let wav_edge =
+            first_rising_edge_index(&wav_samples).expect("failed to find rising edge in wav");
+        let emu_edge =
+            first_rising_edge_index(samples).expect("failed to find rising edge in emu output");
+
+        let max_len = (SAMPLE_RATE_HZ as usize)
+            .min(wav_samples.len().saturating_sub(wav_edge))
+            .min(samples.len().saturating_sub(emu_edge));
+        assert!(max_len > 1000, "not enough samples for correlation");
+
+        let wav_slice = &wav_samples[wav_edge..wav_edge + max_len];
+        let emu_slice = &samples[emu_edge..emu_edge + max_len];
+
+        // Mandatory period-series correlation against the reference near the pitch drop.
+        let wav_periods = period_series(wav_slice);
+        let emu_periods = period_series(emu_slice);
+
+        let wav_drop = pitch_drop_period_index(&wav_periods, 8, 1.01)
+            .expect("expected wav pitch drop for correlation");
+        let emu_drop = pitch_drop_period_index(&emu_periods, 8, 1.01)
+            .expect("expected emu pitch drop for correlation");
+
+        let wav_baseline = wav_periods.iter().take(16).sum::<f32>() / 16.0;
+        let emu_baseline = emu_periods.iter().take(16).sum::<f32>() / 16.0;
+        let wav_norm: Vec<f32> = wav_periods[wav_drop..]
+            .iter()
+            .map(|period| (period - wav_baseline) / wav_baseline)
+            .collect();
+        let emu_norm: Vec<f32> = emu_periods[emu_drop..]
+            .iter()
+            .map(|period| (period - emu_baseline) / emu_baseline)
+            .collect();
+
+        let wav_norm = average_chunks(&wav_norm, 8);
+        let emu_norm = average_chunks(&emu_norm, 8);
+        let corr_len = 120.min(wav_norm.len()).min(emu_norm.len());
+        let wav_corr = &wav_norm[..corr_len];
+        let emu_corr = &emu_norm[..corr_len];
+        let correlation = max_abs_correlation_with_lag(wav_corr, emu_corr, 60);
+        assert!(
+            correlation > 0.6,
+            "expected strong wav period correlation magnitude, got {}",
+            correlation
+        );
+
+        // Verify that the pitch drops slightly (period increases) during the sweep.
+        let wav_periods = period_series(wav_slice);
+        let emu_periods = period_series(emu_slice);
+        assert!(wav_periods.len() >= 16, "not enough wav periods");
+        assert!(emu_periods.len() >= 16, "not enough emu periods");
+        let wav_start = wav_periods.iter().take(16).sum::<f32>() / 16.0;
+        let emu_start = emu_periods.iter().take(16).sum::<f32>() / 16.0;
+        let wav_drop = pitch_drop_period_index(&wav_periods, 8, 1.01)
+            .expect("expected wav pitch to drop over time");
+        let emu_drop = pitch_drop_period_index(&emu_periods, 8, 1.01)
+            .expect("expected emu pitch to drop over time");
+        let wav_delta = (wav_periods[wav_drop] - wav_start) / wav_start;
+        let emu_delta = (emu_periods[emu_drop] - emu_start) / emu_start;
+        assert!(wav_delta > 0.0, "expected wav pitch to drop over time");
+        assert!(emu_delta > 0.0, "expected emu pitch to drop over time");
+
+        let ratio = emu_delta / wav_delta;
+        assert!(
+            (0.5..=2.0).contains(&ratio),
+            "pitch drop mismatch: wav_delta={}, emu_delta={}",
+            wav_delta,
+            emu_delta
+        );
+    }
 
     // TODO test_apu_timers
 
