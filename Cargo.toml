@@ -68,6 +68,7 @@ path = "src/bin/autorunner.rs"
 required-features = ["sdl"]
 
 [dev-dependencies]
+hound = "3.5"
 serial_test = "3.2"
 tempfile = "3.24.0"
 

@@ -23,10 +23,16 @@ mod tests {
     const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
     const SAMPLE_RATE_HZ: f32 = 44_100.0;
 
-    fn collect_apu_phase_reset_samples(channel: ApuPulseChannel) -> Vec<f32> {
-        let rom_path = "roms/automated_tests/apu_phase_reset/apu_phase_reset.nes";
-        let rom_data = fs::read(rom_path).expect("apu_phase_reset ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("apu_phase_reset ROM should parse");
+    /// Run a ROM for a fixed number of CPU cycles and collect pulse-only audio samples.
+    ///
+    /// This configures the APU to output a single pulse channel and disables other channels.
+    fn collect_pulse_samples(
+        rom_path: &str,
+        channel: ApuPulseChannel,
+        total_cycles: u32,
+    ) -> Vec<f32> {
+        let rom_data = fs::read(rom_path).expect("ROM should load");
+        let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
 
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.insert_cartridge(cartridge);
@@ -51,7 +57,6 @@ mod tests {
         }
 
         let mut samples = Vec::new();
-        let total_cycles = NTSC_CPU_CYCLES_PER_FRAME * 5;
         for _cycle in 0..total_cycles {
             nes.run_cpu_tick();
             while nes.sample_ready() {
@@ -64,15 +69,23 @@ mod tests {
         samples
     }
 
-    fn analyze_pulse_samples(samples: &[f32]) -> PulseAnalysis {
-        assert!(!samples.is_empty(), "no samples captured");
+    /// Collect samples for the apu_phase_reset ROM over a fixed window.
+    fn collect_apu_phase_reset_samples(channel: ApuPulseChannel) -> Vec<f32> {
+        let total_cycles = NTSC_CPU_CYCLES_PER_FRAME * 5;
+        collect_pulse_samples(
+            "roms/automated_tests/apu_phase_reset/apu_phase_reset.nes",
+            channel,
+            total_cycles,
+        )
+    }
 
-        const WARMUP_SAMPLES: usize = 2_000;
-        let samples = if samples.len() > WARMUP_SAMPLES {
-            &samples[WARMUP_SAMPLES..]
-        } else {
-            samples
-        };
+    /// Compute a midpoint threshold between min/max sample values.
+    ///
+    /// Returns `None` when the samples are empty or flat.
+    fn compute_threshold(samples: &[f32]) -> Option<f32> {
+        if samples.is_empty() {
+            return None;
+        }
 
         let mut min = f32::INFINITY;
         let mut max = f32::NEG_INFINITY;
@@ -84,9 +97,16 @@ mod tests {
                 max = sample;
             }
         }
-        assert!(max > min, "samples appear constant");
 
-        let threshold = (min + max) * 0.5;
+        if max > min {
+            Some((min + max) * 0.5)
+        } else {
+            None
+        }
+    }
+
+    /// Collect indices where the waveform crosses the threshold from low to high.
+    fn collect_rising_edges(samples: &[f32], threshold: f32) -> Vec<usize> {
         let mut rising_edges = Vec::new();
         for index in 1..samples.len() {
             if samples[index - 1] < threshold && samples[index] >= threshold {
@@ -94,11 +114,178 @@ mod tests {
             }
         }
 
+        rising_edges
+    }
+
+    /// Compute a threshold and rising edges for a non-empty waveform.
+    fn rising_edges_with_threshold(samples: &[f32]) -> (f32, Vec<usize>) {
+        assert!(!samples.is_empty(), "no samples captured");
+
+        let threshold = compute_threshold(samples).expect("samples appear constant");
+        let rising_edges = collect_rising_edges(samples, threshold);
+
         assert!(
             rising_edges.len() >= 3,
             "expected at least 3 rising edges, got {}",
             rising_edges.len()
         );
+
+        (threshold, rising_edges)
+    }
+
+    /// Measure successive rising-edge periods in samples.
+    fn rising_edge_periods(samples: &[f32]) -> Vec<f32> {
+        let (_threshold, rising_edges) = rising_edges_with_threshold(samples);
+
+        let mut periods = Vec::new();
+        for window in rising_edges.windows(2) {
+            periods.push((window[1] - window[0]) as f32);
+        }
+
+        periods
+    }
+
+    /// Return the first rising-edge index, if a crossing is found.
+    fn first_rising_edge_index(samples: &[f32]) -> Option<usize> {
+        let threshold = compute_threshold(samples)?;
+        collect_rising_edges(samples, threshold).into_iter().next()
+    }
+
+    /// Compute a normalized correlation coefficient with DC offset removed.
+    fn normalized_correlation(a: &[f32], b: &[f32]) -> f32 {
+        if a.is_empty() || b.is_empty() {
+            return 0.0;
+        }
+
+        let mean_a = a.iter().copied().sum::<f32>() / a.len() as f32;
+        let mean_b = b.iter().copied().sum::<f32>() / b.len() as f32;
+
+        let mut dot = 0.0;
+        let mut norm_a = 0.0;
+        let mut norm_b = 0.0;
+        for (&x, &y) in a.iter().zip(b.iter()) {
+            let xa = x - mean_a;
+            let yb = y - mean_b;
+            dot += xa * yb;
+            norm_a += xa * xa;
+            norm_b += yb * yb;
+        }
+
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 0.0;
+        }
+
+        dot / (norm_a.sqrt() * norm_b.sqrt())
+    }
+
+    /// Compute the maximum absolute correlation between two signals within a lag window.
+    fn max_abs_correlation_with_lag(a: &[f32], b: &[f32], max_lag: usize) -> f32 {
+        if a.is_empty() || b.is_empty() {
+            return 0.0;
+        }
+
+        let mut best = 0.0f32;
+        let max_lag = max_lag
+            .min(a.len().saturating_sub(1))
+            .min(b.len().saturating_sub(1));
+
+        for lag in 0..=max_lag {
+            let len = a.len().saturating_sub(lag).min(b.len());
+            if len > 0 {
+                let corr = normalized_correlation(&a[lag..lag + len], &b[..len]).abs();
+                if corr > best {
+                    best = corr;
+                }
+            }
+
+            if lag > 0 {
+                let len = b.len().saturating_sub(lag).min(a.len());
+                if len > 0 {
+                    let corr = normalized_correlation(&a[..len], &b[lag..lag + len]).abs();
+                    if corr > best {
+                        best = corr;
+                    }
+                }
+            }
+        }
+
+        best
+    }
+
+    /// Load a WAV file and return mono samples plus sample rate.
+    fn read_wav_mono_samples(path: &str) -> (Vec<f32>, u32) {
+        let mut reader = hound::WavReader::open(path)
+            .unwrap_or_else(|err| panic!("failed to open wav {}: {}", path, err));
+        let spec = reader.spec();
+        let channels = spec.channels as usize;
+        assert!(channels >= 1, "wav has no channels");
+
+        let mut samples = Vec::new();
+        let mut frame_sum = 0.0f32;
+        let mut frame_count = 0usize;
+
+        match spec.sample_format {
+            hound::SampleFormat::Float => {
+                for sample in reader.samples::<f32>() {
+                    let value = sample.expect("failed to read wav sample");
+                    frame_sum += value;
+                    frame_count += 1;
+                    if frame_count == channels {
+                        samples.push(frame_sum / channels as f32);
+                        frame_sum = 0.0;
+                        frame_count = 0;
+                    }
+                }
+            }
+            hound::SampleFormat::Int => {
+                if spec.bits_per_sample == 8 {
+                    for sample in reader.samples::<i8>() {
+                        let value = sample.expect("failed to read wav sample") as f32;
+                        let centered = value / 128.0;
+                        frame_sum += centered;
+                        frame_count += 1;
+                        if frame_count == channels {
+                            samples.push(frame_sum / channels as f32);
+                            frame_sum = 0.0;
+                            frame_count = 0;
+                        }
+                    }
+                } else {
+                    let scale = (1u64 << (spec.bits_per_sample - 1)) as f32;
+                    for sample in reader.samples::<i32>() {
+                        let value = sample.expect("failed to read wav sample") as f32 / scale;
+                        frame_sum += value;
+                        frame_count += 1;
+                        if frame_count == channels {
+                            samples.push(frame_sum / channels as f32);
+                            frame_sum = 0.0;
+                            frame_count = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        (samples, spec.sample_rate)
+    }
+
+    /// Skip an initial warmup window to avoid power-on transients.
+    fn trim_warmup(samples: &[f32], warmup_samples: usize) -> &[f32] {
+        if samples.len() > warmup_samples {
+            &samples[warmup_samples..]
+        } else {
+            samples
+        }
+    }
+
+    /// Analyze a pulse waveform for period, duty cycle, and peak amplitude.
+    fn analyze_pulse_samples(samples: &[f32]) -> PulseAnalysis {
+        assert!(!samples.is_empty(), "no samples captured");
+
+        const WARMUP_SAMPLES: usize = 2_000;
+        let samples = trim_warmup(samples, WARMUP_SAMPLES);
+
+        let (threshold, rising_edges) = rising_edges_with_threshold(samples);
 
         let mut periods = Vec::new();
         for window in rising_edges.windows(2).take(6) {
@@ -125,16 +312,18 @@ mod tests {
             first_rising_edge: rising_edges[0],
             period_samples,
             duty_cycle,
-            peak: max,
+            peak: samples.iter().copied().fold(f32::NEG_INFINITY, f32::max),
         }
     }
 
+    /// Convert a pulse timer value into an expected sample period (NTSC timing).
     fn expected_pulse_period_samples(timer: u16) -> f32 {
         let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
         let period_cycles = 16.0 * (timer as f32 + 1.0);
         period_cycles / cycles_per_sample
     }
 
+    /// Convert a CPU-cycle offset into samples (NTSC timing).
     fn expected_phase_offset_samples(cpu_cycles: u32) -> f32 {
         let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
         cpu_cycles as f32 / cycles_per_sample
@@ -354,7 +543,102 @@ mod tests {
 
     // TODO fadeout_and_triangle_tests
 
-    // TODO square_timer_div2
+    // square_timer_div2
+    #[test]
+    fn test_square_timer_div2() {
+        // Run the ROM long enough to cover the pre-loop delay, the loop body, and
+        // the post-loop tones for verification against the reference WAV.
+        let cycles_per_ms = CPU_CLOCK_NTSC / 1000.0;
+        let pre_loop_cycles = (cycles_per_ms * 350.0) as u32; // 250ms + 100ms delay
+        let loop_cycles = 1792u32 * 256;
+        let post_cycles = (cycles_per_ms * 600.0) as u32; // 250ms + 250ms + buffer
+        let total_cycles = pre_loop_cycles + loop_cycles + post_cycles;
+
+        let samples = collect_pulse_samples(
+            "roms/automated_tests/square_timer_div2/square_timer_div2.nes",
+            ApuPulseChannel::Pulse1,
+            total_cycles,
+        );
+
+        const WARMUP_SAMPLES: usize = 2_000;
+        let samples = trim_warmup(&samples, WARMUP_SAMPLES);
+
+        let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
+        let pre_loop_cycles = CPU_CLOCK_NTSC * 0.35;
+        let loop_cycles = 1792.0 * 256.0;
+
+        // Focus the analysis window on the middle half of the loop to avoid edges.
+        let loop_start_sample = (pre_loop_cycles / cycles_per_sample) as usize;
+        let loop_window_start =
+            loop_start_sample + ((loop_cycles * 0.25) / cycles_per_sample) as usize;
+        let loop_window_end =
+            loop_start_sample + ((loop_cycles * 0.75) / cycles_per_sample) as usize;
+
+        let window_start = loop_window_start.min(samples.len());
+        let window_end = loop_window_end.min(samples.len());
+        assert!(
+            window_end > window_start + 100,
+            "not enough samples captured for loop analysis"
+        );
+
+        let window = &samples[window_start..window_end];
+        let periods = rising_edge_periods(window);
+
+        let expected_223 = expected_pulse_period_samples(223);
+        let expected_255 = expected_pulse_period_samples(255);
+        let tolerance = 1.0;
+
+        let mut count_223 = 0usize;
+        let mut count_255 = 0usize;
+        let mut avg_period = 0.0f32;
+        for period in &periods {
+            avg_period += *period;
+            if (period - expected_223).abs() <= tolerance {
+                count_223 += 1;
+            }
+            if (period - expected_255).abs() <= tolerance {
+                count_255 += 1;
+            }
+        }
+        avg_period /= periods.len() as f32;
+
+        assert!(count_223 >= 3, "expected 223-like periods during loop");
+        assert!(
+            (avg_period - expected_223).abs() < (avg_period - expected_255).abs(),
+            "loop period closer to 255 than 223: avg={} (223={}, 255={})",
+            avg_period,
+            expected_223,
+            expected_255
+        );
+        assert!(
+            count_223 > count_255,
+            "expected more 223-like periods than 255-like periods"
+        );
+
+        // WAV correlation: compare a aligned window to the golden reference.
+        let (wav_samples, wav_rate) =
+            read_wav_mono_samples("roms/automated_tests/square_timer_div2/correct.wav");
+        assert_eq!(wav_rate, SAMPLE_RATE_HZ as u32, "wav sample rate mismatch");
+
+        let wav_edge =
+            first_rising_edge_index(&wav_samples).expect("failed to find rising edge in wav");
+        let emu_edge =
+            first_rising_edge_index(samples).expect("failed to find rising edge in emu output");
+
+        let max_len = (SAMPLE_RATE_HZ as usize)
+            .min(wav_samples.len().saturating_sub(wav_edge))
+            .min(samples.len().saturating_sub(emu_edge));
+        assert!(max_len > 1000, "not enough samples for correlation");
+
+        let wav_slice = &wav_samples[wav_edge..wav_edge + max_len];
+        let emu_slice = &samples[emu_edge..emu_edge + max_len];
+        let correlation = max_abs_correlation_with_lag(wav_slice, emu_slice, 200);
+        assert!(
+            correlation > 0.8,
+            "expected strong wav correlation magnitude, got {}",
+            correlation
+        );
+    }
 
     // TODO test_apu_env
 
