@@ -9,6 +9,6 @@ pub mod pulse;
 pub mod triangle;
 
 #[cfg(test)]
-mod audio_analysis_test;
+mod audio_analysis_pulse_test;
 
 pub use apu::Apu;

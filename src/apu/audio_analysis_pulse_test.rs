@@ -878,7 +878,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apu_sweep_sub_sequence_pitch_drop() {
+    fn test_pulse_sweep_sub_sequence_pitch_drop() {
         // Recreate the sweep_sub sequence from roms/automated_tests/test_apu_sweep/sweep_sub.asm
         // and verify a slight pitch drop after the sweep clock + $4003 write.
         let sample_rate = 44_100.0;
