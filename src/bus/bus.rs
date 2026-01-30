@@ -1532,8 +1532,8 @@ mod tests {
         }
 
         // Now sweep timer period low from small -> larger via $400A.
-        // Triangle timer clocks every 2 CPU cycles in our model, so the sequencer step interval
-        // should be 2 * (period + 1) CPU cycles.
+        // Triangle timer clocks every CPU cycle, so the sequencer step interval
+        // should be (period + 1) CPU cycles.
         let periods = [0u8, 1, 2, 3, 7, 15, 31, 63];
 
         for &period in &periods {
@@ -1574,7 +1574,7 @@ mod tests {
                         period, prev_pos, pos, expected
                     );
 
-                    let expected_cycles = 2u32 * (period as u32 + 1);
+                    let expected_cycles = period as u32 + 1;
                     assert_eq!(
                         cycles_since_step, expected_cycles,
                         "period={}: step interval mismatch",

@@ -8,3 +8,5 @@ pub mod ppu_device;
 pub mod ram_device;
 
 pub use bus::Bus;
+#[cfg(test)]
+pub(crate) use bus::BusDevice;

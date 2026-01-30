@@ -36,6 +36,7 @@ roms/games
 .DS_Store
 *~
 \#*\#
+prompts.txt
 
 # NESER config
 neser.conf

@@ -12,6 +12,9 @@ import { createSaveStateContext } from "./save_state_context.js";
 import { fetchRomList } from "./rom_list.js";
 import { handleRomSelection } from "./rom_selection.js";
 import { createFrameLimiter } from "./frame_limiter.js";
+import { computePlaybackRate } from "./audio_resampler.js";
+import { planFrame } from "./frame_plan.js";
+import { createSineScroller } from "./sine_scroller.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -30,6 +33,12 @@ if (!gl) {
 
 const width = 256;
 const height = 240;
+const SCROLLER_TEXT = "Newest update: ** Jan 30: Updated frame limiter so that audio does not stutter the first ~10 seconds after loading a ROM **";
+const SCROLLER_SPEED = 1.5;
+const SCROLLER_AMPLITUDE = 50;
+const SCROLLER_FREQUENCY = 0.009;
+const SCROLLER_FONT_SIZE_PX = 20;
+const SCROLLER_FONT_FAMILY = "'VT323', monospace";
 
 // WebGL shader setup for filters - Thorough manual port from SDL .slang shaders
 const filters = {
@@ -524,7 +533,11 @@ let positionBuffer = null;
 let texCoordBuffer = null;
 let frameCount = 0; // For NTSC phase animation
 const frameLimiter = createFrameLimiter(60);
+const idleFrameLimiter = createFrameLimiter(60);
 let webglInitialized = false; // Track WebGL initialization state
+let idleScrollerActive = false;
+let idleScroller = null;
+let idleScrollerStartTime = 0;
 
 function resetWebGLResources() {
     if (nesTexture) gl.deleteTexture(nesTexture);
@@ -749,6 +762,9 @@ let audioContext = null;
 let nextAudioTime = 0;
 const AUDIO_SAMPLE_RATE = 44100; // Target output sample rate for Web Audio (NES audio is downsampled to this rate)
 const NES_APU_MAX = 1.177; // Conservative max output from NES APU mixer including expansion audio
+const AUDIO_TARGET_LATENCY = 0.1; // seconds
+const AUDIO_MAX_ADJUST = 0.005; // +/- 0.5% playback rate
+const AUDIO_LATENCY_GAIN = 0.1; // scale factor for latency correction
 let audioMuted = false;
 let gamepadEnabled = true;
 let lastGamepadState = {
@@ -775,6 +791,7 @@ async function applyRomBytes(bytes, name) {
         bytes: romBytes
     };
     setStatus(`Loaded ROM: ${name} (${romBytes.length} bytes)`);
+    stopIdleScroller();
     await refreshSaveStateController();
 }
 
@@ -902,8 +919,16 @@ function playAudioSamples(samples) {
     if (nextAudioTime - now > MAX_AUDIO_LOOKAHEAD) {
         nextAudioTime = now + MAX_AUDIO_LOOKAHEAD;
     }
+    const latencySeconds = Math.max(0, nextAudioTime - now);
+    const playbackRate = computePlaybackRate({
+        latencySeconds,
+        targetLatencySeconds: AUDIO_TARGET_LATENCY,
+        maxAdjust: AUDIO_MAX_ADJUST,
+        gain: AUDIO_LATENCY_GAIN
+    });
+    source.playbackRate.value = playbackRate;
     source.start(nextAudioTime);
-    nextAudioTime += buffer.duration;
+    nextAudioTime += buffer.duration / playbackRate;
 }
 
 async function start() {
@@ -917,6 +942,7 @@ async function start() {
         startBtn.disabled = false;
         return;
     }
+    stopIdleScroller();
     setStatus("Initializing emulator...");
     try {
         if (!nes) {
@@ -975,6 +1001,68 @@ function stop() {
     lastFrameTime = 0;
     frameLimiter.reset();
     setStatus("Stopped. You can restart or load a new ROM");
+}
+
+function startIdleScroller() {
+    if (idleScrollerActive || romBytes) {
+        return;
+    }
+    if (!webglInitialized && !initWebGL()) {
+        setStatus("Failed to initialize WebGL", true);
+        return;
+    }
+    if (!idleScroller) {
+        idleScroller = createSineScroller({
+            text: SCROLLER_TEXT,
+            width,
+            height,
+            speed: SCROLLER_SPEED,
+            amplitude: SCROLLER_AMPLITUDE,
+            frequency: SCROLLER_FREQUENCY,
+            fontSizePx: SCROLLER_FONT_SIZE_PX,
+            fontFamily: SCROLLER_FONT_FAMILY
+        });
+    }
+    idleScrollerActive = true;
+    idleScrollerStartTime = 0;
+    idleFrameLimiter.reset();
+    requestAnimationFrame(stepIdleScroller);
+}
+
+function stopIdleScroller() {
+    idleScrollerActive = false;
+    idleScrollerStartTime = 0;
+}
+
+function stepIdleScroller(timestamp) {
+    if (!idleScrollerActive || running || paused || romBytes) {
+        return;
+    }
+    if (!idleFrameLimiter.shouldRender(timestamp)) {
+        requestAnimationFrame(stepIdleScroller);
+        return;
+    }
+    if (!idleScrollerStartTime) {
+        idleScrollerStartTime = timestamp;
+    }
+
+    const frame = idleScroller.renderFrame(timestamp);
+    const filter = filters[currentFilter];
+    let rendered = false;
+    if (filter?.type === "ntsc") {
+        rendered = renderNtscPass(frame);
+    } else {
+        rendered = renderSinglePass(frame);
+    }
+
+    if (!rendered) {
+        idleScrollerActive = false;
+        setStatus("Rendering error occurred. Please restart.", true);
+        return;
+    }
+
+    frameCount = (frameCount + 1) % 3600;
+    requestAnimationFrame(stepIdleScroller);
 }
 
 function bindQuadAttributes(program) {
@@ -1096,21 +1184,22 @@ function renderNtscPass(frame) {
 function step(timestamp) {
     if (!running || paused) return;
     lastFrameTime = timestamp;
-    if (!frameLimiter.shouldRender(timestamp)) {
-        requestAnimationFrame(step);
-        return;
-    }
+    const framePlan = planFrame({
+        shouldRender: frameLimiter.shouldRender(timestamp)
+    });
     try {
         if (gamepadEnabled && nes) {
             pollGamepad();
         }
         const frame = nes.render_frame_rgba(); // RGBA8888
         const filter = filters[currentFilter];
-        let rendered = false;
-        if (filter?.type === "ntsc") {
-            rendered = renderNtscPass(frame);
-        } else {
-            rendered = renderSinglePass(frame);
+        let rendered = true;
+        if (framePlan.shouldRender) {
+            if (filter?.type === "ntsc") {
+                rendered = renderNtscPass(frame);
+            } else {
+                rendered = renderSinglePass(frame);
+            }
         }
 
         if (!rendered) {
@@ -1298,6 +1387,7 @@ updateCanvasSize(INITIAL_HEIGHT);
 updateFullscreenButton();
 filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
 updateSaveStateButtons();
+startIdleScroller();
 
 screenMinusBtn.addEventListener("click", () => {
     updateCanvasSize(currentHeight - SCALE_STEP);

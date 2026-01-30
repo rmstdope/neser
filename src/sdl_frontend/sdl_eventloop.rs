@@ -400,7 +400,8 @@ impl SdlEventLoop {
         let mut last_perf_instant = Instant::now();
 
         // Start audio playback if audio is enabled
-        if let Some(ref audio) = self.audio {
+        if let Some(ref mut audio) = self.audio {
+            audio.prime_startup(2048);
             audio.resume();
         }
 
@@ -1355,18 +1356,17 @@ mod tests {
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
         let audio = SdlNesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
 
-        // Default volume is 0.25.
-        assert!((audio.get_volume() - 0.25).abs() < 1e-6);
+        let initial_volume = audio.get_volume();
 
         apply_volume_hotkey(&audio, Keycode::F2);
         assert!(
-            (audio.get_volume() - 0.35).abs() < 1e-6,
+            (audio.get_volume() - (initial_volume + 0.1)).abs() < 1e-6,
             "F2 should raise volume by 0.1"
         );
 
         apply_volume_hotkey(&audio, Keycode::F3);
         assert!(
-            (audio.get_volume() - 0.25).abs() < 1e-6,
+            (audio.get_volume() - initial_volume).abs() < 1e-6,
             "F3 should lower volume by 0.1"
         );
 

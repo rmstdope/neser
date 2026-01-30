@@ -429,15 +429,15 @@ impl Apu {
         self.triangle.apply_pending_length_halt();
         self.noise.apply_pending_length_halt();
 
-        // Clock timers every APU cycle (every 2 CPU cycles)
-        // APU runs at half the CPU clock rate
-        // Use dedicated apu_cycle counter to ensure consistent timing
+        // Clock timers on the APU cycle (every 2 CPU cycles).
+        // Note: The triangle timer runs at the CPU clock rate (NESdev), so it
+        // must be clocked every CPU cycle, not every other CPU cycle.
         if self.apu_cycle.is_multiple_of(2) {
             self.pulse1.clock_timer();
             self.pulse2.clock_timer();
-            self.triangle.clock_timer();
             self.noise.clock_timer();
         }
+        self.triangle.clock_timer();
 
         // Increment APU cycle counter
         self.apu_cycle = self.apu_cycle.wrapping_add(1);
@@ -1034,6 +1034,26 @@ mod tests {
     }
 
     #[test]
+    fn test_length_halt_applies_before_immediate_half_frame_on_4017_write() {
+        let mut apu = Apu::new_for_testing();
+
+        apu.write_enable(STATUS_PULSE1);
+        apu.pulse1_mut().write_control(0x10); // unhalt
+        write_pulse1_length(&mut apu, 0x18); // length index 3 -> 2
+        assert_eq!(apu.pulse1().get_length_counter(), 2);
+
+        apu.pulse1_mut().write_control(0x30); // halt (pending)
+        apu.frame_counter_mut().write_register(0x80); // immediate quarter+half clock next tick
+        apu.clock();
+
+        assert_eq!(
+            apu.pulse1().get_length_counter(),
+            1,
+            "halt should apply after the immediate half-frame length clock"
+        );
+    }
+
+    #[test]
     fn test_length_reload_during_half_frame_with_nonzero_counter_is_ignored() {
         let mut apu = Apu::new_for_testing();
 
@@ -1222,6 +1242,23 @@ mod tests {
 
         // Sweep should have been clocked (reload flag consumed)
         assert!(!apu.pulse1().get_sweep_reload());
+    }
+
+    #[test]
+    fn test_sweep_immediate_half_frame_updates_period() {
+        let mut apu = Apu::new_for_testing();
+
+        apu.pulse1_mut().write_sweep(0b1000_1001); // enable, period=0, negate=1, shift=1
+        apu.pulse1_mut().write_timer_low(16);
+        apu.pulse1_mut().write_timer_high(0);
+
+        apu.write_frame_counter(0b1100_0000); // 5-step + immediate quarter/half
+
+        for _ in 0..4 {
+            apu.clock();
+        }
+
+        assert_eq!(apu.pulse1().get_timer_period(), 7);
     }
 
     #[test]

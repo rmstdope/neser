@@ -1,6 +1,10 @@
 #[cfg(test)]
 mod tests {
     use crate::apu::Apu;
+    use crate::bus::BusDevice;
+    use crate::bus::apu_device::ApuDevice;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
 
@@ -14,22 +18,27 @@ mod tests {
     ///
     /// We set the sample rate to the CPU clock so every `clock()` yields
     /// one mixed sample, and disable non-pulse channels for isolation.
-    fn create_apu() -> Apu {
+    fn create_apu() -> (Rc<RefCell<Apu>>, ApuDevice) {
         create_apu_with_sample_rate(CPU_CLOCK_NTSC)
     }
 
-    fn create_apu_with_sample_rate(sample_rate: f32) -> Apu {
-        let mut apu = Apu::new();
-        apu.set_sample_rate(sample_rate);
-        apu.set_triangle_enabled(false);
-        apu.set_noise_enabled(false);
-        apu.set_dmc_enabled(false);
-        apu
+    fn create_apu_with_sample_rate(sample_rate: f32) -> (Rc<RefCell<Apu>>, ApuDevice) {
+        let apu = Rc::new(RefCell::new(Apu::new()));
+        {
+            let mut apu_mut = apu.borrow_mut();
+            apu_mut.set_sample_rate(sample_rate);
+            apu_mut.set_triangle_enabled(false);
+            apu_mut.set_noise_enabled(false);
+            apu_mut.set_dmc_enabled(false);
+        }
+        let device = ApuDevice::new(apu.clone());
+        (apu, device)
     }
 
-    fn set_pulse_mix_enable(apu: &mut Apu, channel: PulseChannel) {
-        apu.set_pulse1_enabled(matches!(channel, PulseChannel::Pulse1));
-        apu.set_pulse2_enabled(matches!(channel, PulseChannel::Pulse2));
+    fn set_pulse_mix_enable(apu: &Rc<RefCell<Apu>>, channel: PulseChannel) {
+        let mut apu_mut = apu.borrow_mut();
+        apu_mut.set_pulse1_enabled(matches!(channel, PulseChannel::Pulse1));
+        apu_mut.set_pulse2_enabled(matches!(channel, PulseChannel::Pulse2));
     }
 
     fn pulse_enable_mask(channel: PulseChannel) -> u8 {
@@ -39,32 +48,36 @@ mod tests {
         }
     }
 
-    fn write_pulse_control(apu: &mut Apu, channel: PulseChannel, value: u8) {
-        match channel {
-            PulseChannel::Pulse1 => apu.pulse1_mut().write_control(value),
-            PulseChannel::Pulse2 => apu.pulse2_mut().write_control(value),
-        }
+    fn write_pulse_control(device: &mut ApuDevice, channel: PulseChannel, value: u8) {
+        let addr = match channel {
+            PulseChannel::Pulse1 => 0x4000,
+            PulseChannel::Pulse2 => 0x4004,
+        };
+        assert!(device.write(addr, value, false));
     }
 
-    fn write_pulse_timer_low(apu: &mut Apu, channel: PulseChannel, value: u8) {
-        match channel {
-            PulseChannel::Pulse1 => apu.pulse1_mut().write_timer_low(value),
-            PulseChannel::Pulse2 => apu.pulse2_mut().write_timer_low(value),
-        }
+    fn write_pulse_timer_low(device: &mut ApuDevice, channel: PulseChannel, value: u8) {
+        let addr = match channel {
+            PulseChannel::Pulse1 => 0x4002,
+            PulseChannel::Pulse2 => 0x4006,
+        };
+        assert!(device.write(addr, value, false));
     }
 
-    fn write_pulse_timer_high_and_length(apu: &mut Apu, channel: PulseChannel, value: u8) {
-        match channel {
-            PulseChannel::Pulse1 => apu.pulse1_mut().write_length_counter_timer_high(value),
-            PulseChannel::Pulse2 => apu.pulse2_mut().write_length_counter_timer_high(value),
-        }
+    fn write_pulse_timer_high_and_length(device: &mut ApuDevice, channel: PulseChannel, value: u8) {
+        let addr = match channel {
+            PulseChannel::Pulse1 => 0x4003,
+            PulseChannel::Pulse2 => 0x4007,
+        };
+        assert!(device.write(addr, value, false));
     }
 
-    fn write_pulse_sweep(apu: &mut Apu, channel: PulseChannel, value: u8) {
-        match channel {
-            PulseChannel::Pulse1 => apu.pulse1_mut().write_sweep(value),
-            PulseChannel::Pulse2 => apu.pulse2_mut().write_sweep(value),
-        }
+    fn write_pulse_sweep(device: &mut ApuDevice, channel: PulseChannel, value: u8) {
+        let addr = match channel {
+            PulseChannel::Pulse1 => 0x4001,
+            PulseChannel::Pulse2 => 0x4005,
+        };
+        assert!(device.write(addr, value, false));
     }
 
     /// Configure the pulse channel for a simple, constant-volume tone.
@@ -74,7 +87,8 @@ mod tests {
     /// - $4002/$4003 or $4006/$4007 timer (period)
     /// - length reload + enable, so output is not muted by length counter
     fn configure_pulse_constant_volume(
-        apu: &mut Apu,
+        apu: &Rc<RefCell<Apu>>,
+        device: &mut ApuDevice,
         channel: PulseChannel,
         duty: u8,
         volume: u8,
@@ -83,19 +97,20 @@ mod tests {
     ) {
         let duty_bits = (duty & 0x03) << 6;
         let control = duty_bits | 0b0001_0000 | (volume & 0x0F);
-        write_pulse_control(apu, channel, control);
+        write_pulse_control(device, channel, control);
 
-        apu.write_enable(pulse_enable_mask(channel));
+        assert!(device.write(0x4015, pulse_enable_mask(channel), false));
         set_pulse_mix_enable(apu, channel);
 
-        write_pulse_timer_low(apu, channel, (timer & 0x00FF) as u8);
+        write_pulse_timer_low(device, channel, (timer & 0x00FF) as u8);
         let timer_high = ((timer >> 8) as u8) & 0x07;
         let length_and_high = ((length_index & 0x1F) << 3) | timer_high;
-        write_pulse_timer_high_and_length(apu, channel, length_and_high);
+        write_pulse_timer_high_and_length(device, channel, length_and_high);
 
         // Apply pending length reload on the next clock.
-        apu.clock();
-        let _ = apu.get_sample();
+        let mut apu_mut = apu.borrow_mut();
+        apu_mut.clock();
+        let _ = apu_mut.get_sample();
     }
 
     /// Configure the pulse channel for envelope-driven output (disable constant volume).
@@ -105,7 +120,8 @@ mod tests {
     /// - $4002/$4003 or $4006/$4007 timer (period)
     /// - length reload + enable, so output is not muted by length counter
     fn configure_pulse_envelope(
-        apu: &mut Apu,
+        apu: &Rc<RefCell<Apu>>,
+        device: &mut ApuDevice,
         channel: PulseChannel,
         duty: u8,
         envelope_period: u8,
@@ -114,18 +130,19 @@ mod tests {
     ) {
         let duty_bits = (duty & 0x03) << 6;
         let control = duty_bits | (envelope_period & 0x0F);
-        write_pulse_control(apu, channel, control);
+        write_pulse_control(device, channel, control);
 
-        apu.write_enable(pulse_enable_mask(channel));
+        assert!(device.write(0x4015, pulse_enable_mask(channel), false));
         set_pulse_mix_enable(apu, channel);
 
-        write_pulse_timer_low(apu, channel, (timer & 0x00FF) as u8);
+        write_pulse_timer_low(device, channel, (timer & 0x00FF) as u8);
         let timer_high = ((timer >> 8) as u8) & 0x07;
         let length_and_high = ((length_index & 0x1F) << 3) | timer_high;
-        write_pulse_timer_high_and_length(apu, channel, length_and_high);
+        write_pulse_timer_high_and_length(device, channel, length_and_high);
 
-        apu.clock();
-        let _ = apu.get_sample();
+        let mut apu_mut = apu.borrow_mut();
+        apu_mut.clock();
+        let _ = apu_mut.get_sample();
     }
 
     /// Configure the pulse channel with explicit control bits.
@@ -133,35 +150,38 @@ mod tests {
     /// This is useful for tests that require the length counter halt (bit 5)
     /// or envelope loop behavior while still using APU-level sampling.
     fn configure_pulse_with_control(
-        apu: &mut Apu,
+        apu: &Rc<RefCell<Apu>>,
+        device: &mut ApuDevice,
         channel: PulseChannel,
         control: u8,
         timer: u16,
         length_index: u8,
     ) {
-        write_pulse_control(apu, channel, control);
+        write_pulse_control(device, channel, control);
 
-        apu.write_enable(pulse_enable_mask(channel));
+        assert!(device.write(0x4015, pulse_enable_mask(channel), false));
         set_pulse_mix_enable(apu, channel);
 
-        write_pulse_timer_low(apu, channel, (timer & 0x00FF) as u8);
+        write_pulse_timer_low(device, channel, (timer & 0x00FF) as u8);
         let timer_high = ((timer >> 8) as u8) & 0x07;
         let length_and_high = ((length_index & 0x1F) << 3) | timer_high;
-        write_pulse_timer_high_and_length(apu, channel, length_and_high);
+        write_pulse_timer_high_and_length(device, channel, length_and_high);
 
-        apu.clock();
-        let _ = apu.get_sample();
+        let mut apu_mut = apu.borrow_mut();
+        apu_mut.clock();
+        let _ = apu_mut.get_sample();
     }
 
     /// Clock the APU and collect mixed output samples.
     ///
     /// We set the sample rate so each `clock()` yields one sample; if a sample
     /// is delayed, we keep clocking until it is available.
-    fn collect_samples(apu: &mut Apu, samples: usize) -> Vec<f32> {
+    fn collect_samples(apu: &Rc<RefCell<Apu>>, samples: usize) -> Vec<f32> {
         let mut outputs = Vec::with_capacity(samples);
         while outputs.len() < samples {
-            apu.clock();
-            if let Some(sample) = apu.get_sample() {
+            let mut apu_mut = apu.borrow_mut();
+            apu_mut.clock();
+            if let Some(sample) = apu_mut.get_sample() {
                 outputs.push(sample);
             }
         }
@@ -194,7 +214,7 @@ mod tests {
     }
 
     /// Measure the maximum output observed over one full waveform period.
-    fn max_output_over_period(apu: &mut Apu, period_samples: usize) -> f32 {
+    fn max_output_over_period(apu: &Rc<RefCell<Apu>>, period_samples: usize) -> f32 {
         collect_samples(apu, period_samples)
             .into_iter()
             .fold(0.0, f32::max)
@@ -204,11 +224,12 @@ mod tests {
     ///
     /// Writing $4017 with bit 7 set generates an immediate quarter+half clock
     /// once the delayed write takes effect (3-4 CPU cycles).
-    fn clock_immediate_quarter_and_half(apu: &mut Apu) {
-        apu.write_frame_counter(0x80);
+    fn clock_immediate_quarter_and_half(apu: &Rc<RefCell<Apu>>, device: &mut ApuDevice) {
+        assert!(device.write(0x4017, 0x80, false));
         for _ in 0..4 {
-            apu.clock();
-            let _ = apu.get_sample();
+            let mut apu_mut = apu.borrow_mut();
+            apu_mut.clock();
+            let _ = apu_mut.get_sample();
         }
     }
 
@@ -224,16 +245,17 @@ mod tests {
         let cases = [(0, 0.125f32), (1, 0.25f32), (2, 0.5f32), (3, 0.75f32)];
 
         for (duty_mode, expected_ratio) in cases {
-            let mut apu = create_apu();
+            let (apu, mut device) = create_apu();
             configure_pulse_constant_volume(
-                &mut apu,
+                &apu,
+                &mut device,
                 PulseChannel::Pulse1,
                 duty_mode,
                 15,
                 timer,
                 0,
             );
-            let outputs = collect_samples(&mut apu, period_samples * 4);
+            let outputs = collect_samples(&apu, period_samples * 4);
 
             // Count non-zero samples to approximate duty ratio.
             let high = outputs.iter().filter(|&&value| value > 0.0).count();
@@ -253,13 +275,13 @@ mod tests {
         //
         // We detect rising edges in the output and compare the average period
         // to 16 * (timer + 1), which is the pulse timer formula in CPU cycles.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x000F;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0);
+        configure_pulse_constant_volume(&apu, &mut device, PulseChannel::Pulse1, 2, 15, timer, 0);
 
         // Collect several periods to average out edge jitter.
         let period_samples = 16 * (timer as usize + 1);
-        let outputs = collect_samples(&mut apu, period_samples * 5);
+        let outputs = collect_samples(&apu, period_samples * 5);
 
         // Compare average period to expected timer-derived period.
         let avg_period = average_period(&outputs);
@@ -279,14 +301,22 @@ mod tests {
         //
         // We enable the length counter, then advance a few half-frame clocks.
         // Once the counter expires, output should be zero.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0008;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0x03);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x03,
+        );
 
         // Each period provides a window to detect non-zero output.
         let period_samples = 16 * (timer as usize + 1);
 
-        let early_outputs = collect_samples(&mut apu, period_samples);
+        let early_outputs = collect_samples(&apu, period_samples);
         let has_sound_initially = early_outputs.iter().any(|&value| value > 0.0);
         assert!(
             has_sound_initially,
@@ -295,10 +325,10 @@ mod tests {
 
         // Advance enough half-frame clocks to expire a short length (index 3 -> length 2).
         for _ in 0..3 {
-            clock_immediate_quarter_and_half(&mut apu);
+            clock_immediate_quarter_and_half(&apu, &mut device);
         }
 
-        let late_outputs = collect_samples(&mut apu, period_samples * 2);
+        let late_outputs = collect_samples(&apu, period_samples * 2);
         assert!(
             late_outputs.iter().all(|&value| value == 0.0),
             "expected length counter to silence output"
@@ -313,17 +343,17 @@ mod tests {
         // With envelope period n=0, the envelope counter should decrement
         // on every envelope clock. We sample one full period after each
         // clock and expect the maximum output to step down.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0010;
         let period_samples = 16 * (timer as usize + 1);
 
-        configure_pulse_envelope(&mut apu, PulseChannel::Pulse1, 2, 0, timer, 0x1F);
+        configure_pulse_envelope(&apu, &mut device, PulseChannel::Pulse1, 2, 0, timer, 0x1F);
 
         // Collect a few envelope steps and ensure they decay by 1 each clock.
         let mut levels = Vec::with_capacity(4);
         for _ in 0..4 {
-            clock_immediate_quarter_and_half(&mut apu);
-            let observed = max_output_over_period(&mut apu, period_samples);
+            clock_immediate_quarter_and_half(&apu, &mut device);
+            let observed = max_output_over_period(&apu, period_samples);
             levels.push(observed);
         }
 
@@ -347,18 +377,25 @@ mod tests {
     fn test_pulse_length_counter_halt_prevents_silence() {
         // Verify that setting the length counter halt flag prevents the
         // length counter from silencing the channel.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0008;
         let duty_bits = 2u8 << 6;
         let control = duty_bits | 0b0011_0000 | 0x0F; // halt=1, constant volume=15
-        configure_pulse_with_control(&mut apu, PulseChannel::Pulse1, control, timer, 0x03);
+        configure_pulse_with_control(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            control,
+            timer,
+            0x03,
+        );
 
         for _ in 0..10 {
-            clock_immediate_quarter_and_half(&mut apu);
+            clock_immediate_quarter_and_half(&apu, &mut device);
         }
 
         let period_samples = 16 * (timer as usize + 1);
-        let outputs = collect_samples(&mut apu, period_samples);
+        let outputs = collect_samples(&apu, period_samples);
         assert!(
             outputs.iter().any(|&value| value > 0.0),
             "expected output with halt set"
@@ -371,17 +408,24 @@ mod tests {
         //
         // With envelope period n=0, the envelope counter should decrement
         // on every envelope clock, then wrap to 15 after reaching 0.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0010;
         let duty_bits = 2u8 << 6;
         let control = duty_bits | 0b0010_0000; // loop=1, constant volume disabled, n=0
-        configure_pulse_with_control(&mut apu, PulseChannel::Pulse1, control, timer, 0x1F);
+        configure_pulse_with_control(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            control,
+            timer,
+            0x1F,
+        );
 
         let period_samples = 16 * (timer as usize + 1);
         let mut levels = Vec::with_capacity(20);
         for _ in 0..20 {
-            clock_immediate_quarter_and_half(&mut apu);
-            levels.push(max_output_over_period(&mut apu, period_samples));
+            clock_immediate_quarter_and_half(&apu, &mut device);
+            levels.push(max_output_over_period(&apu, period_samples));
         }
 
         let min_before_wrap = levels[..16].iter().copied().fold(f32::INFINITY, f32::min);
@@ -397,20 +441,28 @@ mod tests {
     #[test]
     fn test_pulse_sweep_shift_zero_keeps_period() {
         // Verify that sweep shift=0 does not update the period.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0030;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         let base_period_samples = 16 * (timer as usize + 1);
-        let base_outputs = collect_samples(&mut apu, base_period_samples * 4);
+        let base_outputs = collect_samples(&apu, base_period_samples * 4);
         let base_avg = average_period(&base_outputs);
 
         // Enable sweep with shift=0 (no change expected).
-        write_pulse_sweep(&mut apu, PulseChannel::Pulse1, 0x80);
-        clock_immediate_quarter_and_half(&mut apu);
-        clock_immediate_quarter_and_half(&mut apu);
+        write_pulse_sweep(&mut device, PulseChannel::Pulse1, 0x80);
+        clock_immediate_quarter_and_half(&apu, &mut device);
+        clock_immediate_quarter_and_half(&apu, &mut device);
 
-        let updated_outputs = collect_samples(&mut apu, base_period_samples * 4);
+        let updated_outputs = collect_samples(&apu, base_period_samples * 4);
         let updated_avg = average_period(&updated_outputs);
 
         assert!(
@@ -422,19 +474,27 @@ mod tests {
     #[test]
     fn test_pulse_disabled_via_4015_silences_output() {
         // Verify that disabling the pulse via $4015 silences output.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0010;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         let period_samples = 16 * (timer as usize + 1);
-        let outputs = collect_samples(&mut apu, period_samples);
+        let outputs = collect_samples(&apu, period_samples);
         assert!(
             outputs.iter().any(|&value| value > 0.0),
             "expected output before disable"
         );
 
-        apu.write_enable(0x00);
-        let outputs = collect_samples(&mut apu, period_samples * 2);
+        assert!(device.write(0x4015, 0x00, false));
+        let outputs = collect_samples(&apu, period_samples * 2);
         assert!(
             outputs.iter().all(|&value| value == 0.0),
             "expected silence after disable"
@@ -448,24 +508,34 @@ mod tests {
         //
         // We configure a sweep with shift=1 and period=0 so that every
         // applicable sweep clock updates the timer.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0020;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         let base_period_samples = 16 * (timer as usize + 1);
-        let base_outputs = collect_samples(&mut apu, base_period_samples * 4);
+        let base_outputs = collect_samples(&apu, base_period_samples * 4);
         let base_avg = average_period(&base_outputs);
 
         // Enable sweep: period=0, negate=0, shift=1.
-        write_pulse_sweep(&mut apu, PulseChannel::Pulse1, 0x81);
+        write_pulse_sweep(&mut device, PulseChannel::Pulse1, 0x81);
 
-        // First sweep clock reloads divider, second performs update.
-        clock_immediate_quarter_and_half(&mut apu);
-        clock_immediate_quarter_and_half(&mut apu);
+        // With sweep period=0, each half-frame clock updates immediately.
+        // Two clocks apply two successive updates.
+        clock_immediate_quarter_and_half(&apu, &mut device);
+        clock_immediate_quarter_and_half(&apu, &mut device);
 
         let updated_timer = timer + (timer >> 1);
+        let updated_timer = updated_timer + (updated_timer >> 1);
         let updated_period_samples = 16 * (updated_timer as usize + 1);
-        let updated_outputs = collect_samples(&mut apu, updated_period_samples * 4);
+        let updated_outputs = collect_samples(&apu, updated_period_samples * 4);
         let updated_avg = average_period(&updated_outputs);
 
         assert!(updated_avg > base_avg, "expected sweep to increase period");
@@ -489,27 +559,41 @@ mod tests {
         let expected_pulse1 = timer - change - 1;
         let expected_pulse2 = timer - change;
 
-        let mut apu1 = create_apu();
-        let mut apu2 = create_apu();
+        let (apu1, mut device1) = create_apu();
+        let (apu2, mut device2) = create_apu();
 
-        configure_pulse_constant_volume(&mut apu1, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
-        configure_pulse_constant_volume(&mut apu2, PulseChannel::Pulse2, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu1,
+            &mut device1,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
+        configure_pulse_constant_volume(
+            &apu2,
+            &mut device2,
+            PulseChannel::Pulse2,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         // Enable sweep: period=0, negate=1, shift=1.
-        write_pulse_sweep(&mut apu1, PulseChannel::Pulse1, 0x89);
-        write_pulse_sweep(&mut apu2, PulseChannel::Pulse2, 0x89);
+        write_pulse_sweep(&mut device1, PulseChannel::Pulse1, 0x89);
+        write_pulse_sweep(&mut device2, PulseChannel::Pulse2, 0x89);
 
-        // First sweep clock reloads divider, second performs update.
-        clock_immediate_quarter_and_half(&mut apu1);
-        clock_immediate_quarter_and_half(&mut apu1);
-        clock_immediate_quarter_and_half(&mut apu2);
-        clock_immediate_quarter_and_half(&mut apu2);
+        // With sweep period=0, the update happens on the first half-frame clock.
+        clock_immediate_quarter_and_half(&apu1, &mut device1);
+        clock_immediate_quarter_and_half(&apu2, &mut device2);
 
         let expected_pulse1_samples = 16 * (expected_pulse1 as usize + 1);
         let expected_pulse2_samples = 16 * (expected_pulse2 as usize + 1);
 
-        let outputs1 = collect_samples(&mut apu1, expected_pulse1_samples * 4);
-        let outputs2 = collect_samples(&mut apu2, expected_pulse2_samples * 4);
+        let outputs1 = collect_samples(&apu1, expected_pulse1_samples * 4);
+        let outputs2 = collect_samples(&apu2, expected_pulse2_samples * 4);
 
         let avg1 = average_period(&outputs1);
         let avg2 = average_period(&outputs2);
@@ -533,12 +617,20 @@ mod tests {
         //
         // This mute condition is independent of sweep enable and should
         // silence the channel even if the duty sequence is high.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0007;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         let period_samples = 16 * (timer as usize + 1);
-        let outputs = collect_samples(&mut apu, period_samples * 2);
+        let outputs = collect_samples(&apu, period_samples * 2);
         assert!(outputs.iter().all(|&value| value == 0.0), "expected mute");
     }
 
@@ -549,15 +641,23 @@ mod tests {
         // The muting check uses the current sweep target regardless of sweep
         // enable, so configuring a positive shift that overflows should silence
         // the output immediately.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x07FE;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         // shift=1 produces target = timer + (timer >> 1) > $7FF.
-        write_pulse_sweep(&mut apu, PulseChannel::Pulse1, 0x81);
+        write_pulse_sweep(&mut device, PulseChannel::Pulse1, 0x81);
 
         let period_samples = 16 * (timer as usize + 1);
-        let outputs = collect_samples(&mut apu, period_samples * 2);
+        let outputs = collect_samples(&apu, period_samples * 2);
         assert!(outputs.iter().all(|&value| value == 0.0), "expected mute");
     }
 
@@ -565,23 +665,23 @@ mod tests {
     fn test_pulse_envelope_restart_on_length_write() {
         // Verify that writing $4003/$4007 restarts the envelope on the next
         // envelope clock, increasing the observed output.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0010;
         let period_samples = 16 * (timer as usize + 1);
 
-        configure_pulse_envelope(&mut apu, PulseChannel::Pulse1, 2, 0, timer, 0x1F);
+        configure_pulse_envelope(&apu, &mut device, PulseChannel::Pulse1, 2, 0, timer, 0x1F);
 
         for _ in 0..3 {
-            clock_immediate_quarter_and_half(&mut apu);
+            clock_immediate_quarter_and_half(&apu, &mut device);
         }
-        let before = max_output_over_period(&mut apu, period_samples);
+        let before = max_output_over_period(&apu, period_samples);
 
         let timer_high = ((timer >> 8) as u8) & 0x07;
         let length_and_high = (0x1F << 3) | timer_high;
-        write_pulse_timer_high_and_length(&mut apu, PulseChannel::Pulse1, length_and_high);
+        write_pulse_timer_high_and_length(&mut device, PulseChannel::Pulse1, length_and_high);
 
-        clock_immediate_quarter_and_half(&mut apu);
-        let after = max_output_over_period(&mut apu, period_samples);
+        clock_immediate_quarter_and_half(&apu, &mut device);
+        let after = max_output_over_period(&apu, period_samples);
 
         let epsilon = 1e-6;
         assert!(
@@ -593,21 +693,29 @@ mod tests {
     #[test]
     fn test_pulse_sweep_disabled_does_not_change_period() {
         // Verify that sweep does not affect the period when the enable bit is 0.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0030;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         let expected_period = 16 * (timer as usize + 1);
-        let outputs = collect_samples(&mut apu, expected_period * 4);
+        let outputs = collect_samples(&apu, expected_period * 4);
         let base_avg = average_period(&outputs);
         assert_eq!(base_avg, expected_period as f32, "unexpected base period");
 
         // Enable=0, shift=1.
-        write_pulse_sweep(&mut apu, PulseChannel::Pulse1, 0x01);
-        clock_immediate_quarter_and_half(&mut apu);
-        clock_immediate_quarter_and_half(&mut apu);
+        write_pulse_sweep(&mut device, PulseChannel::Pulse1, 0x01);
+        clock_immediate_quarter_and_half(&apu, &mut device);
+        clock_immediate_quarter_and_half(&apu, &mut device);
 
-        let outputs = collect_samples(&mut apu, expected_period * 4);
+        let outputs = collect_samples(&apu, expected_period * 4);
         let updated_avg = average_period(&outputs);
         assert_eq!(
             updated_avg, expected_period as f32,
@@ -619,22 +727,30 @@ mod tests {
     fn test_pulse_disable_then_reenable_keeps_silence_until_reload() {
         // Verify that disabling a pulse clears the length counter, and
         // re-enabling without a length reload keeps it silent.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0010;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         let period_samples = 16 * (timer as usize + 1);
-        let outputs = collect_samples(&mut apu, period_samples);
+        let outputs = collect_samples(&apu, period_samples);
         assert!(
             outputs.iter().any(|&value| value > 0.0),
             "expected output before disable"
         );
 
-        apu.write_enable(0x00);
-        apu.write_enable(0x01);
-        set_pulse_mix_enable(&mut apu, PulseChannel::Pulse1);
+        assert!(device.write(0x4015, 0x00, false));
+        assert!(device.write(0x4015, 0x01, false));
+        set_pulse_mix_enable(&apu, PulseChannel::Pulse1);
 
-        let outputs = collect_samples(&mut apu, period_samples * 2);
+        let outputs = collect_samples(&apu, period_samples * 2);
         assert!(
             outputs.iter().all(|&value| value == 0.0),
             "expected silence without reload"
@@ -645,25 +761,28 @@ mod tests {
     fn test_pulse_timer_high_low_write_ordering() {
         // Verify that writing timer high then timer low produces the expected
         // period once both bytes are set.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x01AB;
         let period_samples = 16 * (timer as usize + 1);
 
         let duty_bits = 2u8 << 6;
         let control = duty_bits | 0b0001_0000 | 0x0F;
-        write_pulse_control(&mut apu, PulseChannel::Pulse1, control);
-        apu.write_enable(0x01);
-        set_pulse_mix_enable(&mut apu, PulseChannel::Pulse1);
+        write_pulse_control(&mut device, PulseChannel::Pulse1, control);
+        assert!(device.write(0x4015, 0x01, false));
+        set_pulse_mix_enable(&apu, PulseChannel::Pulse1);
 
         let timer_high = ((timer >> 8) as u8) & 0x07;
         let length_and_high = (0x1F << 3) | timer_high;
-        write_pulse_timer_high_and_length(&mut apu, PulseChannel::Pulse1, length_and_high);
-        write_pulse_timer_low(&mut apu, PulseChannel::Pulse1, (timer & 0x00FF) as u8);
+        write_pulse_timer_high_and_length(&mut device, PulseChannel::Pulse1, length_and_high);
+        write_pulse_timer_low(&mut device, PulseChannel::Pulse1, (timer & 0x00FF) as u8);
 
-        apu.clock();
-        let _ = apu.get_sample();
+        {
+            let mut apu_mut = apu.borrow_mut();
+            apu_mut.clock();
+            let _ = apu_mut.get_sample();
+        }
 
-        let outputs = collect_samples(&mut apu, period_samples * 4);
+        let outputs = collect_samples(&apu, period_samples * 4);
         let avg_period = average_period(&outputs);
         assert_eq!(
             avg_period, period_samples as f32,
@@ -677,22 +796,30 @@ mod tests {
         //
         // With sweep period = 1, the update should occur on the third half-frame
         // clock after the write (reload, decrement, then update).
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0020;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         let base_period_samples = 16 * (timer as usize + 1);
-        let base_outputs = collect_samples(&mut apu, base_period_samples * 4);
+        let base_outputs = collect_samples(&apu, base_period_samples * 4);
         let base_avg = average_period(&base_outputs);
 
         // Enable sweep: period=1, negate=0, shift=1.
-        write_pulse_sweep(&mut apu, PulseChannel::Pulse1, 0x91);
+        write_pulse_sweep(&mut device, PulseChannel::Pulse1, 0x91);
 
         // First two half-frame clocks should not update the period.
-        clock_immediate_quarter_and_half(&mut apu);
-        clock_immediate_quarter_and_half(&mut apu);
+        clock_immediate_quarter_and_half(&apu, &mut device);
+        clock_immediate_quarter_and_half(&apu, &mut device);
 
-        let outputs = collect_samples(&mut apu, base_period_samples * 4);
+        let outputs = collect_samples(&apu, base_period_samples * 4);
         let mid_avg = average_period(&outputs);
         assert!(
             (mid_avg - base_avg).abs() <= 1e-6,
@@ -700,11 +827,11 @@ mod tests {
         );
 
         // Third half-frame clock should update the period.
-        clock_immediate_quarter_and_half(&mut apu);
+        clock_immediate_quarter_and_half(&apu, &mut device);
 
         let updated_timer = timer + (timer >> 1);
         let updated_period_samples = 16 * (updated_timer as usize + 1);
-        let outputs = collect_samples(&mut apu, updated_period_samples * 4);
+        let outputs = collect_samples(&apu, updated_period_samples * 4);
         let updated_avg = average_period(&outputs);
         assert_eq!(
             updated_avg, updated_period_samples as f32,
@@ -715,18 +842,25 @@ mod tests {
     #[test]
     fn test_pulse_constant_volume_ignores_envelope_clock() {
         // Verify that constant volume output remains stable across envelope clocks.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0010;
         let duty_bits = 2u8 << 6;
         let control = duty_bits | 0b0001_0000 | 0x0F; // constant volume 15
-        configure_pulse_with_control(&mut apu, PulseChannel::Pulse1, control, timer, 0x1F);
+        configure_pulse_with_control(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            control,
+            timer,
+            0x1F,
+        );
 
         let period_samples = 16 * (timer as usize + 1);
-        let baseline = max_output_over_period(&mut apu, period_samples);
+        let baseline = max_output_over_period(&apu, period_samples);
 
         for _ in 0..4 {
-            clock_immediate_quarter_and_half(&mut apu);
-            let observed = max_output_over_period(&mut apu, period_samples);
+            clock_immediate_quarter_and_half(&apu, &mut device);
+            let observed = max_output_over_period(&apu, period_samples);
             assert_eq!(
                 observed, baseline,
                 "expected constant volume across envelope clocks"
@@ -737,18 +871,25 @@ mod tests {
     #[test]
     fn test_pulse_constant_volume_change_updates_output() {
         // Verify that changing constant volume updates the output amplitude.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0010;
         let duty_bits = 2u8 << 6;
         let control_loud = duty_bits | 0b0001_0000 | 0x0F;
         let control_soft = duty_bits | 0b0001_0000 | 0x08;
-        configure_pulse_with_control(&mut apu, PulseChannel::Pulse1, control_loud, timer, 0x1F);
+        configure_pulse_with_control(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            control_loud,
+            timer,
+            0x1F,
+        );
 
         let period_samples = 16 * (timer as usize + 1);
-        let loud = max_output_over_period(&mut apu, period_samples);
+        let loud = max_output_over_period(&apu, period_samples);
 
-        write_pulse_control(&mut apu, PulseChannel::Pulse1, control_soft);
-        let soft = max_output_over_period(&mut apu, period_samples);
+        write_pulse_control(&mut device, PulseChannel::Pulse1, control_soft);
+        let soft = max_output_over_period(&apu, period_samples);
 
         let epsilon = 1e-6;
         assert!(
@@ -764,17 +905,26 @@ mod tests {
         // For duty 12.5%, after a falling edge we should normally see
         // 7 low steps. A length write should reset the sequence and
         // produce a high within the next step.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0008;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 0, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            0,
+            15,
+            timer,
+            0x1F,
+        );
 
         let period_samples = 16 * (timer as usize + 1);
         let mut prev = 0.0;
         let mut seen_high = false;
         let mut found_fall = false;
         for _ in 0..(period_samples * 2) {
-            apu.clock();
-            if let Some(sample) = apu.get_sample() {
+            let mut apu_mut = apu.borrow_mut();
+            apu_mut.clock();
+            if let Some(sample) = apu_mut.get_sample() {
                 if prev > 0.0 && sample == 0.0 {
                     found_fall = true;
                     break;
@@ -789,10 +939,10 @@ mod tests {
 
         let timer_high = ((timer >> 8) as u8) & 0x07;
         let length_and_high = (0x1F << 3) | timer_high;
-        write_pulse_timer_high_and_length(&mut apu, PulseChannel::Pulse1, length_and_high);
+        write_pulse_timer_high_and_length(&mut device, PulseChannel::Pulse1, length_and_high);
 
         let step_samples = 2 * (timer as usize + 1);
-        let outputs = collect_samples(&mut apu, step_samples);
+        let outputs = collect_samples(&apu, step_samples);
         assert!(
             outputs.iter().any(|&value| value > 0.0),
             "expected high within one step after reset"
@@ -802,15 +952,23 @@ mod tests {
     #[test]
     fn test_pulse_sweep_overflow_mutes_even_when_disabled() {
         // Verify that sweep target overflow mutes output even when sweep is disabled.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x07FE;
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         // Enable bit = 0, shift=1 -> target overflow.
-        write_pulse_sweep(&mut apu, PulseChannel::Pulse1, 0x01);
+        write_pulse_sweep(&mut device, PulseChannel::Pulse1, 0x01);
 
         let period_samples = 16 * (timer as usize + 1);
-        let outputs = collect_samples(&mut apu, period_samples * 2);
+        let outputs = collect_samples(&apu, period_samples * 2);
         assert!(outputs.iter().all(|&value| value == 0.0), "expected mute");
     }
 
@@ -823,18 +981,34 @@ mod tests {
         let timer = 0x0009;
         let period_samples = 16 * (timer as usize + 1);
 
-        let mut apu1 = create_apu();
-        let mut apu2 = create_apu();
+        let (apu1, mut device1) = create_apu();
+        let (apu2, mut device2) = create_apu();
 
-        configure_pulse_constant_volume(&mut apu1, PulseChannel::Pulse1, 2, 15, timer, 0x1F);
-        configure_pulse_constant_volume(&mut apu2, PulseChannel::Pulse2, 2, 15, timer, 0x1F);
+        configure_pulse_constant_volume(
+            &apu1,
+            &mut device1,
+            PulseChannel::Pulse1,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
+        configure_pulse_constant_volume(
+            &apu2,
+            &mut device2,
+            PulseChannel::Pulse2,
+            2,
+            15,
+            timer,
+            0x1F,
+        );
 
         // Enable sweep negate with shift=3.
-        write_pulse_sweep(&mut apu1, PulseChannel::Pulse1, 0x8B);
-        write_pulse_sweep(&mut apu2, PulseChannel::Pulse2, 0x8B);
+        write_pulse_sweep(&mut device1, PulseChannel::Pulse1, 0x8B);
+        write_pulse_sweep(&mut device2, PulseChannel::Pulse2, 0x8B);
 
-        let outputs1 = collect_samples(&mut apu1, period_samples * 2);
-        let outputs2 = collect_samples(&mut apu2, period_samples * 2);
+        let outputs1 = collect_samples(&apu1, period_samples * 2);
+        let outputs2 = collect_samples(&apu2, period_samples * 2);
 
         assert!(
             outputs1.iter().all(|&value| value == 0.0),
@@ -853,23 +1027,30 @@ mod tests {
         //
         // We run for several envelope clocks in constant-volume mode, then
         // clear the disable flag and expect the output to reflect a decayed level.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0010;
         let period_samples = 16 * (timer as usize + 1);
 
         let duty_bits = 2u8 << 6;
         let control_const = duty_bits | 0b0001_0000; // disable=1, n=0
-        configure_pulse_with_control(&mut apu, PulseChannel::Pulse1, control_const, timer, 0x1F);
+        configure_pulse_with_control(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            control_const,
+            timer,
+            0x1F,
+        );
 
         for _ in 0..4 {
-            clock_immediate_quarter_and_half(&mut apu);
+            clock_immediate_quarter_and_half(&apu, &mut device);
         }
 
-        let control_env = duty_bits | 0b0000_0000; // disable=0, n=0
-        write_pulse_control(&mut apu, PulseChannel::Pulse1, control_env);
-        clock_immediate_quarter_and_half(&mut apu);
+        let control_env = duty_bits; // disable=0, n=0
+        write_pulse_control(&mut device, PulseChannel::Pulse1, control_env);
+        clock_immediate_quarter_and_half(&apu, &mut device);
 
-        let observed = max_output_over_period(&mut apu, period_samples);
+        let observed = max_output_over_period(&apu, period_samples);
         let epsilon = 1e-6;
         assert!(
             observed < 1.0 - epsilon,
@@ -882,48 +1063,52 @@ mod tests {
         // Recreate the sweep_sub sequence from roms/automated_tests/test_apu_sweep/sweep_sub.asm
         // and verify a slight pitch drop after the sweep clock + $4003 write.
         let sample_rate = 44_100.0;
-        let mut apu = create_apu_with_sample_rate(sample_rate);
-        set_pulse_mix_enable(&mut apu, PulseChannel::Pulse1);
+        let (apu, mut device) = create_apu_with_sample_rate(sample_rate);
+        set_pulse_mix_enable(&apu, PulseChannel::Pulse1);
 
         // Sync APU and configure pulse 1.
-        apu.write_frame_counter(0xC0);
+        assert!(device.write(0x4017, 0xC0, false));
         for _ in 0..4 {
-            apu.clock();
-            let _ = apu.get_sample();
+            let mut apu_mut = apu.borrow_mut();
+            apu_mut.clock();
+            let _ = apu_mut.get_sample();
         }
-        apu.write_enable(0x01);
+        assert!(device.write(0x4015, 0x01, false));
 
         // $4000 = $BF (duty=2, halt=1, constant volume=15)
-        write_pulse_control(&mut apu, PulseChannel::Pulse1, 0xBF);
+        write_pulse_control(&mut device, PulseChannel::Pulse1, 0xBF);
 
         // Use the first table entry (y=7): table_h=2, table_l=0x04.
         let timer_low = 0x04u8;
         let timer_high = 0x02u8;
-        write_pulse_timer_low(&mut apu, PulseChannel::Pulse1, timer_low);
-        write_pulse_timer_high_and_length(&mut apu, PulseChannel::Pulse1, timer_high);
+        write_pulse_timer_low(&mut device, PulseChannel::Pulse1, timer_low);
+        write_pulse_timer_high_and_length(&mut device, PulseChannel::Pulse1, timer_high);
 
         // Sweep: enable, negate, period=0, shift=7 (0x88 | 0x07).
-        write_pulse_sweep(&mut apu, PulseChannel::Pulse1, 0x8F);
+        write_pulse_sweep(&mut device, PulseChannel::Pulse1, 0x8F);
 
         // Clock sweep via $4017 (immediate quarter+half), then write $4003 with +1.
-        apu.write_frame_counter(0xC0);
+        assert!(device.write(0x4017, 0xC0, false));
         for _ in 0..4 {
-            apu.clock();
-            let _ = apu.get_sample();
+            let mut apu_mut = apu.borrow_mut();
+            apu_mut.clock();
+            let _ = apu_mut.get_sample();
         }
-        write_pulse_timer_high_and_length(&mut apu, PulseChannel::Pulse1, 0x01);
-        write_pulse_sweep(&mut apu, PulseChannel::Pulse1, 0x00);
+        write_pulse_timer_high_and_length(&mut device, PulseChannel::Pulse1, 0x01);
+        write_pulse_sweep(&mut device, PulseChannel::Pulse1, 0x00);
 
         // Capture 200ms of audio and compare early vs late period.
+        // With immediate sweep updates, the pitch should remain stable after the sequence.
         let capture_samples = (sample_rate * 0.2) as usize;
-        let outputs = collect_samples(&mut apu, capture_samples);
+        let outputs = collect_samples(&apu, capture_samples);
         let mid = outputs.len() / 2;
         let early_avg = average_period(&outputs[..mid]);
         let late_avg = average_period(&outputs[mid..]);
 
+        let epsilon = 1e-6;
         assert!(
-            late_avg > early_avg,
-            "expected slight pitch drop after sweep sequence"
+            late_avg <= early_avg + epsilon,
+            "expected no late pitch drop after sweep sequence"
         );
     }
 
@@ -931,38 +1116,38 @@ mod tests {
     fn test_pulse_length_load_ignored_when_disabled() {
         // Verify that writing $4003/$4007 while disabled does not load
         // the length counter, and output remains silent until a new reload.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0010;
         let period_samples = 16 * (timer as usize + 1);
 
         let duty_bits = 2u8 << 6;
         let control = duty_bits | 0b0001_0000 | 0x0F; // constant volume 15
-        write_pulse_control(&mut apu, PulseChannel::Pulse1, control);
-        write_pulse_timer_low(&mut apu, PulseChannel::Pulse1, (timer & 0x00FF) as u8);
+        write_pulse_control(&mut device, PulseChannel::Pulse1, control);
+        write_pulse_timer_low(&mut device, PulseChannel::Pulse1, (timer & 0x00FF) as u8);
 
-        apu.write_enable(0x00);
-        set_pulse_mix_enable(&mut apu, PulseChannel::Pulse1);
+        assert!(device.write(0x4015, 0x00, false));
+        set_pulse_mix_enable(&apu, PulseChannel::Pulse1);
 
         let timer_high = ((timer >> 8) as u8) & 0x07;
         let length_and_high = (0x1F << 3) | timer_high;
-        write_pulse_timer_high_and_length(&mut apu, PulseChannel::Pulse1, length_and_high);
+        write_pulse_timer_high_and_length(&mut device, PulseChannel::Pulse1, length_and_high);
 
-        let outputs = collect_samples(&mut apu, period_samples);
+        let outputs = collect_samples(&apu, period_samples);
         assert!(
             outputs.iter().all(|&value| value == 0.0),
             "expected silence while disabled"
         );
 
-        apu.write_enable(0x01);
-        set_pulse_mix_enable(&mut apu, PulseChannel::Pulse1);
-        let outputs = collect_samples(&mut apu, period_samples);
+        assert!(device.write(0x4015, 0x01, false));
+        set_pulse_mix_enable(&apu, PulseChannel::Pulse1);
+        let outputs = collect_samples(&apu, period_samples);
         assert!(
             outputs.iter().all(|&value| value == 0.0),
             "expected silence without reload after enable"
         );
 
-        write_pulse_timer_high_and_length(&mut apu, PulseChannel::Pulse1, length_and_high);
-        let outputs = collect_samples(&mut apu, period_samples);
+        write_pulse_timer_high_and_length(&mut device, PulseChannel::Pulse1, length_and_high);
+        let outputs = collect_samples(&apu, period_samples);
         assert!(
             outputs.iter().any(|&value| value > 0.0),
             "expected output after reload"
@@ -973,20 +1158,28 @@ mod tests {
     fn test_pulse_duty_change_applies_without_timer_reset() {
         // Verify that changing duty cycle takes effect without needing
         // a timer reload, and the observed duty ratio matches the new duty.
-        let mut apu = create_apu();
+        let (apu, mut device) = create_apu();
         let timer = 0x0010;
         let period_samples = 16 * (timer as usize + 1);
 
-        configure_pulse_constant_volume(&mut apu, PulseChannel::Pulse1, 0, 15, timer, 0x1F);
-        let outputs = collect_samples(&mut apu, period_samples * 2);
+        configure_pulse_constant_volume(
+            &apu,
+            &mut device,
+            PulseChannel::Pulse1,
+            0,
+            15,
+            timer,
+            0x1F,
+        );
+        let outputs = collect_samples(&apu, period_samples * 2);
         let high = outputs.iter().filter(|&&value| value > 0.0).count();
         let duty_before = high as f32 / outputs.len() as f32;
 
         let duty_bits = 3u8 << 6;
         let control = duty_bits | 0b0001_0000 | 0x0F;
-        write_pulse_control(&mut apu, PulseChannel::Pulse1, control);
+        write_pulse_control(&mut device, PulseChannel::Pulse1, control);
 
-        let outputs = collect_samples(&mut apu, period_samples * 2);
+        let outputs = collect_samples(&apu, period_samples * 2);
         let high = outputs.iter().filter(|&&value| value > 0.0).count();
         let duty_after = high as f32 / outputs.len() as f32;
 

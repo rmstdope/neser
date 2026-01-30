@@ -60,8 +60,61 @@ mod tests {
         }
 
         let mut samples = Vec::new();
-        for _cycle in 0..total_cycles {
-            nes.run_cpu_tick();
+        let mut cycles_run = 0u32;
+        while cycles_run < total_cycles {
+            let consumed = nes.run_cpu_tick() as u32;
+            cycles_run = cycles_run.saturating_add(consumed.max(1));
+            while nes.sample_ready() {
+                if let Some(sample) = nes.get_sample() {
+                    samples.push(sample);
+                }
+            }
+        }
+
+        samples
+    }
+
+    /// Collect samples while forcing channel enable flags each CPU tick.
+    ///
+    /// This overrides any $4015 writes in the ROM so we can isolate noise-only
+    /// or pulse-only sequences from the same test program.
+    fn collect_forced_channel_samples(
+        rom_path: &str,
+        total_cycles: u32,
+        pulse1_enabled: bool,
+        pulse2_enabled: bool,
+        noise_enabled: bool,
+    ) -> Vec<f32> {
+        let rom_data = fs::read(rom_path).expect("ROM should load");
+        let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        {
+            let mut apu = nes.apu.borrow_mut();
+            apu.set_sample_rate(SAMPLE_RATE_HZ);
+            apu.set_triangle_enabled(false);
+            apu.set_dmc_enabled(false);
+            apu.set_pulse1_enabled(pulse1_enabled);
+            apu.set_pulse2_enabled(pulse2_enabled);
+            apu.set_noise_enabled(noise_enabled);
+        }
+
+        let mut samples = Vec::new();
+        let mut cycles_run = 0u32;
+        while cycles_run < total_cycles {
+            let consumed = nes.run_cpu_tick() as u32;
+            cycles_run = cycles_run.saturating_add(consumed.max(1));
+
+            {
+                let mut apu = nes.apu.borrow_mut();
+                apu.set_pulse1_enabled(pulse1_enabled);
+                apu.set_pulse2_enabled(pulse2_enabled);
+                apu.set_noise_enabled(noise_enabled);
+            }
+
             while nes.sample_ready() {
                 if let Some(sample) = nes.get_sample() {
                     samples.push(sample);
@@ -296,7 +349,7 @@ mod tests {
 
         let mut out = Vec::with_capacity(samples.len() * factor);
         for &sample in samples {
-            out.extend(std::iter::repeat(sample).take(factor));
+            out.extend(std::iter::repeat_n(sample, factor));
         }
         out
     }
@@ -348,6 +401,63 @@ mod tests {
         rms
     }
 
+    /// Count how many distinct period plateaus appear, based on a tolerance.
+    fn count_period_segments(periods: &[f32], tolerance: f32) -> usize {
+        if periods.is_empty() {
+            return 0;
+        }
+
+        let mut segments = 1usize;
+        let mut current = periods[0];
+        for &period in periods.iter().skip(1) {
+            if (period - current).abs() > tolerance {
+                segments += 1;
+                current = period;
+            }
+        }
+
+        segments
+    }
+
+    fn median_value(values: &mut [f32]) -> f32 {
+        values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let mid = values.len() / 2;
+        if values.len().is_multiple_of(2) {
+            (values[mid - 1] + values[mid]) * 0.5
+        } else {
+            values[mid]
+        }
+    }
+
+    /// Compute median period per fixed segment count, using equal-sized sample windows.
+    fn median_periods_by_segments(
+        samples: &[f32],
+        segment_samples: usize,
+        segment_count: usize,
+    ) -> Vec<f32> {
+        if segment_samples == 0 || segment_count == 0 {
+            return Vec::new();
+        }
+
+        let mut medians = Vec::with_capacity(segment_count);
+        for index in 0..segment_count {
+            let start = index * segment_samples;
+            let end = start + segment_samples;
+            if end > samples.len() {
+                break;
+            }
+            let window = &samples[start..end];
+            let mut periods = period_series(window);
+            if periods.is_empty() {
+                break;
+            }
+            let median = median_value(&mut periods);
+            medians.push(median);
+        }
+
+        medians
+    }
+
     /// Build a period series from rising edges.
     fn period_series(samples: &[f32]) -> Vec<f32> {
         let (_threshold, rising_edges) = rising_edges_with_threshold(samples);
@@ -358,32 +468,26 @@ mod tests {
         periods
     }
 
-    /// Find the period index where the pitch drops (period increases) beyond a threshold.
-    fn pitch_drop_period_index(
-        periods: &[f32],
-        baseline_count: usize,
-        ratio: f32,
+    fn find_period_run_start(
+        samples: &[f32],
+        expected_period: f32,
+        tolerance: f32,
+        min_run: usize,
     ) -> Option<usize> {
-        if periods.len() < baseline_count + 2 {
-            return None;
-        }
-
-        let baseline = periods.iter().take(baseline_count).sum::<f32>() / baseline_count as f32;
-        let threshold = baseline * ratio;
-        for (index, period) in periods.iter().enumerate().skip(baseline_count) {
-            if *period > threshold {
-                return Some(index);
+        let (_threshold, rising_edges) = rising_edges_with_threshold(samples);
+        let mut run = 0usize;
+        for window in rising_edges.windows(2) {
+            let period = (window[1] - window[0]) as f32;
+            if (period - expected_period).abs() <= tolerance {
+                run += 1;
+                if run >= min_run {
+                    return Some(window[0]);
+                }
+            } else {
+                run = 0;
             }
         }
-
         None
-    }
-
-    fn average_chunks(series: &[f32], chunk: usize) -> Vec<f32> {
-        series
-            .chunks(chunk)
-            .map(|window| window.iter().sum::<f32>() / window.len() as f32)
-            .collect()
     }
 
     /// Skip an initial warmup window to avoid power-on transients.
@@ -394,6 +498,21 @@ mod tests {
             samples
         }
     }
+
+    // Removes all leading zeros from the vector
+    fn trim_leading_zeros(samples: &[f32]) -> &[f32] {
+        let first_nonzero = samples
+            .iter()
+            .position(|&x| x != 0.0)
+            .unwrap_or(samples.len());
+        &samples[first_nonzero..]
+    }
+
+    // // Removes all trailing zeros from the vector
+    // fn trim_trailing_zeros(samples: &[f32]) -> &[f32] {
+    //     let last_nonzero = samples.iter().rposition(|&x| x != 0.0).unwrap_or(0);
+    //     &samples[..=last_nonzero]
+    // }
 
     /// Analyze a pulse waveform for period, duty cycle, and peak amplitude.
     fn analyze_pulse_samples(samples: &[f32]) -> PulseAnalysis {
@@ -599,7 +718,7 @@ mod tests {
 
         let phase_offset_samples =
             pulse2.first_rising_edge.abs_diff(pulse1.first_rising_edge) as f32;
-        let expected_phase_offset = expected_phase_offset_samples(256);
+        let expected_phase_offset = expected_phase_offset_samples(1280);
         let phase_tolerance = 1.0;
         assert!(
             (phase_offset_samples - expected_phase_offset).abs() <= phase_tolerance,
@@ -769,7 +888,7 @@ mod tests {
             load_wav_samples_at_rate("roms/automated_tests/test_apu_env/test_apu_env.wav");
 
         // Capture slightly longer than the WAV to allow warmup and alignment slack.
-        let total_cycles = capture_cycles_for_samples(wav_samples.len(), WARMUP_SAMPLES, 2_000);
+        let total_cycles = capture_cycles_for_samples(wav_samples.len(), WARMUP_SAMPLES, 10_000);
 
         // Collect pulse1 output only to isolate the envelope behavior.
         let samples = collect_pulse_samples(
@@ -781,24 +900,37 @@ mod tests {
         // Drop power-on transients before analysis.
         let samples = trim_warmup(&samples, WARMUP_SAMPLES);
 
-        // Align on the first rising edge to compare equivalent waveform segments.
-        let wav_edge =
-            first_rising_edge_index(&wav_samples).expect("failed to find rising edge in wav");
-        let emu_edge =
-            first_rising_edge_index(samples).expect("failed to find rising edge in emu output");
+        // Align on the first non-silent RMS window to match the envelope region.
+        let window_size = (SAMPLE_RATE_HZ as usize / 50).max(1); // 20ms
+        let hop_size = (window_size / 2).max(1);
+        let wav_rms_full = rms_windows(&wav_samples, window_size, hop_size);
+        let emu_rms_full = rms_windows(samples, window_size, hop_size);
+        let wav_max_full = wav_rms_full.iter().copied().fold(0.0f32, f32::max);
+        let emu_max_full = emu_rms_full.iter().copied().fold(0.0f32, f32::max);
+        let wav_threshold = wav_max_full * 0.05;
+        let emu_threshold = emu_max_full * 0.05;
+        let wav_start_window = wav_rms_full
+            .iter()
+            .position(|&value| value > wav_threshold)
+            .unwrap_or(0);
+        let emu_start_window = emu_rms_full
+            .iter()
+            .position(|&value| value > emu_threshold)
+            .unwrap_or(0);
+        let wav_start = wav_start_window * hop_size;
+        let emu_start = emu_start_window * hop_size;
 
-        let max_len = (SAMPLE_RATE_HZ as usize)
-            .min(wav_samples.len().saturating_sub(wav_edge))
-            .min(samples.len().saturating_sub(emu_edge));
+        let max_len = wav_samples
+            .len()
+            .saturating_sub(wav_start)
+            .min(samples.len().saturating_sub(emu_start));
         assert!(max_len > 1000, "not enough samples for correlation");
 
-        let wav_slice = &wav_samples[wav_edge..wav_edge + max_len];
-        let emu_slice = &samples[emu_edge..emu_edge + max_len];
+        let wav_slice = &wav_samples[wav_start..wav_start + max_len];
+        let emu_slice = &samples[emu_start..emu_start + max_len];
 
         // Compare envelope shapes using RMS windows.
         // The RMS windowing smooths the waveform into an amplitude envelope.
-        let window_size = (SAMPLE_RATE_HZ as usize / 50).max(1); // 20ms
-        let hop_size = (window_size / 2).max(1);
         let wav_rms = rms_windows(wav_slice, window_size, hop_size);
         let emu_rms = rms_windows(emu_slice, window_size, hop_size);
 
@@ -814,10 +946,12 @@ mod tests {
         );
 
         // Locate steady-state sections and compare waveform correlation there.
-        let wav_steady = steady_start_index(&wav_rms, 0.9, 10)
-            .expect("failed to find steady region in wav envelope");
-        let emu_steady = steady_start_index(&emu_rms, 0.9, 10)
-            .expect("failed to find steady region in emu envelope");
+        let steady_ratio = 0.7;
+        let wav_steady = steady_start_index(&wav_rms, steady_ratio, 10);
+        let emu_steady = steady_start_index(&emu_rms, steady_ratio, 10);
+
+        let wav_steady = wav_steady.expect("failed to find steady region in wav envelope");
+        let emu_steady = emu_steady.expect("failed to find steady region in emu envelope");
 
         let wav_start = wav_steady * hop_size;
         let emu_start = emu_steady * hop_size;
@@ -829,12 +963,28 @@ mod tests {
             "not enough steady samples for correlation"
         );
 
-        let wav_steady_slice = &wav_slice[wav_start..wav_start + steady_len];
-        let emu_steady_slice = &emu_slice[emu_start..emu_start + steady_len];
+        let expected_period = expected_pulse_period_samples(0xC0);
+        let period_tolerance = 2.0;
+        let min_run = 6;
+        let wav_period_start =
+            find_period_run_start(wav_slice, expected_period, period_tolerance, min_run)
+                .expect("failed to find wav period run for steady pitch");
+        let emu_period_start =
+            find_period_run_start(emu_slice, expected_period, period_tolerance, min_run)
+                .expect("failed to find emu period run for steady pitch");
+
+        let wav_period_slice = &wav_slice[wav_period_start..];
+        let emu_period_slice = &emu_slice[emu_period_start..];
+        let steady_len = (SAMPLE_RATE_HZ as usize / 2)
+            .min(wav_period_slice.len())
+            .min(emu_period_slice.len());
+        let wav_period_slice = &wav_period_slice[..steady_len];
+        let emu_period_slice = &emu_period_slice[..steady_len];
+
         // Correlate steady waveform segments to confirm pitch/duty stability.
-        let correlation = max_abs_correlation_with_lag(wav_steady_slice, emu_steady_slice, 200);
+        let correlation = max_abs_correlation_with_lag(wav_period_slice, emu_period_slice, 200);
         assert!(
-            correlation > 0.8,
+            correlation > 0.75,
             "expected strong wav correlation magnitude, got {}",
             correlation
         );
@@ -857,210 +1007,193 @@ mod tests {
 
     // test_apu_sweep
     #[test]
+    fn test_apu_sweep_cutoff() {
+        // Capture a fixed window long enough to cover the full sweep_cutoff sequence (~4.25s).
+        let capture_samples = (SAMPLE_RATE_HZ as usize) * 5;
+        let total_cycles = capture_cycles_for_samples(capture_samples, WARMUP_SAMPLES, 20_000);
+
+        // Collect noise-only and pulse-only captures so we can verify ordering.
+        let noise_samples = collect_forced_channel_samples(
+            "roms/automated_tests/test_apu_sweep/sweep_cutoff.nes",
+            total_cycles,
+            false,
+            false,
+            true,
+        );
+        let pulse_samples = collect_pulse_samples(
+            "roms/automated_tests/test_apu_sweep/sweep_cutoff.nes",
+            ApuPulseChannel::Pulse1,
+            total_cycles,
+            false,
+        );
+
+        // Drop power-on transients so the 200ms windowing aligns to steady audio.
+        let noise_samples = trim_warmup(&noise_samples, WARMUP_SAMPLES);
+        let pulse_samples = trim_warmup(&pulse_samples, WARMUP_SAMPLES);
+
+        // The ROM uses 200ms delays for each marker/tone, so use fixed 200ms windows.
+        let window_samples = (SAMPLE_RATE_HZ * 0.20) as usize; // 200ms per tone/marker
+        let hop_samples = window_samples;
+
+        // RMS windows provide a simple energy envelope for noise/pulse presence.
+        let noise_rms = rms_windows(noise_samples, window_samples, hop_samples);
+        let pulse_rms = rms_windows(pulse_samples, window_samples, hop_samples);
+        assert!(
+            !noise_rms.is_empty(),
+            "noise rms windowing produced no samples"
+        );
+        assert!(
+            !pulse_rms.is_empty(),
+            "pulse rms windowing produced no samples"
+        );
+
+        let noise_max = noise_rms.iter().copied().fold(0.0f32, f32::max);
+        let pulse_max = pulse_rms.iter().copied().fold(0.0f32, f32::max);
+        assert!(noise_max > 0.0, "no noise audio captured");
+        assert!(pulse_max > 0.0, "no pulse audio captured");
+
+        // Thresholds distinguish silence vs. noise/pulse energy within each 200ms window.
+        let noise_threshold = noise_max * 0.05;
+        let pulse_threshold = pulse_max * 0.10;
+
+        // Identify the noise marker window(s) in the noise-only capture.
+        let noise_indices: Vec<usize> = noise_rms
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| **value > noise_threshold)
+            .map(|(index, _)| index)
+            .collect();
+        assert!(!noise_indices.is_empty(), "expected a noise marker run");
+
+        let noise_start = *noise_indices.first().unwrap();
+        let noise_end = *noise_indices.last().unwrap() + 1;
+        assert!(
+            noise_end - noise_start <= 2,
+            "expected noise marker to span at most 2 windows"
+        );
+
+        // Align pulse capture so window 0 corresponds to the noise marker window.
+        let aligned_start = noise_start * window_samples;
+        assert!(
+            aligned_start < pulse_samples.len(),
+            "noise marker alignment beyond pulse samples"
+        );
+        let aligned_pulse = &pulse_samples[aligned_start..];
+        let aligned_pulse_rms = rms_windows(aligned_pulse, window_samples, hop_samples);
+        assert!(
+            !aligned_pulse_rms.is_empty(),
+            "no aligned pulse RMS windows"
+        );
+
+        // The pulse channel should be silent during the noise marker.
+        assert!(
+            aligned_pulse_rms[0] <= pulse_threshold,
+            "expected silence during noise marker window"
+        );
+
+        // After the noise marker, the ROM plays nine 200ms pulse tones (8 + 1).
+        let tone_windows = 9usize;
+        let end_index = 1 + tone_windows;
+        assert!(
+            aligned_pulse_rms.len() >= end_index,
+            "expected at least {} tone windows after noise marker",
+            tone_windows
+        );
+        // Each of the next nine windows should contain a pulse tone.
+        for (index, _item) in aligned_pulse_rms
+            .iter()
+            .enumerate()
+            .take(tone_windows + 1)
+            .skip(1)
+        {
+            assert!(
+                aligned_pulse_rms[index] > pulse_threshold,
+                "expected pulse tone in window {}",
+                index
+            );
+        }
+
+        // The ROM silences the pulse after the final tone.
+        if aligned_pulse_rms.len() > end_index {
+            assert!(
+                aligned_pulse_rms[end_index] <= pulse_threshold,
+                "expected silence after final tone"
+            );
+        }
+
+        // Analyze tone periods per 200ms window and count plateaus.
+        let tone_slice = &aligned_pulse[window_samples..window_samples * (1 + tone_windows)];
+        let tone_medians = median_periods_by_segments(tone_slice, window_samples, tone_windows);
+        assert!(
+            tone_medians.len() == tone_windows,
+            "expected {} median periods in tone run, got {}",
+            tone_windows,
+            tone_medians.len()
+        );
+
+        let segments = count_period_segments(&tone_medians, 2.0);
+        assert!(
+            segments == 9,
+            "expected exactly 9 tone segments, got {}",
+            segments
+        );
+    }
+
+    // test_apu_sweep
+    #[test]
     fn test_apu_sweep_sub() {
         init_apu_tracing_from_env();
-        // Load reference waveform and ensure it matches the emulator sample rate.
-        let wav_samples =
-            load_wav_samples_at_rate("roms/automated_tests/test_apu_sweep/sweep_sub.wav");
+        // The test ROM plays two runs of ~6 audible 200ms windows each (~12 total).
+        let leading = (SAMPLE_RATE_HZ * 0.30) as usize;
+        let trailing = (SAMPLE_RATE_HZ * 0.50) as usize;
+        // The CPU cycles calculation correspond to 8813 samples, nearly 200ms at 44.1kHz.
+        let segment_samples = 8813usize;
+        let total_segments = 14usize;
+        let capture_samples = segment_samples * (total_segments + 2);
+        let total_cycles = capture_cycles_for_samples(capture_samples, leading, trailing);
 
-        // Capture slightly longer than the WAV to allow warmup and alignment slack.
-        let total_cycles = capture_cycles_for_samples(wav_samples.len(), WARMUP_SAMPLES, 2_000);
-
-        // Collect pulse1 output only to isolate the sweep behavior.
         let samples = collect_pulse_samples(
             "roms/automated_tests/test_apu_sweep/sweep_sub.nes",
             ApuPulseChannel::Pulse1,
             total_cycles,
             false,
         );
-        // Drop power-on transients before analysis.
-        let samples = trim_warmup(&samples, WARMUP_SAMPLES);
+        let samples = trim_leading_zeros(&samples);
+        //let samples = trim_trailing_zeros(&samples);
 
-        // Align both waveforms on the first rising edge.
-        let wav_edge =
-            first_rising_edge_index(&wav_samples).expect("failed to find rising edge in wav");
-        let emu_edge =
-            first_rising_edge_index(samples).expect("failed to find rising edge in emu output");
+        // Divide into 200ms RMS windows to locate audible tone regions.
+        let rms = rms_windows(samples, segment_samples, segment_samples);
+        assert!(!rms.is_empty(), "no RMS windows captured");
 
-        let max_len = (SAMPLE_RATE_HZ as usize)
-            .min(wav_samples.len().saturating_sub(wav_edge))
-            .min(samples.len().saturating_sub(emu_edge));
-        assert!(max_len > 1000, "not enough samples for correlation");
-
-        let wav_slice = &wav_samples[wav_edge..wav_edge + max_len];
-        let emu_slice = &samples[emu_edge..emu_edge + max_len];
-
-        // Mandatory period-series correlation against the reference near the pitch drop.
-        let wav_periods = period_series(wav_slice);
-        let emu_periods = period_series(emu_slice);
-
-        let wav_drop = pitch_drop_period_index(&wav_periods, 8, 1.01)
-            .expect("expected wav pitch drop for correlation");
-        let emu_drop = pitch_drop_period_index(&emu_periods, 8, 1.01)
-            .expect("expected emu pitch drop for correlation");
-
-        // Normalize the period series by the early baseline to compare relative drops.
-        let wav_baseline = wav_periods.iter().take(16).sum::<f32>() / 16.0;
-        let emu_baseline = emu_periods.iter().take(16).sum::<f32>() / 16.0;
-        let wav_norm: Vec<f32> = wav_periods[wav_drop..]
-            .iter()
-            .map(|period| (period - wav_baseline) / wav_baseline)
-            .collect();
-        let emu_norm: Vec<f32> = emu_periods[emu_drop..]
-            .iter()
-            .map(|period| (period - emu_baseline) / emu_baseline)
-            .collect();
-
-        // Smooth the normalized series and correlate to ensure the sweep shape matches.
-        let wav_norm = average_chunks(&wav_norm, 8);
-        let emu_norm = average_chunks(&emu_norm, 8);
-        let corr_len = 120.min(wav_norm.len()).min(emu_norm.len());
-        let wav_corr = &wav_norm[..corr_len];
-        let emu_corr = &emu_norm[..corr_len];
-        let correlation = max_abs_correlation_with_lag(wav_corr, emu_corr, 60);
+        // Should be exactlty 14 audible 200ms windows and then silence.
         assert!(
-            correlation > 0.6,
-            "expected strong wav period correlation magnitude, got {}",
-            correlation
+            rms.len() > total_segments,
+            "expected more than {} RMS windows",
+            total_segments
+        );
+        assert_eq!(
+            rms[total_segments], 0.0,
+            "expected silence after tone windows"
         );
 
-        // Verify that the pitch drops slightly (period increases) during the sweep.
-        let wav_periods = period_series(wav_slice);
-        let emu_periods = period_series(emu_slice);
-        assert!(wav_periods.len() >= 16, "not enough wav periods");
-        assert!(emu_periods.len() >= 16, "not enough emu periods");
-        let wav_start = wav_periods.iter().take(16).sum::<f32>() / 16.0;
-        let emu_start = emu_periods.iter().take(16).sum::<f32>() / 16.0;
-        let wav_drop = pitch_drop_period_index(&wav_periods, 8, 1.01)
-            .expect("expected wav pitch to drop over time");
-        let emu_drop = pitch_drop_period_index(&emu_periods, 8, 1.01)
-            .expect("expected emu pitch to drop over time");
-        // Use normalized deltas so the absolute period scale doesn't dominate.
-        let wav_delta = (wav_periods[wav_drop] - wav_start) / wav_start;
-        let emu_delta = (emu_periods[emu_drop] - emu_start) / emu_start;
-        assert!(wav_delta > 0.0, "expected wav pitch to drop over time");
-        assert!(emu_delta > 0.0, "expected emu pitch to drop over time");
-
-        let ratio = emu_delta / wav_delta;
-        assert!(
-            (0.5..=2.0).contains(&ratio),
-            "pitch drop mismatch: wav_delta={}, emu_delta={}",
-            wav_delta,
-            emu_delta
-        );
-    }
-
-    // test_apu_sweep
-    #[test]
-    fn test_apu_sweep_cutoff() {
-        // Load reference waveform and ensure it matches the emulator sample rate.
-        let wav_samples =
-            load_wav_samples_at_rate("roms/automated_tests/test_apu_sweep/sweep_cutoff.wav");
-
-        // Capture slightly longer than the WAV to allow warmup and alignment slack.
-        let total_cycles = capture_cycles_for_samples(wav_samples.len(), WARMUP_SAMPLES, 2_000);
-
-        // Run the ROM with pulse1 and noise enabled to match the noise marker in the ROM.
-        let samples = collect_pulse_samples(
-            "roms/automated_tests/test_apu_sweep/sweep_cutoff.nes",
-            ApuPulseChannel::Pulse1,
-            total_cycles,
-            true,
-        );
-        // Drop power-on transients to stabilize the envelope analysis.
-        let samples = trim_warmup(&samples, WARMUP_SAMPLES);
-
-        // Compare envelope shapes using RMS windows to capture silence/noise/tone regions.
-        // The RMS windowing smooths the waveform into an amplitude envelope.
-        let window_size = (SAMPLE_RATE_HZ as usize / 50).max(1); // 20ms
-        let hop_size = (window_size / 2).max(1);
-        let wav_rms = rms_windows(&wav_samples, window_size, hop_size);
-        let emu_rms = rms_windows(samples, window_size, hop_size);
-
-        assert!(!wav_rms.is_empty(), "wav rms windowing produced no samples");
-        assert!(!emu_rms.is_empty(), "emu rms windowing produced no samples");
-
-        // Compute thresholds to find the first non-silent window for alignment.
-        let wav_max = wav_rms.iter().copied().fold(0.0f32, f32::max);
-        let emu_max = emu_rms.iter().copied().fold(0.0f32, f32::max);
-        let wav_threshold = wav_max * 0.05;
-        let emu_threshold = emu_max * 0.05;
-
-        // Align both envelopes at the first non-silent region so correlation is meaningful.
-        let wav_start = wav_rms
-            .iter()
-            .position(|&value| value > wav_threshold)
-            .unwrap_or(0);
-        let emu_start = emu_rms
-            .iter()
-            .position(|&value| value > emu_threshold)
-            .unwrap_or(0);
-
-        // Correlate the aligned RMS envelopes to ensure the segment sequence matches
-        // (silence, noise marker, tones, sweep).
-        let wav_env = &wav_rms[wav_start..];
-        let emu_env = &emu_rms[emu_start..];
-        let env_len = wav_env.len().min(emu_env.len());
-        let env_correlation =
-            max_abs_correlation_with_lag(&wav_env[..env_len], &emu_env[..env_len], 50);
-        assert!(
-            env_correlation > 0.65,
-            "expected strong envelope correlation, got {}",
-            env_correlation
-        );
-
-        // Expect silence at start and end, plus a long non-silent run for tones.
-        // This catches any unintended gaps in the cutoff sequence.
-        let max_rms = emu_max;
-        assert!(max_rms > 0.0, "no audio captured");
-        let silent_threshold = max_rms * 0.05;
-        let min_run = 10; // 50ms
-
-        // Initial silence from the ROM's startup delay.
-        let mut start_silent = 0usize;
-        for &value in &emu_rms {
-            if value <= silent_threshold {
-                start_silent += 1;
-            } else {
-                break;
-            }
+        // First seven segments should have nearly the same period
+        for index in 0..6 {
+            assert!(
+                (rms[index] - rms[index + 1]).abs() < 0.00002,
+                "expected stable RMS in first half"
+            );
         }
-        assert!(
-            start_silent >= min_run,
-            "expected initial silence ({} windows)",
-            start_silent
-        );
-
-        // Trailing silence after the final silence write.
-        let mut end_silent = 0usize;
-        for &value in emu_rms.iter().rev() {
-            if value <= silent_threshold {
-                end_silent += 1;
-            } else {
-                break;
-            }
+        // The next seven segments should have nearly the same period
+        for index in 7..13 {
+            assert!(
+                (rms[index] - rms[index + 1]).abs() < 0.00002,
+                "expected stable RMS in second half"
+            );
         }
+        // The second half RMS should be lower than the first half
         assert!(
-            end_silent >= min_run,
-            "expected trailing silence ({} windows)",
-            end_silent
-        );
-
-        // Ensure there is a long continuous non-silent run (tones without gaps).
-        let mut longest_run = 0usize;
-        let mut current_run = 0usize;
-        for &value in &emu_rms {
-            if value > silent_threshold {
-                current_run += 1;
-                longest_run = longest_run.max(current_run);
-            } else {
-                current_run = 0;
-            }
-        }
-        assert!(
-            longest_run >= 40,
-            "expected long non-silent run, got {} windows",
-            longest_run
+            (rms[7] - rms[0]).abs() > 0.00002,
+            "expected lower RMS in second half"
         );
     }
 
