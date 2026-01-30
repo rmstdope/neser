@@ -623,7 +623,7 @@ mod tests {
         let wav_edge =
             first_rising_edge_index(&wav_samples).expect("failed to find rising edge in wav");
         let emu_edge =
-            first_rising_edge_index(&samples).expect("failed to find rising edge in emu output");
+            first_rising_edge_index(samples).expect("failed to find rising edge in emu output");
 
         let max_len = (SAMPLE_RATE_HZ as usize)
             .min(wav_samples.len().saturating_sub(wav_edge))
