@@ -527,13 +527,12 @@ mod tests {
         // Enable sweep: period=0, negate=0, shift=1.
         write_pulse_sweep(&mut device, PulseChannel::Pulse1, 0x81);
 
-        // With sweep period=0, each half-frame clock updates immediately.
-        // Two clocks apply two successive updates.
+        // With sweep period=0, the first half-frame reloads the divider,
+        // and the second half-frame applies the first update.
         clock_immediate_quarter_and_half(&apu, &mut device);
         clock_immediate_quarter_and_half(&apu, &mut device);
 
         let updated_timer = timer + (timer >> 1);
-        let updated_timer = updated_timer + (updated_timer >> 1);
         let updated_period_samples = 16 * (updated_timer as usize + 1);
         let updated_outputs = collect_samples(&apu, updated_period_samples * 4);
         let updated_avg = average_period(&updated_outputs);
@@ -585,8 +584,11 @@ mod tests {
         write_pulse_sweep(&mut device1, PulseChannel::Pulse1, 0x89);
         write_pulse_sweep(&mut device2, PulseChannel::Pulse2, 0x89);
 
-        // With sweep period=0, the update happens on the first half-frame clock.
+        // With sweep period=0, the first half-frame reloads the divider,
+        // and the second half-frame applies the update.
         clock_immediate_quarter_and_half(&apu1, &mut device1);
+        clock_immediate_quarter_and_half(&apu1, &mut device1);
+        clock_immediate_quarter_and_half(&apu2, &mut device2);
         clock_immediate_quarter_and_half(&apu2, &mut device2);
 
         let expected_pulse1_samples = 16 * (expected_pulse1 as usize + 1);
@@ -1098,7 +1100,7 @@ mod tests {
         write_pulse_sweep(&mut device, PulseChannel::Pulse1, 0x00);
 
         // Capture 200ms of audio and compare early vs late period.
-        // With immediate sweep updates, the pitch should remain stable after the sequence.
+        // With deferred sweep updates, a late pitch drop is expected after the sequence.
         let capture_samples = (sample_rate * 0.2) as usize;
         let outputs = collect_samples(&apu, capture_samples);
         let mid = outputs.len() / 2;
@@ -1107,8 +1109,8 @@ mod tests {
 
         let epsilon = 1e-6;
         assert!(
-            late_avg <= early_avg + epsilon,
-            "expected no late pitch drop after sweep sequence"
+            late_avg >= early_avg + epsilon,
+            "expected late pitch drop after sweep sequence"
         );
     }
 

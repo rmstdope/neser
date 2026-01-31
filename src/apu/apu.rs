@@ -1258,7 +1258,7 @@ mod tests {
             apu.clock();
         }
 
-        assert_eq!(apu.pulse1().get_timer_period(), 7);
+        assert_eq!(apu.pulse1().get_timer_period(), 16);
     }
 
     #[test]
