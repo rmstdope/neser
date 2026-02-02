@@ -2,7 +2,6 @@
 /// comparing to known-good audio captures from real hardware.
 /// The audio analysis functions below are more of a fun exploration than strict test verifications,
 /// but they could help catch gross APU emulation errors in the future.
-
 #[cfg(test)]
 mod tests {
     use crate::cartridge::Cartridge;
