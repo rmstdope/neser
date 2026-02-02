@@ -111,9 +111,58 @@ mod tests {
 
     // TODO pal_apu_tests
 
-    // TODO test_apu_2
     setup_rom_console_test!(
         test_apu_2_test_1,
         "roms/automated_tests/test_apu_2/test_1.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_2_test_2,
+        "roms/automated_tests/test_apu_2/test_2.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_2_test_3,
+        "roms/automated_tests/test_apu_2/test_3.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_2_test_4,
+        "roms/automated_tests/test_apu_2/test_4.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_2_test_5,
+        "roms/automated_tests/test_apu_2/test_5.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_2_test_6,
+        "roms/automated_tests/test_apu_2/test_6.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_2_test_7,
+        "roms/automated_tests/test_apu_2/test_7.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_2_test_8,
+        "roms/automated_tests/test_apu_2/test_8.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_2_test_9,
+        "roms/automated_tests/test_apu_2/test_9.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_2_test_10,
+        "roms/automated_tests/test_apu_2/test_10.nes"
+    );
+
+    // test_amu_m
+    setup_rom_console_test!(
+        test_apu_m_test_9,
+        "roms/automated_tests/test_apu_m/test_9.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_m_test_10,
+        "roms/automated_tests/test_apu_m/test_10.nes"
+    );
+    setup_rom_console_test!(
+        test_apu_m_test_11,
+        "roms/automated_tests/test_apu_m/test_11.nes"
     );
 }

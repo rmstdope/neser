@@ -4,6 +4,7 @@ mod tests {
 
     use crate::cartridge::Cartridge;
     use crate::console::{Nes, TvSystem};
+    use crate::input::Button;
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{setup_rom_console_crc_test, setup_rom_console_test, setup_rom_test};
 
@@ -89,7 +90,45 @@ mod tests {
         "roms/automated_tests/cpu_timing_test6/cpu_timing_test.nes"
     );
 
-    // TODO dma_sync_test
+    #[test]
+    fn test_dma_sync_test_v2() {
+        let rom_path = "roms/automated_tests/dma_sync_test_v2/dma_sync_test.nes";
+        let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
+        let cartridge = Cartridge::new(&rom_data).expect("DMA Sync Test v2 ROM should parse");
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        run_nes_for_frames(&mut nes, 300);
+
+        let mut ppu = nes.ppu.borrow_mut();
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
+        let palette_data = ppu.read_data();
+        // Verify that the palette data read is 0x0F (black)
+        assert_eq!(palette_data, 0x0F);
+    }
+
+    #[test]
+    fn test_dma_sync_test_v2_simulate_failure() {
+        let rom_path = "roms/automated_tests/dma_sync_test_v2/dma_sync_test.nes";
+        let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
+        let cartridge = Cartridge::new(&rom_data).expect("DMA Sync Test v2 ROM should parse");
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        run_nes_for_frames(&mut nes, 150);
+        // Halfway in, simulate a right button press
+        // This causes the test to fail as the DMA timing is now off
+        nes.set_button(1, Button::Right, true);
+        run_nes_for_frames(&mut nes, 150);
+
+        let mut ppu = nes.ppu.borrow_mut();
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
+        let palette_data = ppu.read_data();
+        // Verify that the palette data read is 0x30 (white)
+        assert_eq!(palette_data, 0x30);
+    }
 
     // dmc_dma_during_read4
     setup_rom_console_crc_test!(

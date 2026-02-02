@@ -16,6 +16,7 @@ const GRAYSCALE: u8 = 0b0000_0001;
 // const EMPHASIZE_BLUE: u8 = 0b1000_0000;
 
 /// Manages PPU registers including PPUCTRL, PPUMASK, and Loopy scroll registers
+#[derive(Debug)]
 pub struct Registers {
     /// Control register value ($2000)
     control_register: u8,
