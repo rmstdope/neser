@@ -663,50 +663,6 @@ pub use savestate_error::SaveStateError;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::debugging::Tracing;
-    use std::fs;
-
-    // TODO Migrate into rom_tests.rs
-    #[test]
-    fn test_nestest() {
-        // Load the golden log from file
-        let golden_log = fs::read_to_string("roms/nestest.log")
-            .expect("Failed to load nestest.log - make sure roms/nestest.log exists");
-
-        // Load the nestest ROM
-        let rom_data = fs::read("roms/nestest.nes").expect("Failed to load ROM");
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to parse ROM");
-
-        // Create NES and insert cartridge
-        let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
-        nes.cpu.reset(false);
-        // nestest automated test starts execution at $C000 (not reset vector $C004)
-        nes.cpu.set_pc(0xC000);
-        // CPU reset takes 7 cycles, manually sync PPU and CPU cycle counters
-        // PPU is already a bit ahead here:
-        // - Nes::new runs the PPU for 1 cycle (sprite-0 hit timing offset)
-        // - Cpu::reset reads the reset vector via bus reads, which advances the PPU further
-        //   due to the CPU master-clock phase model.
-        // Ensure the PPU reaches exactly 21 cycles (7 * 3) before the first traced instruction.
-        let ppu_cycles_needed = 21u64.saturating_sub(nes.ppu.borrow().total_cycles());
-        nes.ppu.borrow_mut().run_ppu_cycles(ppu_cycles_needed);
-
-        for line in golden_log.lines() {
-            let expected = line.to_string();
-            let actual = nes.trace(&Tracing {
-                enabled: true,
-                cpu: 0,
-                ppu: 0,
-                apu: 0,
-                mapper: 0,
-                nestest: true,
-            });
-
-            assert_eq!(expected, actual);
-            nes.run_cpu_tick();
-        }
-    }
 
     #[test]
     fn test_ntsc_ppu_cycles_per_cpu_cycle() {
