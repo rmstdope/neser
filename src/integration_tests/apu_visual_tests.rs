@@ -112,4 +112,8 @@ mod tests {
     // TODO pal_apu_tests
 
     // TODO test_apu_2
+    setup_rom_console_test!(
+        test_apu_2_test_1,
+        "roms/automated_tests/test_apu_2/test_1.nes"
+    );
 }

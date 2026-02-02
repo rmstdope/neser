@@ -8,6 +8,15 @@ pub struct FrameCounter {
     cycle_counter: u32,
     irq_flag: bool,
     irq_assert_cycles_remaining: u8,
+    /// Block frame counter ticks for the next N CPU cycles.
+    ///
+    /// This prevents a delayed $4017 write (which can trigger an immediate
+    /// quarter/half-frame clock when bit 7 is set) from producing a back-to-back
+    /// tick with the regular sequencer on the very next cycle. Without this, we
+    /// can double-clock length counters (e.g., 29829 tick + immediate tick at
+    /// cycle 0) and clear pulse-1 early, causing `test_apu_2/test_1.nes`
+    /// to fail at the $4015 check.
+    block_frame_counter: bool,
     five_step_extra_cycle: bool, // Alternating +1 cycle offset for 5-step sequencing
     pending_write: Option<u8>,   // Pending write to $4017 register
     write_delay: u8,             // Cycles remaining before pending write takes effect
@@ -36,6 +45,7 @@ impl FrameCounter {
             cycle_counter: 0,
             irq_flag: false,
             irq_assert_cycles_remaining: 0,
+            block_frame_counter: false,
             five_step_extra_cycle: false,
             pending_write: None,
             write_delay: 0,
@@ -75,6 +85,7 @@ impl FrameCounter {
         // Note: Phase not tracked here as we don't know the APU cycle
         self.five_step_extra_cycle = false;
         self.irq_assert_cycles_remaining = 0;
+        self.block_frame_counter = false;
 
         // Writing 1 to IRQ inhibit clears the IRQ flag
         if (value & 0x40) != 0 {
@@ -123,6 +134,10 @@ impl FrameCounter {
 
     pub(crate) fn irq_assert_cycles_remaining(&self) -> u8 {
         self.irq_assert_cycles_remaining
+    }
+
+    pub(crate) fn block_frame_counter(&self) -> bool {
+        self.block_frame_counter
     }
 
     pub(crate) fn five_step_extra_cycle(&self) -> bool {
@@ -193,6 +208,7 @@ impl FrameCounter {
         irq_inhibit: bool,
         irq_flag: bool,
         irq_assert_cycles_remaining: u8,
+        block_frame_counter: bool,
         five_step_extra_cycle: bool,
         pending_write: Option<u8>,
         write_delay: u8,
@@ -204,6 +220,7 @@ impl FrameCounter {
         self.irq_inhibit = irq_inhibit;
         self.irq_flag = irq_flag;
         self.irq_assert_cycles_remaining = irq_assert_cycles_remaining;
+        self.block_frame_counter = block_frame_counter;
         self.five_step_extra_cycle = five_step_extra_cycle;
         self.pending_write = pending_write;
         self.write_delay = write_delay;
@@ -331,8 +348,26 @@ impl FrameCounter {
         let (immediate_quarter, immediate_half) = self.pending_immediate_clock;
         self.pending_immediate_clock = (false, false);
 
-        let quarter = quarter_frame || immediate_quarter;
-        let half = half_frame || immediate_half;
+        let block_active = self.block_frame_counter;
+        let quarter = if block_active {
+            false
+        } else {
+            quarter_frame || immediate_quarter
+        };
+        let half = if block_active {
+            false
+        } else {
+            half_frame || immediate_half
+        };
+
+        if self.block_frame_counter {
+            self.block_frame_counter = false;
+        }
+
+        if quarter || half {
+            self.block_frame_counter = true;
+        }
+
         if quarter || half {
             trace_apu!(
                 3; "frame_counter clock quarter={} half={} cycle={}",
@@ -517,6 +552,38 @@ mod tests {
 
         fc.write_register(0b1000_0000); // 5-step
         assert!(fc.get_mode());
+    }
+
+    #[test]
+    fn test_delayed_4017_immediate_clock_blocked_after_half_frame_tick() {
+        let mut fc = FrameCounter::new();
+
+        // Arrange: place the counter just before a half-frame tick in 4-step mode,
+        // and schedule a delayed write to 5-step so it takes effect on the next cycle.
+        fc.restore_state(
+            29828,
+            false,
+            false,
+            false,
+            0,
+            false,
+            false,
+            Some(0x80),
+            2,
+            false,
+            (false, false),
+        );
+
+        // First clock: should hit the 4-step half-frame tick at cycle 29829.
+        let (quarter_1, half_1) = fc.clock();
+        assert!(quarter_1);
+        assert!(half_1);
+
+        // Second clock: delayed $4017 write takes effect (mode 5-step).
+        // Immediate quarter/half clocks from the write should be blocked for this cycle.
+        let (quarter_2, half_2) = fc.clock();
+        assert!(!quarter_2);
+        assert!(!half_2);
     }
 
     #[test]

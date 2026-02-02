@@ -82,7 +82,7 @@ pub(crate) mod tests {
         ///
         /// Returns `Timeout` if no result is found within max_frames.
         pub fn run_test(&mut self) -> RomTestResult {
-            init_apu_tracing_from_env();
+            init_tracing_from_env();
             // Load ROM
             let rom_data = match fs::read(&self.rom_path) {
                 Ok(data) => data,
@@ -240,7 +240,7 @@ pub(crate) mod tests {
         stop_address: u16,
         verifier: fn(&mut Nes) -> bool,
     ) -> RomTestResult {
-        init_apu_tracing_from_env();
+        init_tracing_from_env();
 
         let rom_data = match fs::read(rom_path) {
             Ok(data) => data,
@@ -319,21 +319,24 @@ pub(crate) mod tests {
         }
     }
 
-    pub(crate) fn init_apu_tracing_from_env() {
-        let level = match std::env::var("NESER_TRACE_APU") {
+    pub(crate) fn init_tracing_from_env() {
+        let apu_level = match std::env::var("NESER_TRACE_APU") {
+            Ok(value) => value.parse::<u8>().unwrap_or(1),
+            Err(_) => return,
+        };
+        let cpu_level = match std::env::var("NESER_TRACE_CPU") {
             Ok(value) => value.parse::<u8>().unwrap_or(1),
             Err(_) => return,
         };
 
-        if level == 0 {
-            return;
+        if apu_level != 0 || cpu_level != 0 {
+            init_tracing(Tracing {
+                enabled: true,
+                apu: apu_level,
+                cpu: cpu_level,
+                ..Tracing::default()
+            });
         }
-
-        init_tracing(Tracing {
-            enabled: true,
-            apu: level,
-            ..Tracing::default()
-        });
     }
 
     fn parse_crc32_from_console_text(text: &str) -> Option<u32> {

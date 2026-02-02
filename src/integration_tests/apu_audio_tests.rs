@@ -1,8 +1,13 @@
+/// All of the test ROMs below are verified manually by listening to them and, where possible,
+/// comparing to known-good audio captures from real hardware.
+/// The audio analysis functions below are more of a fun exploration than strict test verifications,
+/// but they could help catch gross APU emulation errors in the future.
+
 #[cfg(test)]
 mod tests {
     use crate::cartridge::Cartridge;
     use crate::console::{Nes, TvSystem};
-    use crate::integration_tests::rom_test_runner::tests::init_apu_tracing_from_env;
+    use crate::integration_tests::rom_test_runner::tests::init_tracing_from_env;
     use crate::{setup_rom_address_test, setup_rom_test};
     use std::fs;
 
@@ -83,7 +88,9 @@ mod tests {
         total_cycles: u32,
         pulse1_enabled: bool,
         pulse2_enabled: bool,
+        triangle_enabled: bool,
         noise_enabled: bool,
+        dmc_enabled: bool,
     ) -> Vec<f32> {
         let rom_data = fs::read(rom_path).expect("ROM should load");
         let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
@@ -95,8 +102,8 @@ mod tests {
         {
             let mut apu = nes.apu.borrow_mut();
             apu.set_sample_rate(SAMPLE_RATE_HZ);
-            apu.set_triangle_enabled(false);
-            apu.set_dmc_enabled(false);
+            apu.set_triangle_enabled(triangle_enabled);
+            apu.set_dmc_enabled(dmc_enabled);
             apu.set_pulse1_enabled(pulse1_enabled);
             apu.set_pulse2_enabled(pulse2_enabled);
             apu.set_noise_enabled(noise_enabled);
@@ -113,6 +120,8 @@ mod tests {
                 apu.set_pulse1_enabled(pulse1_enabled);
                 apu.set_pulse2_enabled(pulse2_enabled);
                 apu.set_noise_enabled(noise_enabled);
+                apu.set_triangle_enabled(triangle_enabled);
+                apu.set_dmc_enabled(dmc_enabled);
             }
 
             while nes.sample_ready() {
@@ -507,12 +516,6 @@ mod tests {
             .unwrap_or(samples.len());
         &samples[first_nonzero..]
     }
-
-    // // Removes all trailing zeros from the vector
-    // fn trim_trailing_zeros(samples: &[f32]) -> &[f32] {
-    //     let last_nonzero = samples.iter().rposition(|&x| x != 0.0).unwrap_or(0);
-    //     &samples[..=last_nonzero]
-    // }
 
     /// Analyze a pulse waveform for period, duty cycle, and peak amplitude.
     fn analyze_pulse_samples(samples: &[f32]) -> PulseAnalysis {
@@ -1018,7 +1021,9 @@ mod tests {
             total_cycles,
             false,
             false,
+            false,
             true,
+            false,
         );
         let pulse_samples = collect_pulse_samples(
             "roms/automated_tests/test_apu_sweep/sweep_cutoff.nes",
@@ -1142,7 +1147,7 @@ mod tests {
     // test_apu_sweep
     #[test]
     fn test_apu_sweep_sub() {
-        init_apu_tracing_from_env();
+        init_tracing_from_env();
         // The test ROM plays two runs of ~6 audible 200ms windows each (~12 total).
         let leading = (SAMPLE_RATE_HZ * 0.30) as usize;
         let trailing = (SAMPLE_RATE_HZ * 0.50) as usize;
@@ -1185,7 +1190,154 @@ mod tests {
         }
     }
 
-    // TODO test_apu_timers
+    // test_apu_timers
+    // #[test]
+    // fn test_apu_timers_dmc_pitch() {
+    //     init_apu_tracing_from_env();
+    //     // Golden reference for the expected DMC output (recorded from the test ROM).
+    //     let wav_samples =
+    //         load_wav_samples_at_rate("roms/automated_tests/test_apu_timers/dmc_pitch.wav");
+    //     // Capture a little extra beyond the WAV length to allow for warmup and alignment.
+    //     let total_cycles = capture_cycles_for_samples(wav_samples.len(), WARMUP_SAMPLES, 20_000);
+
+    //     // Run the ROM and capture DMC-only output so other channels don't contaminate analysis.
+    //     let samples = collect_dmc_samples(
+    //         "roms/automated_tests/test_apu_timers/dmc_pitch.nes",
+    //         total_cycles,
+    //     );
+    //     // Remove initial power-on transients for stable audio analysis.
+    //     let samples = trim_warmup(&samples, WARMUP_SAMPLES);
+
+    //     // Align on the first steady RMS window to compare timbre against the WAV.
+    //     let window_size = (SAMPLE_RATE_HZ as usize / 50).max(1); // 20ms
+    //     let hop_size = (window_size / 2).max(1);
+    //     let wav_rms = rms_windows(&wav_samples, window_size, hop_size);
+    //     let emu_rms = rms_windows(samples, window_size, hop_size);
+
+    //     let wav_start_window =
+    //         steady_start_index(&wav_rms, 0.05, 3).expect("failed to find wav steady start");
+    //     let emu_start_window =
+    //         steady_start_index(&emu_rms, 0.05, 3).expect("failed to find emu steady start");
+    //     let wav_start = wav_start_window * hop_size;
+    //     let emu_start = emu_start_window * hop_size;
+
+    //     let max_len = wav_samples
+    //         .len()
+    //         .saturating_sub(wav_start)
+    //         .min(samples.len().saturating_sub(emu_start));
+    //     assert!(max_len > 10_000, "not enough samples for DMC correlation");
+
+    //     let wav_slice = &wav_samples[wav_start..wav_start + max_len];
+    //     let emu_slice = &samples[emu_start..emu_start + max_len];
+
+    //     // Timbre check: compare distributions of per-sample deltas (DMC step patterns).
+    //     let wav_hist = delta_histogram(wav_slice, 64, 0.05);
+    //     let emu_hist = delta_histogram(emu_slice, 64, 0.05);
+    //     let timbre_corr = normalized_correlation(&wav_hist, &emu_hist).abs();
+    //     assert!(
+    //         timbre_corr > 0.7,
+    //         "expected DMC timbre histogram correlation > 0.7, got {}",
+    //         timbre_corr
+    //     );
+
+    //     // Period analysis:
+    //     // - DMC pitch steps should form 16 distinct tone segments.
+    //     // - Each step should lower the pitch, which increases the measured period.
+    //     let period_window = (SAMPLE_RATE_HZ * 0.10) as usize; // 100ms windows
+    //     let period_hop = (period_window / 2).max(1); // 50ms hop
+    //     // Expected period range in samples (derived from DMC rate table and sample shape).
+    //     let min_lag = 2usize;
+    //     let max_lag = 80usize;
+    //     let wav_period_windows =
+    //         periods_by_autocorr(wav_slice, period_window, period_hop, min_lag, max_lag);
+    //     let emu_period_windows =
+    //         periods_by_autocorr(emu_slice, period_window, period_hop, min_lag, max_lag);
+    //     assert!(
+    //         !wav_period_windows.is_empty() && !emu_period_windows.is_empty(),
+    //         "no periods detected for DMC pitch test"
+    //     );
+
+    //     // Build median periods across small chunks to reduce jitter.
+    //     let wav_medians = median_periods_by_chunks(&wav_period_windows, 8);
+    //     let emu_medians = median_periods_by_chunks(&emu_period_windows, 8);
+    //     assert!(
+    //         wav_medians.len() >= 16 && emu_medians.len() >= 16,
+    //         "expected enough median windows for 16 tones"
+    //     );
+
+    //     let tolerance = 25.0;
+    //     let wav_segment_count = count_period_segments(&wav_medians, tolerance);
+    //     let emu_segment_count = count_period_segments(&emu_medians, tolerance);
+    //     assert!(
+    //         wav_segment_count >= 16 && wav_segment_count <= 20,
+    //         "expected ~16 wav tone segments, got {}",
+    //         wav_segment_count
+    //     );
+    //     assert!(
+    //         emu_segment_count >= 16 && emu_segment_count <= 20,
+    //         "expected ~16 DMC tone segments, got {}",
+    //         emu_segment_count
+    //     );
+
+    //     // Compare period series shapes to ensure pitch steps align with the WAV.
+    //     let series_len = wav_medians.len().min(emu_medians.len());
+    //     let series_corr =
+    //         normalized_correlation(&wav_medians[..series_len], &emu_medians[..series_len]).abs();
+    //     assert!(
+    //         series_corr > 0.6,
+    //         "expected DMC pitch series correlation > 0.6, got {}",
+    //         series_corr
+    //     );
+
+    //     // The reference WAV should show meaningful pitch variation.
+    //     let wav_min = wav_medians.iter().copied().fold(f32::INFINITY, f32::min);
+    //     let wav_max = wav_medians
+    //         .iter()
+    //         .copied()
+    //         .fold(f32::NEG_INFINITY, f32::max);
+    //     assert!(
+    //         wav_max - wav_min > 100.0,
+    //         "wav pitch range too small (min={}, max={})",
+    //         wav_min,
+    //         wav_max
+    //     );
+
+    //     // Emulator should also show meaningful pitch variation.
+    //     let emu_min = emu_medians.iter().copied().fold(f32::INFINITY, f32::min);
+    //     let emu_max = emu_medians
+    //         .iter()
+    //         .copied()
+    //         .fold(f32::NEG_INFINITY, f32::max);
+    //     assert!(
+    //         emu_max - emu_min > 100.0,
+    //         "emu pitch range too small (min={}, max={})",
+    //         emu_min,
+    //         emu_max
+    //     );
+    // }
+
+    // #[test]
+    // fn test_apu_timers_noise_pitch() {
+    //     let samples = collect_forced_channel_samples(
+    //         "roms/automated_tests/test_apu_timers/noise_pitch.nes",
+    //         10_000_000,
+    //         false,
+    //         false,
+    //         false,
+    //         true,
+    //         true,
+    //     );
+
+    //     // Save raw samples for external analysis if the environment variable is set.
+    //     {
+    //         let mut file = fs::File::create("samples.raw").expect("Failed to create samples.raw");
+    //         for &sample in &samples {
+    //             // Clamp and convert f32 [0.0, 1.0] to u8 [0, 255]
+    //             let byte = (sample.clamp(0.0, 1.0) * 255.0).round() as u8;
+    //             std::io::Write::write_all(&mut file, &[byte]).expect("Failed to write sample");
+    //         }
+    //     }
+    // }
 
     // TODO test_tri_lin_ctr
 
