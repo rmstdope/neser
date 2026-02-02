@@ -17,9 +17,17 @@ pub struct FrameCounter {
     /// cycle 0) and clear pulse-1 early, causing `test_apu_2/test_1.nes`
     /// to fail at the $4015 check.
     block_frame_counter: bool,
-    five_step_extra_cycle: bool, // Alternating +1 cycle offset for 5-step sequencing
-    pending_write: Option<u8>,   // Pending write to $4017 register
-    write_delay: u8,             // Cycles remaining before pending write takes effect
+    /// Alternate +1 CPU-cycle offset in 5-step mode.
+    ///
+    /// The 5-step sequence is 37281 CPU cycles (odd length), so the phase between
+    /// the frame sequencer and CPU/APU clocks flips every other sequence. We model
+    /// that by shifting the step boundaries by +1 cycle on alternating runs. This
+    /// is required for timing-sensitive tests like
+    /// `apu_test/rom_singles/5-len_timing.nes` and
+    /// `blargg_apu_2005.07.30/06.len_timing_mode1.nes`.
+    five_step_extra_cycle: bool,
+    pending_write: Option<u8>, // Pending write to $4017 register
+    write_delay: u8,           // Cycles remaining before pending write takes effect
     pending_write_on_odd_cpu_cycle: bool,
     pending_immediate_clock: (bool, bool), // Extra quarter/half clocks from delayed $4017 side-effects
 }
