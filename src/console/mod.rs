@@ -9,6 +9,6 @@ pub use nes::Nes;
 pub use nes::TvSystem;
 pub use savestate::{
     ApuState, BusState, CpuState, DmcState, EnvelopeState, FrameCounterState, JoypadState,
-    MapperState, NoiseState, PpuRegisterState, PpuState, PpuTimingState, PulseState,
+    MapperState, NoiseState, PaddleState, PpuRegisterState, PpuState, PpuTimingState, PulseState,
     SAVESTATE_VERSION, SaveState, SpritesState, TriangleState,
 };

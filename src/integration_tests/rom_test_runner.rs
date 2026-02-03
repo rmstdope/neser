@@ -24,6 +24,7 @@ pub(crate) mod tests {
     use crate::cartridge::Cartridge;
     use crate::console::{Nes, TvSystem};
     use crate::debugging::{Tracing, init_tracing};
+    use crate::input::Button;
     use std::fs;
 
     /// Result of running an test ROM
@@ -108,6 +109,10 @@ pub(crate) mod tests {
 
             let mut running = false;
             let mut first_nonzero_status = None;
+            let mut last_prompt: Option<String> = None;
+            let mut pressed_for_prompt = false;
+            let mut pending_release: Option<Button> = None;
+            let mut release_after_frames: u8 = 0;
             // Run frames and check for results
             for frame in 1..=self.max_frames {
                 // Run one frame (roughly 29780 CPU cycles for NTSC)
@@ -148,7 +153,6 @@ pub(crate) mod tests {
                 }
                 if self.verification == RomTestVerification::StatusByte {
                     if status == 0x00 {
-                        // println!("Test passed!");
                         return RomTestResult::Pass;
                     } else if status > 0x00 && status < 0x80 {
                         let base_addr = nes.base_nametable_addr();
@@ -165,13 +169,8 @@ pub(crate) mod tests {
                         return RomTestResult::Fail(status);
                     } else if status == 0x81 {
                         if self.wait_reset > 0 {
-                            // println!(
-                            //     "Test indicates reset, waiting {} frames...",
-                            //     self.wait_reset
-                            // );
                             self.wait_reset -= 1;
                         } else {
-                            // println!("Test indicates reset, restarting NES...");
                             // Test requests a reset-button style reset.
                             nes.reset(true);
                             nes.memory.borrow_mut().write_for_testing(0x6000, 0x80);
@@ -192,6 +191,7 @@ pub(crate) mod tests {
                         .collect::<Vec<_>>()
                         .join("\n");
                     // Check if $0x test
+                    // println!("Text is '{}'", text);
                     let is_0x = text.len() == 3 && text.starts_with("$0");
                     if text.to_uppercase().contains("PASSED")
                         || text == "$01"
@@ -206,6 +206,34 @@ pub(crate) mod tests {
                         println!("Test failed!");
                         println!("Console output:\n{}", text);
                         return RomTestResult::Fail(1);
+                    } else if let Some(last_line) = text.lines().last().map(|line| line.trim()) {
+                        let prompt_button = match last_line {
+                            "A" => Some(Button::A),
+                            "B" => Some(Button::B),
+                            "Select" => Some(Button::Select),
+                            "Start" => Some(Button::Start),
+                            "Up" => Some(Button::Up),
+                            "Down" => Some(Button::Down),
+                            "Left" => Some(Button::Left),
+                            "Right" => Some(Button::Right),
+                            _ => None,
+                        };
+
+                        let prompt_changed = last_prompt.as_deref() != Some(last_line);
+                        if prompt_changed {
+                            last_prompt = Some(last_line.to_string());
+                            pressed_for_prompt = false;
+                        }
+
+                        if let Some(button) = prompt_button
+                            && !pressed_for_prompt
+                            && pending_release.is_none()
+                        {
+                            nes.set_button(1, button, true);
+                            pending_release = Some(button);
+                            release_after_frames = 2;
+                            pressed_for_prompt = true;
+                        }
                     }
                 } else if let RomTestVerification::ConsoleCrc(expected_crcs) = self.verification {
                     let base_addr = nes.base_nametable_addr();
@@ -225,6 +253,16 @@ pub(crate) mod tests {
                         println!("Test failed! Unexpected CRC 0x{:08X}", crc);
                         println!("Console output:\n{}", text);
                         return RomTestResult::Fail(1);
+                    }
+                }
+
+                if let Some(button) = pending_release
+                    && release_after_frames > 0
+                {
+                    release_after_frames -= 1;
+                    if release_after_frames == 0 {
+                        nes.set_button(1, button, false);
+                        pending_release = None;
                     }
                 }
             }
