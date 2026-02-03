@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Current save-state format version.
 /// Increment this when making breaking changes to the state format.
-pub const SAVESTATE_VERSION: u32 = 5;
+pub const SAVESTATE_VERSION: u32 = 6;
 
 /// Complete emulator state snapshot.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -275,6 +275,17 @@ pub struct JoypadState {
     pub button_states: u8,
 }
 
+/// Bus paddle state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PaddleState {
+    pub strobe: bool,
+    pub shift_index: u8,
+    pub position: u8,
+    pub latched_position: u8,
+    pub trigger: bool,
+    pub enabled: bool,
+}
+
 /// Bus state for save-state support.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BusState {
@@ -282,6 +293,7 @@ pub struct BusState {
     pub oam_dma_page: Option<u8>,
     pub joypad1: JoypadState,
     pub joypad2: JoypadState,
+    pub paddle1: PaddleState,
 }
 
 /// APU complete state.
@@ -590,12 +602,20 @@ mod tests {
                 button_index: 0,
                 button_states: 0,
             },
+            paddle1: PaddleState {
+                strobe: false,
+                shift_index: 0,
+                position: 0,
+                latched_position: 0,
+                trigger: false,
+                enabled: false,
+            },
         }
     }
 
     #[test]
     fn test_savestate_version() {
-        assert_eq!(SAVESTATE_VERSION, 5);
+        assert_eq!(SAVESTATE_VERSION, 6);
     }
 
     #[test]
