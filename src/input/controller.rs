@@ -10,7 +10,7 @@ pub enum ControllerState {
 
 /// The type of input a controller need.
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControllerInput {
     // Gamepad (or keyboard as fallback) needed to provide input.
     Gamepad,

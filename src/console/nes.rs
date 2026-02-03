@@ -247,8 +247,14 @@ impl Nes {
     }
 
     /// Returns the controller port that has an Arkanoid paddle connected.
+    #[allow(dead_code)]
     pub fn paddle_port(&self) -> Option<u8> {
         self.memory.borrow().paddle_port()
+    }
+
+    /// Return the input type for a controller port.
+    pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
+        self.memory.borrow().controller_input_type(port)
     }
 
     /// Set the current position of the first paddle controller.
