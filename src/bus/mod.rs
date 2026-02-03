@@ -1,7 +1,7 @@
 pub mod apu_device;
 #[allow(clippy::module_inception)]
 mod bus;
-pub mod joypad_device;
+pub mod controller_device;
 pub mod mapper_device;
 pub mod oam_dma_device;
 pub mod ppu_device;

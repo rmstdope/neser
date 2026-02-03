@@ -1,5 +1,5 @@
 use super::apu_device::ApuDevice;
-use super::joypad_device::JoypadDevice;
+use super::controller_device::ControllerDevice;
 use super::mapper_device::MapperDevice;
 use super::oam_dma_device::OamDmaDevice;
 use super::ppu_device::PpuDevice;
@@ -7,7 +7,7 @@ use super::ram_device::RamDevice;
 use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::console::{BusState, MapperState};
-use crate::input::{Joypad, Paddle};
+use crate::input::{Button, Controller, Joypad, Paddle};
 use crate::ppu;
 use crate::trace_mapper;
 use std::cell::RefCell;
@@ -16,7 +16,7 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::rc::Rc;
 
-/// Controller type for a port (re-exported from config for bus module use)
+/// Controller type for a port
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControllerType {
     Joypad,
@@ -37,13 +37,8 @@ pub struct Bus {
     apu: Rc<RefCell<apu::Apu>>,
     oam_dma_page: Rc<RefCell<Option<u8>>>, // Stores the page for pending OAM DMA
     dma_triggered: Rc<RefCell<bool>>,
-    joypad1: Rc<RefCell<Joypad>>,
-    joypad2: Rc<RefCell<Joypad>>,
-    paddle1: Rc<RefCell<Paddle>>,
-    paddle2: Rc<RefCell<Paddle>>,
-    port1_type: Rc<RefCell<ControllerType>>,
-    port2_type: Rc<RefCell<ControllerType>>,
-    paddle1_enabled: Rc<RefCell<bool>>, // Deprecated: use port1_type instead. Kept for backward compatibility with existing code.
+    port1_controller: Rc<RefCell<Box<dyn Controller>>>,
+    port2_controller: Rc<RefCell<Box<dyn Controller>>>,
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
     mmc5_scroll_log_active: bool,
@@ -59,13 +54,8 @@ impl Bus {
             apu,
             oam_dma_page: Rc::new(RefCell::new(None)),
             dma_triggered: Rc::new(RefCell::new(false)),
-            joypad1: Rc::new(RefCell::new(Joypad::new())),
-            joypad2: Rc::new(RefCell::new(Joypad::new())),
-            paddle1: Rc::new(RefCell::new(Paddle::new())),
-            paddle2: Rc::new(RefCell::new(Paddle::new())),
-            port1_type: Rc::new(RefCell::new(ControllerType::Joypad)),
-            port2_type: Rc::new(RefCell::new(ControllerType::Joypad)),
-            paddle1_enabled: Rc::new(RefCell::new(false)),
+            port1_controller: Rc::new(RefCell::new(Joypad::new_boxed())),
+            port2_controller: Rc::new(RefCell::new(Joypad::new_boxed())),
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
             mmc5_scroll_log_active: false,
@@ -76,13 +66,9 @@ impl Bus {
             controller.ppu.clone(),
             controller.cartridge.clone(),
         )));
-        controller.register_device(Box::new(JoypadDevice::new(
-            controller.joypad1.clone(),
-            controller.joypad2.clone(),
-            controller.paddle1.clone(),
-            controller.paddle2.clone(),
-            controller.port1_type.clone(),
-            controller.port2_type.clone(),
+        controller.register_device(Box::new(ControllerDevice::new(
+            controller.port1_controller.clone(),
+            controller.port2_controller.clone(),
         )));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -432,73 +418,123 @@ impl Bus {
     }
 
     /// Set button state for a controller
-    pub fn set_button(&mut self, controller: u8, button: crate::input::Button, pressed: bool) {
-        match controller {
-            1 => self.joypad1.borrow_mut().set_button(button, pressed),
-            2 => self.joypad2.borrow_mut().set_button(button, pressed),
-            _ => {}
+    pub fn set_button(&mut self, port: u8, button: Button, pressed: bool) {
+        let controller_ref = match port {
+            1 => &self.port1_controller,
+            2 => &self.port2_controller,
+            _ => return,
+        };
+        
+        // For now, we'll need to replace the controller if it's a Joypad
+        let is_joypad = matches!(
+            controller_ref.borrow().capture_state(),
+            crate::input::ControllerState::Joypad(_)
+        );
+        
+        if is_joypad {
+            let state = controller_ref.borrow().capture_state();
+            if let crate::input::ControllerState::Joypad(mut joypad_state) = state {
+                // Update button states bitfield
+                let bit = button as u8;
+                if pressed {
+                    joypad_state.button_states |= 1 << bit;
+                } else {
+                    joypad_state.button_states &= !(1 << bit);
+                }
+                controller_ref.borrow_mut().restore_state(&crate::input::ControllerState::Joypad(joypad_state));
+            }
         }
-    }
-
-    /// Enable or disable the Arkanoid paddle on controller port 1.
-    pub fn set_paddle1_enabled(&mut self, enabled: bool) {
-        *self.paddle1_enabled.borrow_mut() = enabled;
-        // Also update the port type for consistency
-        if enabled {
-            *self.port1_type.borrow_mut() = ControllerType::Paddle;
-        } else {
-            *self.port1_type.borrow_mut() = ControllerType::Joypad;
-        }
-    }
-
-    /// Returns `true` if the Arkanoid paddle on controller port 1 is enabled.
-    pub fn paddle1_enabled(&self) -> bool {
-        *self.paddle1_enabled.borrow()
-    }
-
-    /// Update paddle 1 position (0..255).
-    pub fn set_paddle1_position(&mut self, position: u8) {
-        self.paddle1.borrow_mut().set_position(position);
-    }
-
-    /// Update paddle 1 trigger state.
-    pub fn set_paddle1_trigger(&mut self, pressed: bool) {
-        self.paddle1.borrow_mut().set_trigger(pressed);
     }
 
     /// Set the controller type for a specific port.
     pub fn set_controller_type(&mut self, port: u8, controller_type: ControllerType) {
-        match port {
-            1 => {
-                *self.port1_type.borrow_mut() = controller_type;
-                // Update paddle1_enabled for backward compatibility
-                *self.paddle1_enabled.borrow_mut() = controller_type == ControllerType::Paddle;
-            }
-            2 => {
-                *self.port2_type.borrow_mut() = controller_type;
-            }
-            _ => {}
+        let controller_ref = match port {
+            1 => &self.port1_controller,
+            2 => &self.port2_controller,
+            _ => return,
+        };
+        
+        let new_controller: Box<dyn Controller> = match controller_type {
+            ControllerType::Joypad => Joypad::new_boxed(),
+            ControllerType::Paddle => Paddle::new_boxed(),
+        };
+        
+        *controller_ref.borrow_mut() = new_controller;
+    }
+
+    /// Update paddle position for a specific port (0..255).
+    pub fn set_paddle_position(&mut self, port: u8, position: u8) {
+        let controller_ref = match port {
+            1 => &self.port1_controller,
+            2 => &self.port2_controller,
+            _ => return,
+        };
+        
+        let state = controller_ref.borrow().capture_state();
+        if let crate::input::ControllerState::Paddle(mut paddle_state) = state {
+            paddle_state.position = position;
+            controller_ref.borrow_mut().restore_state(&crate::input::ControllerState::Paddle(paddle_state));
         }
+    }
+
+    /// Update paddle 1 position (0..255).
+    pub fn set_paddle1_position(&mut self, position: u8) {
+        self.set_paddle_position(1, position);
     }
 
     /// Update paddle 2 position (0..255).
     pub fn set_paddle2_position(&mut self, position: u8) {
-        self.paddle2.borrow_mut().set_position(position);
+        self.set_paddle_position(2, position);
+    }
+
+    /// Update paddle trigger state for a specific port.
+    pub fn set_paddle_trigger(&mut self, port: u8, pressed: bool) {
+        let controller_ref = match port {
+            1 => &self.port1_controller,
+            2 => &self.port2_controller,
+            _ => return,
+        };
+        
+        let state = controller_ref.borrow().capture_state();
+        if let crate::input::ControllerState::Paddle(mut paddle_state) = state {
+            paddle_state.trigger = pressed;
+            controller_ref.borrow_mut().restore_state(&crate::input::ControllerState::Paddle(paddle_state));
+        }
+    }
+
+    /// Update paddle 1 trigger state.
+    pub fn set_paddle1_trigger(&mut self, pressed: bool) {
+        self.set_paddle_trigger(1, pressed);
     }
 
     /// Update paddle 2 trigger state.
     pub fn set_paddle2_trigger(&mut self, pressed: bool) {
-        self.paddle2.borrow_mut().set_trigger(pressed);
+        self.set_paddle_trigger(2, pressed);
+    }
+
+    /// Returns the controller type for a specific port.
+    pub fn get_controller_type(&self, port: u8) -> ControllerType {
+        let controller_ref = match port {
+            1 => &self.port1_controller,
+            2 => &self.port2_controller,
+            _ => return ControllerType::Joypad,
+        };
+        
+        match controller_ref.borrow().capture_state() {
+            crate::input::ControllerState::Joypad(_) => ControllerType::Joypad,
+            crate::input::ControllerState::Paddle(_) => ControllerType::Paddle,
+        }
+    }
+
+    /// Returns `true` if the Arkanoid paddle is on controller port 1.
+    /// This is for backward compatibility with existing code.
+    pub fn paddle1_enabled(&self) -> bool {
+        self.get_controller_type(1) == ControllerType::Paddle
     }
 
     #[cfg(test)]
     fn open_bus_value_for_test(&self) -> u8 {
         self.open_bus
-    }
-
-    #[cfg(test)]
-    pub fn paddle1_enabled_for_test(&self) -> bool {
-        *self.paddle1_enabled.borrow()
     }
 
     /// Create a snapshot of CPU RAM for save-state (first 2KB is the actual RAM).
@@ -549,60 +585,60 @@ impl Bus {
 
     /// Capture bus state for save-state.
     pub fn capture_state(&self) -> BusState {
+        use crate::console::ControllerStateWrapper;
+        
+        let port1_state = self.port1_controller.borrow().capture_state();
+        let port2_state = self.port2_controller.borrow().capture_state();
+        
         BusState {
             open_bus: self.open_bus,
             oam_dma_page: *self.oam_dma_page.borrow(),
-            joypad1: self.joypad1.borrow().capture_state(),
-            joypad2: self.joypad2.borrow().capture_state(),
-            paddle1: {
-                let mut state = self.paddle1.borrow().capture_state();
-                state.enabled = *self.paddle1_enabled.borrow();
-                state
+            port1_controller: match port1_state {
+                crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
+                crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Paddle(s),
             },
-            paddle2: self.paddle2.borrow().capture_state(),
-            port1_type: match *self.port1_type.borrow() {
-                ControllerType::Joypad => 0,
-                ControllerType::Paddle => 1,
-            },
-            port2_type: match *self.port2_type.borrow() {
-                ControllerType::Joypad => 0,
-                ControllerType::Paddle => 1,
+            port2_controller: match port2_state {
+                crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
+                crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Paddle(s),
             },
         }
     }
 
     /// Restore bus state from a save-state.
     pub fn restore_state(&mut self, state: &BusState) {
+        use crate::console::ControllerStateWrapper;
+        
         self.open_bus = state.open_bus;
         *self.oam_dma_page.borrow_mut() = state.oam_dma_page;
         self.dma_triggered.replace(false);
-        self.joypad1.borrow_mut().restore_state(&state.joypad1);
-        self.joypad2.borrow_mut().restore_state(&state.joypad2);
-        self.paddle1.borrow_mut().restore_state(&state.paddle1);
-        self.paddle2.borrow_mut().restore_state(&state.paddle2);
-        *self.paddle1_enabled.borrow_mut() = state.paddle1.enabled;
-        *self.port1_type.borrow_mut() = match state.port1_type {
-            0 => ControllerType::Joypad,
-            1 => ControllerType::Paddle,
-            _ => {
-                eprintln!(
-                    "Warning: Invalid port1_type value {} in save state, defaulting to Joypad",
-                    state.port1_type
-                );
-                ControllerType::Joypad
+        
+        // Restore port 1 controller - replace if type changed
+        match &state.port1_controller {
+            ControllerStateWrapper::Joypad(s) => {
+                let mut controller = Joypad::new_boxed();
+                controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
+                *self.port1_controller.borrow_mut() = controller;
             }
-        };
-        *self.port2_type.borrow_mut() = match state.port2_type {
-            0 => ControllerType::Joypad,
-            1 => ControllerType::Paddle,
-            _ => {
-                eprintln!(
-                    "Warning: Invalid port2_type value {} in save state, defaulting to Joypad",
-                    state.port2_type
-                );
-                ControllerType::Joypad
+            ControllerStateWrapper::Paddle(s) => {
+                let mut controller = Paddle::new_boxed();
+                controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
+                *self.port1_controller.borrow_mut() = controller;
             }
-        };
+        }
+        
+        // Restore port 2 controller - replace if type changed
+        match &state.port2_controller {
+            ControllerStateWrapper::Joypad(s) => {
+                let mut controller = Joypad::new_boxed();
+                controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
+                *self.port2_controller.borrow_mut() = controller;
+            }
+            ControllerStateWrapper::Paddle(s) => {
+                let mut controller = Paddle::new_boxed();
+                controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
+                *self.port2_controller.borrow_mut() = controller;
+            }
+        }
     }
 
     // /// Print the current open bus value to stdout (for debugging)
@@ -1049,22 +1085,14 @@ mod tests {
         memory.write(0x0000, 0x3C, false);
         memory.write(0x4014, 0x22, false);
 
+        // Test with joypad on port 1
         memory.set_button(1, crate::input::Button::A, true);
         memory.set_button(1, crate::input::Button::Right, true);
-        memory.write(0x4016, 0x00, false);
-        memory.read(0x4016);
-        memory.read(0x4016);
-
-        memory.set_paddle1_enabled(true);
-        memory.set_paddle1_position(0xA5);
-        memory.set_paddle1_trigger(true);
-        memory.write(0x4016, 0x01, false);
-        memory.write(0x4016, 0x00, false);
-        let expected_paddle = [0x08, 0x18];
-
-        memory.set_paddle1_enabled(false);
-        memory.read(0x4016);
-        memory.read(0x4016);
+        memory.write(0x4016, 0x01, false);  // Strobe high
+        memory.write(0x4016, 0x00, false);  // Strobe low - latches and resets index
+        memory.read(0x4016);  // Read A button
+        memory.read(0x4016);  // Read B button
+        // Now button_index is 2
 
         let expected_open_bus = memory.open_bus_value_for_test();
 
@@ -1077,13 +1105,31 @@ mod tests {
         assert!(restored.oam_dma_pending());
         assert_eq!(restored.take_oam_dma_page(), Some(0x22));
 
-        restored.set_paddle1_enabled(false);
-        let expected_sequence = [0, 0, 0, 0, 0, 1];
+        // Port 1 should have Joypad with buttons A and Right pressed, button_index=2
+        // Reading should continue from where we left off
+        let expected_sequence = [0, 0, 0, 0, 0, 1];  // Select, Start, Up, Down, Left, Right
         for expected in expected_sequence {
             assert_eq!(restored.read(0x4016) & 0x01, expected);
         }
-        restored.set_paddle1_enabled(true);
+    }
 
+    #[test]
+    fn test_bus_save_state_roundtrip_with_paddle() {
+        let mut memory = create_test_memory();
+
+        memory.set_controller_type(1, ControllerType::Paddle);
+        memory.set_paddle1_position(0xA5);
+        memory.set_paddle1_trigger(true);
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        let expected_paddle = [0x08, 0x18];
+
+        let saved_state = memory.capture_state();
+
+        let mut restored = create_test_memory();
+        restored.restore_state(&saved_state);
+
+        // Port 1 should have Paddle with position 0xA5 and trigger=true
         restored.write(0x0000, 0x00, false);
         restored.read(0x0000);
         let restored_paddle = [restored.read(0x4016) & 0x18, restored.read(0x4016) & 0x18];
