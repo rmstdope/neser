@@ -20,7 +20,7 @@ It is VERY VERY important to:
 
 - For more complex tasks, stop after the red phase and ask the navigator to review the test and approve before moving on to the green phase.
 - ALWAYS stop after the green phase and ask the navigator to review the implementation and approve before moving on to the refactor phase.
-- If anhy code was changed, ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on. If nothing was changed in the refactor phase, you can skip this step. In that case, don't wait for any approval, just continue with merging into main.
+- If any code was changed, ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on. If nothing was changed in the refactor phase, you can skip this step. In that case, don't wait for any approval, just continue with merging into main.
 - ALWAYS use a TDD approach for all kinds of code, feature implementation, bug fixing, feature enhancements.
 - After the refactor phase, continue with merging into main.
 
