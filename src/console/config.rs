@@ -128,7 +128,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--filter",
-        help: Some("Specify shader preset path (e.g., shaders/crt-lottes.slangp)"),
+        help: Some("Specify shader filter: crt, ntsc, smooth, or none"),
         has_value: true,
     },
     CliFlag {
@@ -324,8 +324,8 @@ impl Config {
         }
 
         // Shader path
-        if let Some(path) = Self::parse_shader_arg(args) {
-            self.shader_path = Some(path);
+        if let Some(filter_name) = Self::parse_shader_arg(args) {
+            self.shader_path = Self::map_filter_name(&filter_name);
         }
 
         if let Some(path) = Self::parse_rom_arg(args)? {
@@ -546,8 +546,9 @@ impl Config {
     /// # Window settings (windowed mode only)
     /// window_height=960
     ///
-    /// # Shader/filter path
-    /// filter=shaders/crt-lottes.slangp
+    /// # Shader/filter
+    /// # Valid values: crt, ntsc, smooth, none
+    /// filter=crt
     ///
     /// # APU channel toggles
     /// pulse1=true
@@ -576,6 +577,18 @@ impl Config {
                 let value = value.trim();
                 self.apply_config_value(key, value);
             }
+        }
+    }
+
+    /// Map simplified filter names to shader paths.
+    /// Supported values: crt, ntsc, smooth, none
+    fn map_filter_name(name: &str) -> Option<String> {
+        match name {
+            "crt" => Some("shaders/crt-lottes.slangp".to_string()),
+            "ntsc" => Some("shaders/ntsc-256px-composite.slangp".to_string()),
+            "smooth" => Some("shaders/xbrz-freescale.slangp".to_string()),
+            "none" => Some("shaders/stock.slangp".to_string()),
+            _ => None,
         }
     }
 
@@ -618,7 +631,7 @@ impl Config {
             }
             "filter" => {
                 if !value.is_empty() {
-                    self.shader_path = Some(value.to_string());
+                    self.shader_path = Self::map_filter_name(value);
                 }
             }
             "debugger" => {
@@ -908,14 +921,14 @@ mod tests {
     }
 
     #[test]
-    fn test_config_shader_path() {
+    fn test_config_shader_path_invalid_ignored() {
         let args = vec![
             "neser".to_string(),
             "--filter".to_string(),
-            "shaders/crt.slangp".to_string(),
+            "invalid-filter".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.shader_path, Some("shaders/crt.slangp".to_string()));
+        assert_eq!(config.shader_path, None);
     }
 
     #[test]
@@ -1256,10 +1269,10 @@ mod tests {
     }
 
     #[test]
-    fn test_config_file_filter() {
+    fn test_config_file_filter_invalid_ignored() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "shaders/crt.slangp");
-        assert_eq!(config.shader_path, Some("shaders/crt.slangp".to_string()));
+        config.apply_config_value("filter", "invalid-filter");
+        assert_eq!(config.shader_path, None);
     }
 
     #[test]
@@ -1270,46 +1283,75 @@ mod tests {
     }
 
     #[test]
-    fn test_config_file_filter_short_name() {
+    fn test_config_file_filter_crt() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "crt-lottes");
+        config.apply_config_value("filter", "crt");
         assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
     }
 
     #[test]
-    fn test_config_file_filter_full_path_backward_compatible() {
+    fn test_config_file_filter_ntsc() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "shaders/crt-lottes.slangp");
-        assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
+        config.apply_config_value("filter", "ntsc");
+        assert_eq!(config.shader_path, Some("shaders/ntsc-256px-composite.slangp".to_string()));
     }
 
     #[test]
-    fn test_config_file_filter_with_extension() {
+    fn test_config_file_filter_smooth() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "crt-lottes.slangp");
-        assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
+        config.apply_config_value("filter", "smooth");
+        assert_eq!(config.shader_path, Some("shaders/xbrz-freescale.slangp".to_string()));
     }
 
     #[test]
-    fn test_config_cmdline_filter_short_name() {
+    fn test_config_file_filter_none() {
+        let mut config = Config::default();
+        config.apply_config_value("filter", "none");
+        assert_eq!(config.shader_path, Some("shaders/stock.slangp".to_string()));
+    }
+
+    #[test]
+    fn test_config_cmdline_filter_crt() {
         let args = vec![
             "neser".to_string(),
             "--filter".to_string(),
-            "crt-lottes".to_string(),
+            "crt".to_string(),
         ];
         let config = parse_config(args);
         assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
     }
 
     #[test]
-    fn test_config_cmdline_filter_full_path_backward_compatible() {
+    fn test_config_cmdline_filter_ntsc() {
         let args = vec![
             "neser".to_string(),
             "--filter".to_string(),
-            "shaders/xbrz-freescale.slangp".to_string(),
+            "ntsc".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.shader_path, Some("shaders/ntsc-256px-composite.slangp".to_string()));
+    }
+
+    #[test]
+    fn test_config_cmdline_filter_smooth() {
+        let args = vec![
+            "neser".to_string(),
+            "--filter".to_string(),
+            "smooth".to_string(),
         ];
         let config = parse_config(args);
         assert_eq!(config.shader_path, Some("shaders/xbrz-freescale.slangp".to_string()));
+    }
+
+    #[test]
+    fn test_config_cmdline_filter_none() {
+        let args = vec![
+            "neser".to_string(),
+            "--filter".to_string(),
+            "none".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.shader_path, Some("shaders/stock.slangp".to_string()));
     }
 
     #[test]
@@ -1434,7 +1476,7 @@ tv_system=pal
 audio=false
 fullscreen=true
 display=2
-filter=shaders/test.slangp
+filter=crt
 pulse1=false
 "#;
 
@@ -1449,7 +1491,7 @@ pulse1=false
         assert!(!config.audio_enabled);
         assert!(config.fullscreen);
         assert_eq!(config.fullscreen_display, Some(2));
-        assert_eq!(config.shader_path, Some("shaders/test.slangp".to_string()));
+        assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
         assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
         // Other values should remain default
         assert!(config.vsync_enabled);
