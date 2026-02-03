@@ -63,6 +63,8 @@ pub struct Cartridge {
     /// Mapper instance that handles banking and memory access
     mapper: Box<dyn Mapper>,
 
+    crc32: u32,
+
     rom_path: Option<PathBuf>,
     save_path: Option<PathBuf>,
     battery_backed_prg_ram: bool,
@@ -132,6 +134,7 @@ impl Cartridge {
         // Extract PRG ROM and CHR ROM
         let prg_rom = data[prg_rom_start..prg_rom_end].to_vec();
         let chr_rom = data[chr_rom_start..chr_rom_end].to_vec();
+        let crc32 = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
 
         // Create mapper instance
         let mapper = crate::cartridge::mapper::create_mapper(
@@ -163,6 +166,7 @@ impl Cartridge {
 
         Ok(Self {
             mapper,
+            crc32,
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram,
@@ -257,13 +261,19 @@ impl Cartridge {
         self.mapper.reset();
     }
 
+    pub fn crc32(&self) -> u32 {
+        self.crc32
+    }
+
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         use crate::cartridge::nrom::NROMMapper;
+        let crc32 = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
         let mapper = Box::new(NROMMapper::new(prg_rom, chr_rom, mirroring));
         Self {
             mapper,
+            crc32,
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram: false,
@@ -274,10 +284,16 @@ impl Cartridge {
     pub fn from_mapper_for_test(mapper: Box<dyn Mapper>) -> Self {
         Self {
             mapper,
+            crc32: 0,
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram: false,
         }
+    }
+
+    #[cfg(test)]
+    pub fn set_crc32_for_test(&mut self, crc32: u32) {
+        self.crc32 = crc32;
     }
 }
 

@@ -91,7 +91,12 @@ impl Nes {
 
     /// Insert a cartridge and map it into memory
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
-        self.memory.borrow_mut().map_cartridge(cartridge);
+        let requires_arkanoid_paddle =
+            crate::cartridge::requires_arkanoid_paddle(cartridge.crc32());
+
+        let mut memory = self.memory.borrow_mut();
+        memory.map_cartridge(cartridge);
+        memory.set_paddle1_enabled(requires_arkanoid_paddle);
     }
 
     pub fn state_path(&self) -> Option<PathBuf> {
@@ -1496,5 +1501,29 @@ mod tests {
             end_state2.ppu.timing.scanline
         );
         assert_eq!(end_state1.ppu.timing.pixel, end_state2.ppu.timing.pixel);
+    }
+
+    #[test]
+    fn test_insert_cartridge_enables_paddle_for_known_crc() {
+        let rom_data = create_minimal_nrom_rom();
+        let mut cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        cartridge.set_crc32_for_test(0x32FB0583);
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+
+        assert!(nes.memory.borrow().paddle1_enabled_for_test());
+    }
+
+    #[test]
+    fn test_insert_cartridge_disables_paddle_for_unknown_crc() {
+        let rom_data = create_minimal_nrom_rom();
+        let mut cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        cartridge.set_crc32_for_test(0xDEADBEEF);
+
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
+
+        assert!(!nes.memory.borrow().paddle1_enabled_for_test());
     }
 }

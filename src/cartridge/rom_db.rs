@@ -41,9 +41,20 @@ const MMC3_ALTERNATE_IRQ_CRCS: &[u32] = &[
     0xA512BDF6, // 6-MMC6.nes
 ];
 
+/// CRC32 values for ROMs that require Arkanoid paddle input on port 1.
+const ARKANOID_PADDLE_CRCS: &[u32] = &[
+    0x32FB0583, // Arkanoid (NES, 1987)
+    0x47F9F410, // PaddleTest3
+];
+
 /// Check if a ROM CRC requires alternate MMC3 IRQ behavior.
 pub fn requires_mmc3_alternate_irq(crc: u32) -> bool {
     MMC3_ALTERNATE_IRQ_CRCS.contains(&crc)
+}
+
+/// Check if a ROM CRC requires Arkanoid paddle input.
+pub fn requires_arkanoid_paddle(crc: u32) -> bool {
+    ARKANOID_PADDLE_CRCS.contains(&crc)
 }
 
 #[cfg(test)]
@@ -77,5 +88,16 @@ mod tests {
     fn test_mmc3_alternate_irq_unknown_crc() {
         // Random CRC should not require alternate IRQ
         assert!(!requires_mmc3_alternate_irq(0x12345678));
+    }
+
+    #[test]
+    fn test_arkanoid_paddle_known_crcs() {
+        assert!(requires_arkanoid_paddle(0x32FB0583));
+        assert!(requires_arkanoid_paddle(0x47F9F410));
+    }
+
+    #[test]
+    fn test_arkanoid_paddle_unknown_crc() {
+        assert!(!requires_arkanoid_paddle(0xDEADBEEF));
     }
 }
