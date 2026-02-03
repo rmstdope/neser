@@ -3,6 +3,7 @@ use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::console::{Config, Nes, SaveState};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::mouse::MouseButton;
 use std::collections::HashMap;
 use std::fs;
 use std::time::{Duration, Instant};
@@ -53,6 +54,63 @@ enum KeyDownOutcome {
 }
 
 impl SdlEventLoop {
+    /// Maps an SDL mouse X position into a paddle position value (0..=255).
+    ///
+    /// The input is normalized to $[-1.0, 1.0]$ across the current window width,
+    /// then shaped using a non-linear curve $\text{sign}(x)\cdot|x|^{1.5}$ to
+    /// make the edges respond faster than the center. The result is scaled to
+    /// the full 8-bit paddle range and clamped.
+    fn map_mouse_x_to_paddle_position(x: i32, window_width: u32) -> u8 {
+        if window_width <= 1 {
+            return 0;
+        }
+
+        let max_x = window_width.saturating_sub(1) as i32;
+        let clamped_x = x.clamp(0, max_x);
+        let width_minus_one = max_x as f32;
+        let normalized = (clamped_x as f32 / width_minus_one) * 2.0 - 1.0;
+        let curved = normalized.signum() * normalized.abs().powf(1.5);
+        let scaled = (curved + 1.0) * 0.5 * 255.0;
+        scaled.round().clamp(0.0, 255.0) as u8
+    }
+
+    /// Applies mouse motion to paddle 1 when paddle mode is active.
+    ///
+    /// This is a no-op if the paddle is disabled.
+    fn apply_paddle_mouse_motion(nes: &mut Nes, x: i32, window_width: u32) {
+        if !nes.paddle1_enabled() {
+            return;
+        }
+
+        let position = Self::map_mouse_x_to_paddle_position(x, window_width);
+        nes.set_paddle1_position(position);
+    }
+
+    /// Maps left mouse button presses to the paddle trigger when active.
+    ///
+    /// This is a no-op if the paddle is disabled.
+    fn apply_paddle_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
+        if !nes.paddle1_enabled() {
+            return;
+        }
+
+        if button == MouseButton::Left {
+            nes.set_paddle1_trigger(pressed);
+        }
+    }
+
+    fn apply_joypad_button_if_allowed(
+        nes: &mut Nes,
+        controller: u8,
+        button: Button,
+        pressed: bool,
+    ) {
+        if controller == 1 && nes.paddle1_enabled() {
+            return;
+        }
+
+        nes.set_button(controller, button, pressed);
+    }
     const MIN_TIMING_SCALE: f32 = 0.001;
     const MAX_TIMING_SCALE: f32 = 100.0;
 
@@ -459,6 +517,16 @@ impl SdlEventLoop {
                         }
                         Event::ControllerButtonUp { button, which, .. } => {
                             controller_buttons.push((which, button, false));
+                        }
+                        Event::MouseMotion { x, .. } => {
+                            let (window_width, _) = gl_backend.window_size();
+                            Self::apply_paddle_mouse_motion(nes, x, window_width);
+                        }
+                        Event::MouseButtonDown { mouse_btn, .. } => {
+                            Self::apply_paddle_mouse_button(nes, mouse_btn, true);
+                        }
+                        Event::MouseButtonUp { mouse_btn, .. } => {
+                            Self::apply_paddle_mouse_button(nes, mouse_btn, false);
                         }
                         _ => {}
                     }
@@ -950,14 +1018,14 @@ impl SdlEventLoop {
             Keycode::F7 => {
                 Self::load_state_from_disk(nes);
             }
-            Keycode::W => nes.set_button(1, Button::Up, true),
-            Keycode::S => nes.set_button(1, Button::Down, true),
-            Keycode::A => nes.set_button(1, Button::Left, true),
-            Keycode::D => nes.set_button(1, Button::Right, true),
-            Keycode::G => nes.set_button(1, Button::B, true),
-            Keycode::F => nes.set_button(1, Button::A, true),
-            Keycode::R => nes.set_button(1, Button::Select, true),
-            Keycode::T => nes.set_button(1, Button::Start, true),
+            Keycode::W => Self::apply_joypad_button_if_allowed(nes, 1, Button::Up, true),
+            Keycode::S => Self::apply_joypad_button_if_allowed(nes, 1, Button::Down, true),
+            Keycode::A => Self::apply_joypad_button_if_allowed(nes, 1, Button::Left, true),
+            Keycode::D => Self::apply_joypad_button_if_allowed(nes, 1, Button::Right, true),
+            Keycode::G => Self::apply_joypad_button_if_allowed(nes, 1, Button::B, true),
+            Keycode::F => Self::apply_joypad_button_if_allowed(nes, 1, Button::A, true),
+            Keycode::R => Self::apply_joypad_button_if_allowed(nes, 1, Button::Select, true),
+            Keycode::T => Self::apply_joypad_button_if_allowed(nes, 1, Button::Start, true),
             _ => {}
         }
 
@@ -966,14 +1034,14 @@ impl SdlEventLoop {
 
     fn handle_key_up(nes: &mut Nes, keycode: Keycode) {
         match keycode {
-            Keycode::W => nes.set_button(1, Button::Up, false),
-            Keycode::S => nes.set_button(1, Button::Down, false),
-            Keycode::A => nes.set_button(1, Button::Left, false),
-            Keycode::D => nes.set_button(1, Button::Right, false),
-            Keycode::G => nes.set_button(1, Button::B, false),
-            Keycode::F => nes.set_button(1, Button::A, false),
-            Keycode::R => nes.set_button(1, Button::Select, false),
-            Keycode::T => nes.set_button(1, Button::Start, false),
+            Keycode::W => Self::apply_joypad_button_if_allowed(nes, 1, Button::Up, false),
+            Keycode::S => Self::apply_joypad_button_if_allowed(nes, 1, Button::Down, false),
+            Keycode::A => Self::apply_joypad_button_if_allowed(nes, 1, Button::Left, false),
+            Keycode::D => Self::apply_joypad_button_if_allowed(nes, 1, Button::Right, false),
+            Keycode::G => Self::apply_joypad_button_if_allowed(nes, 1, Button::B, false),
+            Keycode::F => Self::apply_joypad_button_if_allowed(nes, 1, Button::A, false),
+            Keycode::R => Self::apply_joypad_button_if_allowed(nes, 1, Button::Select, false),
+            Keycode::T => Self::apply_joypad_button_if_allowed(nes, 1, Button::Start, false),
             _ => {}
         }
     }
@@ -1169,7 +1237,7 @@ T: Start"
         };
 
         if let Some(nes_button) = nes_button {
-            nes.set_button(player_num, nes_button, pressed);
+            Self::apply_joypad_button_if_allowed(nes, player_num, nes_button, pressed);
         }
     }
 }
@@ -1259,8 +1327,147 @@ mod tests {
         out
     }
 
+    fn read_paddle_trigger_bit(nes: &mut Nes) -> u8 {
+        let value = nes.memory.borrow_mut().read(0x4016);
+        (value >> 3) & 0x01
+    }
+
+    fn read_paddle_position(nes: &mut Nes) -> u8 {
+        {
+            let mut mem = nes.memory.borrow_mut();
+            mem.write(0x4016, 1, false);
+            mem.write(0x4016, 0, false);
+        }
+
+        let mut position = 0u8;
+        for bit_index in 0..8 {
+            let value = nes.memory.borrow_mut().read(0x4016);
+            let bit = (value >> 4) & 0x01;
+            position |= bit << bit_index;
+        }
+        position
+    }
+
     fn tick_headless_once(event_loop: &mut SdlEventLoop, nes: &mut Nes) {
         let _should_quit = event_loop.tick_headless_once_for_run(nes);
+    }
+
+    #[test]
+    fn test_paddle_mouse_mapping_edges_and_center() {
+        let window_width = 300;
+
+        let left = SdlEventLoop::map_mouse_x_to_paddle_position(0, window_width);
+        let right = SdlEventLoop::map_mouse_x_to_paddle_position(299, window_width);
+        // Use the center of the discrete pixel range 0..=window_width-1.
+        let center_x = ((window_width - 1) / 2) as i32;
+        let center = SdlEventLoop::map_mouse_x_to_paddle_position(center_x, window_width);
+
+        assert_eq!(left, 0);
+        assert_eq!(right, 255);
+        assert!((120..=135).contains(&center));
+    }
+
+    #[test]
+    fn test_paddle_mouse_mapping_non_linear_curve() {
+        let window_width = 400;
+        let center_a = 200;
+        let center_b = 220;
+        let edge_a = 360;
+        let edge_b = 380;
+
+        let center_delta = SdlEventLoop::map_mouse_x_to_paddle_position(center_b, window_width)
+            - SdlEventLoop::map_mouse_x_to_paddle_position(center_a, window_width);
+        let edge_delta = SdlEventLoop::map_mouse_x_to_paddle_position(edge_b, window_width)
+            - SdlEventLoop::map_mouse_x_to_paddle_position(edge_a, window_width);
+
+        assert!(edge_delta > center_delta);
+    }
+
+    #[test]
+    fn test_paddle_mode_suppresses_keyboard_joypad_input() {
+        let mut paused = false;
+        let mut debugger_open_requested = false;
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        nes.set_paddle1_position(0x5A);
+        nes.set_paddle1_trigger(true);
+
+        let _ = SdlEventLoop::handle_key_down(
+            &mut nes,
+            Keycode::W,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+
+        assert_eq!(read_joypad1_buttons(&mut nes), [0; 8]);
+        assert_eq!(read_paddle_position(&mut nes), 0x5A);
+        assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
+    }
+
+    #[test]
+    fn test_paddle_mouse_button_sets_trigger_when_enabled() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+
+        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
+        assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
+
+        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, false);
+        assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
+    }
+
+    #[test]
+    fn test_paddle_mouse_button_ignored_when_disabled() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        nes.memory.borrow_mut().set_paddle1_enabled(false);
+        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
+
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
+    }
+
+    #[test]
+    fn test_paddle_mouse_motion_updates_position_when_enabled() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+
+        let window_width = 320;
+        let x = 240;
+        let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
+
+        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+
+        assert_eq!(read_paddle_position(&mut nes), expected);
+    }
+
+    #[test]
+    fn test_paddle_mouse_motion_ignored_when_disabled() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let window_width = 320;
+        let x = 240;
+
+        nes.memory.borrow_mut().set_paddle1_enabled(false);
+        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        assert_eq!(read_paddle_position(&mut nes), 0);
+    }
+
+    #[test]
+    #[serial]
+    fn test_paddle_mode_suppresses_controller_input() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+
+        event_loop.controller_player_map.insert(42, 1);
+        event_loop.handle_controller_button(&mut nes, 42, sdl2::controller::Button::A, true);
+
+        assert_eq!(read_joypad1_buttons(&mut nes), [0; 8]);
     }
 
     #[test]

@@ -87,6 +87,11 @@ impl GlBackend {
         Self::NTSC_ASPECT
     }
 
+    /// Returns the logical window size in pixels reported by the render target.
+    pub fn window_size(&self) -> (u32, u32) {
+        self.render_target.window_size()
+    }
+
     /// Computes windowed mode dimensions preserving the target aspect ratio.
     pub(crate) fn windowed_dimensions(height: u32) -> (u32, u32) {
         let clamped_height = height.max(1);
