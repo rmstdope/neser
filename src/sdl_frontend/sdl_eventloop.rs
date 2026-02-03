@@ -1345,12 +1345,12 @@ mod tests {
         }
 
         let mut position = 0u8;
-        for bit_index in 0..8 {
+        for bit_index in (0..8).rev() {
             let value = nes.memory.borrow_mut().read(0x4016);
             let bit = (value >> 4) & 0x01;
             position |= bit << bit_index;
         }
-        position
+        position ^ 0xFF
     }
 
     fn tick_headless_once(event_loop: &mut SdlEventLoop, nes: &mut Nes) {
@@ -1458,7 +1458,7 @@ mod tests {
         SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
 
         nes.memory.borrow_mut().set_paddle1_enabled(true);
-        assert_eq!(read_paddle_position(&mut nes), 0);
+        assert_eq!(read_paddle_position(&mut nes), 0x62);
     }
 
     #[test]

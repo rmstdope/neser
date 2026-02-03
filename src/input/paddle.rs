@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn test_paddle_strobe_holds_first_bit() {
         let mut paddle = Paddle::new();
-        paddle.set_position(0x02); // bit0 = 0
+        paddle.set_position(0x80); // inverted MSB = 0
 
         paddle.write_strobe(1);
         let first = paddle.read();
@@ -173,9 +173,9 @@ mod tests {
     fn test_paddle_position_clamps_to_valid_range() {
         let mut paddle = Paddle::new();
 
-        let mut read_position = |paddle: &mut Paddle| {
+        let read_position = |paddle: &mut Paddle| {
             let mut position = 0u8;
-            for bit_index in 0..8 {
+            for bit_index in (0..8).rev() {
                 let value = paddle.read();
                 let bit = (value >> 4) & 0x01;
                 position |= bit << bit_index;
