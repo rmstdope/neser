@@ -81,6 +81,11 @@ display=0
 # Set to false to use keyboard only.
 gamepads=true
 
+# Arkanoid paddle (SDL frontend)
+# Paddle mode is auto-enabled for known ROM CRCs (e.g., Arkanoid, PaddleTest3).
+# When active, mouse X controls the paddle position and left-click is the trigger.
+# No sensitivity configuration is exposed yet.
+
 # -----------------------------------------------------------------------------
 # Debugging
 # -----------------------------------------------------------------------------
