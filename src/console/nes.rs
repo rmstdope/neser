@@ -96,7 +96,11 @@ impl Nes {
 
         let mut memory = self.memory.borrow_mut();
         memory.map_cartridge(cartridge);
-        memory.set_paddle1_enabled(requires_arkanoid_paddle);
+        
+        // Auto-configure Arkanoid paddle on port 2 when detected
+        if requires_arkanoid_paddle {
+            memory.set_controller_type(2, crate::bus::ControllerType::Paddle);
+        }
     }
 
     pub fn state_path(&self) -> Option<PathBuf> {
@@ -251,7 +255,7 @@ impl Nes {
     /// # Arguments
     /// * `position` - The paddle position value (typically 0–255) to report for paddle 1.
     pub fn set_paddle1_position(&mut self, position: u8) {
-        self.memory.borrow_mut().set_paddle1_position(position);
+        self.memory.borrow_mut().set_paddle_position(1, position);
     }
 
     /// Set the trigger button state for the first paddle controller.
@@ -259,7 +263,7 @@ impl Nes {
     /// # Arguments
     /// * `pressed` - `true` if the paddle 1 trigger is pressed, `false` if released.
     pub fn set_paddle1_trigger(&mut self, pressed: bool) {
-        self.memory.borrow_mut().set_paddle1_trigger(pressed);
+        self.memory.borrow_mut().set_paddle_trigger(1, pressed);
     }
 
     /// Generate a trace line for the current CPU state
@@ -1535,7 +1539,15 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.insert_cartridge(cartridge);
 
-        assert!(nes.memory.borrow().paddle1_enabled_for_test());
+        // Should configure paddle on port 2 for Arkanoid ROM
+        nes.memory.borrow_mut().set_paddle_position(2, 0xA5);
+        nes.memory.borrow_mut().set_paddle_trigger(2, true);
+        
+        // Verify port 2 reads paddle data
+        nes.memory.borrow_mut().write(0x4016, 0x01, false);
+        nes.memory.borrow_mut().write(0x4016, 0x00, false);
+        let paddle_bits = nes.memory.borrow_mut().read(0x4017) & 0x18;
+        assert_eq!(paddle_bits, 0x08); // Should have paddle data on port 2
     }
 
     #[test]
@@ -1547,6 +1559,11 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.insert_cartridge(cartridge);
 
-        assert!(!nes.memory.borrow().paddle1_enabled_for_test());
+        // Should have joypad on both ports by default
+        nes.memory.borrow_mut().set_button(2, crate::input::Button::A, true);
+        nes.memory.borrow_mut().write(0x4016, 0x01, false);
+        nes.memory.borrow_mut().write(0x4016, 0x00, false);
+        let joypad_bit = nes.memory.borrow_mut().read(0x4017) & 0x01;
+        assert_eq!(joypad_bit, 1); // Should have joypad data on port 2
     }
 }
