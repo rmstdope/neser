@@ -465,7 +465,17 @@ impl Bus {
             .set_paddle_trigger(pressed);
     }
 
+    /// Return the input type for a controller port.
+    pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
+        if !(1..=2).contains(&port) {
+            return None;
+        }
+
+        Some(self.controllers[(port - 1) as usize].borrow().input_type())
+    }
+
     /// Returns the controller port that has an Arkanoid paddle connected.
+    #[allow(dead_code)]
     pub fn paddle_port(&self) -> Option<u8> {
         if matches!(
             self.controllers[0].borrow().capture_state(),

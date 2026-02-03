@@ -78,45 +78,86 @@ impl SdlEventLoop {
         scaled.round().clamp(MIN_POSITION, MAX_POSITION) as u8
     }
 
-    /// Applies mouse motion to paddle 1 when paddle mode is active.
+    /// Applies mouse motion to any paddle controllers when paddle mode is active.
     ///
-    /// This is a no-op if the paddle is disabled.
+    /// This is a no-op if no paddle is connected.
     fn apply_paddle_mouse_motion(nes: &mut Nes, x: i32, window_width: u32) {
-        let Some(port) = nes.paddle_port() else {
+        let mouse_ports = Self::mouse_ports(nes);
+        if mouse_ports.is_empty() {
             return;
-        };
+        }
 
         let position = Self::map_mouse_x_to_paddle_position(x, window_width);
-        nes.set_paddle_position(port, position);
+        for port in mouse_ports {
+            nes.set_paddle_position(port, position);
+        }
     }
 
-    /// Maps left mouse button presses to the paddle trigger when active.
+    /// Maps left mouse button presses to paddle triggers when active.
     ///
-    /// This is a no-op if the paddle is disabled.
+    /// This is a no-op if no paddle is connected.
     fn apply_paddle_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
         // println!("Mouse button {:?} pressed: {}", button, pressed);
-        let Some(port) = nes.paddle_port() else {
+        if button != MouseButton::Left {
             return;
-        };
+        }
 
-        if button == MouseButton::Left {
+        for port in Self::mouse_ports(nes) {
             nes.set_paddle_trigger(port, pressed);
         }
     }
 
-    fn apply_joypad_button_if_allowed(
-        nes: &mut Nes,
-        controller: u8,
-        button: Button,
-        pressed: bool,
-    ) {
-        if let Some(paddle_port) = nes.paddle_port()
-            && controller == paddle_port
-        {
-            return;
+    fn gamepad_ports(nes: &Nes) -> Vec<u8> {
+        (1..=2)
+            .filter(|&port| {
+                nes.controller_input_type(port) == Some(crate::input::ControllerInput::Gamepad)
+            })
+            .collect()
+    }
+
+    fn mouse_ports(nes: &Nes) -> Vec<u8> {
+        (1..=2)
+            .filter(|&port| {
+                nes.controller_input_type(port) == Some(crate::input::ControllerInput::Mouse)
+            })
+            .collect()
+    }
+
+    fn assigned_gamepad_port(
+        nes: &Nes,
+        controller_player_map: &HashMap<u32, u8>,
+        player_num: u8,
+    ) -> Option<u8> {
+        let gamepad_ports = Self::gamepad_ports(nes);
+        if gamepad_ports.is_empty() {
+            return None;
         }
 
-        nes.set_button(controller, button, pressed);
+        let index = (player_num as usize).saturating_sub(1);
+        gamepad_ports.get(index).copied().and_then(|port| {
+            let assigned_count = controller_player_map.len().min(gamepad_ports.len());
+            if index < assigned_count {
+                Some(port)
+            } else {
+                None
+            }
+        })
+    }
+
+    fn keyboard_ports(nes: &Nes, controller_player_map: &HashMap<u32, u8>) -> Vec<u8> {
+        let gamepad_ports = Self::gamepad_ports(nes);
+        if gamepad_ports.is_empty() {
+            return Vec::new();
+        }
+
+        let assigned_count = controller_player_map.len().min(gamepad_ports.len());
+        gamepad_ports[assigned_count..].to_vec()
+    }
+
+    fn apply_keyboard_button(nes: &mut Nes, ports: &[u8], button: Button, pressed: bool) {
+        for port in ports {
+            nes.set_button(*port, button, pressed);
+        }
     }
     const MIN_TIMING_SCALE: f32 = 0.001;
     const MAX_TIMING_SCALE: f32 = 100.0;
@@ -511,7 +552,7 @@ impl SdlEventLoop {
                             keycode: Some(keycode),
                             ..
                         } => {
-                            Self::handle_key_up(nes, keycode);
+                            self.handle_key_up_for_run(nes, keycode);
                         }
                         Event::ControllerDeviceAdded { which, .. } => {
                             controllers_to_add.push(which);
@@ -760,7 +801,7 @@ impl SdlEventLoop {
                     keycode: Some(keycode),
                     ..
                 } => {
-                    Self::handle_key_up(nes, keycode);
+                    self.handle_key_up_for_run(nes, keycode);
                 }
                 _ => {}
             }
@@ -878,12 +919,14 @@ impl SdlEventLoop {
             return KeyDownOutcome::Continue;
         }
 
-        Self::handle_key_down(
+        let keyboard_ports = Self::keyboard_ports(nes, &self.controller_player_map);
+        Self::handle_key_down_with_keyboard_ports(
             nes,
             keycode,
             self.audio.as_ref(),
             &mut self.paused,
             &mut self.debugger_open_requested,
+            &keyboard_ports,
         )
     }
 
@@ -969,12 +1012,13 @@ impl SdlEventLoop {
     /// - F2/F3: Volume up/down (when audio is enabled)
     /// - F6: Save state (when a ROM is loaded)
     /// - F7: Load state (when a ROM is loaded)
-    fn handle_key_down(
+    fn handle_key_down_with_keyboard_ports(
         nes: &mut Nes,
         keycode: Keycode,
         audio: Option<&SdlNesAudio>,
         paused: &mut bool,
         debugger_open_requested: &mut bool,
+        keyboard_ports: &[u8],
     ) -> KeyDownOutcome {
         match keycode {
             Keycode::Escape => return KeyDownOutcome::Quit,
@@ -1025,32 +1069,56 @@ impl SdlEventLoop {
             Keycode::F7 => {
                 Self::load_state_from_disk(nes);
             }
-            Keycode::W => Self::apply_joypad_button_if_allowed(nes, 1, Button::Up, true),
-            Keycode::S => Self::apply_joypad_button_if_allowed(nes, 1, Button::Down, true),
-            Keycode::A => Self::apply_joypad_button_if_allowed(nes, 1, Button::Left, true),
-            Keycode::D => Self::apply_joypad_button_if_allowed(nes, 1, Button::Right, true),
-            Keycode::G => Self::apply_joypad_button_if_allowed(nes, 1, Button::B, true),
-            Keycode::F => Self::apply_joypad_button_if_allowed(nes, 1, Button::A, true),
-            Keycode::R => Self::apply_joypad_button_if_allowed(nes, 1, Button::Select, true),
-            Keycode::T => Self::apply_joypad_button_if_allowed(nes, 1, Button::Start, true),
+            Keycode::W => Self::apply_keyboard_button(nes, keyboard_ports, Button::Up, true),
+            Keycode::S => Self::apply_keyboard_button(nes, keyboard_ports, Button::Down, true),
+            Keycode::A => Self::apply_keyboard_button(nes, keyboard_ports, Button::Left, true),
+            Keycode::D => Self::apply_keyboard_button(nes, keyboard_ports, Button::Right, true),
+            Keycode::G => Self::apply_keyboard_button(nes, keyboard_ports, Button::B, true),
+            Keycode::F => Self::apply_keyboard_button(nes, keyboard_ports, Button::A, true),
+            Keycode::R => Self::apply_keyboard_button(nes, keyboard_ports, Button::Select, true),
+            Keycode::T => Self::apply_keyboard_button(nes, keyboard_ports, Button::Start, true),
             _ => {}
         }
 
         KeyDownOutcome::Continue
     }
 
-    fn handle_key_up(nes: &mut Nes, keycode: Keycode) {
+    #[cfg(test)]
+    fn handle_key_down(
+        nes: &mut Nes,
+        keycode: Keycode,
+        audio: Option<&SdlNesAudio>,
+        paused: &mut bool,
+        debugger_open_requested: &mut bool,
+    ) -> KeyDownOutcome {
+        let keyboard_ports = Self::gamepad_ports(nes);
+        Self::handle_key_down_with_keyboard_ports(
+            nes,
+            keycode,
+            audio,
+            paused,
+            debugger_open_requested,
+            &keyboard_ports,
+        )
+    }
+
+    fn handle_key_up_with_keyboard_ports(nes: &mut Nes, keycode: Keycode, keyboard_ports: &[u8]) {
         match keycode {
-            Keycode::W => Self::apply_joypad_button_if_allowed(nes, 1, Button::Up, false),
-            Keycode::S => Self::apply_joypad_button_if_allowed(nes, 1, Button::Down, false),
-            Keycode::A => Self::apply_joypad_button_if_allowed(nes, 1, Button::Left, false),
-            Keycode::D => Self::apply_joypad_button_if_allowed(nes, 1, Button::Right, false),
-            Keycode::G => Self::apply_joypad_button_if_allowed(nes, 1, Button::B, false),
-            Keycode::F => Self::apply_joypad_button_if_allowed(nes, 1, Button::A, false),
-            Keycode::R => Self::apply_joypad_button_if_allowed(nes, 1, Button::Select, false),
-            Keycode::T => Self::apply_joypad_button_if_allowed(nes, 1, Button::Start, false),
+            Keycode::W => Self::apply_keyboard_button(nes, keyboard_ports, Button::Up, false),
+            Keycode::S => Self::apply_keyboard_button(nes, keyboard_ports, Button::Down, false),
+            Keycode::A => Self::apply_keyboard_button(nes, keyboard_ports, Button::Left, false),
+            Keycode::D => Self::apply_keyboard_button(nes, keyboard_ports, Button::Right, false),
+            Keycode::G => Self::apply_keyboard_button(nes, keyboard_ports, Button::B, false),
+            Keycode::F => Self::apply_keyboard_button(nes, keyboard_ports, Button::A, false),
+            Keycode::R => Self::apply_keyboard_button(nes, keyboard_ports, Button::Select, false),
+            Keycode::T => Self::apply_keyboard_button(nes, keyboard_ports, Button::Start, false),
             _ => {}
         }
+    }
+
+    fn handle_key_up_for_run(&mut self, nes: &mut Nes, keycode: Keycode) {
+        let keyboard_ports = Self::keyboard_ports(nes, &self.controller_player_map);
+        Self::handle_key_up_with_keyboard_ports(nes, keycode, &keyboard_ports);
     }
 
     fn help_overlay_text() -> &'static str {
@@ -1228,6 +1296,11 @@ T: Start"
             None => return, // Unknown controller
         };
 
+        let Some(port) = Self::assigned_gamepad_port(nes, &self.controller_player_map, player_num)
+        else {
+            return;
+        };
+
         // Map SDL2 controller buttons to NES buttons
         let nes_button = match button {
             sdl2::controller::Button::DPadUp => Some(NesButton::Up),
@@ -1244,7 +1317,7 @@ T: Start"
         };
 
         if let Some(nes_button) = nes_button {
-            Self::apply_joypad_button_if_allowed(nes, player_num, nes_button, pressed);
+            nes.set_button(port, nes_button, pressed);
         }
     }
 }
@@ -1318,7 +1391,7 @@ mod tests {
         nes.insert_cartridge(cartridge);
     }
 
-    fn read_joypad1_buttons(nes: &mut Nes) -> [u8; 8] {
+    fn read_joypad_buttons(nes: &mut Nes, port: u8) -> [u8; 8] {
         // Joypad serial order: A, B, Select, Start, Up, Down, Left, Right
         {
             let mut mem = nes.memory.borrow_mut();
@@ -1326,33 +1399,48 @@ mod tests {
             mem.write(0x4016, 0, false);
         }
 
+        let addr = if port == 1 { 0x4016 } else { 0x4017 };
         let mut out = [0u8; 8];
         for slot in &mut out {
-            let value = nes.memory.borrow_mut().read(0x4016) & 0x01;
+            let value = nes.memory.borrow_mut().read(addr) & 0x01;
             *slot = value;
         }
         out
     }
 
-    fn read_paddle_trigger_bit(nes: &mut Nes) -> u8 {
-        let value = nes.memory.borrow_mut().read(0x4016);
+    fn read_joypad1_buttons(nes: &mut Nes) -> [u8; 8] {
+        read_joypad_buttons(nes, 1)
+    }
+
+    fn read_paddle_trigger_bit_for_port(nes: &mut Nes, port: u8) -> u8 {
+        let addr = if port == 1 { 0x4016 } else { 0x4017 };
+        let value = nes.memory.borrow_mut().read(addr);
         (value >> 3) & 0x01
     }
 
-    fn read_paddle_position(nes: &mut Nes) -> u8 {
+    fn read_paddle_trigger_bit(nes: &mut Nes) -> u8 {
+        read_paddle_trigger_bit_for_port(nes, 1)
+    }
+
+    fn read_paddle_position_for_port(nes: &mut Nes, port: u8) -> u8 {
         {
             let mut mem = nes.memory.borrow_mut();
             mem.write(0x4016, 1, false);
             mem.write(0x4016, 0, false);
         }
 
+        let addr = if port == 1 { 0x4016 } else { 0x4017 };
         let mut position = 0u8;
         for bit_index in (0..8).rev() {
-            let value = nes.memory.borrow_mut().read(0x4016);
+            let value = nes.memory.borrow_mut().read(addr);
             let bit = (value >> 4) & 0x01;
             position |= bit << bit_index;
         }
         position ^ 0xFF
+    }
+
+    fn read_paddle_position(nes: &mut Nes) -> u8 {
+        read_paddle_position_for_port(nes, 1)
     }
 
     fn tick_headless_once(event_loop: &mut SdlEventLoop, nes: &mut Nes) {
@@ -1395,7 +1483,9 @@ mod tests {
         let mut paused = false;
         let mut debugger_open_requested = false;
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(1, crate::bus::ControllerType::Paddle);
         nes.set_paddle1_position(0x80);
         nes.set_paddle1_trigger(true);
 
@@ -1413,9 +1503,82 @@ mod tests {
     }
 
     #[test]
+    #[serial]
+    fn test_keyboard_only_targets_ports_without_gamepads() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Two gamepad-capable controllers, but only one physical gamepad present.
+        event_loop.controller_player_map.insert(42, 1);
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::W);
+
+        assert_eq!(read_joypad_buttons(&mut nes, 1), [0; 8]);
+        assert_eq!(read_joypad_buttons(&mut nes, 2), [0, 0, 0, 0, 1, 0, 0, 0]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_keyboard_targets_all_gamepad_ports_when_no_gamepads() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::W);
+
+        assert_eq!(read_joypad_buttons(&mut nes, 1), [0, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(read_joypad_buttons(&mut nes, 2), [0, 0, 0, 0, 1, 0, 0, 0]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_gamepad_routes_to_first_gamepad_port() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        // Port 1 is mouse-only, port 2 is gamepad.
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(1, crate::bus::ControllerType::Paddle);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(2, crate::bus::ControllerType::Joypad);
+
+        event_loop.controller_player_map.insert(42, 1);
+        event_loop.handle_controller_button(&mut nes, 42, sdl2::controller::Button::A, true);
+
+        assert_eq!(read_joypad_buttons(&mut nes, 2), [1, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(read_joypad_buttons(&mut nes, 1), [0; 8]);
+    }
+
+    #[test]
+    fn test_mouse_routes_to_all_mouse_ports() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(1, crate::bus::ControllerType::Paddle);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(2, crate::bus::ControllerType::Paddle);
+
+        let window_width = 320;
+        let x = 240;
+        let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
+
+        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+
+        assert_eq!(read_paddle_position_for_port(&mut nes, 1), expected);
+        assert_eq!(read_paddle_position_for_port(&mut nes, 2), expected);
+    }
+
+    #[test]
     fn test_paddle_mouse_button_sets_trigger_when_enabled() {
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(1, crate::bus::ControllerType::Paddle);
 
         SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
@@ -1428,17 +1591,23 @@ mod tests {
     fn test_paddle_mouse_button_ignored_when_disabled() {
         let mut nes = Nes::new(TvSystem::Ntsc);
 
-        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Joypad);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(1, crate::bus::ControllerType::Joypad);
         SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
 
-        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(1, crate::bus::ControllerType::Paddle);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
     }
 
     #[test]
     fn test_paddle_mouse_motion_updates_position_when_enabled() {
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(1, crate::bus::ControllerType::Paddle);
 
         let window_width = 320;
         let x = 240;
@@ -1456,10 +1625,14 @@ mod tests {
         let window_width = 320;
         let x = 240;
 
-        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Joypad);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(1, crate::bus::ControllerType::Joypad);
         SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
 
-        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(1, crate::bus::ControllerType::Paddle);
         assert_eq!(read_paddle_position(&mut nes), 0x62);
     }
 
@@ -1469,7 +1642,9 @@ mod tests {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
+        nes.memory
+            .borrow_mut()
+            .set_controller_type(1, crate::bus::ControllerType::Paddle);
 
         event_loop.controller_player_map.insert(42, 1);
         event_loop.handle_controller_button(&mut nes, 42, sdl2::controller::Button::A, true);

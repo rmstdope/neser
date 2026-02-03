@@ -39,7 +39,6 @@ impl Paddle {
 
     #[allow(dead_code)]
     pub fn set_trigger(&mut self, pressed: bool) {
-        println!("Paddle trigger set to {}", pressed);
         self.trigger = pressed;
     }
 
