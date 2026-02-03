@@ -1539,7 +1539,15 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.insert_cartridge(cartridge);
 
-        assert!(nes.memory.borrow().paddle1_enabled_for_test());
+        // Should configure paddle on port 2 for Arkanoid ROM
+        nes.memory.borrow_mut().set_paddle2_position(0xA5);
+        nes.memory.borrow_mut().set_paddle2_trigger(true);
+        
+        // Verify port 2 reads paddle data
+        nes.memory.borrow_mut().write(0x4016, 0x01, false);
+        nes.memory.borrow_mut().write(0x4016, 0x00, false);
+        let paddle_bits = nes.memory.borrow_mut().read(0x4017) & 0x18;
+        assert_eq!(paddle_bits, 0x08); // Should have paddle data on port 2
     }
 
     #[test]
@@ -1551,6 +1559,11 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.insert_cartridge(cartridge);
 
-        assert!(!nes.memory.borrow().paddle1_enabled_for_test());
+        // Should have joypad on both ports by default
+        nes.memory.borrow_mut().set_button(2, crate::input::Button::A, true);
+        nes.memory.borrow_mut().write(0x4016, 0x01, false);
+        nes.memory.borrow_mut().write(0x4016, 0x00, false);
+        let joypad_bit = nes.memory.borrow_mut().read(0x4017) & 0x01;
+        assert_eq!(joypad_bit, 1); // Should have joypad data on port 2
     }
 }
