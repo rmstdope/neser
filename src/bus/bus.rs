@@ -982,7 +982,7 @@ mod tests {
         memory.set_paddle1_trigger(true);
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
-        let expected_paddle = [0x18, 0x08];
+        let expected_paddle = [0x08, 0x18];
 
         memory.set_paddle1_enabled(false);
         memory.read(0x4016);
