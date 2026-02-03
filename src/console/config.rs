@@ -189,6 +189,29 @@ pub struct Config {
     pub timing_scale: f32,
     /// Optional ROM path from CLI positional argument.
     pub rom_path: Option<String>,
+    /// Controller type connected to port 1.
+    pub controller_port1: ControllerType,
+    /// Controller type connected to port 2.
+    pub controller_port2: ControllerType,
+}
+
+/// Supported controller types for NES ports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControllerType {
+    Joypad,
+    Arkanoid,
+    None,
+}
+
+impl ControllerType {
+    fn parse(value: &str) -> Option<Self> {
+        match value.to_lowercase().as_str() {
+            "joypad" => Some(Self::Joypad),
+            "arkanoid" => Some(Self::Arkanoid),
+            "none" => Some(Self::None),
+            _ => None,
+        }
+    }
 }
 
 bitflags! {
@@ -220,6 +243,8 @@ impl Default for Config {
             window_height: 960,
             timing_scale: 1.0,
             rom_path: None,
+            controller_port1: ControllerType::Joypad,
+            controller_port2: ControllerType::Joypad,
         }
     }
 }
@@ -284,6 +309,8 @@ impl Config {
 
         // Step 3: Apply command-line arguments (override config file and defaults)
         config.apply_args(args)?;
+
+        config.validate_controller_ports()?;
 
         Ok(ParseResult::Config(config))
     }
@@ -676,6 +703,16 @@ impl Config {
                     self.window_height = s;
                 }
             }
+            "controller_port1" => {
+                if let Some(controller) = ControllerType::parse(value) {
+                    self.controller_port1 = controller;
+                }
+            }
+            "controller_port2" => {
+                if let Some(controller) = ControllerType::parse(value) {
+                    self.controller_port2 = controller;
+                }
+            }
             "trace-cpu" => {
                 if let Ok(level) = value.parse::<u8>() {
                     self.tracing.cpu = level;
@@ -740,6 +777,19 @@ impl Config {
     fn has_flag(args: &[String], flag: &str) -> bool {
         args.iter().any(|a| a == flag)
     }
+
+    fn validate_controller_ports(&self) -> Result<(), String> {
+        let arkanoid_count = [self.controller_port1, self.controller_port2]
+            .iter()
+            .filter(|controller| **controller == ControllerType::Arkanoid)
+            .count();
+
+        if arkanoid_count > 1 {
+            return Err("Only one Arkanoid controller can be configured".to_string());
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -772,6 +822,8 @@ mod tests {
         assert!(config.apu_channels.contains(ApuChannels::DMC));
         assert_eq!(config.window_height, 960);
         assert_eq!(config.rom_path, None);
+        assert_eq!(config.controller_port1, ControllerType::Joypad);
+        assert_eq!(config.controller_port2, ControllerType::Joypad);
     }
 
     #[test]
@@ -784,6 +836,8 @@ mod tests {
         assert!(config.gamepads_enabled);
         assert!(!config.fullscreen);
         assert_eq!(config.window_height, 960);
+        assert_eq!(config.controller_port1, ControllerType::Joypad);
+        assert_eq!(config.controller_port2, ControllerType::Joypad);
     }
 
     #[test]
@@ -1300,6 +1354,24 @@ mod tests {
     }
 
     #[test]
+    fn test_config_file_controller_ports() {
+        let mut config = Config::default();
+        config.apply_config_value("controller_port1", "arkanoid");
+        config.apply_config_value("controller_port2", "none");
+
+        assert_eq!(config.controller_port1, ControllerType::Arkanoid);
+        assert_eq!(config.controller_port2, ControllerType::None);
+    }
+
+    #[test]
+    fn test_config_file_controller_port_invalid_value_ignored() {
+        let mut config = Config::default();
+        config.apply_config_value("controller_port1", "unknown");
+
+        assert_eq!(config.controller_port1, ControllerType::Joypad);
+    }
+
+    #[test]
     fn test_config_file_trace_cpu() {
         let mut config = Config::default();
         config.apply_config_value("trace-cpu", "2");
@@ -1441,6 +1513,28 @@ audio=false
         // Config file values should persist since args don't override them
         assert_eq!(config.tv_system, TvSystem::Pal);
         assert!(!config.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_file_two_paddles_errors() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let content = r#"
+controller_port1=arkanoid
+controller_port2=arkanoid
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+
+        let args = vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
+        ];
+
+        let result = Config::new(&args);
+        assert!(result.is_err());
     }
 
     #[test]
