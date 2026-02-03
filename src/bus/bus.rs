@@ -973,11 +973,13 @@ mod tests {
         memory.set_paddle1_enabled(true);
         memory.set_paddle1_position(0xA5);
         memory.set_paddle1_trigger(true);
-        memory.write(0x0000, 0x00, false);
-        memory.read(0x0000);
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
-        let expected_paddle = [memory.read(0x4016) & 0x18, memory.read(0x4016) & 0x18];
+        let expected_paddle = [0x18, 0x08];
+
+        memory.set_paddle1_enabled(false);
+        memory.read(0x4016);
+        memory.read(0x4016);
 
         let expected_open_bus = memory.open_bus_value_for_test();
 
@@ -990,10 +992,12 @@ mod tests {
         assert!(restored.oam_dma_pending());
         assert_eq!(restored.take_oam_dma_page(), Some(0x22));
 
+        restored.set_paddle1_enabled(false);
         let expected_sequence = [0, 0, 0, 0, 0, 1];
         for expected in expected_sequence {
             assert_eq!(restored.read(0x4016) & 0x01, expected);
         }
+        restored.set_paddle1_enabled(true);
 
         restored.write(0x0000, 0x00, false);
         restored.read(0x0000);
