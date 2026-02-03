@@ -1270,6 +1270,49 @@ mod tests {
     }
 
     #[test]
+    fn test_config_file_filter_short_name() {
+        let mut config = Config::default();
+        config.apply_config_value("filter", "crt-lottes");
+        assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
+    }
+
+    #[test]
+    fn test_config_file_filter_full_path_backward_compatible() {
+        let mut config = Config::default();
+        config.apply_config_value("filter", "shaders/crt-lottes.slangp");
+        assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
+    }
+
+    #[test]
+    fn test_config_file_filter_with_extension() {
+        let mut config = Config::default();
+        config.apply_config_value("filter", "crt-lottes.slangp");
+        assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
+    }
+
+    #[test]
+    fn test_config_cmdline_filter_short_name() {
+        let args = vec![
+            "neser".to_string(),
+            "--filter".to_string(),
+            "crt-lottes".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
+    }
+
+    #[test]
+    fn test_config_cmdline_filter_full_path_backward_compatible() {
+        let args = vec![
+            "neser".to_string(),
+            "--filter".to_string(),
+            "shaders/xbrz-freescale.slangp".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.shader_path, Some("shaders/xbrz-freescale.slangp".to_string()));
+    }
+
+    #[test]
     fn test_config_file_debugger() {
         let mut config = Config::default();
         config.apply_config_value("debugger", "true");
