@@ -39,23 +39,28 @@ mod tests {
     // blargg_ppu_tests_2005.09.15b
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_palette_ram,
-        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/palette_ram.nes"
+        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/palette_ram.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_power_up_palette,
-        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/power_up_palette.nes"
+        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/power_up_palette.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_sprite_ram,
-        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/sprite_ram.nes"
+        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/sprite_ram.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_vbl_clear_time,
-        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes"
+        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/vbl_clear_time.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_vram_access,
-        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/vram_access.nes"
+        "roms/automated_tests/blargg_ppu_tests_2005.09.15b/vram_access.nes",
+        "$01"
     );
 
     // TODO full_palette

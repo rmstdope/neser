@@ -139,13 +139,11 @@ mod tests {
     );
     setup_rom_console_test!(
         test_dmc_dma_during_read4_2007_write,
-        "roms/automated_tests/dmc_dma_during_read4/dma_2007_write.nes",
-        300
+        "roms/automated_tests/dmc_dma_during_read4/dma_2007_write.nes"
     );
     setup_rom_console_test!(
         test_dmc_dma_during_read4_4016_read,
-        "roms/automated_tests/dmc_dma_during_read4/dma_4016_read.nes",
-        300
+        "roms/automated_tests/dmc_dma_during_read4/dma_4016_read.nes"
     );
     setup_rom_console_crc_test!(
         test_dmc_dma_during_read4_double_2007_read,
@@ -155,8 +153,7 @@ mod tests {
     );
     setup_rom_console_test!(
         test_dmc_dma_during_read4_read_write_2007,
-        "roms/automated_tests/dmc_dma_during_read4/read_write_2007.nes",
-        300
+        "roms/automated_tests/dmc_dma_during_read4/read_write_2007.nes"
     );
 
     // dpcmletterbox

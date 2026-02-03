@@ -5,12 +5,14 @@ mod tests {
     // blargg_nes_cpu_test5
     setup_rom_console_test!(
         test_blargg_nes_cpu_test5_cpu,
-        "roms/automated_tests/blargg_nes_cpu_test5/cpu.nes"
+        "roms/automated_tests/blargg_nes_cpu_test5/cpu.nes",
+        "ALL TESTS COMPLETE"
     );
 
     setup_rom_console_test!(
         test_blargg_nes_cpu_test5_official,
-        "roms/automated_tests/blargg_nes_cpu_test5/official.nes"
+        "roms/automated_tests/blargg_nes_cpu_test5/official.nes",
+        "ALL TESTS COMPLETE"
     );
 
     // mmc3_irq_tests

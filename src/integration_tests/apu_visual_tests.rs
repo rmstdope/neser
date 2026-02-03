@@ -66,47 +66,58 @@ mod tests {
     // blargg_apu_2005.07.30
     setup_rom_console_test!(
         test_blargg_apu_01,
-        "roms/automated_tests/blargg_apu_2005.07.30/01.len_ctr.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/01.len_ctr.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_apu_02,
-        "roms/automated_tests/blargg_apu_2005.07.30/02.len_table.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/02.len_table.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_apu_03,
-        "roms/automated_tests/blargg_apu_2005.07.30/03.irq_flag.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/03.irq_flag.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_apu_04,
-        "roms/automated_tests/blargg_apu_2005.07.30/04.clock_jitter.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/04.clock_jitter.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_apu_05,
-        "roms/automated_tests/blargg_apu_2005.07.30/05.len_timing_mode0.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/05.len_timing_mode0.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_apu_06,
-        "roms/automated_tests/blargg_apu_2005.07.30/06.len_timing_mode1.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/06.len_timing_mode1.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_apu_07,
-        "roms/automated_tests/blargg_apu_2005.07.30/07.irq_flag_timing.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/07.irq_flag_timing.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_apu_08,
-        "roms/automated_tests/blargg_apu_2005.07.30/08.irq_timing.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/08.irq_timing.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_apu_09,
-        "roms/automated_tests/blargg_apu_2005.07.30/09.reset_timing.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/09.reset_timing.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_apu_10,
-        "roms/automated_tests/blargg_apu_2005.07.30/10.len_halt_timing.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/10.len_halt_timing.nes",
+        "$01"
     );
     setup_rom_console_test!(
         test_blargg_apu_11,
-        "roms/automated_tests/blargg_apu_2005.07.30/11.len_reload_timing.nes"
+        "roms/automated_tests/blargg_apu_2005.07.30/11.len_reload_timing.nes",
+        "$01"
     );
 
     // TODO pal_apu_tests

@@ -46,7 +46,7 @@ pub(crate) mod tests {
         /// Verify using status byte at 0x6000
         StatusByte,
         /// Verify using console output
-        Console,
+        Console { pass_string: String },
         /// Verify by matching a CRC-32 printed to the console output.
         ConsoleCrc(&'static [u32]),
     }
@@ -180,7 +180,7 @@ pub(crate) mod tests {
                         // Still running
                         continue;
                     }
-                } else if self.verification == RomTestVerification::Console {
+                } else if let RomTestVerification::Console { pass_string } = &self.verification {
                     let base_addr = nes.base_nametable_addr();
                     let mut text = nes.read_nametable_text(base_addr, 32 * 32);
                     text = text
@@ -190,18 +190,11 @@ pub(crate) mod tests {
                         .filter(|s| !s.is_empty())
                         .collect::<Vec<_>>()
                         .join("\n");
-                    // Check if $0x test
-                    // println!("Text is '{}'", text);
-                    let is_0x = text.len() == 3 && text.starts_with("$0");
-                    if text.to_uppercase().contains("PASSED")
-                        || text == "$01"
-                        || text.to_uppercase().contains("ALL TESTS COMPLETE")
-                    {
-                        // println!("Test passed!");
+                    if text.to_uppercase().ends_with(pass_string) {
                         return RomTestResult::Pass;
                     } else if text.to_uppercase().contains("FAILED")
                         || text.to_uppercase().contains("ERROR")
-                        || is_0x
+                        || (text.starts_with("0x") && text.chars().nth(2) != Some('0'))
                     {
                         println!("Test failed!");
                         println!("Console output:\n{}", text);
@@ -268,6 +261,16 @@ pub(crate) mod tests {
             }
 
             // No result found within timeout
+            let base_addr = nes.base_nametable_addr();
+            let mut text = nes.read_nametable_text(base_addr, 32 * 32);
+            text = text
+                .as_bytes()
+                .chunks(32)
+                .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            println!("Test Timed out with output:\n{}", text);
             RomTestResult::Timeout
         }
     }
@@ -421,13 +424,18 @@ pub(crate) mod tests {
 
     #[macro_export]
     macro_rules! setup_rom_console_test {
-        ($test_name:ident, $rom_path:expr, $timeout:expr) => {
+        ($test_name:ident, $rom_path:expr) => {
+            setup_rom_console_test!($test_name, $rom_path, "PASSED");
+        };
+        ($test_name:ident, $rom_path:expr, $pass_string:expr) => {
             #[test]
             fn $test_name() {
                 let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new(
                     $rom_path,
-                    $timeout,
-                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::Console,
+                    60 * 30,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::Console {
+                        pass_string: $pass_string.to_string(),
+                    },
                 );
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();
@@ -438,9 +446,6 @@ pub(crate) mod tests {
                     rom_name
                 );
             }
-        };
-        ($test_name:ident, $rom_path:expr) => {
-            setup_rom_console_test!($test_name, $rom_path, 60 * 30); // Wait for at least 30 s
         };
     }
 

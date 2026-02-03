@@ -1369,21 +1369,30 @@ mod tests {
     fn test_config_file_filter_crt() {
         let mut config = Config::default();
         config.apply_config_value("filter", "crt").unwrap();
-        assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
+        assert_eq!(
+            config.shader_path,
+            Some("shaders/crt-lottes.slangp".to_string())
+        );
     }
 
     #[test]
     fn test_config_file_filter_ntsc() {
         let mut config = Config::default();
         config.apply_config_value("filter", "ntsc").unwrap();
-        assert_eq!(config.shader_path, Some("shaders/ntsc-256px-composite.slangp".to_string()));
+        assert_eq!(
+            config.shader_path,
+            Some("shaders/ntsc-256px-composite.slangp".to_string())
+        );
     }
 
     #[test]
     fn test_config_file_filter_smooth() {
         let mut config = Config::default();
         config.apply_config_value("filter", "smooth").unwrap();
-        assert_eq!(config.shader_path, Some("shaders/xbrz-freescale.slangp".to_string()));
+        assert_eq!(
+            config.shader_path,
+            Some("shaders/xbrz-freescale.slangp".to_string())
+        );
     }
 
     #[test]
@@ -1401,7 +1410,10 @@ mod tests {
             "crt".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
+        assert_eq!(
+            config.shader_path,
+            Some("shaders/crt-lottes.slangp".to_string())
+        );
     }
 
     #[test]
@@ -1412,7 +1424,10 @@ mod tests {
             "ntsc".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.shader_path, Some("shaders/ntsc-256px-composite.slangp".to_string()));
+        assert_eq!(
+            config.shader_path,
+            Some("shaders/ntsc-256px-composite.slangp".to_string())
+        );
     }
 
     #[test]
@@ -1423,7 +1438,10 @@ mod tests {
             "smooth".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.shader_path, Some("shaders/xbrz-freescale.slangp".to_string()));
+        assert_eq!(
+            config.shader_path,
+            Some("shaders/xbrz-freescale.slangp".to_string())
+        );
     }
 
     #[test]
@@ -1470,8 +1488,8 @@ mod tests {
     #[test]
     fn test_config_file_controller_ports() {
         let mut config = Config::default();
-        config.apply_config_value("controller_port1", "arkanoid");
-        config.apply_config_value("controller_port2", "none");
+        let _ = config.apply_config_value("controller_port1", "arkanoid");
+        let _ = config.apply_config_value("controller_port2", "none");
 
         assert_eq!(config.controller_port1, ControllerType::Arkanoid);
         assert_eq!(config.controller_port2, ControllerType::None);
@@ -1480,7 +1498,7 @@ mod tests {
     #[test]
     fn test_config_file_controller_port_invalid_value_ignored() {
         let mut config = Config::default();
-        config.apply_config_value("controller_port1", "unknown");
+        let _ = config.apply_config_value("controller_port1", "unknown");
 
         assert_eq!(config.controller_port1, ControllerType::Joypad);
     }
@@ -1561,7 +1579,9 @@ mod tests {
     fn test_config_file_unknown_key_ignored() {
         let mut config = Config::default();
         // Should not panic
-        config.apply_config_value("unknown_key", "some_value").unwrap();
+        config
+            .apply_config_value("unknown_key", "some_value")
+            .unwrap();
         // Config should remain unchanged
         assert_eq!(config.tv_system, TvSystem::Ntsc);
     }
@@ -1592,7 +1612,10 @@ pulse1=false
         assert!(!config.audio_enabled);
         assert!(config.fullscreen);
         assert_eq!(config.fullscreen_display, Some(2));
-        assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
+        assert_eq!(
+            config.shader_path,
+            Some("shaders/crt-lottes.slangp".to_string())
+        );
         assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
         // Other values should remain default
         assert!(config.vsync_enabled);
@@ -1654,7 +1677,9 @@ controller_port2=arkanoid
     #[test]
     fn test_config_file_nonexistent_silently_ignored() {
         let mut config = Config::default();
-        config.load_from_file(Path::new("/nonexistent/path/neser.conf")).unwrap();
+        config
+            .load_from_file(Path::new("/nonexistent/path/neser.conf"))
+            .unwrap();
         // Should not panic, config should remain default
         assert_eq!(config.tv_system, TvSystem::Ntsc);
         assert!(config.audio_enabled);
