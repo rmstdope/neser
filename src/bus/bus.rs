@@ -43,7 +43,7 @@ pub struct Bus {
     paddle2: Rc<RefCell<Paddle>>,
     port1_type: Rc<RefCell<ControllerType>>,
     port2_type: Rc<RefCell<ControllerType>>,
-    paddle1_enabled: Rc<RefCell<bool>>, // Deprecated: keeping for backward compatibility
+    paddle1_enabled: Rc<RefCell<bool>>, // Deprecated: use port1_type instead. Kept for backward compatibility with existing code.
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
     mmc5_scroll_log_active: bool,
@@ -584,12 +584,24 @@ impl Bus {
         *self.port1_type.borrow_mut() = match state.port1_type {
             0 => ControllerType::Joypad,
             1 => ControllerType::Paddle,
-            _ => ControllerType::Joypad,
+            _ => {
+                eprintln!(
+                    "Warning: Invalid port1_type value {} in save state, defaulting to Joypad",
+                    state.port1_type
+                );
+                ControllerType::Joypad
+            }
         };
         *self.port2_type.borrow_mut() = match state.port2_type {
             0 => ControllerType::Joypad,
             1 => ControllerType::Paddle,
-            _ => ControllerType::Joypad,
+            _ => {
+                eprintln!(
+                    "Warning: Invalid port2_type value {} in save state, defaulting to Joypad",
+                    state.port2_type
+                );
+                ControllerType::Joypad
+            }
         };
     }
 
@@ -1847,10 +1859,12 @@ mod tests {
         let paddle_bits2 = memory.read(0x4017) & 0x18;
 
         // Verify paddle data is present
-        // Position 0xB3 inverted = 0x4C = 0b01001100, trigger=false
-        // First bit (MSB) is 0, second bit is 1
-        assert_eq!(paddle_bits1, 0x00); // bit 4=0, bit 3=0 (no trigger)
-        assert_eq!(paddle_bits2, 0x10); // bit 4=1, bit 3=0 (no trigger)
+        // Position 0xB3: inverted = 0x4C = 0b01001100, trigger=false
+        // MSB (bit 7) = 0, so first position bit is 0; bit 6 = 1, so second position bit is 1
+        // First read:  bit 4=0 (first position bit), bit 3=0 (no trigger) = 0x00
+        // Second read: bit 4=1 (second position bit), bit 3=0 (no trigger) = 0x10
+        assert_eq!(paddle_bits1, 0x00);
+        assert_eq!(paddle_bits2, 0x10);
     }
 
     #[test]
