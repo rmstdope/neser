@@ -1444,6 +1444,8 @@ mod tests {
         let mut debugger_open_requested = false;
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.memory.borrow_mut().set_paddle1_enabled(true);
+        nes.set_paddle1_position(0x5A);
+        nes.set_paddle1_trigger(true);
 
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
@@ -1454,6 +1456,8 @@ mod tests {
         );
 
         assert_eq!(read_joypad1_buttons(&mut nes), [0; 8]);
+        assert_eq!(read_paddle_position(&mut nes), 0x5A);
+        assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
     }
 
     #[test]
