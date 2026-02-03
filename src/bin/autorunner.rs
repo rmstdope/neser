@@ -716,6 +716,7 @@ fn finalize_run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use neser::console::ControllerStateWrapper;
     use neser::console::TvSystem;
     use tempfile::tempdir;
 
@@ -877,11 +878,21 @@ mod tests {
         process_record_mode(&mut nes, &mut state, &mut player1, &mut player2);
 
         let state_after = nes.save_state();
-        assert_eq!(
-            state_after.bus.joypad1.button_states,
-            1u8 << Button::B as u8
-        );
-        assert_eq!(state_after.bus.joypad2.button_states, 0);
+        let port1_buttons = match &state_after.bus.port1_controller {
+            ControllerStateWrapper::Joypad(state) => state.button_states,
+            ControllerStateWrapper::Paddle(_) => {
+                panic!("expected joypad on port 1")
+            }
+        };
+        let port2_buttons = match &state_after.bus.port2_controller {
+            ControllerStateWrapper::Joypad(state) => state.button_states,
+            ControllerStateWrapper::Paddle(_) => {
+                panic!("expected joypad on port 2")
+            }
+        };
+
+        assert_eq!(port1_buttons, 1u8 << Button::B as u8);
+        assert_eq!(port2_buttons, 0);
         assert_eq!(player1, 1u8 << Button::B as u8);
         assert_eq!(player2, 0);
     }

@@ -91,15 +91,18 @@ impl Nes {
 
     /// Insert a cartridge and map it into memory
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
-        let requires_arkanoid_paddle =
-            crate::cartridge::requires_arkanoid_paddle(cartridge.crc32());
+        let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge.crc32());
 
         let mut memory = self.memory.borrow_mut();
         memory.map_cartridge(cartridge);
-        
-        // Auto-configure Arkanoid paddle on port 2 when detected
-        if requires_arkanoid_paddle {
-            memory.set_controller_type(2, crate::bus::ControllerType::Paddle);
+
+        // Auto-configure Arkanoid paddle when detected
+        if arkanoid_port != 0 {
+            println!(
+                "Enabling Arkanoid paddle on port {} for inserted cartridge",
+                arkanoid_port
+            );
+            memory.set_controller_type(arkanoid_port, crate::bus::ControllerType::Paddle);
         }
     }
 
@@ -243,27 +246,45 @@ impl Nes {
             .set_button(controller, button, pressed);
     }
 
-    /// Check whether the first paddle controller is currently enabled.
-    ///
-    /// Returns `true` if paddle 1 is enabled/connected, `false` otherwise.
-    pub fn paddle1_enabled(&self) -> bool {
-        self.memory.borrow().paddle1_enabled()
+    /// Returns the controller port that has an Arkanoid paddle connected.
+    pub fn paddle_port(&self) -> Option<u8> {
+        self.memory.borrow().paddle_port()
     }
 
     /// Set the current position of the first paddle controller.
     ///
     /// # Arguments
     /// * `position` - The paddle position value (typically 0–255) to report for paddle 1.
+    #[allow(dead_code)]
     pub fn set_paddle1_position(&mut self, position: u8) {
         self.memory.borrow_mut().set_paddle_position(1, position);
+    }
+
+    /// Set the current position of a paddle controller.
+    ///
+    /// # Arguments
+    /// * `port` - Controller port (1 or 2).
+    /// * `position` - The paddle position value (typically 0–255).
+    pub fn set_paddle_position(&mut self, port: u8, position: u8) {
+        self.memory.borrow_mut().set_paddle_position(port, position);
     }
 
     /// Set the trigger button state for the first paddle controller.
     ///
     /// # Arguments
     /// * `pressed` - `true` if the paddle 1 trigger is pressed, `false` if released.
+    #[allow(dead_code)]
     pub fn set_paddle1_trigger(&mut self, pressed: bool) {
         self.memory.borrow_mut().set_paddle_trigger(1, pressed);
+    }
+
+    /// Set the trigger button state for a paddle controller.
+    ///
+    /// # Arguments
+    /// * `port` - Controller port (1 or 2).
+    /// * `pressed` - `true` if the paddle trigger is pressed, `false` if released.
+    pub fn set_paddle_trigger(&mut self, port: u8, pressed: bool) {
+        self.memory.borrow_mut().set_paddle_trigger(port, pressed);
     }
 
     /// Generate a trace line for the current CPU state
@@ -1542,7 +1563,7 @@ mod tests {
         // Should configure paddle on port 2 for Arkanoid ROM
         nes.memory.borrow_mut().set_paddle_position(2, 0xA5);
         nes.memory.borrow_mut().set_paddle_trigger(2, true);
-        
+
         // Verify port 2 reads paddle data
         nes.memory.borrow_mut().write(0x4016, 0x01, false);
         nes.memory.borrow_mut().write(0x4016, 0x00, false);
@@ -1560,7 +1581,9 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         // Should have joypad on both ports by default
-        nes.memory.borrow_mut().set_button(2, crate::input::Button::A, true);
+        nes.memory
+            .borrow_mut()
+            .set_button(2, crate::input::Button::A, true);
         nes.memory.borrow_mut().write(0x4016, 0x01, false);
         nes.memory.borrow_mut().write(0x4016, 0x00, false);
         let joypad_bit = nes.memory.borrow_mut().read(0x4017) & 0x01;

@@ -191,7 +191,7 @@ fn reset_restores_initial_state() {
 fn paddle1_enabled_matches_save_state() {
     let nes = WasmNes::new();
     let state = read_save_state(&nes);
-    assert_eq!(nes.paddle1_enabled(), state.bus.paddle1.enabled);
+    assert_eq!(nes.paddle_port() == Some(1), state.bus.paddle1.enabled);
 }
 
 #[wasm_bindgen_test]

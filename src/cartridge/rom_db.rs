@@ -41,9 +41,13 @@ const MMC3_ALTERNATE_IRQ_CRCS: &[u32] = &[
     0xA512BDF6, // 6-MMC6.nes
 ];
 
-/// CRC32 values for ROMs that require Arkanoid paddle input on port 1.
-const ARKANOID_PADDLE_CRCS: &[u32] = &[
+/// CRC32 values for ROMs that default to Arkanoid paddle input on port 2.
+const ARKANOID_PADDLE_PORT2_CRCS: &[u32] = &[
     0x32FB0583, // Arkanoid (NES, 1987)
+];
+
+/// CRC32 values for ROMs that default to Arkanoid paddle input on port 1.
+const ARKANOID_PADDLE_PORT1_CRCS: &[u32] = &[
     0x47F9F410, // PaddleTest3
 ];
 
@@ -52,9 +56,17 @@ pub fn requires_mmc3_alternate_irq(crc: u32) -> bool {
     MMC3_ALTERNATE_IRQ_CRCS.contains(&crc)
 }
 
-/// Check if a ROM CRC requires Arkanoid paddle input.
-pub fn requires_arkanoid_paddle(crc: u32) -> bool {
-    ARKANOID_PADDLE_CRCS.contains(&crc)
+/// Return the default Arkanoid paddle port for a ROM CRC.
+///
+/// Returns 0 for none, 1 for port 1, 2 for port 2.
+pub fn default_arkanoid_on_port(crc: u32) -> u8 {
+    if ARKANOID_PADDLE_PORT1_CRCS.contains(&crc) {
+        1
+    } else if ARKANOID_PADDLE_PORT2_CRCS.contains(&crc) {
+        2
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]
@@ -92,12 +104,12 @@ mod tests {
 
     #[test]
     fn test_arkanoid_paddle_known_crcs() {
-        assert!(requires_arkanoid_paddle(0x32FB0583));
-        assert!(requires_arkanoid_paddle(0x47F9F410));
+        assert_eq!(default_arkanoid_on_port(0x32FB0583), 2);
+        assert_eq!(default_arkanoid_on_port(0x47F9F410), 1);
     }
 
     #[test]
     fn test_arkanoid_paddle_unknown_crc() {
-        assert!(!requires_arkanoid_paddle(0xDEADBEEF));
+        assert_eq!(default_arkanoid_on_port(0xDEADBEEF), 0);
     }
 }

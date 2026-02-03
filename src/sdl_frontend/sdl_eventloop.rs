@@ -82,12 +82,12 @@ impl SdlEventLoop {
     ///
     /// This is a no-op if the paddle is disabled.
     fn apply_paddle_mouse_motion(nes: &mut Nes, x: i32, window_width: u32) {
-        if !nes.paddle1_enabled() {
+        let Some(port) = nes.paddle_port() else {
             return;
-        }
+        };
 
         let position = Self::map_mouse_x_to_paddle_position(x, window_width);
-        nes.set_paddle1_position(position);
+        nes.set_paddle_position(port, position);
     }
 
     /// Maps left mouse button presses to the paddle trigger when active.
@@ -95,12 +95,12 @@ impl SdlEventLoop {
     /// This is a no-op if the paddle is disabled.
     fn apply_paddle_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
         // println!("Mouse button {:?} pressed: {}", button, pressed);
-        if !nes.paddle1_enabled() {
+        let Some(port) = nes.paddle_port() else {
             return;
-        }
+        };
 
         if button == MouseButton::Left {
-            nes.set_paddle1_trigger(pressed);
+            nes.set_paddle_trigger(port, pressed);
         }
     }
 
@@ -110,7 +110,9 @@ impl SdlEventLoop {
         button: Button,
         pressed: bool,
     ) {
-        if controller == 1 && nes.paddle1_enabled() {
+        if let Some(paddle_port) = nes.paddle_port()
+            && controller == paddle_port
+        {
             return;
         }
 

@@ -113,7 +113,7 @@ impl WasmNes {
     /// Returns `true` if paddle 1 is enabled.
     #[wasm_bindgen]
     pub fn paddle1_enabled(&self) -> bool {
-        self.nes.paddle1_enabled()
+        self.nes.paddle_port() == Some(1)
     }
 
     /// Set the current position of paddle 1 (0..=255).

@@ -1,4 +1,5 @@
-/// NES Controller Button
+use super::ControllerInput;
+/// NES standard joypad
 use crate::console::JoypadState;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -114,40 +115,44 @@ impl crate::input::Controller for Joypad {
     fn write_strobe(&mut self, value: u8) {
         self.write_strobe(value)
     }
-    
+
     fn read(&mut self) -> u8 {
         self.read()
     }
-    
+
     fn read_no_clock(&self) -> u8 {
         self.read_no_clock()
     }
-    
+
     fn capture_state(&self) -> crate::input::ControllerState {
         crate::input::ControllerState::Joypad(self.capture_state())
     }
-    
+
     fn restore_state(&mut self, state: &crate::input::ControllerState) {
         if let crate::input::ControllerState::Joypad(joypad_state) = state {
             self.restore_state(joypad_state);
         }
     }
-    
+
     fn new_boxed() -> Box<dyn crate::input::Controller> {
         Box::new(Joypad::new())
     }
-    
+
     fn set_button(&mut self, button: crate::input::Button, pressed: bool) -> bool {
         self.set_button(button, pressed);
         true
     }
-    
+
     fn set_paddle_position(&mut self, _position: u8) -> bool {
-        false  // Not supported for Joypad
+        false // Not supported for Joypad
     }
-    
+
     fn set_paddle_trigger(&mut self, _pressed: bool) -> bool {
-        false  // Not supported for Joypad
+        false // Not supported for Joypad
+    }
+
+    fn input_type(&self) -> ControllerInput {
+        ControllerInput::Gamepad
     }
 }
 
