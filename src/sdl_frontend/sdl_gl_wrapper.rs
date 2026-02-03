@@ -88,6 +88,7 @@ impl SdlGlWrapper {
         }
     }
 
+    /// Returns the current SDL window size as `(width, height)` in pixels.
     pub fn window_size(&self) -> (u32, u32) {
         self.gl_backend.window_size()
     }
