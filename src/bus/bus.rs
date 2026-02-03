@@ -430,6 +430,7 @@ impl Bus {
         *self.paddle1_enabled.borrow_mut() = enabled;
     }
 
+    /// Returns `true` if the Arkanoid paddle on controller port 1 is enabled.
     pub fn paddle1_enabled(&self) -> bool {
         *self.paddle1_enabled.borrow()
     }
