@@ -64,15 +64,15 @@ fullscreen=false
 # Only used when fullscreen=true.
 display=0
 
-# Shader/filter preset path.
+# Shader/filter preset.
 # Applies visual effects like CRT simulation or pixel scaling.
-# Available presets in the shaders/ directory:
-#   - shaders/stock.slangp              (no effect, raw pixels)
-#   - shaders/crt-lottes.slangp         (CRT simulation with scanlines, shadow mask, bloom)
-#   - shaders/xbrz-freescale.slangp     (smooth pixel upscaling)
-#   - shaders/ntsc-256px-composite.slangp (NTSC composite video simulation)
+# Valid values:
+#   - crt    : CRT simulation with scanlines, shadow mask, bloom
+#   - ntsc   : NTSC composite video simulation
+#   - smooth : Smooth pixel upscaling (xBRZ)
+#   - none   : No filter, raw pixels
 # Leave empty or comment out for no shader.
-#filter=shaders/crt-lottes.slangp
+#filter=crt
 
 # -----------------------------------------------------------------------------
 # Input Settings

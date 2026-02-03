@@ -189,7 +189,7 @@ fn print_help() {
     println!("  --window-height <N>  Window height in pixels (default: 960)");
     println!("  --fullscreen       Run emulator in fullscreen mode");
     println!("  --display <N>      Select display index for fullscreen");
-    println!("  --filter <path>    Specify shader preset path");
+    println!("  --filter <name>    Specify shader filter (crt|ntsc|smooth|none)");
 }
 
 struct RunnerState {

@@ -87,7 +87,7 @@ Options:
   --load-state <path>   Load a save state on startup
   --fullscreen          Run emulator in fullscreen mode
   --display <N>         Select display index for fullscreen (default: 0)
-  --filter <path>       Specify shader preset path (see Shaders below)
+  --filter <name>       Specify shader filter (crt|ntsc|smooth|none)
   --config <path>       Specify config file path (overrides default locations)
   --window-height <N>   Window height in pixels, windowed mode only (e.g., 720)
 ```
@@ -252,21 +252,24 @@ NESER is tested against Blargg’s (and Blargg compatible) NES test ROMs to veri
   - sprdma_and_dmc_dma_512.nes
 
 > See src/blargg_tests.rs for the full list of passing tests and ROM paths.
-NESER supports shader presets for visual effects:
 
-- `shaders/stock.slangp`               No effect (raw pixels)
-- `shaders/crt-lottes.slangp`          CRT simulation (scanlines, shadow mask, bloom)
-- `shaders/xbrz-freescale.slangp`      Smooth pixel upscaling
-- `shaders/ntsc-256px-composite.slangp` NTSC composite video simulation
+## Shaders
+
+NESER supports shader filters for visual effects:
+
+- `crt`    - CRT simulation (scanlines, shadow mask, bloom)
+- `ntsc`   - NTSC composite video simulation
+- `smooth` - Smooth pixel upscaling (xBRZ)
+- `none`   - No effect (raw pixels)
 
 Example:
 
 ```bash
-neser --filter shaders/crt-lottes.slangp
+neser --filter crt
 ```
 
 Or in config file:
 
 ```text
-filter=shaders/crt-lottes.slangp
+filter=crt
 ```

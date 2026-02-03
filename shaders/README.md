@@ -11,13 +11,22 @@ This directory contains curated shader presets from the libretro slang-shaders p
 
 ## Usage
 
-Use the `--filter` flag to specify a shader:
+Use the `--filter` flag with a simplified name:
 
 ```bash
-neser rom.nes --filter shaders/crt-lottes.slangp
+neser rom.nes --filter crt     # CRT simulation
+neser rom.nes --filter ntsc    # NTSC composite
+neser rom.nes --filter smooth  # Smooth upscaling
+neser rom.nes --filter none    # No filter
 ```
 
-Or cycle through shaders at runtime with F6.
+Or set in config file:
+
+```text
+filter=crt
+```
+
+You can also cycle through shaders at runtime with F6.
 
 ## Implementation Status
 
