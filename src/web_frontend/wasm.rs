@@ -110,6 +110,24 @@ impl WasmNes {
         self.nes.set_button(controller, nes_button, pressed);
     }
 
+    /// Returns `true` if paddle 1 is enabled.
+    #[wasm_bindgen]
+    pub fn paddle1_enabled(&self) -> bool {
+        self.nes.paddle1_enabled()
+    }
+
+    /// Set the current position of paddle 1 (0..=255).
+    #[wasm_bindgen]
+    pub fn set_paddle1_position(&mut self, position: u8) {
+        self.nes.set_paddle1_position(position);
+    }
+
+    /// Set the trigger button state for paddle 1.
+    #[wasm_bindgen]
+    pub fn set_paddle1_trigger(&mut self, pressed: bool) {
+        self.nes.set_paddle1_trigger(pressed);
+    }
+
     /// Get all available audio samples from the emulator.
     ///
     /// Returns a Float32Array containing all pending audio samples.
