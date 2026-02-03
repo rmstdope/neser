@@ -30,6 +30,7 @@ pub fn calculate_rom_crc32(prg_rom: &[u8], chr_rom: &[u8]) -> u32 {
         let index = ((crc ^ byte as u32) & 0xFF) as usize;
         crc = (crc >> 8) ^ CRC32_TABLE[index];
     }
+    println!("Calculated CRC32: {:08X}", crc ^ 0xFFFFFFFF);
     !crc
 }
 
