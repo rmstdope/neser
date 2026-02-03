@@ -430,14 +430,16 @@ impl Bus {
         *self.paddle1_enabled.borrow_mut() = enabled;
     }
 
+    pub fn paddle1_enabled(&self) -> bool {
+        *self.paddle1_enabled.borrow()
+    }
+
     /// Update paddle 1 position (0..255).
-    #[allow(dead_code)]
     pub fn set_paddle1_position(&mut self, position: u8) {
         self.paddle1.borrow_mut().set_position(position);
     }
 
     /// Update paddle 1 trigger state.
-    #[allow(dead_code)]
     pub fn set_paddle1_trigger(&mut self, pressed: bool) {
         self.paddle1.borrow_mut().set_trigger(pressed);
     }

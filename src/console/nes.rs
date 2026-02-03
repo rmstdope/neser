@@ -239,6 +239,18 @@ impl Nes {
             .set_button(controller, button, pressed);
     }
 
+    pub fn paddle1_enabled(&self) -> bool {
+        self.memory.borrow().paddle1_enabled()
+    }
+
+    pub fn set_paddle1_position(&mut self, position: u8) {
+        self.memory.borrow_mut().set_paddle1_position(position);
+    }
+
+    pub fn set_paddle1_trigger(&mut self, pressed: bool) {
+        self.memory.borrow_mut().set_paddle1_trigger(pressed);
+    }
+
     /// Generate a trace line for the current CPU state
     ///
     /// Returns a string in the nestest.log format showing the current instruction,

@@ -88,6 +88,10 @@ impl SdlGlWrapper {
         }
     }
 
+    pub fn window_size(&self) -> (u32, u32) {
+        self.gl_backend.window_size()
+    }
+
     /// Renders a frame and optional debugger overlay.
     pub fn render(
         &mut self,
