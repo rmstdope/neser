@@ -34,9 +34,16 @@ impl BusDevice for ControllerDevice {
                 } else {
                     self.port1_controller.borrow().read_no_clock()
                 };
-                // Paddle uses bits 4 and 3, Joypad uses bit 0
-                // Return with open bus preservation for unused bits
-                Some((open_bus & 0xE0) | controller_state)
+                // Determine mask based on which bits the controller uses
+                // Joypad uses bit 0 (mask 0xFE), Paddle uses bits 4-3 (mask 0xE7)
+                let mask = if controller_state & 0x18 != 0 {
+                    // Paddle: bits 4 or 3 are set, preserve bits 7-5, 2-0
+                    0xE7
+                } else {
+                    // Joypad: only bit 0 used, preserve bits 7-1
+                    0xFE
+                };
+                Some((open_bus & mask) | controller_state)
             }
             0x4017 => {
                 let controller_state = if clock_joypads {
@@ -44,9 +51,16 @@ impl BusDevice for ControllerDevice {
                 } else {
                     self.port2_controller.borrow().read_no_clock()
                 };
-                // Paddle uses bits 4 and 3, Joypad uses bit 0
-                // Return with open bus preservation for unused bits
-                Some((open_bus & 0xE0) | controller_state)
+                // Determine mask based on which bits the controller uses
+                // Joypad uses bit 0 (mask 0xFE), Paddle uses bits 4-3 (mask 0xE7)
+                let mask = if controller_state & 0x18 != 0 {
+                    // Paddle: bits 4 or 3 are set, preserve bits 7-5, 2-0
+                    0xE7
+                } else {
+                    // Joypad: only bit 0 used, preserve bits 7-1
+                    0xFE
+                };
+                Some((open_bus & mask) | controller_state)
             }
             _ => None,
         }
