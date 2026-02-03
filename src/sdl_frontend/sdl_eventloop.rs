@@ -1206,7 +1206,8 @@ mod tests {
 
     fn copy_test_rom(temp_dir: &TempDir) -> PathBuf {
         let rom_path = temp_dir.path().join("test.nes");
-        fs::copy("roms/nestest.nes", &rom_path).expect("Failed to copy test ROM");
+        fs::copy("roms/automated_tests/nestest/nestest.nes", &rom_path)
+            .expect("Failed to copy test ROM");
         rom_path
     }
 

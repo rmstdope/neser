@@ -225,13 +225,14 @@ pub(crate) mod tests {
                             pressed_for_prompt = false;
                         }
 
-                        if let Some(button) = prompt_button {
-                            if !pressed_for_prompt && pending_release.is_none() {
-                                nes.set_button(1, button, true);
-                                pending_release = Some(button);
-                                release_after_frames = 2;
-                                pressed_for_prompt = true;
-                            }
+                        if let Some(button) = prompt_button
+                            && !pressed_for_prompt
+                            && pending_release.is_none()
+                        {
+                            nes.set_button(1, button, true);
+                            pending_release = Some(button);
+                            release_after_frames = 2;
+                            pressed_for_prompt = true;
                         }
                     }
                 } else if let RomTestVerification::ConsoleCrc(expected_crcs) = self.verification {
@@ -255,13 +256,13 @@ pub(crate) mod tests {
                     }
                 }
 
-                if let Some(button) = pending_release {
-                    if release_after_frames > 0 {
-                        release_after_frames -= 1;
-                        if release_after_frames == 0 {
-                            nes.set_button(1, button, false);
-                            pending_release = None;
-                        }
+                if let Some(button) = pending_release
+                    && release_after_frames > 0
+                {
+                    release_after_frames -= 1;
+                    if release_after_frames == 0 {
+                        nes.set_button(1, button, false);
+                        pending_release = None;
                     }
                 }
             }
