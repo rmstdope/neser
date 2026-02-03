@@ -15,6 +15,11 @@ import { createFrameLimiter } from "./frame_limiter.js";
 import { computePlaybackRate } from "./audio_resampler.js";
 import { planFrame } from "./frame_plan.js";
 import { createSineScroller } from "./sine_scroller.js";
+import {
+    applyJoypadButtonIfAllowed,
+    applyPaddleMouseButton,
+    applyPaddleMouseMotion
+} from "./paddle_input.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -1333,7 +1338,7 @@ document.addEventListener('keydown', (e) => {
     const mapping = keyToButton[key];
     if (mapping) {
         e.preventDefault(); // Prevent default browser behavior
-        nes.set_button(1, mapping.button, true);
+        applyJoypadButtonIfAllowed(nes, 1, mapping.button, true);
     }
 });
 
@@ -1343,9 +1348,28 @@ document.addEventListener('keyup', (e) => {
     const mapping = keyToButton[key];
     if (mapping) {
         e.preventDefault();
-        nes.set_button(1, mapping.button, false);
+        applyJoypadButtonIfAllowed(nes, 1, mapping.button, false);
     }
 });
+
+function handlePaddleMouseMotion(event) {
+    if (!nes) return;
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width <= 1) {
+        return;
+    }
+    const x = event.clientX - rect.left;
+    applyPaddleMouseMotion(nes, x, rect.width);
+}
+
+function handlePaddleMouseButton(event, pressed) {
+    if (!nes) return;
+    applyPaddleMouseButton(nes, event.button, pressed);
+}
+
+canvas.addEventListener("mousemove", handlePaddleMouseMotion);
+canvas.addEventListener("mousedown", (event) => handlePaddleMouseButton(event, true));
+window.addEventListener("mouseup", (event) => handlePaddleMouseButton(event, false));
 
 // Screen size controls
 const screenMinusBtn = document.getElementById("screen-minus");
@@ -1447,28 +1471,28 @@ function pollGamepad() {
 function applyGamepadState(state) {
     if (!nes) return;
     if (state.a !== lastGamepadState.a) {
-        nes.set_button(1, 0, state.a);
+        applyJoypadButtonIfAllowed(nes, 1, 0, state.a);
     }
     if (state.b !== lastGamepadState.b) {
-        nes.set_button(1, 1, state.b);
+        applyJoypadButtonIfAllowed(nes, 1, 1, state.b);
     }
     if (state.select !== lastGamepadState.select) {
-        nes.set_button(1, 2, state.select);
+        applyJoypadButtonIfAllowed(nes, 1, 2, state.select);
     }
     if (state.start !== lastGamepadState.start) {
-        nes.set_button(1, 3, state.start);
+        applyJoypadButtonIfAllowed(nes, 1, 3, state.start);
     }
     if (state.up !== lastGamepadState.up) {
-        nes.set_button(1, 4, state.up);
+        applyJoypadButtonIfAllowed(nes, 1, 4, state.up);
     }
     if (state.down !== lastGamepadState.down) {
-        nes.set_button(1, 5, state.down);
+        applyJoypadButtonIfAllowed(nes, 1, 5, state.down);
     }
     if (state.left !== lastGamepadState.left) {
-        nes.set_button(1, 6, state.left);
+        applyJoypadButtonIfAllowed(nes, 1, 6, state.left);
     }
     if (state.right !== lastGamepadState.right) {
-        nes.set_button(1, 7, state.right);
+        applyJoypadButtonIfAllowed(nes, 1, 7, state.right);
     }
     lastGamepadState = state;
 }

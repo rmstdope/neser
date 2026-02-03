@@ -1,5 +1,6 @@
 #![cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
 
+use crate::console::SaveState;
 use crate::wasm::WasmNes;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
@@ -13,6 +14,10 @@ fn minimal_nrom() -> Vec<u8> {
     data[4] = 1; // 1 * 16KB PRG
     data[5] = 1; // 1 * 8KB CHR
     data
+}
+
+fn read_save_state(nes: &WasmNes) -> SaveState {
+    SaveState::from_bytes(&nes.save_state_bytes()).expect("save state should decode")
 }
 
 #[wasm_bindgen_test]
@@ -180,4 +185,33 @@ fn reset_restores_initial_state() {
     let after_reset = nes.save_state_bytes();
 
     assert_eq!(initial, after_reset);
+}
+
+#[wasm_bindgen_test]
+fn paddle1_enabled_matches_save_state() {
+    let nes = WasmNes::new();
+    let state = read_save_state(&nes);
+    assert_eq!(nes.paddle1_enabled(), state.bus.paddle1.enabled);
+}
+
+#[wasm_bindgen_test]
+fn set_paddle1_position_updates_save_state() {
+    let mut nes = WasmNes::new();
+    nes.set_paddle1_position(0x5A);
+
+    let state = read_save_state(&nes);
+    assert_eq!(state.bus.paddle1.position, 0x5A);
+}
+
+#[wasm_bindgen_test]
+fn set_paddle1_trigger_updates_save_state() {
+    let mut nes = WasmNes::new();
+    nes.set_paddle1_trigger(true);
+
+    let state = read_save_state(&nes);
+    assert!(state.bus.paddle1.trigger);
+
+    nes.set_paddle1_trigger(false);
+    let state = read_save_state(&nes);
+    assert!(!state.bus.paddle1.trigger);
 }
