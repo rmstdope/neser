@@ -426,7 +426,6 @@ impl Bus {
     }
 
     /// Enable or disable the Arkanoid paddle on controller port 1.
-    #[allow(dead_code)]
     pub fn set_paddle1_enabled(&mut self, enabled: bool) {
         *self.paddle1_enabled.borrow_mut() = enabled;
     }
@@ -446,6 +445,11 @@ impl Bus {
     #[cfg(test)]
     fn open_bus_value_for_test(&self) -> u8 {
         self.open_bus
+    }
+
+    #[cfg(test)]
+    pub fn paddle1_enabled_for_test(&self) -> bool {
+        *self.paddle1_enabled.borrow()
     }
 
     /// Create a snapshot of CPU RAM for save-state (first 2KB is the actual RAM).
