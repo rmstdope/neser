@@ -98,6 +98,19 @@ impl SdlEventLoop {
             nes.set_paddle1_trigger(pressed);
         }
     }
+
+    fn apply_joypad_button_if_allowed(
+        nes: &mut Nes,
+        controller: u8,
+        button: Button,
+        pressed: bool,
+    ) {
+        if controller == 1 && nes.paddle1_enabled() {
+            return;
+        }
+
+        nes.set_button(controller, button, pressed);
+    }
     const MIN_TIMING_SCALE: f32 = 0.001;
     const MAX_TIMING_SCALE: f32 = 100.0;
 
@@ -1005,46 +1018,14 @@ impl SdlEventLoop {
             Keycode::F7 => {
                 Self::load_state_from_disk(nes);
             }
-            Keycode::W => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Up, true);
-                }
-            }
-            Keycode::S => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Down, true);
-                }
-            }
-            Keycode::A => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Left, true);
-                }
-            }
-            Keycode::D => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Right, true);
-                }
-            }
-            Keycode::G => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::B, true);
-                }
-            }
-            Keycode::F => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::A, true);
-                }
-            }
-            Keycode::R => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Select, true);
-                }
-            }
-            Keycode::T => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Start, true);
-                }
-            }
+            Keycode::W => Self::apply_joypad_button_if_allowed(nes, 1, Button::Up, true),
+            Keycode::S => Self::apply_joypad_button_if_allowed(nes, 1, Button::Down, true),
+            Keycode::A => Self::apply_joypad_button_if_allowed(nes, 1, Button::Left, true),
+            Keycode::D => Self::apply_joypad_button_if_allowed(nes, 1, Button::Right, true),
+            Keycode::G => Self::apply_joypad_button_if_allowed(nes, 1, Button::B, true),
+            Keycode::F => Self::apply_joypad_button_if_allowed(nes, 1, Button::A, true),
+            Keycode::R => Self::apply_joypad_button_if_allowed(nes, 1, Button::Select, true),
+            Keycode::T => Self::apply_joypad_button_if_allowed(nes, 1, Button::Start, true),
             _ => {}
         }
 
@@ -1053,46 +1034,14 @@ impl SdlEventLoop {
 
     fn handle_key_up(nes: &mut Nes, keycode: Keycode) {
         match keycode {
-            Keycode::W => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Up, false);
-                }
-            }
-            Keycode::S => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Down, false);
-                }
-            }
-            Keycode::A => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Left, false);
-                }
-            }
-            Keycode::D => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Right, false);
-                }
-            }
-            Keycode::G => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::B, false);
-                }
-            }
-            Keycode::F => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::A, false);
-                }
-            }
-            Keycode::R => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Select, false);
-                }
-            }
-            Keycode::T => {
-                if !nes.paddle1_enabled() {
-                    nes.set_button(1, Button::Start, false);
-                }
-            }
+            Keycode::W => Self::apply_joypad_button_if_allowed(nes, 1, Button::Up, false),
+            Keycode::S => Self::apply_joypad_button_if_allowed(nes, 1, Button::Down, false),
+            Keycode::A => Self::apply_joypad_button_if_allowed(nes, 1, Button::Left, false),
+            Keycode::D => Self::apply_joypad_button_if_allowed(nes, 1, Button::Right, false),
+            Keycode::G => Self::apply_joypad_button_if_allowed(nes, 1, Button::B, false),
+            Keycode::F => Self::apply_joypad_button_if_allowed(nes, 1, Button::A, false),
+            Keycode::R => Self::apply_joypad_button_if_allowed(nes, 1, Button::Select, false),
+            Keycode::T => Self::apply_joypad_button_if_allowed(nes, 1, Button::Start, false),
             _ => {}
         }
     }
@@ -1272,10 +1221,6 @@ T: Start"
             None => return, // Unknown controller
         };
 
-        if player_num == 1 && nes.paddle1_enabled() {
-            return;
-        }
-
         // Map SDL2 controller buttons to NES buttons
         let nes_button = match button {
             sdl2::controller::Button::DPadUp => Some(NesButton::Up),
@@ -1292,7 +1237,7 @@ T: Start"
         };
 
         if let Some(nes_button) = nes_button {
-            nes.set_button(player_num, nes_button, pressed);
+            Self::apply_joypad_button_if_allowed(nes, player_num, nes_button, pressed);
         }
     }
 }
@@ -1509,6 +1454,20 @@ mod tests {
 
         nes.memory.borrow_mut().set_paddle1_enabled(true);
         assert_eq!(read_paddle_position(&mut nes), 0);
+    }
+
+    #[test]
+    #[serial]
+    fn test_paddle_mode_suppresses_controller_input() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+
+        event_loop.controller_player_map.insert(42, 1);
+        event_loop.handle_controller_button(&mut nes, 42, sdl2::controller::Button::A, true);
+
+        assert_eq!(read_joypad1_buttons(&mut nes), [0; 8]);
     }
 
     #[test]
