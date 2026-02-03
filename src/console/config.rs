@@ -270,16 +270,16 @@ impl Config {
             if !path.exists() {
                 return Err(format!("Config file not found: {}", config_path));
             }
-            config.load_from_file(path);
+            config.load_from_file(path)?;
         } else {
             // Load from default locations (later overrides earlier)
             // First: ~/.neser/neser.conf
             if let Some(home) = std::env::var_os("HOME") {
                 let home_config = Path::new(&home).join(".neser").join(Self::CONFIG_FILE_NAME);
-                config.load_from_file(&home_config);
+                config.load_from_file(&home_config)?;
             }
             // Second: ./neser.conf (overrides user config)
-            config.load_from_file(Path::new(Self::CONFIG_FILE_NAME));
+            config.load_from_file(Path::new(Self::CONFIG_FILE_NAME))?;
         }
 
         // Step 3: Apply command-line arguments (override config file and defaults)
@@ -325,7 +325,7 @@ impl Config {
 
         // Shader path
         if let Some(filter_name) = Self::parse_shader_arg(args) {
-            self.shader_path = Self::map_filter_name(&filter_name);
+            self.shader_path = Some(Self::map_filter_name(&filter_name)?);
         }
 
         if let Some(path) = Self::parse_rom_arg(args)? {
@@ -557,10 +557,10 @@ impl Config {
     /// noise=true
     /// dmc=true
     /// ```
-    fn load_from_file(&mut self, path: &Path) {
+    fn load_from_file(&mut self, path: &Path) -> Result<(), String> {
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
-            Err(_) => return, // File doesn't exist or can't be read - silently ignore
+            Err(_) => return Ok(()), // File doesn't exist or can't be read - silently ignore
         };
 
         for line in content.lines() {
@@ -575,29 +575,33 @@ impl Config {
             if let Some((key, value)) = line.split_once('=') {
                 let key = key.trim();
                 let value = value.trim();
-                self.apply_config_value(key, value);
+                self.apply_config_value(key, value)?;
             }
         }
+        Ok(())
     }
 
     /// Map simplified filter names to shader paths.
     ///
     /// Supported values: crt, ntsc, smooth, none
     ///
-    /// Returns `Some(String)` with the full shader path for valid filter names,
-    /// or `None` for invalid/unknown names.
-    fn map_filter_name(name: &str) -> Option<String> {
+    /// Returns `Ok(String)` with the full shader path for valid filter names,
+    /// or `Err(String)` with an error message for invalid/unknown names.
+    fn map_filter_name(name: &str) -> Result<String, String> {
         match name {
-            "crt" => Some("shaders/crt-lottes.slangp".to_string()),
-            "ntsc" => Some("shaders/ntsc-256px-composite.slangp".to_string()),
-            "smooth" => Some("shaders/xbrz-freescale.slangp".to_string()),
-            "none" => Some("shaders/stock.slangp".to_string()),
-            _ => None,
+            "crt" => Ok("shaders/crt-lottes.slangp".to_string()),
+            "ntsc" => Ok("shaders/ntsc-256px-composite.slangp".to_string()),
+            "smooth" => Ok("shaders/xbrz-freescale.slangp".to_string()),
+            "none" => Ok("shaders/stock.slangp".to_string()),
+            _ => Err(format!(
+                "Invalid filter name: '{}'. Valid options are: crt, ntsc, smooth, none",
+                name
+            )),
         }
     }
 
     /// Apply a single config file key-value pair.
-    fn apply_config_value(&mut self, key: &str, value: &str) {
+    fn apply_config_value(&mut self, key: &str, value: &str) -> Result<(), String> {
         match key {
             "tv_system" => {
                 if value.eq_ignore_ascii_case("pal") {
@@ -635,7 +639,7 @@ impl Config {
             }
             "filter" => {
                 if !value.is_empty() {
-                    self.shader_path = Self::map_filter_name(value);
+                    self.shader_path = Some(Self::map_filter_name(value)?);
                 }
             }
             "debugger" => {
@@ -741,6 +745,7 @@ impl Config {
             // }
             _ => {} // Unknown keys are silently ignored
         }
+        Ok(())
     }
 
     /// Parse a boolean value from config file.
@@ -925,14 +930,18 @@ mod tests {
     }
 
     #[test]
-    fn test_config_cmdline_filter_invalid_ignored() {
+    fn test_config_cmdline_filter_invalid_errors() {
         let args = vec![
             "neser".to_string(),
             "--filter".to_string(),
             "invalid-filter".to_string(),
         ];
-        let config = parse_config(args);
-        assert_eq!(config.shader_path, None);
+        let result = Config::new(&args);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid filter name: 'invalid-filter'. Valid options are: crt, ntsc, smooth, none"
+        );
     }
 
     #[test]
@@ -1191,7 +1200,7 @@ mod tests {
     #[test]
     fn test_config_file_tv_system_pal() {
         let mut config = Config::default();
-        config.apply_config_value("tv_system", "pal");
+        config.apply_config_value("tv_system", "pal").unwrap();
         assert_eq!(config.tv_system, TvSystem::Pal);
     }
 
@@ -1201,116 +1210,120 @@ mod tests {
             tv_system: TvSystem::Pal,
             ..Default::default()
         };
-        config.apply_config_value("tv_system", "ntsc");
+        config.apply_config_value("tv_system", "ntsc").unwrap();
         assert_eq!(config.tv_system, TvSystem::Ntsc);
     }
 
     #[test]
     fn test_config_file_tv_system_case_insensitive() {
         let mut config = Config::default();
-        config.apply_config_value("tv_system", "PAL");
+        config.apply_config_value("tv_system", "PAL").unwrap();
         assert_eq!(config.tv_system, TvSystem::Pal);
 
-        config.apply_config_value("tv_system", "NTSC");
+        config.apply_config_value("tv_system", "NTSC").unwrap();
         assert_eq!(config.tv_system, TvSystem::Ntsc);
     }
 
     #[test]
     fn test_config_file_audio() {
         let mut config = Config::default();
-        config.apply_config_value("audio", "false");
+        config.apply_config_value("audio", "false").unwrap();
         assert!(!config.audio_enabled);
 
-        config.apply_config_value("audio", "true");
+        config.apply_config_value("audio", "true").unwrap();
         assert!(config.audio_enabled);
     }
 
     #[test]
     fn test_config_file_vsync() {
         let mut config = Config::default();
-        config.apply_config_value("vsync", "false");
+        config.apply_config_value("vsync", "false").unwrap();
         assert!(!config.vsync_enabled);
 
-        config.apply_config_value("vsync", "true");
+        config.apply_config_value("vsync", "true").unwrap();
         assert!(config.vsync_enabled);
     }
 
     #[test]
     fn test_config_file_gamepads() {
         let mut config = Config::default();
-        config.apply_config_value("gamepads", "false");
+        config.apply_config_value("gamepads", "false").unwrap();
         assert!(!config.gamepads_enabled);
 
-        config.apply_config_value("gamepads", "true");
+        config.apply_config_value("gamepads", "true").unwrap();
         assert!(config.gamepads_enabled);
     }
 
     #[test]
     fn test_config_file_fullscreen() {
         let mut config = Config::default();
-        config.apply_config_value("fullscreen", "true");
+        config.apply_config_value("fullscreen", "true").unwrap();
         assert!(config.fullscreen);
 
-        config.apply_config_value("fullscreen", "false");
+        config.apply_config_value("fullscreen", "false").unwrap();
         assert!(!config.fullscreen);
     }
 
     #[test]
     fn test_config_file_display() {
         let mut config = Config::default();
-        config.apply_config_value("display", "1");
+        config.apply_config_value("display", "1").unwrap();
         assert_eq!(config.fullscreen_display, Some(1));
 
-        config.apply_config_value("display", "0");
+        config.apply_config_value("display", "0").unwrap();
         assert_eq!(config.fullscreen_display, Some(0));
     }
 
     #[test]
     fn test_config_file_display_negative_ignored() {
         let mut config = Config::default();
-        config.apply_config_value("display", "-1");
+        config.apply_config_value("display", "-1").unwrap();
         assert_eq!(config.fullscreen_display, None);
     }
 
     #[test]
-    fn test_config_file_filter_invalid_ignored() {
+    fn test_config_file_filter_invalid_errors() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "invalid-filter");
-        assert_eq!(config.shader_path, None);
+        let result = config.apply_config_value("filter", "invalid-filter");
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid filter name: 'invalid-filter'. Valid options are: crt, ntsc, smooth, none"
+        );
     }
 
     #[test]
     fn test_config_file_filter_empty_ignored() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "");
+        config.apply_config_value("filter", "").unwrap();
         assert_eq!(config.shader_path, None);
     }
 
     #[test]
     fn test_config_file_filter_crt() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "crt");
+        config.apply_config_value("filter", "crt").unwrap();
         assert_eq!(config.shader_path, Some("shaders/crt-lottes.slangp".to_string()));
     }
 
     #[test]
     fn test_config_file_filter_ntsc() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "ntsc");
+        config.apply_config_value("filter", "ntsc").unwrap();
         assert_eq!(config.shader_path, Some("shaders/ntsc-256px-composite.slangp".to_string()));
     }
 
     #[test]
     fn test_config_file_filter_smooth() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "smooth");
+        config.apply_config_value("filter", "smooth").unwrap();
         assert_eq!(config.shader_path, Some("shaders/xbrz-freescale.slangp".to_string()));
     }
 
     #[test]
     fn test_config_file_filter_none() {
         let mut config = Config::default();
-        config.apply_config_value("filter", "none");
+        config.apply_config_value("filter", "none").unwrap();
         assert_eq!(config.shader_path, Some("shaders/stock.slangp".to_string()));
     }
 
@@ -1361,18 +1374,18 @@ mod tests {
     #[test]
     fn test_config_file_debugger() {
         let mut config = Config::default();
-        config.apply_config_value("debugger", "true");
+        config.apply_config_value("debugger", "true").unwrap();
         assert!(config.debugger_enabled);
     }
 
     #[test]
     fn test_config_file_apu_channels() {
         let mut config = Config::default();
-        config.apply_config_value("pulse1", "false");
-        config.apply_config_value("pulse2", "false");
-        config.apply_config_value("triangle", "false");
-        config.apply_config_value("noise", "false");
-        config.apply_config_value("dmc", "false");
+        config.apply_config_value("pulse1", "false").unwrap();
+        config.apply_config_value("pulse2", "false").unwrap();
+        config.apply_config_value("triangle", "false").unwrap();
+        config.apply_config_value("noise", "false").unwrap();
+        config.apply_config_value("dmc", "false").unwrap();
 
         assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
         assert!(!config.apu_channels.contains(ApuChannels::PULSE2));
@@ -1384,14 +1397,14 @@ mod tests {
     #[test]
     fn test_config_file_window_height() {
         let mut config = Config::default();
-        config.apply_config_value("window_height", "720");
+        config.apply_config_value("window_height", "720").unwrap();
         assert_eq!(config.window_height, 720);
     }
 
     #[test]
     fn test_config_file_trace_cpu() {
         let mut config = Config::default();
-        config.apply_config_value("trace-cpu", "2");
+        config.apply_config_value("trace-cpu", "2").unwrap();
         assert!(config.tracing.enabled);
         assert_eq!(config.tracing.cpu, 2);
     }
@@ -1399,7 +1412,7 @@ mod tests {
     #[test]
     fn test_config_file_trace_ppu() {
         let mut config = Config::default();
-        config.apply_config_value("trace-ppu", "3");
+        config.apply_config_value("trace-ppu", "3").unwrap();
         assert!(config.tracing.enabled);
         assert_eq!(config.tracing.ppu, 3);
     }
@@ -1407,7 +1420,7 @@ mod tests {
     #[test]
     fn test_config_file_trace_apu() {
         let mut config = Config::default();
-        config.apply_config_value("trace-apu", "1");
+        config.apply_config_value("trace-apu", "1").unwrap();
         assert!(config.tracing.enabled);
         assert_eq!(config.tracing.apu, 1);
     }
@@ -1415,7 +1428,7 @@ mod tests {
     #[test]
     fn test_config_file_trace_mapper() {
         let mut config = Config::default();
-        config.apply_config_value("trace-mapper", "4");
+        config.apply_config_value("trace-mapper", "4").unwrap();
         assert!(config.tracing.enabled);
         assert_eq!(config.tracing.mapper, 4);
     }
@@ -1423,7 +1436,7 @@ mod tests {
     #[test]
     fn test_config_file_trace_nestest() {
         let mut config = Config::default();
-        config.apply_config_value("trace-nestest", "true");
+        config.apply_config_value("trace-nestest", "true").unwrap();
         assert!(config.tracing.enabled);
         assert!(config.tracing.nestest);
     }
@@ -1431,7 +1444,7 @@ mod tests {
     #[test]
     fn test_config_file_trace_zero_does_not_enable() {
         let mut config = Config::default();
-        config.apply_config_value("trace-cpu", "0");
+        config.apply_config_value("trace-cpu", "0").unwrap();
         assert!(!config.tracing.enabled);
         assert_eq!(config.tracing.cpu, 0);
     }
@@ -1439,7 +1452,7 @@ mod tests {
     // #[test]
     // fn test_config_file_timing_scale() {
     //     let mut config = Config::default();
-    //     config.apply_config_value("timing_scale", "1.5");
+    //     config.apply_config_value("timing_scale", "1.5").unwrap();
     //     assert!((config.timing_scale - 1.5).abs() < 0.001);
     // }
 
@@ -1448,15 +1461,15 @@ mod tests {
         let mut config = Config::default();
 
         // Test "yes"/"no"
-        config.apply_config_value("audio", "no");
+        config.apply_config_value("audio", "no").unwrap();
         assert!(!config.audio_enabled);
-        config.apply_config_value("audio", "yes");
+        config.apply_config_value("audio", "yes").unwrap();
         assert!(config.audio_enabled);
 
         // Test "1"/"0"
-        config.apply_config_value("audio", "0");
+        config.apply_config_value("audio", "0").unwrap();
         assert!(!config.audio_enabled);
-        config.apply_config_value("audio", "1");
+        config.apply_config_value("audio", "1").unwrap();
         assert!(config.audio_enabled);
     }
 
@@ -1464,7 +1477,7 @@ mod tests {
     fn test_config_file_unknown_key_ignored() {
         let mut config = Config::default();
         // Should not panic
-        config.apply_config_value("unknown_key", "some_value");
+        config.apply_config_value("unknown_key", "some_value").unwrap();
         // Config should remain unchanged
         assert_eq!(config.tv_system, TvSystem::Ntsc);
     }
@@ -1489,7 +1502,7 @@ pulse1=false
         file.write_all(content.as_bytes()).unwrap();
 
         let mut config = Config::default();
-        config.load_from_file(file.path());
+        config.load_from_file(file.path()).unwrap();
 
         assert_eq!(config.tv_system, TvSystem::Pal);
         assert!(!config.audio_enabled);
@@ -1519,7 +1532,7 @@ audio=false
         let mut config = Config::default();
 
         // Load from config file
-        config.load_from_file(file.path());
+        config.load_from_file(file.path()).unwrap();
         assert_eq!(config.tv_system, TvSystem::Pal);
         assert!(!config.audio_enabled);
 
@@ -1535,7 +1548,7 @@ audio=false
     #[test]
     fn test_config_file_nonexistent_silently_ignored() {
         let mut config = Config::default();
-        config.load_from_file(Path::new("/nonexistent/path/neser.conf"));
+        config.load_from_file(Path::new("/nonexistent/path/neser.conf")).unwrap();
         // Should not panic, config should remain default
         assert_eq!(config.tv_system, TvSystem::Ntsc);
         assert!(config.audio_enabled);
@@ -1558,6 +1571,31 @@ audio=false
         let config = parse_config(args);
         assert_eq!(config.tv_system, TvSystem::Pal);
         assert!(!config.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_file_invalid_filter_errors() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let content = r#"
+tv_system=pal
+filter=invalid-shader
+"#;
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(content.as_bytes()).unwrap();
+
+        let args = vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_str().unwrap().to_string(),
+        ];
+        let result = Config::new(&args);
+        assert!(result.is_err());
+        assert_eq!(
+            result.unwrap_err(),
+            "Invalid filter name: 'invalid-shader'. Valid options are: crt, ntsc, smooth, none"
+        );
     }
 
     #[test]
