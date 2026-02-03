@@ -1528,7 +1528,7 @@ audio=false
     }
 
     #[test]
-    fn test_config_file_two_paddles_errors() {
+    fn test_config_file_two_arkanoid_controllers_errors() {
         use std::io::Write;
         use tempfile::NamedTempFile;
 
