@@ -706,11 +706,23 @@ impl Config {
             "controller_port1" => {
                 if let Some(controller) = ControllerType::parse(value) {
                     self.controller_port1 = controller;
+                } else {
+                    eprintln!(
+                        "Warning: invalid value '{}' for 'controller_port1' in configuration; \
+                         keeping default controller type.",
+                        value
+                    );
                 }
             }
             "controller_port2" => {
                 if let Some(controller) = ControllerType::parse(value) {
                     self.controller_port2 = controller;
+                } else {
+                    eprintln!(
+                        "Warning: invalid value '{}' for 'controller_port2' in configuration; \
+                         keeping default controller type.",
+                        value
+                    );
                 }
             }
             "trace-cpu" => {
