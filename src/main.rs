@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_result = event_loop.run(&mut nes_instance, config.tracing);
     // Best-effort save on clean shutdown (Escape/Quit).
     if run_result.is_ok()
-        && let Err(e) = nes_instance.memory.borrow().save_ram()
+        && let Err(e) = nes_instance.bus.borrow().save_ram()
     {
         eprintln!("Warning: failed to save RAM: {}", e);
     }

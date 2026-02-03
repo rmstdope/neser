@@ -61,7 +61,7 @@ impl TvSystem {
 pub struct Nes {
     pub ppu: Rc<RefCell<Ppu>>,
     pub apu: Rc<RefCell<Apu>>,
-    pub memory: Rc<RefCell<Bus>>,
+    pub bus: Rc<RefCell<Bus>>,
     pub cpu: Cpu,
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
@@ -82,7 +82,7 @@ impl Nes {
         Self {
             ppu,
             apu,
-            memory,
+            bus: memory,
             cpu,
             fractional_ppu_cycles: 0.0,
             ready_to_render: false,
@@ -93,7 +93,7 @@ impl Nes {
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
         let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge.crc32());
 
-        let mut memory = self.memory.borrow_mut();
+        let mut memory = self.bus.borrow_mut();
         memory.map_cartridge(cartridge);
 
         // Auto-configure Arkanoid paddle when detected
@@ -107,7 +107,7 @@ impl Nes {
     }
 
     pub fn state_path(&self) -> Option<PathBuf> {
-        self.memory.borrow().cartridge_state_path()
+        self.bus.borrow().cartridge_state_path()
     }
 
     /// Reset the NES system.
@@ -120,7 +120,7 @@ impl Nes {
         // Reset PPU/APU first: CPU reset advances the master clock and ticks both.
         self.ppu.borrow_mut().reset();
         self.apu.borrow_mut().reset(cpu_cycle, soft_reset);
-        self.memory.borrow_mut().reset_cartridge();
+        self.bus.borrow_mut().reset_cartridge();
         self.cpu.reset(soft_reset);
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
@@ -241,7 +241,7 @@ impl Nes {
     /// * `button` - Which button to set
     /// * `pressed` - true if pressed, false if released
     pub fn set_button(&mut self, controller: u8, button: crate::input::Button, pressed: bool) {
-        self.memory
+        self.bus
             .borrow_mut()
             .set_button(controller, button, pressed);
     }
@@ -249,12 +249,12 @@ impl Nes {
     /// Returns the controller port that has an Arkanoid paddle connected.
     #[allow(dead_code)]
     pub fn paddle_port(&self) -> Option<u8> {
-        self.memory.borrow().paddle_port()
+        self.bus.borrow().paddle_port()
     }
 
     /// Return the input type for a controller port.
     pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
-        self.memory.borrow().controller_input_type(port)
+        self.bus.borrow().controller_input_type(port)
     }
 
     /// Set the current position of the first paddle controller.
@@ -263,7 +263,7 @@ impl Nes {
     /// * `position` - The paddle position value (typically 0–255) to report for paddle 1.
     #[allow(dead_code)]
     pub fn set_paddle1_position(&mut self, position: u8) {
-        self.memory.borrow_mut().set_paddle_position(1, position);
+        self.bus.borrow_mut().set_paddle_position(1, position);
     }
 
     /// Set the current position of a paddle controller.
@@ -272,7 +272,7 @@ impl Nes {
     /// * `port` - Controller port (1 or 2).
     /// * `position` - The paddle position value (typically 0–255).
     pub fn set_paddle_position(&mut self, port: u8, position: u8) {
-        self.memory.borrow_mut().set_paddle_position(port, position);
+        self.bus.borrow_mut().set_paddle_position(port, position);
     }
 
     /// Set the trigger button state for the first paddle controller.
@@ -281,7 +281,7 @@ impl Nes {
     /// * `pressed` - `true` if the paddle 1 trigger is pressed, `false` if released.
     #[allow(dead_code)]
     pub fn set_paddle1_trigger(&mut self, pressed: bool) {
-        self.memory.borrow_mut().set_paddle_trigger(1, pressed);
+        self.bus.borrow_mut().set_paddle_trigger(1, pressed);
     }
 
     /// Set the trigger button state for a paddle controller.
@@ -290,7 +290,7 @@ impl Nes {
     /// * `port` - Controller port (1 or 2).
     /// * `pressed` - `true` if the paddle trigger is pressed, `false` if released.
     pub fn set_paddle_trigger(&mut self, port: u8, pressed: bool) {
-        self.memory.borrow_mut().set_paddle_trigger(port, pressed);
+        self.bus.borrow_mut().set_paddle_trigger(port, pressed);
     }
 
     /// Generate a trace line for the current CPU state
@@ -303,7 +303,7 @@ impl Nes {
         let nestest = tracing.nestest;
         let cpu_state = self.cpu.state();
         let pc = cpu_state.pc;
-        let mut memory = self.memory.borrow_mut();
+        let mut memory = self.bus.borrow_mut();
         // Read the opcode and determine instruction size
         let opcode_byte = memory.read(pc);
         let instruction =
@@ -634,9 +634,9 @@ impl Nes {
             self.cpu.capture_state(),
             self.ppu.borrow().capture_state(),
             self.apu.borrow().capture_state(),
-            self.memory.borrow().capture_state(),
-            self.memory.borrow().ram_snapshot(),
-            self.memory.borrow().capture_mapper_state(),
+            self.bus.borrow().capture_state(),
+            self.bus.borrow().ram_snapshot(),
+            self.bus.borrow().capture_mapper_state(),
         )
     }
 
@@ -659,7 +659,7 @@ impl Nes {
         }
 
         // Check mapper compatibility
-        let current_mapper = self.memory.borrow().capture_mapper_state().mapper_number;
+        let current_mapper = self.bus.borrow().capture_mapper_state().mapper_number;
         if state.mapper.mapper_number != current_mapper {
             return Err(SaveStateError::MapperMismatch {
                 expected: current_mapper,
@@ -671,9 +671,9 @@ impl Nes {
         self.cpu.restore_state(&state.cpu);
         self.ppu.borrow_mut().restore_state(&state.ppu);
         self.apu.borrow_mut().restore_state(&state.apu);
-        self.memory.borrow_mut().restore_state(&state.bus);
-        self.memory.borrow_mut().restore_ram(&state.ram);
-        self.memory.borrow_mut().restore_mapper_state(&state.mapper);
+        self.bus.borrow_mut().restore_state(&state.bus);
+        self.bus.borrow_mut().restore_ram(&state.ram);
+        self.bus.borrow_mut().restore_mapper_state(&state.mapper);
 
         // Clear derived state
         self.fractional_ppu_cycles = 0.0;
@@ -755,7 +755,7 @@ mod tests {
     fn test_ntsc_ppu_runs_3x_cpu_cycles() {
         let mut nes = Nes::new(TvSystem::Ntsc);
         // Write NOP to RAM and set PC directly (skip reset to avoid ROM requirement)
-        nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
+        nes.bus.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
         nes.cpu.set_pc(0x0000); // Set PC to RAM address
 
         // NOP takes 2 CPU cycles, so PPU should run 6 cycles (3x ratio for NTSC)
@@ -768,7 +768,7 @@ mod tests {
     fn test_pal_ppu_runs_3_2x_cpu_cycles() {
         let mut nes = Nes::new(TvSystem::Pal);
         // Write NOP to RAM and set PC directly
-        nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
+        nes.bus.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
         nes.cpu.set_pc(0x0000);
 
         // NOP takes 2 CPU cycles, PAL ratio is 3.2, so 2 * 3.2 = 6.4
@@ -783,7 +783,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Pal);
         // Write NOP instructions to RAM
         for i in 0..10 {
-            nes.memory.borrow_mut().write(i, 0xEA, false); // NOP
+            nes.bus.borrow_mut().write(i, 0xEA, false); // NOP
         }
         nes.cpu.set_pc(0x0000);
 
@@ -800,7 +800,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         // Write NOP instructions to RAM
         for i in 0..3 {
-            nes.memory.borrow_mut().write(i, 0xEA, false); // NOP (2 cycles each)
+            nes.bus.borrow_mut().write(i, 0xEA, false); // NOP (2 cycles each)
         }
         nes.cpu.set_pc(0x0000);
 
@@ -814,7 +814,7 @@ mod tests {
     #[test]
     fn test_ppu_cycles_reset_on_nes_reset() {
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory.borrow_mut().write(0x0000, 0xEA, false); // NOP
+        nes.bus.borrow_mut().write(0x0000, 0xEA, false); // NOP
         nes.cpu.set_pc(0x0000);
 
         nes.run_cpu_tick();
@@ -962,7 +962,7 @@ mod tests {
         assert_eq!(cycles_before % 2, 0, "Should start on even cycle");
 
         // Trigger OAM DMA by writing to $4014
-        nes.memory.borrow_mut().write(0x4014, 0x02, false);
+        nes.bus.borrow_mut().write(0x4014, 0x02, false);
 
         // Run one CPU tick which should process the DMA
         nes.run_cpu_tick();
@@ -991,7 +991,7 @@ mod tests {
         assert_eq!(cycles_before % 2, 1, "Should start on odd cycle");
 
         // Trigger OAM DMA by writing to $4014
-        nes.memory.borrow_mut().write(0x4014, 0x02, false);
+        nes.bus.borrow_mut().write(0x4014, 0x02, false);
 
         // Run one CPU tick which should process the DMA
         nes.run_cpu_tick();
@@ -1015,21 +1015,21 @@ mod tests {
 
         // Set up test data in RAM at page $02 ($0200-$02FF)
         for i in 0..256u16 {
-            nes.memory
+            nes.bus
                 .borrow_mut()
                 .write(0x0200 + i, (i & 0xFF) as u8, false);
         }
 
         // Trigger OAM DMA from page $02
-        nes.memory.borrow_mut().write(0x4014, 0x02, false);
+        nes.bus.borrow_mut().write(0x4014, 0x02, false);
         nes.run_cpu_tick();
 
         // Verify all 256 bytes were copied to OAM by reading through $2004
         for i in 0..256 {
             // Set OAM address via $2003
-            nes.memory.borrow_mut().write(0x2003, i as u8, false);
+            nes.bus.borrow_mut().write(0x2003, i as u8, false);
             // Read OAM data via $2004
-            let oam_byte = nes.memory.borrow_mut().read(0x2004);
+            let oam_byte = nes.bus.borrow_mut().read(0x2004);
             let expected = if (i & 0x03) == 2 {
                 // Attribute byte: mask bits 2-4
                 ((i & 0xFF) as u8) & 0xE3
@@ -1055,19 +1055,19 @@ mod tests {
         // Set up distinct data in different pages
         // Page $03: $0300-$03FF
         for i in 0..256u16 {
-            nes.memory.borrow_mut().write(0x0300 + i, 0xAA, false); // Marker value
+            nes.bus.borrow_mut().write(0x0300 + i, 0xAA, false); // Marker value
         }
 
         // Trigger OAM DMA from page $03
-        nes.memory.borrow_mut().write(0x4014, 0x03, false);
+        nes.bus.borrow_mut().write(0x4014, 0x03, false);
         nes.run_cpu_tick();
 
         // Verify bytes came from page $03 by reading through $2004
         for i in 0..256 {
             // Set OAM address via $2003
-            nes.memory.borrow_mut().write(0x2003, i as u8, false);
+            nes.bus.borrow_mut().write(0x2003, i as u8, false);
             // Read OAM data via $2004
-            let oam_byte = nes.memory.borrow_mut().read(0x2004);
+            let oam_byte = nes.bus.borrow_mut().read(0x2004);
             let expected = if (i & 0x03) == 2 {
                 // Attribute byte: 0xAA with masking = 0xAA & 0xE3 = 0xA2
                 0xA2
@@ -1097,7 +1097,7 @@ mod tests {
         let initial_ppu_cycles = nes.ppu.borrow().total_cycles();
 
         // Trigger OAM DMA
-        nes.memory.borrow_mut().write(0x4014, 0x02, false);
+        nes.bus.borrow_mut().write(0x4014, 0x02, false);
         nes.run_cpu_tick();
 
         // With CPU-owned DMA ticking using MasterClock, the PPU advances by at least
@@ -1226,7 +1226,7 @@ mod tests {
         let initial_cycle = nes.apu.borrow().frame_counter().get_cycle_counter();
 
         // Trigger an OAM DMA by writing to $4014
-        nes.memory.borrow_mut().write(0x4014, 0x02, false);
+        nes.bus.borrow_mut().write(0x4014, 0x02, false);
 
         // Run a CPU tick which should execute the DMA
         let dma_cycles = nes.run_cpu_tick();
@@ -1404,8 +1404,8 @@ mod tests {
         nes.reset(false);
 
         // Write to PRG-RAM (would be affected by a mapper that has reset state)
-        nes.memory.borrow_mut().write(0x6000, 0xAB, false);
-        assert_eq!(nes.memory.borrow_mut().read(0x6000), 0xAB);
+        nes.bus.borrow_mut().write(0x6000, 0xAB, false);
+        assert_eq!(nes.bus.borrow_mut().read(0x6000), 0xAB);
 
         // Soft reset should call cartridge reset
         // For NROM this doesn't change much, but the call chain should work
@@ -1413,7 +1413,7 @@ mod tests {
 
         // PRG-RAM should still have the value (NROM doesn't clear RAM on reset)
         // This test verifies the reset call chain works without crashing
-        assert_eq!(nes.memory.borrow_mut().read(0x6000), 0xAB);
+        assert_eq!(nes.bus.borrow_mut().read(0x6000), 0xAB);
     }
 
     #[test]
@@ -1567,13 +1567,13 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         // Should configure paddle on port 2 for Arkanoid ROM
-        nes.memory.borrow_mut().set_paddle_position(2, 0xA5);
-        nes.memory.borrow_mut().set_paddle_trigger(2, true);
+        nes.bus.borrow_mut().set_paddle_position(2, 0xA5);
+        nes.bus.borrow_mut().set_paddle_trigger(2, true);
 
         // Verify port 2 reads paddle data
-        nes.memory.borrow_mut().write(0x4016, 0x01, false);
-        nes.memory.borrow_mut().write(0x4016, 0x00, false);
-        let paddle_bits = nes.memory.borrow_mut().read(0x4017) & 0x18;
+        nes.bus.borrow_mut().write(0x4016, 0x01, false);
+        nes.bus.borrow_mut().write(0x4016, 0x00, false);
+        let paddle_bits = nes.bus.borrow_mut().read(0x4017) & 0x18;
         assert_eq!(paddle_bits, 0x08); // Should have paddle data on port 2
     }
 
@@ -1587,12 +1587,12 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         // Should have joypad on both ports by default
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_button(2, crate::input::Button::A, true);
-        nes.memory.borrow_mut().write(0x4016, 0x01, false);
-        nes.memory.borrow_mut().write(0x4016, 0x00, false);
-        let joypad_bit = nes.memory.borrow_mut().read(0x4017) & 0x01;
+        nes.bus.borrow_mut().write(0x4016, 0x01, false);
+        nes.bus.borrow_mut().write(0x4016, 0x00, false);
+        let joypad_bit = nes.bus.borrow_mut().read(0x4017) & 0x01;
         assert_eq!(joypad_bit, 1); // Should have joypad data on port 2
     }
 }

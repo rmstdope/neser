@@ -44,7 +44,7 @@ fn prg_hexdump_base_from_pc(pc: u16) -> u16 {
 }
 
 fn read_vectors_for_snapshot(nes: &Nes) -> (u16, u16) {
-    let memory = nes.memory.borrow();
+    let memory = nes.bus.borrow();
     let nmi_lo = memory.read_cpu_for_debugger(0xFFFA) as u16;
     let nmi_hi = memory.read_cpu_for_debugger(0xFFFB) as u16;
     let irq_lo = memory.read_cpu_for_debugger(0xFFFE) as u16;
@@ -59,7 +59,7 @@ fn build_snapshot(nes: &Nes, cpu_disasm: Vec<CpuDisasmLineSnapshot>) -> Debugger
     let prg_hexdump_base = prg_hexdump_base_from_pc(pc);
 
     let prg_hexdump_bytes = {
-        let memory = nes.memory.borrow();
+        let memory = nes.bus.borrow();
         (0u16..=0x00FF)
             .map(|offset| memory.read_prg_rom_for_debugger(prg_hexdump_base + offset))
             .collect::<Vec<u8>>()
@@ -134,7 +134,7 @@ fn snapshot_impl(
     disasm_config: DisasmWindowConfig,
 ) -> DebuggerSnapshot {
     let cpu_disasm = {
-        let memory = nes.memory.borrow();
+        let memory = nes.bus.borrow();
         match state {
             Some(state) => disassemble_window_with_state(
                 |addr| memory.read_cpu_for_debugger(addr),

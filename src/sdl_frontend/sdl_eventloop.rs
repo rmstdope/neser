@@ -323,7 +323,7 @@ impl SdlEventLoop {
     }
 
     fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
-        let memory = nes.memory.borrow();
+        let memory = nes.bus.borrow();
         let lo = memory.read_cpu_for_debugger(vector_addr);
         let hi = memory.read_cpu_for_debugger(vector_addr.wrapping_add(1));
         u16::from_le_bytes([lo, hi])
@@ -848,7 +848,7 @@ impl SdlEventLoop {
         if action.step_over {
             let pc = nes.cpu.pc();
             let opcode = {
-                let memory = nes.memory.borrow();
+                let memory = nes.bus.borrow();
                 memory.read_cpu_for_debugger(pc)
             };
 
@@ -969,7 +969,7 @@ impl SdlEventLoop {
 
         let pc = nes.cpu.pc();
         let opcode = {
-            let memory = nes.memory.borrow();
+            let memory = nes.bus.borrow();
             memory.read_cpu_for_debugger(pc)
         };
 
@@ -1394,7 +1394,7 @@ mod tests {
     fn read_joypad_buttons(nes: &mut Nes, port: u8) -> [u8; 8] {
         // Joypad serial order: A, B, Select, Start, Up, Down, Left, Right
         {
-            let mut mem = nes.memory.borrow_mut();
+            let mut mem = nes.bus.borrow_mut();
             mem.write(0x4016, 1, false);
             mem.write(0x4016, 0, false);
         }
@@ -1402,7 +1402,7 @@ mod tests {
         let addr = if port == 1 { 0x4016 } else { 0x4017 };
         let mut out = [0u8; 8];
         for slot in &mut out {
-            let value = nes.memory.borrow_mut().read(addr) & 0x01;
+            let value = nes.bus.borrow_mut().read(addr) & 0x01;
             *slot = value;
         }
         out
@@ -1414,7 +1414,7 @@ mod tests {
 
     fn read_paddle_trigger_bit_for_port(nes: &mut Nes, port: u8) -> u8 {
         let addr = if port == 1 { 0x4016 } else { 0x4017 };
-        let value = nes.memory.borrow_mut().read(addr);
+        let value = nes.bus.borrow_mut().read(addr);
         (value >> 3) & 0x01
     }
 
@@ -1424,7 +1424,7 @@ mod tests {
 
     fn read_paddle_position_for_port(nes: &mut Nes, port: u8) -> u8 {
         {
-            let mut mem = nes.memory.borrow_mut();
+            let mut mem = nes.bus.borrow_mut();
             mem.write(0x4016, 1, false);
             mem.write(0x4016, 0, false);
         }
@@ -1432,7 +1432,7 @@ mod tests {
         let addr = if port == 1 { 0x4016 } else { 0x4017 };
         let mut position = 0u8;
         for bit_index in (0..8).rev() {
-            let value = nes.memory.borrow_mut().read(addr);
+            let value = nes.bus.borrow_mut().read(addr);
             let bit = (value >> 4) & 0x01;
             position |= bit << bit_index;
         }
@@ -1483,7 +1483,7 @@ mod tests {
         let mut paused = false;
         let mut debugger_open_requested = false;
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::bus::ControllerType::Paddle);
         nes.set_paddle1_position(0x80);
@@ -1539,10 +1539,10 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
 
         // Port 1 is mouse-only, port 2 is gamepad.
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::bus::ControllerType::Paddle);
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(2, crate::bus::ControllerType::Joypad);
 
@@ -1556,10 +1556,10 @@ mod tests {
     #[test]
     fn test_mouse_routes_to_all_mouse_ports() {
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::bus::ControllerType::Paddle);
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(2, crate::bus::ControllerType::Paddle);
 
@@ -1576,7 +1576,7 @@ mod tests {
     #[test]
     fn test_paddle_mouse_button_sets_trigger_when_enabled() {
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::bus::ControllerType::Paddle);
 
@@ -1591,12 +1591,12 @@ mod tests {
     fn test_paddle_mouse_button_ignored_when_disabled() {
         let mut nes = Nes::new(TvSystem::Ntsc);
 
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::bus::ControllerType::Joypad);
         SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
 
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::bus::ControllerType::Paddle);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
@@ -1605,7 +1605,7 @@ mod tests {
     #[test]
     fn test_paddle_mouse_motion_updates_position_when_enabled() {
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::bus::ControllerType::Paddle);
 
@@ -1625,12 +1625,12 @@ mod tests {
         let window_width = 320;
         let x = 240;
 
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::bus::ControllerType::Joypad);
         SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
 
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::bus::ControllerType::Paddle);
         assert_eq!(read_paddle_position(&mut nes), 0x62);
@@ -1642,7 +1642,7 @@ mod tests {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory
+        nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::bus::ControllerType::Paddle);
 
@@ -2546,7 +2546,7 @@ mod tests {
         nes.reset(false);
 
         // Make the handler loop a bit (revisiting $9000) before RTI.
-        nes.memory.borrow_mut().write_for_testing(0x0000, 3);
+        nes.bus.borrow_mut().write_for_testing(0x0000, 3);
 
         // Enter NMI once, stopping at the vector.
         nes.cpu.set_nmi_pending(true);
