@@ -92,6 +92,25 @@ Options:
   --window-height <N>   Window height in pixels, windowed mode only (e.g., 720)
 ```
 
+## Arkanoid Paddle (SDL)
+
+The Arkanoid paddle is auto-enabled for known ROM CRCs (e.g., Arkanoid and PaddleTest3).
+When enabled in the SDL frontend:
+
+- Mouse X controls paddle position (non-linear curve with faster edge response).
+- Left mouse button controls the paddle trigger.
+- Controller/keyboard input for player 1 is suppressed while paddle mode is active.
+
+### Validation Steps
+
+1. Run the SDL frontend with a paddle-enabled ROM:
+   - roms/games/arkanoid.nes (if available)
+   - roms/automated_tests/PaddleTest3 (if available)
+2. Move the mouse left/right and confirm the paddle moves across the full range.
+3. Verify fine control near the center and faster response near the edges.
+4. Click and release the left mouse button and confirm the trigger is detected.
+5. Confirm keyboard/controller input does not affect player 1 while paddle mode is active.
+
 ### Blargg NES Test Suite Status
 
 NESER is tested against Blargg’s (and Blargg compatible) NES test ROMs to verify CPU, PPU, APU, DMA, and mapper correctness. The following test suites are currently passing in the main branch:
