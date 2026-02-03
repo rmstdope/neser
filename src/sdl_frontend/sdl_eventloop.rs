@@ -1393,7 +1393,7 @@ mod tests {
         let mut paused = false;
         let mut debugger_open_requested = false;
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
         nes.set_paddle1_position(0x80);
         nes.set_paddle1_trigger(true);
 
@@ -1413,7 +1413,7 @@ mod tests {
     #[test]
     fn test_paddle_mouse_button_sets_trigger_when_enabled() {
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
 
         SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
@@ -1426,17 +1426,17 @@ mod tests {
     fn test_paddle_mouse_button_ignored_when_disabled() {
         let mut nes = Nes::new(TvSystem::Ntsc);
 
-        nes.memory.borrow_mut().set_paddle1_enabled(false);
+        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Joypad);
         SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
 
-        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
     }
 
     #[test]
     fn test_paddle_mouse_motion_updates_position_when_enabled() {
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
 
         let window_width = 320;
         let x = 240;
@@ -1454,10 +1454,10 @@ mod tests {
         let window_width = 320;
         let x = 240;
 
-        nes.memory.borrow_mut().set_paddle1_enabled(false);
+        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Joypad);
         SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
 
-        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
         assert_eq!(read_paddle_position(&mut nes), 0x62);
     }
 
@@ -1467,7 +1467,7 @@ mod tests {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        nes.memory.borrow_mut().set_controller_type(1, crate::bus::ControllerType::Paddle);
 
         event_loop.controller_player_map.insert(42, 1);
         event_loop.handle_controller_button(&mut nes, 42, sdl2::controller::Button::A, true);
