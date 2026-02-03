@@ -54,6 +54,12 @@ enum KeyDownOutcome {
 }
 
 impl SdlEventLoop {
+    /// Maps an SDL mouse X position into a paddle position value (0..=255).
+    ///
+    /// The input is normalized to $[-1.0, 1.0]$ across the current window width,
+    /// then shaped using a non-linear curve $\text{sign}(x)\cdot|x|^{1.5}$ to
+    /// make the edges respond faster than the center. The result is scaled to
+    /// the full 8-bit paddle range and clamped.
     fn map_mouse_x_to_paddle_position(x: i32, window_width: u32) -> u8 {
         if window_width <= 1 {
             return 0;
@@ -68,6 +74,9 @@ impl SdlEventLoop {
         scaled.round().clamp(0.0, 255.0) as u8
     }
 
+    /// Applies mouse motion to paddle 1 when paddle mode is active.
+    ///
+    /// This is a no-op if the paddle is disabled.
     fn apply_paddle_mouse_motion(nes: &mut Nes, x: i32, window_width: u32) {
         if !nes.paddle1_enabled() {
             return;
@@ -77,6 +86,9 @@ impl SdlEventLoop {
         nes.set_paddle1_position(position);
     }
 
+    /// Maps left mouse button presses to the paddle trigger when active.
+    ///
+    /// This is a no-op if the paddle is disabled.
     fn apply_paddle_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
         if !nes.paddle1_enabled() {
             return;
@@ -1370,6 +1382,27 @@ mod tests {
         out
     }
 
+    fn read_paddle_trigger_bit(nes: &mut Nes) -> u8 {
+        let value = nes.memory.borrow_mut().read(0x4016);
+        (value >> 3) & 0x01
+    }
+
+    fn read_paddle_position(nes: &mut Nes) -> u8 {
+        {
+            let mut mem = nes.memory.borrow_mut();
+            mem.write(0x4016, 1, false);
+            mem.write(0x4016, 0, false);
+        }
+
+        let mut position = 0u8;
+        for bit_index in 0..8 {
+            let value = nes.memory.borrow_mut().read(0x4016);
+            let bit = (value >> 4) & 0x01;
+            position |= bit << bit_index;
+        }
+        position
+    }
+
     fn tick_headless_once(event_loop: &mut SdlEventLoop, nes: &mut Nes) {
         let _should_quit = event_loop.tick_headless_once_for_run(nes);
     }
@@ -1380,7 +1413,9 @@ mod tests {
 
         let left = SdlEventLoop::map_mouse_x_to_paddle_position(0, window_width);
         let right = SdlEventLoop::map_mouse_x_to_paddle_position(299, window_width);
-        let center = SdlEventLoop::map_mouse_x_to_paddle_position(150, window_width);
+        // Use the center of the discrete pixel range 0..=window_width-1.
+        let center_x = ((window_width - 1) / 2) as i32;
+        let center = SdlEventLoop::map_mouse_x_to_paddle_position(center_x, window_width);
 
         assert_eq!(left, 0);
         assert_eq!(right, 255);
@@ -1419,6 +1454,57 @@ mod tests {
         );
 
         assert_eq!(read_joypad1_buttons(&mut nes), [0; 8]);
+    }
+
+    #[test]
+    fn test_paddle_mouse_button_sets_trigger_when_enabled() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+
+        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
+        assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
+
+        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, false);
+        assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
+    }
+
+    #[test]
+    fn test_paddle_mouse_button_ignored_when_disabled() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        nes.memory.borrow_mut().set_paddle1_enabled(false);
+        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
+
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
+    }
+
+    #[test]
+    fn test_paddle_mouse_motion_updates_position_when_enabled() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+
+        let window_width = 320;
+        let x = 240;
+        let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
+
+        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+
+        assert_eq!(read_paddle_position(&mut nes), expected);
+    }
+
+    #[test]
+    fn test_paddle_mouse_motion_ignored_when_disabled() {
+        let mut nes = Nes::new(TvSystem::Ntsc);
+
+        let window_width = 320;
+        let x = 240;
+
+        nes.memory.borrow_mut().set_paddle1_enabled(false);
+        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+
+        nes.memory.borrow_mut().set_paddle1_enabled(true);
+        assert_eq!(read_paddle_position(&mut nes), 0);
     }
 
     #[test]
