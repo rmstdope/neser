@@ -1834,9 +1834,16 @@ mod tests {
         // Restore state
         memory.restore_state(&saved_state);
 
-        // Verify port 2 has paddle
+        // Verify port 1 has joypad and port 2 has paddle
+        memory.set_button(1, crate::input::Button::A, true);
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
+        
+        // Port 1 should have joypad data (bit 0)
+        let joypad_bit = memory.read(0x4016) & 0x01;
+        assert_eq!(joypad_bit, 1); // A button pressed on joypad
+        
+        // Port 2 should have paddle data (bits 4 and 3)
         let paddle_bits = memory.read(0x4017) & 0x18;
         assert!(paddle_bits != 0); // Should have paddle data on port 2
     }
