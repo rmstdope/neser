@@ -501,6 +501,11 @@ impl Bus {
             oam_dma_page: *self.oam_dma_page.borrow(),
             joypad1: self.joypad1.borrow().capture_state(),
             joypad2: self.joypad2.borrow().capture_state(),
+            paddle1: {
+                let mut state = self.paddle1.borrow().capture_state();
+                state.enabled = *self.paddle1_enabled.borrow();
+                state
+            },
         }
     }
 
@@ -511,6 +516,8 @@ impl Bus {
         self.dma_triggered.replace(false);
         self.joypad1.borrow_mut().restore_state(&state.joypad1);
         self.joypad2.borrow_mut().restore_state(&state.joypad2);
+        self.paddle1.borrow_mut().restore_state(&state.paddle1);
+        *self.paddle1_enabled.borrow_mut() = state.paddle1.enabled;
     }
 
     // /// Print the current open bus value to stdout (for debugging)
@@ -963,6 +970,15 @@ mod tests {
         memory.read(0x4016);
         memory.read(0x4016);
 
+        memory.set_paddle1_enabled(true);
+        memory.set_paddle1_position(0xA5);
+        memory.set_paddle1_trigger(true);
+        memory.write(0x0000, 0x00, false);
+        memory.read(0x0000);
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        let expected_paddle = [memory.read(0x4016) & 0x18, memory.read(0x4016) & 0x18];
+
         let expected_open_bus = memory.open_bus_value_for_test();
 
         let saved_state = memory.capture_state();
@@ -978,6 +994,11 @@ mod tests {
         for expected in expected_sequence {
             assert_eq!(restored.read(0x4016) & 0x01, expected);
         }
+
+        restored.write(0x0000, 0x00, false);
+        restored.read(0x0000);
+        let restored_paddle = [restored.read(0x4016) & 0x18, restored.read(0x4016) & 0x18];
+        assert_eq!(restored_paddle, expected_paddle);
     }
 
     #[test]

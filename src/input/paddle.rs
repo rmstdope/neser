@@ -81,6 +81,27 @@ impl Paddle {
 
         (bit << 4) | ((self.trigger as u8) << 3)
     }
+
+    /// Capture current paddle state for save-state.
+    pub fn capture_state(&self) -> crate::console::PaddleState {
+        crate::console::PaddleState {
+            strobe: self.strobe,
+            shift_index: self.shift_index,
+            position: self.position,
+            latched_position: self.latched_position,
+            trigger: self.trigger,
+            enabled: false,
+        }
+    }
+
+    /// Restore paddle state from a save-state.
+    pub fn restore_state(&mut self, state: &crate::console::PaddleState) {
+        self.strobe = state.strobe;
+        self.shift_index = state.shift_index;
+        self.position = state.position;
+        self.latched_position = state.latched_position;
+        self.trigger = state.trigger;
+    }
 }
 
 #[cfg(test)]
