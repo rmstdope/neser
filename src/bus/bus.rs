@@ -7,7 +7,7 @@ use super::ram_device::RamDevice;
 use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::console::{BusState, MapperState};
-use crate::input::Joypad;
+use crate::input::{Joypad, Paddle};
 use crate::ppu;
 use crate::trace_mapper;
 use std::cell::RefCell;
@@ -32,6 +32,8 @@ pub struct Bus {
     dma_triggered: Rc<RefCell<bool>>,
     joypad1: Rc<RefCell<Joypad>>,
     joypad2: Rc<RefCell<Joypad>>,
+    paddle1: Rc<RefCell<Paddle>>,
+    paddle1_enabled: Rc<RefCell<bool>>,
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
     mmc5_scroll_log_active: bool,
@@ -49,6 +51,8 @@ impl Bus {
             dma_triggered: Rc::new(RefCell::new(false)),
             joypad1: Rc::new(RefCell::new(Joypad::new())),
             joypad2: Rc::new(RefCell::new(Joypad::new())),
+            paddle1: Rc::new(RefCell::new(Paddle::new())),
+            paddle1_enabled: Rc::new(RefCell::new(false)),
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
             mmc5_scroll_log_active: false,
@@ -62,6 +66,8 @@ impl Bus {
         controller.register_device(Box::new(JoypadDevice::new(
             controller.joypad1.clone(),
             controller.joypad2.clone(),
+            controller.paddle1.clone(),
+            controller.paddle1_enabled.clone(),
         )));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -417,6 +423,24 @@ impl Bus {
             2 => self.joypad2.borrow_mut().set_button(button, pressed),
             _ => {}
         }
+    }
+
+    /// Enable or disable the Arkanoid paddle on controller port 1.
+    #[allow(dead_code)]
+    pub fn set_paddle1_enabled(&mut self, enabled: bool) {
+        *self.paddle1_enabled.borrow_mut() = enabled;
+    }
+
+    /// Update paddle 1 position (0..255).
+    #[allow(dead_code)]
+    pub fn set_paddle1_position(&mut self, position: u8) {
+        self.paddle1.borrow_mut().set_position(position);
+    }
+
+    /// Update paddle 1 trigger state.
+    #[allow(dead_code)]
+    pub fn set_paddle1_trigger(&mut self, pressed: bool) {
+        self.paddle1.borrow_mut().set_trigger(pressed);
     }
 
     #[cfg(test)]
