@@ -32,4 +32,16 @@ pub trait Controller {
     
     /// Create a new default controller instance.
     fn new_boxed() -> Box<dyn Controller> where Self: Sized;
+    
+    /// Set button state (for Joypad controllers).
+    /// Returns true if the operation was successful, false if not supported.
+    fn set_button(&mut self, button: Button, pressed: bool) -> bool;
+    
+    /// Set paddle position (for Paddle controllers).
+    /// Returns true if the operation was successful, false if not supported.
+    fn set_paddle_position(&mut self, position: u8) -> bool;
+    
+    /// Set paddle trigger state (for Paddle controllers).
+    /// Returns true if the operation was successful, false if not supported.
+    fn set_paddle_trigger(&mut self, pressed: bool) -> bool;
 }

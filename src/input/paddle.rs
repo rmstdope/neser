@@ -145,6 +145,20 @@ impl crate::input::Controller for Paddle {
     fn new_boxed() -> Box<dyn crate::input::Controller> {
         Box::new(Paddle::new())
     }
+    
+    fn set_button(&mut self, _button: crate::input::Button, _pressed: bool) -> bool {
+        false  // Not supported for Paddle
+    }
+    
+    fn set_paddle_position(&mut self, position: u8) -> bool {
+        self.set_position(position);
+        true
+    }
+    
+    fn set_paddle_trigger(&mut self, pressed: bool) -> bool {
+        self.set_trigger(pressed);
+        true
+    }
 }
 
 #[cfg(test)]

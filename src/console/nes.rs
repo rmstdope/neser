@@ -255,7 +255,7 @@ impl Nes {
     /// # Arguments
     /// * `position` - The paddle position value (typically 0–255) to report for paddle 1.
     pub fn set_paddle1_position(&mut self, position: u8) {
-        self.memory.borrow_mut().set_paddle1_position(position);
+        self.memory.borrow_mut().set_paddle_position(1, position);
     }
 
     /// Set the trigger button state for the first paddle controller.
@@ -263,7 +263,7 @@ impl Nes {
     /// # Arguments
     /// * `pressed` - `true` if the paddle 1 trigger is pressed, `false` if released.
     pub fn set_paddle1_trigger(&mut self, pressed: bool) {
-        self.memory.borrow_mut().set_paddle1_trigger(pressed);
+        self.memory.borrow_mut().set_paddle_trigger(1, pressed);
     }
 
     /// Generate a trace line for the current CPU state
@@ -1540,8 +1540,8 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         // Should configure paddle on port 2 for Arkanoid ROM
-        nes.memory.borrow_mut().set_paddle2_position(0xA5);
-        nes.memory.borrow_mut().set_paddle2_trigger(true);
+        nes.memory.borrow_mut().set_paddle_position(2, 0xA5);
+        nes.memory.borrow_mut().set_paddle_trigger(2, true);
         
         // Verify port 2 reads paddle data
         nes.memory.borrow_mut().write(0x4016, 0x01, false);

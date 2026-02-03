@@ -136,6 +136,19 @@ impl crate::input::Controller for Joypad {
     fn new_boxed() -> Box<dyn crate::input::Controller> {
         Box::new(Joypad::new())
     }
+    
+    fn set_button(&mut self, button: crate::input::Button, pressed: bool) -> bool {
+        self.set_button(button, pressed);
+        true
+    }
+    
+    fn set_paddle_position(&mut self, _position: u8) -> bool {
+        false  // Not supported for Joypad
+    }
+    
+    fn set_paddle_trigger(&mut self, _pressed: bool) -> bool {
+        false  // Not supported for Joypad
+    }
 }
 
 #[cfg(test)]
