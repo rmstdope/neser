@@ -72,7 +72,7 @@ Before merging or committing to main, the following checkpoint shall pass:
 
 - Run `cargo check --all-targets --all-features` and fix all warnings
 - Run `cargo clippy --all-targets --all-features -- -D warnings` and fix all warnings
-- Run `cargo fmt -- --check` and fix all warnings
+- Run `cargo fmt`
 - Run `cargo test --all-features` and fix all warnings and ensure all tests pass
 - Run `npm test` in the `web/` directory and ensure all tests pass (if any tests exist)
 

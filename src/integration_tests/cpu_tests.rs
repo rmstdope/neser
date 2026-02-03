@@ -367,7 +367,8 @@ mod tests {
             .expect("Failed to load nestest.log - make sure roms/automated_tests/nestest/nestest.log exists");
 
         // Load the nestest ROM
-        let rom_data = fs::read("roms/automated_tests/nestest/nestest.nes").expect("Failed to load ROM");
+        let rom_data =
+            fs::read("roms/automated_tests/nestest/nestest.nes").expect("Failed to load ROM");
         let cartridge = Cartridge::new(&rom_data).expect("Failed to parse ROM");
 
         // Create NES and insert cartridge
