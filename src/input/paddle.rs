@@ -173,7 +173,7 @@ mod tests {
     fn test_paddle_position_clamps_to_valid_range() {
         let mut paddle = Paddle::new();
 
-        let mut read_position = |paddle: &mut Paddle| {
+        let read_position = |paddle: &mut Paddle| {
             let mut position = 0u8;
             for bit_index in (0..8).rev() {
                 let value = paddle.read();
