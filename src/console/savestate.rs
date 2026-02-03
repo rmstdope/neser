@@ -291,9 +291,15 @@ pub struct PaddleState {
 pub struct BusState {
     pub open_bus: u8,
     pub oam_dma_page: Option<u8>,
-    pub joypad1: JoypadState,
-    pub joypad2: JoypadState,
-    pub paddle1: PaddleState,
+    pub port1_controller: ControllerStateWrapper,
+    pub port2_controller: ControllerStateWrapper,
+}
+
+/// Wrapper for controller state to support serialization.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ControllerStateWrapper {
+    Joypad(JoypadState),
+    Paddle(PaddleState),
 }
 
 /// APU complete state.
@@ -592,24 +598,16 @@ mod tests {
         BusState {
             open_bus: 0xFF,
             oam_dma_page: None,
-            joypad1: JoypadState {
+            port1_controller: ControllerStateWrapper::Joypad(JoypadState {
                 strobe: false,
                 button_index: 0,
                 button_states: 0,
-            },
-            joypad2: JoypadState {
+            }),
+            port2_controller: ControllerStateWrapper::Joypad(JoypadState {
                 strobe: false,
                 button_index: 0,
                 button_states: 0,
-            },
-            paddle1: PaddleState {
-                strobe: false,
-                shift_index: 0,
-                position: 0,
-                latched_position: 0,
-                trigger: false,
-                enabled: false,
-            },
+            }),
         }
     }
 

@@ -119,6 +119,48 @@ impl Paddle {
     }
 }
 
+impl crate::input::Controller for Paddle {
+    fn write_strobe(&mut self, value: u8) {
+        self.write_strobe(value)
+    }
+    
+    fn read(&mut self) -> u8 {
+        self.read()
+    }
+    
+    fn read_no_clock(&self) -> u8 {
+        self.read_no_clock()
+    }
+    
+    fn capture_state(&self) -> crate::input::ControllerState {
+        crate::input::ControllerState::Paddle(self.capture_state())
+    }
+    
+    fn restore_state(&mut self, state: &crate::input::ControllerState) {
+        if let crate::input::ControllerState::Paddle(paddle_state) = state {
+            self.restore_state(paddle_state);
+        }
+    }
+    
+    fn new_boxed() -> Box<dyn crate::input::Controller> {
+        Box::new(Paddle::new())
+    }
+    
+    fn set_button(&mut self, _button: crate::input::Button, _pressed: bool) -> bool {
+        false  // Not supported for Paddle
+    }
+    
+    fn set_paddle_position(&mut self, position: u8) -> bool {
+        self.set_position(position);
+        true
+    }
+    
+    fn set_paddle_trigger(&mut self, pressed: bool) -> bool {
+        self.set_trigger(pressed);
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Paddle;
