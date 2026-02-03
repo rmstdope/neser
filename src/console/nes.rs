@@ -96,7 +96,11 @@ impl Nes {
 
         let mut memory = self.memory.borrow_mut();
         memory.map_cartridge(cartridge);
-        memory.set_paddle1_enabled(requires_arkanoid_paddle);
+        
+        // Auto-configure Arkanoid paddle on port 2 when detected
+        if requires_arkanoid_paddle {
+            memory.set_controller_type(2, crate::bus::ControllerType::Paddle);
+        }
     }
 
     pub fn state_path(&self) -> Option<PathBuf> {

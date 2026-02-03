@@ -294,6 +294,9 @@ pub struct BusState {
     pub joypad1: JoypadState,
     pub joypad2: JoypadState,
     pub paddle1: PaddleState,
+    pub paddle2: PaddleState,
+    pub port1_type: u8, // 0 = Joypad, 1 = Paddle
+    pub port2_type: u8, // 0 = Joypad, 1 = Paddle
 }
 
 /// APU complete state.
@@ -610,6 +613,16 @@ mod tests {
                 trigger: false,
                 enabled: false,
             },
+            paddle2: PaddleState {
+                strobe: false,
+                shift_index: 0,
+                position: 0,
+                latched_position: 0,
+                trigger: false,
+                enabled: false,
+            },
+            port1_type: 0, // Joypad
+            port2_type: 0, // Joypad
         }
     }
 

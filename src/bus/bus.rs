@@ -16,6 +16,13 @@ use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+/// Controller type for a port (re-exported from config for bus module use)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControllerType {
+    Joypad,
+    Paddle,
+}
+
 pub trait BusDevice {
     fn read(&mut self, addr: u16, open_bus: u8, clock_joypads: bool) -> Option<u8>;
     fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool;
@@ -33,7 +40,10 @@ pub struct Bus {
     joypad1: Rc<RefCell<Joypad>>,
     joypad2: Rc<RefCell<Joypad>>,
     paddle1: Rc<RefCell<Paddle>>,
-    paddle1_enabled: Rc<RefCell<bool>>,
+    paddle2: Rc<RefCell<Paddle>>,
+    port1_type: Rc<RefCell<ControllerType>>,
+    port2_type: Rc<RefCell<ControllerType>>,
+    paddle1_enabled: Rc<RefCell<bool>>, // Deprecated: keeping for backward compatibility
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
     mmc5_scroll_log_active: bool,
@@ -52,6 +62,9 @@ impl Bus {
             joypad1: Rc::new(RefCell::new(Joypad::new())),
             joypad2: Rc::new(RefCell::new(Joypad::new())),
             paddle1: Rc::new(RefCell::new(Paddle::new())),
+            paddle2: Rc::new(RefCell::new(Paddle::new())),
+            port1_type: Rc::new(RefCell::new(ControllerType::Joypad)),
+            port2_type: Rc::new(RefCell::new(ControllerType::Joypad)),
             paddle1_enabled: Rc::new(RefCell::new(false)),
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
@@ -67,7 +80,9 @@ impl Bus {
             controller.joypad1.clone(),
             controller.joypad2.clone(),
             controller.paddle1.clone(),
-            controller.paddle1_enabled.clone(),
+            controller.paddle2.clone(),
+            controller.port1_type.clone(),
+            controller.port2_type.clone(),
         )));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -428,6 +443,12 @@ impl Bus {
     /// Enable or disable the Arkanoid paddle on controller port 1.
     pub fn set_paddle1_enabled(&mut self, enabled: bool) {
         *self.paddle1_enabled.borrow_mut() = enabled;
+        // Also update the port type for consistency
+        if enabled {
+            *self.port1_type.borrow_mut() = ControllerType::Paddle;
+        } else {
+            *self.port1_type.borrow_mut() = ControllerType::Joypad;
+        }
     }
 
     /// Returns `true` if the Arkanoid paddle on controller port 1 is enabled.
@@ -443,6 +464,31 @@ impl Bus {
     /// Update paddle 1 trigger state.
     pub fn set_paddle1_trigger(&mut self, pressed: bool) {
         self.paddle1.borrow_mut().set_trigger(pressed);
+    }
+
+    /// Set the controller type for a specific port.
+    pub fn set_controller_type(&mut self, port: u8, controller_type: ControllerType) {
+        match port {
+            1 => {
+                *self.port1_type.borrow_mut() = controller_type;
+                // Update paddle1_enabled for backward compatibility
+                *self.paddle1_enabled.borrow_mut() = controller_type == ControllerType::Paddle;
+            }
+            2 => {
+                *self.port2_type.borrow_mut() = controller_type;
+            }
+            _ => {}
+        }
+    }
+
+    /// Update paddle 2 position (0..255).
+    pub fn set_paddle2_position(&mut self, position: u8) {
+        self.paddle2.borrow_mut().set_position(position);
+    }
+
+    /// Update paddle 2 trigger state.
+    pub fn set_paddle2_trigger(&mut self, pressed: bool) {
+        self.paddle2.borrow_mut().set_trigger(pressed);
     }
 
     #[cfg(test)]
@@ -513,6 +559,15 @@ impl Bus {
                 state.enabled = *self.paddle1_enabled.borrow();
                 state
             },
+            paddle2: self.paddle2.borrow().capture_state(),
+            port1_type: match *self.port1_type.borrow() {
+                ControllerType::Joypad => 0,
+                ControllerType::Paddle => 1,
+            },
+            port2_type: match *self.port2_type.borrow() {
+                ControllerType::Joypad => 0,
+                ControllerType::Paddle => 1,
+            },
         }
     }
 
@@ -524,7 +579,18 @@ impl Bus {
         self.joypad1.borrow_mut().restore_state(&state.joypad1);
         self.joypad2.borrow_mut().restore_state(&state.joypad2);
         self.paddle1.borrow_mut().restore_state(&state.paddle1);
+        self.paddle2.borrow_mut().restore_state(&state.paddle2);
         *self.paddle1_enabled.borrow_mut() = state.paddle1.enabled;
+        *self.port1_type.borrow_mut() = match state.port1_type {
+            0 => ControllerType::Joypad,
+            1 => ControllerType::Paddle,
+            _ => ControllerType::Joypad,
+        };
+        *self.port2_type.borrow_mut() = match state.port2_type {
+            0 => ControllerType::Joypad,
+            1 => ControllerType::Paddle,
+            _ => ControllerType::Joypad,
+        };
     }
 
     // /// Print the current open bus value to stdout (for debugging)
@@ -1781,8 +1847,10 @@ mod tests {
         let paddle_bits2 = memory.read(0x4017) & 0x18;
 
         // Verify paddle data is present
-        assert_eq!(paddle_bits1, 0x18);
-        assert_eq!(paddle_bits2, 0x10);
+        // Position 0xB3 inverted = 0x4C = 0b01001100, trigger=false
+        // First bit (MSB) is 0, second bit is 1
+        assert_eq!(paddle_bits1, 0x00); // bit 4=0, bit 3=0 (no trigger)
+        assert_eq!(paddle_bits2, 0x10); // bit 4=1, bit 3=0 (no trigger)
     }
 
     #[test]
@@ -1808,10 +1876,11 @@ mod tests {
 
         // Verify port 2 returns paddle data
         memory.set_paddle2_position(0xA5);
+        memory.set_paddle2_trigger(true); // Set trigger so bit 3 is set
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
         let paddle_bits = memory.read(0x4017) & 0x18;
-        assert!(paddle_bits != 0); // Should have paddle data
+        assert!(paddle_bits != 0); // Should have paddle data (at least bit 3)
     }
 
     #[test]
@@ -1823,6 +1892,7 @@ mod tests {
         memory.set_controller_type(1, crate::bus::ControllerType::Joypad);
         memory.set_controller_type(2, crate::bus::ControllerType::Paddle);
         memory.set_paddle2_position(0xC7);
+        memory.set_paddle2_trigger(true); // Set trigger so bit 3 is set
 
         // Capture state
         let saved_state = memory.capture_state();

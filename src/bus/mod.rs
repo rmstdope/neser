@@ -7,6 +7,6 @@ pub mod oam_dma_device;
 pub mod ppu_device;
 pub mod ram_device;
 
-pub use bus::Bus;
+pub use bus::{Bus, ControllerType};
 #[cfg(test)]
 pub(crate) use bus::BusDevice;

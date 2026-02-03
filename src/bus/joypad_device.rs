@@ -1,4 +1,4 @@
-use crate::bus::bus::BusDevice;
+use crate::bus::bus::{BusDevice, ControllerType};
 use crate::input::{Joypad, Paddle};
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
@@ -8,7 +8,9 @@ pub(crate) struct JoypadDevice {
     joypad1: Rc<RefCell<Joypad>>,
     joypad2: Rc<RefCell<Joypad>>,
     paddle1: Rc<RefCell<Paddle>>,
-    paddle1_enabled: Rc<RefCell<bool>>,
+    paddle2: Rc<RefCell<Paddle>>,
+    port1_type: Rc<RefCell<ControllerType>>,
+    port2_type: Rc<RefCell<ControllerType>>,
 }
 
 impl JoypadDevice {
@@ -16,13 +18,17 @@ impl JoypadDevice {
         joypad1: Rc<RefCell<Joypad>>,
         joypad2: Rc<RefCell<Joypad>>,
         paddle1: Rc<RefCell<Paddle>>,
-        paddle1_enabled: Rc<RefCell<bool>>,
+        paddle2: Rc<RefCell<Paddle>>,
+        port1_type: Rc<RefCell<ControllerType>>,
+        port2_type: Rc<RefCell<ControllerType>>,
     ) -> Self {
         Self {
             joypad1,
             joypad2,
             paddle1,
-            paddle1_enabled,
+            paddle2,
+            port1_type,
+            port2_type,
         }
     }
 }
@@ -35,29 +41,44 @@ impl BusDevice for JoypadDevice {
 
         match addr {
             0x4016 => {
-                if *self.paddle1_enabled.borrow() {
-                    let paddle_state = if clock_joypads {
-                        self.paddle1.borrow_mut().read()
-                    } else {
-                        self.paddle1.borrow().read_no_clock()
-                    };
-                    Some((open_bus & 0xE7) | paddle_state)
-                } else {
-                    let button_state = if clock_joypads {
-                        self.joypad1.borrow_mut().read()
-                    } else {
-                        self.joypad1.borrow().read_no_clock()
-                    };
-                    Some((open_bus & 0xFE) | button_state)
+                match *self.port1_type.borrow() {
+                    ControllerType::Paddle => {
+                        let paddle_state = if clock_joypads {
+                            self.paddle1.borrow_mut().read()
+                        } else {
+                            self.paddle1.borrow().read_no_clock()
+                        };
+                        Some((open_bus & 0xE7) | paddle_state)
+                    }
+                    ControllerType::Joypad => {
+                        let button_state = if clock_joypads {
+                            self.joypad1.borrow_mut().read()
+                        } else {
+                            self.joypad1.borrow().read_no_clock()
+                        };
+                        Some((open_bus & 0xFE) | button_state)
+                    }
                 }
             }
             0x4017 => {
-                let button_state = if clock_joypads {
-                    self.joypad2.borrow_mut().read()
-                } else {
-                    self.joypad2.borrow().read_no_clock()
-                };
-                Some((open_bus & 0xFE) | button_state)
+                match *self.port2_type.borrow() {
+                    ControllerType::Paddle => {
+                        let paddle_state = if clock_joypads {
+                            self.paddle2.borrow_mut().read()
+                        } else {
+                            self.paddle2.borrow().read_no_clock()
+                        };
+                        Some((open_bus & 0xE7) | paddle_state)
+                    }
+                    ControllerType::Joypad => {
+                        let button_state = if clock_joypads {
+                            self.joypad2.borrow_mut().read()
+                        } else {
+                            self.joypad2.borrow().read_no_clock()
+                        };
+                        Some((open_bus & 0xFE) | button_state)
+                    }
+                }
             }
             _ => None,
         }
@@ -72,8 +93,11 @@ impl BusDevice for JoypadDevice {
             0x4016 => {
                 self.joypad1.borrow_mut().write_strobe(value);
                 self.joypad2.borrow_mut().write_strobe(value);
-                if *self.paddle1_enabled.borrow() {
+                if *self.port1_type.borrow() == ControllerType::Paddle {
                     self.paddle1.borrow_mut().write_strobe(value);
+                }
+                if *self.port2_type.borrow() == ControllerType::Paddle {
+                    self.paddle2.borrow_mut().write_strobe(value);
                 }
                 true
             }
