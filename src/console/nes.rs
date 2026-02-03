@@ -239,14 +239,25 @@ impl Nes {
             .set_button(controller, button, pressed);
     }
 
+    /// Check whether the first paddle controller is currently enabled.
+    ///
+    /// Returns `true` if paddle 1 is enabled/connected, `false` otherwise.
     pub fn paddle1_enabled(&self) -> bool {
         self.memory.borrow().paddle1_enabled()
     }
 
+    /// Set the current position of the first paddle controller.
+    ///
+    /// # Arguments
+    /// * `position` - The paddle position value (typically 0–255) to report for paddle 1.
     pub fn set_paddle1_position(&mut self, position: u8) {
         self.memory.borrow_mut().set_paddle1_position(position);
     }
 
+    /// Set the trigger button state for the first paddle controller.
+    ///
+    /// # Arguments
+    /// * `pressed` - `true` if the paddle 1 trigger is pressed, `false` if released.
     pub fn set_paddle1_trigger(&mut self, pressed: bool) {
         self.memory.borrow_mut().set_paddle1_trigger(pressed);
     }
