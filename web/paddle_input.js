@@ -1,15 +1,19 @@
 export function mapMouseXToPaddlePosition(x, windowWidth) {
+    const minPosition = 0x62;
+    const maxPosition = 0xF2;
+    const range = maxPosition - minPosition;
+
     if (windowWidth <= 1) {
-        return 0;
+        return minPosition;
     }
 
     const maxX = windowWidth - 1;
     const clampedX = Math.min(Math.max(x, 0), maxX);
     const normalized = (clampedX / maxX) * 2 - 1;
     const curved = Math.sign(normalized) * Math.pow(Math.abs(normalized), 1.5);
-    const scaled = (curved + 1) * 0.5 * 255;
+    const scaled = (curved + 1) * 0.5 * range + minPosition;
 
-    return Math.min(255, Math.max(0, Math.round(scaled)));
+    return Math.min(maxPosition, Math.max(minPosition, Math.round(scaled)));
 }
 
 export function applyPaddleMouseMotion(nes, x, windowWidth) {

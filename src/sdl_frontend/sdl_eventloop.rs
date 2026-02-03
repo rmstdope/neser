@@ -59,10 +59,14 @@ impl SdlEventLoop {
     /// The input is normalized to $[-1.0, 1.0]$ across the current window width,
     /// then shaped using a non-linear curve $\text{sign}(x)\cdot|x|^{1.5}$ to
     /// make the edges respond faster than the center. The result is scaled to
-    /// the full 8-bit paddle range and clamped.
+    /// the Arkanoid paddle range ($62$-$F2$) and clamped.
     fn map_mouse_x_to_paddle_position(x: i32, window_width: u32) -> u8 {
+        const MIN_POSITION: f32 = 0x62 as f32;
+        const MAX_POSITION: f32 = 0xF2 as f32;
+        const RANGE: f32 = MAX_POSITION - MIN_POSITION;
+
         if window_width <= 1 {
-            return 0;
+            return MIN_POSITION as u8;
         }
 
         let max_x = window_width.saturating_sub(1) as i32;
@@ -70,8 +74,8 @@ impl SdlEventLoop {
         let width_minus_one = max_x as f32;
         let normalized = (clamped_x as f32 / width_minus_one) * 2.0 - 1.0;
         let curved = normalized.signum() * normalized.abs().powf(1.5);
-        let scaled = (curved + 1.0) * 0.5 * 255.0;
-        scaled.round().clamp(0.0, 255.0) as u8
+        let scaled = (curved + 1.0) * 0.5 * RANGE + MIN_POSITION;
+        scaled.round().clamp(MIN_POSITION, MAX_POSITION) as u8
     }
 
     /// Applies mouse motion to paddle 1 when paddle mode is active.
@@ -90,6 +94,7 @@ impl SdlEventLoop {
     ///
     /// This is a no-op if the paddle is disabled.
     fn apply_paddle_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
+        // println!("Mouse button {:?} pressed: {}", button, pressed);
         if !nes.paddle1_enabled() {
             return;
         }
@@ -1362,9 +1367,9 @@ mod tests {
         let center_x = ((window_width - 1) / 2) as i32;
         let center = SdlEventLoop::map_mouse_x_to_paddle_position(center_x, window_width);
 
-        assert_eq!(left, 0);
-        assert_eq!(right, 255);
-        assert!((120..=135).contains(&center));
+        assert_eq!(left, 0x62);
+        assert_eq!(right, 0xF2);
+        assert!((165..=175).contains(&center));
     }
 
     #[test]
@@ -1389,7 +1394,7 @@ mod tests {
         let mut debugger_open_requested = false;
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.memory.borrow_mut().set_paddle1_enabled(true);
-        nes.set_paddle1_position(0x5A);
+        nes.set_paddle1_position(0x80);
         nes.set_paddle1_trigger(true);
 
         let _ = SdlEventLoop::handle_key_down(
@@ -1401,7 +1406,7 @@ mod tests {
         );
 
         assert_eq!(read_joypad1_buttons(&mut nes), [0; 8]);
-        assert_eq!(read_paddle_position(&mut nes), 0x5A);
+        assert_eq!(read_paddle_position(&mut nes), 0x80);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
     }
 

@@ -39,9 +39,9 @@ test("mapMouseXToPaddlePosition maps edges and center", () => {
     const centerX = Math.floor((width - 1) / 2);
     const center = mapMouseXToPaddlePosition(centerX, width);
 
-    assert.equal(left, 0);
-    assert.equal(right, 255);
-    assert.ok(center >= 120 && center <= 135);
+    assert.equal(left, 0x62);
+    assert.equal(right, 0xF2);
+    assert.ok(center >= 165 && center <= 175);
 });
 
 test("mapMouseXToPaddlePosition uses non-linear curve", () => {

@@ -197,10 +197,23 @@ fn paddle1_enabled_matches_save_state() {
 #[wasm_bindgen_test]
 fn set_paddle1_position_updates_save_state() {
     let mut nes = WasmNes::new();
-    nes.set_paddle1_position(0x5A);
+    nes.set_paddle1_position(0x80);
 
     let state = read_save_state(&nes);
-    assert_eq!(state.bus.paddle1.position, 0x5A);
+    assert_eq!(state.bus.paddle1.position, 0x80);
+}
+
+#[wasm_bindgen_test]
+fn set_paddle1_position_clamps_to_valid_range() {
+    let mut nes = WasmNes::new();
+    nes.set_paddle1_position(0x20);
+
+    let state = read_save_state(&nes);
+    assert_eq!(state.bus.paddle1.position, 0x62);
+
+    nes.set_paddle1_position(0xFF);
+    let state = read_save_state(&nes);
+    assert_eq!(state.bus.paddle1.position, 0xF2);
 }
 
 #[wasm_bindgen_test]
