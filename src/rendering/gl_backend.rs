@@ -87,6 +87,7 @@ impl GlBackend {
         Self::NTSC_ASPECT
     }
 
+    /// Returns the logical window size in pixels reported by the render target.
     pub fn window_size(&self) -> (u32, u32) {
         self.render_target.window_size()
     }
