@@ -581,7 +581,11 @@ impl Config {
     }
 
     /// Map simplified filter names to shader paths.
+    ///
     /// Supported values: crt, ntsc, smooth, none
+    ///
+    /// Returns `Some(String)` with the full shader path for valid filter names,
+    /// or `None` for invalid/unknown names.
     fn map_filter_name(name: &str) -> Option<String> {
         match name {
             "crt" => Some("shaders/crt-lottes.slangp".to_string()),
@@ -921,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_shader_path_invalid_ignored() {
+    fn test_config_cmdline_filter_invalid_ignored() {
         let args = vec![
             "neser".to_string(),
             "--filter".to_string(),
