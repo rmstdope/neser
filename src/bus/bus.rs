@@ -1738,4 +1738,106 @@ mod tests {
             "$4017 write should switch to 5-step mode after the delayed-write window"
         );
     }
+
+    #[test]
+    fn test_paddle_on_port_1() {
+        // RED: Test that paddle can be configured on port 1 (0x4016)
+        let mut memory = create_test_memory();
+
+        // Configure paddle on port 1
+        memory.set_controller_type(1, crate::bus::ControllerType::Paddle);
+        memory.set_paddle1_position(0xA5);
+        memory.set_paddle1_trigger(true);
+
+        // Strobe the controller
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+
+        // Read paddle data from port 1 - bits 4 and 3
+        let paddle_bits1 = memory.read(0x4016) & 0x18;
+        let paddle_bits2 = memory.read(0x4016) & 0x18;
+
+        // Verify paddle data is present
+        assert_eq!(paddle_bits1, 0x08);
+        assert_eq!(paddle_bits2, 0x18);
+    }
+
+    #[test]
+    fn test_paddle_on_port_2() {
+        // RED: Test that paddle can be configured on port 2 (0x4017)
+        let mut memory = create_test_memory();
+
+        // Configure paddle on port 2
+        memory.set_controller_type(2, crate::bus::ControllerType::Paddle);
+        memory.set_paddle2_position(0xB3);
+        memory.set_paddle2_trigger(false);
+
+        // Strobe the controller
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+
+        // Read paddle data from port 2 - bits 4 and 3
+        let paddle_bits1 = memory.read(0x4017) & 0x18;
+        let paddle_bits2 = memory.read(0x4017) & 0x18;
+
+        // Verify paddle data is present
+        assert_eq!(paddle_bits1, 0x18);
+        assert_eq!(paddle_bits2, 0x10);
+    }
+
+    #[test]
+    fn test_joypad_on_port_1_while_paddle_on_port_2() {
+        // RED: Test that joypad on port 1 works while paddle is on port 2
+        let mut memory = create_test_memory();
+
+        // Configure joypad on port 1, paddle on port 2
+        memory.set_controller_type(1, crate::bus::ControllerType::Joypad);
+        memory.set_controller_type(2, crate::bus::ControllerType::Paddle);
+
+        // Set joypad buttons
+        memory.set_button(1, crate::input::Button::A, true);
+        memory.set_button(1, crate::input::Button::B, true);
+
+        // Strobe the controllers
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+
+        // Read joypad from port 1
+        assert_eq!(memory.read(0x4016) & 0x01, 1); // A button
+        assert_eq!(memory.read(0x4016) & 0x01, 1); // B button
+
+        // Verify port 2 returns paddle data
+        memory.set_paddle2_position(0xA5);
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        let paddle_bits = memory.read(0x4017) & 0x18;
+        assert!(paddle_bits != 0); // Should have paddle data
+    }
+
+    #[test]
+    fn test_controller_port_config_save_state_roundtrip() {
+        // RED: Test that controller port configuration is saved/restored
+        let mut memory = create_test_memory();
+
+        // Configure paddle on port 2
+        memory.set_controller_type(1, crate::bus::ControllerType::Joypad);
+        memory.set_controller_type(2, crate::bus::ControllerType::Paddle);
+        memory.set_paddle2_position(0xC7);
+
+        // Capture state
+        let saved_state = memory.capture_state();
+
+        // Change configuration
+        memory.set_controller_type(1, crate::bus::ControllerType::Paddle);
+        memory.set_controller_type(2, crate::bus::ControllerType::Joypad);
+
+        // Restore state
+        memory.restore_state(&saved_state);
+
+        // Verify port 2 has paddle
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        let paddle_bits = memory.read(0x4017) & 0x18;
+        assert!(paddle_bits != 0); // Should have paddle data on port 2
+    }
 }
