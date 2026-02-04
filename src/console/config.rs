@@ -87,6 +87,7 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     // Aligned flags matching config file keys with same value ranges
+    // Support both value-based (--audio true) and prefix negation (--no-audio, --disable-audio)
     CliFlag {
         flag: "--tv-system",
         help: Some("TV system: ntsc or pal (default: ntsc)"),
@@ -98,9 +99,29 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--no-audio",
+        help: Some("Disable audio output (equivalent to --audio false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-audio",
+        help: Some("Disable audio output (equivalent to --audio false)"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--vsync",
         help: Some("Enable VSync: true or false (default: true)"),
         has_value: true,
+    },
+    CliFlag {
+        flag: "--no-vsync",
+        help: Some("Disable VSync (equivalent to --vsync false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-vsync",
+        help: Some("Disable VSync (equivalent to --vsync false)"),
+        has_value: false,
     },
     CliFlag {
         flag: "--gamepads",
@@ -108,9 +129,29 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--no-gamepads",
+        help: Some("Disable gamepad/joystick support (equivalent to --gamepads false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-gamepads",
+        help: Some("Disable gamepad/joystick support (equivalent to --gamepads false)"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--pulse1",
         help: Some("Enable pulse 1 channel: true or false (default: true)"),
         has_value: true,
+    },
+    CliFlag {
+        flag: "--no-pulse1",
+        help: Some("Disable pulse 1 channel (equivalent to --pulse1 false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-pulse1",
+        help: Some("Disable pulse 1 channel (equivalent to --pulse1 false)"),
+        has_value: false,
     },
     CliFlag {
         flag: "--pulse2",
@@ -118,9 +159,29 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--no-pulse2",
+        help: Some("Disable pulse 2 channel (equivalent to --pulse2 false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-pulse2",
+        help: Some("Disable pulse 2 channel (equivalent to --pulse2 false)"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--triangle",
         help: Some("Enable triangle channel: true or false (default: true)"),
         has_value: true,
+    },
+    CliFlag {
+        flag: "--no-triangle",
+        help: Some("Disable triangle channel (equivalent to --triangle false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-triangle",
+        help: Some("Disable triangle channel (equivalent to --triangle false)"),
+        has_value: false,
     },
     CliFlag {
         flag: "--noise",
@@ -128,9 +189,29 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--no-noise",
+        help: Some("Disable noise channel (equivalent to --noise false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-noise",
+        help: Some("Disable noise channel (equivalent to --noise false)"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--dmc",
         help: Some("Enable DMC channel: true or false (default: true)"),
         has_value: true,
+    },
+    CliFlag {
+        flag: "--no-dmc",
+        help: Some("Disable DMC channel (equivalent to --dmc false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-dmc",
+        help: Some("Disable DMC channel (equivalent to --dmc false)"),
+        has_value: false,
     },
     CliFlag {
         flag: "--debugger",
@@ -138,9 +219,29 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--no-debugger",
+        help: Some("Do not open debugger on startup (equivalent to --debugger false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-debugger",
+        help: Some("Do not open debugger on startup (equivalent to --debugger false)"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--load-state",
         help: Some("Load save-state on startup: true or false (default: false)"),
         has_value: true,
+    },
+    CliFlag {
+        flag: "--no-load-state",
+        help: Some("Do not load save-state on startup (equivalent to --load-state false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-load-state",
+        help: Some("Do not load save-state on startup (equivalent to --load-state false)"),
+        has_value: false,
     },
 ];
 
@@ -327,21 +428,45 @@ impl Config {
             }
         }
 
-        // Boolean flags (value-based, aligned with config file)
+        // Boolean flags (support both value-based and prefix negation)
+        // Audio: --audio true/false, --no-audio, --disable-audio
         if let Some(audio) = Self::parse_bool_arg(args, "--audio")? {
             self.audio_enabled = audio;
         }
+        if Self::has_negation_flag(args, &["--no-audio", "--disable-audio"]) {
+            self.audio_enabled = false;
+        }
+
+        // VSync: --vsync true/false, --no-vsync, --disable-vsync
         if let Some(vsync) = Self::parse_bool_arg(args, "--vsync")? {
             self.vsync_enabled = vsync;
         }
+        if Self::has_negation_flag(args, &["--no-vsync", "--disable-vsync"]) {
+            self.vsync_enabled = false;
+        }
+
+        // Gamepads: --gamepads true/false, --no-gamepads, --disable-gamepads
         if let Some(gamepads) = Self::parse_bool_arg(args, "--gamepads")? {
             self.gamepads_enabled = gamepads;
         }
+        if Self::has_negation_flag(args, &["--no-gamepads", "--disable-gamepads"]) {
+            self.gamepads_enabled = false;
+        }
+
+        // Debugger: --debugger true/false, --no-debugger, --disable-debugger
         if let Some(debugger) = Self::parse_bool_arg(args, "--debugger")? {
             self.debugger_enabled = debugger;
         }
+        if Self::has_negation_flag(args, &["--no-debugger", "--disable-debugger"]) {
+            self.debugger_enabled = false;
+        }
+
+        // Load state: --load-state true/false, --no-load-state, --disable-load-state
         if let Some(load_state) = Self::parse_bool_arg(args, "--load-state")? {
             self.load_state = load_state;
+        }
+        if Self::has_negation_flag(args, &["--no-load-state", "--disable-load-state"]) {
+            self.load_state = false;
         }
 
         // Fullscreen (value-based)
@@ -368,7 +493,8 @@ impl Config {
         // Tracing (merge with existing config file values)
         self.tracing.apply_args(args);
 
-        // APU channel enable/disable flags (value-based, aligned with config file)
+        // APU channel enable/disable flags (support both value-based and prefix negation)
+        // Pulse1: --pulse1 true/false, --no-pulse1, --disable-pulse1
         if let Some(pulse1) = Self::parse_bool_arg(args, "--pulse1")? {
             if pulse1 {
                 self.apu_channels.insert(ApuChannels::PULSE1);
@@ -376,6 +502,11 @@ impl Config {
                 self.apu_channels.remove(ApuChannels::PULSE1);
             }
         }
+        if Self::has_negation_flag(args, &["--no-pulse1", "--disable-pulse1"]) {
+            self.apu_channels.remove(ApuChannels::PULSE1);
+        }
+
+        // Pulse2: --pulse2 true/false, --no-pulse2, --disable-pulse2
         if let Some(pulse2) = Self::parse_bool_arg(args, "--pulse2")? {
             if pulse2 {
                 self.apu_channels.insert(ApuChannels::PULSE2);
@@ -383,6 +514,11 @@ impl Config {
                 self.apu_channels.remove(ApuChannels::PULSE2);
             }
         }
+        if Self::has_negation_flag(args, &["--no-pulse2", "--disable-pulse2"]) {
+            self.apu_channels.remove(ApuChannels::PULSE2);
+        }
+
+        // Triangle: --triangle true/false, --no-triangle, --disable-triangle
         if let Some(triangle) = Self::parse_bool_arg(args, "--triangle")? {
             if triangle {
                 self.apu_channels.insert(ApuChannels::TRIANGLE);
@@ -390,6 +526,11 @@ impl Config {
                 self.apu_channels.remove(ApuChannels::TRIANGLE);
             }
         }
+        if Self::has_negation_flag(args, &["--no-triangle", "--disable-triangle"]) {
+            self.apu_channels.remove(ApuChannels::TRIANGLE);
+        }
+
+        // Noise: --noise true/false, --no-noise, --disable-noise
         if let Some(noise) = Self::parse_bool_arg(args, "--noise")? {
             if noise {
                 self.apu_channels.insert(ApuChannels::NOISE);
@@ -397,12 +538,20 @@ impl Config {
                 self.apu_channels.remove(ApuChannels::NOISE);
             }
         }
+        if Self::has_negation_flag(args, &["--no-noise", "--disable-noise"]) {
+            self.apu_channels.remove(ApuChannels::NOISE);
+        }
+
+        // DMC: --dmc true/false, --no-dmc, --disable-dmc
         if let Some(dmc) = Self::parse_bool_arg(args, "--dmc")? {
             if dmc {
                 self.apu_channels.insert(ApuChannels::DMC);
             } else {
                 self.apu_channels.remove(ApuChannels::DMC);
             }
+        }
+        if Self::has_negation_flag(args, &["--no-dmc", "--disable-dmc"]) {
+            self.apu_channels.remove(ApuChannels::DMC);
         }
 
         // Window height
@@ -429,10 +578,11 @@ impl Config {
         println!("  neser game.nes                               # Load and run a ROM");
         println!("  neser --tv-system pal game.nes               # Use PAL timing");
         println!("  neser --debugger true game.nes               # Start with debugger open");
-        println!("  neser --audio false game.nes                 # Disable audio");
-        println!("  neser --pulse1 false --pulse2 false game.nes # Only triangle, noise, and DMC");
+        println!("  neser --audio false game.nes                 # Disable audio (value-based)");
+        println!("  neser --no-audio game.nes                    # Disable audio (prefix negation)");
+        println!("  neser --disable-pulse1 --disable-pulse2 game.nes # Disable specific channels");
         println!();
-        println!("Note: Boolean flags accept: true, false, yes, no, 1, or 0");
+        println!("Note: Boolean flags accept values (true, false, yes, no, 1, 0) or prefix negation (--no-*, --disable-*)");
     }
 
     /// Validate command-line arguments.
@@ -850,10 +1000,26 @@ impl Config {
     }
 
     /// Parse a boolean argument from command-line args.
+    /// Supports both --flag value and --flag=value syntax.
     /// Returns None if flag not present, Some(Ok(bool)) if valid, Some(Err(msg)) if invalid.
     fn parse_bool_arg(args: &[String], flag: &str) -> Result<Option<bool>, String> {
         for i in 0..args.len() {
-            if args[i] == flag {
+            // Check for --flag=value syntax
+            if let Some((flag_part, value_part)) = args[i].split_once('=') {
+                if flag_part == flag {
+                    match Self::parse_bool(value_part) {
+                        Ok(b) => return Ok(Some(b)),
+                        Err(_) => {
+                            return Err(format!(
+                                "Invalid value for {flag}: '{}'. Expected: true, false, yes, no, 1, or 0",
+                                value_part
+                            ))
+                        }
+                    }
+                }
+            }
+            // Check for --flag value syntax (space-separated)
+            else if args[i] == flag {
                 if i + 1 >= args.len() {
                     return Err(format!("Missing value for {flag}. Expected true or false."));
                 }
@@ -870,6 +1036,11 @@ impl Config {
             }
         }
         Ok(None)
+    }
+
+    /// Check if any of the negation flags are present in the arguments.
+    fn has_negation_flag(args: &[String], flags: &[&str]) -> bool {
+        args.iter().any(|a| flags.contains(&a.as_str()))
     }
 
     fn validate_controller_ports(&self) -> Result<(), String> {
@@ -2060,5 +2231,94 @@ filter=invalid-shader
         let mut config = Config::default();
         config.apply_config_value("load_state", "true").unwrap();
         assert!(config.load_state);
+    }
+
+    // Tests for negation flags (--no-*, --disable-*)
+
+    #[test]
+    fn test_config_no_audio_disables_audio() {
+        let args = vec!["neser".to_string(), "--no-audio".to_string()];
+        let config = parse_config(args);
+        assert!(!config.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_disable_audio_disables_audio() {
+        let args = vec!["neser".to_string(), "--disable-audio".to_string()];
+        let config = parse_config(args);
+        assert!(!config.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_no_vsync_disables_vsync() {
+        let args = vec!["neser".to_string(), "--no-vsync".to_string()];
+        let config = parse_config(args);
+        assert!(!config.vsync_enabled);
+    }
+
+    #[test]
+    fn test_config_disable_vsync_disables_vsync() {
+        let args = vec!["neser".to_string(), "--disable-vsync".to_string()];
+        let config = parse_config(args);
+        assert!(!config.vsync_enabled);
+    }
+
+    #[test]
+    fn test_config_no_gamepads_disables_gamepads() {
+        let args = vec!["neser".to_string(), "--no-gamepads".to_string()];
+        let config = parse_config(args);
+        assert!(!config.gamepads_enabled);
+    }
+
+    #[test]
+    fn test_config_disable_pulse1_removes_channel() {
+        let args = vec!["neser".to_string(), "--disable-pulse1".to_string()];
+        let config = parse_config(args);
+        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
+    }
+
+    #[test]
+    fn test_config_no_pulse2_removes_channel() {
+        let args = vec!["neser".to_string(), "--no-pulse2".to_string()];
+        let config = parse_config(args);
+        assert!(config.apu_channels.contains(ApuChannels::PULSE1));
+        assert!(!config.apu_channels.contains(ApuChannels::PULSE2));
+    }
+
+    #[test]
+    fn test_config_disable_triangle_removes_channel() {
+        let args = vec!["neser".to_string(), "--disable-triangle".to_string()];
+        let config = parse_config(args);
+        assert!(!config.apu_channels.contains(ApuChannels::TRIANGLE));
+    }
+
+    #[test]
+    fn test_config_audio_value_equals_syntax() {
+        let args = vec!["neser".to_string(), "--audio=0".to_string()];
+        let config = parse_config(args);
+        assert!(!config.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_audio_value_equals_syntax_true() {
+        let args = vec!["neser".to_string(), "--audio=1".to_string()];
+        let config = parse_config(args);
+        assert!(config.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_mixed_value_and_negation() {
+        let args = vec![
+            "neser".to_string(),
+            "--audio".to_string(),
+            "true".to_string(),
+            "--no-vsync".to_string(),
+            "--disable-pulse1".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(config.audio_enabled);
+        assert!(!config.vsync_enabled);
+        assert!(!config.apu_channels.contains(ApuChannels::PULSE1));
     }
 }
