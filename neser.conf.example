@@ -93,10 +93,51 @@ display=0
 # Set to false to use keyboard only.
 gamepads=true
 
-# Arkanoid paddle (SDL frontend)
-# Paddle mode is auto-enabled for known ROM CRCs (e.g., Arkanoid, PaddleTest3).
-# When active, mouse X controls the paddle position and left-click is the trigger.
-# No sensitivity configuration is exposed yet.
+# Controller Type Configuration (Per-Port)
+# Each of the two controller ports can be configured independently.
+# Valid values: joypad, arkanoid, none
+# Default: joypad for both ports
+#
+# Port 1 (Player 1):
+#controller_port1=joypad
+#
+# Port 2 (Player 2):
+#controller_port2=joypad
+#
+# Auto-detection behavior:
+# If a specific port hasn't been explicitly configured, NESER will
+# automatically detect known paddle ROMs and configure that port:
+#   - Arkanoid (CRC 0x32FB0583) → paddle on port 2
+#   - PaddleTest3 (CRC 0x47F9F410) → paddle on port 1
+#
+# Auto-detection is per-port: if you explicitly configure port 2, auto-detection
+# for port 2 is disabled, but port 1 can still be auto-detected (and vice versa).
+# This gives you fine-grained control over each port independently.
+
+# Paddle Controller Input (SDL frontend)
+# When a paddle controller is enabled on a port, mouse input controls it:
+#   - Mouse X position → paddle position (0-255, non-linear curve)
+#   - Left mouse button → paddle trigger
+# Mouse input is routed to ALL ports configured as paddles.
+# Keyboard/gamepad input for paddle-configured ports is suppressed.
+#
+# Configuration examples:
+#
+# Example 1: Mouse-based paddle on port 1 (for PaddleTest3-style games)
+#   controller_port1=arkanoid
+#   controller_port2=joypad
+#
+# Example 2: Mouse-based paddle on port 2 (for Arkanoid)
+#   controller_port1=joypad
+#   controller_port2=arkanoid
+#
+# Example 3: Paddles on both ports (both controlled by same mouse)
+#   controller_port1=arkanoid
+#   controller_port2=arkanoid
+#
+# Example 4: Force joypad mode even for Arkanoid ROM
+#   controller_port1=joypad
+#   controller_port2=joypad
 
 # -----------------------------------------------------------------------------
 # Debugging

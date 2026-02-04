@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod tests {
     use crate::cartridge::Cartridge;
-    use crate::console::{Nes, TvSystem};
+    use crate::console::{Config, Nes, TvSystem};
     use crate::integration_tests::rom_test_runner::tests::init_tracing_from_env;
     use crate::{setup_rom_address_test, setup_rom_test};
     use std::fs;
@@ -41,7 +41,7 @@ mod tests {
         let rom_data = fs::read(rom_path).expect("ROM should load");
         let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
 
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -94,7 +94,7 @@ mod tests {
         let rom_data = fs::read(rom_path).expect("ROM should load");
         let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
 
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 

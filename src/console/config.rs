@@ -8,6 +8,7 @@
 
 use crate::console::TvSystem;
 use crate::debugging::Tracing;
+use crate::input::ControllerType;
 use bitflags::bitflags;
 use std::fs;
 use std::path::Path;
@@ -295,25 +296,10 @@ pub struct Config {
     pub controller_port1: ControllerType,
     /// Controller type connected to port 2.
     pub controller_port2: ControllerType,
-}
-
-/// Supported controller types for NES ports.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControllerType {
-    Joypad,
-    Arkanoid,
-    None,
-}
-
-impl ControllerType {
-    fn parse(value: &str) -> Option<Self> {
-        match value.to_lowercase().as_str() {
-            "joypad" => Some(Self::Joypad),
-            "arkanoid" => Some(Self::Arkanoid),
-            "none" => Some(Self::None),
-            _ => None,
-        }
-    }
+    /// Whether controller_port1 was explicitly configured (not default).
+    pub controller_port1_explicit: bool,
+    /// Whether controller_port2 was explicitly configured (not default).
+    pub controller_port2_explicit: bool,
 }
 
 bitflags! {
@@ -347,6 +333,8 @@ impl Default for Config {
             rom_path: None,
             controller_port1: ControllerType::Joypad,
             controller_port2: ControllerType::Joypad,
+            controller_port1_explicit: false,
+            controller_port2_explicit: false,
         }
     }
 }
@@ -959,6 +947,7 @@ impl Config {
             "controller_port1" => {
                 if let Some(controller) = ControllerType::parse(value) {
                     self.controller_port1 = controller;
+                    self.controller_port1_explicit = true;
                 } else {
                     eprintln!(
                         "Warning: invalid value '{}' for 'controller_port1' in configuration; \
@@ -970,6 +959,7 @@ impl Config {
             "controller_port2" => {
                 if let Some(controller) = ControllerType::parse(value) {
                     self.controller_port2 = controller;
+                    self.controller_port2_explicit = true;
                 } else {
                     eprintln!(
                         "Warning: invalid value '{}' for 'controller_port2' in configuration; \
@@ -1091,12 +1081,12 @@ impl Config {
     }
 
     fn validate_controller_ports(&self) -> Result<(), String> {
-        let arkanoid_count = [self.controller_port1, self.controller_port2]
+        let paddle_count = [self.controller_port1, self.controller_port2]
             .iter()
-            .filter(|controller| **controller == ControllerType::Arkanoid)
+            .filter(|controller| **controller == ControllerType::Paddle)
             .count();
 
-        if arkanoid_count > 1 {
+        if paddle_count > 1 {
             return Err("No more than one controller simulated using Mouse can be configured (Arkanoid/Zapper)".to_string());
         }
 
@@ -1821,10 +1811,12 @@ mod tests {
     fn test_config_file_controller_ports() {
         let mut config = Config::default();
         let _ = config.apply_config_value("controller_port1", "arkanoid");
-        let _ = config.apply_config_value("controller_port2", "none");
+        let _ = config.apply_config_value("controller_port2", "joypad");
 
-        assert_eq!(config.controller_port1, ControllerType::Arkanoid);
-        assert_eq!(config.controller_port2, ControllerType::None);
+        assert_eq!(config.controller_port1, ControllerType::Paddle);
+        assert_eq!(config.controller_port2, ControllerType::Joypad);
+        assert!(config.controller_port1_explicit);
+        assert!(config.controller_port2_explicit);
     }
 
     #[test]
@@ -1833,6 +1825,7 @@ mod tests {
         let _ = config.apply_config_value("controller_port1", "unknown");
 
         assert_eq!(config.controller_port1, ControllerType::Joypad);
+        assert!(!config.controller_port1_explicit);
     }
 
     #[test]
