@@ -1,5 +1,5 @@
 import init, { WasmNes } from "./pkg/neser.js?v=20260127";
-import { mapStandardGamepadState, selectPrimaryGamepad } from "./gamepad.js";
+import { mapStandardGamepadState, selectGamepads } from "./gamepad.js";
 import {
     createRomSaveKey,
     hasState,
@@ -8,6 +8,7 @@ import {
     saveState
 } from "./save_state_storage.js";
 import { createSaveStateController } from "./save_state_controller.js";
+import { applyJoypadButtonIfAllowed, applyPaddleMouseMotion, applyPaddleMouseButton } from "./paddle_input.js";
 import { createSaveStateContext } from "./save_state_context.js";
 import { fetchRomList } from "./rom_list.js";
 import { handleRomSelection } from "./rom_selection.js";
@@ -15,11 +16,7 @@ import { createFrameLimiter } from "./frame_limiter.js";
 import { computePlaybackRate } from "./audio_resampler.js";
 import { planFrame } from "./frame_plan.js";
 import { createSineScroller } from "./sine_scroller.js";
-import {
-    applyJoypadButtonIfAllowed,
-    applyPaddleMouseButton,
-    applyPaddleMouseMotion
-} from "./paddle_input.js";
+import { getKeyboardControllerTarget } from "./input_routing.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -772,7 +769,17 @@ const AUDIO_MAX_ADJUST = 0.005; // +/- 0.5% playback rate
 const AUDIO_LATENCY_GAIN = 0.1; // scale factor for latency correction
 let audioMuted = false;
 let gamepadEnabled = true;
-let lastGamepadState = {
+let lastGamepadState1 = {
+    a: false,
+    b: false,
+    select: false,
+    start: false,
+    up: false,
+    down: false,
+    left: false,
+    right: false
+};
+let lastGamepadState2 = {
     a: false,
     b: false,
     select: false,
@@ -1319,9 +1326,9 @@ async function populateRomSelect() {
 
 populateRomSelect();
 
-// Keyboard input for controller 1
-// Mapping: W=Up, S=Down, A=Left, D=Right, G=B, F=A, R=Select, T=Start
-const keyToButton = {
+// Keyboard input mappings for both controllers
+// Controller 1: W=Up, S=Down, A=Left, D=Right, G=B, F=A, R=Select, T=Start
+const keyToButtonController1 = {
     'w': { button: 4, name: 'Up' },      // Button 4 = Up
     's': { button: 5, name: 'Down' },    // Button 5 = Down
     'a': { button: 6, name: 'Left' },    // Button 6 = Left
@@ -1332,23 +1339,67 @@ const keyToButton = {
     't': { button: 3, name: 'Start' }    // Button 3 = Start
 };
 
+// Controller 2: U=Up, J=Down, H=Left, K=Right, ;=B, L=A, O=Select, P=Start
+const keyToButtonController2 = {
+    'u': { button: 4, name: 'Up' },      // Button 4 = Up
+    'j': { button: 5, name: 'Down' },    // Button 5 = Down
+    'h': { button: 6, name: 'Left' },    // Button 6 = Left
+    'k': { button: 7, name: 'Right' },   // Button 7 = Right
+    ';': { button: 1, name: 'B' },       // Button 1 = B
+    'l': { button: 0, name: 'A' },       // Button 0 = A
+    'o': { button: 2, name: 'Select' },  // Button 2 = Select
+    'p': { button: 3, name: 'Start' }    // Button 3 = Start
+};
+
+// Track connected gamepads for routing
+let connectedGamepads = [];
+
+function updateConnectedGamepads() {
+    const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+    connectedGamepads = selectGamepads(gamepads);
+    return connectedGamepads;
+}
+
+// Initialize connectedGamepads to detect any gamepads already connected on page load
+updateConnectedGamepads();
+
 document.addEventListener('keydown', (e) => {
     if (!nes) return;
     const key = e.key.toLowerCase();
-    const mapping = keyToButton[key];
-    if (mapping) {
-        e.preventDefault(); // Prevent default browser behavior
-        applyJoypadButtonIfAllowed(nes, 1, mapping.button, true);
+    const targets = getKeyboardControllerTarget(connectedGamepads.length);
+    
+    // Check controller 1 mapping
+    const mapping1 = keyToButtonController1[key];
+    if (mapping1 && targets.includes(1)) {
+        e.preventDefault();
+        applyJoypadButtonIfAllowed(nes, 1, mapping1.button, true);
+    }
+    
+    // Check controller 2 mapping
+    const mapping2 = keyToButtonController2[key];
+    if (mapping2 && targets.includes(2)) {
+        e.preventDefault();
+        applyJoypadButtonIfAllowed(nes, 2, mapping2.button, true);
     }
 });
 
 document.addEventListener('keyup', (e) => {
     if (!nes) return;
     const key = e.key.toLowerCase();
-    const mapping = keyToButton[key];
-    if (mapping) {
+    const targets = getKeyboardControllerTarget(connectedGamepads.length);
+    
+    // Check controller 1 mapping
+    const mapping1 = keyToButtonController1[key];
+    if (mapping1 && targets.includes(1)) {
         e.preventDefault();
-        applyJoypadButtonIfAllowed(nes, 1, mapping.button, false);
+        applyJoypadButtonIfAllowed(nes, 1, mapping1.button, false);
+    }
+    
+    // Check controller 2 mapping
+    const mapping2 = keyToButtonController2[key];
+    if (mapping2 && targets.includes(2)) {
+        e.preventDefault();
+        applyJoypadButtonIfAllowed(nes, 2, mapping2.button, false);
     }
 });
 
@@ -1460,45 +1511,53 @@ loadStateBtn?.addEventListener("click", async () => {
 
 function pollGamepad() {
     const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
-    const gamepad = selectPrimaryGamepad(gamepads);
-    if (!gamepad || !gamepad.connected) {
-        return;
+    connectedGamepads = selectGamepads(gamepads);
+    
+    // Apply first gamepad to controller 1
+    if (connectedGamepads.length >= 1) {
+        const state1 = mapStandardGamepadState(connectedGamepads[0]);
+        applyGamepadState(state1, 1, lastGamepadState1);
+        lastGamepadState1 = state1;
     }
-    const state = mapStandardGamepadState(gamepad);
-    applyGamepadState(state);
+    
+    // Apply second gamepad to controller 2
+    if (connectedGamepads.length >= 2) {
+        const state2 = mapStandardGamepadState(connectedGamepads[1]);
+        applyGamepadState(state2, 2, lastGamepadState2);
+        lastGamepadState2 = state2;
+    }
 }
 
-function applyGamepadState(state) {
+function applyGamepadState(state, controller, lastState) {
     if (!nes) return;
-    if (state.a !== lastGamepadState.a) {
-        applyJoypadButtonIfAllowed(nes, 1, 0, state.a);
+    if (state.a !== lastState.a) {
+        applyJoypadButtonIfAllowed(nes, controller, 0, state.a);
     }
-    if (state.b !== lastGamepadState.b) {
-        applyJoypadButtonIfAllowed(nes, 1, 1, state.b);
+    if (state.b !== lastState.b) {
+        applyJoypadButtonIfAllowed(nes, controller, 1, state.b);
     }
-    if (state.select !== lastGamepadState.select) {
-        applyJoypadButtonIfAllowed(nes, 1, 2, state.select);
+    if (state.select !== lastState.select) {
+        applyJoypadButtonIfAllowed(nes, controller, 2, state.select);
     }
-    if (state.start !== lastGamepadState.start) {
-        applyJoypadButtonIfAllowed(nes, 1, 3, state.start);
+    if (state.start !== lastState.start) {
+        applyJoypadButtonIfAllowed(nes, controller, 3, state.start);
     }
-    if (state.up !== lastGamepadState.up) {
-        applyJoypadButtonIfAllowed(nes, 1, 4, state.up);
+    if (state.up !== lastState.up) {
+        applyJoypadButtonIfAllowed(nes, controller, 4, state.up);
     }
-    if (state.down !== lastGamepadState.down) {
-        applyJoypadButtonIfAllowed(nes, 1, 5, state.down);
+    if (state.down !== lastState.down) {
+        applyJoypadButtonIfAllowed(nes, controller, 5, state.down);
     }
-    if (state.left !== lastGamepadState.left) {
-        applyJoypadButtonIfAllowed(nes, 1, 6, state.left);
+    if (state.left !== lastState.left) {
+        applyJoypadButtonIfAllowed(nes, controller, 6, state.left);
     }
-    if (state.right !== lastGamepadState.right) {
-        applyJoypadButtonIfAllowed(nes, 1, 7, state.right);
+    if (state.right !== lastState.right) {
+        applyJoypadButtonIfAllowed(nes, controller, 7, state.right);
     }
-    lastGamepadState = state;
 }
 
 function resetGamepadState() {
-    applyGamepadState({
+    const emptyState = {
         a: false,
         b: false,
         select: false,
@@ -1507,13 +1566,23 @@ function resetGamepadState() {
         down: false,
         left: false,
         right: false
-    });
+    };
+    applyGamepadState(emptyState, 1, lastGamepadState1);
+    applyGamepadState(emptyState, 2, lastGamepadState2);
+    lastGamepadState1 = { ...emptyState };
+    lastGamepadState2 = { ...emptyState };
 }
 
 window.addEventListener("gamepadconnected", () => {
+    updateConnectedGamepads();
     if (gamepadEnabled && running && !paused) {
         pollGamepad();
     }
+});
+
+window.addEventListener("gamepaddisconnected", () => {
+    updateConnectedGamepads();
+    resetGamepadState();
 });
 
 // Handle canvas resizing when entering/exiting fullscreen

@@ -116,6 +116,17 @@ impl WasmNes {
         self.nes.paddle_port() == Some(1)
     }
 
+    /// Returns the controller port number that has a paddle, or null if no paddle.
+    /// 
+    /// # Returns
+    /// * `Some(1)` if paddle on port 1
+    /// * `Some(2)` if paddle on port 2
+    /// * `None` if no paddle connected
+    #[wasm_bindgen]
+    pub fn paddle_port(&self) -> Option<u8> {
+        self.nes.paddle_port()
+    }
+
     /// Set the current position of paddle 1 (0..=255).
     #[wasm_bindgen]
     pub fn set_paddle1_position(&mut self, position: u8) {
@@ -126,6 +137,26 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn set_paddle1_trigger(&mut self, pressed: bool) {
         self.nes.set_paddle1_trigger(pressed);
+    }
+
+    /// Set the current position of a paddle controller on a specific port.
+    ///
+    /// # Arguments
+    /// * `port` - Controller port (1 or 2)
+    /// * `position` - The paddle position value (0..=255)
+    #[wasm_bindgen]
+    pub fn set_paddle_position(&mut self, port: u8, position: u8) {
+        self.nes.set_paddle_position(port, position);
+    }
+
+    /// Set the trigger button state for a paddle controller on a specific port.
+    ///
+    /// # Arguments
+    /// * `port` - Controller port (1 or 2)
+    /// * `pressed` - true if pressed, false if released
+    #[wasm_bindgen]
+    pub fn set_paddle_trigger(&mut self, port: u8, pressed: bool) {
+        self.nes.set_paddle_trigger(port, pressed);
     }
 
     /// Get all available audio samples from the emulator.
