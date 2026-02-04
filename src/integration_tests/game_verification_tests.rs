@@ -105,8 +105,8 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data)
             .map_err(|e| format!("Failed to parse ROM {}: {e}", rom_path.display()))?;
 
-        let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge, None);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
         nes.reset(false);
 
         let rgb = run_nes_for_frames(&mut nes, frames);
@@ -122,8 +122,8 @@ mod tests {
         let rom_data = manual_test_cartridges::triangle_only_nrom_128();
         let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
 
-        let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge, None);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
         nes.reset(false);
 
         let frame = run_nes_for_frames(&mut nes, 2);

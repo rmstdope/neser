@@ -1482,7 +1482,7 @@ mod tests {
     fn test_paddle_mode_suppresses_keyboard_joypad_input() {
         let mut paused = false;
         let mut debugger_open_requested = false;
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Paddle);
@@ -1507,7 +1507,7 @@ mod tests {
     fn test_keyboard_only_targets_ports_without_gamepads() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Two gamepad-capable controllers, but only one physical gamepad present.
         event_loop.controller_player_map.insert(42, 1);
@@ -1523,7 +1523,7 @@ mod tests {
     fn test_keyboard_targets_all_gamepad_ports_when_no_gamepads() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::W);
 
@@ -1536,7 +1536,7 @@ mod tests {
     fn test_gamepad_routes_to_first_gamepad_port() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Port 1 is mouse-only, port 2 is gamepad.
         nes.bus
@@ -1555,7 +1555,7 @@ mod tests {
 
     #[test]
     fn test_mouse_routes_to_all_mouse_ports() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Paddle);
@@ -1575,7 +1575,7 @@ mod tests {
 
     #[test]
     fn test_paddle_mouse_button_sets_trigger_when_enabled() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Paddle);
@@ -1589,7 +1589,7 @@ mod tests {
 
     #[test]
     fn test_paddle_mouse_button_ignored_when_disabled() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         nes.bus
             .borrow_mut()
@@ -1604,7 +1604,7 @@ mod tests {
 
     #[test]
     fn test_paddle_mouse_motion_updates_position_when_enabled() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Paddle);
@@ -1620,7 +1620,7 @@ mod tests {
 
     #[test]
     fn test_paddle_mouse_motion_ignored_when_disabled() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         let window_width = 320;
         let x = 240;
@@ -1641,7 +1641,7 @@ mod tests {
     fn test_paddle_mode_suppresses_controller_input() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Paddle);
@@ -1657,7 +1657,7 @@ mod tests {
     fn test_breakpoint_hit_pauses_and_opens_debugger() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -1684,7 +1684,7 @@ mod tests {
     fn test_remove_breakpoint_allows_execution_to_continue() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -1789,7 +1789,7 @@ mod tests {
         }
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
         let audio = SdlNesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -1820,7 +1820,7 @@ mod tests {
         let rom_path = copy_test_rom(&temp_dir);
 
         let cart = Cartridge::load_from_file(&rom_path).expect("Failed to load ROM");
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         nes.insert_cartridge(cart);
         nes.reset(false);
 
@@ -1844,7 +1844,7 @@ mod tests {
         let rom_path = copy_test_rom(&temp_dir);
 
         let cart = Cartridge::load_from_file(&rom_path).expect("Failed to load ROM");
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         nes.insert_cartridge(cart);
         nes.reset(false);
 
@@ -1875,7 +1875,7 @@ mod tests {
     fn test_handle_key_down_escape_requests_quit() {
         // Desired behavior: key handling for Escape is centralized in handle_key_down,
         // and it indicates that the event loop should exit.
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -1892,7 +1892,7 @@ mod tests {
     #[test]
     fn test_handle_key_down_space_toggles_pause() {
         // Desired behavior: Space toggles pause state via centralized handle_key_down.
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -1919,7 +1919,7 @@ mod tests {
     fn test_handle_key_down_h_toggles_help_overlay() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::H);
         assert!(event_loop.help_overlay_visible);
@@ -1965,7 +1965,7 @@ mod tests {
     }
 
     fn nes_with_jsr_program() -> Nes {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Program at $8000:
         //   JSR $8006
@@ -2010,7 +2010,7 @@ mod tests {
     }
 
     fn nes_with_nop_loop_program() -> Nes {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Program at $8000:
         //   NOP
@@ -2046,7 +2046,7 @@ mod tests {
     #[test]
     fn test_handle_key_down_f5_pauses_emulation() {
         // Desired behavior: F5 opens debugger windows, which immediately pauses emulation.
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -2063,7 +2063,7 @@ mod tests {
 
     #[test]
     fn test_handle_key_down_f5_when_debugger_open_continues_and_closes_debugger() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let mut paused = true;
         let mut debugger_open_requested = true;
 
@@ -2202,7 +2202,7 @@ mod tests {
     fn test_continue_action_unpauses_and_closes_debugger() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         event_loop.request_debugger_open();
 
@@ -2230,7 +2230,7 @@ mod tests {
     fn test_continue_skips_breakpoint_once_on_same_pc() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -2271,7 +2271,7 @@ mod tests {
     fn test_f5_when_debugger_open_behaves_like_continue_for_breakpoints() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -2301,7 +2301,7 @@ mod tests {
     fn test_run_to_nmi_action_runs_until_nmi_vector_pc() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Minimal cartridge with vectors.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -2370,7 +2370,7 @@ mod tests {
     fn test_run_to_irq_action_runs_until_irq_vector_pc() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Minimal cartridge with vectors.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -2442,7 +2442,7 @@ mod tests {
     fn test_run_to_irq_requires_actual_irq_entry_not_just_pc_match() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Minimal cartridge where IRQ vector points at the reset entrypoint.
         // This catches false positives where the debugger stops just because PC == vector.
@@ -2507,7 +2507,7 @@ mod tests {
     fn test_run_to_nmi_when_already_in_nmi_waits_for_next_nmi_entry() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Cartridge with RESET=$8000, NMI=$9000.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -2621,7 +2621,7 @@ mod tests {
     fn test_run_to_nmi_ignores_other_breakpoints_until_next_nmi_entry() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Cartridge with RESET=$8000, NMI=$9000.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -2719,7 +2719,7 @@ mod tests {
     fn test_step_into_action_runs_via_temporary_breakpoint_and_reopens_debugger() {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -2835,7 +2835,7 @@ mod tests {
     #[test]
     fn test_handle_key_down_f1_resets_nes() {
         // Desired behavior: F1 triggers a reset through centralized handle_key_down.
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -2875,7 +2875,7 @@ mod tests {
         let mut debugger_open_requested = false;
 
         // W => Up
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::W,
@@ -2886,7 +2886,7 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 1, 0, 0, 0]);
 
         // S => Down
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::S,
@@ -2897,7 +2897,7 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 1, 0, 0]);
 
         // A => Left
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::A,
@@ -2908,7 +2908,7 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 1, 0]);
 
         // D => Right
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::D,
@@ -2919,7 +2919,7 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 0, 1]);
 
         // R => Select
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::R,
@@ -2930,7 +2930,7 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 1, 0, 0, 0, 0, 0]);
 
         // T => Start
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::T,
@@ -2941,7 +2941,7 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 1, 0, 0, 0, 0]);
 
         // F => A
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F,
@@ -2952,7 +2952,7 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [1, 0, 0, 0, 0, 0, 0, 0]);
 
         // G => B
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::G,
@@ -2992,7 +2992,7 @@ mod tests {
     fn test_run_with_nes() {
         let config = default_config();
         let _event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Just verify that run accepts a Nes instance
         // We can't actually run the event loop in tests as it would loop forever
@@ -3058,7 +3058,7 @@ mod tests {
             calls: calls.clone(),
         }));
 
-        let nes = Nes::new(TvSystem::Ntsc);
+        let nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         event_loop.request_debugger_open();
         event_loop.render_debugger_if_needed(&nes);
@@ -3087,7 +3087,7 @@ mod tests {
         }));
         event_loop.request_debugger_open();
 
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Provide a minimal cartridge so `run_cpu_tick()` won't panic on unmapped vector reads.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -3144,7 +3144,7 @@ mod tests {
         }));
         event_loop.request_debugger_open();
 
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Provide a minimal cartridge so `run_cpu_tick()` won't panic on unmapped vector reads.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -3201,7 +3201,7 @@ mod tests {
             calls: calls.clone(),
         }));
 
-        let nes = Nes::new(TvSystem::Ntsc);
+        let nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         event_loop.request_debugger_open();
         SdlEventLoop::tick_windowed_paused_for_run(

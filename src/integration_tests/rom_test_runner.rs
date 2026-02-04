@@ -102,8 +102,8 @@ pub(crate) mod tests {
             };
 
             // Create NES and insert cartridge
-            let mut nes = Nes::new(TvSystem::Ntsc);
-            nes.insert_cartridge(cartridge, None);
+            let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+            nes.insert_cartridge(cartridge);
             // Initial reset is treated as power-on.
             nes.reset(false);
 
@@ -299,8 +299,8 @@ pub(crate) mod tests {
             }
         };
 
-        let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge, None);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
         nes.reset(false);
 
         for _frame in 1..=max_frames {

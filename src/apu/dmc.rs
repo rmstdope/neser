@@ -789,8 +789,8 @@ mod sample_tests {
         let rom = make_ines_nrom_32k(&prg);
         let cartridge = Cartridge::new(&rom).expect("test ROM should parse");
 
-        let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge, None);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        nes.insert_cartridge(cartridge);
         nes.reset(false);
 
         // Configure DMC to play 1 byte starting at $C000, at the fastest rate.

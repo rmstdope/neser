@@ -28,7 +28,7 @@ impl WasmNes {
     pub fn new() -> WasmNes {
         console_error_panic_hook::set_once();
         WasmNes {
-            nes: Nes::new(TvSystem::Ntsc),
+            nes: Nes::new_with_tv_system(TvSystem::Ntsc),
             audio_muted: false,
         }
     }
@@ -36,9 +36,9 @@ impl WasmNes {
     /// Load a ROM from raw bytes.
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), JsValue> {
-        self.nes = Nes::new(TvSystem::Ntsc);
+        self.nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let cart = Cartridge::new(rom).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        self.nes.insert_cartridge(cart, None);
+        self.nes.insert_cartridge(cart);
         self.nes.reset(false);
         Ok(())
     }

@@ -30,12 +30,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize SDL2
     let sdl_context = sdl2::init()?;
-    let mut nes_instance = Nes::new(config.tv_system);
+    let mut nes_instance = Nes::new(config);
 
     // Create audio output (request 44.1 kHz) unless disabled.
     // SDL may open the device at a different rate; always sync the APU to the actual rate
     // to avoid steady underruns.
-    let audio = if !config.audio_enabled {
+    let audio = if !nes_instance.config.audio_enabled {
         None
     } else {
         let audio = SdlNesAudio::new(&sdl_context, 44100)?;
@@ -44,10 +44,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some(audio)
     };
 
-    let mut event_loop = SdlEventLoop::new(false, audio, &config)?;
+    let mut event_loop = SdlEventLoop::new(false, audio, &nes_instance.config)?;
 
     // Request debugger open if enabled via CLI
-    if config.debugger_enabled {
+    if nes_instance.config.debugger_enabled {
         event_loop.request_debugger_open();
     }
 
@@ -84,11 +84,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
-    let rom_path = config.rom_path.as_deref().unwrap_or(default_rom_path);
+    let rom_path = nes_instance.config.rom_path.as_deref().unwrap_or(default_rom_path);
     let cart = cartridge::Cartridge::load_from_file(rom_path)?;
-    // Pass config to insert_cartridge so it can apply controller configuration
-    // and respect user overrides for auto-detection
-    nes_instance.insert_cartridge(cart, Some(&config));
+    nes_instance.insert_cartridge(cart);
 
     if config.load_state {
         let state_path = nes_instance

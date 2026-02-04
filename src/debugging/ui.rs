@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_window_models_have_three_debug_windows_with_text() {
-        let nes = Nes::new(TvSystem::Ntsc);
+        let nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         let snapshot = snapshot(&nes);
 
         let windows = window_models(&snapshot);
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_cpu_register_lines_render_expected_values() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
         nes.cpu.set_pc(0xC000);
         nes.cpu.set_a_register(0x12);
         nes.cpu.set_x(0x34);

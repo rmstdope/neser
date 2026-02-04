@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_contains_basic_cpu_ppu_apu_info() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         // Insert a cartridge so PRG hexdump can be generated.
         let mut prg_rom = vec![0u8; 32 * 1024];
@@ -192,7 +192,7 @@ mod tests {
         prg_rom[0x7FFF] = irq_hi;
 
         let cartridge = Cartridge::from_parts(prg_rom, vec![], MirroringMode::Horizontal);
-        nes.insert_cartridge(cartridge, None);
+        nes.insert_cartridge(cartridge);
 
         // Seed a couple of CPU registers so the snapshot has something meaningful.
         nes.cpu.set_pc(0xC000);
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_includes_disassembly_around_pc() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
 
         let mut prg_rom = vec![0u8; 32 * 1024];
         // $8000: LDA #$01; TAX; INX; BRK
@@ -242,7 +242,7 @@ mod tests {
         prg_rom[0x0003] = 0xE8;
         prg_rom[0x0004] = 0x00;
         let cartridge = Cartridge::from_parts(prg_rom, vec![], MirroringMode::Horizontal);
-        nes.insert_cartridge(cartridge, None);
+        nes.insert_cartridge(cartridge);
 
         nes.cpu.set_pc(0x8000);
 
