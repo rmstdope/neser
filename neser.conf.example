@@ -20,6 +20,18 @@
 # Format: key=value (one per line)
 # Comments start with #
 # Boolean values: true/false, yes/no, 1/0 (case-insensitive)
+#
+# Command-line arguments use the same keys with -- prefix and hyphens:
+#   tv_system=pal     →  --tv-system pal
+#   audio=false       →  --audio false  OR  --audio=0  OR  --no-audio  OR  --disable-audio
+#   audio=true        →  --audio  OR  --audio true  OR  --audio=1
+#   pulse1=true       →  --pulse1  OR  --pulse1 true  OR  --pulse1=1
+#   pulse2=false      →  --pulse2 false  OR  --pulse2=0  OR  --no-pulse2  OR  --disable-pulse2
+#
+# CLI boolean flags:
+#   - No value (--flag) defaults to true
+#   - With value (--flag true/false) sets explicit value  
+#   - Prefix negation (--no-flag, --disable-flag) sets to false
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -92,6 +104,10 @@ gamepads=true
 # Open debugger windows (CPU/PPU/APU) on startup.
 # The emulator will start paused when this is enabled.
 debugger=false
+
+# Load save-state on startup (uses ROM .state path).
+# This will automatically restore the emulator state from the last save.
+load_state=false
 
 # -----------------------------------------------------------------------------
 # Emulation Speed (DISABLED - not supported with current eventloop design)
