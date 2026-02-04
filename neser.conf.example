@@ -86,20 +86,20 @@ gamepads=true
 # Valid values: joypad, arkanoid, none
 # Default: joypad for both ports
 #
-# NOTE: Manual configuration is not yet fully integrated with the runtime.
-# The auto-detection mechanism below is the primary way to enable paddle controllers.
-#
 # Port 1 (Player 1):
 #controller_port1=joypad
 #
 # Port 2 (Player 2):
 #controller_port2=joypad
 #
-# Auto-detection (currently active):
-# Paddle controllers are auto-detected for known ROMs:
+# Auto-detection behavior:
+# If both ports are left at the default "joypad" setting, NESER will
+# automatically detect known paddle ROMs and configure them:
 #   - Arkanoid (CRC 0x32FB0583) → arkanoid paddle on port 2
 #   - PaddleTest3 (CRC 0x47F9F410) → arkanoid paddle on port 1
-# Auto-detection overrides manual settings.
+#
+# If you explicitly configure EITHER port, auto-detection is disabled entirely,
+# and your configuration is used instead. This gives you full control.
 
 # Paddle Controller Input (SDL frontend)
 # When a paddle controller is enabled on a port, mouse input controls it:
@@ -108,7 +108,7 @@ gamepads=true
 # Mouse input is routed to ALL ports configured as paddles.
 # Keyboard/gamepad input for paddle-configured ports is suppressed.
 #
-# Configuration examples (for future when manual config is fully integrated):
+# Configuration examples:
 #
 # Example 1: Mouse-based paddle on port 1 (for PaddleTest3-style games)
 #   controller_port1=arkanoid
@@ -121,6 +121,10 @@ gamepads=true
 # Example 3: Paddles on both ports (both controlled by same mouse)
 #   controller_port1=arkanoid
 #   controller_port2=arkanoid
+#
+# Example 4: Force joypad mode even for Arkanoid ROM
+#   controller_port1=joypad
+#   controller_port2=joypad
 
 # -----------------------------------------------------------------------------
 # Debugging

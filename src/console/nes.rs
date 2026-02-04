@@ -89,20 +89,49 @@ impl Nes {
         }
     }
 
-    /// Insert a cartridge and map it into memory
+    /// Set controller types from configuration.
+    /// Should be called before insert_cartridge to apply explicit user configuration.
+    pub fn set_controller_types(
+        &mut self,
+        port1: crate::bus::ControllerType,
+        port2: crate::bus::ControllerType,
+    ) {
+        let mut memory = self.bus.borrow_mut();
+        memory.set_controller_type(1, port1);
+        memory.set_controller_type(2, port2);
+    }
+
+    /// Insert a cartridge and map it into memory.
+    /// Auto-configures paddle controllers for known ROMs only if both ports are still joypads.
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
         let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge.crc32());
 
         let mut memory = self.bus.borrow_mut();
         memory.map_cartridge(cartridge);
 
-        // Auto-configure Arkanoid paddle when detected
+        // Auto-configure Arkanoid paddle when detected, but only if user hasn't
+        // explicitly configured controllers (both ports are still default gamepad input)
         if arkanoid_port != 0 {
-            println!(
-                "Enabling Arkanoid paddle on port {} for inserted cartridge",
-                arkanoid_port
-            );
-            memory.set_controller_type(arkanoid_port, crate::bus::ControllerType::Paddle);
+            let port1_is_gamepad = memory.controller_input_type(1)
+                .map_or(false, |t| matches!(t, crate::input::ControllerInput::Gamepad));
+            let port2_is_gamepad = memory.controller_input_type(2)
+                .map_or(false, |t| matches!(t, crate::input::ControllerInput::Gamepad));
+            
+            let should_auto_configure = port1_is_gamepad && port2_is_gamepad;
+            
+            if should_auto_configure {
+                println!(
+                    "Enabling Arkanoid paddle on port {} for inserted cartridge",
+                    arkanoid_port
+                );
+                memory.set_controller_type(arkanoid_port, crate::bus::ControllerType::Paddle);
+            } else {
+                println!(
+                    "ROM detected as Arkanoid (port {}), but user has explicitly configured controllers; \
+                     keeping user configuration",
+                    arkanoid_port
+                );
+            }
         }
     }
 

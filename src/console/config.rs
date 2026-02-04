@@ -212,6 +212,16 @@ impl ControllerType {
             _ => None,
         }
     }
+
+    /// Convert config ControllerType to bus ControllerType.
+    pub fn to_bus_controller_type(self) -> crate::bus::ControllerType {
+        match self {
+            Self::Joypad => crate::bus::ControllerType::Joypad,
+            Self::Arkanoid => crate::bus::ControllerType::Paddle,
+            // "None" maps to Joypad (no controller disconnection support yet)
+            Self::None => crate::bus::ControllerType::Joypad,
+        }
+    }
 }
 
 bitflags! {

@@ -84,6 +84,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
+    // Apply controller configuration from config file before inserting cartridge
+    // This ensures auto-detection respects user preferences
+    nes_instance.set_controller_types(
+        config.controller_port1.to_bus_controller_type(),
+        config.controller_port2.to_bus_controller_type(),
+    );
+
     let rom_path = config.rom_path.as_deref().unwrap_or(default_rom_path);
     let cart = cartridge::Cartridge::load_from_file(rom_path)?;
     nes_instance.insert_cartridge(cart);

@@ -115,14 +115,21 @@ Each port can be independently configured in the configuration file or via the a
 
 ### Auto-Detection
 
-NESER automatically detects known paddle-based games by ROM CRC32 and configures the appropriate port:
+NESER automatically detects known paddle-based games by ROM CRC32 and configures the appropriate port **only if both controller ports are using the default joypad configuration**:
 
 - **Arkanoid** (CRC: 0x32FB0583) → Paddle on **port 2**
 - **PaddleTest3** (CRC: 0x47F9F410) → Paddle on **port 1**
 
-When a known ROM is loaded, you'll see a message like:
+**Important**: Auto-detection respects explicit user configuration. If you have configured either controller port in your config file, auto-detection will be skipped and your configuration will be used instead.
+
+When a known ROM is loaded with default configuration, you'll see a message like:
 ```
 Enabling Arkanoid paddle on port 2 for inserted cartridge
+```
+
+When a known ROM is loaded but you have explicit configuration, you'll see:
+```
+ROM detected as Arkanoid (port 2), but user has explicitly configured controllers; keeping user configuration
 ```
 
 ### Paddle Controller Input (SDL Frontend)
@@ -136,9 +143,7 @@ When a paddle controller is enabled on either port:
 
 ### Manual Configuration Examples
 
-**Note**: Manual controller configuration via config file is currently supported in the configuration structure but is not yet fully integrated with the runtime. The auto-detection mechanism (described above) is the primary way to enable paddle controllers. Manual configuration support is planned for future releases.
-
-For reference, the configuration format will be:
+Manual controller configuration via config file is supported and will override auto-detection. Configure controller types in your config file before loading a ROM:
 
 **Example 1: Paddle on Port 1**
 ```text
@@ -157,6 +162,8 @@ controller_port2=arkanoid
 controller_port1=arkanoid
 controller_port2=arkanoid
 ```
+
+**Note**: When you explicitly configure controllers, auto-detection is disabled, giving you full control over controller configuration regardless of which ROM is loaded.
 
 ### Validation Steps
 
