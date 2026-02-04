@@ -16,6 +16,7 @@ import { createFrameLimiter } from "./frame_limiter.js";
 import { computePlaybackRate } from "./audio_resampler.js";
 import { planFrame } from "./frame_plan.js";
 import { createSineScroller } from "./sine_scroller.js";
+import { getKeyboardControllerTarget } from "./input_routing.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -1347,23 +1348,12 @@ function updateConnectedGamepads() {
     return connectedGamepads;
 }
 
-function getKeyboardTarget() {
-    const gamepadCount = connectedGamepads.length;
-    if (gamepadCount === 0) {
-        return 1;  // No gamepads: keyboard controls controller 1
-    } else if (gamepadCount === 1) {
-        return 2;  // One gamepad: keyboard controls controller 2
-    } else {
-        return null;  // Two or more gamepads: keyboard disabled
-    }
-}
-
 document.addEventListener('keydown', (e) => {
     if (!nes) return;
     const key = e.key.toLowerCase();
     const mapping = keyToButton[key];
     if (mapping) {
-        const target = getKeyboardTarget();
+        const target = getKeyboardControllerTarget(connectedGamepads.length);
         if (target !== null) {
             e.preventDefault(); // Prevent default browser behavior
             applyJoypadButtonIfAllowed(nes, target, mapping.button, true);
@@ -1376,7 +1366,7 @@ document.addEventListener('keyup', (e) => {
     const key = e.key.toLowerCase();
     const mapping = keyToButton[key];
     if (mapping) {
-        const target = getKeyboardTarget();
+        const target = getKeyboardControllerTarget(connectedGamepads.length);
         if (target !== null) {
             e.preventDefault();
             applyJoypadButtonIfAllowed(nes, target, mapping.button, false);
