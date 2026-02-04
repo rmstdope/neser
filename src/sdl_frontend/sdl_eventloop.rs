@@ -1485,7 +1485,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::bus::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Paddle);
         nes.set_paddle1_position(0x80);
         nes.set_paddle1_trigger(true);
 
@@ -1541,10 +1541,10 @@ mod tests {
         // Port 1 is mouse-only, port 2 is gamepad.
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::bus::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Paddle);
         nes.bus
             .borrow_mut()
-            .set_controller_type(2, crate::bus::ControllerType::Joypad);
+            .set_controller_type(2, crate::input::ControllerType::Joypad);
 
         event_loop.controller_player_map.insert(42, 1);
         event_loop.handle_controller_button(&mut nes, 42, sdl2::controller::Button::A, true);
@@ -1558,10 +1558,10 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::bus::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Paddle);
         nes.bus
             .borrow_mut()
-            .set_controller_type(2, crate::bus::ControllerType::Paddle);
+            .set_controller_type(2, crate::input::ControllerType::Paddle);
 
         let window_width = 320;
         let x = 240;
@@ -1578,7 +1578,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::bus::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Paddle);
 
         SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
@@ -1593,12 +1593,12 @@ mod tests {
 
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::bus::ControllerType::Joypad);
+            .set_controller_type(1, crate::input::ControllerType::Joypad);
         SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
 
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::bus::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Paddle);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
     }
 
@@ -1607,7 +1607,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::bus::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Paddle);
 
         let window_width = 320;
         let x = 240;
@@ -1627,12 +1627,12 @@ mod tests {
 
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::bus::ControllerType::Joypad);
+            .set_controller_type(1, crate::input::ControllerType::Joypad);
         SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
 
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::bus::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Paddle);
         assert_eq!(read_paddle_position(&mut nes), 0x62);
     }
 
@@ -1644,7 +1644,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::bus::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Paddle);
 
         event_loop.controller_player_map.insert(42, 1);
         event_loop.handle_controller_button(&mut nes, 42, sdl2::controller::Button::A, true);

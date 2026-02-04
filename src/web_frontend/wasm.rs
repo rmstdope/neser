@@ -38,7 +38,7 @@ impl WasmNes {
     pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), JsValue> {
         self.nes = Nes::new(TvSystem::Ntsc);
         let cart = Cartridge::new(rom).map_err(|e| JsValue::from_str(&e.to_string()))?;
-        self.nes.insert_cartridge(cart);
+        self.nes.insert_cartridge(cart, None);
         self.nes.reset(false);
         Ok(())
     }

@@ -9,4 +9,4 @@ pub mod ram_device;
 
 #[cfg(test)]
 pub(crate) use bus::BusDevice;
-pub use bus::{Bus, ControllerType};
+pub use bus::Bus;

@@ -96,7 +96,7 @@ mod tests {
         let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
         let cartridge = Cartridge::new(&rom_data).expect("DMA Sync Test v2 ROM should parse");
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
         run_nes_for_frames(&mut nes, 300);
 
@@ -114,7 +114,7 @@ mod tests {
         let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
         let cartridge = Cartridge::new(&rom_data).expect("DMA Sync Test v2 ROM should parse");
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
         run_nes_for_frames(&mut nes, 150);
         // Halfway in, simulate a right button press
@@ -164,7 +164,7 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data).expect("dpcmletterbox ROM should parse");
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         run_nes_for_frames(&mut nes, 60);
@@ -370,7 +370,7 @@ mod tests {
 
         // Create NES and insert cartridge
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.cpu.reset(false);
         // nestest automated test starts execution at $C000 (not reset vector $C004)
         nes.cpu.set_pc(0xC000);

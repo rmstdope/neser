@@ -75,7 +75,7 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data).expect("demo_ntsc ROM should parse");
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         const WARMUP_FRAMES: u32 = 25;

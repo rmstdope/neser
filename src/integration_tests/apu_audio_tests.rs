@@ -42,7 +42,7 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         {
@@ -95,7 +95,7 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         {

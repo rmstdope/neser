@@ -1,10 +1,11 @@
 use crate::apu::Apu;
 use crate::bus::Bus;
 use crate::cartridge::Cartridge;
-use crate::console::{SAVESTATE_VERSION, SaveState};
+use crate::console::{Config, SAVESTATE_VERSION, SaveState};
 use crate::cpu::Cpu;
 use crate::cpu::lookup;
 use crate::debugging::Tracing;
+use crate::input::ControllerType;
 use crate::ppu::Ppu;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -89,49 +90,56 @@ impl Nes {
         }
     }
 
-    /// Set controller types from configuration.
-    /// Should be called before insert_cartridge to apply explicit user configuration.
-    pub fn set_controller_types(
-        &mut self,
-        port1: crate::bus::ControllerType,
-        port2: crate::bus::ControllerType,
-    ) {
-        let mut memory = self.bus.borrow_mut();
-        memory.set_controller_type(1, port1);
-        memory.set_controller_type(2, port2);
-    }
-
     /// Insert a cartridge and map it into memory.
-    /// Auto-configures paddle controllers for known ROMs only if both ports are still joypads.
-    pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
+    /// Auto-configures paddle controllers for known ROMs if that specific port hasn't been explicitly configured.
+    /// If config is None, uses defaults (joypad for both ports, not explicitly configured).
+    pub fn insert_cartridge(&mut self, cartridge: Cartridge, config: Option<&Config>) {
         let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge.crc32());
 
-        let mut memory = self.bus.borrow_mut();
-        memory.map_cartridge(cartridge);
+        let mut bus = self.bus.borrow_mut();
+        bus.map_cartridge(cartridge);
 
-        // Auto-configure Arkanoid paddle when detected, but only if user hasn't
-        // explicitly configured controllers (both ports are still default gamepad input)
+        // Get controller config and explicit flags, using defaults if config not provided
+        let (port1_type, port2_type, port1_explicit, port2_explicit) = if let Some(cfg) = config {
+            (cfg.controller_port1, cfg.controller_port2, cfg.controller_port1_explicit, cfg.controller_port2_explicit)
+        } else {
+            (ControllerType::Joypad, ControllerType::Joypad, false, false)
+        };
+
+        // Auto-configure Arkanoid paddle when detected, but only if the specific port
+        // hasn't been explicitly configured by the user
         if arkanoid_port != 0 {
-            let port1_is_gamepad = memory.controller_input_type(1)
-                .map_or(false, |t| matches!(t, crate::input::ControllerInput::Gamepad));
-            let port2_is_gamepad = memory.controller_input_type(2)
-                .map_or(false, |t| matches!(t, crate::input::ControllerInput::Gamepad));
+            let port_explicitly_configured = match arkanoid_port {
+                1 => port1_explicit,
+                2 => port2_explicit,
+                _ => false,
+            };
             
-            let should_auto_configure = port1_is_gamepad && port2_is_gamepad;
-            
-            if should_auto_configure {
+            if !port_explicitly_configured {
                 println!(
                     "Enabling Arkanoid paddle on port {} for inserted cartridge",
                     arkanoid_port
                 );
-                memory.set_controller_type(arkanoid_port, crate::bus::ControllerType::Paddle);
+                bus.set_controller_type(arkanoid_port, ControllerType::Paddle);
+                
+                // Apply the other port's configuration
+                let other_port = if arkanoid_port == 1 { 2 } else { 1 };
+                let other_port_type = if arkanoid_port == 1 { port2_type } else { port1_type };
+                bus.set_controller_type(other_port, other_port_type);
             } else {
                 println!(
-                    "ROM detected as Arkanoid (port {}), but user has explicitly configured controllers; \
+                    "ROM detected as Arkanoid (port {}), but user has explicitly configured that port; \
                      keeping user configuration",
                     arkanoid_port
                 );
+                // Apply user's explicit configuration
+                bus.set_controller_type(1, port1_type);
+                bus.set_controller_type(2, port2_type);
             }
+        } else {
+            // No paddle detected, just apply user config
+            bus.set_controller_type(1, port1_type);
+            bus.set_controller_type(2, port2_type);
         }
     }
 
@@ -860,7 +868,7 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data).expect("minimal ROM should parse");
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
 
         // After a power-on reset, CPU reset consumes 7 cycles (21 PPU cycles at 3x).
         // The emulator maintains a 1-cycle PPU lead for timing quirks (sprite-0 hit, etc).
@@ -929,7 +937,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
 
         // Ensure cpu_cycle passed into APU reset is non-zero (so we don't take the power-on
         // early-return path inside APU reset).
@@ -956,7 +964,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
 
         // Set a non-default $4017 value.
         nes.apu.borrow_mut().write_frame_counter(0x80);
@@ -981,7 +989,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.cpu.reset(false);
 
         // Set CPU to an even cycle (8)
@@ -1010,7 +1018,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.cpu.reset(false);
 
         // Set CPU to an odd cycle (7)
@@ -1039,7 +1047,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.cpu.reset(false);
 
         // Set up test data in RAM at page $02 ($0200-$02FF)
@@ -1078,7 +1086,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.cpu.reset(false);
 
         // Set up distinct data in different pages
@@ -1116,7 +1124,7 @@ mod tests {
         let mut nes = Nes::new(TvSystem::Ntsc);
         let rom_data = create_minimal_rom();
         let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.cpu.reset(false);
 
         // Set CPU to an even cycle (8)
@@ -1195,7 +1203,7 @@ mod tests {
         // Load a simple NOP program that executes predictably
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
 
         // Reset to start execution
         nes.reset(false);
@@ -1224,7 +1232,7 @@ mod tests {
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Force an NMI pending edge before executing the next instruction.
@@ -1248,7 +1256,7 @@ mod tests {
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Get initial APU cycle count
@@ -1285,7 +1293,7 @@ mod tests {
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Configure DMC to play 1 byte starting at $C000, at the fastest rate.
@@ -1322,7 +1330,7 @@ mod tests {
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Clock the APU until a sample is ready
@@ -1346,7 +1354,7 @@ mod tests {
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Clock until a sample is ready
@@ -1373,7 +1381,7 @@ mod tests {
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Clock until a sample is ready
@@ -1429,7 +1437,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Write to PRG-RAM (would be affected by a mapper that has reset state)
@@ -1452,7 +1460,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Run some cycles to get the emulator into an interesting state
@@ -1494,7 +1502,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Create a state with an incompatible version
@@ -1519,7 +1527,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Create a state with a different mapper number
@@ -1545,7 +1553,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         // Run to get to an interesting state
@@ -1593,7 +1601,7 @@ mod tests {
         cartridge.set_crc32_for_test(0x32FB0583);
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
 
         // Should configure paddle on port 2 for Arkanoid ROM
         nes.bus.borrow_mut().set_paddle_position(2, 0xA5);
@@ -1613,7 +1621,7 @@ mod tests {
         cartridge.set_crc32_for_test(0xDEADBEEF);
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
 
         // Should have joypad on both ports by default
         nes.bus

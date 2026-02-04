@@ -7,7 +7,7 @@ use super::ram_device::RamDevice;
 use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::console::{BusState, MapperState};
-use crate::input::{Button, Controller, Joypad, Paddle};
+use crate::input::{Button, Controller, ControllerType, Joypad, Paddle};
 use crate::ppu;
 use crate::trace_mapper;
 use std::cell::RefCell;
@@ -15,14 +15,6 @@ use std::io;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::rc::Rc;
-
-/// Controller type for a port
-#[allow(dead_code)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ControllerType {
-    Joypad,
-    Paddle,
-}
 
 pub trait BusDevice {
     fn read(&mut self, addr: u16, open_bus: u8, clock_joypads: bool) -> Option<u8>;
@@ -1831,7 +1823,7 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Configure paddle on port 1
-        memory.set_controller_type(1, crate::bus::ControllerType::Paddle);
+        memory.set_controller_type(1, crate::input::ControllerType::Paddle);
         memory.set_paddle_position(1, 0xA5);
         memory.set_paddle_trigger(1, true);
 
@@ -1854,7 +1846,7 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Configure paddle on port 2
-        memory.set_controller_type(2, crate::bus::ControllerType::Paddle);
+        memory.set_controller_type(2, crate::input::ControllerType::Paddle);
         memory.set_paddle_position(2, 0xB3);
         memory.set_paddle_trigger(2, false);
 
@@ -1881,8 +1873,8 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Configure joypad on port 1, paddle on port 2
-        memory.set_controller_type(1, crate::bus::ControllerType::Joypad);
-        memory.set_controller_type(2, crate::bus::ControllerType::Paddle);
+        memory.set_controller_type(1, crate::input::ControllerType::Joypad);
+        memory.set_controller_type(2, crate::input::ControllerType::Paddle);
 
         // Set joypad buttons
         memory.set_button(1, crate::input::Button::A, true);
@@ -1911,8 +1903,8 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Configure paddle on port 2
-        memory.set_controller_type(1, crate::bus::ControllerType::Joypad);
-        memory.set_controller_type(2, crate::bus::ControllerType::Paddle);
+        memory.set_controller_type(1, crate::input::ControllerType::Joypad);
+        memory.set_controller_type(2, crate::input::ControllerType::Paddle);
         memory.set_paddle_position(2, 0xC7);
         memory.set_paddle_trigger(2, true); // Set trigger so bit 3 is set
 
@@ -1920,8 +1912,8 @@ mod tests {
         let saved_state = memory.capture_state();
 
         // Change configuration
-        memory.set_controller_type(1, crate::bus::ControllerType::Paddle);
-        memory.set_controller_type(2, crate::bus::ControllerType::Joypad);
+        memory.set_controller_type(1, crate::input::ControllerType::Paddle);
+        memory.set_controller_type(2, crate::input::ControllerType::Joypad);
 
         // Restore state
         memory.restore_state(&saved_state);

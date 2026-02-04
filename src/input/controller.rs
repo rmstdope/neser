@@ -8,6 +8,24 @@ pub enum ControllerState {
     Paddle(PaddleState),
 }
 
+/// Controller type for a port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControllerType {
+    Joypad,
+    Paddle,
+}
+
+impl ControllerType {
+    /// Parse a controller type from a string configuration value.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.to_lowercase().as_str() {
+            "joypad" => Some(Self::Joypad),
+            "arkanoid" | "paddle" => Some(Self::Paddle),
+            _ => None,
+        }
+    }
+}
+
 /// The type of input a controller need.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

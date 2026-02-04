@@ -50,7 +50,7 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data).expect("mmc5exram ROM should parse");
 
         let mut nes = Nes::new(TvSystem::Ntsc);
-        nes.insert_cartridge(cartridge);
+        nes.insert_cartridge(cartridge, None);
         nes.reset(false);
 
         let expected_crcs = [
