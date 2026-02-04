@@ -92,14 +92,71 @@ Options:
   --window-height <N>   Window height in pixels, windowed mode only (e.g., 720)
 ```
 
-## Arkanoid Paddle (SDL)
+## Controller Mapping
 
-The Arkanoid paddle is auto-enabled for known ROM CRCs (e.g., Arkanoid and PaddleTest3).
-When enabled in the SDL frontend:
+NESER supports two controller ports (port 1 and port 2), each of which can be configured with different controller types.
 
-- Mouse X controls paddle position (non-linear curve with faster edge response).
-- Left mouse button controls the paddle trigger.
-- Controller/keyboard input for player 1 is suppressed while paddle mode is active.
+### Supported Controller Types
+
+- **Joypad** - Standard NES controller (default for both ports)
+- **Paddle** - Arkanoid-style paddle controller with analog position and trigger button
+
+### Per-Port Controller Selection
+
+Each port can be independently configured in the configuration file or via the auto-detection mechanism:
+
+**Port 1** (Controller 1):
+- Default: Joypad
+- Can be configured as Paddle for games that use paddle on port 1
+
+**Port 2** (Controller 2):
+- Default: Joypad  
+- Can be configured as Paddle for games that use paddle on port 2
+
+### Auto-Detection
+
+NESER automatically detects known paddle-based games by ROM CRC32 and configures the appropriate port:
+
+- **Arkanoid** (CRC: 0x32FB0583) → Paddle on **port 2**
+- **PaddleTest3** (CRC: 0x47F9F410) → Paddle on **port 1**
+
+When a known ROM is loaded, you'll see a message like:
+```
+Enabling Arkanoid paddle on port 2 for inserted cartridge
+```
+
+### Paddle Controller Input (SDL Frontend)
+
+When a paddle controller is enabled on either port:
+
+- **Mouse X position** controls the paddle position (non-linear curve with faster edge response)
+- **Left mouse button** controls the paddle trigger
+- The mouse input is routed to all ports configured as paddles
+- Keyboard/gamepad input for that port is suppressed while paddle mode is active
+
+### Manual Configuration Examples
+
+**Note**: Manual controller configuration via config file is currently supported in the configuration structure but is not yet fully integrated with the runtime. The auto-detection mechanism (described above) is the primary way to enable paddle controllers. Manual configuration support is planned for future releases.
+
+For reference, the configuration format will be:
+
+**Example 1: Paddle on Port 1**
+```text
+controller_port1=arkanoid
+controller_port2=joypad
+```
+
+**Example 2: Paddle on Port 2 (Arkanoid)**
+```text
+controller_port1=joypad
+controller_port2=arkanoid
+```
+
+**Example 3: Paddles on Both Ports**
+```text
+controller_port1=arkanoid
+controller_port2=arkanoid
+```
 
 ### Validation Steps
 
@@ -109,7 +166,7 @@ When enabled in the SDL frontend:
 2. Move the mouse left/right and confirm the paddle moves across the full range.
 3. Verify fine control near the center and faster response near the edges.
 4. Click and release the left mouse button and confirm the trigger is detected.
-5. Confirm keyboard/controller input does not affect player 1 while paddle mode is active.
+5. Confirm keyboard/controller input for that port does not interfere while paddle mode is active.
 
 ### Blargg NES Test Suite Status
 
