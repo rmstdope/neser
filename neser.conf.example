@@ -93,6 +93,10 @@ gamepads=true
 # The emulator will start paused when this is enabled.
 debugger=false
 
+# Load save-state on startup (uses ROM .state path).
+# This will automatically restore the emulator state from the last save.
+load_state=false
+
 # -----------------------------------------------------------------------------
 # Emulation Speed (DISABLED - not supported with current eventloop design)
 # -----------------------------------------------------------------------------

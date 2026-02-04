@@ -500,8 +500,13 @@ impl Config {
             }
         }
 
-        println!("\nExample:");
-        println!("  neser --disable-pulse2 --disable-triangle    # Only pulse1, noise, and DMC");
+        println!("\nExamples:");
+        println!("  neser game.nes                           # Load and run a ROM");
+        println!("  neser --tv-system pal game.nes           # Use PAL timing");
+        println!("  neser --debugger game.nes                # Start with debugger open");
+        println!();
+        println!("Note: Old-style flags (--no-audio, --disable-pulse1, etc.) are still supported");
+        println!("      for backward compatibility but the new positive flags are recommended.");
     }
 
     /// Validate command-line arguments.
