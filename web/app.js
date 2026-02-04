@@ -1326,9 +1326,9 @@ async function populateRomSelect() {
 
 populateRomSelect();
 
-// Keyboard input for controller 1
-// Mapping: W=Up, S=Down, A=Left, D=Right, G=B, F=A, R=Select, T=Start
-const keyToButton = {
+// Keyboard input mappings for both controllers
+// Controller 1: W=Up, S=Down, A=Left, D=Right, G=B, F=A, R=Select, T=Start
+const keyToButtonController1 = {
     'w': { button: 4, name: 'Up' },      // Button 4 = Up
     's': { button: 5, name: 'Down' },    // Button 5 = Down
     'a': { button: 6, name: 'Left' },    // Button 6 = Left
@@ -1337,6 +1337,18 @@ const keyToButton = {
     'f': { button: 0, name: 'A' },       // Button 0 = A
     'r': { button: 2, name: 'Select' },  // Button 2 = Select
     't': { button: 3, name: 'Start' }    // Button 3 = Start
+};
+
+// Controller 2: U=Up, J=Down, H=Left, K=Right, ;=B, L=A, O=Select, P=Start
+const keyToButtonController2 = {
+    'u': { button: 4, name: 'Up' },      // Button 4 = Up
+    'j': { button: 5, name: 'Down' },    // Button 5 = Down
+    'h': { button: 6, name: 'Left' },    // Button 6 = Left
+    'k': { button: 7, name: 'Right' },   // Button 7 = Right
+    ';': { button: 1, name: 'B' },       // Button 1 = B
+    'l': { button: 0, name: 'A' },       // Button 0 = A
+    'o': { button: 2, name: 'Select' },  // Button 2 = Select
+    'p': { button: 3, name: 'Start' }    // Button 3 = Start
 };
 
 // Track connected gamepads for routing
@@ -1351,14 +1363,24 @@ function updateConnectedGamepads() {
 document.addEventListener('keydown', (e) => {
     if (!nes) return;
     const key = e.key.toLowerCase();
-    const mapping = keyToButton[key];
-    if (mapping) {
+    
+    // Check controller 1 mapping
+    const mapping1 = keyToButtonController1[key];
+    if (mapping1) {
         const targets = getKeyboardControllerTarget(connectedGamepads.length);
-        if (targets.length > 0) {
-            e.preventDefault(); // Prevent default browser behavior
-            for (const target of targets) {
-                applyJoypadButtonIfAllowed(nes, target, mapping.button, true);
-            }
+        if (targets.includes(1)) {
+            e.preventDefault();
+            applyJoypadButtonIfAllowed(nes, 1, mapping1.button, true);
+        }
+    }
+    
+    // Check controller 2 mapping
+    const mapping2 = keyToButtonController2[key];
+    if (mapping2) {
+        const targets = getKeyboardControllerTarget(connectedGamepads.length);
+        if (targets.includes(2)) {
+            e.preventDefault();
+            applyJoypadButtonIfAllowed(nes, 2, mapping2.button, true);
         }
     }
 });
@@ -1366,14 +1388,24 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('keyup', (e) => {
     if (!nes) return;
     const key = e.key.toLowerCase();
-    const mapping = keyToButton[key];
-    if (mapping) {
+    
+    // Check controller 1 mapping
+    const mapping1 = keyToButtonController1[key];
+    if (mapping1) {
         const targets = getKeyboardControllerTarget(connectedGamepads.length);
-        if (targets.length > 0) {
+        if (targets.includes(1)) {
             e.preventDefault();
-            for (const target of targets) {
-                applyJoypadButtonIfAllowed(nes, target, mapping.button, false);
-            }
+            applyJoypadButtonIfAllowed(nes, 1, mapping1.button, false);
+        }
+    }
+    
+    // Check controller 2 mapping
+    const mapping2 = keyToButtonController2[key];
+    if (mapping2) {
+        const targets = getKeyboardControllerTarget(connectedGamepads.length);
+        if (targets.includes(2)) {
+            e.preventDefault();
+            applyJoypadButtonIfAllowed(nes, 2, mapping2.button, false);
         }
     }
 });
