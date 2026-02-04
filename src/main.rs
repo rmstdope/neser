@@ -135,10 +135,18 @@ mod tests {
     #[test]
     #[serial]
     fn test_enable_debugger_requests_open_and_pauses_on_start() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"").unwrap();
+
         let args = vec![
             "neser".to_string(),
             "--debugger".to_string(),
             "true".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
         ];
 
         let config = match Config::new(&args).unwrap() {
