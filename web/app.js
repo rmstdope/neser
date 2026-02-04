@@ -1353,10 +1353,12 @@ document.addEventListener('keydown', (e) => {
     const key = e.key.toLowerCase();
     const mapping = keyToButton[key];
     if (mapping) {
-        const target = getKeyboardControllerTarget(connectedGamepads.length);
-        if (target !== null) {
+        const targets = getKeyboardControllerTarget(connectedGamepads.length);
+        if (targets.length > 0) {
             e.preventDefault(); // Prevent default browser behavior
-            applyJoypadButtonIfAllowed(nes, target, mapping.button, true);
+            for (const target of targets) {
+                applyJoypadButtonIfAllowed(nes, target, mapping.button, true);
+            }
         }
     }
 });
@@ -1366,10 +1368,12 @@ document.addEventListener('keyup', (e) => {
     const key = e.key.toLowerCase();
     const mapping = keyToButton[key];
     if (mapping) {
-        const target = getKeyboardControllerTarget(connectedGamepads.length);
-        if (target !== null) {
+        const targets = getKeyboardControllerTarget(connectedGamepads.length);
+        if (targets.length > 0) {
             e.preventDefault();
-            applyJoypadButtonIfAllowed(nes, target, mapping.button, false);
+            for (const target of targets) {
+                applyJoypadButtonIfAllowed(nes, target, mapping.button, false);
+            }
         }
     }
 });

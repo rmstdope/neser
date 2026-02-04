@@ -63,19 +63,19 @@ test("selectGamepads returns only first two when more than two connected", () =>
 });
 
 // Tests for getKeyboardControllerTarget
-test("getKeyboardControllerTarget returns 1 when no gamepads", () => {
-    const target = getKeyboardControllerTarget(0);
-    assert.equal(target, 1);
+test("getKeyboardControllerTarget returns [1, 2] when no gamepads", () => {
+    const targets = getKeyboardControllerTarget(0);
+    assert.deepEqual(targets, [1, 2]);
 });
 
-test("getKeyboardControllerTarget returns 2 when one gamepad", () => {
-    const target = getKeyboardControllerTarget(1);
-    assert.equal(target, 2);
+test("getKeyboardControllerTarget returns [2] when one gamepad", () => {
+    const targets = getKeyboardControllerTarget(1);
+    assert.deepEqual(targets, [2]);
 });
 
-test("getKeyboardControllerTarget returns null when two or more gamepads", () => {
-    assert.equal(getKeyboardControllerTarget(2), null);
-    assert.equal(getKeyboardControllerTarget(3), null);
+test("getKeyboardControllerTarget returns [] when two or more gamepads", () => {
+    assert.deepEqual(getKeyboardControllerTarget(2), []);
+    assert.deepEqual(getKeyboardControllerTarget(3), []);
 });
 
 // Tests for shouldSuppressJoypadInput

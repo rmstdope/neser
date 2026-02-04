@@ -7,23 +7,23 @@
  */
 
 /**
- * Determine which controller port the keyboard should control.
+ * Determine which controller port(s) the keyboard should control.
  * 
  * Rules:
- * - No gamepads: keyboard controls controller 1
+ * - No gamepads: keyboard controls both controllers (1 and 2)
  * - One gamepad: keyboard controls controller 2
- * - Two or more gamepads: keyboard is disabled (returns null)
+ * - Two or more gamepads: keyboard is disabled (empty array)
  * 
  * @param {number} gamepadCount - Number of connected gamepads
- * @returns {number|null} Controller number (1 or 2) or null if keyboard disabled
+ * @returns {number[]} Array of controller numbers that keyboard should control
  */
 export function getKeyboardControllerTarget(gamepadCount) {
     if (gamepadCount === 0) {
-        return 1;
+        return [1, 2]; // Keyboard controls both controllers
     } else if (gamepadCount === 1) {
-        return 2;
+        return [2]; // Keyboard controls controller 2
     } else {
-        return null; // Two or more gamepads, keyboard disabled
+        return []; // Two or more gamepads, keyboard disabled
     }
 }
 
