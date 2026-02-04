@@ -166,7 +166,7 @@ mod tests {
     use super::*;
     use crate::cartridge::Cartridge;
     use crate::cartridge::MirroringMode;
-    use crate::console::{Config, Nes, TvSystem};
+    use crate::console::{Config, Nes};
 
     #[test]
     fn test_snapshot_contains_basic_cpu_ppu_apu_info() {

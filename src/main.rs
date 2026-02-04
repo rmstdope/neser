@@ -30,7 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize SDL2
     let sdl_context = sdl2::init()?;
-    let mut nes_instance = Nes::new(config);
+    let mut nes_instance = Nes::new(config.clone());
 
     // Create audio output (request 44.1 kHz) unless disabled.
     // SDL may open the device at a different rate; always sync the APU to the actual rate
@@ -84,7 +84,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
-    let rom_path = nes_instance.config.rom_path.as_deref().unwrap_or(default_rom_path);
+    let rom_path = nes_instance
+        .config
+        .rom_path
+        .as_deref()
+        .unwrap_or(default_rom_path);
     let cart = cartridge::Cartridge::load_from_file(rom_path)?;
     nes_instance.insert_cartridge(cart);
 

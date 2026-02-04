@@ -643,7 +643,7 @@ mod tests {
 mod sample_tests {
     use super::*;
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, TvSystem};
+    use crate::console::{Config, Nes};
 
     fn make_ines_nrom_32k(prg_rom: &[u8]) -> Vec<u8> {
         assert_eq!(prg_rom.len(), 2 * 16 * 1024);

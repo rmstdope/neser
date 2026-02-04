@@ -64,7 +64,9 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--fullscreen",
-        help: Some("Run emulator in fullscreen mode (optionally: true/false, default when flag present: true)"),
+        help: Some(
+            "Run emulator in fullscreen mode (optionally: true/false, default when flag present: true)",
+        ),
         has_value: false,
     },
     CliFlag {
@@ -126,7 +128,9 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--gamepads",
-        help: Some("Enable gamepad/joystick support (optionally: true/false, default when flag present: true)"),
+        help: Some(
+            "Enable gamepad/joystick support (optionally: true/false, default when flag present: true)",
+        ),
         has_value: false,
     },
     CliFlag {
@@ -141,7 +145,9 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--pulse1",
-        help: Some("Enable pulse 1 channel (optionally: true/false, default when flag present: true)"),
+        help: Some(
+            "Enable pulse 1 channel (optionally: true/false, default when flag present: true)",
+        ),
         has_value: false,
     },
     CliFlag {
@@ -156,7 +162,9 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--pulse2",
-        help: Some("Enable pulse 2 channel (optionally: true/false, default when flag present: true)"),
+        help: Some(
+            "Enable pulse 2 channel (optionally: true/false, default when flag present: true)",
+        ),
         has_value: false,
     },
     CliFlag {
@@ -171,7 +179,9 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--triangle",
-        help: Some("Enable triangle channel (optionally: true/false, default when flag present: true)"),
+        help: Some(
+            "Enable triangle channel (optionally: true/false, default when flag present: true)",
+        ),
         has_value: false,
     },
     CliFlag {
@@ -186,7 +196,9 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--noise",
-        help: Some("Enable noise channel (optionally: true/false, default when flag present: true)"),
+        help: Some(
+            "Enable noise channel (optionally: true/false, default when flag present: true)",
+        ),
         has_value: false,
     },
     CliFlag {
@@ -216,7 +228,9 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--debugger",
-        help: Some("Open debugger windows (CPU/PPU/APU) on startup (optionally: true/false, default when flag present: true)"),
+        help: Some(
+            "Open debugger windows (CPU/PPU/APU) on startup (optionally: true/false, default when flag present: true)",
+        ),
         has_value: false,
     },
     CliFlag {
@@ -231,7 +245,9 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--load-state",
-        help: Some("Load save-state on startup (optionally: true/false, default when flag present: true)"),
+        help: Some(
+            "Load save-state on startup (optionally: true/false, default when flag present: true)",
+        ),
         has_value: false,
     },
     CliFlag {
@@ -248,8 +264,17 @@ const CLI_FLAGS: &[CliFlag] = &[
 
 /// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
 const OPTIONAL_BOOL_FLAGS: &[&str] = &[
-    "--audio", "--vsync", "--gamepads", "--pulse1", "--pulse2",
-    "--triangle", "--noise", "--dmc", "--debugger", "--load-state", "--fullscreen"
+    "--audio",
+    "--vsync",
+    "--gamepads",
+    "--pulse1",
+    "--pulse2",
+    "--triangle",
+    "--noise",
+    "--dmc",
+    "--debugger",
+    "--load-state",
+    "--fullscreen",
 ];
 
 /// Result of parsing command-line arguments.
@@ -571,16 +596,24 @@ impl Config {
         println!("\nExamples:");
         println!("  neser game.nes                               # Load and run a ROM");
         println!("  neser --tv-system pal game.nes               # Use PAL timing");
-        println!("  neser --debugger game.nes                    # Enable debugger (no value = true)");
+        println!(
+            "  neser --debugger game.nes                    # Enable debugger (no value = true)"
+        );
         println!("  neser --audio game.nes                       # Enable audio (no value = true)");
         println!("  neser --audio=1 game.nes                     # Enable audio (equals syntax)");
         println!("  neser --audio false game.nes                 # Disable audio (value-based)");
         println!("  neser --audio=0 game.nes                     # Disable audio (equals syntax)");
-        println!("  neser --no-audio game.nes                    # Disable audio (prefix negation)");
+        println!(
+            "  neser --no-audio game.nes                    # Disable audio (prefix negation)"
+        );
         println!("  neser --disable-pulse1 --disable-pulse2 game.nes # Disable specific channels");
         println!();
-        println!("Note: Boolean flags can be used without value (defaults to true), with value (true/false/yes/no/1/0),");
-        println!("      or with prefix negation (--no-*, --disable-*). All forms: --audio, --audio=1, --audio true are equivalent.");
+        println!(
+            "Note: Boolean flags can be used without value (defaults to true), with value (true/false/yes/no/1/0),"
+        );
+        println!(
+            "      or with prefix negation (--no-*, --disable-*). All forms: --audio, --audio=1, --audio true are equivalent."
+        );
     }
 
     /// Validate command-line arguments.
@@ -754,10 +787,10 @@ impl Config {
             }
 
             // Handle `--flag=value`
-            if let Some((flag_part, value_part)) = args[i].split_once('=') {
-                if flag_part == flag {
-                    return Some(value_part.to_string());
-                }
+            if let Some((flag_part, value_part)) = args[i].split_once('=')
+                && flag_part == flag
+            {
+                return Some(value_part.to_string());
             }
         }
         None
@@ -1034,7 +1067,7 @@ impl Config {
     /// - `--flag` (no value) → defaults to true
     /// - `--flag value` (space-separated) → parse value
     /// - `--flag=value` (equals syntax) → parse value
-    /// Returns Ok(None) if flag not present, Ok(Some(bool)) if valid, Err(msg) if invalid.
+    ///   Returns Ok(None) if flag not present, Ok(Some(bool)) if valid, Err(msg) if invalid.
     fn parse_bool_arg(args: &[String], flag: &str) -> Result<Option<bool>, String> {
         for i in 0..args.len() {
             // Check for --flag=value syntax
@@ -1046,7 +1079,7 @@ impl Config {
                             return Err(format!(
                                 "Invalid value for {flag}: '{}'. Expected: true, false, yes, no, 1, or 0",
                                 value_part
-                            ))
+                            ));
                         }
                     }
                 }
@@ -2204,11 +2237,7 @@ filter=invalid-shader
 
     #[test]
     fn test_config_dmc_flag_true() {
-        let args = vec![
-            "neser".to_string(),
-            "--dmc".to_string(),
-            "true".to_string(),
-        ];
+        let args = vec!["neser".to_string(), "--dmc".to_string(), "true".to_string()];
         let config = parse_config(args);
         assert!(config.apu_channels.contains(ApuChannels::DMC));
     }

@@ -314,7 +314,7 @@ fn format_hexdump_lines(base_addr: u16, bytes: &[u8]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::console::{Config, Nes, TvSystem};
+    use crate::console::{Config, Nes};
     use crate::debugging::snapshot;
 
     fn assert_close(actual: f32, expected: f32) {

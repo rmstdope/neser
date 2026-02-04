@@ -92,7 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     };
 
-    let mut nes = Nes::new(config.tv_system);
+    let mut nes = Nes::new(config.clone());
     let cart = Cartridge::load_from_file(&rom_path)?;
     nes.insert_cartridge(cart);
     nes.reset(false);
@@ -717,7 +717,6 @@ fn finalize_run(
 mod tests {
     use super::*;
     use neser::console::ControllerStateWrapper;
-    use neser::console::TvSystem;
     use tempfile::tempdir;
 
     fn parse_args_for_test(args: &[&str]) -> Result<(Mode, PathBuf, Config), String> {
@@ -857,7 +856,7 @@ mod tests {
 
     #[test]
     fn test_extend_transition_applies_live_inputs() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new(Config::default());
         apply_buttons(&mut nes, 1u8 << Button::A as u8, 0);
 
         let mut state = RunnerState {
@@ -899,7 +898,7 @@ mod tests {
 
     #[test]
     fn test_extend_transition_records_live_input() {
-        let mut nes = Nes::new(TvSystem::Ntsc);
+        let mut nes = Nes::new(Config::default());
         let mut state = RunnerState {
             autorun: AutorunFile {
                 version: AUTORUN_VERSION,

@@ -3,7 +3,7 @@ mod tests {
     use std::fs;
 
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, TvSystem};
+    use crate::console::{Config, Nes};
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::setup_rom_test;
 

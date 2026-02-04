@@ -115,17 +115,21 @@ impl Nes {
                 2 => port2_explicit,
                 _ => false,
             };
-            
+
             if !port_explicitly_configured {
                 println!(
                     "Enabling Arkanoid paddle on port {} for inserted cartridge",
                     arkanoid_port
                 );
                 bus.set_controller_type(arkanoid_port, ControllerType::Paddle);
-                
+
                 // Apply the other port's configuration
                 let other_port = if arkanoid_port == 1 { 2 } else { 1 };
-                let other_port_type = if arkanoid_port == 1 { port2_type } else { port1_type };
+                let other_port_type = if arkanoid_port == 1 {
+                    port2_type
+                } else {
+                    port1_type
+                };
                 bus.set_controller_type(other_port, other_port_type);
             } else {
                 println!(
@@ -804,8 +808,10 @@ mod tests {
 
     #[test]
     fn test_pal_ppu_runs_3_2x_cpu_cycles() {
-        let mut config = Config::default();
-        config.tv_system = TvSystem::Pal;
+        let config = Config {
+            tv_system: TvSystem::Pal,
+            ..Default::default()
+        };
         let mut nes = Nes::new(config);
         // Write NOP to RAM and set PC directly
         nes.bus.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
@@ -820,8 +826,10 @@ mod tests {
 
     #[test]
     fn test_pal_ppu_accumulates_fractional_cycles() {
-        let mut config = Config::default();
-        config.tv_system = TvSystem::Pal;
+        let config = Config {
+            tv_system: TvSystem::Pal,
+            ..Default::default()
+        };
         let mut nes = Nes::new(config);
         // Write NOP instructions to RAM
         for i in 0..10 {

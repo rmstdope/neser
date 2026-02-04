@@ -22,7 +22,7 @@ pub(crate) mod tests {
     ///   function is called to determine pass/fail.
     ///
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, TvSystem};
+    use crate::console::{Config, Nes};
     use crate::debugging::{Tracing, init_tracing};
     use crate::input::Button;
     use std::fs;

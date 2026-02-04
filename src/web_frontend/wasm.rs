@@ -1,5 +1,5 @@
 use crate::cartridge::Cartridge;
-use crate::console::{Config, Nes, SaveState, TvSystem};
+use crate::console::{Config, Nes, SaveState};
 use crate::input::Button;
 use wasm_bindgen::prelude::*;
 
@@ -117,7 +117,7 @@ impl WasmNes {
     }
 
     /// Returns the controller port number that has a paddle, or null if no paddle.
-    /// 
+    ///
     /// # Returns
     /// * `Some(1)` if paddle on port 1
     /// * `Some(2)` if paddle on port 2

@@ -1339,7 +1339,6 @@ fn apply_volume_hotkey(audio: &SdlNesAudio, keycode: Keycode) {
 mod tests {
     use super::*;
     use crate::cartridge::Cartridge;
-    use crate::console::TvSystem;
     use serial_test::serial;
     use std::cell::RefCell;
     use std::env;
