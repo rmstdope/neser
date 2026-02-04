@@ -37,7 +37,7 @@ export function getKeyboardControllerTarget(gamepadCount) {
  * @returns {boolean} True if joypad input should be suppressed
  */
 export function shouldSuppressJoypadInput(nes, controller) {
-    const paddlePort = nes.paddle_port();
+    const paddlePort = nes.paddle_port ? nes.paddle_port() : null;
     return paddlePort === controller;
 }
 

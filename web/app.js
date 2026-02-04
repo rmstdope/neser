@@ -1360,53 +1360,46 @@ function updateConnectedGamepads() {
     return connectedGamepads;
 }
 
+// Initialize connectedGamepads to detect any gamepads already connected on page load
+updateConnectedGamepads();
+
 document.addEventListener('keydown', (e) => {
     if (!nes) return;
     const key = e.key.toLowerCase();
+    const targets = getKeyboardControllerTarget(connectedGamepads.length);
     
     // Check controller 1 mapping
     const mapping1 = keyToButtonController1[key];
-    if (mapping1) {
-        const targets = getKeyboardControllerTarget(connectedGamepads.length);
-        if (targets.includes(1)) {
-            e.preventDefault();
-            applyJoypadButtonIfAllowed(nes, 1, mapping1.button, true);
-        }
+    if (mapping1 && targets.includes(1)) {
+        e.preventDefault();
+        applyJoypadButtonIfAllowed(nes, 1, mapping1.button, true);
     }
     
     // Check controller 2 mapping
     const mapping2 = keyToButtonController2[key];
-    if (mapping2) {
-        const targets = getKeyboardControllerTarget(connectedGamepads.length);
-        if (targets.includes(2)) {
-            e.preventDefault();
-            applyJoypadButtonIfAllowed(nes, 2, mapping2.button, true);
-        }
+    if (mapping2 && targets.includes(2)) {
+        e.preventDefault();
+        applyJoypadButtonIfAllowed(nes, 2, mapping2.button, true);
     }
 });
 
 document.addEventListener('keyup', (e) => {
     if (!nes) return;
     const key = e.key.toLowerCase();
+    const targets = getKeyboardControllerTarget(connectedGamepads.length);
     
     // Check controller 1 mapping
     const mapping1 = keyToButtonController1[key];
-    if (mapping1) {
-        const targets = getKeyboardControllerTarget(connectedGamepads.length);
-        if (targets.includes(1)) {
-            e.preventDefault();
-            applyJoypadButtonIfAllowed(nes, 1, mapping1.button, false);
-        }
+    if (mapping1 && targets.includes(1)) {
+        e.preventDefault();
+        applyJoypadButtonIfAllowed(nes, 1, mapping1.button, false);
     }
     
     // Check controller 2 mapping
     const mapping2 = keyToButtonController2[key];
-    if (mapping2) {
-        const targets = getKeyboardControllerTarget(connectedGamepads.length);
-        if (targets.includes(2)) {
-            e.preventDefault();
-            applyJoypadButtonIfAllowed(nes, 2, mapping2.button, false);
-        }
+    if (mapping2 && targets.includes(2)) {
+        e.preventDefault();
+        applyJoypadButtonIfAllowed(nes, 2, mapping2.button, false);
     }
 });
 
