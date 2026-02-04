@@ -1,10 +1,11 @@
-/// NES Arkanoid paddle controller.
+/// NES Arkanoid controller.
 ///
-/// The paddle provides a serialized position value on bit 4 of $4016 reads and
+/// The Arkanoid controller provides a serialized position value on bit 4 of $4016 reads and
 /// uses bit 3 for the trigger/button. Position is latched on strobe and shifted
 /// out MSB-first (inverted) when strobe is low.
 use super::ControllerInput;
 
+// TODO Change file name to arkanoid_controller.rs
 pub struct Paddle {
     strobe: bool,
     shift_index: u8,
@@ -97,8 +98,8 @@ impl Paddle {
     }
 
     /// Capture current paddle state for save-state.
-    pub fn capture_state(&self) -> crate::console::PaddleState {
-        crate::console::PaddleState {
+    pub fn capture_state(&self) -> crate::console::ArkanoidState {
+        crate::console::ArkanoidState {
             strobe: self.strobe,
             shift_index: self.shift_index,
             position: self.position,
@@ -109,7 +110,7 @@ impl Paddle {
     }
 
     /// Restore paddle state from a save-state.
-    pub fn restore_state(&mut self, state: &crate::console::PaddleState) {
+    pub fn restore_state(&mut self, state: &crate::console::ArkanoidState) {
         self.strobe = state.strobe;
         self.shift_index = state.shift_index;
         self.position = state.position.clamp(Self::MIN_POSITION, Self::MAX_POSITION);
@@ -151,18 +152,18 @@ impl crate::input::Controller for Paddle {
         false // Not supported for Paddle
     }
 
-    fn set_paddle_position(&mut self, position: u8) -> bool {
+    fn set_mouse_x_position(&mut self, position: u8) -> bool {
         self.set_position(position);
         true
     }
 
-    fn set_paddle_trigger(&mut self, pressed: bool) -> bool {
+    fn set_mouse_left_button(&mut self, pressed: bool) -> bool {
         self.set_trigger(pressed);
         true
     }
 
     fn input_type(&self) -> ControllerInput {
-        ControllerInput::Mouse
+        crate::input::controller_input_type(crate::input::ControllerType::Arkanoid)
     }
 }
 

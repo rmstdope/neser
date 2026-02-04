@@ -879,13 +879,13 @@ mod tests {
         let state_after = nes.save_state();
         let port1_buttons = match &state_after.bus.port1_controller {
             ControllerStateWrapper::Joypad(state) => state.button_states,
-            ControllerStateWrapper::Paddle(_) => {
+            ControllerStateWrapper::Arkanoid(_) => {
                 panic!("expected joypad on port 1")
             }
         };
         let port2_buttons = match &state_after.bus.port2_controller {
             ControllerStateWrapper::Joypad(state) => state.button_states,
-            ControllerStateWrapper::Paddle(_) => {
+            ControllerStateWrapper::Arkanoid(_) => {
                 panic!("expected joypad on port 2")
             }
         };

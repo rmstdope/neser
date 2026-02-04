@@ -41,12 +41,12 @@ const MMC3_ALTERNATE_IRQ_CRCS: &[u32] = &[
     0xA512BDF6, // 6-MMC6.nes
 ];
 
-/// CRC32 values for ROMs that default to Arkanoid paddle input on port 2.
+/// CRC32 values for ROMs that default to Arkanoid controller input on port 2.
 const ARKANOID_PADDLE_PORT2_CRCS: &[u32] = &[
     0x32FB0583, // Arkanoid (NES, 1987)
 ];
 
-/// CRC32 values for ROMs that default to Arkanoid paddle input on port 1.
+/// CRC32 values for ROMs that default to Arkanoid controller input on port 1.
 const ARKANOID_PADDLE_PORT1_CRCS: &[u32] = &[
     0x47F9F410, // PaddleTest3
 ];
@@ -56,7 +56,7 @@ pub fn requires_mmc3_alternate_irq(crc: u32) -> bool {
     MMC3_ALTERNATE_IRQ_CRCS.contains(&crc)
 }
 
-/// Return the default Arkanoid paddle port for a ROM CRC.
+/// Return the default Arkanoid controller port for a ROM CRC.
 ///
 /// Returns 0 for none, 1 for port 1, 2 for port 2.
 pub fn default_arkanoid_on_port(crc: u32) -> u8 {

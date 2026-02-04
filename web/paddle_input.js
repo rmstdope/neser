@@ -25,7 +25,7 @@ export function applyPaddleMouseMotion(nes, x, windowWidth) {
     }
 
     const position = mapMouseXToPaddlePosition(x, windowWidth);
-    nes.set_paddle_position(paddlePort, position);
+    nes.set_mouse_x_position(paddlePort, position);
 }
 
 export function applyPaddleMouseButton(nes, button, pressed) {
@@ -35,7 +35,7 @@ export function applyPaddleMouseButton(nes, button, pressed) {
     }
 
     if (button === 0) {
-        nes.set_paddle_trigger(paddlePort, pressed);
+        nes.set_mouse_left_button(paddlePort, pressed);
     }
 }
 

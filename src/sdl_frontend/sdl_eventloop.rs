@@ -54,12 +54,12 @@ enum KeyDownOutcome {
 }
 
 impl SdlEventLoop {
-    /// Maps an SDL mouse X position into a paddle position value (0..=255).
+    /// Maps an SDL mouse X position into a screen position value (0..=255).
     ///
     /// The input is normalized to $[-1.0, 1.0]$ across the current window width,
     /// then shaped using a non-linear curve $\text{sign}(x)\cdot|x|^{1.5}$ to
     /// make the edges respond faster than the center. The result is scaled to
-    /// the Arkanoid paddle range ($62$-$F2$) and clamped.
+    /// the Arkanoid controller range ($62$-$F2$) and clamped.
     fn map_mouse_x_to_paddle_position(x: i32, window_width: u32) -> u8 {
         const MIN_POSITION: f32 = 0x62 as f32;
         const MAX_POSITION: f32 = 0xF2 as f32;
@@ -78,10 +78,10 @@ impl SdlEventLoop {
         scaled.round().clamp(MIN_POSITION, MAX_POSITION) as u8
     }
 
-    /// Applies mouse motion to any paddle controllers when paddle mode is active.
+    /// Applies mouse motion to mouse-emulated controller.
     ///
-    /// This is a no-op if no paddle is connected.
-    fn apply_paddle_mouse_motion(nes: &mut Nes, x: i32, window_width: u32) {
+    /// This is a no-op if no mouse-emulated controller is connected.
+    fn update_mouse_motion(nes: &mut Nes, x: i32, window_width: u32) {
         let mouse_ports = Self::mouse_ports(nes);
         if mouse_ports.is_empty() {
             return;
@@ -89,21 +89,20 @@ impl SdlEventLoop {
 
         let position = Self::map_mouse_x_to_paddle_position(x, window_width);
         for port in mouse_ports {
-            nes.set_paddle_position(port, position);
+            nes.set_mouse_x_position(port, position);
         }
     }
 
-    /// Maps left mouse button presses to paddle triggers when active.
+    /// Maps left mouse button presses to mouse-emulated controller.
     ///
-    /// This is a no-op if no paddle is connected.
-    fn apply_paddle_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
-        // println!("Mouse button {:?} pressed: {}", button, pressed);
+    /// This is a no-op if no mouse-emulated controller is connected.
+    fn update_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
         if button != MouseButton::Left {
             return;
         }
 
         for port in Self::mouse_ports(nes) {
-            nes.set_paddle_trigger(port, pressed);
+            nes.set_mouse_left_button(port, pressed);
         }
     }
 
@@ -568,13 +567,13 @@ impl SdlEventLoop {
                         }
                         Event::MouseMotion { x, .. } => {
                             let (window_width, _) = gl_backend.window_size();
-                            Self::apply_paddle_mouse_motion(nes, x, window_width);
+                            Self::update_mouse_motion(nes, x, window_width);
                         }
                         Event::MouseButtonDown { mouse_btn, .. } => {
-                            Self::apply_paddle_mouse_button(nes, mouse_btn, true);
+                            Self::update_mouse_button(nes, mouse_btn, true);
                         }
                         Event::MouseButtonUp { mouse_btn, .. } => {
-                            Self::apply_paddle_mouse_button(nes, mouse_btn, false);
+                            Self::update_mouse_button(nes, mouse_btn, false);
                         }
                         _ => {}
                     }
@@ -1484,9 +1483,9 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
-        nes.set_paddle1_position(0x80);
-        nes.set_paddle1_trigger(true);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
+        nes.set_mouse_x_position(1, 0x80);
+        nes.set_mouse_left_button(1, true);
 
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
@@ -1540,7 +1539,7 @@ mod tests {
         // Port 1 is mouse-only, port 2 is gamepad.
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
         nes.bus
             .borrow_mut()
             .set_controller_type(2, crate::input::ControllerType::Joypad);
@@ -1557,16 +1556,16 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
         nes.bus
             .borrow_mut()
-            .set_controller_type(2, crate::input::ControllerType::Paddle);
+            .set_controller_type(2, crate::input::ControllerType::Arkanoid);
 
         let window_width = 320;
         let x = 240;
         let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
 
-        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+        SdlEventLoop::update_mouse_motion(&mut nes, x, window_width);
 
         assert_eq!(read_paddle_position_for_port(&mut nes, 1), expected);
         assert_eq!(read_paddle_position_for_port(&mut nes, 2), expected);
@@ -1577,12 +1576,12 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
 
-        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
+        SdlEventLoop::update_mouse_button(&mut nes, MouseButton::Left, true);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
 
-        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, false);
+        SdlEventLoop::update_mouse_button(&mut nes, MouseButton::Left, false);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
     }
 
@@ -1593,11 +1592,11 @@ mod tests {
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Joypad);
-        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
+        SdlEventLoop::update_mouse_button(&mut nes, MouseButton::Left, true);
 
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
     }
 
@@ -1606,13 +1605,13 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
 
         let window_width = 320;
         let x = 240;
         let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
 
-        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+        SdlEventLoop::update_mouse_motion(&mut nes, x, window_width);
 
         assert_eq!(read_paddle_position(&mut nes), expected);
     }
@@ -1627,11 +1626,11 @@ mod tests {
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Joypad);
-        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+        SdlEventLoop::update_mouse_motion(&mut nes, x, window_width);
 
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
         assert_eq!(read_paddle_position(&mut nes), 0x62);
     }
 
@@ -1643,7 +1642,7 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
 
         event_loop.controller_player_map.insert(42, 1);
         event_loop.handle_controller_button(&mut nes, 42, sdl2::controller::Button::A, true);

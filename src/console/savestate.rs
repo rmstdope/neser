@@ -275,9 +275,9 @@ pub struct JoypadState {
     pub button_states: u8,
 }
 
-/// Bus paddle state.
+/// Bus Arkanoid controller state.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PaddleState {
+pub struct ArkanoidState {
     pub strobe: bool,
     pub shift_index: u8,
     pub position: u8,
@@ -299,7 +299,7 @@ pub struct BusState {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ControllerStateWrapper {
     Joypad(JoypadState),
-    Paddle(PaddleState),
+    Arkanoid(ArkanoidState),
 }
 
 /// APU complete state.

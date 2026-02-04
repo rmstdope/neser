@@ -1114,13 +1114,16 @@ impl Config {
     }
 
     fn validate_controller_ports(&self) -> Result<(), String> {
-        let paddle_count = [self.controller_port1, self.controller_port2]
+        let mouse_emulated_controller_count = [self.controller_port1, self.controller_port2]
             .iter()
-            .filter(|controller| **controller == ControllerType::Paddle)
+            .filter(|controller| **controller == ControllerType::Arkanoid)
             .count();
 
-        if paddle_count > 1 {
-            return Err("No more than one controller simulated using Mouse can be configured (Arkanoid/Zapper)".to_string());
+        if mouse_emulated_controller_count > 1 {
+            return Err(
+                "No more than one mouse-emulated controller can be configured (Arkanoid/Zapper)"
+                    .to_string(),
+            );
         }
 
         Ok(())
@@ -1873,7 +1876,7 @@ mod tests {
         let _ = config.apply_config_value("controller_port1", "arkanoid");
         let _ = config.apply_config_value("controller_port2", "joypad");
 
-        assert_eq!(config.controller_port1, ControllerType::Paddle);
+        assert_eq!(config.controller_port1, ControllerType::Arkanoid);
         assert_eq!(config.controller_port2, ControllerType::Joypad);
         assert!(config.controller_port1_explicit);
         assert!(config.controller_port2_explicit);

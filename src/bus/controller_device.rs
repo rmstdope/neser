@@ -39,7 +39,7 @@ impl BusDevice for ControllerDevice {
                     self.port1_controller.borrow().read_no_clock()
                 };
                 // Determine mask based on controller type.
-                // Joypad uses bit 0 (mask 0xFE), Paddle uses bits 4-3 (mask 0xE7).
+                // Joypad uses bit 0 (mask 0xFE), Arkanoid controller uses bits 4-3 (mask 0xE7).
                 let mask = if is_paddle { 0xE7 } else { 0xFE };
                 Some((open_bus & mask) | controller_state)
             }
@@ -54,7 +54,7 @@ impl BusDevice for ControllerDevice {
                     self.port2_controller.borrow().read_no_clock()
                 };
                 // Determine mask based on controller type.
-                // Joypad uses bit 0 (mask 0xFE), Paddle uses bits 4-3 (mask 0xE7).
+                // Joypad uses bit 0 (mask 0xFE), Arkanoid controller uses bits 4-3 (mask 0xE7).
                 let mask = if is_paddle { 0xE7 } else { 0xFE };
                 Some((open_bus & mask) | controller_state)
             }

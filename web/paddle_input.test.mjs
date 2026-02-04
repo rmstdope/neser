@@ -21,16 +21,10 @@ function makeNesStub({ paddleEnabled = false } = {}) {
         set_button: (controller, button, pressed) => {
             calls.setButton.push({ controller, button, pressed });
         },
-        set_paddle1_position: (position) => {
-            calls.setPaddlePosition.push(position);
-        },
-        set_paddle1_trigger: (pressed) => {
-            calls.setPaddleTrigger.push(pressed);
-        },
-        set_paddle_position: (port, position) => {
+        set_mouse_x_position: (port, position) => {
             calls.setPaddlePosition.push({ port, position });
         },
-        set_paddle_trigger: (port, pressed) => {
+        set_mouse_left_button: (port, pressed) => {
             calls.setPaddleTrigger.push({ port, pressed });
         }
     };
@@ -152,10 +146,10 @@ function makeNesStubWithPort({ paddlePort = null } = {}) {
         set_button: (controller, button, pressed) => {
             calls.setButton.push({ controller, button, pressed });
         },
-        set_paddle_position: (port, position) => {
+        set_mouse_x_position: (port, position) => {
             calls.setPaddlePosition.push({ port, position });
         },
-        set_paddle_trigger: (port, pressed) => {
+        set_mouse_left_button: (port, pressed) => {
             calls.setPaddleTrigger.push({ port, pressed });
         }
     };
