@@ -166,11 +166,11 @@ mod tests {
     use super::*;
     use crate::cartridge::Cartridge;
     use crate::cartridge::MirroringMode;
-    use crate::console::{Nes, TvSystem};
+    use crate::console::{Config, Nes, TvSystem};
 
     #[test]
     fn test_snapshot_contains_basic_cpu_ppu_apu_info() {
-        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        let mut nes = Nes::new(Config::default());
 
         // Insert a cartridge so PRG hexdump can be generated.
         let mut prg_rom = vec![0u8; 32 * 1024];
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_snapshot_includes_disassembly_around_pc() {
-        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        let mut nes = Nes::new(Config::default());
 
         let mut prg_rom = vec![0u8; 32 * 1024];
         // $8000: LDA #$01; TAX; INX; BRK

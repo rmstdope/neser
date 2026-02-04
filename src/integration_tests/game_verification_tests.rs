@@ -3,7 +3,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::cartridge::Cartridge;
-    use crate::console::{Nes, TvSystem};
+    use crate::console::{Config, Nes, TvSystem};
     use crate::integration_tests::golden_screenshots::{
         GoldenScreenshotPolicy, assert_matches_golden_screenshot_byte_exact,
         ensure_golden_screenshot, golden_screenshot_path_for_rom,
@@ -105,7 +105,7 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data)
             .map_err(|e| format!("Failed to parse ROM {}: {e}", rom_path.display()))?;
 
-        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -122,7 +122,7 @@ mod tests {
         let rom_data = manual_test_cartridges::triangle_only_nrom_128();
         let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
 
-        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 

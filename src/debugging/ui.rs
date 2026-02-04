@@ -314,7 +314,7 @@ fn format_hexdump_lines(base_addr: u16, bytes: &[u8]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::console::{Nes, TvSystem};
+    use crate::console::{Config, Nes, TvSystem};
     use crate::debugging::snapshot;
 
     fn assert_close(actual: f32, expected: f32) {
@@ -329,7 +329,7 @@ mod tests {
 
     #[test]
     fn test_window_models_have_three_debug_windows_with_text() {
-        let nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        let nes = Nes::new(Config::default());
         let snapshot = snapshot(&nes);
 
         let windows = window_models(&snapshot);
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_cpu_register_lines_render_expected_values() {
-        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        let mut nes = Nes::new(Config::default());
         nes.cpu.set_pc(0xC000);
         nes.cpu.set_a_register(0x12);
         nes.cpu.set_x(0x34);

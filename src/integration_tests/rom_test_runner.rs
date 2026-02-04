@@ -22,7 +22,7 @@ pub(crate) mod tests {
     ///   function is called to determine pass/fail.
     ///
     use crate::cartridge::Cartridge;
-    use crate::console::{Nes, TvSystem};
+    use crate::console::{Config, Nes, TvSystem};
     use crate::debugging::{Tracing, init_tracing};
     use crate::input::Button;
     use std::fs;
@@ -102,7 +102,7 @@ pub(crate) mod tests {
             };
 
             // Create NES and insert cartridge
-            let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+            let mut nes = Nes::new(Config::default());
             nes.insert_cartridge(cartridge);
             // Initial reset is treated as power-on.
             nes.reset(false);
@@ -299,7 +299,7 @@ pub(crate) mod tests {
             }
         };
 
-        let mut nes = Nes::new_with_tv_system(TvSystem::Ntsc);
+        let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
