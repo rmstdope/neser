@@ -27,3 +27,17 @@ export function getKeyboardControllerTarget(gamepadCount) {
     }
 }
 
+/**
+ * Check if joypad input should be suppressed for a given controller.
+ * 
+ * Joypad input is suppressed on a port if that port has a paddle controller.
+ * 
+ * @param {Object} nes - NES emulator instance
+ * @param {number} controller - Controller number (1 or 2)
+ * @returns {boolean} True if joypad input should be suppressed
+ */
+export function shouldSuppressJoypadInput(nes, controller) {
+    const paddlePort = nes.paddle_port();
+    return paddlePort === controller;
+}
+
