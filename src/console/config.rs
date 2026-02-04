@@ -1001,7 +1001,7 @@ impl Config {
 
     /// Parse a boolean argument from command-line args.
     /// Supports both --flag value and --flag=value syntax.
-    /// Returns None if flag not present, Some(Ok(bool)) if valid, Some(Err(msg)) if invalid.
+    /// Returns Ok(None) if flag not present, Ok(Some(bool)) if valid, Err(msg) if invalid.
     fn parse_bool_arg(args: &[String], flag: &str) -> Result<Option<bool>, String> {
         for i in 0..args.len() {
             // Check for --flag=value syntax
