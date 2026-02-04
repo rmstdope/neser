@@ -1553,6 +1553,7 @@ window.addEventListener("gamepadconnected", () => {
 
 window.addEventListener("gamepaddisconnected", () => {
     updateConnectedGamepads();
+    resetGamepadState();
 });
 
 // Handle canvas resizing when entering/exiting fullscreen
