@@ -437,24 +437,18 @@ impl Bus {
         *self.controllers[(port - 1) as usize].borrow_mut() = new_controller;
     }
 
-    /// Update mouse X position for a specific port (0..255).
-    pub fn set_mouse_x_position(&mut self, port: u8, position: u8) {
-        if !(1..=2).contains(&port) {
-            return;
+    /// Update mouse X position for any mouse-emulated controller (0..255).
+    pub fn set_mouse_x_position(&mut self, position: u8) {
+        for controller in &self.controllers {
+            controller.borrow_mut().set_mouse_x_position(position);
         }
-        self.controllers[(port - 1) as usize]
-            .borrow_mut()
-            .set_mouse_x_position(position);
     }
 
-    /// Update mouse left button state for a specific port.
-    pub fn set_mouse_left_button(&mut self, port: u8, pressed: bool) {
-        if !(1..=2).contains(&port) {
-            return;
+    /// Update mouse left button state for any mouse-emulated controller.
+    pub fn set_mouse_left_button(&mut self, pressed: bool) {
+        for controller in &self.controllers {
+            controller.borrow_mut().set_mouse_left_button(pressed);
         }
-        self.controllers[(port - 1) as usize]
-            .borrow_mut()
-            .set_mouse_left_button(pressed);
     }
 
     /// Return the input type for a controller port.
@@ -1052,8 +1046,8 @@ mod tests {
         let mut memory = create_test_memory();
 
         memory.set_controller_type(1, ControllerType::Arkanoid);
-        memory.set_mouse_x_position(1, 0xA5);
-        memory.set_mouse_left_button(1, true);
+        memory.set_mouse_x_position(0xA5);
+        memory.set_mouse_left_button(true);
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
         let expected_paddle = [0x08, 0x18];
@@ -1804,8 +1798,8 @@ mod tests {
 
         // Configure paddle on port 1
         memory.set_controller_type(1, crate::input::ControllerType::Arkanoid);
-        memory.set_mouse_x_position(1, 0xA5);
-        memory.set_mouse_left_button(1, true);
+        memory.set_mouse_x_position(0xA5);
+        memory.set_mouse_left_button(true);
 
         // Strobe the controller
         memory.write(0x4016, 0x01, false);
@@ -1827,8 +1821,8 @@ mod tests {
 
         // Configure paddle on port 2
         memory.set_controller_type(2, crate::input::ControllerType::Arkanoid);
-        memory.set_mouse_x_position(2, 0xB3);
-        memory.set_mouse_left_button(2, false);
+        memory.set_mouse_x_position(0xB3);
+        memory.set_mouse_left_button(false);
 
         // Strobe the controller
         memory.write(0x4016, 0x01, false);
@@ -1869,8 +1863,8 @@ mod tests {
         assert_eq!(memory.read(0x4016) & 0x01, 1); // B button
 
         // Verify port 2 returns paddle data
-        memory.set_mouse_x_position(2, 0xA5);
-        memory.set_mouse_left_button(2, true); // Set trigger so bit 3 is set
+        memory.set_mouse_x_position(0xA5);
+        memory.set_mouse_left_button(true); // Set trigger so bit 3 is set
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
         let paddle_bits = memory.read(0x4017) & 0x18;
@@ -1885,8 +1879,8 @@ mod tests {
         // Configure paddle on port 2
         memory.set_controller_type(1, crate::input::ControllerType::Joypad);
         memory.set_controller_type(2, crate::input::ControllerType::Arkanoid);
-        memory.set_mouse_x_position(2, 0xC7);
-        memory.set_mouse_left_button(2, true); // Set trigger so bit 3 is set
+        memory.set_mouse_x_position(0xC7);
+        memory.set_mouse_left_button(true); // Set trigger so bit 3 is set
 
         // Capture state
         let saved_state = memory.capture_state();

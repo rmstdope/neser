@@ -305,24 +305,20 @@ impl Nes {
         self.bus.borrow().controller_input_type(port)
     }
 
-    // TODO Remove the port argument from this and child function calls.
-    /// Update the mouse X position for the emulated controllers.
+    /// Update the mouse X position for any mouse-emulated controller.
     ///
     /// # Arguments
-    /// * `port` - Controller port (1 or 2).
     /// * `position` - The Arkanoid controller position value (typically 0–255).
-    pub fn set_mouse_x_position(&mut self, port: u8, position: u8) {
-        self.bus.borrow_mut().set_mouse_x_position(port, position);
+    pub fn set_mouse_x_position(&mut self, position: u8) {
+        self.bus.borrow_mut().set_mouse_x_position(position);
     }
 
-    // TODO Remove the port argument from this and child function calls.
-    /// Update the left mouse button status for the emulated controller.
+    /// Update the left mouse button status for any mouse-emulated controller.
     ///
     /// # Arguments
-    /// * `port` - Controller port (1 or 2).
     /// * `pressed` - `true` if the Arkanoid controller trigger is pressed, `false` if released.
-    pub fn set_mouse_left_button(&mut self, port: u8, pressed: bool) {
-        self.bus.borrow_mut().set_mouse_left_button(port, pressed);
+    pub fn set_mouse_left_button(&mut self, pressed: bool) {
+        self.bus.borrow_mut().set_mouse_left_button(pressed);
     }
 
     /// Generate a trace line for the current CPU state
@@ -1607,8 +1603,8 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         // Should configure paddle on port 2 for Arkanoid ROM
-        nes.bus.borrow_mut().set_mouse_x_position(2, 0xA5);
-        nes.bus.borrow_mut().set_mouse_left_button(2, true);
+        nes.bus.borrow_mut().set_mouse_x_position(0xA5);
+        nes.bus.borrow_mut().set_mouse_left_button(true);
 
         // Verify port 2 reads paddle data
         nes.bus.borrow_mut().write(0x4016, 0x01, false);
@@ -1642,11 +1638,13 @@ mod tests {
         let mut cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
         cartridge.set_crc32_for_test(0x32FB0583);
 
-        let mut config = Config::default();
-        config.controller_port1 = crate::input::ControllerType::Arkanoid;
-        config.controller_port1_explicit = true;
-        config.controller_port2 = crate::input::ControllerType::Joypad;
-        config.controller_port2_explicit = false;
+        let config = Config {
+            controller_port1: crate::input::ControllerType::Arkanoid,
+            controller_port1_explicit: true,
+            controller_port2: crate::input::ControllerType::Joypad,
+            controller_port2_explicit: false,
+            ..Default::default()
+        };
 
         let mut nes = Nes::new(config);
         nes.insert_cartridge(cartridge);

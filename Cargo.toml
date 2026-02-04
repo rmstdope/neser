@@ -79,6 +79,8 @@ wasm-pack = "0.14"
 # keeping debuggability. This is a common setup for emulator-style workloads.
 [profile.dev]
 opt-level = 1
+incremental = true
 
 [profile.dev.package."*"]
 opt-level = 3
+incremental = true

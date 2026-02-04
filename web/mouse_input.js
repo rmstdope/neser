@@ -19,23 +19,13 @@ export function mapMouseXToScreenPosition(x, windowWidth) {
 }
 
 export function applyMouseMotion(nes, x, windowWidth) {
-    const port = nes.mouse_controller_port ? nes.mouse_controller_port() : null;
-    if (!port) {
-        return;
-    }
-
     const position = mapMouseXToScreenPosition(x, windowWidth);
-    nes.set_mouse_x_position(port, position);
+    nes.set_mouse_x_position(position);
 }
 
 export function applyMouseButton(nes, button, pressed) {
-    const port = nes.mouse_controller_port ? nes.mouse_controller_port() : null;
-    if (!port) {
-        return;
-    }
-
     if (button === 0) {
-        nes.set_mouse_left_button(port, pressed);
+        nes.set_mouse_left_button(pressed);
     }
 }
 

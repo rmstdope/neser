@@ -204,7 +204,7 @@ fn reset_restores_initial_state() {
 fn set_mouse_x_position_updates_save_state() {
     let mut nes = WasmNes::new();
     enable_arkanoid_on_port1(&mut nes);
-    nes.set_mouse_x_position(1, 0x80);
+    nes.set_mouse_x_position(0x80);
 
     let state = read_save_state(&nes);
     let arkanoid = port1_arkanoid_state(&state);
@@ -215,13 +215,13 @@ fn set_mouse_x_position_updates_save_state() {
 fn set_mouse_x_position_clamps_to_valid_range() {
     let mut nes = WasmNes::new();
     enable_arkanoid_on_port1(&mut nes);
-    nes.set_mouse_x_position(1, 0x20);
+    nes.set_mouse_x_position(0x20);
 
     let state = read_save_state(&nes);
     let arkanoid = port1_arkanoid_state(&state);
     assert_eq!(arkanoid.position, 0x62);
 
-    nes.set_mouse_x_position(1, 0xFF);
+    nes.set_mouse_x_position(0xFF);
     let state = read_save_state(&nes);
     let arkanoid = port1_arkanoid_state(&state);
     assert_eq!(arkanoid.position, 0xF2);
@@ -231,23 +231,14 @@ fn set_mouse_x_position_clamps_to_valid_range() {
 fn set_mouse_left_button_updates_save_state() {
     let mut nes = WasmNes::new();
     enable_arkanoid_on_port1(&mut nes);
-    nes.set_mouse_left_button(1, true);
+    nes.set_mouse_left_button(true);
 
     let state = read_save_state(&nes);
     let arkanoid = port1_arkanoid_state(&state);
     assert!(arkanoid.trigger);
 
-    nes.set_mouse_left_button(1, false);
+    nes.set_mouse_left_button(false);
     let state = read_save_state(&nes);
     let arkanoid = port1_arkanoid_state(&state);
     assert!(!arkanoid.trigger);
-}
-
-#[wasm_bindgen_test]
-fn mouse_controller_port_reports_connected_port() {
-    let mut nes = WasmNes::new();
-    assert_eq!(nes.mouse_controller_port(), None);
-
-    enable_arkanoid_on_port1(&mut nes);
-    assert_eq!(nes.mouse_controller_port(), Some(1));
 }

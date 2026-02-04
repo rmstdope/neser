@@ -83,15 +83,8 @@ impl SdlEventLoop {
     ///
     /// This is a no-op if no mouse-emulated controller is connected.
     fn update_mouse_motion(nes: &mut Nes, x: i32, window_width: u32) {
-        let mouse_ports = Self::mouse_ports(nes);
-        if mouse_ports.is_empty() {
-            return;
-        }
-
         let position = Self::map_mouse_x_to_paddle_position(x, window_width);
-        for port in mouse_ports {
-            nes.set_mouse_x_position(port, position);
-        }
+        nes.set_mouse_x_position(position);
     }
 
     /// Maps left mouse button presses to mouse-emulated controller.
@@ -102,8 +95,8 @@ impl SdlEventLoop {
             return;
         }
 
-        for port in Self::mouse_ports(nes) {
-            nes.set_mouse_left_button(port, pressed);
+        if !Self::mouse_ports(nes).is_empty() {
+            nes.set_mouse_left_button(pressed);
         }
     }
 
@@ -1485,8 +1478,8 @@ mod tests {
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Arkanoid);
-        nes.set_mouse_x_position(1, 0x80);
-        nes.set_mouse_left_button(1, true);
+        nes.set_mouse_x_position(0x80);
+        nes.set_mouse_left_button(true);
 
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,

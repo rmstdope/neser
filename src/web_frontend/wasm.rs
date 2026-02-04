@@ -141,30 +141,22 @@ impl WasmNes {
         Ok(())
     }
 
-    /// Set the mouse X position for a mouse-emulated controller on a specific port.
+    /// Set the mouse X position for any mouse-emulated controller.
     ///
     /// # Arguments
-    /// * `port` - Controller port (1 or 2)
     /// * `position` - The mouse-emulated controller position value (0..=255)
     #[wasm_bindgen]
-    pub fn set_mouse_x_position(&mut self, port: u8, position: u8) {
-        self.nes.set_mouse_x_position(port, position);
+    pub fn set_mouse_x_position(&mut self, position: u8) {
+        self.nes.set_mouse_x_position(position);
     }
 
-    /// Set the mouse left button state for a mouse-emulated controller on a specific port.
+    /// Set the mouse left button state for any mouse-emulated controller.
     ///
     /// # Arguments
-    /// * `port` - Controller port (1 or 2)
     /// * `pressed` - true if pressed, false if released
     #[wasm_bindgen]
-    pub fn set_mouse_left_button(&mut self, port: u8, pressed: bool) {
-        self.nes.set_mouse_left_button(port, pressed);
-    }
-
-    /// Returns the controller port number that has a mouse-emulated controller, or null if none.
-    #[wasm_bindgen]
-    pub fn mouse_controller_port(&self) -> Option<u8> {
-        Some(2)
+    pub fn set_mouse_left_button(&mut self, pressed: bool) {
+        self.nes.set_mouse_left_button(pressed);
     }
 
     /// Get all available audio samples from the emulator.
