@@ -147,6 +147,57 @@ const CLI_FLAGS: &[CliFlag] = &[
     //     help: Some("Emulation speed multiplier (e.g., --timing-scale 2.0)"),
     //     has_value: true,
     // },
+    // New aligned flags (matching config file keys)
+    CliFlag {
+        flag: "--audio",
+        help: Some("Enable audio output (default: enabled)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--vsync",
+        help: Some("Enable VSync (default: enabled)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--gamepads",
+        help: Some("Enable gamepad/joystick support (default: enabled)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--pulse1",
+        help: Some("Enable pulse 1 channel (default: enabled)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--pulse2",
+        help: Some("Enable pulse 2 channel (default: enabled)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--triangle",
+        help: Some("Enable triangle channel (default: enabled)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--noise",
+        help: Some("Enable noise channel (default: enabled)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--dmc",
+        help: Some("Enable DMC channel (default: enabled)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--debugger",
+        help: Some("Open debugger windows (CPU/PPU/APU) on startup"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--tv-system",
+        help: Some("TV system: ntsc or pal (default: ntsc)"),
+        has_value: true,
+    },
 ];
 
 /// Result of parsing command-line arguments.
@@ -322,8 +373,35 @@ impl Config {
         if Self::has_flag(args, "--pal") {
             self.tv_system = TvSystem::Pal;
         }
+        // New --tv-system flag (aligned with config file)
+        if let Some(tv_system) = Self::parse_string_arg(args, "--tv-system") {
+            if tv_system.eq_ignore_ascii_case("pal") {
+                self.tv_system = TvSystem::Pal;
+            } else if tv_system.eq_ignore_ascii_case("ntsc") {
+                self.tv_system = TvSystem::Ntsc;
+            } else {
+                return Err(format!(
+                    "Invalid --tv-system value: '{}'. Valid options are: ntsc, pal",
+                    tv_system
+                ));
+            }
+        }
 
-        // Boolean flags (only override if explicitly specified)
+        // New positive boolean flags (aligned with config file)
+        if Self::has_flag(args, "--audio") {
+            self.audio_enabled = true;
+        }
+        if Self::has_flag(args, "--vsync") {
+            self.vsync_enabled = true;
+        }
+        if Self::has_flag(args, "--gamepads") {
+            self.gamepads_enabled = true;
+        }
+        if Self::has_flag(args, "--debugger") {
+            self.debugger_enabled = true;
+        }
+
+        // Old negative boolean flags (for backward compatibility)
         if Self::has_flag(args, "--no-audio") {
             self.audio_enabled = false;
         }
@@ -333,11 +411,12 @@ impl Config {
         if Self::has_flag(args, "--no-gamepads") {
             self.gamepads_enabled = false;
         }
-        if Self::has_flag(args, "--fullscreen") {
-            self.fullscreen = true;
-        }
         if Self::has_flag(args, "--start-in-debugger") {
             self.debugger_enabled = true;
+        }
+
+        if Self::has_flag(args, "--fullscreen") {
+            self.fullscreen = true;
         }
         if Self::has_flag(args, "--load-state") {
             self.load_state = true;
@@ -362,7 +441,24 @@ impl Config {
         // Tracing (merge with existing config file values)
         self.tracing.apply_args(args);
 
-        // APU channel disable flags
+        // New positive APU channel enable flags (aligned with config file)
+        if Self::has_flag(args, "--pulse1") {
+            self.apu_channels.insert(ApuChannels::PULSE1);
+        }
+        if Self::has_flag(args, "--pulse2") {
+            self.apu_channels.insert(ApuChannels::PULSE2);
+        }
+        if Self::has_flag(args, "--triangle") {
+            self.apu_channels.insert(ApuChannels::TRIANGLE);
+        }
+        if Self::has_flag(args, "--noise") {
+            self.apu_channels.insert(ApuChannels::NOISE);
+        }
+        if Self::has_flag(args, "--dmc") {
+            self.apu_channels.insert(ApuChannels::DMC);
+        }
+
+        // Old negative APU channel disable flags (for backward compatibility)
         if Self::has_flag(args, "--disable-pulse1") {
             self.apu_channels.remove(ApuChannels::PULSE1);
         }
@@ -548,6 +644,16 @@ impl Config {
         Ok(None)
     }
 
+    /// Parse a string argument from command-line args.
+    fn parse_string_arg(args: &[String], flag: &str) -> Option<String> {
+        for i in 0..args.len() {
+            if args[i] == flag && i + 1 < args.len() {
+                return Some(args[i + 1].clone());
+            }
+        }
+        None
+    }
+
     /// Default config file name.
     const CONFIG_FILE_NAME: &'static str = "neser.conf";
 
@@ -672,6 +778,11 @@ impl Config {
             "debugger" => {
                 if let Ok(b) = Self::parse_bool(value) {
                     self.debugger_enabled = b;
+                }
+            }
+            "load_state" => {
+                if let Ok(b) = Self::parse_bool(value) {
+                    self.load_state = b;
                 }
             }
             "pulse1" => {
@@ -1785,5 +1896,99 @@ filter=invalid-shader
         let args = vec!["neser".to_string()];
         let result = Config::parse_config_arg(&args);
         assert_eq!(result, None);
+    }
+
+    // Tests for aligned command line arguments
+
+    #[test]
+    fn test_config_audio_flag_enables_audio() {
+        let args = vec!["neser".to_string(), "--audio".to_string()];
+        let config = parse_config(args);
+        assert!(config.audio_enabled);
+    }
+
+    #[test]
+    fn test_config_vsync_flag_enables_vsync() {
+        let args = vec!["neser".to_string(), "--vsync".to_string()];
+        let config = parse_config(args);
+        assert!(config.vsync_enabled);
+    }
+
+    #[test]
+    fn test_config_gamepads_flag_enables_gamepads() {
+        let args = vec!["neser".to_string(), "--gamepads".to_string()];
+        let config = parse_config(args);
+        assert!(config.gamepads_enabled);
+    }
+
+    #[test]
+    fn test_config_pulse1_flag_enables_pulse1() {
+        let args = vec!["neser".to_string(), "--pulse1".to_string()];
+        let config = parse_config(args);
+        assert!(config.apu_channels.contains(ApuChannels::PULSE1));
+    }
+
+    #[test]
+    fn test_config_pulse2_flag_enables_pulse2() {
+        let args = vec!["neser".to_string(), "--pulse2".to_string()];
+        let config = parse_config(args);
+        assert!(config.apu_channels.contains(ApuChannels::PULSE2));
+    }
+
+    #[test]
+    fn test_config_triangle_flag_enables_triangle() {
+        let args = vec!["neser".to_string(), "--triangle".to_string()];
+        let config = parse_config(args);
+        assert!(config.apu_channels.contains(ApuChannels::TRIANGLE));
+    }
+
+    #[test]
+    fn test_config_noise_flag_enables_noise() {
+        let args = vec!["neser".to_string(), "--noise".to_string()];
+        let config = parse_config(args);
+        assert!(config.apu_channels.contains(ApuChannels::NOISE));
+    }
+
+    #[test]
+    fn test_config_dmc_flag_enables_dmc() {
+        let args = vec!["neser".to_string(), "--dmc".to_string()];
+        let config = parse_config(args);
+        assert!(config.apu_channels.contains(ApuChannels::DMC));
+    }
+
+    #[test]
+    fn test_config_debugger_flag_enables_debugger() {
+        let args = vec!["neser".to_string(), "--debugger".to_string()];
+        let config = parse_config(args);
+        assert!(config.debugger_enabled);
+    }
+
+    #[test]
+    fn test_config_tv_system_flag_pal() {
+        let args = vec![
+            "neser".to_string(),
+            "--tv-system".to_string(),
+            "pal".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.tv_system, TvSystem::Pal);
+    }
+
+    #[test]
+    fn test_config_tv_system_flag_ntsc() {
+        let args = vec![
+            "neser".to_string(),
+            "--tv-system".to_string(),
+            "ntsc".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.tv_system, TvSystem::Ntsc);
+    }
+
+    #[test]
+    fn test_config_file_load_state() {
+        let mut config = Config::default();
+        config.apply_config_value("load_state", "true").unwrap();
+        assert!(config.load_state);
     }
 }
