@@ -25,5 +25,9 @@ jobs:
         run: cargo clippy --all-targets --all-features
       - name: Check formatting
         run: cargo fmt -- --check
+      - name: Test WASM frontend
+        run: |
+          curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+          wasm-pack test --headless --chrome --features wasm
       - name: Test web frontend
         run: npm ci && npm test

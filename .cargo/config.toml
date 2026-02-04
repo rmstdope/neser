@@ -1,2 +1,5 @@
 [target.aarch64-apple-darwin]
 rustflags = ["-L", "/opt/homebrew/lib"]
+
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg=getrandom_backend=\"wasm_js\""]

@@ -78,6 +78,7 @@ impl SdlEventLoop {
         scaled.round().clamp(MIN_POSITION, MAX_POSITION) as u8
     }
 
+    // TODO There should be only one mouse port!
     /// Applies mouse motion to mouse-emulated controller.
     ///
     /// This is a no-op if no mouse-emulated controller is connected.

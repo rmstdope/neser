@@ -8,7 +8,7 @@ import {
     saveState
 } from "./save_state_storage.js";
 import { createSaveStateController } from "./save_state_controller.js";
-import { applyJoypadButtonIfAllowed, applyPaddleMouseMotion, applyPaddleMouseButton } from "./paddle_input.js";
+import { applyJoypadButtonIfAllowed, applyMouseMotion, applyMouseButton } from "./mouse_input.js";
 import { createSaveStateContext } from "./save_state_context.js";
 import { fetchRomList } from "./rom_list.js";
 import { handleRomSelection } from "./rom_selection.js";
@@ -1403,24 +1403,24 @@ document.addEventListener('keyup', (e) => {
     }
 });
 
-function handlePaddleMouseMotion(event) {
+function handleMouseMotion(event) {
     if (!nes) return;
     const rect = canvas.getBoundingClientRect();
     if (rect.width <= 1) {
         return;
     }
     const x = event.clientX - rect.left;
-    applyPaddleMouseMotion(nes, x, rect.width);
+    applyMouseMotion(nes, x, rect.width);
 }
 
-function handlePaddleMouseButton(event, pressed) {
+function handleMouseButton(event, pressed) {
     if (!nes) return;
-    applyPaddleMouseButton(nes, event.button, pressed);
+    applyMouseButton(nes, event.button, pressed);
 }
 
-canvas.addEventListener("mousemove", handlePaddleMouseMotion);
-canvas.addEventListener("mousedown", (event) => handlePaddleMouseButton(event, true));
-window.addEventListener("mouseup", (event) => handlePaddleMouseButton(event, false));
+canvas.addEventListener("mousemove", handleMouseMotion);
+canvas.addEventListener("mousedown", (event) => handleMouseButton(event, true));
+window.addEventListener("mouseup", (event) => handleMouseButton(event, false));
 
 // Screen size controls
 const screenMinusBtn = document.getElementById("screen-minus");

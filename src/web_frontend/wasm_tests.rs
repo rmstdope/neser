@@ -242,3 +242,12 @@ fn set_mouse_left_button_updates_save_state() {
     let arkanoid = port1_arkanoid_state(&state);
     assert!(!arkanoid.trigger);
 }
+
+#[wasm_bindgen_test]
+fn mouse_controller_port_reports_connected_port() {
+    let mut nes = WasmNes::new();
+    assert_eq!(nes.mouse_controller_port(), None);
+
+    enable_arkanoid_on_port1(&mut nes);
+    assert_eq!(nes.mouse_controller_port(), Some(1));
+}

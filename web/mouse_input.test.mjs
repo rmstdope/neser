@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 
 import {
     applyJoypadButtonIfAllowed,
-    applyPaddleMouseButton,
-    applyPaddleMouseMotion,
-    mapMouseXToPaddlePosition
-} from "./paddle_input.js";
+    applyMouseButton,
+    applyMouseMotion,
+    mapMouseXToScreenPosition
+} from "./mouse_input.js";
 
 function makeNesStub({ paddleEnabled = false } = {}) {
     const calls = {
@@ -35,10 +35,10 @@ function makeNesStub({ paddleEnabled = false } = {}) {
 test("mapMouseXToPaddlePosition maps edges and center", () => {
     const width = 300;
 
-    const left = mapMouseXToPaddlePosition(0, width);
-    const right = mapMouseXToPaddlePosition(width - 1, width);
+    const left = mapMouseXToScreenPosition(0, width);
+    const right = mapMouseXToScreenPosition(width - 1, width);
     const centerX = Math.floor((width - 1) / 2);
-    const center = mapMouseXToPaddlePosition(centerX, width);
+    const center = mapMouseXToScreenPosition(centerX, width);
 
     assert.equal(left, 0x62);
     assert.equal(right, 0xF2);
@@ -53,11 +53,11 @@ test("mapMouseXToPaddlePosition uses non-linear curve", () => {
     const edgeB = 380;
 
     const centerDelta =
-        mapMouseXToPaddlePosition(centerB, width) -
-        mapMouseXToPaddlePosition(centerA, width);
+        mapMouseXToScreenPosition(centerB, width) -
+        mapMouseXToScreenPosition(centerA, width);
     const edgeDelta =
-        mapMouseXToPaddlePosition(edgeB, width) -
-        mapMouseXToPaddlePosition(edgeA, width);
+        mapMouseXToScreenPosition(edgeB, width) -
+        mapMouseXToScreenPosition(edgeA, width);
 
     assert.ok(edgeDelta > centerDelta);
 });
@@ -67,15 +67,15 @@ test("applyPaddleMouseMotion updates position when enabled", () => {
     const width = 320;
     const x = 240;
 
-    const expected = mapMouseXToPaddlePosition(x, width);
-    applyPaddleMouseMotion(nes, x, width);
+    const expected = mapMouseXToScreenPosition(x, width);
+    applyMouseMotion(nes, x, width);
 
     assert.deepEqual(calls.setPaddlePosition, [{ port: 1, position: expected }]);
 });
 
 test("applyPaddleMouseMotion ignored when disabled", () => {
     const { nes, calls } = makeNesStub({ paddleEnabled: false });
-    applyPaddleMouseMotion(nes, 240, 320);
+    applyMouseMotion(nes, 240, 320);
 
     assert.deepEqual(calls.setPaddlePosition, []);
 });
@@ -83,8 +83,8 @@ test("applyPaddleMouseMotion ignored when disabled", () => {
 test("applyPaddleMouseButton maps left button to trigger", () => {
     const { nes, calls } = makeNesStub({ paddleEnabled: true });
 
-    applyPaddleMouseButton(nes, 0, true);
-    applyPaddleMouseButton(nes, 0, false);
+    applyMouseButton(nes, 0, true);
+    applyMouseButton(nes, 0, false);
 
     assert.deepEqual(calls.setPaddleTrigger, [{ port: 1, pressed: true }, { port: 1, pressed: false }]);
 });
@@ -92,7 +92,7 @@ test("applyPaddleMouseButton maps left button to trigger", () => {
 test("applyPaddleMouseButton ignores non-left buttons", () => {
     const { nes, calls } = makeNesStub({ paddleEnabled: true });
 
-    applyPaddleMouseButton(nes, 1, true);
+    applyMouseButton(nes, 1, true);
 
     assert.deepEqual(calls.setPaddleTrigger, []);
 });
@@ -100,7 +100,7 @@ test("applyPaddleMouseButton ignores non-left buttons", () => {
 test("applyPaddleMouseButton ignored when disabled", () => {
     const { nes, calls } = makeNesStub({ paddleEnabled: false });
 
-    applyPaddleMouseButton(nes, 0, true);
+    applyMouseButton(nes, 0, true);
 
     assert.deepEqual(calls.setPaddleTrigger, []);
 });
@@ -180,8 +180,8 @@ test("applyPaddleMouseMotion works with paddle on port 2", () => {
     const width = 320;
     const x = 240;
 
-    const expected = mapMouseXToPaddlePosition(x, width);
-    applyPaddleMouseMotion(nes, x, width);
+    const expected = mapMouseXToScreenPosition(x, width);
+    applyMouseMotion(nes, x, width);
 
     assert.deepEqual(calls.setPaddlePosition, [{ port: 2, position: expected }]);
 });
@@ -189,7 +189,7 @@ test("applyPaddleMouseMotion works with paddle on port 2", () => {
 test("applyPaddleMouseButton works with paddle on port 2", () => {
     const { nes, calls } = makeNesStubWithPort({ paddlePort: 2 });
 
-    applyPaddleMouseButton(nes, 0, true);
+    applyMouseButton(nes, 0, true);
 
     assert.deepEqual(calls.setPaddleTrigger, [{ port: 2, pressed: true }]);
 });

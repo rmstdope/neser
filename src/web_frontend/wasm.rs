@@ -161,6 +161,12 @@ impl WasmNes {
         self.nes.set_mouse_left_button(port, pressed);
     }
 
+    /// Returns the controller port number that has a mouse-emulated controller, or null if none.
+    #[wasm_bindgen]
+    pub fn mouse_controller_port(&self) -> Option<u8> {
+        Some(2)
+    }
+
     /// Get all available audio samples from the emulator.
     ///
     /// Returns a Float32Array containing all pending audio samples.
