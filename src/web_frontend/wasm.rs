@@ -139,6 +139,26 @@ impl WasmNes {
         self.nes.set_paddle1_trigger(pressed);
     }
 
+    /// Set the current position of a paddle controller on a specific port.
+    ///
+    /// # Arguments
+    /// * `port` - Controller port (1 or 2)
+    /// * `position` - The paddle position value (0..=255)
+    #[wasm_bindgen]
+    pub fn set_paddle_position(&mut self, port: u8, position: u8) {
+        self.nes.set_paddle_position(port, position);
+    }
+
+    /// Set the trigger button state for a paddle controller on a specific port.
+    ///
+    /// # Arguments
+    /// * `port` - Controller port (1 or 2)
+    /// * `pressed` - true if pressed, false if released
+    #[wasm_bindgen]
+    pub fn set_paddle_trigger(&mut self, port: u8, pressed: bool) {
+        self.nes.set_paddle_trigger(port, pressed);
+    }
+
     /// Get all available audio samples from the emulator.
     ///
     /// Returns a Float32Array containing all pending audio samples.
