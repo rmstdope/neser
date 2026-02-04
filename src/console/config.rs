@@ -245,6 +245,12 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
 ];
 
+/// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
+const OPTIONAL_BOOL_FLAGS: &[&str] = &[
+    "--audio", "--vsync", "--gamepads", "--pulse1", "--pulse2",
+    "--triangle", "--noise", "--dmc", "--debugger", "--load-state", "--fullscreen"
+];
+
 /// Result of parsing command-line arguments.
 #[derive(Debug)]
 pub enum ParseResult {
@@ -591,9 +597,6 @@ impl Config {
 
     /// Validate command-line arguments.
     fn validate_args(args: &[String]) -> Result<(), String> {
-        // Boolean flags that accept optional values are defined in the shared
-        // OPTIONAL_BOOL_FLAGS constant, which is also used by parse_rom_arg.
-
         let mut i = 1; // Skip program name
         let mut seen_positional = false;
         while i < args.len() {
@@ -691,12 +694,6 @@ impl Config {
 
     /// Parse a positional ROM path from command-line args.
     fn parse_rom_arg(args: &[String]) -> Result<Option<String>, String> {
-        // Boolean flags that accept optional values
-        const OPTIONAL_BOOL_FLAGS: &[&str] = &[
-            "--audio", "--vsync", "--gamepads", "--pulse1", "--pulse2",
-            "--triangle", "--noise", "--dmc", "--debugger", "--load-state", "--fullscreen"
-        ];
-
         let mut i = 1; // Skip program name
         let mut rom_path: Option<String> = None;
         while i < args.len() {
@@ -2422,6 +2419,62 @@ filter=invalid-shader
         let args = vec!["neser".to_string(), "--load-state".to_string()];
         let config = parse_config(args);
         assert!(config.load_state);
+    }
+
+    #[test]
+    fn test_config_no_load_state_disables_load_state() {
+        let args = vec!["neser".to_string(), "--no-load-state".to_string()];
+        let config = parse_config(args);
+        assert!(!config.load_state);
+    }
+
+    #[test]
+    fn test_config_disable_load_state_disables_load_state() {
+        let args = vec!["neser".to_string(), "--disable-load-state".to_string()];
+        let config = parse_config(args);
+        assert!(!config.load_state);
+    }
+
+    #[test]
+    fn test_config_load_state_false_disables() {
+        let args = vec![
+            "neser".to_string(),
+            "--load-state".to_string(),
+            "false".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(!config.load_state);
+    }
+
+    #[test]
+    fn test_config_load_state_equals_zero() {
+        let args = vec!["neser".to_string(), "--load-state=0".to_string()];
+        let config = parse_config(args);
+        assert!(!config.load_state);
+    }
+
+    #[test]
+    fn test_config_load_state_with_rom() {
+        let args = vec![
+            "neser".to_string(),
+            "--load-state".to_string(),
+            "game.nes".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(config.load_state);
+        assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
+    }
+
+    #[test]
+    fn test_config_no_load_state_with_rom() {
+        let args = vec![
+            "neser".to_string(),
+            "--no-load-state".to_string(),
+            "game.nes".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(!config.load_state);
+        assert_eq!(config.rom_path.as_deref(), Some("game.nes"));
     }
 
     #[test]
