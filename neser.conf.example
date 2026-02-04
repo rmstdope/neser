@@ -20,6 +20,11 @@
 # Format: key=value (one per line)
 # Comments start with #
 # Boolean values: true/false, yes/no, 1/0 (case-insensitive)
+#
+# Command-line arguments use the same keys with -- prefix and hyphens:
+#   tv_system=pal     →  --tv-system pal
+#   audio=false       →  --audio false
+#   pulse1=true       →  --pulse1 true
 # =============================================================================
 
 # -----------------------------------------------------------------------------

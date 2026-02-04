@@ -131,7 +131,11 @@ mod tests {
     #[test]
     #[serial]
     fn test_enable_debugger_requests_open_and_pauses_on_start() {
-        let args = vec!["neser".to_string(), "--start-in-debugger".to_string()];
+        let args = vec![
+            "neser".to_string(),
+            "--debugger".to_string(),
+            "true".to_string(),
+        ];
 
         let config = match Config::new(&args).unwrap() {
             ParseResult::Config(c) => c,
