@@ -1540,8 +1540,8 @@ function resetGamepadState() {
     };
     applyGamepadState(emptyState, 1, lastGamepadState1);
     applyGamepadState(emptyState, 2, lastGamepadState2);
-    lastGamepadState1 = emptyState;
-    lastGamepadState2 = emptyState;
+    lastGamepadState1 = { ...emptyState };
+    lastGamepadState2 = { ...emptyState };
 }
 
 window.addEventListener("gamepadconnected", () => {

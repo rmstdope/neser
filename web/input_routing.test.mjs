@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { selectGamepads } from "./gamepad.js";
 import { 
-    selectGamepads,
     getKeyboardControllerTarget,
     shouldSuppressJoypadInput
 } from "./input_routing.js";
