@@ -231,7 +231,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--load-state",
         help: Some("Load save-state on startup: true or false (default: false)"),
-        has_value: true,
+        has_value: false,
     },
     CliFlag {
         flag: "--no-load-state",
