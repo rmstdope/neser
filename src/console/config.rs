@@ -1072,8 +1072,8 @@ impl Config {
                 // Check if next argument is a value or another flag/positional
                 if i + 1 < args.len() {
                     let next_arg = &args[i + 1];
-                    // If next arg looks like a flag or is a file, treat current flag as valueless (default to true)
-                    if next_arg.starts_with('-') || next_arg.ends_with(".nes") {
+                    // If next arg looks like another flag, treat current flag as valueless (default to true)
+                    if next_arg.starts_with('-') {
                         return Ok(Some(true));
                     }
                     // Try to parse as boolean value
