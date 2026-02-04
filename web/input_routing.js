@@ -1,0 +1,43 @@
+/**
+ * Input routing logic for multiple controllers.
+ * 
+ * This module handles the routing of keyboard, gamepad, and paddle inputs
+ * to the appropriate NES controller ports based on the number of connected
+ * gamepads and the presence of paddle controllers.
+ */
+
+/**
+ * Determine which controller port(s) the keyboard should control.
+ * 
+ * Rules:
+ * - No gamepads: keyboard controls both controllers (1 and 2)
+ * - One gamepad: keyboard controls controller 2
+ * - Two or more gamepads: keyboard is disabled (empty array)
+ * 
+ * @param {number} gamepadCount - Number of connected gamepads
+ * @returns {number[]} Array of controller numbers that keyboard should control
+ */
+export function getKeyboardControllerTarget(gamepadCount) {
+    if (gamepadCount === 0) {
+        return [1, 2]; // Keyboard controls both controllers
+    } else if (gamepadCount === 1) {
+        return [2]; // Keyboard controls controller 2
+    } else {
+        return []; // Two or more gamepads, keyboard disabled
+    }
+}
+
+/**
+ * Check if joypad input should be suppressed for a given controller.
+ * 
+ * Joypad input is suppressed on a port if that port has a paddle controller.
+ * 
+ * @param {Object} nes - NES emulator instance
+ * @param {number} controller - Controller number (1 or 2)
+ * @returns {boolean} True if joypad input should be suppressed
+ */
+export function shouldSuppressJoypadInput(nes, controller) {
+    const paddlePort = nes.paddle_port ? nes.paddle_port() : null;
+    return paddlePort === controller;
+}
+

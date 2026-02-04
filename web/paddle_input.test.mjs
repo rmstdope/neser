@@ -17,6 +17,7 @@ function makeNesStub({ paddleEnabled = false } = {}) {
 
     const nes = {
         paddle1_enabled: () => paddleEnabled,
+        paddle_port: () => paddleEnabled ? 1 : null,
         set_button: (controller, button, pressed) => {
             calls.setButton.push({ controller, button, pressed });
         },
@@ -25,6 +26,12 @@ function makeNesStub({ paddleEnabled = false } = {}) {
         },
         set_paddle1_trigger: (pressed) => {
             calls.setPaddleTrigger.push(pressed);
+        },
+        set_paddle_position: (port, position) => {
+            calls.setPaddlePosition.push({ port, position });
+        },
+        set_paddle_trigger: (port, pressed) => {
+            calls.setPaddleTrigger.push({ port, pressed });
         }
     };
 
@@ -69,7 +76,7 @@ test("applyPaddleMouseMotion updates position when enabled", () => {
     const expected = mapMouseXToPaddlePosition(x, width);
     applyPaddleMouseMotion(nes, x, width);
 
-    assert.deepEqual(calls.setPaddlePosition, [expected]);
+    assert.deepEqual(calls.setPaddlePosition, [{ port: 1, position: expected }]);
 });
 
 test("applyPaddleMouseMotion ignored when disabled", () => {
@@ -85,7 +92,7 @@ test("applyPaddleMouseButton maps left button to trigger", () => {
     applyPaddleMouseButton(nes, 0, true);
     applyPaddleMouseButton(nes, 0, false);
 
-    assert.deepEqual(calls.setPaddleTrigger, [true, false]);
+    assert.deepEqual(calls.setPaddleTrigger, [{ port: 1, pressed: true }, { port: 1, pressed: false }]);
 });
 
 test("applyPaddleMouseButton ignores non-left buttons", () => {
@@ -130,4 +137,65 @@ test("applyJoypadButtonIfAllowed allows controller 1 when paddle disabled", () =
     assert.deepEqual(calls.setButton, [
         { controller: 1, button: 7, pressed: false }
     ]);
+});
+
+// Tests for dynamic paddle port detection
+function makeNesStubWithPort({ paddlePort = null } = {}) {
+    const calls = {
+        setButton: [],
+        setPaddlePosition: [],
+        setPaddleTrigger: []
+    };
+
+    const nes = {
+        paddle_port: () => paddlePort,
+        set_button: (controller, button, pressed) => {
+            calls.setButton.push({ controller, button, pressed });
+        },
+        set_paddle_position: (port, position) => {
+            calls.setPaddlePosition.push({ port, position });
+        },
+        set_paddle_trigger: (port, pressed) => {
+            calls.setPaddleTrigger.push({ port, pressed });
+        }
+    };
+
+    return { nes, calls };
+}
+
+test("applyJoypadButtonIfAllowed suppresses controller 2 when paddle on port 2", () => {
+    const { nes, calls } = makeNesStubWithPort({ paddlePort: 2 });
+
+    applyJoypadButtonIfAllowed(nes, 2, 0, true);
+
+    assert.deepEqual(calls.setButton, []);
+});
+
+test("applyJoypadButtonIfAllowed allows controller 1 when paddle on port 2", () => {
+    const { nes, calls } = makeNesStubWithPort({ paddlePort: 2 });
+
+    applyJoypadButtonIfAllowed(nes, 1, 0, true);
+
+    assert.deepEqual(calls.setButton, [
+        { controller: 1, button: 0, pressed: true }
+    ]);
+});
+
+test("applyPaddleMouseMotion works with paddle on port 2", () => {
+    const { nes, calls } = makeNesStubWithPort({ paddlePort: 2 });
+    const width = 320;
+    const x = 240;
+
+    const expected = mapMouseXToPaddlePosition(x, width);
+    applyPaddleMouseMotion(nes, x, width);
+
+    assert.deepEqual(calls.setPaddlePosition, [{ port: 2, position: expected }]);
+});
+
+test("applyPaddleMouseButton works with paddle on port 2", () => {
+    const { nes, calls } = makeNesStubWithPort({ paddlePort: 2 });
+
+    applyPaddleMouseButton(nes, 0, true);
+
+    assert.deepEqual(calls.setPaddleTrigger, [{ port: 2, pressed: true }]);
 });
