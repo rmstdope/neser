@@ -116,6 +116,17 @@ impl WasmNes {
         self.nes.paddle_port() == Some(1)
     }
 
+    /// Returns the controller port number that has a paddle, or null if no paddle.
+    /// 
+    /// # Returns
+    /// * `Some(1)` if paddle on port 1
+    /// * `Some(2)` if paddle on port 2
+    /// * `None` if no paddle connected
+    #[wasm_bindgen]
+    pub fn paddle_port(&self) -> Option<u8> {
+        self.nes.paddle_port()
+    }
+
     /// Set the current position of paddle 1 (0..=255).
     #[wasm_bindgen]
     pub fn set_paddle1_position(&mut self, position: u8) {

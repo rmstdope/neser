@@ -17,6 +17,7 @@ function makeNesStub({ paddleEnabled = false } = {}) {
 
     const nes = {
         paddle1_enabled: () => paddleEnabled,
+        paddle_port: () => paddleEnabled ? 1 : null,
         set_button: (controller, button, pressed) => {
             calls.setButton.push({ controller, button, pressed });
         },
@@ -129,5 +130,47 @@ test("applyJoypadButtonIfAllowed allows controller 1 when paddle disabled", () =
 
     assert.deepEqual(calls.setButton, [
         { controller: 1, button: 7, pressed: false }
+    ]);
+});
+
+// Tests for dynamic paddle port detection
+function makeNesStubWithPort({ paddlePort = null } = {}) {
+    const calls = {
+        setButton: [],
+        setPaddlePosition: [],
+        setPaddleTrigger: []
+    };
+
+    const nes = {
+        paddle_port: () => paddlePort,
+        set_button: (controller, button, pressed) => {
+            calls.setButton.push({ controller, button, pressed });
+        },
+        set_paddle_position: (port, position) => {
+            calls.setPaddlePosition.push({ port, position });
+        },
+        set_paddle_trigger: (port, pressed) => {
+            calls.setPaddleTrigger.push({ port, pressed });
+        }
+    };
+
+    return { nes, calls };
+}
+
+test("applyJoypadButtonIfAllowed suppresses controller 2 when paddle on port 2", () => {
+    const { nes, calls } = makeNesStubWithPort({ paddlePort: 2 });
+
+    applyJoypadButtonIfAllowed(nes, 2, 0, true);
+
+    assert.deepEqual(calls.setButton, []);
+});
+
+test("applyJoypadButtonIfAllowed allows controller 1 when paddle on port 2", () => {
+    const { nes, calls } = makeNesStubWithPort({ paddlePort: 2 });
+
+    applyJoypadButtonIfAllowed(nes, 1, 0, true);
+
+    assert.deepEqual(calls.setButton, [
+        { controller: 1, button: 0, pressed: true }
     ]);
 });

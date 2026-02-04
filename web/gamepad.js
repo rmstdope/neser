@@ -32,3 +32,24 @@ export function selectPrimaryGamepad(gamepads) {
     }
     return null;
 }
+
+/**
+ * Select up to two connected gamepads from the gamepads array.
+ * 
+ * @param {Gamepad[]} gamepads - Array of gamepads (may contain null/undefined)
+ * @returns {Gamepad[]} Array of connected gamepads (0-2 elements)
+ */
+export function selectGamepads(gamepads) {
+    if (!gamepads) return [];
+    
+    const connected = [];
+    for (const gamepad of gamepads) {
+        if (gamepad && gamepad.connected) {
+            connected.push(gamepad);
+            if (connected.length >= 2) {
+                break;
+            }
+        }
+    }
+    return connected;
+}

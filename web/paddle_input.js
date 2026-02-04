@@ -36,8 +36,10 @@ export function applyPaddleMouseButton(nes, button, pressed) {
 }
 
 export function applyJoypadButtonIfAllowed(nes, controller, button, pressed) {
-    if (controller === 1 && nes.paddle1_enabled()) {
-        return;
+    // Check if there's a paddle on this controller's port
+    const paddlePort = nes.paddle_port ? nes.paddle_port() : null;
+    if (controller === paddlePort) {
+        return; // Suppress joypad input on the port with paddle
     }
 
     nes.set_button(controller, button, pressed);
