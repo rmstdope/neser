@@ -32,7 +32,7 @@ export function applyMouseButton(nes, button, pressed) {
 export function applyJoypadButtonIfAllowed(nes, controller, button, pressed) {
     // Check if there's a mouse-emulated controller on this port
     if (shouldSuppressJoypadInput(nes, controller)) {
-        return; // Suppress joypad input on the port with paddle
+        return; // Suppress joypad input on the port with mouse-emulated controller
     }
 
     nes.set_button(controller, button, pressed);

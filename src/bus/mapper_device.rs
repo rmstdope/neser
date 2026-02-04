@@ -1,5 +1,6 @@
 use crate::bus::bus::BusDevice;
 use crate::cartridge::Cartridge;
+use crate::debugging::log_info;
 use crate::ppu;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
@@ -29,10 +30,10 @@ impl BusDevice for MapperDevice {
             return match addr {
                 0x4020..=0x5FFF => Some(open_bus),
                 0x6000..=0x7FFF => {
-                    eprintln!(
+                    log_info(format!(
                         "Warning: Read from PRG-RAM {:04X} without cartridge, returning 0",
                         addr
-                    );
+                    ));
                     Some(0)
                 }
                 0x8000..=0xFFFF => panic!("No cartridge mapped, cannot read from {:04X}", addr),
@@ -55,18 +56,18 @@ impl BusDevice for MapperDevice {
 
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             match addr {
-                0x4020..=0x5FFF => eprintln!(
+                0x4020..=0x5FFF => log_info(format!(
                     "Warning: Write to mapper expansion area {:04X} without cartridge, ignored",
                     addr
-                ),
-                0x6000..=0x7FFF => eprintln!(
+                )),
+                0x6000..=0x7FFF => log_info(format!(
                     "Warning: Write to PRG-RAM {:04X} without cartridge, ignored",
                     addr
-                ),
-                0x8000..=0xFFFF => eprintln!(
+                )),
+                0x8000..=0xFFFF => log_info(format!(
                     "Warning: Write to PRG ROM area {:04X} without cartridge, ignored",
                     addr
-                ),
+                )),
                 _ => {}
             }
             return true;

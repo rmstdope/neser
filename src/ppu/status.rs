@@ -45,14 +45,12 @@ impl Status {
 
     /// Enter VBlank period
     pub fn enter_vblank(&mut self) {
-        // println!("PPU Status: Entering VBlank");
         self.vblank_flag = true;
         self.frame_complete = true;
     }
 
     /// Exit VBlank period (clear VBL flag, but NOT sprite flags)
     pub fn exit_vblank(&mut self) {
-        // println!("PPU Status: Exiting VBlank");
         self.vblank_flag = false;
         // Note: Sprite 0 hit and sprite overflow are cleared separately at scanline 261, pixel 0
     }
@@ -124,13 +122,11 @@ impl Status {
 
     /// Set sprite 0 hit flag immediately
     pub fn set_sprite_0_hit(&mut self) {
-        // println!("PPU Status: Setting Sprite 0 Hit flag");
         self.sprite_0_hit = true;
     }
 
     /// Set sprite overflow flag
     pub fn set_sprite_overflow(&mut self) {
-        // println!("PPU Status: Setting Sprite Overflow flag");
         self.sprite_overflow = true;
     }
 

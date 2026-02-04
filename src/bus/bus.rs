@@ -7,6 +7,7 @@ use super::ram_device::RamDevice;
 use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::console::{BusState, MapperState};
+use crate::debugging::log_info;
 use crate::input::{Button, Controller, ControllerType, Joypad, Paddle};
 use crate::ppu;
 use crate::trace_mapper;
@@ -198,10 +199,10 @@ impl Bus {
         }
 
         let value = {
-            eprintln!(
+            log_info(format!(
                 "Warning: Read from unimplemented address {:04X}, returning 0",
                 addr
-            );
+            ));
             0
         };
 
@@ -316,7 +317,6 @@ impl Bus {
             let _ = (t, v, fine_x, w);
         }
 
-        // println!("Write to {:04X}: {:02X}", addr, value);
         let wrote = self.write_to_devices(addr, value, is_dummy_write);
         if wrote
             && Self::should_log_mmc5_ppu_scroll_write(
@@ -344,10 +344,10 @@ impl Bus {
         }
 
         {
-            eprintln!(
+            log_info(format!(
                 "Warning: Write to unimplemented address {:04X} ignored",
                 addr
-            );
+            ));
         }
         false // No DMA triggered
     }
@@ -568,11 +568,6 @@ impl Bus {
             }
         }
     }
-
-    // /// Print the current open bus value to stdout (for debugging)
-    // pub fn print_open_bus(&self) {
-    //     println!("Open bus: 0x{:02X}", *self.open_bus.borrow());
-    // }
 }
 
 #[cfg(test)]

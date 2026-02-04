@@ -4,7 +4,7 @@ use crate::cartridge::Cartridge;
 use crate::console::{Config, SAVESTATE_VERSION, SaveState};
 use crate::cpu::Cpu;
 use crate::cpu::lookup;
-use crate::debugging::Tracing;
+use crate::debugging::{Tracing, log_info};
 use crate::input::ControllerType;
 use crate::ppu::Ppu;
 use std::cell::RefCell;
@@ -132,23 +132,23 @@ impl Nes {
                 other_port_explicit && matches!(other_port_type, ControllerType::Arkanoid);
 
             if !port_explicitly_configured && !other_port_is_explicit_paddle {
-                println!(
-                    "Enabling Arkanoid controller on port {} for inserted cartridge",
+                log_info(format!(
+                    "Enabling Arkanoid controller on port {} for inserted cartridge. If you don't want this behavior, explicitly configure that port or configure another mouse-emulated controller on the other port to prevent auto-detection. Note that some games expect the Arkanoid controller on a specific port, so be sure to configure the correct one if you have issues with input not working in certain games.",
                     arkanoid_port
-                );
+                ));
                 bus.set_controller_type(arkanoid_port, ControllerType::Arkanoid);
 
                 // Apply the other port's configuration
                 let other_port = if arkanoid_port == 1 { 2 } else { 1 };
                 bus.set_controller_type(other_port, other_port_type);
             } else {
-                println!(
+                log_info(format!(
                     "ROM detected as supporting an Arkanoid controller on port {}, but user has explicitly configured that port \
                     or configured another mouse-emulated controller on another port. \
                     Keeping user configuration. Note that this may cause issues if the game expects an Arkanoid controller on \
                     port {}.",
                     arkanoid_port, arkanoid_port
-                );
+                ));
                 // Apply user's explicit configuration
                 bus.set_controller_type(1, port1_type);
                 bus.set_controller_type(2, port2_type);

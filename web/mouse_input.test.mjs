@@ -8,16 +8,14 @@ import {
     mapMouseXToScreenPosition
 } from "./mouse_input.js";
 
-function makeNesStub({ paddleEnabled = false } = {}) {
+function makeNesStub({ } = {}) {
     const calls = {
         setButton: [],
-        setPaddlePosition: [],
-        setPaddleTrigger: []
+        setMouseXPosition: [],
+        setMouseLeftButton: []
     };
 
     const nes = {
-        paddle1_enabled: () => paddleEnabled,
-        paddle_port: () => paddleEnabled ? 1 : null,
         set_button: (controller, button, pressed) => {
             calls.setButton.push({ controller, button, pressed });
         },
@@ -29,7 +27,7 @@ function makeNesStub({ paddleEnabled = false } = {}) {
         }
     };
 
-    return { nes, calls, setPaddleEnabled: (enabled) => { paddleEnabled = enabled; } };
+    return { nes, calls };
 }
 
 test("mapMouseXToPaddlePosition maps edges and center", () => {
@@ -63,7 +61,7 @@ test("mapMouseXToPaddlePosition uses non-linear curve", () => {
 });
 
 test("applyPaddleMouseMotion updates position when enabled", () => {
-    const { nes, calls } = makeNesStub({ paddleEnabled: true });
+    const { nes, calls } = makeNesStub({ });
     const width = 320;
     const x = 240;
 
@@ -74,7 +72,7 @@ test("applyPaddleMouseMotion updates position when enabled", () => {
 });
 
 test("applyPaddleMouseButton maps left button to trigger", () => {
-    const { nes, calls } = makeNesStub({ paddleEnabled: true });
+    const { nes, calls } = makeNesStub({ });
 
     applyMouseButton(nes, 0, true);
     applyMouseButton(nes, 0, false);
@@ -83,7 +81,7 @@ test("applyPaddleMouseButton maps left button to trigger", () => {
 });
 
 test("applyJoypadButtonIfAllowed suppresses controller 1 in paddle mode", () => {
-    const { nes, calls } = makeNesStub({ paddleEnabled: true });
+    const { nes, calls } = makeNesStub({ });
 
     applyJoypadButtonIfAllowed(nes, 1, 0, true);
 
@@ -91,7 +89,7 @@ test("applyJoypadButtonIfAllowed suppresses controller 1 in paddle mode", () => 
 });
 
 test("applyJoypadButtonIfAllowed allows controller 2 in paddle mode", () => {
-    const { nes, calls } = makeNesStub({ paddleEnabled: true });
+    const { nes, calls } = makeNesStub({ });
 
     applyJoypadButtonIfAllowed(nes, 2, 1, true);
 
@@ -101,7 +99,7 @@ test("applyJoypadButtonIfAllowed allows controller 2 in paddle mode", () => {
 });
 
 test("applyJoypadButtonIfAllowed allows controller 1 when paddle disabled", () => {
-    const { nes, calls } = makeNesStub({ paddleEnabled: false });
+    const { nes, calls } = makeNesStub({ });
 
     applyJoypadButtonIfAllowed(nes, 1, 7, false);
 
@@ -110,32 +108,9 @@ test("applyJoypadButtonIfAllowed allows controller 1 when paddle disabled", () =
     ]);
 });
 
-// Tests for dynamic paddle port detection
-function makeNesStubWithPort({ paddlePort = null } = {}) {
-    const calls = {
-        setButton: [],
-        setMouseXPosition: [],
-        setMouseTrigger: []
-    };
-
-    const nes = {
-        paddle_port: () => paddlePort,
-        set_button: (controller, button, pressed) => {
-            calls.setButton.push({ controller, button, pressed });
-        },
-        set_mouse_x_position: (position) => {
-            calls.setMouseXPosition.push({ position });
-        },
-        set_mouse_left_button: (pressed) => {
-            calls.setMouseTrigger.push({ pressed });
-        }
-    };
-
-    return { nes, calls };
-}
 
 test("applyJoypadButtonIfAllowed suppresses controller 2 when paddle on port 2", () => {
-    const { nes, calls } = makeNesStubWithPort({ paddlePort: 2 });
+    const { nes, calls } = makeNesStub({ });
 
     applyJoypadButtonIfAllowed(nes, 2, 0, true);
 
@@ -143,7 +118,7 @@ test("applyJoypadButtonIfAllowed suppresses controller 2 when paddle on port 2",
 });
 
 test("applyJoypadButtonIfAllowed allows controller 1 when paddle on port 2", () => {
-    const { nes, calls } = makeNesStubWithPort({ paddlePort: 2 });
+    const { nes, calls } = makeNesStub({ });
 
     applyJoypadButtonIfAllowed(nes, 1, 0, true);
 
@@ -153,7 +128,7 @@ test("applyJoypadButtonIfAllowed allows controller 1 when paddle on port 2", () 
 });
 
 test("applyPaddleMouseMotion works", () => {
-    const { nes, calls } = makeNesStubWithPort({ paddlePort: 1 });
+    const { nes, calls } = makeNesStub({ });
     const width = 320;
     const x = 240;
 
@@ -164,7 +139,7 @@ test("applyPaddleMouseMotion works", () => {
 });
 
 test("applyPaddleMouseButton works ", () => {
-    const { nes, calls } = makeNesStubWithPort({ paddlePort: 1 });
+    const { nes, calls } = makeNesStub({ });
 
     applyMouseButton(nes, 0, true);
 

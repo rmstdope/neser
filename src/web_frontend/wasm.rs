@@ -44,6 +44,7 @@ impl WasmNes {
         self.nes.insert_cartridge(cart);
         self.nes.reset(false);
         self.rom_loaded = true;
+        web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
     }
 

@@ -121,7 +121,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if run_result.is_ok()
         && let Err(e) = nes_instance.bus.borrow().save_ram()
     {
-        eprintln!("Warning: failed to save RAM: {}", e);
+        log_info(format!("Warning: failed to save RAM: {}", e));
     }
 
     run_result.map_err(|e| e.into())

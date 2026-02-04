@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::time::{Duration, Instant};
 
-use crate::debugging::{DebuggerSnapshot, Tracing, snapshot, ui};
+use crate::debugging::{DebuggerSnapshot, Tracing, log_info, snapshot, ui};
 use crate::input::Button;
 
 /// EventLoop manages the SDL2 event loop for the application.
@@ -241,7 +241,6 @@ impl SdlEventLoop {
         let _num = game_controller_subsystem
             .load_mappings("gamecontrollerdb.txt")
             .unwrap_or(0);
-        // println!("Loaded {} game controller mappings", num);
         let available = game_controller_subsystem
             .num_joysticks()
             .map_err(|e| format!("Failed to enumerate joysticks: {}", e))?;
@@ -252,7 +251,7 @@ impl SdlEventLoop {
         // Try to open up to 2 controllers
         for id in 0..available.min(2) {
             if !game_controller_subsystem.is_game_controller(id) {
-                println!("Joystick {} is not a game controller", id);
+                log_info(format!("Joystick {} is not a game controller", id));
                 continue;
             }
 
@@ -260,17 +259,17 @@ impl SdlEventLoop {
                 Ok(controller) => {
                     let instance_id = controller.instance_id();
                     let player_num = (controllers.len() + 1) as u8;
-                    println!(
+                    log_info(format!(
                         "Opened game controller {} for player {}: {}",
                         id,
                         player_num,
                         controller.name()
-                    );
+                    ));
                     controller_player_map.insert(instance_id, player_num);
                     controllers.push(controller);
                 }
                 Err(e) => {
-                    println!("Failed to open controller {}: {}", id, e);
+                    log_info(format!("Failed to open controller {}: {}", id, e));
                 }
             }
 
@@ -286,20 +285,20 @@ impl SdlEventLoop {
     /// Prints a warning to stderr if clamping occurs.
     fn clamp_timing_scale(scale: f32) -> f32 {
         if scale < Self::MIN_TIMING_SCALE {
-            eprintln!(
+            log_info(format!(
                 "Warning: Timing scaling factor {} is below minimum {}. Clamping to {}.",
                 scale,
                 Self::MIN_TIMING_SCALE,
                 Self::MIN_TIMING_SCALE
-            );
+            ));
             Self::MIN_TIMING_SCALE
         } else if scale > Self::MAX_TIMING_SCALE {
-            eprintln!(
+            log_info(format!(
                 "Warning: Timing scaling factor {} is above maximum {}. Clamping to {}.",
                 scale,
                 Self::MAX_TIMING_SCALE,
                 Self::MAX_TIMING_SCALE
-            );
+            ));
             Self::MAX_TIMING_SCALE
         } else {
             scale
@@ -641,26 +640,20 @@ impl SdlEventLoop {
                         0.0
                     };
                     if dropped != 0 || underrun != 0 {
-                        eprintln!(
+                        log_info(format!(
                             "Audio stats (last ~1s): received={}, dropped={}, underrun={}, cpu_cycles_per_sec≈{:.0}",
                             received, dropped, underrun, cycles_per_sec
-                        );
+                        ));
                     }
                     last_cpu_cycles = now_cycles;
                     last_perf_instant = Instant::now();
                     last_audio_stats_print = Instant::now();
                 }
                 nes.clear_ready_to_render();
-                // println!(
-                //     "Frame emulated. Scanline: {}, Pixel: {}",
-                //     nes.ppu.borrow().scanline(),
-                //     nes.ppu.borrow().pixel()
-                // );
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
                 let overlay_text = self.help_overlay_render_text();
                 let _ = gl_backend.render(nes, self.debugger_open_requested, overlay_text, false);
-                // println!("Frame rendered.");
 
                 // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
                 let current_time = timer.performance_counter();
@@ -671,7 +664,7 @@ impl SdlEventLoop {
 
                 // Calculate FPS before sleeping
                 // let fps = 1.0 / elapsed_seconds;
-                // println!("FPS: {:.2}", fps);
+                // log_info(format!("FPS: {:.2}", fps));
 
                 // Update last_frame_time before sleeping to avoid timing drift
                 last_frame_time = current_time;
@@ -682,7 +675,6 @@ impl SdlEventLoop {
                     let sleep_time = target_frame_time - elapsed_seconds;
                     std::thread::sleep(std::time::Duration::from_secs_f64(sleep_time));
                 }
-                // println!("Frame limited.");
             }
         } else {
             // Headless mode - just run without rendering
@@ -715,10 +707,10 @@ impl SdlEventLoop {
                             0.0
                         };
                         if dropped != 0 || underrun != 0 {
-                            eprintln!(
+                            log_info(format!(
                                 "Audio stats (last ~1s): received={}, dropped={}, underrun={}, cpu_cycles_per_sec≈{:.0}",
                                 received, dropped, underrun, cycles_per_sec
-                            );
+                            ));
                         }
                         last_cpu_cycles = now_cycles;
                         last_perf_instant = Instant::now();
@@ -1043,7 +1035,6 @@ impl SdlEventLoop {
                 nes.run_cpu_tick();
             }
             Keycode::F1 => {
-                // println!("Resetting NES...");
                 nes.reset(true);
             }
             Keycode::F2 => {
@@ -1155,7 +1146,7 @@ T: Start"
         let bytes = match state.to_bytes() {
             Ok(bytes) => bytes,
             Err(err) => {
-                eprintln!("Failed to serialize save-state: {err}");
+                log_info(format!("Failed to serialize save-state: {err}"));
                 return;
             }
         };
@@ -1163,7 +1154,7 @@ T: Start"
         if let Some(parent) = state_path.parent()
             && let Err(err) = fs::create_dir_all(parent)
         {
-            eprintln!("Failed to create save-state directory: {err}");
+            log_info(format!("Failed to create save-state directory: {err}"));
             return;
         }
 
@@ -1171,12 +1162,12 @@ T: Start"
         tmp_path.set_extension(format!("state.tmp.{}", std::process::id()));
 
         if let Err(err) = fs::write(&tmp_path, bytes) {
-            eprintln!("Failed to write save-state: {err}");
+            log_info(format!("Failed to write save-state: {err}"));
             return;
         }
 
         if let Err(err) = fs::rename(&tmp_path, &state_path) {
-            eprintln!("Failed to finalize save-state: {err}");
+            log_info(format!("Failed to finalize save-state: {err}"));
         }
     }
 
@@ -1192,7 +1183,7 @@ T: Start"
         let bytes = match fs::read(&state_path) {
             Ok(bytes) => bytes,
             Err(err) => {
-                eprintln!("Failed to read save-state: {err}");
+                log_info(format!("Failed to read save-state: {err}"));
                 return;
             }
         };
@@ -1200,13 +1191,13 @@ T: Start"
         let state = match SaveState::from_bytes(&bytes) {
             Ok(state) => state,
             Err(err) => {
-                eprintln!("Failed to deserialize save-state: {err}");
+                log_info(format!("Failed to deserialize save-state: {err}"));
                 return;
             }
         };
 
         if let Err(err) = nes.load_state(&state) {
-            eprintln!("Failed to restore save-state: {err}");
+            log_info(format!("Failed to restore save-state: {err}"));
         }
     }
 
@@ -1214,20 +1205,23 @@ T: Start"
     fn handle_controller_added(&mut self, which: u32) {
         // Only add if we have less than 2 controllers
         if self.controllers.len() >= 2 {
-            println!("Controller {} added but already have 2 controllers", which);
+            log_info(format!(
+                "Controller {} added but already have 2 controllers",
+                which
+            ));
             return;
         }
 
         let game_controller_subsystem = match self._sdl_context.game_controller() {
             Ok(subsystem) => subsystem,
             Err(e) => {
-                println!("Failed to get game controller subsystem: {}", e);
+                log_info(format!("Failed to get game controller subsystem: {}", e));
                 return;
             }
         };
 
         if !game_controller_subsystem.is_game_controller(which) {
-            println!("Device {} is not a game controller", which);
+            log_info(format!("Device {} is not a game controller", which));
             return;
         }
 
@@ -1235,17 +1229,17 @@ T: Start"
             Ok(controller) => {
                 let instance_id = controller.instance_id();
                 let player_num = (self.controllers.len() + 1) as u8;
-                println!(
+                log_info(format!(
                     "Hot-plugged controller {} for player {}: {}",
                     which,
                     player_num,
                     controller.name()
-                );
+                ));
                 self.controller_player_map.insert(instance_id, player_num);
                 self.controllers.push(controller);
             }
             Err(e) => {
-                println!("Failed to open controller {}: {}", which, e);
+                log_info(format!("Failed to open controller {}: {}", which, e));
             }
         }
     }
@@ -1256,7 +1250,10 @@ T: Start"
         if let Some(player_num) = self.controller_player_map.remove(&which) {
             // Remove from controllers vec
             self.controllers.retain(|c| c.instance_id() != which);
-            println!("Controller {} (player {}) removed", which, player_num);
+            log_info(format!(
+                "Controller {} (player {}) removed",
+                which, player_num
+            ));
 
             // Reassign remaining controllers to players 1 and 2
             self.controller_player_map.clear();
@@ -1265,10 +1262,10 @@ T: Start"
                 let new_player_num = (idx + 1) as u8;
                 self.controller_player_map
                     .insert(instance_id, new_player_num);
-                println!(
+                log_info(format!(
                     "Reassigned controller {} to player {}",
                     instance_id, new_player_num
-                );
+                ));
             }
         }
     }
