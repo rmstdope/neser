@@ -591,11 +591,8 @@ impl Config {
 
     /// Validate command-line arguments.
     fn validate_args(args: &[String]) -> Result<(), String> {
-        // Boolean flags that accept optional values
-        const OPTIONAL_BOOL_FLAGS: &[&str] = &[
-            "--audio", "--vsync", "--gamepads", "--pulse1", "--pulse2",
-            "--triangle", "--noise", "--dmc", "--debugger", "--load-state", "--fullscreen"
-        ];
+        // Boolean flags that accept optional values are defined in the shared
+        // OPTIONAL_BOOL_FLAGS constant, which is also used by parse_rom_arg.
 
         let mut i = 1; // Skip program name
         let mut seen_positional = false;
