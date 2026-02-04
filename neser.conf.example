@@ -24,10 +24,14 @@
 # Command-line arguments use the same keys with -- prefix and hyphens:
 #   tv_system=pal     →  --tv-system pal
 #   audio=false       →  --audio false  OR  --audio=0  OR  --no-audio  OR  --disable-audio
-#   pulse1=true       →  --pulse1 true  OR  --pulse1=1
-#   pulse2=false      →  --pulse2 false OR  --pulse2=0  OR  --no-pulse2  OR  --disable-pulse2
+#   audio=true        →  --audio  OR  --audio true  OR  --audio=1
+#   pulse1=true       →  --pulse1  OR  --pulse1 true  OR  --pulse1=1
+#   pulse2=false      →  --pulse2 false  OR  --pulse2=0  OR  --no-pulse2  OR  --disable-pulse2
 #
-# CLI supports both value-based (--flag value) and prefix negation (--no-flag, --disable-flag)
+# CLI boolean flags:
+#   - No value (--flag) defaults to true
+#   - With value (--flag true/false) sets explicit value  
+#   - Prefix negation (--no-flag, --disable-flag) sets to false
 # =============================================================================
 
 # -----------------------------------------------------------------------------
