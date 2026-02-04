@@ -819,7 +819,7 @@ impl Config {
             .count();
 
         if arkanoid_count > 1 {
-            return Err("Only one Arkanoid controller can be configured".to_string());
+            return Err("No more than one controller simulated using Mouse can be configured (Arkanoid/Zapper)".to_string());
         }
 
         Ok(())
