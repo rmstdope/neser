@@ -8,7 +8,7 @@ use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::console::{BusState, MapperState};
 use crate::debugging::log_info;
-use crate::input::{Button, Controller, ControllerType, Joypad, Paddle, Zapper};
+use crate::input::{ArkanoidController, Button, Controller, ControllerType, NesJoypad, Zapper};
 use crate::ppu;
 use crate::trace_mapper;
 use std::cell::RefCell;
@@ -41,8 +41,8 @@ impl Bus {
     /// Create a new memory instance with 64KB of RAM initialized to 0
     pub fn new(ppu: Rc<RefCell<ppu::Ppu>>, apu: Rc<RefCell<apu::Apu>>) -> Self {
         let controllers = [
-            Rc::new(RefCell::new(Joypad::new_boxed())),
-            Rc::new(RefCell::new(Joypad::new_boxed())),
+            Rc::new(RefCell::new(NesJoypad::new_boxed())),
+            Rc::new(RefCell::new(NesJoypad::new_boxed())),
         ];
 
         let mut controller = Self {
@@ -430,8 +430,8 @@ impl Bus {
         }
 
         let new_controller: Box<dyn Controller> = match controller_type {
-            ControllerType::Joypad => Joypad::new_boxed(),
-            ControllerType::Arkanoid => Paddle::new_boxed(),
+            ControllerType::Joypad => NesJoypad::new_boxed(),
+            ControllerType::Arkanoid => ArkanoidController::new_boxed(),
             ControllerType::Zapper => Zapper::new_boxed(),
         };
 
@@ -553,12 +553,12 @@ impl Bus {
         // Restore port 1 controller - replace if type changed
         match &state.port1_controller {
             ControllerStateWrapper::Joypad(s) => {
-                let mut controller = Joypad::new_boxed();
+                let mut controller = NesJoypad::new_boxed();
                 controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
             ControllerStateWrapper::Arkanoid(s) => {
-                let mut controller = Paddle::new_boxed();
+                let mut controller = ArkanoidController::new_boxed();
                 controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
@@ -572,12 +572,12 @@ impl Bus {
         // Restore port 2 controller - replace if type changed
         match &state.port2_controller {
             ControllerStateWrapper::Joypad(s) => {
-                let mut controller = Joypad::new_boxed();
+                let mut controller = NesJoypad::new_boxed();
                 controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
             ControllerStateWrapper::Arkanoid(s) => {
-                let mut controller = Paddle::new_boxed();
+                let mut controller = ArkanoidController::new_boxed();
                 controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }

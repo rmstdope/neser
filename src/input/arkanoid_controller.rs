@@ -6,7 +6,7 @@
 use super::ControllerInput;
 
 // TODO Change file name to arkanoid_controller.rs
-pub struct Paddle {
+pub struct ArkanoidController {
     strobe: bool,
     shift_index: u8,
     position: u8,
@@ -14,13 +14,13 @@ pub struct Paddle {
     trigger: bool,
 }
 
-impl Default for Paddle {
+impl Default for ArkanoidController {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Paddle {
+impl ArkanoidController {
     const MIN_POSITION: u8 = 0x62;
     const MAX_POSITION: u8 = 0xF2;
     pub fn new() -> Self {
@@ -33,12 +33,10 @@ impl Paddle {
         }
     }
 
-    #[allow(dead_code)]
     pub fn set_position(&mut self, position: u8) {
         self.position = position.clamp(Self::MIN_POSITION, Self::MAX_POSITION);
     }
 
-    #[allow(dead_code)]
     pub fn set_trigger(&mut self, pressed: bool) {
         self.trigger = pressed;
     }
@@ -121,7 +119,7 @@ impl Paddle {
     }
 }
 
-impl crate::input::Controller for Paddle {
+impl crate::input::Controller for ArkanoidController {
     fn write_strobe(&mut self, value: u8) {
         self.write_strobe(value)
     }
@@ -145,7 +143,7 @@ impl crate::input::Controller for Paddle {
     }
 
     fn new_boxed() -> Box<dyn crate::input::Controller> {
-        Box::new(Paddle::new())
+        Box::new(ArkanoidController::new())
     }
 
     fn set_button(&mut self, _button: crate::input::Button, _pressed: bool) -> bool {
@@ -173,11 +171,11 @@ impl crate::input::Controller for Paddle {
 
 #[cfg(test)]
 mod tests {
-    use super::Paddle;
+    use super::ArkanoidController;
 
     #[test]
     fn test_paddle_serializes_position_msb_first() {
-        let mut paddle = Paddle::new();
+        let mut paddle = ArkanoidController::new();
         paddle.set_position(0x92); // 0b1001_0010 -> inverted 0b0110_1101
 
         paddle.write_strobe(1);
@@ -195,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_paddle_strobe_holds_first_bit() {
-        let mut paddle = Paddle::new();
+        let mut paddle = ArkanoidController::new();
         paddle.set_position(0x80); // inverted MSB = 0
 
         paddle.write_strobe(1);
@@ -208,7 +206,7 @@ mod tests {
 
     #[test]
     fn test_paddle_trigger_bit() {
-        let mut paddle = Paddle::new();
+        let mut paddle = ArkanoidController::new();
         paddle.set_position(0x00);
 
         paddle.write_strobe(1);
@@ -223,9 +221,9 @@ mod tests {
 
     #[test]
     fn test_paddle_position_clamps_to_valid_range() {
-        let mut paddle = Paddle::new();
+        let mut paddle = ArkanoidController::new();
 
-        let read_position = |paddle: &mut Paddle| {
+        let read_position = |paddle: &mut ArkanoidController| {
             let mut position = 0u8;
             for bit_index in (0..8).rev() {
                 let value = paddle.read();

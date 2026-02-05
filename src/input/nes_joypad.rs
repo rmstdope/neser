@@ -22,19 +22,19 @@ pub enum Button {
 ///
 /// The controller uses a shift register that returns button states sequentially.
 /// Writing to the strobe register (bit 0) resets the read position.
-pub struct Joypad {
+pub struct NesJoypad {
     strobe: bool,
     button_index: u8,
     button_states: u8, // Bitfield: [Right, Left, Down, Up, Start, Select, B, A]
 }
 
-impl Default for Joypad {
+impl Default for NesJoypad {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Joypad {
+impl NesJoypad {
     pub fn new() -> Self {
         Self {
             strobe: false,
@@ -115,7 +115,7 @@ impl Joypad {
     }
 }
 
-impl crate::input::Controller for Joypad {
+impl crate::input::Controller for NesJoypad {
     fn write_strobe(&mut self, value: u8) {
         self.write_strobe(value)
     }
@@ -139,7 +139,7 @@ impl crate::input::Controller for Joypad {
     }
 
     fn new_boxed() -> Box<dyn crate::input::Controller> {
-        Box::new(Joypad::new())
+        Box::new(NesJoypad::new())
     }
 
     fn set_button(&mut self, button: crate::input::Button, pressed: bool) -> bool {
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_new_joypad() {
-        let joypad = Joypad::new();
+        let joypad = NesJoypad::new();
         assert!(!joypad.strobe);
         assert_eq!(joypad.button_index, 0);
         assert_eq!(joypad.button_states, 0);
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn test_strobe_reset() {
-        let mut joypad = Joypad::new();
+        let mut joypad = NesJoypad::new();
 
         // Press A button
         joypad.set_button(Button::A, true);
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_sequential_button_reading() {
-        let mut joypad = Joypad::new();
+        let mut joypad = NesJoypad::new();
 
         // Press A, Start, and Right
         joypad.set_button(Button::A, true);
@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn test_ninth_read_returns_one() {
-        let mut joypad = Joypad::new();
+        let mut joypad = NesJoypad::new();
 
         // Read all 8 buttons
         for _ in 0..8 {
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_strobe_holds_same_button() {
-        let mut joypad = Joypad::new();
+        let mut joypad = NesJoypad::new();
 
         // Press B button
         joypad.set_button(Button::B, true);
@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_button_state_changes() {
-        let mut joypad = Joypad::new();
+        let mut joypad = NesJoypad::new();
 
         // Press A
         joypad.set_button(Button::A, true);
@@ -280,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_all_buttons() {
-        let mut joypad = Joypad::new();
+        let mut joypad = NesJoypad::new();
 
         // Press all buttons
         joypad.set_button(Button::A, true);
