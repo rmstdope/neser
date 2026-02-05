@@ -21,7 +21,6 @@ impl Rendering {
     }
 
     /// Get reference to screen buffer
-    #[cfg(test)]
     pub fn screen_buffer(&self) -> &ScreenBuffer {
         &self.screen_buffer
     }

@@ -520,7 +520,6 @@ impl Ppu {
     }
 
     /// Get reference to screen buffer
-    #[cfg(test)]
     pub fn screen_buffer(&self) -> &super::screen_buffer::ScreenBuffer {
         self.rendering.screen_buffer()
     }
