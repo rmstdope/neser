@@ -35,7 +35,7 @@ if (!gl) {
 
 const width = 256;
 const height = 240;
-const SCROLLER_TEXT = "Newest update: ** Jan 30: Updated frame limiter so that audio does not stutter the first ~10 seconds after loading a ROM **";
+const SCROLLER_TEXT = "Newest update: ** Feb 5: Added support for Arkanoid controller - Use the mouse! **";
 const SCROLLER_SPEED = 1.5;
 const SCROLLER_AMPLITUDE = 50;
 const SCROLLER_FREQUENCY = 0.009;
