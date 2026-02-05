@@ -332,6 +332,15 @@ impl Nes {
         self.bus.borrow_mut().set_mouse_x_position(position);
     }
 
+    /// Update the mouse Y position for any mouse-emulated controller.
+    ///
+    /// # Arguments
+    /// * `position` - The mouse position value (typically 0–255).
+    #[allow(dead_code)]
+    pub fn set_mouse_y_position(&mut self, position: u8) {
+        self.bus.borrow_mut().set_mouse_y_position(position);
+    }
+
     /// Update the left mouse button status for any mouse-emulated controller.
     ///
     /// # Arguments

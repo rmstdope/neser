@@ -157,6 +157,10 @@ impl crate::input::Controller for Paddle {
         true
     }
 
+    fn set_mouse_y_position(&mut self, _position: u8) -> bool {
+        false
+    }
+
     fn set_mouse_left_button(&mut self, pressed: bool) -> bool {
         self.set_trigger(pressed);
         true
