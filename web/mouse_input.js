@@ -54,3 +54,8 @@ export function applyJoypadButtonIfAllowed(nes, controller, button, pressed) {
 
     nes.set_button(controller, button, pressed);
 }
+
+export function isZapperActive(nes) {
+    // Check if Zapper is active on either port
+    return nes.is_zapper_active(1) || nes.is_zapper_active(2);
+}

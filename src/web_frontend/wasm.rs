@@ -150,6 +150,14 @@ impl WasmNes {
         self.nes.controller_input_type(port) == Some(crate::input::ControllerInput::Mouse)
     }
 
+    /// Check if a Zapper light gun is active on the specified port.
+    /// Returns true if a Zapper is connected to the port.
+    /// This is used by the JavaScript frontend to show/hide the crosshair cursor.
+    #[wasm_bindgen]
+    pub fn is_zapper_active(&self, port: u8) -> bool {
+        self.nes.is_zapper_active(port)
+    }
+
     /// Set the mouse X position for any mouse-emulated controller.
     ///
     /// # Arguments

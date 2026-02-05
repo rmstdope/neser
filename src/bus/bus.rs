@@ -474,6 +474,18 @@ impl Bus {
         Some(self.controllers[(port - 1) as usize].borrow().input_type())
     }
 
+    /// Check if a Zapper is active on the specified port.
+    pub fn is_zapper_active(&self, port: u8) -> bool {
+        if !(1..=2).contains(&port) {
+            return false;
+        }
+
+        matches!(
+            self.controllers[(port - 1) as usize].borrow().capture_state(),
+            crate::input::ControllerState::Zapper(_)
+        )
+    }
+
     #[cfg(test)]
     fn open_bus_value_for_test(&self) -> u8 {
         self.open_bus

@@ -6,10 +6,11 @@ import {
     applyMouseButton,
     applyMouseMotion,
     mapMouseXToScreenPosition,
-    mapMouseYToScreenPosition
+    mapMouseYToScreenPosition,
+    isZapperActive
 } from "./mouse_input.js";
 
-function makeNesStub({ arkanoidPort = 0 } = {}) {
+function makeNesStub({ arkanoidPort = 0, zapperPort = 0 } = {}) {
     const calls = {
         setButton: [],
         setMouseXPosition: [],
@@ -19,6 +20,7 @@ function makeNesStub({ arkanoidPort = 0 } = {}) {
 
     const nes = {
         is_mouse_emulated_controller: (controller) => (arkanoidPort === controller),
+        is_zapper_active: (port) => (zapperPort === port),
         set_button: (controller, button, pressed) => {
             calls.setButton.push({ controller, button, pressed });
         },
@@ -163,4 +165,19 @@ test("mapMouseYToScreenPosition clamps to bounds", () => {
 
     assert.equal(negative, 0);
     assert.equal(tooLarge, 239);
+});
+
+test("isZapperActive returns true when Zapper on port 1", () => {
+    const { nes } = makeNesStub({ zapperPort: 1 });
+    assert.equal(isZapperActive(nes), true);
+});
+
+test("isZapperActive returns true when Zapper on port 2", () => {
+    const { nes } = makeNesStub({ zapperPort: 2 });
+    assert.equal(isZapperActive(nes), true);
+});
+
+test("isZapperActive returns false when no Zapper", () => {
+    const { nes } = makeNesStub({ zapperPort: 0 });
+    assert.equal(isZapperActive(nes), false);
 });
