@@ -31,6 +31,7 @@ export function createCrosshair(targetCanvas) {
         overlayCanvas.height = targetCanvas.height;
         overlayCanvas.style.width = targetCanvas.style.width;
         overlayCanvas.style.height = targetCanvas.style.height;
+        drawCrosshair(currentX, currentY);
     }
     
     function drawCrosshair(x, y) {

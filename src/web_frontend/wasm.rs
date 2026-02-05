@@ -169,8 +169,13 @@ impl WasmNes {
 
     /// Set the mouse Y position for any mouse-emulated controller.
     ///
+    /// The NES has 240 visible scanlines, so the meaningful Y range on screen is 0..=239.
+    /// Values in this range will be within the visible area; values >= 240 are forwarded
+    /// to the backend but are outside the visible region and will not cause the Zapper
+    /// to detect light.
+    ///
     /// # Arguments
-    /// * `position` - The mouse-emulated controller position value (0..=239)
+    /// * `position` - The mouse-emulated controller position value (useful range 0..=239)
     #[wasm_bindgen]
     pub fn set_mouse_y_position(&mut self, position: u8) {
         self.nes.set_mouse_y_position(position);
