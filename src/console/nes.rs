@@ -331,6 +331,13 @@ impl Nes {
         self.bus.borrow().controller_input_type(port)
     }
 
+    /// Check if a Zapper is active on the specified port.
+    /// This method is primarily used by the WASM frontend.
+    #[allow(dead_code)]
+    pub fn is_zapper_active(&self, port: u8) -> bool {
+        self.bus.borrow().is_zapper_active(port)
+    }
+
     /// Update the mouse X position for any mouse-emulated controller.
     ///
     /// # Arguments

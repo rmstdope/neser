@@ -1,6 +1,6 @@
 import { shouldSuppressJoypadInput } from "./input_routing.js";
 
-export function mapMouseXToScreenPosition(x, windowWidth) {
+export function mapMouseXToPaddlePosition(x, windowWidth) {
     const minPosition = 0x62;
     const maxPosition = 0xF2;
     const range = maxPosition - minPosition;
@@ -18,9 +18,45 @@ export function mapMouseXToScreenPosition(x, windowWidth) {
     return Math.min(maxPosition, Math.max(minPosition, Math.round(scaled)));
 }
 
-export function applyMouseMotion(nes, x, windowWidth) {
-    const position = mapMouseXToScreenPosition(x, windowWidth);
-    nes.set_mouse_x_position(position);
+export function mapMouseXToZapperPosition(x, windowWidth) {
+    if (windowWidth <= 1) {
+        return 0;
+    }
+
+    const maxX = windowWidth - 1;
+    const clampedX = Math.min(Math.max(x, 0), maxX);
+    const normalized = clampedX / maxX;
+    const scaled = normalized * 255;
+
+    return Math.min(255, Math.max(0, Math.round(scaled)));
+}
+
+export function mapMouseYToZapperPosition(y, windowHeight) {
+    if (windowHeight <= 1) {
+        return 0;
+    }
+
+    const maxY = windowHeight - 1;
+    const clampedY = Math.min(Math.max(y, 0), maxY);
+    const normalized = clampedY / maxY;
+    const scaled = normalized * 255;
+
+    return Math.min(255, Math.max(0, Math.round(scaled)));
+}
+
+export function applyMouseMotion(nes, x, y, windowWidth, windowHeight) {
+    const isZapper = isZapperActive(nes);
+    
+    if (isZapper) {
+        const positionX = mapMouseXToZapperPosition(x, windowWidth);
+        const positionY = mapMouseYToZapperPosition(y, windowHeight);
+        nes.set_mouse_x_position(positionX);
+        nes.set_mouse_y_position(positionY);
+    } else {
+        // Arkanoid paddle only uses X position
+        const positionX = mapMouseXToPaddlePosition(x, windowWidth);
+        nes.set_mouse_x_position(positionX);
+    }
 }
 
 export function applyMouseButton(nes, button, pressed) {
@@ -36,4 +72,9 @@ export function applyJoypadButtonIfAllowed(nes, controller, button, pressed) {
     }
 
     nes.set_button(controller, button, pressed);
+}
+
+export function isZapperActive(nes) {
+    // Check if Zapper is active on either port
+    return nes.is_zapper_active(1) || nes.is_zapper_active(2);
 }

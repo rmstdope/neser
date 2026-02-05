@@ -8,7 +8,7 @@ import {
     saveState
 } from "./save_state_storage.js";
 import { createSaveStateController } from "./save_state_controller.js";
-import { applyJoypadButtonIfAllowed, applyMouseMotion, applyMouseButton } from "./mouse_input.js";
+import { applyJoypadButtonIfAllowed, applyMouseMotion, applyMouseButton, isZapperActive } from "./mouse_input.js";
 import { createSaveStateContext } from "./save_state_context.js";
 import { fetchRomList } from "./rom_list.js";
 import { handleRomSelection } from "./rom_selection.js";
@@ -17,6 +17,7 @@ import { computePlaybackRate } from "./audio_resampler.js";
 import { planFrame } from "./frame_plan.js";
 import { createSineScroller } from "./sine_scroller.js";
 import { getKeyboardControllerTarget } from "./input_routing.js";
+import { createCrosshair } from "./crosshair.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -540,6 +541,7 @@ let webglInitialized = false; // Track WebGL initialization state
 let idleScrollerActive = false;
 let idleScroller = null;
 let idleScrollerStartTime = 0;
+let crosshair = null; // Crosshair overlay for Zapper
 
 function resetWebGLResources() {
     if (nesTexture) gl.deleteTexture(nesTexture);
@@ -974,6 +976,9 @@ async function start() {
         initAudioContext();
         nes.set_audio_muted(audioMuted);
         await refreshSaveStateController();
+        
+        // Update Zapper cursor state after ROM is loaded
+        updateZapperCursor();
     } catch (err) {
         setStatus(`Failed to load ROM: ${err}`, true);
         startBtn.disabled = false;
@@ -1406,11 +1411,39 @@ document.addEventListener('keyup', (e) => {
 function handleMouseMotion(event) {
     if (!nes) return;
     const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 1) {
+    if (rect.width <= 1 || rect.height <= 1) {
         return;
     }
     const x = event.clientX - rect.left;
-    applyMouseMotion(nes, x, rect.width);
+    const y = event.clientY - rect.top;
+    applyMouseMotion(nes, x, y, rect.width, rect.height);
+    
+    // Update crosshair position if visible
+    if (crosshair && crosshair.visible) {
+        crosshair.updatePosition(x, y);
+    }
+}
+
+function updateZapperCursor() {
+    if (!nes) return;
+    
+    const zapperActive = isZapperActive(nes);
+    
+    if (zapperActive) {
+        // Hide system cursor and show crosshair
+        canvas.style.cursor = "none";
+        if (!crosshair) {
+            crosshair = createCrosshair(canvas);
+        }
+        crosshair.show();
+    } else {
+        // Show system cursor and hide/destroy crosshair
+        canvas.style.cursor = "default";
+        if (crosshair) {
+            crosshair.destroy();
+            crosshair = null;
+        }
+    }
 }
 
 function handleMouseButton(event, pressed) {
@@ -1444,6 +1477,11 @@ function updateCanvasSize(newHeight) {
     const dpr = window.devicePixelRatio || 1;
     canvas.width = Math.round(newWidth * dpr);
     canvas.height = Math.round(currentHeight * dpr);
+    
+    // Update crosshair overlay size if it exists
+    if (crosshair) {
+        crosshair.updateCanvasSize();
+    }
 }
 
 // Update fullscreen button text based on state
@@ -1611,5 +1649,10 @@ document.addEventListener("fullscreenchange", () => {
     } else {
         // Exited fullscreen - restore previous size
         updateCanvasSize(currentHeight);
+    }
+    
+    // Update crosshair overlay size if it exists
+    if (crosshair) {
+        crosshair.updateCanvasSize();
     }
 });

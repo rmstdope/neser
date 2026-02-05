@@ -5,23 +5,31 @@ import {
     applyJoypadButtonIfAllowed,
     applyMouseButton,
     applyMouseMotion,
-    mapMouseXToScreenPosition
+    mapMouseXToPaddlePosition,
+    mapMouseXToZapperPosition,
+    mapMouseYToZapperPosition,
+    isZapperActive
 } from "./mouse_input.js";
 
-function makeNesStub({ arkanoidPort = 0 } = {}) {
+function makeNesStub({ arkanoidPort = 0, zapperPort = 0 } = {}) {
     const calls = {
         setButton: [],
         setMouseXPosition: [],
+        setMouseYPosition: [],
         setMouseLeftButton: []
     };
 
     const nes = {
         is_mouse_emulated_controller: (controller) => (arkanoidPort === controller),
+        is_zapper_active: (port) => (zapperPort === port),
         set_button: (controller, button, pressed) => {
             calls.setButton.push({ controller, button, pressed });
         },
         set_mouse_x_position: (position) => {
             calls.setMouseXPosition.push({ position });
+        },
+        set_mouse_y_position: (position) => {
+            calls.setMouseYPosition.push({ position });
         },
         set_mouse_left_button: (pressed) => {
             calls.setMouseLeftButton.push({ pressed });
@@ -31,20 +39,20 @@ function makeNesStub({ arkanoidPort = 0 } = {}) {
     return { nes, calls };
 }
 
-test("mapMouseXToScreenPosition maps edges and center", () => {
+test("mapMouseXToPaddlePosition maps edges and center", () => {
     const width = 300;
 
-    const left = mapMouseXToScreenPosition(0, width);
-    const right = mapMouseXToScreenPosition(width - 1, width);
+    const left = mapMouseXToPaddlePosition(0, width);
+    const right = mapMouseXToPaddlePosition(width - 1, width);
     const centerX = Math.floor((width - 1) / 2);
-    const center = mapMouseXToScreenPosition(centerX, width);
+    const center = mapMouseXToPaddlePosition(centerX, width);
 
     assert.equal(left, 0x62);
     assert.equal(right, 0xF2);
     assert.ok(center >= 165 && center <= 175);
 });
 
-test("mapMouseXToScreenPosition uses non-linear curve", () => {
+test("mapMouseXToPaddlePosition uses non-linear curve", () => {
     const width = 400;
     const centerA = 200;
     const centerB = 220;
@@ -52,24 +60,84 @@ test("mapMouseXToScreenPosition uses non-linear curve", () => {
     const edgeB = 380;
 
     const centerDelta =
-        mapMouseXToScreenPosition(centerB, width) -
-        mapMouseXToScreenPosition(centerA, width);
+        mapMouseXToPaddlePosition(centerB, width) -
+        mapMouseXToPaddlePosition(centerA, width);
     const edgeDelta =
-        mapMouseXToScreenPosition(edgeB, width) -
-        mapMouseXToScreenPosition(edgeA, width);
+        mapMouseXToPaddlePosition(edgeB, width) -
+        mapMouseXToPaddlePosition(edgeA, width);
 
     assert.ok(edgeDelta > centerDelta);
 });
 
-test("applyMouseMotion updates position", () => {
+test("mapMouseXToZapperPosition maps edges and center linearly", () => {
+    const width = 320;
+
+    const left = mapMouseXToZapperPosition(0, width);
+    const right = mapMouseXToZapperPosition(width - 1, width);
+    const centerX = Math.floor((width - 1) / 2);
+    const center = mapMouseXToZapperPosition(centerX, width);
+
+    assert.equal(left, 0);
+    assert.equal(right, 255);
+    assert.ok(center >= 126 && center <= 128);
+});
+
+test("mapMouseYToZapperPosition maps top and bottom edges", () => {
+    const height = 480;
+
+    const top = mapMouseYToZapperPosition(0, height);
+    const bottom = mapMouseYToZapperPosition(height - 1, height);
+
+    assert.equal(top, 0);
+    assert.equal(bottom, 255);
+});
+
+test("mapMouseYToZapperPosition maps center", () => {
+    const height = 480;
+    const centerY = Math.floor((height - 1) / 2);
+    const center = mapMouseYToZapperPosition(centerY, height);
+
+    assert.ok(center >= 126 && center <= 128);
+});
+
+test("mapMouseYToZapperPosition clamps to bounds", () => {
+    const height = 480;
+
+    const negative = mapMouseYToZapperPosition(-10, height);
+    const tooLarge = mapMouseYToZapperPosition(1000, height);
+
+    assert.equal(negative, 0);
+    assert.equal(tooLarge, 255);
+});
+
+test("applyMouseMotion updates Arkanoid position", () => {
     const { nes, calls } = makeNesStub({ arkanoidPort: 1 });
     const width = 320;
+    const height = 480;
     const x = 240;
+    const y = 360;
 
-    const expected = mapMouseXToScreenPosition(x, width);
-    applyMouseMotion(nes, x, width);
+    const expectedX = mapMouseXToPaddlePosition(x, width);
+    applyMouseMotion(nes, x, y, width, height);
 
-    assert.deepEqual(calls.setMouseXPosition, [{ position: expected }]);
+    assert.deepEqual(calls.setMouseXPosition, [{ position: expectedX }]);
+    // Arkanoid doesn't set Y position
+    assert.deepEqual(calls.setMouseYPosition, []);
+});
+
+test("applyMouseMotion updates Zapper position", () => {
+    const { nes, calls } = makeNesStub({ zapperPort: 1 });
+    const width = 320;
+    const height = 480;
+    const x = 240;
+    const y = 360;
+
+    const expectedX = mapMouseXToZapperPosition(x, width);
+    const expectedY = mapMouseYToZapperPosition(y, height);
+    applyMouseMotion(nes, x, y, width, height);
+
+    assert.deepEqual(calls.setMouseXPosition, [{ position: expectedX }]);
+    assert.deepEqual(calls.setMouseYPosition, [{ position: expectedY }]);
 });
 
 test("applyMouseButton maps left button to trigger", () => {
@@ -128,3 +196,17 @@ test("applyJoypadButtonIfAllowed allows controller 1 when mouse on port 2", () =
     ]);
 });
 
+test("isZapperActive returns true when Zapper on port 1", () => {
+    const { nes } = makeNesStub({ zapperPort: 1 });
+    assert.equal(isZapperActive(nes), true);
+});
+
+test("isZapperActive returns true when Zapper on port 2", () => {
+    const { nes } = makeNesStub({ zapperPort: 2 });
+    assert.equal(isZapperActive(nes), true);
+});
+
+test("isZapperActive returns false when no Zapper", () => {
+    const { nes } = makeNesStub({ zapperPort: 0 });
+    assert.equal(isZapperActive(nes), false);
+});

@@ -150,6 +150,14 @@ impl WasmNes {
         self.nes.controller_input_type(port) == Some(crate::input::ControllerInput::Mouse)
     }
 
+    /// Check if a Zapper light gun is active on the specified port.
+    /// Returns true if a Zapper is connected to the port.
+    /// This is used by the JavaScript frontend to show/hide the crosshair cursor.
+    #[wasm_bindgen]
+    pub fn is_zapper_active(&self, port: u8) -> bool {
+        self.nes.is_zapper_active(port)
+    }
+
     /// Set the mouse X position for any mouse-emulated controller.
     ///
     /// # Arguments
@@ -157,6 +165,20 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn set_mouse_x_position(&mut self, position: u8) {
         self.nes.set_mouse_x_position(position);
+    }
+
+    /// Set the mouse Y position for any mouse-emulated controller.
+    ///
+    /// The NES has 240 visible scanlines, so the meaningful Y range on screen is 0..=239.
+    /// Values in this range will be within the visible area; values >= 240 are forwarded
+    /// to the backend but are outside the visible region and will not cause the Zapper
+    /// to detect light.
+    ///
+    /// # Arguments
+    /// * `position` - The mouse-emulated controller position value (useful range 0..=239)
+    #[wasm_bindgen]
+    pub fn set_mouse_y_position(&mut self, position: u8) {
+        self.nes.set_mouse_y_position(position);
     }
 
     /// Set the mouse left button state for any mouse-emulated controller.
