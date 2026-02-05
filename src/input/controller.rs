@@ -87,6 +87,12 @@ pub trait Controller {
     /// Returns true if the operation was successful, false if not supported.
     fn set_mouse_left_button(&mut self, pressed: bool) -> bool;
 
+    /// Update light detection state based on screen buffer (for light gun controllers).
+    /// Returns true if the operation was performed, false if not supported.
+    fn update_light_detection(&mut self, _screen_buffer: &crate::ppu::ScreenBuffer) -> bool {
+        false
+    }
+
     // Get the type of input this controller needs.
     fn input_type(&self) -> ControllerInput;
 }

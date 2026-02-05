@@ -2,6 +2,10 @@ use super::ControllerInput;
 use crate::console::ZapperState;
 use crate::input::Button;
 
+/// Luminance threshold for light detection (0-255)
+/// Bright pixels above this threshold will trigger light detection
+const LIGHT_DETECTION_THRESHOLD: f32 = 85.0;
+
 /// NES Zapper controller.
 ///
 /// Minimal implementation for save-state support and mouse-driven trigger.
@@ -98,6 +102,15 @@ impl crate::input::Controller for Zapper {
         true
     }
 
+    fn update_light_detection(&mut self, screen_buffer: &crate::ppu::ScreenBuffer) -> bool {
+        // Sample the luminance at the Zapper's position
+        let luminance = screen_buffer.get_luminance(self.x as u32, self.y as u32);
+        
+        // Light is detected when luminance exceeds threshold
+        self.light = luminance >= LIGHT_DETECTION_THRESHOLD;
+        true
+    }
+
     fn input_type(&self) -> ControllerInput {
         crate::input::controller_input_type(crate::input::ControllerType::Zapper)
     }
@@ -152,5 +165,91 @@ mod tests {
         assert_eq!(restored_state.x, 0x22);
         assert_eq!(restored_state.y, 0x77);
         assert!(restored_state.trigger);
+    }
+
+    #[test]
+    fn test_zapper_detects_light_on_bright_pixel() {
+        use crate::ppu::ScreenBuffer;
+        let mut zapper = Zapper::new();
+        zapper.set_mouse_x_position(100);
+        zapper.set_mouse_y_position(100);
+
+        let mut screen_buffer = ScreenBuffer::new();
+        // Set a bright white pixel at the Zapper position
+        screen_buffer.set_pixel(100, 100, 255, 255, 255);
+
+        zapper.update_light_detection(&screen_buffer);
+
+        // Light should be detected (light bit = 0)
+        let value = zapper.read_no_clock();
+        assert_eq!((value >> 4) & 0x01, 0, "Light bit should be 0 when light is detected");
+        assert!(zapper.light);
+    }
+
+    #[test]
+    fn test_zapper_no_light_on_dark_pixel() {
+        use crate::ppu::ScreenBuffer;
+        let mut zapper = Zapper::new();
+        zapper.set_mouse_x_position(50);
+        zapper.set_mouse_y_position(50);
+
+        let screen_buffer = ScreenBuffer::new(); // All black pixels
+
+        zapper.update_light_detection(&screen_buffer);
+
+        // Light should not be detected (light bit = 1)
+        let value = zapper.read_no_clock();
+        assert_eq!((value >> 4) & 0x01, 1, "Light bit should be 1 when no light is detected");
+        assert!(!zapper.light);
+    }
+
+    #[test]
+    fn test_zapper_light_threshold() {
+        use crate::ppu::ScreenBuffer;
+        let mut zapper = Zapper::new();
+        zapper.set_mouse_x_position(30);
+        zapper.set_mouse_y_position(30);
+
+        let mut screen_buffer = ScreenBuffer::new();
+        
+        // Just below threshold (85) - use a dim gray
+        screen_buffer.set_pixel(30, 30, 84, 84, 84);
+        zapper.update_light_detection(&screen_buffer);
+        assert!(!zapper.light, "Light should not be detected below threshold");
+
+        // At threshold (85) - should detect
+        screen_buffer.set_pixel(30, 30, 85, 85, 85);
+        zapper.update_light_detection(&screen_buffer);
+        assert!(zapper.light, "Light should be detected at threshold");
+
+        // Above threshold - should detect
+        screen_buffer.set_pixel(30, 30, 200, 200, 200);
+        zapper.update_light_detection(&screen_buffer);
+        assert!(zapper.light, "Light should be detected above threshold");
+    }
+
+    #[test]
+    fn test_zapper_light_detection_with_different_colors() {
+        use crate::ppu::ScreenBuffer;
+        let mut zapper = Zapper::new();
+        zapper.set_mouse_x_position(60);
+        zapper.set_mouse_y_position(60);
+
+        let mut screen_buffer = ScreenBuffer::new();
+        
+        // Bright green (high luminance due to green coefficient)
+        screen_buffer.set_pixel(60, 60, 0, 255, 0);
+        zapper.update_light_detection(&screen_buffer);
+        assert!(zapper.light, "Bright green should be detected");
+
+        // Bright red (lower luminance)
+        screen_buffer.set_pixel(60, 60, 255, 0, 0);
+        zapper.update_light_detection(&screen_buffer);
+        assert!(!zapper.light, "Pure red alone is below threshold");
+
+        // Bright blue (very low luminance)
+        screen_buffer.set_pixel(60, 60, 0, 0, 255);
+        zapper.update_light_detection(&screen_buffer);
+        assert!(!zapper.light, "Pure blue alone is below threshold");
     }
 }

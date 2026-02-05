@@ -459,6 +459,13 @@ impl Bus {
         }
     }
 
+    /// Update light detection state for all controllers based on screen buffer
+    pub fn update_light_detection(&mut self, screen_buffer: &crate::ppu::ScreenBuffer) {
+        for controller in &self.controllers {
+            controller.borrow_mut().update_light_detection(screen_buffer);
+        }
+    }
+
     /// Return the input type for a controller port.
     pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
         if !(1..=2).contains(&port) {
@@ -1841,6 +1848,94 @@ mod tests {
         memory.write(0x4016, 0x00, false);
         let zapper_bits = memory.read(0x4017) & 0x18;
         assert_eq!(zapper_bits, 0x18);
+    }
+
+    #[test]
+    fn test_zapper_light_detection_with_bright_pixel() {
+        let mut memory = create_test_memory();
+
+        memory.set_controller_type(2, crate::input::ControllerType::Zapper);
+        memory.set_mouse_x_position(100);
+        memory.set_mouse_y_position(100);
+
+        // Create a screen buffer with a bright white pixel at position (100, 100)
+        let mut screen_buffer = crate::ppu::ScreenBuffer::new();
+        screen_buffer.set_pixel(100, 100, 255, 255, 255);
+
+        // Update light detection
+        memory.update_light_detection(&screen_buffer);
+
+        // Read zapper state
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        let zapper_value = memory.read(0x4017);
+        
+        // Light bit (bit 4) should be 0 when light is detected
+        let light_bit = (zapper_value >> 4) & 0x01;
+        assert_eq!(light_bit, 0, "Light bit should be 0 (light detected) for bright pixel");
+    }
+
+    #[test]
+    fn test_zapper_light_detection_with_dark_pixel() {
+        let mut memory = create_test_memory();
+
+        memory.set_controller_type(2, crate::input::ControllerType::Zapper);
+        memory.set_mouse_x_position(50);
+        memory.set_mouse_y_position(50);
+
+        // Create a screen buffer with all black pixels
+        let screen_buffer = crate::ppu::ScreenBuffer::new();
+
+        // Update light detection
+        memory.update_light_detection(&screen_buffer);
+
+        // Read zapper state
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        let zapper_value = memory.read(0x4017);
+        
+        // Light bit (bit 4) should be 1 when no light is detected
+        let light_bit = (zapper_value >> 4) & 0x01;
+        assert_eq!(light_bit, 1, "Light bit should be 1 (no light detected) for dark pixel");
+    }
+
+    #[test]
+    fn test_zapper_light_detection_with_different_positions() {
+        let mut memory = create_test_memory();
+
+        memory.set_controller_type(2, crate::input::ControllerType::Zapper);
+
+        // Create a screen buffer with bright pixels at specific positions
+        let mut screen_buffer = crate::ppu::ScreenBuffer::new();
+        screen_buffer.set_pixel(10, 10, 255, 255, 255);
+        screen_buffer.set_pixel(200, 150, 255, 255, 255);
+
+        // Test position (10, 10) - should detect light
+        memory.set_mouse_x_position(10);
+        memory.set_mouse_y_position(10);
+        memory.update_light_detection(&screen_buffer);
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        let light_bit_1 = (memory.read(0x4017) >> 4) & 0x01;
+        assert_eq!(light_bit_1, 0, "Should detect light at (10, 10)");
+
+        // Test position (200, 150) - should detect light
+        memory.set_mouse_x_position(200);
+        memory.set_mouse_y_position(150);
+        memory.update_light_detection(&screen_buffer);
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        let light_bit_2 = (memory.read(0x4017) >> 4) & 0x01;
+        assert_eq!(light_bit_2, 0, "Should detect light at (200, 150)");
+
+        // Test position (100, 100) - dark pixel, should not detect light
+        memory.set_mouse_x_position(100);
+        memory.set_mouse_y_position(100);
+        memory.update_light_detection(&screen_buffer);
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        let light_bit_3 = (memory.read(0x4017) >> 4) & 0x01;
+        assert_eq!(light_bit_3, 1, "Should not detect light at dark position (100, 100)");
     }
 
     #[test]

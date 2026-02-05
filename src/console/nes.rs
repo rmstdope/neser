@@ -233,8 +233,17 @@ impl Nes {
 
         // IRQ/NMI are handled by the CPU itself at the end of `execute()`.
 
-        if self.ppu.borrow_mut().poll_frame_complete() {
+        let frame_complete = self.ppu.borrow_mut().poll_frame_complete();
+        if frame_complete {
             self.ready_to_render = true;
+            
+            // Update light detection for all controllers (e.g., Zapper)
+            // when a frame is complete
+            {
+                let ppu = self.ppu.borrow();
+                let screen_buffer = ppu.screen_buffer();
+                self.bus.borrow_mut().update_light_detection(screen_buffer);
+            }
         }
 
         let cycles_after = self.cpu.get_total_cycles();
