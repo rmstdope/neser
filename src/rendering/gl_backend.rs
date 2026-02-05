@@ -186,7 +186,10 @@ impl GlBackend {
             && let Err(e) =
                 shader_manager.load_preset(std::path::Path::new(path), glow_context.clone())
         {
-            log_info(format!("Warning: Failed to load shader preset '{}': {}", path, e));
+            log_info(format!(
+                "Warning: Failed to load shader preset '{}': {}",
+                path, e
+            ));
         }
 
         Ok(Self {

@@ -142,6 +142,14 @@ impl WasmNes {
         Ok(())
     }
 
+    /// Check if mouse-emulated controller input is enabled on a port.
+    /// Returns true if a mouse-emulated controller is active on the specified port.
+    /// This is used by the JavaScript frontend to determine whether to suppress joypad input for that port.
+    #[wasm_bindgen]
+    pub fn is_mouse_emulated_controller(&self, port: u8) -> bool {
+        self.nes.controller_input_type(port) == Some(crate::input::ControllerInput::Mouse)
+    }
+
     /// Set the mouse X position for any mouse-emulated controller.
     ///
     /// # Arguments

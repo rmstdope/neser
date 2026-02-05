@@ -10,6 +10,7 @@ mod rendering;
 mod sdl_frontend;
 
 use console::{ApuChannels, Config, Nes, ParseResult, SaveState};
+use debugging::log_info;
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::fs;
 

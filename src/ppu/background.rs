@@ -119,7 +119,6 @@ impl Background {
             (self.bg_attribute_shift_lo & 0xFF00) | (palette_lo_bits as u16);
         self.bg_attribute_shift_hi =
             (self.bg_attribute_shift_hi & 0xFF00) | (palette_hi_bits as u16);
-
     }
 
     /// Shift all background rendering shift registers left by 1

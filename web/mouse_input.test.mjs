@@ -8,7 +8,7 @@ import {
     mapMouseXToScreenPosition
 } from "./mouse_input.js";
 
-function makeNesStub({ } = {}) {
+function makeNesStub({ arkanoidPort = 0 } = {}) {
     const calls = {
         setButton: [],
         setMouseXPosition: [],
@@ -16,21 +16,22 @@ function makeNesStub({ } = {}) {
     };
 
     const nes = {
+        is_mouse_emulated_controller: (controller) => (arkanoidPort === controller),
         set_button: (controller, button, pressed) => {
             calls.setButton.push({ controller, button, pressed });
         },
         set_mouse_x_position: (position) => {
-            calls.setPaddlePosition.push({ position });
+            calls.setMouseXPosition.push({ position });
         },
         set_mouse_left_button: (pressed) => {
-            calls.setPaddleTrigger.push({ pressed });
+            calls.setMouseLeftButton.push({ pressed });
         }
     };
 
     return { nes, calls };
 }
 
-test("mapMouseXToPaddlePosition maps edges and center", () => {
+test("mapMouseXToScreenPosition maps edges and center", () => {
     const width = 300;
 
     const left = mapMouseXToScreenPosition(0, width);
@@ -43,7 +44,7 @@ test("mapMouseXToPaddlePosition maps edges and center", () => {
     assert.ok(center >= 165 && center <= 175);
 });
 
-test("mapMouseXToPaddlePosition uses non-linear curve", () => {
+test("mapMouseXToScreenPosition uses non-linear curve", () => {
     const width = 400;
     const centerA = 200;
     const centerB = 220;
@@ -60,36 +61,36 @@ test("mapMouseXToPaddlePosition uses non-linear curve", () => {
     assert.ok(edgeDelta > centerDelta);
 });
 
-test("applyPaddleMouseMotion updates position when enabled", () => {
-    const { nes, calls } = makeNesStub({ });
+test("applyMouseMotion updates position", () => {
+    const { nes, calls } = makeNesStub({ arkanoidPort: 1 });
     const width = 320;
     const x = 240;
 
     const expected = mapMouseXToScreenPosition(x, width);
     applyMouseMotion(nes, x, width);
 
-    assert.deepEqual(calls.setPaddlePosition, [{ position: expected }]);
+    assert.deepEqual(calls.setMouseXPosition, [{ position: expected }]);
 });
 
-test("applyPaddleMouseButton maps left button to trigger", () => {
-    const { nes, calls } = makeNesStub({ });
+test("applyMouseButton maps left button to trigger", () => {
+    const { nes, calls } = makeNesStub({ arkanoidPort: 1 });
 
     applyMouseButton(nes, 0, true);
     applyMouseButton(nes, 0, false);
 
-    assert.deepEqual(calls.setPaddleTrigger, [{ pressed: true }, { pressed: false }]);
+    assert.deepEqual(calls.setMouseLeftButton, [{ pressed: true }, { pressed: false }]);
 });
 
-test("applyJoypadButtonIfAllowed suppresses controller 1 in paddle mode", () => {
-    const { nes, calls } = makeNesStub({ });
+test("applyJoypadButtonIfAllowed suppresses controller 1 in mouse mode", () => {
+    const { nes, calls } = makeNesStub({ arkanoidPort: 1 });
 
     applyJoypadButtonIfAllowed(nes, 1, 0, true);
 
     assert.deepEqual(calls.setButton, []);
 });
 
-test("applyJoypadButtonIfAllowed allows controller 2 in paddle mode", () => {
-    const { nes, calls } = makeNesStub({ });
+test("applyJoypadButtonIfAllowed allows controller 2 in mouse mode", () => {
+    const { nes, calls } = makeNesStub({ arkanoidPort: 1 });
 
     applyJoypadButtonIfAllowed(nes, 2, 1, true);
 
@@ -98,7 +99,7 @@ test("applyJoypadButtonIfAllowed allows controller 2 in paddle mode", () => {
     ]);
 });
 
-test("applyJoypadButtonIfAllowed allows controller 1 when paddle disabled", () => {
+test("applyJoypadButtonIfAllowed allows controller 1 when mouse disabled", () => {
     const { nes, calls } = makeNesStub({ });
 
     applyJoypadButtonIfAllowed(nes, 1, 7, false);
@@ -109,16 +110,16 @@ test("applyJoypadButtonIfAllowed allows controller 1 when paddle disabled", () =
 });
 
 
-test("applyJoypadButtonIfAllowed suppresses controller 2 when paddle on port 2", () => {
-    const { nes, calls } = makeNesStub({ });
+test("applyJoypadButtonIfAllowed suppresses controller 2 when mouse on port 2", () => {
+    const { nes, calls } = makeNesStub({ arkanoidPort: 2 });
 
     applyJoypadButtonIfAllowed(nes, 2, 0, true);
 
     assert.deepEqual(calls.setButton, []);
 });
 
-test("applyJoypadButtonIfAllowed allows controller 1 when paddle on port 2", () => {
-    const { nes, calls } = makeNesStub({ });
+test("applyJoypadButtonIfAllowed allows controller 1 when mouse on port 2", () => {
+    const { nes, calls } = makeNesStub({ arkanoidPort: 2 });
 
     applyJoypadButtonIfAllowed(nes, 1, 0, true);
 
@@ -127,21 +128,3 @@ test("applyJoypadButtonIfAllowed allows controller 1 when paddle on port 2", () 
     ]);
 });
 
-test("applyPaddleMouseMotion works", () => {
-    const { nes, calls } = makeNesStub({ });
-    const width = 320;
-    const x = 240;
-
-    const expected = mapMouseXToScreenPosition(x, width);
-    applyMouseMotion(nes, x, width);
-
-    assert.deepEqual(calls.setMouseXPosition, [{ position: expected }]);
-});
-
-test("applyPaddleMouseButton works ", () => {
-    const { nes, calls } = makeNesStub({ });
-
-    applyMouseButton(nes, 0, true);
-
-    assert.deepEqual(calls.setMouseTrigger, [{ pressed: true }]);
-});

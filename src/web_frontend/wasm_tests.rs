@@ -242,3 +242,14 @@ fn set_mouse_left_button_updates_save_state() {
     let arkanoid = port1_arkanoid_state(&state);
     assert!(!arkanoid.trigger);
 }
+
+#[wasm_bindgen_test]
+fn is_mouse_emulated_controller_reflects_port_configuration() {
+    let mut nes = WasmNes::new();
+    assert!(!nes.is_mouse_emulated_controller(1));
+    assert!(!nes.is_mouse_emulated_controller(2));
+
+    enable_arkanoid_on_port1(&mut nes);
+    assert!(nes.is_mouse_emulated_controller(1));
+    assert!(!nes.is_mouse_emulated_controller(2));
+}
