@@ -11,6 +11,7 @@ pub struct WasmNes {
     nes: Nes,
     audio_muted: bool,
     rom_loaded: bool,
+    rom_bytes: Option<Vec<u8>>,
 }
 
 impl Default for WasmNes {
@@ -32,6 +33,7 @@ impl WasmNes {
             nes: Nes::new(Config::default()),
             audio_muted: false,
             rom_loaded: false,
+            rom_bytes: None,
         }
     }
 
@@ -40,10 +42,12 @@ impl WasmNes {
     pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), JsValue> {
         self.nes = Nes::new(Config::default());
         self.rom_loaded = false;
+        self.rom_bytes = None;
         let cart = Cartridge::new(rom).map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.nes.insert_cartridge(cart);
         self.nes.reset(false);
         self.rom_loaded = true;
+        self.rom_bytes = Some(rom.to_vec());
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
     }
@@ -51,7 +55,11 @@ impl WasmNes {
     /// Reset the emulator without ejecting the cartridge.
     #[wasm_bindgen]
     pub fn reset(&mut self) {
-        self.nes.reset(true);
+        if let Some(rom) = self.rom_bytes.clone() {
+            let _ = self.load_rom(&rom);
+        } else {
+            self.nes.reset(false);
+        }
     }
 
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGB888).
