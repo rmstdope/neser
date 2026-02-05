@@ -83,4 +83,3 @@ incremental = true
 
 [profile.dev.package."*"]
 opt-level = 3
-incremental = true
