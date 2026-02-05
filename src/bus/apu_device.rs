@@ -18,10 +18,6 @@ impl ApuDevice {
 
 impl BusDevice for ApuDevice {
     fn read(&mut self, addr: u16, open_bus: u8, _clock_joypads: bool) -> Option<u8> {
-        if !self.address_range().contains(&addr) {
-            return None;
-        }
-
         match addr {
             0x4000..=0x4013 => Some(open_bus),
             0x4015 => Some(self.apu.borrow_mut().read_status(open_bus)),
@@ -32,10 +28,6 @@ impl BusDevice for ApuDevice {
     }
 
     fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
-        if !self.address_range().contains(&addr) {
-            return false;
-        }
-
         match addr {
             0x4000 => self.apu.borrow_mut().pulse1_mut().write_control(value),
             0x4001 => {
