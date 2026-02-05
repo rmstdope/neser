@@ -2675,7 +2675,7 @@ mod tests {
     fn test_cpu_new_stores_provided_ppu_and_apu_instances() {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu))));
+        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu), 0)));
 
         let cpu = Cpu::new(TvSystem::Ntsc, memory, Rc::clone(&ppu), Rc::clone(&apu));
 
@@ -3159,14 +3159,14 @@ mod tests {
     fn create_test_memory() -> TestMemory {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu))));
+        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu), 0)));
         (ppu, apu, memory)
     }
 
     fn create_test_memory_for(tv_system: TvSystem) -> TestMemory {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(tv_system)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu))));
+        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu), 0)));
         (ppu, apu, memory)
     }
 

@@ -87,10 +87,19 @@ pub trait Controller {
     /// Returns true if the operation was successful, false if not supported.
     fn set_mouse_left_button(&mut self, pressed: bool) -> bool;
 
-    /// Update light detection state based on screen buffer (for light gun controllers).
-    /// Returns true if the operation was performed, false if not supported.
-    fn update_light_detection(&mut self, _screen_buffer: &crate::ppu::ScreenBuffer) -> bool {
-        false
+    /// Set PPU rendering context for light gun controllers.
+    /// This should be called before reading to provide access to screen buffer and timing.
+    /// scanline: current PPU scanline (0-261 for NTSC, 0-311 for PAL)
+    /// pixel: current PPU pixel within scanline (0-340)
+    /// screen_buffer: reference to PPU screen buffer
+    /// light_radius: radius for light sampling (0 = single pixel, 1 = 3x3, 2 = 5x5, etc.)
+    fn set_ppu_context(
+        &mut self,
+        _scanline: u16,
+        _pixel: u16,
+        _screen_buffer: &crate::ppu::ScreenBuffer,
+        _light_radius: u8,
+    ) {
     }
 
     // Get the type of input this controller needs.

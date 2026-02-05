@@ -1,5 +1,6 @@
 use crate::bus::bus::BusDevice;
 use crate::input::{Controller, ControllerState};
+use crate::ppu;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
 use std::rc::Rc;
@@ -7,16 +8,22 @@ use std::rc::Rc;
 pub(crate) struct ControllerDevice {
     port1_controller: Rc<RefCell<Box<dyn Controller>>>,
     port2_controller: Rc<RefCell<Box<dyn Controller>>>,
+    ppu: Rc<RefCell<ppu::Ppu>>,
+    zapper_light_radius: u8,
 }
 
 impl ControllerDevice {
     pub(crate) fn new(
         port1_controller: Rc<RefCell<Box<dyn Controller>>>,
         port2_controller: Rc<RefCell<Box<dyn Controller>>>,
+        ppu: Rc<RefCell<ppu::Ppu>>,
+        zapper_light_radius: u8,
     ) -> Self {
         Self {
             port1_controller,
             port2_controller,
+            ppu,
+            zapper_light_radius,
         }
     }
 }
@@ -25,6 +32,28 @@ impl BusDevice for ControllerDevice {
     fn read(&mut self, addr: u16, open_bus: u8, clock_joypads: bool) -> Option<u8> {
         if !self.address_range().contains(&addr) {
             return None;
+        }
+
+        // Update PPU context for light gun controllers before reading
+        {
+            let ppu = self.ppu.borrow();
+            let scanline = ppu.timing().scanline;
+            let pixel = ppu.timing().pixel;
+            let screen_buffer = ppu.screen_buffer();
+
+            // Update both controllers (only light guns will use this)
+            self.port1_controller.borrow_mut().set_ppu_context(
+                scanline,
+                pixel,
+                screen_buffer,
+                self.zapper_light_radius,
+            );
+            self.port2_controller.borrow_mut().set_ppu_context(
+                scanline,
+                pixel,
+                screen_buffer,
+                self.zapper_light_radius,
+            );
         }
 
         match addr {

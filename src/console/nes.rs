@@ -74,7 +74,11 @@ impl Nes {
         let tv_system = config.tv_system;
         let ppu = Rc::new(RefCell::new(Ppu::new(tv_system)));
         let apu = Rc::new(RefCell::new(Apu::new()));
-        let memory = Rc::new(RefCell::new(Bus::new(ppu.clone(), apu.clone())));
+        let memory = Rc::new(RefCell::new(Bus::new(
+            ppu.clone(),
+            apu.clone(),
+            config.zapper_light_radius,
+        )));
         let cpu = Cpu::new(tv_system, memory.clone(), ppu.clone(), apu.clone());
 
         // Initialize PPU 1 cycle ahead for proper sprite 0 hit timing
@@ -233,17 +237,8 @@ impl Nes {
 
         // IRQ/NMI are handled by the CPU itself at the end of `execute()`.
 
-        let frame_complete = self.ppu.borrow_mut().poll_frame_complete();
-        if frame_complete {
+        if self.ppu.borrow_mut().poll_frame_complete() {
             self.ready_to_render = true;
-
-            // Update light detection for all controllers (e.g., Zapper)
-            // when a frame is complete
-            {
-                let ppu = self.ppu.borrow();
-                let screen_buffer = ppu.screen_buffer();
-                self.bus.borrow_mut().update_light_detection(screen_buffer);
-            }
         }
 
         let cycles_after = self.cpu.get_total_cycles();

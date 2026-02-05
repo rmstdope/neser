@@ -325,6 +325,8 @@ pub struct Config {
     pub controller_port1_explicit: bool,
     /// Whether controller_port2 was explicitly configured (not default).
     pub controller_port2_explicit: bool,
+    /// Zapper light detection radius (0 = single pixel, 1 = 3x3 area, 2 = 5x5 area, etc.).
+    pub zapper_light_radius: u8,
 }
 
 bitflags! {
@@ -360,6 +362,7 @@ impl Default for Config {
             controller_port2: ControllerType::Joypad,
             controller_port1_explicit: false,
             controller_port2_explicit: false,
+            zapper_light_radius: 0,
         }
     }
 }
