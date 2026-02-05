@@ -4,6 +4,15 @@
  */
 
 export function createCrosshair(targetCanvas) {
+    const parent = targetCanvas.parentElement;
+    if (!parent) {
+        throw new Error("Crosshair requires a parent element for the target canvas");
+    }
+
+    if (!parent.style.position || parent.style.position === "static") {
+        parent.style.position = "relative";
+    }
+
     // Create overlay canvas for crosshair
     const overlayCanvas = document.createElement("canvas");
     overlayCanvas.style.position = "absolute";
@@ -19,18 +28,38 @@ export function createCrosshair(targetCanvas) {
     overlayCanvas.style.height = targetCanvas.style.height;
     
     // Insert overlay after target canvas
-    targetCanvas.parentElement.appendChild(overlayCanvas);
+    parent.appendChild(overlayCanvas);
     
     const ctx = overlayCanvas.getContext("2d");
     let visible = false;
     let currentX = 0;
     let currentY = 0;
+
+    function clampPosition(x, y) {
+        const dpr = window.devicePixelRatio || 1;
+        const maxX = Math.max(0, overlayCanvas.width / dpr - 1);
+        const maxY = Math.max(0, overlayCanvas.height / dpr - 1);
+
+        return {
+            x: Math.min(Math.max(x, 0), maxX),
+            y: Math.min(Math.max(y, 0), maxY),
+        };
+    }
+
+    function syncOverlayPlacement() {
+        overlayCanvas.style.left = `${targetCanvas.offsetLeft}px`;
+        overlayCanvas.style.top = `${targetCanvas.offsetTop}px`;
+    }
     
     function updateCanvasSize() {
         overlayCanvas.width = targetCanvas.width;
         overlayCanvas.height = targetCanvas.height;
         overlayCanvas.style.width = targetCanvas.style.width;
         overlayCanvas.style.height = targetCanvas.style.height;
+        syncOverlayPlacement();
+        const clamped = clampPosition(currentX, currentY);
+        currentX = clamped.x;
+        currentY = clamped.y;
         drawCrosshair(currentX, currentY);
     }
     
@@ -79,6 +108,7 @@ export function createCrosshair(targetCanvas) {
     
     function show() {
         visible = true;
+        syncOverlayPlacement();
         drawCrosshair(currentX, currentY);
     }
     
@@ -88,9 +118,11 @@ export function createCrosshair(targetCanvas) {
     }
     
     function updatePosition(x, y) {
-        currentX = x;
-        currentY = y;
-        drawCrosshair(x, y);
+        syncOverlayPlacement();
+        const clamped = clampPosition(x, y);
+        currentX = clamped.x;
+        currentY = clamped.y;
+        drawCrosshair(currentX, currentY);
     }
     
     function destroy() {

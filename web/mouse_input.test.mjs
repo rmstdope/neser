@@ -89,7 +89,7 @@ test("mapMouseYToZapperPosition maps top and bottom edges", () => {
     const bottom = mapMouseYToZapperPosition(height - 1, height);
 
     assert.equal(top, 0);
-    assert.equal(bottom, 255);
+    assert.equal(bottom, 239);
 });
 
 test("mapMouseYToZapperPosition maps center", () => {
@@ -97,7 +97,7 @@ test("mapMouseYToZapperPosition maps center", () => {
     const centerY = Math.floor((height - 1) / 2);
     const center = mapMouseYToZapperPosition(centerY, height);
 
-    assert.ok(center >= 126 && center <= 128);
+    assert.ok(center >= 119 && center <= 120);
 });
 
 test("mapMouseYToZapperPosition clamps to bounds", () => {
@@ -107,7 +107,7 @@ test("mapMouseYToZapperPosition clamps to bounds", () => {
     const tooLarge = mapMouseYToZapperPosition(1000, height);
 
     assert.equal(negative, 0);
-    assert.equal(tooLarge, 255);
+    assert.equal(tooLarge, 239);
 });
 
 test("applyMouseMotion updates Arkanoid position", () => {
