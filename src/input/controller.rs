@@ -87,6 +87,21 @@ pub trait Controller {
     /// Returns true if the operation was successful, false if not supported.
     fn set_mouse_left_button(&mut self, pressed: bool) -> bool;
 
+    /// Set PPU rendering context for light gun controllers.
+    /// This should be called before reading to provide access to screen buffer and timing.
+    /// scanline: current PPU scanline (0-261 for NTSC, 0-311 for PAL)
+    /// pixel: current PPU pixel within scanline (0-340)
+    /// screen_buffer: reference to PPU screen buffer
+    /// config: emulator configuration (contains zapper_detection_size, etc.)
+    fn set_ppu_context(
+        &mut self,
+        _scanline: u16,
+        _pixel: u16,
+        _screen_buffer: &crate::ppu::ScreenBuffer,
+        _config: &crate::console::Config,
+    ) {
+    }
+
     // Get the type of input this controller needs.
     fn input_type(&self) -> ControllerInput;
 }
