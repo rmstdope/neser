@@ -81,7 +81,6 @@ pub trait Controller {
 
     /// Set mouse Y position for mouse-emulated controllers.
     /// Returns true if the operation was successful, false if not supported.
-    #[allow(dead_code)]
     fn set_mouse_y_position(&mut self, position: u8) -> bool;
 
     /// Set mouse left button state for mouse-emulated controllers.

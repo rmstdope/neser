@@ -446,7 +446,6 @@ impl Bus {
     }
 
     /// Update mouse Y position for any mouse-emulated controller (0..255).
-    #[allow(dead_code)]
     pub fn set_mouse_y_position(&mut self, position: u8) {
         for controller in &self.controllers {
             controller.borrow_mut().set_mouse_y_position(position);
