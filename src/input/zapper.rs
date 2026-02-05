@@ -180,8 +180,7 @@ impl Zapper {
                 }
 
                 // Get luminance at this pixel
-                let luminance =
-                    screen_buffer.get_luminance(sample_x as u32, sample_y as u32);
+                let luminance = screen_buffer.get_luminance(sample_x as u32, sample_y as u32);
 
                 // If any pixel in the radius is bright enough, light is detected
                 if luminance >= LIGHT_DETECTION_THRESHOLD {
@@ -400,10 +399,7 @@ mod tests {
 
         // With radius 1 (3x3 area), should detect
         zapper.set_ppu_context(101, 0, &screen_buffer, 1);
-        assert!(
-            zapper.light,
-            "Radius 1 should detect pixel at distance 1"
-        );
+        assert!(zapper.light, "Radius 1 should detect pixel at distance 1");
     }
 
     #[test]
@@ -420,10 +416,7 @@ mod tests {
         zapper.set_ppu_context(241, 100, &screen_buffer, 0);
 
         // Should not detect light (y >= 240 is out of bounds)
-        assert!(
-            !zapper.light,
-            "Should not detect light when Y >= 240"
-        );
+        assert!(!zapper.light, "Should not detect light when Y >= 240");
     }
 
     #[test]
@@ -438,10 +431,7 @@ mod tests {
         zapper.set_ppu_context(260, 100, &screen_buffer, 0);
 
         // Should not detect light (y >= 240 is out of bounds)
-        assert!(
-            !zapper.light,
-            "Should not detect light when Y = 255"
-        );
+        assert!(!zapper.light, "Should not detect light when Y = 255");
     }
 
     #[test]
