@@ -1,6 +1,6 @@
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
-use crate::console::{Config, Nes, SaveState};
+use crate::console::{Config, ControllerStateWrapper, Nes, SaveState};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::debugging::{DebuggerSnapshot, Tracing, log_info, snapshot, ui};
 use crate::input::Button;
+use crate::rendering::Crosshair;
 
 /// EventLoop manages the SDL2 event loop for the application.
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
@@ -31,6 +32,8 @@ pub struct SdlEventLoop {
     audio: Option<SdlNesAudio>,
     controllers: Vec<sdl2::controller::GameController>,
     controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
+    last_mouse_position: Option<(i32, i32)>,
+    cursor_hidden: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,12 +81,43 @@ impl SdlEventLoop {
         scaled.round().clamp(MIN_POSITION, MAX_POSITION) as u8
     }
 
+    /// Maps an SDL mouse X position into a Zapper screen position (0..=255).
+    fn map_mouse_x_to_zapper_position(x: i32, window_width: u32) -> u8 {
+        if window_width <= 1 {
+            return 0;
+        }
+
+        let max_x = window_width.saturating_sub(1) as i32;
+        let clamped_x = x.clamp(0, max_x);
+        let normalized = clamped_x as f32 / max_x as f32;
+        (normalized * 255.0).round().clamp(0.0, 255.0) as u8
+    }
+
+    /// Maps an SDL mouse Y position into a Zapper screen position (0..=255).
+    fn map_mouse_y_to_zapper_position(y: i32, window_height: u32) -> u8 {
+        if window_height <= 1 {
+            return 0;
+        }
+
+        let max_y = window_height.saturating_sub(1) as i32;
+        let clamped_y = y.clamp(0, max_y);
+        let normalized = clamped_y as f32 / max_y as f32;
+        (normalized * 255.0).round().clamp(0.0, 255.0) as u8
+    }
+
     /// Applies mouse motion to mouse-emulated controller.
     ///
     /// This is a no-op if no mouse-emulated controller is connected.
-    fn update_mouse_motion(nes: &mut Nes, x: i32, window_width: u32) {
-        let position = Self::map_mouse_x_to_paddle_position(x, window_width);
-        nes.set_mouse_x_position(position);
+    fn update_mouse_motion(nes: &mut Nes, x: i32, y: i32, window_width: u32, window_height: u32) {
+        if Self::zapper_ports(nes).is_empty() {
+            let position = Self::map_mouse_x_to_paddle_position(x, window_width);
+            nes.set_mouse_x_position(position);
+        } else {
+            let x_position = Self::map_mouse_x_to_zapper_position(x, window_width);
+            let y_position = Self::map_mouse_y_to_zapper_position(y, window_height);
+            nes.set_mouse_x_position(x_position);
+            nes.set_mouse_y_position(y_position);
+        }
     }
 
     /// Maps left mouse button presses to mouse-emulated controller.
@@ -113,6 +147,38 @@ impl SdlEventLoop {
                 nes.controller_input_type(port) == Some(crate::input::ControllerInput::Mouse)
             })
             .collect()
+    }
+
+    fn zapper_crosshair(&self, nes: &Nes) -> Option<Crosshair> {
+        if Self::zapper_ports(nes).is_empty() {
+            None
+        } else {
+            self.last_mouse_position.map(|(x, y)| Crosshair {
+                x: x as f32,
+                y: y as f32,
+            })
+        }
+    }
+
+    fn update_cursor_visibility(&mut self, zapper_active: bool) {
+        if self.cursor_hidden == zapper_active {
+            return;
+        }
+
+        self._sdl_context.mouse().show_cursor(!zapper_active);
+        self.cursor_hidden = zapper_active;
+    }
+
+    fn zapper_ports(nes: &Nes) -> Vec<u8> {
+        let state = nes.bus.borrow().capture_state();
+        let mut ports = Vec::new();
+        if matches!(state.port1_controller, ControllerStateWrapper::Zapper(_)) {
+            ports.push(1);
+        }
+        if matches!(state.port2_controller, ControllerStateWrapper::Zapper(_)) {
+            ports.push(2);
+        }
+        ports
     }
 
     fn assigned_gamepad_port(
@@ -224,6 +290,8 @@ impl SdlEventLoop {
             audio,
             controllers,
             controller_player_map,
+            last_mouse_position: None,
+            cursor_hidden: false,
         })
     }
 
@@ -557,9 +625,10 @@ impl SdlEventLoop {
                         Event::ControllerButtonUp { button, which, .. } => {
                             controller_buttons.push((which, button, false));
                         }
-                        Event::MouseMotion { x, .. } => {
-                            let (window_width, _) = gl_backend.window_size();
-                            Self::update_mouse_motion(nes, x, window_width);
+                        Event::MouseMotion { x, y, .. } => {
+                            let (window_width, window_height) = gl_backend.window_size();
+                            self.last_mouse_position = Some((x, y));
+                            Self::update_mouse_motion(nes, x, y, window_width, window_height);
                         }
                         Event::MouseButtonDown { mouse_btn, .. } => {
                             Self::update_mouse_button(nes, mouse_btn, true);
@@ -591,8 +660,16 @@ impl SdlEventLoop {
                     );
 
                     let overlay_text = self.help_overlay_render_text();
-                    let action =
-                        gl_backend.render(nes, self.debugger_open_requested, overlay_text, false);
+                    let zapper_active = !Self::zapper_ports(nes).is_empty();
+                    self.update_cursor_visibility(zapper_active);
+                    let crosshair = self.zapper_crosshair(nes);
+                    let action = gl_backend.render(
+                        nes,
+                        self.debugger_open_requested,
+                        overlay_text,
+                        false,
+                        crosshair,
+                    );
                     self.apply_debugger_ui_action(nes, action);
                     std::thread::sleep(std::time::Duration::from_millis(16));
                     continue;
@@ -652,7 +729,16 @@ impl SdlEventLoop {
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
                 let overlay_text = self.help_overlay_render_text();
-                let _ = gl_backend.render(nes, self.debugger_open_requested, overlay_text, false);
+                let zapper_active = !Self::zapper_ports(nes).is_empty();
+                self.update_cursor_visibility(zapper_active);
+                let crosshair = self.zapper_crosshair(nes);
+                let _ = gl_backend.render(
+                    nes,
+                    self.debugger_open_requested,
+                    overlay_text,
+                    false,
+                    crosshair,
+                );
 
                 // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
                 let current_time = timer.performance_counter();
@@ -1467,6 +1553,22 @@ mod tests {
     }
 
     #[test]
+    fn test_zapper_mouse_mapping_edges_and_center() {
+        let window_width = 320;
+        let window_height = 240;
+
+        let left = SdlEventLoop::map_mouse_x_to_zapper_position(0, window_width);
+        let right = SdlEventLoop::map_mouse_x_to_zapper_position(319, window_width);
+        let top = SdlEventLoop::map_mouse_y_to_zapper_position(0, window_height);
+        let bottom = SdlEventLoop::map_mouse_y_to_zapper_position(239, window_height);
+
+        assert_eq!(left, 0);
+        assert_eq!(right, 255);
+        assert_eq!(top, 0);
+        assert_eq!(bottom, 255);
+    }
+
+    #[test]
     fn test_paddle_mode_suppresses_keyboard_joypad_input() {
         let mut paused = false;
         let mut debugger_open_requested = false;
@@ -1552,10 +1654,12 @@ mod tests {
             .set_controller_type(2, crate::input::ControllerType::Arkanoid);
 
         let window_width = 320;
+        let window_height = 240;
         let x = 240;
+        let y = 120;
         let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
 
-        SdlEventLoop::update_mouse_motion(&mut nes, x, window_width);
+        SdlEventLoop::update_mouse_motion(&mut nes, x, y, window_width, window_height);
 
         assert_eq!(read_paddle_position_for_port(&mut nes, 1), expected);
         assert_eq!(read_paddle_position_for_port(&mut nes, 2), expected);
@@ -1598,10 +1702,12 @@ mod tests {
             .set_controller_type(1, crate::input::ControllerType::Arkanoid);
 
         let window_width = 320;
+        let window_height = 240;
         let x = 240;
+        let y = 120;
         let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
 
-        SdlEventLoop::update_mouse_motion(&mut nes, x, window_width);
+        SdlEventLoop::update_mouse_motion(&mut nes, x, y, window_width, window_height);
 
         assert_eq!(read_paddle_position(&mut nes), expected);
     }
@@ -1611,12 +1717,14 @@ mod tests {
         let mut nes = Nes::new(Config::default());
 
         let window_width = 320;
+        let window_height = 240;
         let x = 240;
+        let y = 120;
 
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Joypad);
-        SdlEventLoop::update_mouse_motion(&mut nes, x, window_width);
+        SdlEventLoop::update_mouse_motion(&mut nes, x, y, window_width, window_height);
 
         nes.bus
             .borrow_mut()
