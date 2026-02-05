@@ -1406,11 +1406,12 @@ document.addEventListener('keyup', (e) => {
 function handleMouseMotion(event) {
     if (!nes) return;
     const rect = canvas.getBoundingClientRect();
-    if (rect.width <= 1) {
+    if (rect.width <= 1 || rect.height <= 1) {
         return;
     }
     const x = event.clientX - rect.left;
-    applyMouseMotion(nes, x, rect.width);
+    const y = event.clientY - rect.top;
+    applyMouseMotion(nes, x, y, rect.width, rect.height);
 }
 
 function handleMouseButton(event, pressed) {

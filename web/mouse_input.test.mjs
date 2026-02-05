@@ -5,13 +5,15 @@ import {
     applyJoypadButtonIfAllowed,
     applyMouseButton,
     applyMouseMotion,
-    mapMouseXToScreenPosition
+    mapMouseXToScreenPosition,
+    mapMouseYToScreenPosition
 } from "./mouse_input.js";
 
 function makeNesStub({ arkanoidPort = 0 } = {}) {
     const calls = {
         setButton: [],
         setMouseXPosition: [],
+        setMouseYPosition: [],
         setMouseLeftButton: []
     };
 
@@ -22,6 +24,9 @@ function makeNesStub({ arkanoidPort = 0 } = {}) {
         },
         set_mouse_x_position: (position) => {
             calls.setMouseXPosition.push({ position });
+        },
+        set_mouse_y_position: (position) => {
+            calls.setMouseYPosition.push({ position });
         },
         set_mouse_left_button: (pressed) => {
             calls.setMouseLeftButton.push({ pressed });
@@ -64,12 +69,16 @@ test("mapMouseXToScreenPosition uses non-linear curve", () => {
 test("applyMouseMotion updates position", () => {
     const { nes, calls } = makeNesStub({ arkanoidPort: 1 });
     const width = 320;
+    const height = 480;
     const x = 240;
+    const y = 360;
 
-    const expected = mapMouseXToScreenPosition(x, width);
-    applyMouseMotion(nes, x, width);
+    const expectedX = mapMouseXToScreenPosition(x, width);
+    const expectedY = mapMouseYToScreenPosition(y, height);
+    applyMouseMotion(nes, x, y, width, height);
 
-    assert.deepEqual(calls.setMouseXPosition, [{ position: expected }]);
+    assert.deepEqual(calls.setMouseXPosition, [{ position: expectedX }]);
+    assert.deepEqual(calls.setMouseYPosition, [{ position: expectedY }]);
 });
 
 test("applyMouseButton maps left button to trigger", () => {
@@ -128,3 +137,30 @@ test("applyJoypadButtonIfAllowed allows controller 1 when mouse on port 2", () =
     ]);
 });
 
+test("mapMouseYToScreenPosition maps top and bottom edges", () => {
+    const height = 480;
+
+    const top = mapMouseYToScreenPosition(0, height);
+    const bottom = mapMouseYToScreenPosition(height - 1, height);
+
+    assert.equal(top, 0);
+    assert.equal(bottom, 239);
+});
+
+test("mapMouseYToScreenPosition maps center", () => {
+    const height = 480;
+    const centerY = Math.floor((height - 1) / 2);
+    const center = mapMouseYToScreenPosition(centerY, height);
+
+    assert.ok(center >= 115 && center <= 125);
+});
+
+test("mapMouseYToScreenPosition clamps to bounds", () => {
+    const height = 480;
+
+    const negative = mapMouseYToScreenPosition(-10, height);
+    const tooLarge = mapMouseYToScreenPosition(1000, height);
+
+    assert.equal(negative, 0);
+    assert.equal(tooLarge, 239);
+});

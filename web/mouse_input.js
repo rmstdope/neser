@@ -18,9 +18,26 @@ export function mapMouseXToScreenPosition(x, windowWidth) {
     return Math.min(maxPosition, Math.max(minPosition, Math.round(scaled)));
 }
 
-export function applyMouseMotion(nes, x, windowWidth) {
-    const position = mapMouseXToScreenPosition(x, windowWidth);
-    nes.set_mouse_x_position(position);
+export function mapMouseYToScreenPosition(y, windowHeight) {
+    const minPosition = 0;
+    const maxPosition = 239;
+
+    if (windowHeight <= 1) {
+        return minPosition;
+    }
+
+    const maxY = windowHeight - 1;
+    const clampedY = Math.min(Math.max(y, 0), maxY);
+    const scaled = (clampedY / maxY) * maxPosition;
+
+    return Math.min(maxPosition, Math.max(minPosition, Math.round(scaled)));
+}
+
+export function applyMouseMotion(nes, x, y, windowWidth, windowHeight) {
+    const positionX = mapMouseXToScreenPosition(x, windowWidth);
+    const positionY = mapMouseYToScreenPosition(y, windowHeight);
+    nes.set_mouse_x_position(positionX);
+    nes.set_mouse_y_position(positionY);
 }
 
 export function applyMouseButton(nes, button, pressed) {

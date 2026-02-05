@@ -159,6 +159,15 @@ impl WasmNes {
         self.nes.set_mouse_x_position(position);
     }
 
+    /// Set the mouse Y position for any mouse-emulated controller.
+    ///
+    /// # Arguments
+    /// * `position` - The mouse-emulated controller position value (0..=239)
+    #[wasm_bindgen]
+    pub fn set_mouse_y_position(&mut self, position: u8) {
+        self.nes.set_mouse_y_position(position);
+    }
+
     /// Set the mouse left button state for any mouse-emulated controller.
     ///
     /// # Arguments
