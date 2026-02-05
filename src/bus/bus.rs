@@ -475,6 +475,7 @@ impl Bus {
     }
 
     /// Check if a Zapper is active on the specified port.
+    /// This method is primarily used by the WASM frontend.
     #[allow(dead_code)]
     pub fn is_zapper_active(&self, port: u8) -> bool {
         if !(1..=2).contains(&port) {
