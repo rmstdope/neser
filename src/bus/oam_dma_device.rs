@@ -21,11 +21,11 @@ impl OamDmaDevice {
 }
 
 impl BusDevice for OamDmaDevice {
-    fn read(&mut self, addr: u16, open_bus: u8, _clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, _addr: u16, open_bus: u8, _clock_joypads: bool) -> Option<u8> {
         Some(open_bus)
     }
 
-    fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
+    fn write(&mut self, _addr: u16, value: u8, _is_dummy_write: bool) -> bool {
         *self.oam_dma_page.borrow_mut() = Some(value);
         *self.dma_triggered.borrow_mut() = true;
         true
