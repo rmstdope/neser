@@ -151,6 +151,10 @@ impl crate::input::Controller for Joypad {
         false // Not supported for Joypad
     }
 
+    fn set_mouse_y_position(&mut self, _position: u8) -> bool {
+        false // Not supported for Joypad
+    }
+
     fn set_mouse_left_button(&mut self, _pressed: bool) -> bool {
         false // Not supported for Joypad
     }

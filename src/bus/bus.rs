@@ -445,6 +445,14 @@ impl Bus {
         }
     }
 
+    /// Update mouse Y position for any mouse-emulated controller (0..255).
+    #[allow(dead_code)]
+    pub fn set_mouse_y_position(&mut self, position: u8) {
+        for controller in &self.controllers {
+            controller.borrow_mut().set_mouse_y_position(position);
+        }
+    }
+
     /// Update mouse left button state for any mouse-emulated controller.
     pub fn set_mouse_left_button(&mut self, pressed: bool) {
         for controller in &self.controllers {
@@ -1803,7 +1811,6 @@ mod tests {
     fn test_paddle_on_port_1() {
         // RED: Test that paddle can be configured on port 1 (0x4016)
         let mut memory = create_test_memory();
-
         // Configure paddle on port 1
         memory.set_controller_type(1, crate::input::ControllerType::Arkanoid);
         memory.set_mouse_x_position(0xA5);
@@ -1820,6 +1827,21 @@ mod tests {
         // Verify paddle data is present
         assert_eq!(paddle_bits1, 0x08);
         assert_eq!(paddle_bits2, 0x18);
+    }
+
+    #[test]
+    fn test_zapper_on_port_2_reports_trigger_and_light_bits() {
+        let mut memory = create_test_memory();
+
+        memory.set_controller_type(2, crate::input::ControllerType::Zapper);
+        memory.set_mouse_x_position(0x10);
+        memory.set_mouse_y_position(0x20);
+        memory.set_mouse_left_button(true);
+
+        memory.write(0x4016, 0x01, false);
+        memory.write(0x4016, 0x00, false);
+        let zapper_bits = memory.read(0x4017) & 0x18;
+        assert_eq!(zapper_bits, 0x18);
     }
 
     #[test]

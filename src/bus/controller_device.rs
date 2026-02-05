@@ -29,9 +29,9 @@ impl BusDevice for ControllerDevice {
 
         match addr {
             0x4016 => {
-                let is_paddle = matches!(
+                let is_mouse = matches!(
                     self.port1_controller.borrow().capture_state(),
-                    ControllerState::Paddle(_)
+                    ControllerState::Paddle(_) | ControllerState::Zapper(_)
                 );
                 let controller_state = if clock_joypads {
                     self.port1_controller.borrow_mut().read()
@@ -40,13 +40,13 @@ impl BusDevice for ControllerDevice {
                 };
                 // Determine mask based on controller type.
                 // Joypad uses bit 0 (mask 0xFE), Arkanoid controller uses bits 4-3 (mask 0xE7).
-                let mask = if is_paddle { 0xE7 } else { 0xFE };
+                let mask = if is_mouse { 0xE7 } else { 0xFE };
                 Some((open_bus & mask) | controller_state)
             }
             0x4017 => {
-                let is_paddle = matches!(
+                let is_mouse = matches!(
                     self.port2_controller.borrow().capture_state(),
-                    ControllerState::Paddle(_)
+                    ControllerState::Paddle(_) | ControllerState::Zapper(_)
                 );
                 let controller_state = if clock_joypads {
                     self.port2_controller.borrow_mut().read()
@@ -55,7 +55,7 @@ impl BusDevice for ControllerDevice {
                 };
                 // Determine mask based on controller type.
                 // Joypad uses bit 0 (mask 0xFE), Arkanoid controller uses bits 4-3 (mask 0xE7).
-                let mask = if is_paddle { 0xE7 } else { 0xFE };
+                let mask = if is_mouse { 0xE7 } else { 0xFE };
                 Some((open_bus & mask) | controller_state)
             }
             _ => None,
