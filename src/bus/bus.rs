@@ -462,7 +462,9 @@ impl Bus {
     /// Update light detection state for all controllers based on screen buffer
     pub fn update_light_detection(&mut self, screen_buffer: &crate::ppu::ScreenBuffer) {
         for controller in &self.controllers {
-            controller.borrow_mut().update_light_detection(screen_buffer);
+            controller
+                .borrow_mut()
+                .update_light_detection(screen_buffer);
         }
     }
 
@@ -1869,10 +1871,13 @@ mod tests {
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
         let zapper_value = memory.read(0x4017);
-        
+
         // Light bit (bit 4) should be 0 when light is detected
         let light_bit = (zapper_value >> 4) & 0x01;
-        assert_eq!(light_bit, 0, "Light bit should be 0 (light detected) for bright pixel");
+        assert_eq!(
+            light_bit, 0,
+            "Light bit should be 0 (light detected) for bright pixel"
+        );
     }
 
     #[test]
@@ -1893,10 +1898,13 @@ mod tests {
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
         let zapper_value = memory.read(0x4017);
-        
+
         // Light bit (bit 4) should be 1 when no light is detected
         let light_bit = (zapper_value >> 4) & 0x01;
-        assert_eq!(light_bit, 1, "Light bit should be 1 (no light detected) for dark pixel");
+        assert_eq!(
+            light_bit, 1,
+            "Light bit should be 1 (no light detected) for dark pixel"
+        );
     }
 
     #[test]
@@ -1935,7 +1943,10 @@ mod tests {
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
         let light_bit_3 = (memory.read(0x4017) >> 4) & 0x01;
-        assert_eq!(light_bit_3, 1, "Should not detect light at dark position (100, 100)");
+        assert_eq!(
+            light_bit_3, 1,
+            "Should not detect light at dark position (100, 100)"
+        );
     }
 
     #[test]

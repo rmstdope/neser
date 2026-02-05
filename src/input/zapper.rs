@@ -105,7 +105,7 @@ impl crate::input::Controller for Zapper {
     fn update_light_detection(&mut self, screen_buffer: &crate::ppu::ScreenBuffer) -> bool {
         // Sample the luminance at the Zapper's position
         let luminance = screen_buffer.get_luminance(self.x as u32, self.y as u32);
-        
+
         // Light is detected when luminance exceeds threshold
         self.light = luminance >= LIGHT_DETECTION_THRESHOLD;
         true
@@ -182,7 +182,11 @@ mod tests {
 
         // Light should be detected (light bit = 0)
         let value = zapper.read_no_clock();
-        assert_eq!((value >> 4) & 0x01, 0, "Light bit should be 0 when light is detected");
+        assert_eq!(
+            (value >> 4) & 0x01,
+            0,
+            "Light bit should be 0 when light is detected"
+        );
         assert!(zapper.light);
     }
 
@@ -199,7 +203,11 @@ mod tests {
 
         // Light should not be detected (light bit = 1)
         let value = zapper.read_no_clock();
-        assert_eq!((value >> 4) & 0x01, 1, "Light bit should be 1 when no light is detected");
+        assert_eq!(
+            (value >> 4) & 0x01,
+            1,
+            "Light bit should be 1 when no light is detected"
+        );
         assert!(!zapper.light);
     }
 
@@ -211,11 +219,14 @@ mod tests {
         zapper.set_mouse_y_position(30);
 
         let mut screen_buffer = ScreenBuffer::new();
-        
+
         // Just below threshold (85) - use a dim gray
         screen_buffer.set_pixel(30, 30, 84, 84, 84);
         zapper.update_light_detection(&screen_buffer);
-        assert!(!zapper.light, "Light should not be detected below threshold");
+        assert!(
+            !zapper.light,
+            "Light should not be detected below threshold"
+        );
 
         // At threshold (85) - should detect
         screen_buffer.set_pixel(30, 30, 85, 85, 85);
@@ -236,7 +247,7 @@ mod tests {
         zapper.set_mouse_y_position(60);
 
         let mut screen_buffer = ScreenBuffer::new();
-        
+
         // Bright green (high luminance due to green coefficient)
         screen_buffer.set_pixel(60, 60, 0, 255, 0);
         zapper.update_light_detection(&screen_buffer);

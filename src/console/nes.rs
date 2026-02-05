@@ -236,7 +236,7 @@ impl Nes {
         let frame_complete = self.ppu.borrow_mut().poll_frame_complete();
         if frame_complete {
             self.ready_to_render = true;
-            
+
             // Update light detection for all controllers (e.g., Zapper)
             // when a frame is complete
             {
