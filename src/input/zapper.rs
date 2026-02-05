@@ -142,8 +142,9 @@ impl Zapper {
         let zapper_y = self.y as i32;
 
         // Calculate the beam position as a linear offset
-        let beam_position = (current_scanline as i32) * 256 + (current_pixel as i32);
-        let zapper_position = zapper_y * 256 + zapper_x;
+        // PPU has 341 pixels per scanline (PIXELS_PER_SCANLINE constant)
+        let beam_position = (current_scanline as i32) * 341 + (current_pixel as i32);
+        let zapper_position = zapper_y * 341 + zapper_x;
 
         // Check timing constraints:
         // 1. Cannot detect light ahead of the beam
@@ -153,7 +154,7 @@ impl Zapper {
             return false;
         }
 
-        let scanlines_behind = (beam_position - zapper_position) / 256;
+        let scanlines_behind = (beam_position - zapper_position) / 341;
         if scanlines_behind > MAX_SCANLINES_BEHIND {
             // Too far behind the beam
             return false;
@@ -167,7 +168,7 @@ impl Zapper {
                 let sample_y = zapper_y + dy;
 
                 // Check bounds
-                if sample_x < 0 || sample_x >= 256 || sample_y < 0 || sample_y >= 240 {
+                if !(0..256).contains(&sample_x) || !(0..240).contains(&sample_y) {
                     continue;
                 }
 
@@ -351,8 +352,8 @@ mod tests {
         let mut screen_buffer = ScreenBuffer::new();
         screen_buffer.set_pixel(100, 100, 255, 255, 255);
 
-        // Set PPU context BEFORE the zapper position (scanline 99, pixel 200)
-        // This is ahead of the Zapper's position at (100, 100)
+        // Set PPU context where the beam has not yet reached the Zapper position
+        // Beam at (scanline 99, pixel 200) occurs before Zapper at (100, 100) in raster order
         zapper.set_ppu_context(99, 200, &screen_buffer, &test_config_with_size(0));
 
         // Light should NOT be detected (beam hasn't reached it yet)

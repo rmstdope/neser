@@ -325,7 +325,20 @@ pub struct Config {
     pub controller_port1_explicit: bool,
     /// Whether controller_port2 was explicitly configured (not default).
     pub controller_port2_explicit: bool,
-    /// Zapper light detection size - side length of the detection square (0 = single pixel, 1 = 3x3 square, 2 = 5x5 square, etc.).
+    /// Zapper light detection size (config key: `zapper_detection_size`).
+    ///
+    /// This controls the side length of the square area sampled around the Zapper
+    /// cursor when checking for light hits:
+    /// - `0` = single pixel
+    /// - `1` = 3×3 square
+    /// - `2` = 5×5 square
+    /// - `n` = (2·n + 1)² pixels sampled
+    ///
+    /// Default: `0` (single pixel).
+    ///
+    /// Valid range: `0..=255` (full `u8` range). Larger values increase the
+    /// number of pixels sampled per check and can noticeably impact performance,
+    /// so values above 10 are generally not recommended.
     pub zapper_detection_size: u8,
 }
 
@@ -1007,6 +1020,16 @@ impl Config {
             "zapper_detection_size" => {
                 if let Ok(size) = value.parse::<u8>() {
                     self.zapper_detection_size = size;
+                    // Warn about performance implications of large values
+                    if size > 10 {
+                        eprintln!(
+                            "Warning: zapper_detection_size={} may cause performance issues. \
+                             Large values sample (2*size + 1)² = {} pixels per controller read. \
+                             Consider using values ≤ 10 for better performance.",
+                            size,
+                            (2 * size as u32 + 1).pow(2)
+                        );
+                    }
                 } else {
                     eprintln!(
                         "Warning: invalid value '{}' for 'zapper_detection_size' in configuration; \

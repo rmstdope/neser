@@ -139,6 +139,19 @@ gamepads=true
 #   controller_port1=joypad
 #   controller_port2=joypad
 
+# Zapper Light Detection Size
+# Controls the size of the square area sampled around the Zapper cursor
+# when checking for light detection:
+#   0 = single pixel (default)
+#   1 = 3×3 square (9 pixels)
+#   2 = 5×5 square (25 pixels)
+#   n = (2·n + 1)² pixels sampled
+#
+# Larger values make it easier to hit targets but increase CPU usage.
+# Values above 10 may cause noticeable performance impact.
+# Valid range: 0-255
+zapper_detection_size=0
+
 # -----------------------------------------------------------------------------
 # Debugging
 # -----------------------------------------------------------------------------
