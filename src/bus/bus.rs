@@ -39,7 +39,11 @@ pub struct Bus {
 
 impl Bus {
     /// Create a new memory instance with 64KB of RAM initialized to 0
-    pub fn new(ppu: Rc<RefCell<ppu::Ppu>>, apu: Rc<RefCell<apu::Apu>>) -> Self {
+    pub fn new(
+        ppu: Rc<RefCell<ppu::Ppu>>,
+        apu: Rc<RefCell<apu::Apu>>,
+        config: Rc<RefCell<crate::console::Config>>,
+    ) -> Self {
         let controllers = [
             Rc::new(RefCell::new(Joypad::new_boxed())),
             Rc::new(RefCell::new(Joypad::new_boxed())),
@@ -66,6 +70,8 @@ impl Bus {
         controller.register_device(Box::new(ControllerDevice::new(
             controller.controllers[0].clone(),
             controller.controllers[1].clone(),
+            controller.ppu.clone(),
+            config,
         )));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -754,7 +760,8 @@ mod tests {
     fn test_restore_mapper_state_updates_ppu_mirroring() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        let mut bus = Bus::new(ppu.clone(), apu);
+        let config = Rc::new(RefCell::new(crate::console::Config::default()));
+        let mut bus = Bus::new(ppu.clone(), apu, config);
 
         let rom = create_mmc1_rom();
         let cartridge = Cartridge::new(&rom).expect("Failed to create MMC1 ROM");
@@ -839,7 +846,8 @@ mod tests {
     fn create_test_memory() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        Bus::new(ppu, apu)
+        let config = Rc::new(RefCell::new(crate::console::Config::default()));
+        Bus::new(ppu, apu, config)
     }
 
     #[test]
@@ -968,7 +976,8 @@ mod tests {
     fn test_oam_dma_write_notifies_mapper_only_on_real_write() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        let mut memory = Bus::new(ppu, apu);
+        let config = Rc::new(RefCell::new(crate::console::Config::default()));
+        let mut memory = Bus::new(ppu, apu, config);
 
         let oam_dma_calls = Rc::new(RefCell::new(0u32));
         let mapper = Box::new(OamDmaCountingMapper::new(oam_dma_calls.clone()));
@@ -1087,7 +1096,8 @@ mod tests {
 
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        let mut mem = Bus::new(ppu.clone(), apu);
+        let config = Rc::new(RefCell::new(crate::console::Config::default()));
+        let mut mem = Bus::new(ppu.clone(), apu, config);
 
         let cart = Cartridge::new(&create_mmc1_ines_rom_with_vertical_mirroring())
             .expect("MMC1 test ROM should load");

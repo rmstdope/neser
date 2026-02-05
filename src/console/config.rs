@@ -325,6 +325,21 @@ pub struct Config {
     pub controller_port1_explicit: bool,
     /// Whether controller_port2 was explicitly configured (not default).
     pub controller_port2_explicit: bool,
+    /// Zapper light detection size (config key: `zapper_detection_size`).
+    ///
+    /// This controls the side length of the square area sampled around the Zapper
+    /// cursor when checking for light hits:
+    /// - `0` = single pixel
+    /// - `1` = 3×3 square
+    /// - `2` = 5×5 square
+    /// - `n` = (2·n + 1)² pixels sampled
+    ///
+    /// Default: `0` (single pixel).
+    ///
+    /// Valid range: `0..=255` (full `u8` range). Larger values increase the
+    /// number of pixels sampled per check and can noticeably impact performance,
+    /// so values above 10 are generally not recommended.
+    pub zapper_detection_size: u8,
 }
 
 bitflags! {
@@ -360,6 +375,7 @@ impl Default for Config {
             controller_port2: ControllerType::Joypad,
             controller_port1_explicit: false,
             controller_port2_explicit: false,
+            zapper_detection_size: 0,
         }
     }
 }
@@ -997,6 +1013,27 @@ impl Config {
                     eprintln!(
                         "Warning: invalid value '{}' for 'controller_port2' in configuration; \
                          keeping default controller type.",
+                        value
+                    );
+                }
+            }
+            "zapper_detection_size" => {
+                if let Ok(size) = value.parse::<u8>() {
+                    self.zapper_detection_size = size;
+                    // Warn about performance implications of large values
+                    if size > 10 {
+                        eprintln!(
+                            "Warning: zapper_detection_size={} may cause performance issues. \
+                             Large values sample (2*size + 1)² = {} pixels per controller read. \
+                             Consider using values ≤ 10 for better performance.",
+                            size,
+                            (2 * size as u32 + 1).pow(2)
+                        );
+                    }
+                } else {
+                    eprintln!(
+                        "Warning: invalid value '{}' for 'zapper_detection_size' in configuration; \
+                         ignoring. Must be a number between 0 and 255.",
                         value
                     );
                 }
@@ -1894,6 +1931,33 @@ mod tests {
 
         assert_eq!(config.controller_port1, ControllerType::Joypad);
         assert!(!config.controller_port1_explicit);
+    }
+
+    #[test]
+    fn test_config_zapper_detection_size() {
+        let mut config = Config::default();
+        let _ = config.apply_config_value("zapper_detection_size", "2");
+        assert_eq!(config.zapper_detection_size, 2);
+    }
+
+    #[test]
+    fn test_config_zapper_detection_size_invalid() {
+        let mut config = Config::default();
+        let _ = config.apply_config_value("zapper_detection_size", "invalid");
+        assert_eq!(config.zapper_detection_size, 0); // Should remain default
+    }
+
+    #[test]
+    fn test_config_zapper_detection_size_from_file() {
+        let config_content = "zapper_detection_size=1\n";
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("neser.conf");
+        std::fs::write(&config_path, config_content).unwrap();
+
+        let mut config = Config::default();
+        config.load_from_file(&config_path).unwrap();
+
+        assert_eq!(config.zapper_detection_size, 1);
     }
 
     #[test]

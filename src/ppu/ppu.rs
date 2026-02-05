@@ -520,9 +520,13 @@ impl Ppu {
     }
 
     /// Get reference to screen buffer
-    #[cfg(test)]
     pub fn screen_buffer(&self) -> &super::screen_buffer::ScreenBuffer {
         self.rendering.screen_buffer()
+    }
+
+    /// Get reference to timing info
+    pub fn timing(&self) -> &super::timing::Timing {
+        &self.timing
     }
 
     /// Get mutable reference to screen buffer (for compatibility)

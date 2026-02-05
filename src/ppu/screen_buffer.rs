@@ -67,7 +67,6 @@ impl ScreenBuffer {
     /// # Returns
     ///
     /// A tuple containing the (r, g, b) color components
-    #[cfg(test)]
     pub fn get_pixel(&self, x: u32, y: u32) -> (u8, u8, u8) {
         let offset = self.pixel_offset(x, y);
         (
@@ -75,6 +74,23 @@ impl ScreenBuffer {
             self.buffer[offset + 1],
             self.buffer[offset + 2],
         )
+    }
+
+    /// Calculates the luminance of a pixel at the specified coordinates.
+    /// Uses the Rec. 709 formula for perceptual brightness.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - The x coordinate (0-255)
+    /// * `y` - The y coordinate (0-239)
+    ///
+    /// # Returns
+    ///
+    /// A luminance value between 0.0 (black) and 255.0 (white)
+    pub fn get_luminance(&self, x: u32, y: u32) -> f32 {
+        let (r, g, b) = self.get_pixel(x, y);
+        // Rec. 709 luma coefficients for perceptual brightness
+        0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32
     }
 
     /// Copies the entire buffer to the specified destination buffer.
@@ -266,5 +282,56 @@ mod tests {
         let screen_buffer = ScreenBuffer::new();
         let crc = screen_buffer.crc32();
         assert_eq!(crc, 0xB77D_18AB);
+    }
+
+    #[test]
+    fn test_get_luminance_for_black() {
+        let screen_buffer = ScreenBuffer::new();
+        let luminance = screen_buffer.get_luminance(0, 0);
+        assert_eq!(luminance, 0.0);
+    }
+
+    #[test]
+    fn test_get_luminance_for_white() {
+        let mut screen_buffer = ScreenBuffer::new();
+        screen_buffer.set_pixel(10, 10, 255, 255, 255);
+        let luminance = screen_buffer.get_luminance(10, 10);
+        assert_eq!(luminance, 255.0);
+    }
+
+    #[test]
+    fn test_get_luminance_for_red() {
+        let mut screen_buffer = ScreenBuffer::new();
+        screen_buffer.set_pixel(20, 20, 255, 0, 0);
+        let luminance = screen_buffer.get_luminance(20, 20);
+        // Red contributes 0.2126 * 255 = 54.213
+        assert!((luminance - 54.213).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_get_luminance_for_green() {
+        let mut screen_buffer = ScreenBuffer::new();
+        screen_buffer.set_pixel(30, 30, 0, 255, 0);
+        let luminance = screen_buffer.get_luminance(30, 30);
+        // Green contributes 0.7152 * 255 = 182.376
+        assert!((luminance - 182.376).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_get_luminance_for_blue() {
+        let mut screen_buffer = ScreenBuffer::new();
+        screen_buffer.set_pixel(40, 40, 0, 0, 255);
+        let luminance = screen_buffer.get_luminance(40, 40);
+        // Blue contributes 0.0722 * 255 = 18.411
+        assert!((luminance - 18.411).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_get_luminance_for_mixed_color() {
+        let mut screen_buffer = ScreenBuffer::new();
+        screen_buffer.set_pixel(50, 50, 128, 200, 64);
+        let luminance = screen_buffer.get_luminance(50, 50);
+        // 0.2126 * 128 + 0.7152 * 200 + 0.0722 * 64 = 27.2128 + 143.04 + 4.6208 = 174.8736
+        assert!((luminance - 174.8736).abs() < 0.01);
     }
 }
