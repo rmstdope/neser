@@ -138,10 +138,6 @@ impl crate::input::Controller for NesJoypad {
         }
     }
 
-    fn new_boxed() -> Box<dyn crate::input::Controller> {
-        Box::new(NesJoypad::new())
-    }
-
     fn set_button(&mut self, button: crate::input::Button, pressed: bool) -> bool {
         self.set_button(button, pressed);
         true

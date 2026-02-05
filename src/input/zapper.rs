@@ -1,6 +1,9 @@
 use super::ControllerInput;
-use crate::console::ZapperState;
+use crate::console::{Config, ZapperState};
 use crate::input::Button;
+use crate::ppu::Ppu;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 /// Luminance threshold for light detection (0-255)
 /// Bright pixels above this threshold will trigger light detection
@@ -20,27 +23,21 @@ pub struct Zapper {
     x: u8,
     y: u8,
     trigger: bool,
-    light: bool,
-}
-
-impl Default for Zapper {
-    fn default() -> Self {
-        Self::new()
-    }
+    light: Cell<bool>,
+    ppu: Rc<RefCell<Ppu>>,
+    config: Rc<RefCell<Config>>,
 }
 
 impl Zapper {
-    pub fn new() -> Self {
+    pub fn new(ppu: Rc<RefCell<Ppu>>, config: Rc<RefCell<Config>>) -> Self {
         Self {
             x: 0,
             y: 0,
             trigger: false,
-            light: false,
+            light: Cell::new(false),
+            ppu,
+            config,
         }
-    }
-
-    pub fn new_boxed() -> Box<dyn crate::input::Controller> {
-        Box::new(Self::new())
     }
 
     pub fn capture_state(&self) -> ZapperState {
@@ -48,7 +45,7 @@ impl Zapper {
             x: self.x,
             y: self.y,
             trigger: self.trigger,
-            light: self.light,
+            light: self.light.get(),
         }
     }
 
@@ -56,7 +53,7 @@ impl Zapper {
         self.x = state.x;
         self.y = state.y;
         self.trigger = state.trigger;
-        self.light = state.light;
+        self.light.set(state.light);
     }
 }
 
@@ -68,8 +65,15 @@ impl crate::input::Controller for Zapper {
     }
 
     fn read_no_clock(&self) -> u8 {
+        let detection_size = self.config.borrow().zapper_detection_size;
+        let ppu = self.ppu.borrow();
+        let scanline = ppu.timing().scanline();
+        let pixel = ppu.timing().pixel();
+        let light_now = self.detect_light(scanline, pixel, ppu.screen_buffer(), detection_size);
+        self.light.set(light_now);
+
         let trigger_bit = (self.trigger as u8) << 4;
-        let light_bit = if self.light { 0 } else { 1 << 3 };
+        let light_bit = if light_now { 0 } else { 1 << 3 };
         trigger_bit | light_bit
     }
 
@@ -81,13 +85,6 @@ impl crate::input::Controller for Zapper {
         if let crate::input::ControllerState::Zapper(zapper_state) = state {
             self.restore_state(zapper_state);
         }
-    }
-
-    fn new_boxed() -> Box<dyn crate::input::Controller>
-    where
-        Self: Sized,
-    {
-        Self::new_boxed()
     }
 
     fn set_button(&mut self, _button: Button, _pressed: bool) -> bool {
@@ -107,18 +104,6 @@ impl crate::input::Controller for Zapper {
     fn set_mouse_left_button(&mut self, pressed: bool) -> bool {
         self.trigger = pressed;
         true
-    }
-
-    fn set_ppu_context(
-        &mut self,
-        scanline: u16,
-        pixel: u16,
-        screen_buffer: &crate::ppu::ScreenBuffer,
-        config: &crate::console::Config,
-    ) {
-        // Update light detection based on current PPU timing and screen buffer
-        self.light =
-            self.detect_light(scanline, pixel, screen_buffer, config.zapper_detection_size);
     }
 
     fn input_type(&self) -> ControllerInput {
@@ -189,18 +174,40 @@ impl Zapper {
 #[cfg(test)]
 mod tests {
     use super::Zapper;
+    use crate::console::TvSystem;
     use crate::input::Controller;
+    use crate::ppu::Ppu;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
-    fn test_config_with_size(size: u8) -> crate::console::Config {
-        crate::console::Config {
+    fn test_config_with_size(size: u8) -> Rc<RefCell<crate::console::Config>> {
+        Rc::new(RefCell::new(crate::console::Config {
             zapper_detection_size: size,
             ..Default::default()
+        }))
+    }
+
+    fn create_zapper_with_ppu(size: u8) -> (Zapper, Rc<RefCell<Ppu>>) {
+        let ppu = Rc::new(RefCell::new(Ppu::new(TvSystem::Ntsc)));
+        let config = test_config_with_size(size);
+        let zapper = Zapper::new(ppu.clone(), config);
+        (zapper, ppu)
+    }
+
+    fn advance_ppu_to(ppu: &Rc<RefCell<Ppu>>, scanline: u16, pixel: u16) {
+        let current_scanline = ppu.borrow().timing().scanline();
+        let current_pixel = ppu.borrow().timing().pixel();
+        let current_cycles = (current_scanline as u64) * 341 + (current_pixel as u64);
+        let target_cycles = (scanline as u64) * 341 + (pixel as u64);
+        let delta = target_cycles.saturating_sub(current_cycles);
+        if delta > 0 {
+            ppu.borrow_mut().run_ppu_cycles(delta);
         }
     }
 
     #[test]
     fn test_zapper_trigger_and_light_bits() {
-        let mut zapper = Zapper::new();
+        let (mut zapper, _ppu) = create_zapper_with_ppu(0);
 
         zapper.set_mouse_left_button(true);
         let value = zapper.read_no_clock();
@@ -215,13 +222,15 @@ mod tests {
 
     #[test]
     fn test_zapper_light_bit_clears_on_light() {
-        let mut zapper = Zapper::new();
-        zapper.restore_state(&crate::console::ZapperState {
-            x: 0,
-            y: 0,
-            trigger: false,
-            light: true,
-        });
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
+        zapper.set_mouse_x_position(0);
+        zapper.set_mouse_y_position(0);
+
+        advance_ppu_to(&ppu, 1, 0);
+
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(0, 0, 255, 255, 255);
 
         let value = zapper.read_no_clock();
         assert_eq!((value >> 3) & 0x01, 0);
@@ -229,14 +238,14 @@ mod tests {
 
     #[test]
     fn test_zapper_capture_restore_roundtrip() {
-        let mut zapper = Zapper::new();
+        let (mut zapper, _ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(0x22);
         zapper.set_mouse_y_position(0x77);
         zapper.set_mouse_left_button(true);
 
         let state = zapper.capture_state();
 
-        let mut restored = Zapper::new();
+        let (mut restored, _ppu) = create_zapper_with_ppu(0);
         restored.restore_state(&state);
 
         let restored_state = restored.capture_state();
@@ -247,39 +256,36 @@ mod tests {
 
     #[test]
     fn test_zapper_detects_light_on_bright_pixel() {
-        use crate::ppu::ScreenBuffer;
-        let mut zapper = Zapper::new();
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(100);
         zapper.set_mouse_y_position(100);
 
-        let mut screen_buffer = ScreenBuffer::new();
         // Set a bright white pixel at the Zapper position
-        screen_buffer.set_pixel(100, 100, 255, 255, 255);
+        // Set PPU timing at scanline 101, pixel 100 (just past the zapper position)
+        advance_ppu_to(&ppu, 101, 100);
 
-        // Set PPU context at scanline 101, pixel 100 (just past the zapper position)
-        zapper.set_ppu_context(101, 100, &screen_buffer, &test_config_with_size(0));
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(100, 100, 255, 255, 255);
 
         // Light should be detected (light bit = 0)
         let value = zapper.read_no_clock();
         assert_eq!(
-            (value >> 4) & 0x01,
+            (value >> 3) & 0x01,
             0,
             "Light bit should be 0 when light is detected"
         );
-        assert!(zapper.light);
+        assert!(zapper.capture_state().light);
     }
 
     #[test]
     fn test_zapper_no_light_on_dark_pixel() {
-        use crate::ppu::ScreenBuffer;
-        let mut zapper = Zapper::new();
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(50);
         zapper.set_mouse_y_position(50);
 
-        let screen_buffer = ScreenBuffer::new(); // All black pixels
-
-        // Set PPU context at scanline 51, pixel 50 (just past the zapper position)
-        zapper.set_ppu_context(51, 50, &screen_buffer, &test_config_with_size(0));
+        // All black pixels by default
+        advance_ppu_to(&ppu, 51, 50);
 
         // Light should not be detected (light bit = 1)
         let value = zapper.read_no_clock();
@@ -288,168 +294,217 @@ mod tests {
             1,
             "Light bit should be 1 when no light is detected"
         );
-        assert!(!zapper.light);
+        assert!(!zapper.capture_state().light);
     }
 
     #[test]
     fn test_zapper_light_threshold() {
-        use crate::ppu::ScreenBuffer;
-        let mut zapper = Zapper::new();
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(30);
         zapper.set_mouse_y_position(30);
 
-        let mut screen_buffer = ScreenBuffer::new();
-
         // Just below threshold (85) - use a dim gray
-        screen_buffer.set_pixel(30, 30, 84, 84, 84);
-        zapper.set_ppu_context(31, 30, &screen_buffer, &test_config_with_size(0));
+        advance_ppu_to(&ppu, 31, 30);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(30, 30, 84, 84, 84);
+        zapper.read_no_clock();
         assert!(
-            !zapper.light,
+            !zapper.capture_state().light,
             "Light should not be detected below threshold"
         );
 
         // At threshold (85) - should detect
-        screen_buffer.set_pixel(30, 30, 85, 85, 85);
-        zapper.set_ppu_context(31, 30, &screen_buffer, &test_config_with_size(0));
-        assert!(zapper.light, "Light should be detected at threshold");
+        advance_ppu_to(&ppu, 31, 30);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(30, 30, 85, 85, 85);
+        zapper.read_no_clock();
+        assert!(
+            zapper.capture_state().light,
+            "Light should be detected at threshold"
+        );
 
         // Above threshold - should detect
-        screen_buffer.set_pixel(30, 30, 200, 200, 200);
-        zapper.set_ppu_context(31, 30, &screen_buffer, &test_config_with_size(0));
-        assert!(zapper.light, "Light should be detected above threshold");
+        advance_ppu_to(&ppu, 31, 30);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(30, 30, 200, 200, 200);
+        zapper.read_no_clock();
+        assert!(
+            zapper.capture_state().light,
+            "Light should be detected above threshold"
+        );
     }
 
     #[test]
     fn test_zapper_light_detection_with_different_colors() {
-        use crate::ppu::ScreenBuffer;
-        let mut zapper = Zapper::new();
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(60);
         zapper.set_mouse_y_position(60);
 
-        let mut screen_buffer = ScreenBuffer::new();
-
         // Bright green (high luminance due to green coefficient)
-        screen_buffer.set_pixel(60, 60, 0, 255, 0);
-        zapper.set_ppu_context(61, 60, &screen_buffer, &test_config_with_size(0));
-        assert!(zapper.light, "Bright green should be detected");
+        advance_ppu_to(&ppu, 61, 60);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(60, 60, 0, 255, 0);
+        zapper.read_no_clock();
+        assert!(
+            zapper.capture_state().light,
+            "Bright green should be detected"
+        );
 
         // Bright red (lower luminance)
-        screen_buffer.set_pixel(60, 60, 255, 0, 0);
-        zapper.set_ppu_context(61, 60, &screen_buffer, &test_config_with_size(0));
-        assert!(!zapper.light, "Pure red alone is below threshold");
+        advance_ppu_to(&ppu, 61, 60);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(60, 60, 255, 0, 0);
+        zapper.read_no_clock();
+        assert!(
+            !zapper.capture_state().light,
+            "Pure red alone is below threshold"
+        );
 
         // Bright blue (very low luminance)
-        screen_buffer.set_pixel(60, 60, 0, 0, 255);
-        zapper.set_ppu_context(61, 60, &screen_buffer, &test_config_with_size(0));
-        assert!(!zapper.light, "Pure blue alone is below threshold");
+        advance_ppu_to(&ppu, 61, 60);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(60, 60, 0, 0, 255);
+        zapper.read_no_clock();
+        assert!(
+            !zapper.capture_state().light,
+            "Pure blue alone is below threshold"
+        );
     }
 
     #[test]
     fn test_zapper_no_light_ahead_of_beam() {
-        use crate::ppu::ScreenBuffer;
-        let mut zapper = Zapper::new();
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(100);
         zapper.set_mouse_y_position(100);
 
-        let mut screen_buffer = ScreenBuffer::new();
-        screen_buffer.set_pixel(100, 100, 255, 255, 255);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(100, 100, 255, 255, 255);
 
-        // Set PPU context where the beam has not yet reached the Zapper position
-        // Beam at (scanline 99, pixel 200) occurs before Zapper at (100, 100) in raster order
-        zapper.set_ppu_context(99, 200, &screen_buffer, &test_config_with_size(0));
+        // Beam at (scanline 99, pixel 200) occurs before Zapper at (100, 100)
+        advance_ppu_to(&ppu, 99, 200);
 
         // Light should NOT be detected (beam hasn't reached it yet)
-        assert!(!zapper.light, "Cannot detect light ahead of beam");
+        zapper.read_no_clock();
+        assert!(
+            !zapper.capture_state().light,
+            "Cannot detect light ahead of beam"
+        );
     }
 
     #[test]
     fn test_zapper_no_light_too_far_behind_beam() {
-        use crate::ppu::ScreenBuffer;
-        let mut zapper = Zapper::new();
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(100);
         zapper.set_mouse_y_position(10);
 
-        let mut screen_buffer = ScreenBuffer::new();
-        screen_buffer.set_pixel(100, 10, 255, 255, 255);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(100, 10, 255, 255, 255);
 
-        // Set PPU context way past the zapper position (scanline 200)
-        // More than MAX_SCANLINES_BEHIND (20) past the Zapper
-        zapper.set_ppu_context(200, 100, &screen_buffer, &test_config_with_size(0));
+        // Set PPU timing way past the zapper position (scanline 200)
+        advance_ppu_to(&ppu, 200, 100);
 
         // Light should NOT be detected (too far behind)
-        assert!(!zapper.light, "Cannot detect light too far behind beam");
+        zapper.read_no_clock();
+        assert!(
+            !zapper.capture_state().light,
+            "Cannot detect light too far behind beam"
+        );
     }
 
     #[test]
     fn test_zapper_with_radius_detects_nearby_bright_pixel() {
-        use crate::ppu::ScreenBuffer;
-        let mut zapper = Zapper::new();
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(100);
         zapper.set_mouse_y_position(100);
 
-        let mut screen_buffer = ScreenBuffer::new();
         // Set a bright pixel one pixel away from the Zapper
-        screen_buffer.set_pixel(101, 100, 255, 255, 255);
-
         // With radius 0, should not detect
-        zapper.set_ppu_context(101, 0, &screen_buffer, &test_config_with_size(0));
+        advance_ppu_to(&ppu, 101, 0);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(101, 100, 255, 255, 255);
+        zapper.read_no_clock();
         assert!(
-            !zapper.light,
+            !zapper.capture_state().light,
             "Radius 0 should not detect neighboring pixel"
         );
 
         // With radius 1 (3x3 area), should detect
-        zapper.set_ppu_context(101, 0, &screen_buffer, &test_config_with_size(1));
-        assert!(zapper.light, "Radius 1 should detect pixel at distance 1");
+        let (mut zapper, ppu) = create_zapper_with_ppu(1);
+        zapper.set_mouse_x_position(100);
+        zapper.set_mouse_y_position(100);
+        advance_ppu_to(&ppu, 101, 0);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(101, 100, 255, 255, 255);
+        zapper.read_no_clock();
+        assert!(
+            zapper.capture_state().light,
+            "Radius 1 should detect pixel at distance 1"
+        );
     }
 
     #[test]
     fn test_zapper_y_boundary_240() {
-        use crate::ppu::ScreenBuffer;
-        let mut zapper = Zapper::new();
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(100);
         zapper.set_mouse_y_position(240); // At boundary
 
-        let mut screen_buffer = ScreenBuffer::new();
         // Even with bright pixels, should not detect at y=240
-        screen_buffer.set_pixel(100, 100, 255, 255, 255);
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(100, 100, 255, 255, 255);
 
-        zapper.set_ppu_context(241, 100, &screen_buffer, &test_config_with_size(0));
+        advance_ppu_to(&ppu, 241, 100);
 
         // Should not detect light (y >= 240 is out of bounds)
-        assert!(!zapper.light, "Should not detect light when Y >= 240");
+        zapper.read_no_clock();
+        assert!(
+            !zapper.capture_state().light,
+            "Should not detect light when Y >= 240"
+        );
     }
 
     #[test]
     fn test_zapper_y_boundary_255() {
-        use crate::ppu::ScreenBuffer;
-        let mut zapper = Zapper::new();
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(100);
         zapper.set_mouse_y_position(255); // Maximum Y value
 
-        let screen_buffer = ScreenBuffer::new();
-
-        zapper.set_ppu_context(260, 100, &screen_buffer, &test_config_with_size(0));
+        advance_ppu_to(&ppu, 260, 100);
 
         // Should not detect light (y >= 240 is out of bounds)
-        assert!(!zapper.light, "Should not detect light when Y = 255");
+        zapper.read_no_clock();
+        assert!(
+            !zapper.capture_state().light,
+            "Should not detect light when Y = 255"
+        );
     }
 
     #[test]
     fn test_zapper_y_boundary_239() {
-        use crate::ppu::ScreenBuffer;
-        let mut zapper = Zapper::new();
+        let (mut zapper, ppu) = create_zapper_with_ppu(0);
         zapper.set_mouse_x_position(100);
         zapper.set_mouse_y_position(239); // Just within bounds
 
-        let mut screen_buffer = ScreenBuffer::new();
-        screen_buffer.set_pixel(100, 239, 255, 255, 255);
+        advance_ppu_to(&ppu, 240, 100);
 
-        zapper.set_ppu_context(240, 100, &screen_buffer, &test_config_with_size(0));
+        ppu.borrow_mut()
+            .screen_buffer_mut()
+            .set_pixel(100, 239, 255, 255, 255);
 
         // Should detect light (y = 239 is valid)
+        zapper.read_no_clock();
         assert!(
-            zapper.light,
+            zapper.capture_state().light,
             "Should detect light when Y = 239 (within bounds)"
         );
     }

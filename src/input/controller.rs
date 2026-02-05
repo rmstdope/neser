@@ -66,11 +66,6 @@ pub trait Controller {
     /// Restore controller state from save-state.
     fn restore_state(&mut self, state: &ControllerState);
 
-    /// Create a new default controller instance.
-    fn new_boxed() -> Box<dyn Controller>
-    where
-        Self: Sized;
-
     /// Set button state (for Joypad controllers).
     /// Returns true if the operation was successful, false if not supported.
     fn set_button(&mut self, button: Button, pressed: bool) -> bool;
@@ -86,21 +81,6 @@ pub trait Controller {
     /// Set mouse left button state for mouse-emulated controllers.
     /// Returns true if the operation was successful, false if not supported.
     fn set_mouse_left_button(&mut self, pressed: bool) -> bool;
-
-    /// Set PPU rendering context for light gun controllers.
-    /// This should be called before reading to provide access to screen buffer and timing.
-    /// scanline: current PPU scanline (0-261 for NTSC, 0-311 for PAL)
-    /// pixel: current PPU pixel within scanline (0-340)
-    /// screen_buffer: reference to PPU screen buffer
-    /// config: emulator configuration (contains zapper_detection_size, etc.)
-    fn set_ppu_context(
-        &mut self,
-        _scanline: u16,
-        _pixel: u16,
-        _screen_buffer: &crate::ppu::ScreenBuffer,
-        _config: &crate::console::Config,
-    ) {
-    }
 
     // Get the type of input this controller needs.
     fn input_type(&self) -> ControllerInput;
