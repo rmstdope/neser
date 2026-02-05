@@ -332,6 +332,7 @@ impl Nes {
     }
 
     /// Check if a Zapper is active on the specified port.
+    #[allow(dead_code)]
     pub fn is_zapper_active(&self, port: u8) -> bool {
         self.bus.borrow().is_zapper_active(port)
     }

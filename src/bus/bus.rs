@@ -475,13 +475,16 @@ impl Bus {
     }
 
     /// Check if a Zapper is active on the specified port.
+    #[allow(dead_code)]
     pub fn is_zapper_active(&self, port: u8) -> bool {
         if !(1..=2).contains(&port) {
             return false;
         }
 
         matches!(
-            self.controllers[(port - 1) as usize].borrow().capture_state(),
+            self.controllers[(port - 1) as usize]
+                .borrow()
+                .capture_state(),
             crate::input::ControllerState::Zapper(_)
         )
     }
