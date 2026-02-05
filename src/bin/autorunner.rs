@@ -367,7 +367,13 @@ fn run_loop(
         let overlay_blink_red = matches!(mode, Mode::Record)
             && state.extending_playback
             && extend_playback_blink_red(state.frame_index, total_frames);
-        let _ = gl_backend.render(nes, false, overlay_text.as_deref(), overlay_blink_red);
+        let _ = gl_backend.render(
+            nes,
+            false,
+            overlay_text.as_deref(),
+            overlay_blink_red,
+            None,
+        );
     }
 }
 

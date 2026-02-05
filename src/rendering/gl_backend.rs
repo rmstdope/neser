@@ -42,6 +42,12 @@ pub struct GlBackend {
     shader_manager: ShaderManager,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Crosshair {
+    pub x: f32,
+    pub y: f32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OverlayTextColor {
     White,
@@ -228,6 +234,7 @@ impl GlBackend {
         show_debugger: bool,
         overlay_text: Option<&str>,
         overlay_blink_red: bool,
+        crosshair: Option<Crosshair>,
     ) -> debugger_ui::DebuggerUiAction {
         let mut action = debugger_ui::DebuggerUiAction::default();
 
@@ -370,6 +377,32 @@ impl GlBackend {
                     overlay_text_rgba(self.overlay_text_color, overlay_blink_red),
                     text,
                 );
+            }
+
+            if let Some(crosshair) = crosshair {
+                const CROSSHAIR_SIZE: f32 = 12.0;
+                let color = [1.0, 0.2, 0.2, 1.0];
+                let draw_list = ui.get_background_draw_list();
+                draw_list
+                    .add_line(
+                        [crosshair.x - CROSSHAIR_SIZE, crosshair.y],
+                        [crosshair.x + CROSSHAIR_SIZE, crosshair.y],
+                        color,
+                    )
+                    .thickness(2.0)
+                    .build();
+                draw_list
+                    .add_line(
+                        [crosshair.x, crosshair.y - CROSSHAIR_SIZE],
+                        [crosshair.x, crosshair.y + CROSSHAIR_SIZE],
+                        color,
+                    )
+                    .thickness(2.0)
+                    .build();
+                draw_list
+                    .add_circle([crosshair.x, crosshair.y], 7.0, color)
+                    .thickness(2.0)
+                    .build();
             }
 
             if show_debugger {
