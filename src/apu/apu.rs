@@ -253,26 +253,6 @@ impl Apu {
         self.frame_counter.get_cycle_counter()
     }
 
-    #[cfg(test)]
-    pub fn debug_frame_counter_irq_inhibit(&self) -> bool {
-        self.frame_counter.is_irq_inhibited()
-    }
-
-    #[cfg(test)]
-    pub fn debug_frame_counter_irq_flag(&self) -> bool {
-        self.frame_counter.get_irq_flag()
-    }
-
-    #[cfg(test)]
-    pub fn debug_pulse1_length_enabled(&self) -> bool {
-        self.pulse1.is_length_counter_enabled()
-    }
-
-    #[cfg(test)]
-    pub fn debug_pulse1_length_counter(&self) -> u8 {
-        self.pulse1.get_length_counter()
-    }
-
     /// Get reference to pulse channel 1
     #[cfg(test)]
     pub fn pulse1(&self) -> &Pulse {

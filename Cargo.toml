@@ -10,7 +10,7 @@ doctest = false
 [dependencies]
 bitflags = "2.9"
 crc = "3.3"
-pixels = "0.13"
+pixels = "0.15"
 rand = "0.9.2"
 ringbuf = "0.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -26,7 +26,7 @@ wasm-bindgen = { version = "0.2.108", optional = true }
 wasm-bindgen-futures = { version = "0.4.45", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 js-sys = { version = "0.3", optional = true }
-web-sys = { version = "0.3", optional = true, features = ["Window"] }
+web-sys = { version = "0.3", optional = true, features = ["Window", "console"] }
 wasm-bindgen-test = { version = "0.3.45", optional = true }
 imgui = { version = "0.11", optional = true }
 
@@ -79,3 +79,4 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+incremental = true

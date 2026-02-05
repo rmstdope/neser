@@ -4,7 +4,7 @@ use crate::cartridge::Cartridge;
 use crate::console::{Config, SAVESTATE_VERSION, SaveState};
 use crate::cpu::Cpu;
 use crate::cpu::lookup;
-use crate::debugging::Tracing;
+use crate::debugging::{Tracing, log_info};
 use crate::input::ControllerType;
 use crate::ppu::Ppu;
 use std::cell::RefCell;
@@ -94,7 +94,7 @@ impl Nes {
     }
 
     /// Insert a cartridge and map it into memory.
-    /// Auto-configures paddle controllers for known ROMs if that specific port hasn't been explicitly configured.
+    /// Auto-configures Arkanoid controllers for known ROMs if that specific port hasn't been explicitly configured.
     pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
         let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge.crc32());
 
@@ -107,8 +107,9 @@ impl Nes {
         let port1_explicit = self.config.controller_port1_explicit;
         let port2_explicit = self.config.controller_port2_explicit;
 
-        // Auto-configure Arkanoid paddle when detected, but only if the specific port
-        // hasn't been explicitly configured by the user
+        // Auto-configure Arkanoid controller when detected, but only if the specific port
+        // hasn't been explicitly configured by the user, and we wouldn't create a second
+        // Arkanoid controller alongside another mouse-emulated controller.
         if arkanoid_port != 0 {
             let port_explicitly_configured = match arkanoid_port {
                 1 => port1_explicit,
@@ -116,33 +117,44 @@ impl Nes {
                 _ => false,
             };
 
-            if !port_explicitly_configured {
-                println!(
-                    "Enabling Arkanoid paddle on port {} for inserted cartridge",
+            let other_port_type = if arkanoid_port == 1 {
+                port2_type
+            } else {
+                port1_type
+            };
+            let other_port_explicit = if arkanoid_port == 1 {
+                port2_explicit
+            } else {
+                port1_explicit
+            };
+
+            let other_port_is_explicit_paddle =
+                other_port_explicit && matches!(other_port_type, ControllerType::Arkanoid);
+
+            if !port_explicitly_configured && !other_port_is_explicit_paddle {
+                log_info(format!(
+                    "Enabling Arkanoid controller on port {} for inserted cartridge. If you don't want this behavior, explicitly configure that port or configure another mouse-emulated controller on the other port to prevent auto-detection. Note that some games expect the Arkanoid controller on a specific port, so be sure to configure the correct one if you have issues with input not working in certain games.",
                     arkanoid_port
-                );
-                bus.set_controller_type(arkanoid_port, ControllerType::Paddle);
+                ));
+                bus.set_controller_type(arkanoid_port, ControllerType::Arkanoid);
 
                 // Apply the other port's configuration
                 let other_port = if arkanoid_port == 1 { 2 } else { 1 };
-                let other_port_type = if arkanoid_port == 1 {
-                    port2_type
-                } else {
-                    port1_type
-                };
                 bus.set_controller_type(other_port, other_port_type);
             } else {
-                println!(
-                    "ROM detected as Arkanoid (port {}), but user has explicitly configured that port; \
-                     keeping user configuration",
-                    arkanoid_port
-                );
+                log_info(format!(
+                    "ROM detected as supporting an Arkanoid controller on port {}, but user has explicitly configured that port \
+                    or configured another mouse-emulated controller on another port. \
+                    Keeping user configuration. Note that this may cause issues if the game expects an Arkanoid controller on \
+                    port {}.",
+                    arkanoid_port, arkanoid_port
+                ));
                 // Apply user's explicit configuration
                 bus.set_controller_type(1, port1_type);
                 bus.set_controller_type(2, port2_type);
             }
         } else {
-            // No paddle detected, just apply user config
+            // No Arkanoid controller detected, just apply user config
             bus.set_controller_type(1, port1_type);
             bus.set_controller_type(2, port2_type);
         }
@@ -288,51 +300,25 @@ impl Nes {
             .set_button(controller, button, pressed);
     }
 
-    /// Returns the controller port that has an Arkanoid paddle connected.
-    #[allow(dead_code)]
-    pub fn paddle_port(&self) -> Option<u8> {
-        self.bus.borrow().paddle_port()
-    }
-
     /// Return the input type for a controller port.
     pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
         self.bus.borrow().controller_input_type(port)
     }
 
-    /// Set the current position of the first paddle controller.
+    /// Update the mouse X position for any mouse-emulated controller.
     ///
     /// # Arguments
-    /// * `position` - The paddle position value (typically 0–255) to report for paddle 1.
-    #[allow(dead_code)]
-    pub fn set_paddle1_position(&mut self, position: u8) {
-        self.bus.borrow_mut().set_paddle_position(1, position);
+    /// * `position` - The Arkanoid controller position value (typically 0–255).
+    pub fn set_mouse_x_position(&mut self, position: u8) {
+        self.bus.borrow_mut().set_mouse_x_position(position);
     }
 
-    /// Set the current position of a paddle controller.
+    /// Update the left mouse button status for any mouse-emulated controller.
     ///
     /// # Arguments
-    /// * `port` - Controller port (1 or 2).
-    /// * `position` - The paddle position value (typically 0–255).
-    pub fn set_paddle_position(&mut self, port: u8, position: u8) {
-        self.bus.borrow_mut().set_paddle_position(port, position);
-    }
-
-    /// Set the trigger button state for the first paddle controller.
-    ///
-    /// # Arguments
-    /// * `pressed` - `true` if the paddle 1 trigger is pressed, `false` if released.
-    #[allow(dead_code)]
-    pub fn set_paddle1_trigger(&mut self, pressed: bool) {
-        self.bus.borrow_mut().set_paddle_trigger(1, pressed);
-    }
-
-    /// Set the trigger button state for a paddle controller.
-    ///
-    /// # Arguments
-    /// * `port` - Controller port (1 or 2).
-    /// * `pressed` - `true` if the paddle trigger is pressed, `false` if released.
-    pub fn set_paddle_trigger(&mut self, port: u8, pressed: bool) {
-        self.bus.borrow_mut().set_paddle_trigger(port, pressed);
+    /// * `pressed` - `true` if the Arkanoid controller trigger is pressed, `false` if released.
+    pub fn set_mouse_left_button(&mut self, pressed: bool) {
+        self.bus.borrow_mut().set_mouse_left_button(pressed);
     }
 
     /// Generate a trace line for the current CPU state
@@ -1617,8 +1603,8 @@ mod tests {
         nes.insert_cartridge(cartridge);
 
         // Should configure paddle on port 2 for Arkanoid ROM
-        nes.bus.borrow_mut().set_paddle_position(2, 0xA5);
-        nes.bus.borrow_mut().set_paddle_trigger(2, true);
+        nes.bus.borrow_mut().set_mouse_x_position(0xA5);
+        nes.bus.borrow_mut().set_mouse_left_button(true);
 
         // Verify port 2 reads paddle data
         nes.bus.borrow_mut().write(0x4016, 0x01, false);
@@ -1644,5 +1630,33 @@ mod tests {
         nes.bus.borrow_mut().write(0x4016, 0x00, false);
         let joypad_bit = nes.bus.borrow_mut().read(0x4017) & 0x01;
         assert_eq!(joypad_bit, 1); // Should have joypad data on port 2
+    }
+
+    #[test]
+    fn test_insert_cartridge_does_not_add_second_arkanoid_port() {
+        let rom_data = create_minimal_nrom_rom();
+        let mut cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        cartridge.set_crc32_for_test(0x32FB0583);
+
+        let config = Config {
+            controller_port1: crate::input::ControllerType::Arkanoid,
+            controller_port1_explicit: true,
+            controller_port2: crate::input::ControllerType::Joypad,
+            controller_port2_explicit: false,
+            ..Default::default()
+        };
+
+        let mut nes = Nes::new(config);
+        nes.insert_cartridge(cartridge);
+
+        let bus_state = nes.bus.borrow().capture_state();
+        assert!(matches!(
+            bus_state.port1_controller,
+            crate::console::ControllerStateWrapper::Arkanoid(_)
+        ));
+        assert!(matches!(
+            bus_state.port2_controller,
+            crate::console::ControllerStateWrapper::Joypad(_)
+        ));
     }
 }

@@ -1,6 +1,6 @@
 use crate::cartridge::Cartridge;
 use crate::console::{Config, Nes, SaveState};
-use crate::input::Button;
+use crate::input::{Button, ControllerType};
 use wasm_bindgen::prelude::*;
 
 /// Provides a minimal WASM bridge for running the emulator in the browser.
@@ -10,6 +10,8 @@ use wasm_bindgen::prelude::*;
 pub struct WasmNes {
     nes: Nes,
     audio_muted: bool,
+    rom_loaded: bool,
+    rom_bytes: Option<Vec<u8>>,
 }
 
 impl Default for WasmNes {
@@ -30,6 +32,8 @@ impl WasmNes {
         WasmNes {
             nes: Nes::new(Config::default()),
             audio_muted: false,
+            rom_loaded: false,
+            rom_bytes: None,
         }
     }
 
@@ -37,16 +41,25 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), JsValue> {
         self.nes = Nes::new(Config::default());
+        self.rom_loaded = false;
+        self.rom_bytes = None;
         let cart = Cartridge::new(rom).map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.nes.insert_cartridge(cart);
         self.nes.reset(false);
+        self.rom_loaded = true;
+        self.rom_bytes = Some(rom.to_vec());
+        web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
     }
 
     /// Reset the emulator without ejecting the cartridge.
     #[wasm_bindgen]
     pub fn reset(&mut self) {
-        self.nes.reset(true);
+        if let Some(rom) = self.rom_bytes.clone() {
+            let _ = self.load_rom(&rom);
+        } else {
+            self.nes.reset(false);
+        }
     }
 
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGB888).
@@ -54,6 +67,9 @@ impl WasmNes {
     /// Returns a Uint8Array with length 256*240*3.
     #[wasm_bindgen]
     pub fn render_frame(&mut self) -> Vec<u8> {
+        if !self.rom_loaded {
+            return vec![0u8; 256 * 240 * 3];
+        }
         // NOTE: MVP implementation runs a synchronous loop until a frame is ready.
         // For browser responsiveness, this could be broken into smaller chunks via
         // async/yield in a future enhancement. See web/README.md for notes about
@@ -70,6 +86,14 @@ impl WasmNes {
     /// Returns a Uint8Array with length 256*240*4 (alpha set to 0xFF).
     #[wasm_bindgen]
     pub fn render_frame_rgba(&mut self) -> Vec<u8> {
+        if !self.rom_loaded {
+            let pixel_count = 256 * 240;
+            let mut rgba = vec![0u8; pixel_count * 4];
+            for alpha in rgba.iter_mut().skip(3).step_by(4) {
+                *alpha = 0xFF;
+            }
+            return rgba;
+        }
         while !self.nes.is_ready_to_render() {
             self.nes.run_cpu_tick();
         }
@@ -110,53 +134,46 @@ impl WasmNes {
         self.nes.set_button(controller, nes_button, pressed);
     }
 
-    /// Returns `true` if paddle 1 is enabled.
-    #[wasm_bindgen]
-    pub fn paddle1_enabled(&self) -> bool {
-        self.nes.paddle_port() == Some(1)
-    }
-
-    /// Returns the controller port number that has a paddle, or null if no paddle.
-    ///
-    /// # Returns
-    /// * `Some(1)` if paddle on port 1
-    /// * `Some(2)` if paddle on port 2
-    /// * `None` if no paddle connected
-    #[wasm_bindgen]
-    pub fn paddle_port(&self) -> Option<u8> {
-        self.nes.paddle_port()
-    }
-
-    /// Set the current position of paddle 1 (0..=255).
-    #[wasm_bindgen]
-    pub fn set_paddle1_position(&mut self, position: u8) {
-        self.nes.set_paddle1_position(position);
-    }
-
-    /// Set the trigger button state for paddle 1.
-    #[wasm_bindgen]
-    pub fn set_paddle1_trigger(&mut self, pressed: bool) {
-        self.nes.set_paddle1_trigger(pressed);
-    }
-
-    /// Set the current position of a paddle controller on a specific port.
+    /// Set the controller type for a port.
     ///
     /// # Arguments
     /// * `port` - Controller port (1 or 2)
-    /// * `position` - The paddle position value (0..=255)
+    /// * `controller_type` - "joypad" or "arkanoid"
     #[wasm_bindgen]
-    pub fn set_paddle_position(&mut self, port: u8, position: u8) {
-        self.nes.set_paddle_position(port, position);
+    pub fn set_controller_type(&mut self, port: u8, controller_type: &str) -> Result<(), JsValue> {
+        let controller_type = ControllerType::parse(controller_type)
+            .ok_or_else(|| JsValue::from_str("invalid controller type"))?;
+        self.nes
+            .bus
+            .borrow_mut()
+            .set_controller_type(port, controller_type);
+        Ok(())
     }
 
-    /// Set the trigger button state for a paddle controller on a specific port.
+    /// Check if mouse-emulated controller input is enabled on a port.
+    /// Returns true if a mouse-emulated controller is active on the specified port.
+    /// This is used by the JavaScript frontend to determine whether to suppress joypad input for that port.
+    #[wasm_bindgen]
+    pub fn is_mouse_emulated_controller(&self, port: u8) -> bool {
+        self.nes.controller_input_type(port) == Some(crate::input::ControllerInput::Mouse)
+    }
+
+    /// Set the mouse X position for any mouse-emulated controller.
     ///
     /// # Arguments
-    /// * `port` - Controller port (1 or 2)
+    /// * `position` - The mouse-emulated controller position value (0..=255)
+    #[wasm_bindgen]
+    pub fn set_mouse_x_position(&mut self, position: u8) {
+        self.nes.set_mouse_x_position(position);
+    }
+
+    /// Set the mouse left button state for any mouse-emulated controller.
+    ///
+    /// # Arguments
     /// * `pressed` - true if pressed, false if released
     #[wasm_bindgen]
-    pub fn set_paddle_trigger(&mut self, port: u8, pressed: bool) {
-        self.nes.set_paddle_trigger(port, pressed);
+    pub fn set_mouse_left_button(&mut self, pressed: bool) {
+        self.nes.set_mouse_left_button(pressed);
     }
 
     /// Get all available audio samples from the emulator.

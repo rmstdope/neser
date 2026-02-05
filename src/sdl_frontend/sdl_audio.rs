@@ -1,3 +1,4 @@
+use crate::debugging::log_info;
 /// Audio output module for the NES APU
 ///
 /// This module handles SDL2 audio initialization and manages the audio callback
@@ -82,10 +83,10 @@ impl SdlNesAudio {
 
         let actual_rate = device.spec().freq;
         if actual_rate != sample_rate {
-            eprintln!(
+            log_info(format!(
                 "Audio: requested {} Hz, got {} Hz from SDL device",
                 sample_rate, actual_rate
-            );
+            ));
         }
 
         Ok(Self {

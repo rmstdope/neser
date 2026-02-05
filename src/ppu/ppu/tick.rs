@@ -72,8 +72,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
             ppu.timing.total_cycles(),
         );
         if ppu_trace_level() >= 1 {
-            let frame_crc = ppu.rendering.screen_buffer_crc32();
-            trace_ppu!(1; "frame crc={:08X}", frame_crc);
+            trace_ppu!(1; "frame crc={:08X}", ppu.rendering.screen_buffer_crc32());
         }
         ppu.with_mapper_mut(|mapper| mapper.ppu_end_frame());
     }

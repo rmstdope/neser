@@ -10,6 +10,7 @@ mod rendering;
 mod sdl_frontend;
 
 use console::{ApuChannels, Config, Nes, ParseResult, SaveState};
+use debugging::log_info;
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::fs;
 
@@ -121,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if run_result.is_ok()
         && let Err(e) = nes_instance.bus.borrow().save_ram()
     {
-        eprintln!("Warning: failed to save RAM: {}", e);
+        log_info(format!("Warning: failed to save RAM: {}", e));
     }
 
     run_result.map_err(|e| e.into())
@@ -135,10 +136,18 @@ mod tests {
     #[test]
     #[serial]
     fn test_enable_debugger_requests_open_and_pauses_on_start() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"").unwrap();
+
         let args = vec![
             "neser".to_string(),
             "--debugger".to_string(),
             "true".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
         ];
 
         let config = match Config::new(&args).unwrap() {

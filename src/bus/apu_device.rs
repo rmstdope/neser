@@ -1,5 +1,6 @@
 use crate::apu;
 use crate::bus::bus::BusDevice;
+use crate::debugging::log_info;
 use crate::trace_apu;
 use std::cell::RefCell;
 use std::ops::RangeInclusive;
@@ -91,10 +92,10 @@ impl BusDevice for ApuDevice {
 
             0x4009 | 0x400D => {}
             _ => {
-                eprintln!(
+                log_info(format!(
                     "Warning: Write to unimplemented APU/IO register {:04X} ignored",
                     addr
-                );
+                ));
             }
         }
 

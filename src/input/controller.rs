@@ -1,26 +1,27 @@
-use crate::console::{JoypadState, PaddleState};
+use crate::console::{ArkanoidState, JoypadState};
 use crate::input::Button;
 
 /// Unified controller state for save-state support.
 #[derive(Debug, Clone)]
 pub enum ControllerState {
     Joypad(JoypadState),
-    Paddle(PaddleState),
+    Paddle(ArkanoidState),
 }
 
 /// Controller type for a port.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControllerType {
     Joypad,
-    Paddle,
+    Arkanoid,
 }
 
+// TODO remove the "paddle" variant
 impl ControllerType {
     /// Parse a controller type from a string configuration value.
     pub fn parse(value: &str) -> Option<Self> {
         match value.to_lowercase().as_str() {
             "joypad" => Some(Self::Joypad),
-            "arkanoid" | "paddle" => Some(Self::Paddle),
+            "arkanoid" | "paddle" => Some(Self::Arkanoid),
             _ => None,
         }
     }
@@ -36,7 +37,15 @@ pub enum ControllerInput {
     Mouse,
 }
 
-/// Trait for NES controller devices (Joypad, Paddle, etc.).
+/// Return the input type required for a given controller type.
+pub fn controller_input_type(controller_type: ControllerType) -> ControllerInput {
+    match controller_type {
+        ControllerType::Joypad => ControllerInput::Gamepad,
+        ControllerType::Arkanoid => ControllerInput::Mouse,
+    }
+}
+
+/// Trait for NES controller devices (Joypad, Arkanoid controller, etc.).
 pub trait Controller {
     /// Write to strobe register ($4016).
     fn write_strobe(&mut self, value: u8);
@@ -62,15 +71,14 @@ pub trait Controller {
     /// Returns true if the operation was successful, false if not supported.
     fn set_button(&mut self, button: Button, pressed: bool) -> bool;
 
-    /// Set paddle position (for Paddle controllers).
+    /// Set mouse X position for mouse-emulated controllers.
     /// Returns true if the operation was successful, false if not supported.
-    fn set_paddle_position(&mut self, position: u8) -> bool;
+    fn set_mouse_x_position(&mut self, position: u8) -> bool;
 
-    /// Set paddle trigger state (for Paddle controllers).
+    /// Set mouse left button state for mouse-emulated controllers.
     /// Returns true if the operation was successful, false if not supported.
-    fn set_paddle_trigger(&mut self, pressed: bool) -> bool;
+    fn set_mouse_left_button(&mut self, pressed: bool) -> bool;
 
     // Get the type of input this controller needs.
-    #[allow(dead_code)]
     fn input_type(&self) -> ControllerInput;
 }

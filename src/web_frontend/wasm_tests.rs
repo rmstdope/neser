@@ -1,8 +1,7 @@
 #![cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
 
-use crate::console::SaveState;
+use crate::console::{ArkanoidState, ControllerStateWrapper, SaveState};
 use crate::wasm::WasmNes;
-use wasm_bindgen::prelude::*;
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -18,6 +17,18 @@ fn minimal_nrom() -> Vec<u8> {
 
 fn read_save_state(nes: &WasmNes) -> SaveState {
     SaveState::from_bytes(&nes.save_state_bytes()).expect("save state should decode")
+}
+
+fn port1_arkanoid_state(state: &SaveState) -> ArkanoidState {
+    match &state.bus.port1_controller {
+        ControllerStateWrapper::Arkanoid(arkanoid) => arkanoid.clone(),
+        ControllerStateWrapper::Joypad(_) => panic!("expected Arkanoid controller on port 1"),
+    }
+}
+
+fn enable_arkanoid_on_port1(nes: &mut WasmNes) {
+    nes.set_controller_type(1, "arkanoid")
+        .expect("should set controller type");
 }
 
 #[wasm_bindgen_test]
@@ -183,48 +194,63 @@ fn reset_restores_initial_state() {
 
     nes.reset();
     let after_reset = nes.save_state_bytes();
-
+    assert!(!after_reset.is_empty());
+    assert_ne!(modified, after_reset);
     assert_eq!(initial, after_reset);
+
+    let _state = SaveState::from_bytes(&after_reset).expect("save state should decode");
 }
 
 #[wasm_bindgen_test]
-fn paddle1_enabled_matches_save_state() {
-    let nes = WasmNes::new();
-    let state = read_save_state(&nes);
-    assert_eq!(nes.paddle_port() == Some(1), state.bus.paddle1.enabled);
-}
-
-#[wasm_bindgen_test]
-fn set_paddle1_position_updates_save_state() {
+fn set_mouse_x_position_updates_save_state() {
     let mut nes = WasmNes::new();
-    nes.set_paddle1_position(0x80);
+    enable_arkanoid_on_port1(&mut nes);
+    nes.set_mouse_x_position(0x80);
 
     let state = read_save_state(&nes);
-    assert_eq!(state.bus.paddle1.position, 0x80);
+    let arkanoid = port1_arkanoid_state(&state);
+    assert_eq!(arkanoid.position, 0x80);
 }
 
 #[wasm_bindgen_test]
-fn set_paddle1_position_clamps_to_valid_range() {
+fn set_mouse_x_position_clamps_to_valid_range() {
     let mut nes = WasmNes::new();
-    nes.set_paddle1_position(0x20);
+    enable_arkanoid_on_port1(&mut nes);
+    nes.set_mouse_x_position(0x20);
 
     let state = read_save_state(&nes);
-    assert_eq!(state.bus.paddle1.position, 0x62);
+    let arkanoid = port1_arkanoid_state(&state);
+    assert_eq!(arkanoid.position, 0x62);
 
-    nes.set_paddle1_position(0xFF);
+    nes.set_mouse_x_position(0xFF);
     let state = read_save_state(&nes);
-    assert_eq!(state.bus.paddle1.position, 0xF2);
+    let arkanoid = port1_arkanoid_state(&state);
+    assert_eq!(arkanoid.position, 0xF2);
 }
 
 #[wasm_bindgen_test]
-fn set_paddle1_trigger_updates_save_state() {
+fn set_mouse_left_button_updates_save_state() {
     let mut nes = WasmNes::new();
-    nes.set_paddle1_trigger(true);
+    enable_arkanoid_on_port1(&mut nes);
+    nes.set_mouse_left_button(true);
 
     let state = read_save_state(&nes);
-    assert!(state.bus.paddle1.trigger);
+    let arkanoid = port1_arkanoid_state(&state);
+    assert!(arkanoid.trigger);
 
-    nes.set_paddle1_trigger(false);
+    nes.set_mouse_left_button(false);
     let state = read_save_state(&nes);
-    assert!(!state.bus.paddle1.trigger);
+    let arkanoid = port1_arkanoid_state(&state);
+    assert!(!arkanoid.trigger);
+}
+
+#[wasm_bindgen_test]
+fn is_mouse_emulated_controller_reflects_port_configuration() {
+    let mut nes = WasmNes::new();
+    assert!(!nes.is_mouse_emulated_controller(1));
+    assert!(!nes.is_mouse_emulated_controller(2));
+
+    enable_arkanoid_on_port1(&mut nes);
+    assert!(nes.is_mouse_emulated_controller(1));
+    assert!(!nes.is_mouse_emulated_controller(2));
 }

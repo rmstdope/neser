@@ -2196,16 +2196,6 @@ mod tests {
         ppu.write_control(0b0000_0000); // BG pattern table at $0000, no NMI, nametable $2000
         ppu.write_mask(0b0000_1010); // Enable background rendering, no clipping
 
-        // Debug: Check if rendering is enabled
-        // println!(
-        //     "Rendering enabled: {}",
-        //     ppu.registers.is_rendering_enabled()
-        // );
-        // println!(
-        //     "Background enabled: {}",
-        //     ppu.registers.is_background_enabled()
-        // );
-
         // Run PPU to render two complete frames
         // NTSC: 262 scanlines * 341 dots/scanline
         // First frame: renders with empty shift registers (will show offset)
@@ -2213,19 +2203,13 @@ mod tests {
         //               so second frame renders correctly with tiles at positions 0-7, 8-15, etc.
         ppu.run_ppu_cycles(2 * 262 * 341);
 
-        // println!("After rendering:");
-        // println!("Scanline: {}, Pixel: {}", ppu.scanline(), ppu.pixel());
-
         // Debug: Check if palette was actually written
         // Use direct memory access to check
-        // println!("Palette check after rendering:");
         ppu.write_address(0x3F, false);
         ppu.write_address(0x03, false);
         let _pal3 = ppu.read_data();
-        // println!("Palette $3F03 (should be 0x12): {:02X}", pal3);
 
         // Now check the screen buffer for expected colors
-        // println!("Before checking screen buffer:");
         let screen_buffer = ppu.screen_buffer();
 
         // Get the system palette colors for our palette entries
@@ -2233,24 +2217,6 @@ mod tests {
         let (green_r, green_g, green_b) = Nes::lookup_system_palette(0x2A);
         let (blue_r, blue_g, blue_b) = Nes::lookup_system_palette(0x12);
         let (black_r, black_g, black_b) = Nes::lookup_system_palette(0x0F);
-
-        // Debug: Print first 32 pixels of row 0 for analysis
-        // println!("\nFirst 32 pixels of row 0:");
-        // for x in 0..32 {
-        //     let (r, g, b) = screen_buffer.get_pixel(x, 0);
-        //     let color_name = if (r, g, b) == (blue_r, blue_g, blue_b) {
-        //         "BLUE"
-        //     } else if (r, g, b) == (red_r, red_g, red_b) {
-        //         "RED"
-        //     } else if (r, g, b) == (green_r, green_g, green_b) {
-        //         "GREEN"
-        //     } else if (r, g, b) == (black_r, black_g, black_b) {
-        //         "BLACK"
-        //     } else {
-        //         "UNKNOWN"
-        //     };
-        //     println!("  Pixel {}: ({},{},{}) = {}", x, r, g, b, color_name);
-        // }
 
         // Verify all pixels in the topmost 16 rows
         // After running two complete frames, the pre-render scanline has properly loaded

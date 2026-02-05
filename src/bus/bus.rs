@@ -7,6 +7,7 @@ use super::ram_device::RamDevice;
 use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::console::{BusState, MapperState};
+use crate::debugging::log_info;
 use crate::input::{Button, Controller, ControllerType, Joypad, Paddle};
 use crate::ppu;
 use crate::trace_mapper;
@@ -198,10 +199,10 @@ impl Bus {
         }
 
         let value = {
-            eprintln!(
+            log_info(format!(
                 "Warning: Read from unimplemented address {:04X}, returning 0",
                 addr
-            );
+            ));
             0
         };
 
@@ -316,7 +317,6 @@ impl Bus {
             let _ = (t, v, fine_x, w);
         }
 
-        // println!("Write to {:04X}: {:02X}", addr, value);
         let wrote = self.write_to_devices(addr, value, is_dummy_write);
         if wrote
             && Self::should_log_mmc5_ppu_scroll_write(
@@ -344,10 +344,10 @@ impl Bus {
         }
 
         {
-            eprintln!(
+            log_info(format!(
                 "Warning: Write to unimplemented address {:04X} ignored",
                 addr
-            );
+            ));
         }
         false // No DMA triggered
     }
@@ -431,30 +431,24 @@ impl Bus {
 
         let new_controller: Box<dyn Controller> = match controller_type {
             ControllerType::Joypad => Joypad::new_boxed(),
-            ControllerType::Paddle => Paddle::new_boxed(),
+            ControllerType::Arkanoid => Paddle::new_boxed(),
         };
 
         *self.controllers[(port - 1) as usize].borrow_mut() = new_controller;
     }
 
-    /// Update paddle position for a specific port (0..255).
-    pub fn set_paddle_position(&mut self, port: u8, position: u8) {
-        if !(1..=2).contains(&port) {
-            return;
+    /// Update mouse X position for any mouse-emulated controller (0..255).
+    pub fn set_mouse_x_position(&mut self, position: u8) {
+        for controller in &self.controllers {
+            controller.borrow_mut().set_mouse_x_position(position);
         }
-        self.controllers[(port - 1) as usize]
-            .borrow_mut()
-            .set_paddle_position(position);
     }
 
-    /// Update paddle trigger state for a specific port.
-    pub fn set_paddle_trigger(&mut self, port: u8, pressed: bool) {
-        if !(1..=2).contains(&port) {
-            return;
+    /// Update mouse left button state for any mouse-emulated controller.
+    pub fn set_mouse_left_button(&mut self, pressed: bool) {
+        for controller in &self.controllers {
+            controller.borrow_mut().set_mouse_left_button(pressed);
         }
-        self.controllers[(port - 1) as usize]
-            .borrow_mut()
-            .set_paddle_trigger(pressed);
     }
 
     /// Return the input type for a controller port.
@@ -464,26 +458,6 @@ impl Bus {
         }
 
         Some(self.controllers[(port - 1) as usize].borrow().input_type())
-    }
-
-    /// Returns the controller port that has an Arkanoid paddle connected.
-    #[allow(dead_code)]
-    pub fn paddle_port(&self) -> Option<u8> {
-        if matches!(
-            self.controllers[0].borrow().capture_state(),
-            crate::input::ControllerState::Paddle(_)
-        ) {
-            return Some(1);
-        }
-
-        if matches!(
-            self.controllers[1].borrow().capture_state(),
-            crate::input::ControllerState::Paddle(_)
-        ) {
-            return Some(2);
-        }
-
-        None
     }
 
     #[cfg(test)]
@@ -549,11 +523,11 @@ impl Bus {
             oam_dma_page: *self.oam_dma_page.borrow(),
             port1_controller: match port1_state {
                 crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
-                crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Paddle(s),
+                crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
             },
             port2_controller: match port2_state {
                 crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
-                crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Paddle(s),
+                crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
             },
         }
     }
@@ -573,7 +547,7 @@ impl Bus {
                 controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
-            ControllerStateWrapper::Paddle(s) => {
+            ControllerStateWrapper::Arkanoid(s) => {
                 let mut controller = Paddle::new_boxed();
                 controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
@@ -587,18 +561,13 @@ impl Bus {
                 controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
-            ControllerStateWrapper::Paddle(s) => {
+            ControllerStateWrapper::Arkanoid(s) => {
                 let mut controller = Paddle::new_boxed();
                 controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
         }
     }
-
-    // /// Print the current open bus value to stdout (for debugging)
-    // pub fn print_open_bus(&self) {
-    //     println!("Open bus: 0x{:02X}", *self.open_bus.borrow());
-    // }
 }
 
 #[cfg(test)]
@@ -1071,9 +1040,9 @@ mod tests {
     fn test_bus_save_state_roundtrip_with_paddle() {
         let mut memory = create_test_memory();
 
-        memory.set_controller_type(1, ControllerType::Paddle);
-        memory.set_paddle_position(1, 0xA5);
-        memory.set_paddle_trigger(1, true);
+        memory.set_controller_type(1, ControllerType::Arkanoid);
+        memory.set_mouse_x_position(0xA5);
+        memory.set_mouse_left_button(true);
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
         let expected_paddle = [0x08, 0x18];
@@ -1823,9 +1792,9 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Configure paddle on port 1
-        memory.set_controller_type(1, crate::input::ControllerType::Paddle);
-        memory.set_paddle_position(1, 0xA5);
-        memory.set_paddle_trigger(1, true);
+        memory.set_controller_type(1, crate::input::ControllerType::Arkanoid);
+        memory.set_mouse_x_position(0xA5);
+        memory.set_mouse_left_button(true);
 
         // Strobe the controller
         memory.write(0x4016, 0x01, false);
@@ -1846,9 +1815,9 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Configure paddle on port 2
-        memory.set_controller_type(2, crate::input::ControllerType::Paddle);
-        memory.set_paddle_position(2, 0xB3);
-        memory.set_paddle_trigger(2, false);
+        memory.set_controller_type(2, crate::input::ControllerType::Arkanoid);
+        memory.set_mouse_x_position(0xB3);
+        memory.set_mouse_left_button(false);
 
         // Strobe the controller
         memory.write(0x4016, 0x01, false);
@@ -1874,7 +1843,7 @@ mod tests {
 
         // Configure joypad on port 1, paddle on port 2
         memory.set_controller_type(1, crate::input::ControllerType::Joypad);
-        memory.set_controller_type(2, crate::input::ControllerType::Paddle);
+        memory.set_controller_type(2, crate::input::ControllerType::Arkanoid);
 
         // Set joypad buttons
         memory.set_button(1, crate::input::Button::A, true);
@@ -1889,8 +1858,8 @@ mod tests {
         assert_eq!(memory.read(0x4016) & 0x01, 1); // B button
 
         // Verify port 2 returns paddle data
-        memory.set_paddle_position(2, 0xA5);
-        memory.set_paddle_trigger(2, true); // Set trigger so bit 3 is set
+        memory.set_mouse_x_position(0xA5);
+        memory.set_mouse_left_button(true); // Set trigger so bit 3 is set
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
         let paddle_bits = memory.read(0x4017) & 0x18;
@@ -1904,15 +1873,15 @@ mod tests {
 
         // Configure paddle on port 2
         memory.set_controller_type(1, crate::input::ControllerType::Joypad);
-        memory.set_controller_type(2, crate::input::ControllerType::Paddle);
-        memory.set_paddle_position(2, 0xC7);
-        memory.set_paddle_trigger(2, true); // Set trigger so bit 3 is set
+        memory.set_controller_type(2, crate::input::ControllerType::Arkanoid);
+        memory.set_mouse_x_position(0xC7);
+        memory.set_mouse_left_button(true); // Set trigger so bit 3 is set
 
         // Capture state
         let saved_state = memory.capture_state();
 
         // Change configuration
-        memory.set_controller_type(1, crate::input::ControllerType::Paddle);
+        memory.set_controller_type(1, crate::input::ControllerType::Arkanoid);
         memory.set_controller_type(2, crate::input::ControllerType::Joypad);
 
         // Restore state

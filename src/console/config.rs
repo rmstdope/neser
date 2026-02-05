@@ -1114,13 +1114,16 @@ impl Config {
     }
 
     fn validate_controller_ports(&self) -> Result<(), String> {
-        let paddle_count = [self.controller_port1, self.controller_port2]
+        let mouse_emulated_controller_count = [self.controller_port1, self.controller_port2]
             .iter()
-            .filter(|controller| **controller == ControllerType::Paddle)
+            .filter(|controller| **controller == ControllerType::Arkanoid)
             .count();
 
-        if paddle_count > 1 {
-            return Err("No more than one controller simulated using Mouse can be configured (Arkanoid/Zapper)".to_string());
+        if mouse_emulated_controller_count > 1 {
+            return Err(
+                "No more than one mouse-emulated controller can be configured (Arkanoid/Zapper)"
+                    .to_string(),
+            );
         }
 
         Ok(())
@@ -1131,8 +1134,25 @@ impl Config {
 mod tests {
     use super::*;
 
+    fn config_new(mut args: Vec<String>) -> Result<ParseResult, String> {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        if args.iter().any(|a| a == "--config") {
+            return Config::new(&args);
+        }
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"").unwrap();
+
+        args.push("--config".to_string());
+        args.push(file.path().to_string_lossy().to_string());
+
+        Config::new(&args)
+    }
+
     fn parse_config(args: Vec<String>) -> Config {
-        match Config::new(&args).unwrap() {
+        match config_new(args).unwrap() {
             ParseResult::Config(c) => c,
             ParseResult::Help => panic!("Expected Config, got Help"),
         }
@@ -1163,7 +1183,17 @@ mod tests {
 
     #[test]
     fn test_config_new_defaults() {
-        let args = vec!["neser".to_string()];
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"").unwrap();
+
+        let args = vec![
+            "neser".to_string(),
+            "--config".to_string(),
+            file.path().to_string_lossy().to_string(),
+        ];
         let config = parse_config(args);
         assert_eq!(config.tv_system, TvSystem::Ntsc);
         assert!(config.audio_enabled);
@@ -1178,7 +1208,7 @@ mod tests {
     #[test]
     fn test_config_help_flag() {
         let args = vec!["neser".to_string(), "--help".to_string()];
-        match Config::new(&args).unwrap() {
+        match config_new(args).unwrap() {
             ParseResult::Help => {}
             ParseResult::Config(_) => panic!("Expected Help"),
         }
@@ -1187,7 +1217,7 @@ mod tests {
     #[test]
     fn test_config_help_flag_short() {
         let args = vec!["neser".to_string(), "-h".to_string()];
-        match Config::new(&args).unwrap() {
+        match config_new(args).unwrap() {
             ParseResult::Help => {}
             ParseResult::Config(_) => panic!("Expected Help"),
         }
@@ -1293,7 +1323,7 @@ mod tests {
             "--fullscreen".to_string(),
             "--display".to_string(),
         ];
-        let result = Config::new(&args);
+        let result = config_new(args);
         assert!(result.is_err());
     }
 
@@ -1305,7 +1335,7 @@ mod tests {
             "--display".to_string(),
             "abc".to_string(),
         ];
-        let result = Config::new(&args);
+        let result = config_new(args);
         assert!(result.is_err());
     }
 
@@ -1317,7 +1347,7 @@ mod tests {
             "--display".to_string(),
             "-1".to_string(),
         ];
-        let result = Config::new(&args);
+        let result = config_new(args);
         assert!(result.is_err());
     }
 
@@ -1328,7 +1358,7 @@ mod tests {
             "--filter".to_string(),
             "invalid-filter".to_string(),
         ];
-        let result = Config::new(&args);
+        let result = config_new(args);
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err(),
@@ -1410,7 +1440,7 @@ mod tests {
             "neser".to_string(),
             "--definitely-not-a-real-flag".to_string(),
         ];
-        let result = Config::new(&args);
+        let result = config_new(args);
         assert!(result.is_err());
     }
 
@@ -1590,7 +1620,7 @@ mod tests {
             "--window-height".to_string(),
             "not_a_number".to_string(),
         ];
-        let result = Config::new(&args);
+        let result = config_new(args);
         assert!(result.is_err());
     }
 
@@ -1601,7 +1631,7 @@ mod tests {
             "--video-scale".to_string(),
             "2.5".to_string(),
         ];
-        let result = Config::new(&args);
+        let result = config_new(args);
         assert!(result.is_err());
     }
 
@@ -1846,7 +1876,7 @@ mod tests {
         let _ = config.apply_config_value("controller_port1", "arkanoid");
         let _ = config.apply_config_value("controller_port2", "joypad");
 
-        assert_eq!(config.controller_port1, ControllerType::Paddle);
+        assert_eq!(config.controller_port1, ControllerType::Arkanoid);
         assert_eq!(config.controller_port2, ControllerType::Joypad);
         assert!(config.controller_port1_explicit);
         assert!(config.controller_port2_explicit);

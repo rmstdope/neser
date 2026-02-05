@@ -1,5 +1,9 @@
-use super::ControllerInput;
 /// NES standard joypad
+///
+/// Emulates the NES standard controller which has 8 buttons: A, B, Select, Start, Up, Down, Left, Right.
+/// The controller state is read via a shift register that outputs button states
+/// sequentially when clocked. Writing to the strobe register resets the read position.
+use super::ControllerInput;
 use crate::console::JoypadState;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -143,16 +147,16 @@ impl crate::input::Controller for Joypad {
         true
     }
 
-    fn set_paddle_position(&mut self, _position: u8) -> bool {
+    fn set_mouse_x_position(&mut self, _position: u8) -> bool {
         false // Not supported for Joypad
     }
 
-    fn set_paddle_trigger(&mut self, _pressed: bool) -> bool {
+    fn set_mouse_left_button(&mut self, _pressed: bool) -> bool {
         false // Not supported for Joypad
     }
 
     fn input_type(&self) -> ControllerInput {
-        ControllerInput::Gamepad
+        crate::input::controller_input_type(crate::input::ControllerType::Joypad)
     }
 }
 

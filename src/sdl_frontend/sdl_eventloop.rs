@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::time::{Duration, Instant};
 
-use crate::debugging::{DebuggerSnapshot, Tracing, snapshot, ui};
+use crate::debugging::{DebuggerSnapshot, Tracing, log_info, snapshot, ui};
 use crate::input::Button;
 
 /// EventLoop manages the SDL2 event loop for the application.
@@ -54,12 +54,12 @@ enum KeyDownOutcome {
 }
 
 impl SdlEventLoop {
-    /// Maps an SDL mouse X position into a paddle position value (0..=255).
+    /// Maps an SDL mouse X position into a screen position value (0..=255).
     ///
     /// The input is normalized to $[-1.0, 1.0]$ across the current window width,
     /// then shaped using a non-linear curve $\text{sign}(x)\cdot|x|^{1.5}$ to
     /// make the edges respond faster than the center. The result is scaled to
-    /// the Arkanoid paddle range ($62$-$F2$) and clamped.
+    /// the Arkanoid controller range ($62$-$F2$) and clamped.
     fn map_mouse_x_to_paddle_position(x: i32, window_width: u32) -> u8 {
         const MIN_POSITION: f32 = 0x62 as f32;
         const MAX_POSITION: f32 = 0xF2 as f32;
@@ -78,32 +78,24 @@ impl SdlEventLoop {
         scaled.round().clamp(MIN_POSITION, MAX_POSITION) as u8
     }
 
-    /// Applies mouse motion to any paddle controllers when paddle mode is active.
+    /// Applies mouse motion to mouse-emulated controller.
     ///
-    /// This is a no-op if no paddle is connected.
-    fn apply_paddle_mouse_motion(nes: &mut Nes, x: i32, window_width: u32) {
-        let mouse_ports = Self::mouse_ports(nes);
-        if mouse_ports.is_empty() {
-            return;
-        }
-
+    /// This is a no-op if no mouse-emulated controller is connected.
+    fn update_mouse_motion(nes: &mut Nes, x: i32, window_width: u32) {
         let position = Self::map_mouse_x_to_paddle_position(x, window_width);
-        for port in mouse_ports {
-            nes.set_paddle_position(port, position);
-        }
+        nes.set_mouse_x_position(position);
     }
 
-    /// Maps left mouse button presses to paddle triggers when active.
+    /// Maps left mouse button presses to mouse-emulated controller.
     ///
-    /// This is a no-op if no paddle is connected.
-    fn apply_paddle_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
-        // println!("Mouse button {:?} pressed: {}", button, pressed);
+    /// This is a no-op if no mouse-emulated controller is connected.
+    fn update_mouse_button(nes: &mut Nes, button: MouseButton, pressed: bool) {
         if button != MouseButton::Left {
             return;
         }
 
-        for port in Self::mouse_ports(nes) {
-            nes.set_paddle_trigger(port, pressed);
+        if !Self::mouse_ports(nes).is_empty() {
+            nes.set_mouse_left_button(pressed);
         }
     }
 
@@ -248,7 +240,6 @@ impl SdlEventLoop {
         let _num = game_controller_subsystem
             .load_mappings("gamecontrollerdb.txt")
             .unwrap_or(0);
-        // println!("Loaded {} game controller mappings", num);
         let available = game_controller_subsystem
             .num_joysticks()
             .map_err(|e| format!("Failed to enumerate joysticks: {}", e))?;
@@ -259,7 +250,7 @@ impl SdlEventLoop {
         // Try to open up to 2 controllers
         for id in 0..available.min(2) {
             if !game_controller_subsystem.is_game_controller(id) {
-                println!("Joystick {} is not a game controller", id);
+                log_info(format!("Joystick {} is not a game controller", id));
                 continue;
             }
 
@@ -267,17 +258,17 @@ impl SdlEventLoop {
                 Ok(controller) => {
                     let instance_id = controller.instance_id();
                     let player_num = (controllers.len() + 1) as u8;
-                    println!(
+                    log_info(format!(
                         "Opened game controller {} for player {}: {}",
                         id,
                         player_num,
                         controller.name()
-                    );
+                    ));
                     controller_player_map.insert(instance_id, player_num);
                     controllers.push(controller);
                 }
                 Err(e) => {
-                    println!("Failed to open controller {}: {}", id, e);
+                    log_info(format!("Failed to open controller {}: {}", id, e));
                 }
             }
 
@@ -293,20 +284,20 @@ impl SdlEventLoop {
     /// Prints a warning to stderr if clamping occurs.
     fn clamp_timing_scale(scale: f32) -> f32 {
         if scale < Self::MIN_TIMING_SCALE {
-            eprintln!(
+            log_info(format!(
                 "Warning: Timing scaling factor {} is below minimum {}. Clamping to {}.",
                 scale,
                 Self::MIN_TIMING_SCALE,
                 Self::MIN_TIMING_SCALE
-            );
+            ));
             Self::MIN_TIMING_SCALE
         } else if scale > Self::MAX_TIMING_SCALE {
-            eprintln!(
+            log_info(format!(
                 "Warning: Timing scaling factor {} is above maximum {}. Clamping to {}.",
                 scale,
                 Self::MAX_TIMING_SCALE,
                 Self::MAX_TIMING_SCALE
-            );
+            ));
             Self::MAX_TIMING_SCALE
         } else {
             scale
@@ -568,13 +559,13 @@ impl SdlEventLoop {
                         }
                         Event::MouseMotion { x, .. } => {
                             let (window_width, _) = gl_backend.window_size();
-                            Self::apply_paddle_mouse_motion(nes, x, window_width);
+                            Self::update_mouse_motion(nes, x, window_width);
                         }
                         Event::MouseButtonDown { mouse_btn, .. } => {
-                            Self::apply_paddle_mouse_button(nes, mouse_btn, true);
+                            Self::update_mouse_button(nes, mouse_btn, true);
                         }
                         Event::MouseButtonUp { mouse_btn, .. } => {
-                            Self::apply_paddle_mouse_button(nes, mouse_btn, false);
+                            Self::update_mouse_button(nes, mouse_btn, false);
                         }
                         _ => {}
                     }
@@ -648,26 +639,20 @@ impl SdlEventLoop {
                         0.0
                     };
                     if dropped != 0 || underrun != 0 {
-                        eprintln!(
+                        log_info(format!(
                             "Audio stats (last ~1s): received={}, dropped={}, underrun={}, cpu_cycles_per_sec≈{:.0}",
                             received, dropped, underrun, cycles_per_sec
-                        );
+                        ));
                     }
                     last_cpu_cycles = now_cycles;
                     last_perf_instant = Instant::now();
                     last_audio_stats_print = Instant::now();
                 }
                 nes.clear_ready_to_render();
-                // println!(
-                //     "Frame emulated. Scanline: {}, Pixel: {}",
-                //     nes.ppu.borrow().scanline(),
-                //     nes.ppu.borrow().pixel()
-                // );
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
                 let overlay_text = self.help_overlay_render_text();
                 let _ = gl_backend.render(nes, self.debugger_open_requested, overlay_text, false);
-                // println!("Frame rendered.");
 
                 // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
                 let current_time = timer.performance_counter();
@@ -678,7 +663,7 @@ impl SdlEventLoop {
 
                 // Calculate FPS before sleeping
                 // let fps = 1.0 / elapsed_seconds;
-                // println!("FPS: {:.2}", fps);
+                // log_info(format!("FPS: {:.2}", fps));
 
                 // Update last_frame_time before sleeping to avoid timing drift
                 last_frame_time = current_time;
@@ -689,7 +674,6 @@ impl SdlEventLoop {
                     let sleep_time = target_frame_time - elapsed_seconds;
                     std::thread::sleep(std::time::Duration::from_secs_f64(sleep_time));
                 }
-                // println!("Frame limited.");
             }
         } else {
             // Headless mode - just run without rendering
@@ -722,10 +706,10 @@ impl SdlEventLoop {
                             0.0
                         };
                         if dropped != 0 || underrun != 0 {
-                            eprintln!(
+                            log_info(format!(
                                 "Audio stats (last ~1s): received={}, dropped={}, underrun={}, cpu_cycles_per_sec≈{:.0}",
                                 received, dropped, underrun, cycles_per_sec
-                            );
+                            ));
                         }
                         last_cpu_cycles = now_cycles;
                         last_perf_instant = Instant::now();
@@ -1050,7 +1034,6 @@ impl SdlEventLoop {
                 nes.run_cpu_tick();
             }
             Keycode::F1 => {
-                // println!("Resetting NES...");
                 nes.reset(true);
             }
             Keycode::F2 => {
@@ -1162,7 +1145,7 @@ T: Start"
         let bytes = match state.to_bytes() {
             Ok(bytes) => bytes,
             Err(err) => {
-                eprintln!("Failed to serialize save-state: {err}");
+                log_info(format!("Failed to serialize save-state: {err}"));
                 return;
             }
         };
@@ -1170,7 +1153,7 @@ T: Start"
         if let Some(parent) = state_path.parent()
             && let Err(err) = fs::create_dir_all(parent)
         {
-            eprintln!("Failed to create save-state directory: {err}");
+            log_info(format!("Failed to create save-state directory: {err}"));
             return;
         }
 
@@ -1178,12 +1161,12 @@ T: Start"
         tmp_path.set_extension(format!("state.tmp.{}", std::process::id()));
 
         if let Err(err) = fs::write(&tmp_path, bytes) {
-            eprintln!("Failed to write save-state: {err}");
+            log_info(format!("Failed to write save-state: {err}"));
             return;
         }
 
         if let Err(err) = fs::rename(&tmp_path, &state_path) {
-            eprintln!("Failed to finalize save-state: {err}");
+            log_info(format!("Failed to finalize save-state: {err}"));
         }
     }
 
@@ -1199,7 +1182,7 @@ T: Start"
         let bytes = match fs::read(&state_path) {
             Ok(bytes) => bytes,
             Err(err) => {
-                eprintln!("Failed to read save-state: {err}");
+                log_info(format!("Failed to read save-state: {err}"));
                 return;
             }
         };
@@ -1207,13 +1190,13 @@ T: Start"
         let state = match SaveState::from_bytes(&bytes) {
             Ok(state) => state,
             Err(err) => {
-                eprintln!("Failed to deserialize save-state: {err}");
+                log_info(format!("Failed to deserialize save-state: {err}"));
                 return;
             }
         };
 
         if let Err(err) = nes.load_state(&state) {
-            eprintln!("Failed to restore save-state: {err}");
+            log_info(format!("Failed to restore save-state: {err}"));
         }
     }
 
@@ -1221,20 +1204,23 @@ T: Start"
     fn handle_controller_added(&mut self, which: u32) {
         // Only add if we have less than 2 controllers
         if self.controllers.len() >= 2 {
-            println!("Controller {} added but already have 2 controllers", which);
+            log_info(format!(
+                "Controller {} added but already have 2 controllers",
+                which
+            ));
             return;
         }
 
         let game_controller_subsystem = match self._sdl_context.game_controller() {
             Ok(subsystem) => subsystem,
             Err(e) => {
-                println!("Failed to get game controller subsystem: {}", e);
+                log_info(format!("Failed to get game controller subsystem: {}", e));
                 return;
             }
         };
 
         if !game_controller_subsystem.is_game_controller(which) {
-            println!("Device {} is not a game controller", which);
+            log_info(format!("Device {} is not a game controller", which));
             return;
         }
 
@@ -1242,17 +1228,17 @@ T: Start"
             Ok(controller) => {
                 let instance_id = controller.instance_id();
                 let player_num = (self.controllers.len() + 1) as u8;
-                println!(
+                log_info(format!(
                     "Hot-plugged controller {} for player {}: {}",
                     which,
                     player_num,
                     controller.name()
-                );
+                ));
                 self.controller_player_map.insert(instance_id, player_num);
                 self.controllers.push(controller);
             }
             Err(e) => {
-                println!("Failed to open controller {}: {}", which, e);
+                log_info(format!("Failed to open controller {}: {}", which, e));
             }
         }
     }
@@ -1263,7 +1249,10 @@ T: Start"
         if let Some(player_num) = self.controller_player_map.remove(&which) {
             // Remove from controllers vec
             self.controllers.retain(|c| c.instance_id() != which);
-            println!("Controller {} (player {}) removed", which, player_num);
+            log_info(format!(
+                "Controller {} (player {}) removed",
+                which, player_num
+            ));
 
             // Reassign remaining controllers to players 1 and 2
             self.controller_player_map.clear();
@@ -1272,10 +1261,10 @@ T: Start"
                 let new_player_num = (idx + 1) as u8;
                 self.controller_player_map
                     .insert(instance_id, new_player_num);
-                println!(
+                log_info(format!(
                     "Reassigned controller {} to player {}",
                     instance_id, new_player_num
-                );
+                ));
             }
         }
     }
@@ -1484,9 +1473,9 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
-        nes.set_paddle1_position(0x80);
-        nes.set_paddle1_trigger(true);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
+        nes.set_mouse_x_position(0x80);
+        nes.set_mouse_left_button(true);
 
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
@@ -1540,7 +1529,7 @@ mod tests {
         // Port 1 is mouse-only, port 2 is gamepad.
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
         nes.bus
             .borrow_mut()
             .set_controller_type(2, crate::input::ControllerType::Joypad);
@@ -1557,16 +1546,16 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
         nes.bus
             .borrow_mut()
-            .set_controller_type(2, crate::input::ControllerType::Paddle);
+            .set_controller_type(2, crate::input::ControllerType::Arkanoid);
 
         let window_width = 320;
         let x = 240;
         let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
 
-        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+        SdlEventLoop::update_mouse_motion(&mut nes, x, window_width);
 
         assert_eq!(read_paddle_position_for_port(&mut nes, 1), expected);
         assert_eq!(read_paddle_position_for_port(&mut nes, 2), expected);
@@ -1577,12 +1566,12 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
 
-        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
+        SdlEventLoop::update_mouse_button(&mut nes, MouseButton::Left, true);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 1);
 
-        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, false);
+        SdlEventLoop::update_mouse_button(&mut nes, MouseButton::Left, false);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
     }
 
@@ -1593,11 +1582,11 @@ mod tests {
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Joypad);
-        SdlEventLoop::apply_paddle_mouse_button(&mut nes, MouseButton::Left, true);
+        SdlEventLoop::update_mouse_button(&mut nes, MouseButton::Left, true);
 
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
         assert_eq!(read_paddle_trigger_bit(&mut nes), 0);
     }
 
@@ -1606,13 +1595,13 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
 
         let window_width = 320;
         let x = 240;
         let expected = SdlEventLoop::map_mouse_x_to_paddle_position(x, window_width);
 
-        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+        SdlEventLoop::update_mouse_motion(&mut nes, x, window_width);
 
         assert_eq!(read_paddle_position(&mut nes), expected);
     }
@@ -1627,11 +1616,11 @@ mod tests {
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Joypad);
-        SdlEventLoop::apply_paddle_mouse_motion(&mut nes, x, window_width);
+        SdlEventLoop::update_mouse_motion(&mut nes, x, window_width);
 
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
         assert_eq!(read_paddle_position(&mut nes), 0x62);
     }
 
@@ -1643,7 +1632,7 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         nes.bus
             .borrow_mut()
-            .set_controller_type(1, crate::input::ControllerType::Paddle);
+            .set_controller_type(1, crate::input::ControllerType::Arkanoid);
 
         event_loop.controller_player_map.insert(42, 1);
         event_loop.handle_controller_button(&mut nes, 42, sdl2::controller::Button::A, true);

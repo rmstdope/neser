@@ -1,6 +1,6 @@
 import { shouldSuppressJoypadInput } from "./input_routing.js";
 
-export function mapMouseXToPaddlePosition(x, windowWidth) {
+export function mapMouseXToScreenPosition(x, windowWidth) {
     const minPosition = 0x62;
     const maxPosition = 0xF2;
     const range = maxPosition - minPosition;
@@ -18,31 +18,21 @@ export function mapMouseXToPaddlePosition(x, windowWidth) {
     return Math.min(maxPosition, Math.max(minPosition, Math.round(scaled)));
 }
 
-export function applyPaddleMouseMotion(nes, x, windowWidth) {
-    const paddlePort = nes.paddle_port ? nes.paddle_port() : null;
-    if (!paddlePort) {
-        return;
-    }
-
-    const position = mapMouseXToPaddlePosition(x, windowWidth);
-    nes.set_paddle_position(paddlePort, position);
+export function applyMouseMotion(nes, x, windowWidth) {
+    const position = mapMouseXToScreenPosition(x, windowWidth);
+    nes.set_mouse_x_position(position);
 }
 
-export function applyPaddleMouseButton(nes, button, pressed) {
-    const paddlePort = nes.paddle_port ? nes.paddle_port() : null;
-    if (!paddlePort) {
-        return;
-    }
-
+export function applyMouseButton(nes, button, pressed) {
     if (button === 0) {
-        nes.set_paddle_trigger(paddlePort, pressed);
+        nes.set_mouse_left_button(pressed);
     }
 }
 
 export function applyJoypadButtonIfAllowed(nes, controller, button, pressed) {
-    // Check if there's a paddle on this controller's port
+    // Check if there's a mouse-emulated controller on this port
     if (shouldSuppressJoypadInput(nes, controller)) {
-        return; // Suppress joypad input on the port with paddle
+        return; // Suppress joypad input on the port with mouse-emulated controller
     }
 
     nes.set_button(controller, button, pressed);

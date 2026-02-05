@@ -1,5 +1,6 @@
 use crate::console::Nes;
 use crate::debugging::DebuggerViewState;
+use crate::debugging::log_info;
 use crate::debugging::ui as debugger_ui;
 use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
@@ -185,7 +186,10 @@ impl GlBackend {
             && let Err(e) =
                 shader_manager.load_preset(std::path::Path::new(path), glow_context.clone())
         {
-            eprintln!("Warning: Failed to load shader preset '{}': {}", path, e);
+            log_info(format!(
+                "Warning: Failed to load shader preset '{}': {}",
+                path, e
+            ));
         }
 
         Ok(Self {
@@ -307,7 +311,7 @@ impl GlBackend {
                 self.shader_manager
                     .apply_shader(self.nes_texture, shader_out_w, shader_out_h)
             {
-                eprintln!("Shader application error: {}", e);
+                log_info(format!("Shader application error: {}", e));
             } else if let Some(tex) = self.shader_manager.output_texture() {
                 shader_output_texture_id = Some((tex as usize).into());
             }
@@ -384,9 +388,9 @@ impl GlBackend {
     /// Cycles through available shader presets, if any.
     pub fn cycle_shader(&mut self) {
         if let Err(e) = self.shader_manager.cycle_shader(self.glow_context.clone()) {
-            eprintln!("Error cycling shader: {}", e);
+            log_info(format!("Error cycling shader: {}", e));
         } else if let Some(name) = self.shader_manager.current_preset_name() {
-            println!("Switched to shader: {}", name);
+            log_info(format!("Switched to shader: {}", name));
         }
     }
 }

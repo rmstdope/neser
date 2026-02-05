@@ -15,10 +15,10 @@ function makeGamepad(index) {
         axes: [0, 0, 0, 0]
     };
 }
-
-function makeNesStub({ paddlePort = null } = {}) {
+    
+function makeNesStub({ arkanoidPort = null } = {}) {
     return {
-        paddle_port: () => paddlePort
+        is_mouse_emulated_controller: (controller) => (arkanoidPort === controller),
     };
 }
 
@@ -79,28 +79,28 @@ test("getKeyboardControllerTarget returns [] when two or more gamepads", () => {
 });
 
 // Tests for shouldSuppressJoypadInput
-test("shouldSuppressJoypadInput suppresses controller 1 when paddle on port 1", () => {
-    const nes = makeNesStub({ paddlePort: 1 });
+test("shouldSuppressJoypadInput suppresses controller 1 when mouse-emulated controller on port 1", () => {
+    const nes = makeNesStub({ arkanoidPort: 1 });
     assert.equal(shouldSuppressJoypadInput(nes, 1), true);
 });
 
-test("shouldSuppressJoypadInput suppresses controller 2 when paddle on port 2", () => {
-    const nes = makeNesStub({ paddlePort: 2 });
+test("shouldSuppressJoypadInput suppresses controller 2 when mouse-emulated controller on port 2", () => {
+    const nes = makeNesStub({ arkanoidPort: 2 });
     assert.equal(shouldSuppressJoypadInput(nes, 2), true);
 });
 
-test("shouldSuppressJoypadInput allows controller 1 when paddle on port 2", () => {
-    const nes = makeNesStub({ paddlePort: 2 });
+test("shouldSuppressJoypadInput allows controller 1 when mouse-emulated controller on port 2", () => {
+    const nes = makeNesStub({ arkanoidPort: 2 });
     assert.equal(shouldSuppressJoypadInput(nes, 1), false);
 });
 
-test("shouldSuppressJoypadInput allows controller 2 when paddle on port 1", () => {
-    const nes = makeNesStub({ paddlePort: 1 });
+test("shouldSuppressJoypadInput allows controller 2 when mouse-emulated controller on port 1", () => {
+    const nes = makeNesStub({ arkanoidPort: 1 });
     assert.equal(shouldSuppressJoypadInput(nes, 2), false);
 });
 
-test("shouldSuppressJoypadInput allows both controllers when no paddle", () => {
-    const nes = makeNesStub({ paddlePort: null });
+test("shouldSuppressJoypadInput allows both controllers when no mouse-emulated controller", () => {
+    const nes = makeNesStub({ arkanoidPort: null });
     assert.equal(shouldSuppressJoypadInput(nes, 1), false);
     assert.equal(shouldSuppressJoypadInput(nes, 2), false);
 });
