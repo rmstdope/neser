@@ -1,6 +1,5 @@
 use super::ControllerInput;
 use crate::console::ZapperState;
-use crate::debugging::log_info;
 use crate::input::Button;
 
 /// Luminance threshold for light detection (0-255)
@@ -210,7 +209,8 @@ mod tests {
 
         zapper.set_mouse_left_button(false);
         let value = zapper.read_no_clock();
-        assert_eq!((value >> 3) & 0x01, 0);
+        assert_eq!((value >> 3) & 0x01, 1);
+        assert_eq!((value >> 4) & 0x01, 0);
     }
 
     #[test]
@@ -224,7 +224,7 @@ mod tests {
         });
 
         let value = zapper.read_no_clock();
-        assert_eq!((value >> 4) & 0x01, 0);
+        assert_eq!((value >> 3) & 0x01, 0);
     }
 
     #[test]
@@ -284,7 +284,7 @@ mod tests {
         // Light should not be detected (light bit = 1)
         let value = zapper.read_no_clock();
         assert_eq!(
-            (value >> 4) & 0x01,
+            (value >> 3) & 0x01,
             1,
             "Light bit should be 1 when no light is detected"
         );
