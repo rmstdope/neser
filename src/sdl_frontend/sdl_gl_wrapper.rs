@@ -102,8 +102,13 @@ impl SdlGlWrapper {
         overlay_blink_red: bool,
         crosshair: Option<crate::rendering::Crosshair>,
     ) -> DebuggerUiAction {
-        self.gl_backend
-            .render(nes, show_debugger, overlay_text, overlay_blink_red, crosshair)
+        self.gl_backend.render(
+            nes,
+            show_debugger,
+            overlay_text,
+            overlay_blink_red,
+            crosshair,
+        )
     }
 
     /// Cycles through available shader presets.

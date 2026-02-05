@@ -108,13 +108,7 @@ impl SdlEventLoop {
     /// Applies mouse motion to mouse-emulated controller.
     ///
     /// This is a no-op if no mouse-emulated controller is connected.
-    fn update_mouse_motion(
-        nes: &mut Nes,
-        x: i32,
-        y: i32,
-        window_width: u32,
-        window_height: u32,
-    ) {
+    fn update_mouse_motion(nes: &mut Nes, x: i32, y: i32, window_width: u32, window_height: u32) {
         if Self::zapper_ports(nes).is_empty() {
             let position = Self::map_mouse_x_to_paddle_position(x, window_width);
             nes.set_mouse_x_position(position);
@@ -159,8 +153,10 @@ impl SdlEventLoop {
         if Self::zapper_ports(nes).is_empty() {
             None
         } else {
-            self.last_mouse_position
-                .map(|(x, y)| Crosshair { x: x as f32, y: y as f32 })
+            self.last_mouse_position.map(|(x, y)| Crosshair {
+                x: x as f32,
+                y: y as f32,
+            })
         }
     }
 
@@ -667,8 +663,13 @@ impl SdlEventLoop {
                     let zapper_active = !Self::zapper_ports(nes).is_empty();
                     self.update_cursor_visibility(zapper_active);
                     let crosshair = self.zapper_crosshair(nes);
-                    let action =
-                        gl_backend.render(nes, self.debugger_open_requested, overlay_text, false, crosshair);
+                    let action = gl_backend.render(
+                        nes,
+                        self.debugger_open_requested,
+                        overlay_text,
+                        false,
+                        crosshair,
+                    );
                     self.apply_debugger_ui_action(nes, action);
                     std::thread::sleep(std::time::Duration::from_millis(16));
                     continue;
