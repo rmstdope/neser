@@ -114,10 +114,10 @@ impl crate::input::Controller for Zapper {
         scanline: u16,
         pixel: u16,
         screen_buffer: &crate::ppu::ScreenBuffer,
-        light_radius: u8,
+        config: &crate::console::Config,
     ) {
         // Update light detection based on current PPU timing and screen buffer
-        self.light = self.detect_light(scanline, pixel, screen_buffer, light_radius);
+        self.light = self.detect_light(scanline, pixel, screen_buffer, config.zapper_detection_size);
     }
 
     fn input_type(&self) -> ControllerInput {
@@ -128,10 +128,6 @@ impl crate::input::Controller for Zapper {
 impl Zapper {
     /// Detect light at the Zapper's position considering PPU timing constraints.
     ///
-    /// References:
-    /// - https://www.nesdev.org/wiki/Zapper
-    /// - https://github.com/SourMesen/Mesen2/blob/master/Core/NES/Input/Zapper.h
-    ///
     /// The Zapper can only detect light at or behind the current beam position,
     /// and not too far behind (hardware latency limit).
     fn detect_light(
@@ -139,15 +135,10 @@ impl Zapper {
         current_scanline: u16,
         current_pixel: u16,
         screen_buffer: &crate::ppu::ScreenBuffer,
-        radius: u8,
+        detection_size: u8,
     ) -> bool {
         let zapper_x = self.x as i32;
         let zapper_y = self.y as i32;
-
-        // Check if Zapper Y position is within valid screen buffer range (0-239)
-        if zapper_y >= 240 {
-            return false;
-        }
 
         // Calculate the beam position as a linear offset
         let beam_position = (current_scanline as i32) * 256 + (current_pixel as i32);
@@ -167,10 +158,10 @@ impl Zapper {
             return false;
         }
 
-        // Sample pixels in a radius around the Zapper position
-        let radius_i32 = radius as i32;
-        for dy in -radius_i32..=radius_i32 {
-            for dx in -radius_i32..=radius_i32 {
+        // Sample pixels in a square around the Zapper position
+        let size_i32 = detection_size as i32;
+        for dy in -size_i32..=size_i32 {
+            for dx in -size_i32..=size_i32 {
                 let sample_x = zapper_x + dx;
                 let sample_y = zapper_y + dy;
 
@@ -180,9 +171,10 @@ impl Zapper {
                 }
 
                 // Get luminance at this pixel
-                let luminance = screen_buffer.get_luminance(sample_x as u32, sample_y as u32);
+                let luminance =
+                    screen_buffer.get_luminance(sample_x as u32, sample_y as u32);
 
-                // If any pixel in the radius is bright enough, light is detected
+                // If any pixel in the detection area is bright enough, light is detected
                 if luminance >= LIGHT_DETECTION_THRESHOLD {
                     return true;
                 }
@@ -197,6 +189,12 @@ impl Zapper {
 mod tests {
     use super::Zapper;
     use crate::input::Controller;
+
+    fn test_config_with_size(size: u8) -> crate::console::Config {
+        let mut config = crate::console::Config::default();
+        config.zapper_detection_size = size;
+        config
+    }
 
     #[test]
     fn test_zapper_trigger_and_light_bits() {
@@ -256,7 +254,7 @@ mod tests {
         screen_buffer.set_pixel(100, 100, 255, 255, 255);
 
         // Set PPU context at scanline 101, pixel 100 (just past the zapper position)
-        zapper.set_ppu_context(101, 100, &screen_buffer, 0);
+        zapper.set_ppu_context(101, 100, &screen_buffer, &test_config_with_size(0));
 
         // Light should be detected (light bit = 0)
         let value = zapper.read_no_clock();
@@ -278,7 +276,7 @@ mod tests {
         let screen_buffer = ScreenBuffer::new(); // All black pixels
 
         // Set PPU context at scanline 51, pixel 50 (just past the zapper position)
-        zapper.set_ppu_context(51, 50, &screen_buffer, 0);
+        zapper.set_ppu_context(51, 50, &screen_buffer, &test_config_with_size(0));
 
         // Light should not be detected (light bit = 1)
         let value = zapper.read_no_clock();
@@ -301,7 +299,7 @@ mod tests {
 
         // Just below threshold (85) - use a dim gray
         screen_buffer.set_pixel(30, 30, 84, 84, 84);
-        zapper.set_ppu_context(31, 30, &screen_buffer, 0);
+        zapper.set_ppu_context(31, 30, &screen_buffer, &test_config_with_size(0));
         assert!(
             !zapper.light,
             "Light should not be detected below threshold"
@@ -309,12 +307,12 @@ mod tests {
 
         // At threshold (85) - should detect
         screen_buffer.set_pixel(30, 30, 85, 85, 85);
-        zapper.set_ppu_context(31, 30, &screen_buffer, 0);
+        zapper.set_ppu_context(31, 30, &screen_buffer, &test_config_with_size(0));
         assert!(zapper.light, "Light should be detected at threshold");
 
         // Above threshold - should detect
         screen_buffer.set_pixel(30, 30, 200, 200, 200);
-        zapper.set_ppu_context(31, 30, &screen_buffer, 0);
+        zapper.set_ppu_context(31, 30, &screen_buffer, &test_config_with_size(0));
         assert!(zapper.light, "Light should be detected above threshold");
     }
 
@@ -329,17 +327,17 @@ mod tests {
 
         // Bright green (high luminance due to green coefficient)
         screen_buffer.set_pixel(60, 60, 0, 255, 0);
-        zapper.set_ppu_context(61, 60, &screen_buffer, 0);
+        zapper.set_ppu_context(61, 60, &screen_buffer, &test_config_with_size(0));
         assert!(zapper.light, "Bright green should be detected");
 
         // Bright red (lower luminance)
         screen_buffer.set_pixel(60, 60, 255, 0, 0);
-        zapper.set_ppu_context(61, 60, &screen_buffer, 0);
+        zapper.set_ppu_context(61, 60, &screen_buffer, &test_config_with_size(0));
         assert!(!zapper.light, "Pure red alone is below threshold");
 
         // Bright blue (very low luminance)
         screen_buffer.set_pixel(60, 60, 0, 0, 255);
-        zapper.set_ppu_context(61, 60, &screen_buffer, 0);
+        zapper.set_ppu_context(61, 60, &screen_buffer, &test_config_with_size(0));
         assert!(!zapper.light, "Pure blue alone is below threshold");
     }
 
@@ -355,7 +353,7 @@ mod tests {
 
         // Set PPU context BEFORE the zapper position (scanline 99, pixel 200)
         // This is ahead of the Zapper's position at (100, 100)
-        zapper.set_ppu_context(99, 200, &screen_buffer, 0);
+        zapper.set_ppu_context(99, 200, &screen_buffer, &test_config_with_size(0));
 
         // Light should NOT be detected (beam hasn't reached it yet)
         assert!(!zapper.light, "Cannot detect light ahead of beam");
@@ -373,7 +371,7 @@ mod tests {
 
         // Set PPU context way past the zapper position (scanline 200)
         // More than MAX_SCANLINES_BEHIND (20) past the Zapper
-        zapper.set_ppu_context(200, 100, &screen_buffer, 0);
+        zapper.set_ppu_context(200, 100, &screen_buffer, &test_config_with_size(0));
 
         // Light should NOT be detected (too far behind)
         assert!(!zapper.light, "Cannot detect light too far behind beam");
@@ -391,14 +389,14 @@ mod tests {
         screen_buffer.set_pixel(101, 100, 255, 255, 255);
 
         // With radius 0, should not detect
-        zapper.set_ppu_context(101, 0, &screen_buffer, 0);
+        zapper.set_ppu_context(101, 0, &screen_buffer, &test_config_with_size(0));
         assert!(
             !zapper.light,
             "Radius 0 should not detect neighboring pixel"
         );
 
         // With radius 1 (3x3 area), should detect
-        zapper.set_ppu_context(101, 0, &screen_buffer, 1);
+        zapper.set_ppu_context(101, 0, &screen_buffer, &test_config_with_size(1));
         assert!(zapper.light, "Radius 1 should detect pixel at distance 1");
     }
 
@@ -413,7 +411,7 @@ mod tests {
         // Even with bright pixels, should not detect at y=240
         screen_buffer.set_pixel(100, 100, 255, 255, 255);
 
-        zapper.set_ppu_context(241, 100, &screen_buffer, 0);
+        zapper.set_ppu_context(241, 100, &screen_buffer, &test_config_with_size(0));
 
         // Should not detect light (y >= 240 is out of bounds)
         assert!(!zapper.light, "Should not detect light when Y >= 240");
@@ -428,7 +426,7 @@ mod tests {
 
         let screen_buffer = ScreenBuffer::new();
 
-        zapper.set_ppu_context(260, 100, &screen_buffer, 0);
+        zapper.set_ppu_context(260, 100, &screen_buffer, &test_config_with_size(0));
 
         // Should not detect light (y >= 240 is out of bounds)
         assert!(!zapper.light, "Should not detect light when Y = 255");
@@ -444,7 +442,7 @@ mod tests {
         let mut screen_buffer = ScreenBuffer::new();
         screen_buffer.set_pixel(100, 239, 255, 255, 255);
 
-        zapper.set_ppu_context(240, 100, &screen_buffer, 0);
+        zapper.set_ppu_context(240, 100, &screen_buffer, &test_config_with_size(0));
 
         // Should detect light (y = 239 is valid)
         assert!(

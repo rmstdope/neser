@@ -92,13 +92,13 @@ pub trait Controller {
     /// scanline: current PPU scanline (0-261 for NTSC, 0-311 for PAL)
     /// pixel: current PPU pixel within scanline (0-340)
     /// screen_buffer: reference to PPU screen buffer
-    /// light_radius: radius for light sampling (0 = single pixel, 1 = 3x3, 2 = 5x5, etc.)
+    /// config: emulator configuration (contains zapper_detection_size, etc.)
     fn set_ppu_context(
         &mut self,
         _scanline: u16,
         _pixel: u16,
         _screen_buffer: &crate::ppu::ScreenBuffer,
-        _light_radius: u8,
+        _config: &crate::console::Config,
     ) {
     }
 
