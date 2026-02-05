@@ -72,9 +72,6 @@ hound = "3.5"
 serial_test = "3.2"
 tempfile = "3.24.0"
 
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-wasm-pack = "0.14"
-
 # Improve runtime performance in debug builds (helps reduce audio underruns) while
 # keeping debuggability. This is a common setup for emulator-style workloads.
 [profile.dev]
