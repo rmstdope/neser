@@ -8,7 +8,7 @@ use crate::apu;
 use crate::cartridge::Cartridge;
 use crate::console::{BusState, MapperState};
 use crate::debugging::log_info;
-use crate::input::{Button, Controller, ControllerType, Joypad, Paddle};
+use crate::input::{Button, Controller, ControllerType, Joypad, Paddle, Zapper};
 use crate::ppu;
 use crate::trace_mapper;
 use std::cell::RefCell;
@@ -432,6 +432,7 @@ impl Bus {
         let new_controller: Box<dyn Controller> = match controller_type {
             ControllerType::Joypad => Joypad::new_boxed(),
             ControllerType::Arkanoid => Paddle::new_boxed(),
+            ControllerType::Zapper => Zapper::new_boxed(),
         };
 
         *self.controllers[(port - 1) as usize].borrow_mut() = new_controller;
@@ -524,10 +525,12 @@ impl Bus {
             port1_controller: match port1_state {
                 crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
                 crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
+                crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
             },
             port2_controller: match port2_state {
                 crate::input::ControllerState::Joypad(s) => ControllerStateWrapper::Joypad(s),
                 crate::input::ControllerState::Paddle(s) => ControllerStateWrapper::Arkanoid(s),
+                crate::input::ControllerState::Zapper(s) => ControllerStateWrapper::Zapper(s),
             },
         }
     }
@@ -552,6 +555,11 @@ impl Bus {
                 controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
+            ControllerStateWrapper::Zapper(s) => {
+                let mut controller = Zapper::new_boxed();
+                controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
+                *self.controllers[0].borrow_mut() = controller;
+            }
         }
 
         // Restore port 2 controller - replace if type changed
@@ -564,6 +572,11 @@ impl Bus {
             ControllerStateWrapper::Arkanoid(s) => {
                 let mut controller = Paddle::new_boxed();
                 controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
+                *self.controllers[1].borrow_mut() = controller;
+            }
+            ControllerStateWrapper::Zapper(s) => {
+                let mut controller = Zapper::new_boxed();
+                controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
         }

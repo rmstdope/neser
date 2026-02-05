@@ -1,4 +1,4 @@
-use crate::console::{ArkanoidState, JoypadState};
+use crate::console::{ArkanoidState, JoypadState, ZapperState};
 use crate::input::Button;
 
 /// Unified controller state for save-state support.
@@ -6,6 +6,7 @@ use crate::input::Button;
 pub enum ControllerState {
     Joypad(JoypadState),
     Paddle(ArkanoidState),
+    Zapper(ZapperState),
 }
 
 /// Controller type for a port.
@@ -13,6 +14,7 @@ pub enum ControllerState {
 pub enum ControllerType {
     Joypad,
     Arkanoid,
+    Zapper,
 }
 
 // TODO remove the "paddle" variant
@@ -22,6 +24,7 @@ impl ControllerType {
         match value.to_lowercase().as_str() {
             "joypad" => Some(Self::Joypad),
             "arkanoid" | "paddle" => Some(Self::Arkanoid),
+            "zapper" => Some(Self::Zapper),
             _ => None,
         }
     }
@@ -42,6 +45,7 @@ pub fn controller_input_type(controller_type: ControllerType) -> ControllerInput
     match controller_type {
         ControllerType::Joypad => ControllerInput::Gamepad,
         ControllerType::Arkanoid => ControllerInput::Mouse,
+        ControllerType::Zapper => ControllerInput::Mouse,
     }
 }
 

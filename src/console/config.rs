@@ -1116,7 +1116,12 @@ impl Config {
     fn validate_controller_ports(&self) -> Result<(), String> {
         let mouse_emulated_controller_count = [self.controller_port1, self.controller_port2]
             .iter()
-            .filter(|controller| **controller == ControllerType::Arkanoid)
+            .filter(|controller| {
+                matches!(
+                    **controller,
+                    ControllerType::Arkanoid | ControllerType::Zapper
+                )
+            })
             .count();
 
         if mouse_emulated_controller_count > 1 {

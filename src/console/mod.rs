@@ -11,4 +11,5 @@ pub use savestate::{
     ApuState, ArkanoidState, BusState, ControllerStateWrapper, CpuState, DmcState, EnvelopeState,
     FrameCounterState, JoypadState, MapperState, NoiseState, PpuRegisterState, PpuState,
     PpuTimingState, PulseState, SAVESTATE_VERSION, SaveState, SpritesState, TriangleState,
+    ZapperState,
 };
