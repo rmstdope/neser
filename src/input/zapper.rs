@@ -117,7 +117,8 @@ impl crate::input::Controller for Zapper {
         config: &crate::console::Config,
     ) {
         // Update light detection based on current PPU timing and screen buffer
-        self.light = self.detect_light(scanline, pixel, screen_buffer, config.zapper_detection_size);
+        self.light =
+            self.detect_light(scanline, pixel, screen_buffer, config.zapper_detection_size);
     }
 
     fn input_type(&self) -> ControllerInput {
@@ -171,8 +172,7 @@ impl Zapper {
                 }
 
                 // Get luminance at this pixel
-                let luminance =
-                    screen_buffer.get_luminance(sample_x as u32, sample_y as u32);
+                let luminance = screen_buffer.get_luminance(sample_x as u32, sample_y as u32);
 
                 // If any pixel in the detection area is bright enough, light is detected
                 if luminance >= LIGHT_DETECTION_THRESHOLD {

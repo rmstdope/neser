@@ -2676,7 +2676,11 @@ mod tests {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
-        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu), config)));
+        let memory = Rc::new(RefCell::new(Bus::new(
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+            config,
+        )));
 
         let cpu = Cpu::new(TvSystem::Ntsc, memory, Rc::clone(&ppu), Rc::clone(&apu));
 
@@ -3161,7 +3165,11 @@ mod tests {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
-        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu), config)));
+        let memory = Rc::new(RefCell::new(Bus::new(
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+            config,
+        )));
         (ppu, apu, memory)
     }
 
@@ -3169,7 +3177,11 @@ mod tests {
         let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(tv_system)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
-        let memory = Rc::new(RefCell::new(Bus::new(Rc::clone(&ppu), Rc::clone(&apu), config)));
+        let memory = Rc::new(RefCell::new(Bus::new(
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+            config,
+        )));
         (ppu, apu, memory)
     }
 
