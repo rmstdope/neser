@@ -1,5 +1,6 @@
 use super::ControllerInput;
 use crate::console::ZapperState;
+use crate::debugging::log_info;
 use crate::input::Button;
 
 /// Luminance threshold for light detection (0-255)
@@ -8,12 +9,12 @@ const LIGHT_DETECTION_THRESHOLD: f32 = 85.0;
 
 /// Maximum number of scanlines behind the beam where light can still be detected
 /// This matches real Zapper hardware latency
-const MAX_SCANLINES_BEHIND: i32 = 20;
+const MAX_SCANLINES_BEHIND: i32 = 25;
 
 /// NES Zapper controller.
 ///
-/// Implementation based on hardware behavior and Mesen reference:
-/// - Light detection uses neighboring pixels (configurable radius)
+/// Implementation based on emulated hardware behavior:
+/// - Light detection uses neighboring pixels (configurable size)
 /// - Sampling respects PPU timing (cannot detect ahead of beam or too far behind)
 /// - Light bit updates on register read, not per-frame
 pub struct Zapper {
@@ -68,8 +69,8 @@ impl crate::input::Controller for Zapper {
     }
 
     fn read_no_clock(&self) -> u8 {
-        let trigger_bit = (self.trigger as u8) << 3;
-        let light_bit = if self.light { 0 } else { 1 << 4 };
+        let trigger_bit = (self.trigger as u8) << 4;
+        let light_bit = if self.light { 0 } else { 1 << 3 };
         trigger_bit | light_bit
     }
 
@@ -192,9 +193,10 @@ mod tests {
     use crate::input::Controller;
 
     fn test_config_with_size(size: u8) -> crate::console::Config {
-        let mut config = crate::console::Config::default();
-        config.zapper_detection_size = size;
-        config
+        crate::console::Config {
+            zapper_detection_size: size,
+            ..Default::default()
+        }
     }
 
     #[test]
