@@ -1437,10 +1437,11 @@ function updateZapperCursor() {
         }
         crosshair.show();
     } else {
-        // Show system cursor and hide crosshair
+        // Show system cursor and hide/destroy crosshair
         canvas.style.cursor = "default";
         if (crosshair) {
-            crosshair.hide();
+            crosshair.destroy();
+            crosshair = null;
         }
     }
 }
