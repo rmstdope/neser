@@ -51,6 +51,11 @@ const ARKANOID_PADDLE_PORT1_CRCS: &[u32] = &[
     0x47F9F410, // PaddleTest3
 ];
 
+/// CRC32 values for ROMs that default to Zapper input on port 2.
+const ZAPPER_PORT2_CRCS: &[u32] = &[
+    0x24598791, // Duck Hunt (World)
+];
+
 /// Check if a ROM CRC requires alternate MMC3 IRQ behavior.
 pub fn requires_mmc3_alternate_irq(crc: u32) -> bool {
     MMC3_ALTERNATE_IRQ_CRCS.contains(&crc)
@@ -63,6 +68,17 @@ pub fn default_arkanoid_on_port(crc: u32) -> u8 {
     if ARKANOID_PADDLE_PORT1_CRCS.contains(&crc) {
         1
     } else if ARKANOID_PADDLE_PORT2_CRCS.contains(&crc) {
+        2
+    } else {
+        0
+    }
+}
+
+/// Return the default Zapper controller port for a ROM CRC.
+///
+/// Returns 0 for none, 2 for port 2.
+pub fn default_zapper_on_port(crc: u32) -> u8 {
+    if ZAPPER_PORT2_CRCS.contains(&crc) {
         2
     } else {
         0
@@ -111,5 +127,15 @@ mod tests {
     #[test]
     fn test_arkanoid_paddle_unknown_crc() {
         assert_eq!(default_arkanoid_on_port(0xDEADBEEF), 0);
+    }
+
+    #[test]
+    fn test_zapper_known_crc() {
+        assert_eq!(default_zapper_on_port(0x24598791), 2);
+    }
+
+    #[test]
+    fn test_zapper_unknown_crc() {
+        assert_eq!(default_zapper_on_port(0xDEADBEEF), 0);
     }
 }

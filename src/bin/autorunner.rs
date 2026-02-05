@@ -882,10 +882,16 @@ mod tests {
             ControllerStateWrapper::Arkanoid(_) => {
                 panic!("expected joypad on port 1")
             }
+            ControllerStateWrapper::Zapper(_) => {
+                panic!("expected joypad on port 1")
+            }
         };
         let port2_buttons = match &state_after.bus.port2_controller {
             ControllerStateWrapper::Joypad(state) => state.button_states,
             ControllerStateWrapper::Arkanoid(_) => {
+                panic!("expected joypad on port 2")
+            }
+            ControllerStateWrapper::Zapper(_) => {
                 panic!("expected joypad on port 2")
             }
         };

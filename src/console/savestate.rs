@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Current save-state format version.
 /// Increment this when making breaking changes to the state format.
-pub const SAVESTATE_VERSION: u32 = 6;
+pub const SAVESTATE_VERSION: u32 = 7;
 
 /// Complete emulator state snapshot.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -286,6 +286,15 @@ pub struct ArkanoidState {
     pub enabled: bool,
 }
 
+/// Bus Zapper controller state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ZapperState {
+    pub x: u8,
+    pub y: u8,
+    pub trigger: bool,
+    pub light: bool,
+}
+
 /// Bus state for save-state support.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BusState {
@@ -300,6 +309,7 @@ pub struct BusState {
 pub enum ControllerStateWrapper {
     Joypad(JoypadState),
     Arkanoid(ArkanoidState),
+    Zapper(ZapperState),
 }
 
 /// APU complete state.
@@ -613,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_savestate_version() {
-        assert_eq!(SAVESTATE_VERSION, 6);
+        assert_eq!(SAVESTATE_VERSION, 7);
     }
 
     #[test]

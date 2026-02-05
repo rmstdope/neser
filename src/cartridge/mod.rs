@@ -35,3 +35,4 @@ pub use mapper::{Mapper, MapperContext};
 #[allow(unused_imports)]
 pub(crate) use rom_db::calculate_rom_crc32;
 pub(crate) use rom_db::default_arkanoid_on_port;
+pub(crate) use rom_db::default_zapper_on_port;

@@ -23,6 +23,7 @@ fn port1_arkanoid_state(state: &SaveState) -> ArkanoidState {
     match &state.bus.port1_controller {
         ControllerStateWrapper::Arkanoid(arkanoid) => arkanoid.clone(),
         ControllerStateWrapper::Joypad(_) => panic!("expected Arkanoid controller on port 1"),
+        ControllerStateWrapper::Zapper(_) => panic!("expected Arkanoid controller on port 1"),
     }
 }
 
