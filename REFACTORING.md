@@ -68,25 +68,6 @@ This pattern appears 10+ times in different methods.
 - Extract opcode execution into smaller modules organized by instruction category (arithmetic, branching, memory, etc.)
 - Consider a more data-driven approach where instruction behavior is defined declaratively
 
-### 2. Opcode Lookup Function Uses Linear Search
-
-**Issue:** In `src/cpu/opcode.rs`, the `lookup()` function iterates through all 256 opcodes to find a match:
-
-```rust
-pub fn lookup(code: u8) -> Option<&'static OpCode> {
-    OPCODE_TABLE.iter().find(|op| op.code == code)
-}
-```
-
-**Suggested Refactoring:**
-- Since `OPCODE_TABLE` is declared as `&[OpCode; 256]` and contains all 256 opcodes (including illegal/undocumented ones), direct array indexing is safe:
-```rust
-pub fn lookup(code: u8) -> &'static OpCode {
-    &OPCODE_TABLE[code as usize]
-}
-```
-- Note: The return type changes from `Option<&'static OpCode>` to `&'static OpCode`, which is valid because the NES 6502 defines behavior for all 256 possible opcodes. Callers would need to be updated accordingly.
-
 ### 3. Many Test-Only Setter Methods
 
 **Issue:** The CPU struct has numerous `#[cfg(test)]` setter methods like `set_a_register()`, `set_x()`, `set_y()`, etc.
@@ -231,14 +212,6 @@ This is O(n) per memory access.
 ## Cartridge Module
 
 **Location:** `src/cartridge/`
-
-### 1. MapperContext Builder Pattern Overhead
-
-**Issue:** `MapperContext` uses a builder pattern with 4-5 builder methods (`with_submapper`, `with_prg_ram_banks`, etc.) for what is essentially a simple data container with 8 fields.
-
-**Suggested Refactoring:**
-- For such a simple struct, consider direct field construction in most cases
-- Keep builder methods only for the truly optional fields that have sensible defaults
 
 ### 2. Common Mapper State Snapshots Could Use Trait Defaults More
 
