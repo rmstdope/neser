@@ -781,7 +781,9 @@ impl ShaderManager {
             }
             FilterType::Smooth => {
                 let shader = self.smooth_shader.as_ref().ok_or("Smooth shader not loaded")?;
-                // For smooth filter, use LINEAR filtering on the input texture
+                // For smooth filter, use LINEAR filtering on the input texture.
+                // Mipmaps are generated for the NES texture in gl_backend.rs (GenerateMipmap call),
+                // so we can use LINEAR_MIPMAP_LINEAR for true trilinear filtering.
                 unsafe {
                     gl::BindTexture(gl::TEXTURE_2D, input_texture);
                     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);

@@ -40,8 +40,10 @@ pub const STOCK_FRAGMENT_SHADER_SOURCE: &str = r#"
     }
 "#;
 
-/// Smooth filter - uses GPU's built-in linear filtering (trilinear when mipmaps are available).
+/// Smooth filter - uses GPU's built-in linear filtering.
 /// This is a simple pass-through shader that relies on GL_LINEAR texture filtering.
+/// Mipmaps are generated for the input texture in gl_backend.rs, enabling trilinear
+/// filtering when GL_LINEAR_MIPMAP_LINEAR is used.
 pub const SMOOTH_FRAGMENT_SHADER_SOURCE: &str = r#"
     #version 120
     #ifdef GL_FRAGMENT_PRECISION_HIGH
