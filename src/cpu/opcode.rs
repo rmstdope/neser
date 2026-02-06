@@ -558,8 +558,8 @@ pub static OPCODE_TABLE: &[OpCode; 256] = &[
 ];
 
 /// Lookup an opcode by its byte value
-pub fn lookup(code: u8) -> Option<&'static OpCode> {
-    OPCODE_TABLE.iter().find(|op| op.code == code)
+pub fn lookup(code: u8) -> &'static OpCode {
+    &OPCODE_TABLE[code as usize]
 }
 
 #[cfg(test)]
@@ -607,7 +607,7 @@ mod tests {
 
     #[test]
     fn test_lookup_existing_opcode() {
-        let opcode = lookup(0x69).unwrap();
+        let opcode = lookup(0x69);
         assert_eq!(opcode.code, 0x69);
         assert_eq!(opcode.mnemonic, "ADC");
         assert_eq!(opcode.mode, "IMM");
@@ -615,15 +615,23 @@ mod tests {
 
     #[test]
     fn test_lookup_brk() {
-        let opcode = lookup(0x00).unwrap();
+        let opcode = lookup(0x00);
         assert_eq!(opcode.mnemonic, "BRK");
     }
 
     #[test]
     fn test_lookup_lda_immediate() {
-        let opcode = lookup(0xA9).unwrap();
+        let opcode = lookup(0xA9);
         assert_eq!(opcode.mnemonic, "LDA");
         assert_eq!(opcode.mode, "IMM");
+    }
+
+    #[test]
+    fn test_lookup_returns_entry_for_all_codes() {
+        for code in 0u8..=u8::MAX {
+            let opcode = lookup(code);
+            assert_eq!(opcode.code, code);
+        }
     }
 
     #[test]

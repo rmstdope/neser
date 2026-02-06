@@ -1508,80 +1508,77 @@ impl Cpu {
             let pc = self.pc;
             let mut memory = self.bus.borrow_mut();
             let opcode_byte = memory.read_for_testing(pc);
-            if let Some(op) = super::opcode::lookup(opcode_byte) {
-                let byte1 = if op.bytes() > 1 {
-                    memory.read_for_testing(pc.wrapping_add(1))
-                } else {
-                    0
-                };
-                let byte2 = if op.bytes() > 2 {
-                    memory.read_for_testing(pc.wrapping_add(2))
-                } else {
-                    0
-                };
-                drop(memory); // Release borrow before trace macro may do other operations
-                let hex_dump = match op.bytes() {
-                    1 => format!("{:02X}", opcode_byte),
-                    2 => format!("{:02X} {:02X}", opcode_byte, byte1),
-                    _ => format!("{:02X} {:02X} {:02X}", opcode_byte, byte1, byte2),
-                };
-                let asm = match op.mode {
-                    "IMP" => op.mnemonic.to_string(),
-                    "ACC" => format!("{} A", op.mnemonic),
-                    "IMM" => format!("{} #${:02X}", op.mnemonic, byte1),
-                    "ZP" => format!("{} ${:02X}", op.mnemonic, byte1),
-                    "ZPX" => format!("{} ${:02X},X", op.mnemonic, byte1),
-                    "ZPY" => format!("{} ${:02X},Y", op.mnemonic, byte1),
-                    "ABS" => format!(
-                        "{} ${:04X}",
-                        op.mnemonic,
-                        u16::from_le_bytes([byte1, byte2])
-                    ),
-                    "ABSX" | "ABSXW" => format!(
-                        "{} ${:04X},X",
-                        op.mnemonic,
-                        u16::from_le_bytes([byte1, byte2])
-                    ),
-                    "ABSY" | "ABSYW" => format!(
-                        "{} ${:04X},Y",
-                        op.mnemonic,
-                        u16::from_le_bytes([byte1, byte2])
-                    ),
-                    "IND" => format!(
-                        "{} (${:04X})",
-                        op.mnemonic,
-                        u16::from_le_bytes([byte1, byte2])
-                    ),
-                    "INDX" => format!("{} (${:02X},X)", op.mnemonic, byte1),
-                    "INDY" | "INDYW" => format!("{} (${:02X}),Y", op.mnemonic, byte1),
-                    "REL" => {
-                        let offset = byte1 as i8;
-                        let target = pc.wrapping_add(2).wrapping_add(offset as u16);
-                        format!("{} ${:04X}", op.mnemonic, target)
-                    }
-                    _ => op.mnemonic.to_string(),
-                };
-                // Set up tick tracking for this instruction
-                self.current_tick_info = Some((1, op.cycles));
-                trace_cpu!(1;
-                    "exec PC={:04X} {} {:14}  A={:02X}  X={:02X}  Y={:02X}  P={:02X}  SP={:02X}  cyc={:<3}",
-                    pc,
-                    hex_dump,
-                    asm,
-                    self.a,
-                    self.x,
-                    self.y,
-                    self.p,
-                    self.sp,
-                    self.total_cycles
-                );
-            }
+            let op = super::opcode::lookup(opcode_byte);
+            let byte1 = if op.bytes() > 1 {
+                memory.read_for_testing(pc.wrapping_add(1))
+            } else {
+                0
+            };
+            let byte2 = if op.bytes() > 2 {
+                memory.read_for_testing(pc.wrapping_add(2))
+            } else {
+                0
+            };
+            drop(memory); // Release borrow before trace macro may do other operations
+            let hex_dump = match op.bytes() {
+                1 => format!("{:02X}", opcode_byte),
+                2 => format!("{:02X} {:02X}", opcode_byte, byte1),
+                _ => format!("{:02X} {:02X} {:02X}", opcode_byte, byte1, byte2),
+            };
+            let asm = match op.mode {
+                "IMP" => op.mnemonic.to_string(),
+                "ACC" => format!("{} A", op.mnemonic),
+                "IMM" => format!("{} #${:02X}", op.mnemonic, byte1),
+                "ZP" => format!("{} ${:02X}", op.mnemonic, byte1),
+                "ZPX" => format!("{} ${:02X},X", op.mnemonic, byte1),
+                "ZPY" => format!("{} ${:02X},Y", op.mnemonic, byte1),
+                "ABS" => format!(
+                    "{} ${:04X}",
+                    op.mnemonic,
+                    u16::from_le_bytes([byte1, byte2])
+                ),
+                "ABSX" | "ABSXW" => format!(
+                    "{} ${:04X},X",
+                    op.mnemonic,
+                    u16::from_le_bytes([byte1, byte2])
+                ),
+                "ABSY" | "ABSYW" => format!(
+                    "{} ${:04X},Y",
+                    op.mnemonic,
+                    u16::from_le_bytes([byte1, byte2])
+                ),
+                "IND" => format!(
+                    "{} (${:04X})",
+                    op.mnemonic,
+                    u16::from_le_bytes([byte1, byte2])
+                ),
+                "INDX" => format!("{} (${:02X},X)", op.mnemonic, byte1),
+                "INDY" | "INDYW" => format!("{} (${:02X}),Y", op.mnemonic, byte1),
+                "REL" => {
+                    let offset = byte1 as i8;
+                    let target = pc.wrapping_add(2).wrapping_add(offset as u16);
+                    format!("{} ${:04X}", op.mnemonic, target)
+                }
+                _ => op.mnemonic.to_string(),
+            };
+            // Set up tick tracking for this instruction
+            self.current_tick_info = Some((1, op.cycles));
+            trace_cpu!(1;
+                "exec PC={:04X} {} {:14}  A={:02X}  X={:02X}  Y={:02X}  P={:02X}  SP={:02X}  cyc={:<3}",
+                pc,
+                hex_dump,
+                asm,
+                self.a,
+                self.x,
+                self.y,
+                self.p,
+                self.sp,
+                self.total_cycles
+            );
         }
 
         let opcode = self.read_byte_from_pc();
-        let Some(op) = super::opcode::lookup(opcode) else {
-            panic!("Invalid opcode: 0x{:02X}", opcode);
-        };
+        let op = super::opcode::lookup(opcode);
         let operand = self.get_operand(*op);
 
         match op.mnemonic {
@@ -7325,11 +7322,11 @@ mod tests {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         // Test NOP (Implied)
-        let op = opcode::lookup(0xEA).unwrap();
+        let op = opcode::lookup(0xEA);
         assert_eq!(cpu.get_operand(*op), 0, "Implied mode should return 0");
 
         // Test INX (Implied)
-        let op = opcode::lookup(0xE8).unwrap();
+        let op = opcode::lookup(0xE8);
         assert_eq!(cpu.get_operand(*op), 0, "Implied mode should return 0");
     }
 
@@ -7338,11 +7335,11 @@ mod tests {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         // Test ASL A (Accumulator)
-        let op = opcode::lookup(0x0A).unwrap();
+        let op = opcode::lookup(0x0A);
         assert_eq!(cpu.get_operand(*op), 0, "Accumulator mode should return 0");
 
         // Test LSR A (Accumulator)
-        let op = opcode::lookup(0x4A).unwrap();
+        let op = opcode::lookup(0x4A);
         assert_eq!(cpu.get_operand(*op), 0, "Accumulator mode should return 0");
     }
 
@@ -7355,7 +7352,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0100, 0x42, false);
 
         // Test LDA #$42 (Immediate)
-        let op = opcode::lookup(0xA9).unwrap();
+        let op = opcode::lookup(0xA9);
         assert_eq!(
             cpu.get_operand(*op),
             0x42,
@@ -7372,7 +7369,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0100, 0x80, false);
 
         // Test LDA $80 (Zero Page)
-        let op = opcode::lookup(0xA5).unwrap();
+        let op = opcode::lookup(0xA5);
         assert_eq!(
             cpu.get_operand(*op),
             0x80,
@@ -7390,7 +7387,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0100, 0x80, false);
 
         // Test LDA $80,X (Zero Page,X)
-        let op = opcode::lookup(0xB5).unwrap();
+        let op = opcode::lookup(0xB5);
         assert_eq!(
             cpu.get_operand(*op),
             0x85,
@@ -7408,7 +7405,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0100, 0x80, false);
 
         // 0x80 + 0xFF = 0x17F, but should wrap to 0x7F
-        let op = opcode::lookup(0xB5).unwrap();
+        let op = opcode::lookup(0xB5);
         assert_eq!(
             cpu.get_operand(*op),
             0x7F,
@@ -7426,7 +7423,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0100, 0x20, false);
 
         // Test LDX $20,Y (Zero Page,Y)
-        let op = opcode::lookup(0xB6).unwrap();
+        let op = opcode::lookup(0xB6);
         assert_eq!(
             cpu.get_operand(*op),
             0x30,
@@ -7444,7 +7441,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0101, 0x12, false); // High byte
 
         // Test LDA $1234 (Absolute)
-        let op = opcode::lookup(0xAD).unwrap();
+        let op = opcode::lookup(0xAD);
         assert_eq!(
             cpu.get_operand(*op),
             0x1234,
@@ -7463,7 +7460,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0101, 0x20, false); // High byte
 
         // Test LDA $2000,X (Absolute,X)
-        let op = opcode::lookup(0xBD).unwrap();
+        let op = opcode::lookup(0xBD);
         assert_eq!(
             cpu.get_operand(*op),
             0x2010,
@@ -7482,7 +7479,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0101, 0x20, false); // High byte
 
         // 0x2080 + 0xFF = 0x217F (page crossing)
-        let op = opcode::lookup(0xBD).unwrap();
+        let op = opcode::lookup(0xBD);
         assert_eq!(
             cpu.get_operand(*op),
             0x217F,
@@ -7501,7 +7498,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0101, 0x30, false); // High byte
 
         // Test LDA $3000,Y (Absolute,Y)
-        let op = opcode::lookup(0xB9).unwrap();
+        let op = opcode::lookup(0xB9);
         assert_eq!(
             cpu.get_operand(*op),
             0x3005,
@@ -7518,7 +7515,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0100, 0x10, false); // +16
 
         // Test BNE (Relative) - should return the raw offset byte
-        let op = opcode::lookup(0xD0).unwrap();
+        let op = opcode::lookup(0xD0);
         assert_eq!(
             cpu.get_operand(*op),
             0x10,
@@ -7537,7 +7534,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0100, 0xF0, false); // -16 (as signed byte)
 
         // Test BEQ (Relative) - should return the raw offset byte
-        let op = opcode::lookup(0xF0).unwrap();
+        let op = opcode::lookup(0xF0);
         assert_eq!(
             cpu.get_operand(*op),
             0xF0,
@@ -7562,7 +7559,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x1235, 0x80, false); // Target high
 
         // Test JMP ($1234) (Indirect)
-        let op = opcode::lookup(0x6C).unwrap();
+        let op = opcode::lookup(0x6C);
         assert_eq!(
             cpu.get_operand(*op),
             0x8000,
@@ -7586,7 +7583,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0300, 0x56, false); // What it should be if no bug
 
         // The bug causes high byte to be read from $0200 instead of $0300
-        let op = opcode::lookup(0x6C).unwrap();
+        let op = opcode::lookup(0x6C);
         assert_eq!(
             cpu.get_operand(*op),
             0x1234,
@@ -7608,7 +7605,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0025, 0x30, false); // Pointer high
 
         // Test LDA ($20,X) (Indexed Indirect)
-        let op = opcode::lookup(0xA1).unwrap();
+        let op = opcode::lookup(0xA1);
         assert_eq!(
             cpu.get_operand(*op),
             0x3000,
@@ -7629,7 +7626,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x007F, 0x34, false); // Pointer low
         cpu.bus.borrow_mut().write(0x0080, 0x12, false); // Pointer high (wraps in ZP)
 
-        let op = opcode::lookup(0xA1).unwrap();
+        let op = opcode::lookup(0xA1);
         assert_eq!(
             cpu.get_operand(*op),
             0x1234,
@@ -7652,7 +7649,7 @@ mod tests {
 
         // Test LDA ($20),Y (Indirect Indexed)
         // Should return ($3000) + Y = $3000 + $10 = $3010
-        let op = opcode::lookup(0xB1).unwrap();
+        let op = opcode::lookup(0xB1);
         assert_eq!(
             cpu.get_operand(*op),
             0x3010,
@@ -7674,7 +7671,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0021, 0x20, false); // Base high
 
         // $2080 + $FF = $217F (page crossing)
-        let op = opcode::lookup(0xB1).unwrap();
+        let op = opcode::lookup(0xB1);
         assert_eq!(
             cpu.get_operand(*op),
             0x217F,
@@ -7696,7 +7693,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x0000, 0x40, false); // Base high (wrapped)
 
         // $4000 + $05 = $4005
-        let op = opcode::lookup(0xB1).unwrap();
+        let op = opcode::lookup(0xB1);
         assert_eq!(
             cpu.get_operand(*op),
             0x4005,
@@ -7708,10 +7705,8 @@ mod tests {
     fn test_get_operand_invalid_opcode() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
-        // Test with an invalid opcode (one not in lookup table)
-        // Note: Most 6502 opcodes are defined, but lookup returns None for invalid ones
-        // This tests the None branch of the match
-        let op = opcode::lookup(0xFF).unwrap(); // 0xFF is SBC
+        // All 256 opcodes are defined (including undocumented ones).
+        let op = opcode::lookup(0xFF); // 0xFF is SBC
         let result = cpu.get_operand(*op);
 
         // The function should not panic

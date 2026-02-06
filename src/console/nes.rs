@@ -376,8 +376,7 @@ impl Nes {
         let mut memory = self.bus.borrow_mut();
         // Read the opcode and determine instruction size
         let opcode_byte = memory.read(pc, false);
-        let instruction =
-            lookup(opcode_byte).unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
+        let instruction = lookup(opcode_byte);
 
         // Read operand bytes
         let byte1 = if instruction.bytes() > 1 {
