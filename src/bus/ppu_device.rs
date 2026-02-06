@@ -20,7 +20,7 @@ impl PpuDevice {
 }
 
 impl BusDevice for PpuDevice {
-    fn read(&mut self, addr: u16, _open_bus: u8, _clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, addr: u16, _open_bus: u8, _is_dummy_read: bool) -> Option<u8> {
         let reg = addr & 0x2007;
         match reg {
             0x2000 | 0x2001 | 0x2003 | 0x2005 | 0x2006 => Some(self.ppu.borrow().io_bus()),

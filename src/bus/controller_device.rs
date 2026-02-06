@@ -20,20 +20,16 @@ impl ControllerDevice {
 }
 
 impl BusDevice for ControllerDevice {
-    fn read(&mut self, addr: u16, open_bus: u8, clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8> {
         let index = (addr - 0x4016) as usize;
         if index >= self.controllers.len() {
             return None;
         }
 
-        let is_mouse = self.controllers[index].borrow().input_type() == ControllerInput::Mouse;
-        let controller_state = if clock_joypads {
-            self.controllers[index].borrow_mut().read()
-        } else {
-            self.controllers[index].borrow().read_no_clock()
-        };
+        let controller_state = self.controllers[index].borrow_mut().read(is_dummy_read);
         // Determine mask based on controller type.
         // Joypad uses bit 0 (mask 0xFE), Arkanoid and Zapper controller uses bits 4-3 (mask 0xE7).
+        let is_mouse = self.controllers[index].borrow().input_type() == ControllerInput::Mouse;
         let mask = if is_mouse { 0xE7 } else { 0xFE };
         Some((open_bus & mask) | controller_state)
     }
@@ -52,5 +48,82 @@ impl BusDevice for ControllerDevice {
 
     fn address_range(&self) -> RangeInclusive<u16> {
         0x4016..=0x4017
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::input::Button;
+
+    struct TestController {
+        reads: Rc<RefCell<u32>>,
+        dummy_reads: Rc<RefCell<u32>>,
+    }
+
+    impl TestController {
+        fn new(reads: Rc<RefCell<u32>>, dummy_reads: Rc<RefCell<u32>>) -> Self {
+            Self { reads, dummy_reads }
+        }
+    }
+
+    impl Controller for TestController {
+        fn write_strobe(&mut self, _value: u8) {}
+
+        fn read(&mut self, is_dummy_read: bool) -> u8 {
+            if is_dummy_read {
+                *self.dummy_reads.borrow_mut() += 1;
+            } else {
+                *self.reads.borrow_mut() += 1;
+            }
+            0
+        }
+
+        fn capture_state(&self) -> crate::input::ControllerState {
+            crate::input::ControllerState::Joypad(crate::console::JoypadState {
+                strobe: false,
+                button_index: 0,
+                button_states: 0,
+            })
+        }
+
+        fn restore_state(&mut self, _state: &crate::input::ControllerState) {}
+
+        fn set_button(&mut self, _button: Button, _pressed: bool) -> bool {
+            true
+        }
+
+        fn set_mouse_x_position(&mut self, _position: u8) -> bool {
+            false
+        }
+
+        fn set_mouse_y_position(&mut self, _position: u8) -> bool {
+            false
+        }
+
+        fn set_mouse_left_button(&mut self, _pressed: bool) -> bool {
+            false
+        }
+
+        fn input_type(&self) -> ControllerInput {
+            ControllerInput::Gamepad
+        }
+    }
+
+    #[test]
+    fn test_dummy_read_uses_no_clock() {
+        let reads = Rc::new(RefCell::new(0));
+        let dummy_reads = Rc::new(RefCell::new(0));
+        let controller = Rc::new(RefCell::new(Box::new(TestController::new(
+            reads.clone(),
+            dummy_reads.clone(),
+        )) as Box<dyn Controller>));
+
+        let mut device = ControllerDevice::new(controller.clone(), controller);
+
+        device.read(0x4016, 0xFF, true);
+
+        assert_eq!(*reads.borrow(), 0);
+        assert_eq!(*dummy_reads.borrow(), 1);
     }
 }

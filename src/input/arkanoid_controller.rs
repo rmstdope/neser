@@ -58,7 +58,7 @@ impl ArkanoidController {
 
     /// Read paddle state, optionally clocking the shift register.
     /// Bit 4 = position serial, bit 3 = trigger.
-    pub fn read(&mut self) -> u8 {
+    pub fn read(&mut self, is_dummy_read: bool) -> u8 {
         let position = self
             .latched_position
             .clamp(Self::MIN_POSITION, Self::MAX_POSITION);
@@ -72,27 +72,11 @@ impl ArkanoidController {
 
         let response = (bit << 4) | ((self.trigger as u8) << 3);
 
-        if !self.strobe {
+        if !self.strobe && !is_dummy_read {
             self.shift_index = self.shift_index.saturating_add(1);
         }
 
         response
-    }
-
-    /// Read paddle state without clocking the shift register.
-    pub fn read_no_clock(&self) -> u8 {
-        let position = self
-            .latched_position
-            .clamp(Self::MIN_POSITION, Self::MAX_POSITION);
-        let inverted = position ^ 0xFF;
-        let bit = if self.shift_index >= 8 {
-            1
-        } else {
-            let bit_index = 7u8.saturating_sub(self.shift_index);
-            (inverted >> bit_index) & 0x01
-        };
-
-        (bit << 4) | ((self.trigger as u8) << 3)
     }
 
     /// Capture current paddle state for save-state.
@@ -124,12 +108,8 @@ impl crate::input::Controller for ArkanoidController {
         self.write_strobe(value)
     }
 
-    fn read(&mut self) -> u8 {
-        self.read()
-    }
-
-    fn read_no_clock(&self) -> u8 {
-        self.read_no_clock()
+    fn read(&mut self, is_dummy_read: bool) -> u8 {
+        self.read(is_dummy_read)
     }
 
     fn capture_state(&self) -> crate::input::ControllerState {
@@ -179,11 +159,11 @@ mod tests {
 
         let bits = [0, 1, 1, 0, 1, 1, 0, 1];
         for expected in bits {
-            let value = paddle.read();
+            let value = paddle.read(false);
             assert_eq!((value >> 4) & 0x01, expected);
         }
 
-        let value = paddle.read();
+        let value = paddle.read(false);
         assert_eq!((value >> 4) & 0x01, 1);
     }
 
@@ -193,8 +173,8 @@ mod tests {
         paddle.set_position(0x80); // inverted MSB = 0
 
         paddle.write_strobe(1);
-        let first = paddle.read();
-        let second = paddle.read();
+        let first = paddle.read(false);
+        let second = paddle.read(false);
 
         assert_eq!((first >> 4) & 0x01, 0);
         assert_eq!((second >> 4) & 0x01, 0);
@@ -207,11 +187,11 @@ mod tests {
 
         paddle.write_strobe(1);
         paddle.set_trigger(true);
-        let value = paddle.read();
+        let value = paddle.read(false);
         assert_eq!((value >> 3) & 0x01, 1);
 
         paddle.set_trigger(false);
-        let value = paddle.read();
+        let value = paddle.read(false);
         assert_eq!((value >> 3) & 0x01, 0);
     }
 
@@ -222,7 +202,7 @@ mod tests {
         let read_position = |paddle: &mut ArkanoidController| {
             let mut position = 0u8;
             for bit_index in (0..8).rev() {
-                let value = paddle.read();
+                let value = paddle.read(false);
                 let bit = (value >> 4) & 0x01;
                 position |= bit << bit_index;
             }

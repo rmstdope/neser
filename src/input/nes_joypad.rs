@@ -58,8 +58,8 @@ impl NesJoypad {
 
     /// Read from controller register ($4016/$4017)
     /// Returns the current button state in bit 0
-    /// Advances to next button if not in strobe mode
-    pub fn read(&mut self) -> u8 {
+    /// Advances to next button if not in strobe mode and not a dummy read
+    pub fn read(&mut self, is_dummy_read: bool) -> u8 {
         // After 8 reads, always return 1
         if self.button_index >= 8 {
             return 1;
@@ -68,24 +68,12 @@ impl NesJoypad {
         // Return current button state (bit 0)
         let response = (self.button_states >> self.button_index) & 0x01;
 
-        // Advance to next button only if not in strobe mode
-        if !self.strobe {
+        // Advance to next button only if not in strobe mode and not a dummy read
+        if !self.strobe && !is_dummy_read {
             self.button_index += 1;
         }
 
         response
-    }
-
-    /// Read the current controller bit without advancing the internal shift position.
-    ///
-    /// This is used to model DMA no-op cycles where the CPU repeats the last read cycle
-    /// externally, but the controller should not observe additional clock pulses.
-    pub fn read_no_clock(&self) -> u8 {
-        if self.button_index >= 8 {
-            return 1;
-        }
-
-        (self.button_states >> self.button_index) & 0x01
     }
 
     /// Set the state of a button
@@ -120,12 +108,8 @@ impl crate::input::Controller for NesJoypad {
         self.write_strobe(value)
     }
 
-    fn read(&mut self) -> u8 {
-        self.read()
-    }
-
-    fn read_no_clock(&self) -> u8 {
-        self.read_no_clock()
+    fn read(&mut self, is_dummy_read: bool) -> u8 {
+        self.read(is_dummy_read)
     }
 
     fn capture_state(&self) -> crate::input::ControllerState {
@@ -180,11 +164,11 @@ mod tests {
         joypad.set_button(Button::A, true);
 
         // Read first button (A)
-        joypad.read();
+        joypad.read(false);
         assert_eq!(joypad.button_index, 1);
 
         // Read second button (B)
-        joypad.read();
+        joypad.read(false);
         assert_eq!(joypad.button_index, 2);
 
         // Strobe high
@@ -205,14 +189,14 @@ mod tests {
         joypad.set_button(Button::Right, true);
 
         // Read buttons in order: A, B, Select, Start, Up, Down, Left, Right
-        assert_eq!(joypad.read(), 1); // A pressed
-        assert_eq!(joypad.read(), 0); // B not pressed
-        assert_eq!(joypad.read(), 0); // Select not pressed
-        assert_eq!(joypad.read(), 1); // Start pressed
-        assert_eq!(joypad.read(), 0); // Up not pressed
-        assert_eq!(joypad.read(), 0); // Down not pressed
-        assert_eq!(joypad.read(), 0); // Left not pressed
-        assert_eq!(joypad.read(), 1); // Right pressed
+        assert_eq!(joypad.read(false), 1); // A pressed
+        assert_eq!(joypad.read(false), 0); // B not pressed
+        assert_eq!(joypad.read(false), 0); // Select not pressed
+        assert_eq!(joypad.read(false), 1); // Start pressed
+        assert_eq!(joypad.read(false), 0); // Up not pressed
+        assert_eq!(joypad.read(false), 0); // Down not pressed
+        assert_eq!(joypad.read(false), 0); // Left not pressed
+        assert_eq!(joypad.read(false), 1); // Right pressed
     }
 
     #[test]
@@ -221,13 +205,13 @@ mod tests {
 
         // Read all 8 buttons
         for _ in 0..8 {
-            joypad.read();
+            joypad.read(false);
         }
 
         // 9th and subsequent reads should return 1
-        assert_eq!(joypad.read(), 1);
-        assert_eq!(joypad.read(), 1);
-        assert_eq!(joypad.read(), 1);
+        assert_eq!(joypad.read(false), 1);
+        assert_eq!(joypad.read(false), 1);
+        assert_eq!(joypad.read(false), 1);
     }
 
     #[test]
@@ -241,18 +225,18 @@ mod tests {
         joypad.write_strobe(1);
 
         // Reading while strobe=1 should keep returning same button
-        assert_eq!(joypad.read(), 0); // A not pressed
+        assert_eq!(joypad.read(false), 0); // A not pressed
         assert_eq!(joypad.button_index, 0); // Index shouldn't advance
-        assert_eq!(joypad.read(), 0); // Still reading A
+        assert_eq!(joypad.read(false), 0); // Still reading A
         assert_eq!(joypad.button_index, 0);
 
         // Release strobe
         joypad.write_strobe(0);
 
         // Now reading should advance
-        assert_eq!(joypad.read(), 0); // A
+        assert_eq!(joypad.read(false), 0); // A
         assert_eq!(joypad.button_index, 1);
-        assert_eq!(joypad.read(), 1); // B
+        assert_eq!(joypad.read(false), 1); // B
         assert_eq!(joypad.button_index, 2);
     }
 
@@ -262,7 +246,7 @@ mod tests {
 
         // Press A
         joypad.set_button(Button::A, true);
-        assert_eq!(joypad.read(), 1);
+        assert_eq!(joypad.read(false), 1);
 
         // Reset and press B instead
         joypad.write_strobe(1);
@@ -270,8 +254,8 @@ mod tests {
         joypad.set_button(Button::A, false);
         joypad.set_button(Button::B, true);
 
-        assert_eq!(joypad.read(), 0); // A not pressed
-        assert_eq!(joypad.read(), 1); // B pressed
+        assert_eq!(joypad.read(false), 0); // A not pressed
+        assert_eq!(joypad.read(false), 1); // B pressed
     }
 
     #[test]
@@ -290,7 +274,22 @@ mod tests {
 
         // All 8 reads should return 1
         for _ in 0..8 {
-            assert_eq!(joypad.read(), 1);
+            assert_eq!(joypad.read(false), 1);
         }
+    }
+
+    #[test]
+    fn test_dummy_read_does_not_advance_button_index() {
+        let mut joypad = NesJoypad::new();
+        joypad.set_button(Button::A, true);
+
+        // First normal read advances index to 1.
+        assert_eq!(joypad.read(false), 1);
+
+        // Dummy read should not advance; should still read B (bit 1) which is not pressed.
+        assert_eq!(joypad.read(true), 0);
+
+        // Next normal read should now advance to index 2 (Select), still not pressed.
+        assert_eq!(joypad.read(false), 0);
     }
 }

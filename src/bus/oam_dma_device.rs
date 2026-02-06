@@ -21,7 +21,7 @@ impl OamDmaDevice {
 }
 
 impl BusDevice for OamDmaDevice {
-    fn read(&mut self, _addr: u16, open_bus: u8, _clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, _addr: u16, open_bus: u8, _is_dummy_read: bool) -> Option<u8> {
         Some(open_bus)
     }
 

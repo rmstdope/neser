@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 pub trait BusDevice {
-    fn read(&mut self, addr: u16, open_bus: u8, clock_joypads: bool) -> Option<u8>;
+    fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8>;
     fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool;
     fn address_range(&self) -> RangeInclusive<u16>;
 }
@@ -161,7 +161,7 @@ impl Bus {
 
     /// Read a byte from memory
     pub fn read(&mut self, addr: u16) -> u8 {
-        self.read_internal(addr, true)
+        self.read_internal(addr, false)
     }
 
     /// Debug-only-ish helper: read PRG ROM without affecting open bus or joypads.
@@ -203,23 +203,23 @@ impl Bus {
         }
     }
 
-    /// Read a byte from memory, optionally clocking joypad shift registers.
+    /// Read a byte from memory, optionally marking the access as a dummy read.
     ///
     /// During DMA no-op cycles, the CPU repeats the last read externally. For joypad
     /// registers ($4016/$4017), real hardware does not necessarily clock the controller
-    /// shift register on these repeated reads; callers can disable joypad clocking.
+    /// shift register on these repeated reads; callers can mark the read as dummy.
     pub fn read_without_joypad_clock(&mut self, addr: u16) -> u8 {
-        self.read_internal(addr, false)
+        self.read_internal(addr, true)
     }
 
-    fn read_internal(&mut self, addr: u16, clock_joypads: bool) -> u8 {
+    fn read_internal(&mut self, addr: u16, is_dummy_read: bool) -> u8 {
         if (0xFFFA..=0xFFFB).contains(&addr)
             && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
         {
             cartridge.borrow_mut().mapper_mut().on_irq_vector_read(addr);
         }
 
-        if let Some(value) = self.read_from_devices(addr, clock_joypads) {
+        if let Some(value) = self.read_from_devices(addr, is_dummy_read) {
             self.open_bus = value;
             return value;
         }
@@ -238,10 +238,10 @@ impl Bus {
         value
     }
 
-    fn read_from_devices(&mut self, addr: u16, clock_joypads: bool) -> Option<u8> {
+    fn read_from_devices(&mut self, addr: u16, is_dummy_read: bool) -> Option<u8> {
         for device in self.devices.iter_mut() {
             if device.address_range().contains(&addr)
-                && let Some(value) = device.read(addr, self.open_bus, clock_joypads)
+                && let Some(value) = device.read(addr, self.open_bus, is_dummy_read)
             {
                 return Some(value);
             }
@@ -690,7 +690,7 @@ mod tests {
     }
 
     impl BusDevice for TestBusDevice {
-        fn read(&mut self, addr: u16, _open_bus: u8, _clock_joypads: bool) -> Option<u8> {
+        fn read(&mut self, addr: u16, _open_bus: u8, _is_dummy_read: bool) -> Option<u8> {
             if self.range.contains(&addr) {
                 return Some(self.read_value);
             }

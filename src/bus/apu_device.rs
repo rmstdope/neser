@@ -17,7 +17,7 @@ impl ApuDevice {
 }
 
 impl BusDevice for ApuDevice {
-    fn read(&mut self, addr: u16, open_bus: u8, _clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, addr: u16, open_bus: u8, _is_dummy_read: bool) -> Option<u8> {
         match addr {
             0x4000..=0x4013 => Some(open_bus),
             0x4015 => Some(self.apu.borrow_mut().read_status(open_bus)),

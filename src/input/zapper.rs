@@ -60,11 +60,7 @@ impl Zapper {
 impl crate::input::Controller for Zapper {
     fn write_strobe(&mut self, _value: u8) {}
 
-    fn read(&mut self) -> u8 {
-        self.read_no_clock()
-    }
-
-    fn read_no_clock(&self) -> u8 {
+    fn read(&mut self, _is_dummy_read: bool) -> u8 {
         let detection_size = self.config.borrow().zapper_detection_size;
         let ppu = self.ppu.borrow();
         let scanline = ppu.timing().scanline();
@@ -210,12 +206,12 @@ mod tests {
         let (mut zapper, _ppu) = create_zapper_with_ppu(0);
 
         zapper.set_mouse_left_button(true);
-        let value = zapper.read_no_clock();
+        let value = zapper.read(false);
         assert_eq!((value >> 3) & 0x01, 1);
         assert_eq!((value >> 4) & 0x01, 1);
 
         zapper.set_mouse_left_button(false);
-        let value = zapper.read_no_clock();
+        let value = zapper.read(false);
         assert_eq!((value >> 3) & 0x01, 1);
         assert_eq!((value >> 4) & 0x01, 0);
     }
@@ -232,7 +228,7 @@ mod tests {
             .screen_buffer_mut()
             .set_pixel(0, 0, 255, 255, 255);
 
-        let value = zapper.read_no_clock();
+        let value = zapper.read(false);
         assert_eq!((value >> 3) & 0x01, 0);
     }
 
@@ -269,7 +265,7 @@ mod tests {
             .set_pixel(100, 100, 255, 255, 255);
 
         // Light should be detected (light bit = 0)
-        let value = zapper.read_no_clock();
+        let value = zapper.read(false);
         assert_eq!(
             (value >> 3) & 0x01,
             0,
@@ -288,7 +284,7 @@ mod tests {
         advance_ppu_to(&ppu, 51, 50);
 
         // Light should not be detected (light bit = 1)
-        let value = zapper.read_no_clock();
+        let value = zapper.read(false);
         assert_eq!(
             (value >> 3) & 0x01,
             1,
@@ -308,7 +304,7 @@ mod tests {
         ppu.borrow_mut()
             .screen_buffer_mut()
             .set_pixel(30, 30, 84, 84, 84);
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             !zapper.capture_state().light,
             "Light should not be detected below threshold"
@@ -319,7 +315,7 @@ mod tests {
         ppu.borrow_mut()
             .screen_buffer_mut()
             .set_pixel(30, 30, 85, 85, 85);
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             zapper.capture_state().light,
             "Light should be detected at threshold"
@@ -330,7 +326,7 @@ mod tests {
         ppu.borrow_mut()
             .screen_buffer_mut()
             .set_pixel(30, 30, 200, 200, 200);
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             zapper.capture_state().light,
             "Light should be detected above threshold"
@@ -348,7 +344,7 @@ mod tests {
         ppu.borrow_mut()
             .screen_buffer_mut()
             .set_pixel(60, 60, 0, 255, 0);
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             zapper.capture_state().light,
             "Bright green should be detected"
@@ -359,7 +355,7 @@ mod tests {
         ppu.borrow_mut()
             .screen_buffer_mut()
             .set_pixel(60, 60, 255, 0, 0);
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             !zapper.capture_state().light,
             "Pure red alone is below threshold"
@@ -370,7 +366,7 @@ mod tests {
         ppu.borrow_mut()
             .screen_buffer_mut()
             .set_pixel(60, 60, 0, 0, 255);
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             !zapper.capture_state().light,
             "Pure blue alone is below threshold"
@@ -391,7 +387,7 @@ mod tests {
         advance_ppu_to(&ppu, 99, 200);
 
         // Light should NOT be detected (beam hasn't reached it yet)
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             !zapper.capture_state().light,
             "Cannot detect light ahead of beam"
@@ -412,7 +408,7 @@ mod tests {
         advance_ppu_to(&ppu, 200, 100);
 
         // Light should NOT be detected (too far behind)
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             !zapper.capture_state().light,
             "Cannot detect light too far behind beam"
@@ -431,7 +427,7 @@ mod tests {
         ppu.borrow_mut()
             .screen_buffer_mut()
             .set_pixel(101, 100, 255, 255, 255);
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             !zapper.capture_state().light,
             "Radius 0 should not detect neighboring pixel"
@@ -445,7 +441,7 @@ mod tests {
         ppu.borrow_mut()
             .screen_buffer_mut()
             .set_pixel(101, 100, 255, 255, 255);
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             zapper.capture_state().light,
             "Radius 1 should detect pixel at distance 1"
@@ -466,7 +462,7 @@ mod tests {
         advance_ppu_to(&ppu, 241, 100);
 
         // Should not detect light (y >= 240 is out of bounds)
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             !zapper.capture_state().light,
             "Should not detect light when Y >= 240"
@@ -482,7 +478,7 @@ mod tests {
         advance_ppu_to(&ppu, 260, 100);
 
         // Should not detect light (y >= 240 is out of bounds)
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             !zapper.capture_state().light,
             "Should not detect light when Y = 255"
@@ -502,7 +498,7 @@ mod tests {
             .set_pixel(100, 239, 255, 255, 255);
 
         // Should detect light (y = 239 is valid)
-        zapper.read_no_clock();
+        zapper.read(false);
         assert!(
             zapper.capture_state().light,
             "Should detect light when Y = 239 (within bounds)"
