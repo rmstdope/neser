@@ -1476,7 +1476,7 @@ mod tests {
         let addr = if port == 1 { 0x4016 } else { 0x4017 };
         let mut out = [0u8; 8];
         for slot in &mut out {
-            let value = nes.bus.borrow_mut().read(addr) & 0x01;
+            let value = nes.bus.borrow_mut().read(addr, false) & 0x01;
             *slot = value;
         }
         out
@@ -1488,7 +1488,7 @@ mod tests {
 
     fn read_paddle_trigger_bit_for_port(nes: &mut Nes, port: u8) -> u8 {
         let addr = if port == 1 { 0x4016 } else { 0x4017 };
-        let value = nes.bus.borrow_mut().read(addr);
+        let value = nes.bus.borrow_mut().read(addr, false);
         (value >> 3) & 0x01
     }
 
@@ -1506,7 +1506,7 @@ mod tests {
         let addr = if port == 1 { 0x4016 } else { 0x4017 };
         let mut position = 0u8;
         for bit_index in (0..8).rev() {
-            let value = nes.bus.borrow_mut().read(addr);
+            let value = nes.bus.borrow_mut().read(addr, false);
             let bit = (value >> 4) & 0x01;
             position |= bit << bit_index;
         }

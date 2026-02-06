@@ -375,18 +375,18 @@ impl Nes {
         let pc = cpu_state.pc;
         let mut memory = self.bus.borrow_mut();
         // Read the opcode and determine instruction size
-        let opcode_byte = memory.read(pc);
+        let opcode_byte = memory.read(pc, false);
         let instruction =
             lookup(opcode_byte).unwrap_or_else(|| panic!("Invalid opcode: 0x{:02X}", opcode_byte));
 
         // Read operand bytes
         let byte1 = if instruction.bytes() > 1 {
-            memory.read(pc.wrapping_add(1))
+            memory.read(pc.wrapping_add(1), false)
         } else {
             0
         };
         let byte2 = if instruction.bytes() > 2 {
-            memory.read(pc.wrapping_add(2))
+            memory.read(pc.wrapping_add(2), false)
         } else {
             0
         };
@@ -407,7 +407,7 @@ impl Nes {
             "ZP" => {
                 let addr = byte1 as u16;
                 if nestest {
-                    let mut value = memory.read(addr);
+                    let mut value = memory.read(addr, false);
                     if (0x4000..0x4100).contains(&addr) {
                         value = 0xFF;
                     }
@@ -419,7 +419,7 @@ impl Nes {
             "ZPX" => {
                 let addr = byte1.wrapping_add(cpu_state.x) as u16;
                 if nestest {
-                    let mut value = memory.read(addr);
+                    let mut value = memory.read(addr, false);
                     if (0x4000..0x4100).contains(&addr) {
                         value = 0xFF;
                     }
@@ -434,7 +434,7 @@ impl Nes {
             "ZPY" => {
                 let addr = byte1.wrapping_add(cpu_state.y) as u16;
                 if nestest {
-                    let mut value = memory.read(addr);
+                    let mut value = memory.read(addr, false);
                     if (0x4000..0x4100).contains(&addr) {
                         value = 0xFF;
                     }
@@ -452,7 +452,7 @@ impl Nes {
                 if instruction.mnemonic == "JMP" || instruction.mnemonic == "JSR" {
                     format!("{} ${:04X}", instruction.mnemonic, addr)
                 } else if nestest {
-                    let mut value = memory.read(addr);
+                    let mut value = memory.read(addr, false);
                     if (0x4000..0x4100).contains(&addr) {
                         value = 0xFF;
                     }
@@ -465,7 +465,7 @@ impl Nes {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
                     let effective_addr = addr.wrapping_add(cpu_state.x as u16);
-                    let value = memory.read(effective_addr);
+                    let value = memory.read(effective_addr, false);
                     format!(
                         "{} ${:04X},X @ {:04X} = {:02X}",
                         instruction.mnemonic, addr, effective_addr, value
@@ -478,7 +478,7 @@ impl Nes {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
                     let effective_addr = addr.wrapping_add(cpu_state.y as u16);
-                    let value = memory.read(effective_addr);
+                    let value = memory.read(effective_addr, false);
                     format!(
                         "{} ${:04X},Y @ {:04X} = {:02X}",
                         instruction.mnemonic, addr, effective_addr, value
@@ -490,10 +490,10 @@ impl Nes {
             "INDX" => {
                 if nestest {
                     let zp_addr = byte1.wrapping_add(cpu_state.x);
-                    let addr_lo = memory.read(zp_addr as u16);
-                    let addr_hi = memory.read(zp_addr.wrapping_add(1) as u16);
+                    let addr_lo = memory.read(zp_addr as u16, false);
+                    let addr_hi = memory.read(zp_addr.wrapping_add(1) as u16, false);
                     let addr = u16::from_le_bytes([addr_lo, addr_hi]);
-                    let value = memory.read(addr);
+                    let value = memory.read(addr, false);
                     format!(
                         "{} (${:02X},X) @ {:02X} = {:04X} = {:02X}",
                         instruction.mnemonic, byte1, zp_addr, addr, value
@@ -504,11 +504,11 @@ impl Nes {
             }
             "INDY" => {
                 if nestest {
-                    let addr_lo = memory.read(byte1 as u16);
-                    let addr_hi = memory.read(byte1.wrapping_add(1) as u16);
+                    let addr_lo = memory.read(byte1 as u16, false);
+                    let addr_hi = memory.read(byte1.wrapping_add(1) as u16, false);
                     let base_addr = u16::from_le_bytes([addr_lo, addr_hi]);
                     let effective_addr = base_addr.wrapping_add(cpu_state.y as u16);
-                    let value = memory.read(effective_addr);
+                    let value = memory.read(effective_addr, false);
                     format!(
                         "{} (${:02X}),Y = {:04X} @ {:04X} = {:02X}",
                         instruction.mnemonic, byte1, base_addr, effective_addr, value
@@ -520,7 +520,7 @@ impl Nes {
             "IND" => {
                 if nestest {
                     let ptr_addr = u16::from_le_bytes([byte1, byte2]);
-                    let addr_lo = memory.read(ptr_addr);
+                    let addr_lo = memory.read(ptr_addr, false);
                     // 6502 bug: if ptr_addr is at page boundary (e.g., $02FF),
                     // high byte wraps within same page instead of crossing to next page
                     let hi_addr = if ptr_addr & 0xFF == 0xFF {
@@ -528,7 +528,7 @@ impl Nes {
                     } else {
                         ptr_addr.wrapping_add(1)
                     };
-                    let addr_hi = memory.read(hi_addr);
+                    let addr_hi = memory.read(hi_addr, false);
                     let target_addr = u16::from_le_bytes([addr_lo, addr_hi]);
                     format!(
                         "{} (${:04X}) = {:04X}",
@@ -549,7 +549,7 @@ impl Nes {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
                     let effective_addr = addr.wrapping_add(cpu_state.x as u16);
-                    let value = memory.read(effective_addr);
+                    let value = memory.read(effective_addr, false);
                     format!(
                         "{} ${:04X},X @ {:04X} = {:02X}",
                         instruction.mnemonic, addr, effective_addr, value
@@ -563,7 +563,7 @@ impl Nes {
                 let addr = u16::from_le_bytes([byte1, byte2]);
                 if nestest {
                     let effective_addr = addr.wrapping_add(cpu_state.y as u16);
-                    let value = memory.read(effective_addr);
+                    let value = memory.read(effective_addr, false);
                     format!(
                         "{} ${:04X},Y @ {:04X} = {:02X}",
                         instruction.mnemonic, addr, effective_addr, value
@@ -575,11 +575,11 @@ impl Nes {
             "INDYW" => {
                 // Same as INDY but for write/RMW instructions
                 if nestest {
-                    let addr_lo = memory.read(byte1 as u16);
-                    let addr_hi = memory.read(byte1.wrapping_add(1) as u16);
+                    let addr_lo = memory.read(byte1 as u16, false);
+                    let addr_hi = memory.read(byte1.wrapping_add(1) as u16, false);
                     let base_addr = u16::from_le_bytes([addr_lo, addr_hi]);
                     let effective_addr = base_addr.wrapping_add(cpu_state.y as u16);
-                    let value = memory.read(effective_addr);
+                    let value = memory.read(effective_addr, false);
                     format!(
                         "{} (${:02X}),Y = {:04X} @ {:04X} = {:02X}",
                         instruction.mnemonic, byte1, base_addr, effective_addr, value
@@ -1107,7 +1107,7 @@ mod tests {
             // Set OAM address via $2003
             nes.bus.borrow_mut().write(0x2003, i as u8, false);
             // Read OAM data via $2004
-            let oam_byte = nes.bus.borrow_mut().read(0x2004);
+            let oam_byte = nes.bus.borrow_mut().read(0x2004, false);
             let expected = if (i & 0x03) == 2 {
                 // Attribute byte: mask bits 2-4
                 ((i & 0xFF) as u8) & 0xE3
@@ -1145,7 +1145,7 @@ mod tests {
             // Set OAM address via $2003
             nes.bus.borrow_mut().write(0x2003, i as u8, false);
             // Read OAM data via $2004
-            let oam_byte = nes.bus.borrow_mut().read(0x2004);
+            let oam_byte = nes.bus.borrow_mut().read(0x2004, false);
             let expected = if (i & 0x03) == 2 {
                 // Attribute byte: 0xAA with masking = 0xAA & 0xE3 = 0xA2
                 0xA2
@@ -1483,7 +1483,7 @@ mod tests {
 
         // Write to PRG-RAM (would be affected by a mapper that has reset state)
         nes.bus.borrow_mut().write(0x6000, 0xAB, false);
-        assert_eq!(nes.bus.borrow_mut().read(0x6000), 0xAB);
+        assert_eq!(nes.bus.borrow_mut().read(0x6000, false), 0xAB);
 
         // Soft reset should call cartridge reset
         // For NROM this doesn't change much, but the call chain should work
@@ -1491,7 +1491,7 @@ mod tests {
 
         // PRG-RAM should still have the value (NROM doesn't clear RAM on reset)
         // This test verifies the reset call chain works without crashing
-        assert_eq!(nes.bus.borrow_mut().read(0x6000), 0xAB);
+        assert_eq!(nes.bus.borrow_mut().read(0x6000, false), 0xAB);
     }
 
     #[test]
@@ -1651,7 +1651,7 @@ mod tests {
         // Verify port 2 reads paddle data
         nes.bus.borrow_mut().write(0x4016, 0x01, false);
         nes.bus.borrow_mut().write(0x4016, 0x00, false);
-        let paddle_bits = nes.bus.borrow_mut().read(0x4017) & 0x18;
+        let paddle_bits = nes.bus.borrow_mut().read(0x4017, false) & 0x18;
         assert_eq!(paddle_bits, 0x08); // Should have paddle data on port 2
     }
 
@@ -1670,7 +1670,7 @@ mod tests {
             .set_button(2, crate::input::Button::A, true);
         nes.bus.borrow_mut().write(0x4016, 0x01, false);
         nes.bus.borrow_mut().write(0x4016, 0x00, false);
-        let joypad_bit = nes.bus.borrow_mut().read(0x4017) & 0x01;
+        let joypad_bit = nes.bus.borrow_mut().read(0x4017, false) & 0x01;
         assert_eq!(joypad_bit, 1); // Should have joypad data on port 2
     }
 

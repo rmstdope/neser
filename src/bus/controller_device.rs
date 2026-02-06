@@ -22,9 +22,6 @@ impl ControllerDevice {
 impl BusDevice for ControllerDevice {
     fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8> {
         let index = (addr - 0x4016) as usize;
-        if index >= self.controllers.len() {
-            return None;
-        }
 
         let controller_state = self.controllers[index].borrow_mut().read(is_dummy_read);
         // Determine mask based on controller type.
