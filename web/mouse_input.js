@@ -39,9 +39,9 @@ export function mapMouseYToZapperPosition(y, windowHeight) {
     const maxY = windowHeight - 1;
     const clampedY = Math.min(Math.max(y, 0), maxY);
     const normalized = clampedY / maxY;
-    const scaled = normalized * 255;
+    const scaled = normalized * 239;
 
-    return Math.min(255, Math.max(0, Math.round(scaled)));
+    return Math.min(239, Math.max(0, Math.round(scaled)));
 }
 
 export function applyMouseMotion(nes, x, y, windowWidth, windowHeight) {

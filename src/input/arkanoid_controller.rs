@@ -142,10 +142,6 @@ impl crate::input::Controller for ArkanoidController {
         }
     }
 
-    fn new_boxed() -> Box<dyn crate::input::Controller> {
-        Box::new(ArkanoidController::new())
-    }
-
     fn set_button(&mut self, _button: crate::input::Button, _pressed: bool) -> bool {
         false // Not supported for Paddle
     }

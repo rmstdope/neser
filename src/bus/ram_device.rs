@@ -15,18 +15,10 @@ impl RamDevice {
 
 impl BusDevice for RamDevice {
     fn read(&mut self, addr: u16, _open_bus: u8, _clock_joypads: bool) -> Option<u8> {
-        if !self.address_range().contains(&addr) {
-            return None;
-        }
-
         Some(self.cpu_ram.borrow()[(addr & 0x07FF) as usize])
     }
 
     fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
-        if !self.address_range().contains(&addr) {
-            return false;
-        }
-
         self.cpu_ram.borrow_mut()[(addr & 0x07FF) as usize] = value;
         true
     }

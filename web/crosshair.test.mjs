@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 // Mock DOM environment for testing
 function createMockCanvas() {
+    let lastArc = null;
     const mockContext = {
         clearRect: () => {},
         strokeStyle: "",
@@ -13,7 +14,9 @@ function createMockCanvas() {
         moveTo: () => {},
         lineTo: () => {},
         stroke: () => {},
-        arc: () => {},
+        arc: (x, y) => {
+            lastArc = { x, y };
+        },
         fill: () => {},
     };
     
@@ -32,22 +35,28 @@ function createMockCanvas() {
         getContext: () => mockContext,
         remove: () => {},
         parentElement: {
+            style: {
+                position: "",
+            },
             appendChild: () => {},
         },
     };
     
-    return mockCanvas;
+    return { mockCanvas, mockContext, getLastArc: () => lastArc };
 }
 
 // Mock document.createElement for crosshair module
 const originalDocument = globalThis.document;
 const originalWindow = globalThis.window;
+let lastOverlayArc = null;
 
 function setupMockDOM() {
     globalThis.document = {
         createElement: (tag) => {
             if (tag === "canvas") {
-                return createMockCanvas();
+                const { mockCanvas, getLastArc } = createMockCanvas();
+                lastOverlayArc = getLastArc;
+                return mockCanvas;
             }
             return {};
         },
@@ -61,14 +70,15 @@ function setupMockDOM() {
 function teardownMockDOM() {
     globalThis.document = originalDocument;
     globalThis.window = originalWindow;
+    lastOverlayArc = null;
 }
 
 test("createCrosshair initially not visible", async () => {
     setupMockDOM();
     const { createCrosshair } = await import("./crosshair.js");
     
-    const targetCanvas = createMockCanvas();
-    const crosshair = createCrosshair(targetCanvas);
+    const { mockCanvas } = createMockCanvas();
+    const crosshair = createCrosshair(mockCanvas);
     
     assert.equal(crosshair.visible, false);
     
@@ -80,8 +90,8 @@ test("createCrosshair show makes crosshair visible", async () => {
     setupMockDOM();
     const { createCrosshair } = await import("./crosshair.js");
     
-    const targetCanvas = createMockCanvas();
-    const crosshair = createCrosshair(targetCanvas);
+    const { mockCanvas } = createMockCanvas();
+    const crosshair = createCrosshair(mockCanvas);
     
     crosshair.show();
     assert.equal(crosshair.visible, true);
@@ -94,8 +104,8 @@ test("createCrosshair hide makes crosshair invisible", async () => {
     setupMockDOM();
     const { createCrosshair } = await import("./crosshair.js");
     
-    const targetCanvas = createMockCanvas();
-    const crosshair = createCrosshair(targetCanvas);
+    const { mockCanvas } = createMockCanvas();
+    const crosshair = createCrosshair(mockCanvas);
     
     crosshair.show();
     assert.equal(crosshair.visible, true);
@@ -111,12 +121,31 @@ test("createCrosshair updatePosition can be called", async () => {
     setupMockDOM();
     const { createCrosshair } = await import("./crosshair.js");
     
-    const targetCanvas = createMockCanvas();
-    const crosshair = createCrosshair(targetCanvas);
+    const { mockCanvas } = createMockCanvas();
+    const crosshair = createCrosshair(mockCanvas);
     
     // Should not throw
     crosshair.updatePosition(100, 100);
     
+    crosshair.destroy();
+    teardownMockDOM();
+});
+
+test("createCrosshair clamps position to bounds", async () => {
+    setupMockDOM();
+    const { createCrosshair } = await import("./crosshair.js");
+
+    const { mockCanvas } = createMockCanvas();
+    const crosshair = createCrosshair(mockCanvas);
+
+    crosshair.show();
+    crosshair.updatePosition(-10, 300);
+
+    const arc = lastOverlayArc ? lastOverlayArc() : null;
+    assert.ok(arc, "Expected crosshair to draw the center dot");
+    assert.equal(arc.x, 0);
+    assert.equal(arc.y, 239);
+
     crosshair.destroy();
     teardownMockDOM();
 });

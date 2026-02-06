@@ -21,10 +21,6 @@ impl PpuDevice {
 
 impl BusDevice for PpuDevice {
     fn read(&mut self, addr: u16, _open_bus: u8, _clock_joypads: bool) -> Option<u8> {
-        if !self.address_range().contains(&addr) {
-            return None;
-        }
-
         let reg = addr & 0x2007;
         match reg {
             0x2000 | 0x2001 | 0x2003 | 0x2005 | 0x2006 => Some(self.ppu.borrow().io_bus()),
@@ -36,10 +32,6 @@ impl BusDevice for PpuDevice {
     }
 
     fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool {
-        if !self.address_range().contains(&addr) {
-            return false;
-        }
-
         let reg = addr & 0x2007;
         match reg {
             0x2000 => {

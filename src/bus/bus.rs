@@ -29,6 +29,7 @@ pub struct Bus {
     cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
     ppu: Rc<RefCell<ppu::Ppu>>,
     apu: Rc<RefCell<apu::Apu>>,
+    config: Rc<RefCell<crate::console::Config>>,
     oam_dma_page: Rc<RefCell<Option<u8>>>, // Stores the page for pending OAM DMA
     dma_triggered: Rc<RefCell<bool>>,
     controllers: [Rc<RefCell<Box<dyn Controller>>>; 2], // Port 1 and Port 2 controllers
@@ -38,6 +39,18 @@ pub struct Bus {
 }
 
 impl Bus {
+    fn build_controller(
+        ppu: Rc<RefCell<ppu::Ppu>>,
+        config: Rc<RefCell<crate::console::Config>>,
+        controller_type: ControllerType,
+    ) -> Box<dyn Controller> {
+        match controller_type {
+            ControllerType::Joypad => Box::new(NesJoypad::new()),
+            ControllerType::Arkanoid => Box::new(ArkanoidController::new()),
+            ControllerType::Zapper => Box::new(Zapper::new(ppu, config)),
+        }
+    }
+
     /// Create a new memory instance with 64KB of RAM initialized to 0
     pub fn new(
         ppu: Rc<RefCell<ppu::Ppu>>,
@@ -45,8 +58,16 @@ impl Bus {
         config: Rc<RefCell<crate::console::Config>>,
     ) -> Self {
         let controllers = [
-            Rc::new(RefCell::new(NesJoypad::new_boxed())),
-            Rc::new(RefCell::new(NesJoypad::new_boxed())),
+            Rc::new(RefCell::new(Self::build_controller(
+                ppu.clone(),
+                config.clone(),
+                ControllerType::Joypad,
+            ))),
+            Rc::new(RefCell::new(Self::build_controller(
+                ppu.clone(),
+                config.clone(),
+                ControllerType::Joypad,
+            ))),
         ];
 
         let mut controller = Self {
@@ -54,6 +75,7 @@ impl Bus {
             cartridge: Rc::new(RefCell::new(None)),
             ppu,
             apu,
+            config: config.clone(),
             oam_dma_page: Rc::new(RefCell::new(None)),
             dma_triggered: Rc::new(RefCell::new(false)),
             controllers,
@@ -70,8 +92,6 @@ impl Bus {
         controller.register_device(Box::new(ControllerDevice::new(
             controller.controllers[0].clone(),
             controller.controllers[1].clone(),
-            controller.ppu.clone(),
-            config,
         )));
         controller.register_device(Box::new(ApuDevice::new(controller.apu.clone())));
         controller.register_device(Box::new(OamDmaDevice::new(
@@ -435,11 +455,8 @@ impl Bus {
             return;
         }
 
-        let new_controller: Box<dyn Controller> = match controller_type {
-            ControllerType::Joypad => NesJoypad::new_boxed(),
-            ControllerType::Arkanoid => ArkanoidController::new_boxed(),
-            ControllerType::Zapper => Zapper::new_boxed(),
-        };
+        let new_controller =
+            Self::build_controller(self.ppu.clone(), self.config.clone(), controller_type);
 
         *self.controllers[(port - 1) as usize].borrow_mut() = new_controller;
     }
@@ -575,17 +592,29 @@ impl Bus {
         // Restore port 1 controller - replace if type changed
         match &state.port1_controller {
             ControllerStateWrapper::Joypad(s) => {
-                let mut controller = NesJoypad::new_boxed();
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.config.clone(),
+                    ControllerType::Joypad,
+                );
                 controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
             ControllerStateWrapper::Arkanoid(s) => {
-                let mut controller = ArkanoidController::new_boxed();
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.config.clone(),
+                    ControllerType::Arkanoid,
+                );
                 controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
             ControllerStateWrapper::Zapper(s) => {
-                let mut controller = Zapper::new_boxed();
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.config.clone(),
+                    ControllerType::Zapper,
+                );
                 controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
                 *self.controllers[0].borrow_mut() = controller;
             }
@@ -594,17 +623,29 @@ impl Bus {
         // Restore port 2 controller - replace if type changed
         match &state.port2_controller {
             ControllerStateWrapper::Joypad(s) => {
-                let mut controller = NesJoypad::new_boxed();
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.config.clone(),
+                    ControllerType::Joypad,
+                );
                 controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
             ControllerStateWrapper::Arkanoid(s) => {
-                let mut controller = ArkanoidController::new_boxed();
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.config.clone(),
+                    ControllerType::Arkanoid,
+                );
                 controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }
             ControllerStateWrapper::Zapper(s) => {
-                let mut controller = Zapper::new_boxed();
+                let mut controller = Self::build_controller(
+                    self.ppu.clone(),
+                    self.config.clone(),
+                    ControllerType::Zapper,
+                );
                 controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
                 *self.controllers[1].borrow_mut() = controller;
             }

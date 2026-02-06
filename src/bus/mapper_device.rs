@@ -22,10 +22,6 @@ impl MapperDevice {
 
 impl BusDevice for MapperDevice {
     fn read(&mut self, addr: u16, open_bus: u8, _clock_joypads: bool) -> Option<u8> {
-        if !self.address_range().contains(&addr) {
-            return None;
-        }
-
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             return match addr {
                 0x4020..=0x5FFF => Some(open_bus),
@@ -50,10 +46,6 @@ impl BusDevice for MapperDevice {
     }
 
     fn write(&mut self, addr: u16, value: u8, _is_dummy_write: bool) -> bool {
-        if !self.address_range().contains(&addr) {
-            return false;
-        }
-
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             match addr {
                 0x4020..=0x5FFF => log_info(format!(
