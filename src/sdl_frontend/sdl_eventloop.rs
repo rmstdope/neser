@@ -18,7 +18,6 @@ pub struct SdlEventLoop {
     _sdl_context: sdl2::Sdl,
     gl_backend: Option<SdlGlWrapper>,
     event_pump: sdl2::EventPump,
-    timing_scale: f32,
     vsync_enabled: bool,
     fullscreen: bool,
     paused: bool,
@@ -218,8 +217,6 @@ impl SdlEventLoop {
             nes.set_button(*port, button, pressed);
         }
     }
-    const MIN_TIMING_SCALE: f32 = 0.001;
-    const MAX_TIMING_SCALE: f32 = 100.0;
 
     /// Creates a new EventLoop instance.
     ///
@@ -256,8 +253,6 @@ impl SdlEventLoop {
         audio: Option<SdlNesAudio>,
         config: &Config,
     ) -> Result<Self, String> {
-        let clamped_timing_scale = Self::clamp_timing_scale(config.timing_scale);
-
         let sdl_context = sdl2::init()?;
         let event_pump = sdl_context.event_pump()?;
 
@@ -278,7 +273,6 @@ impl SdlEventLoop {
             _sdl_context: sdl_context,
             gl_backend,
             event_pump,
-            timing_scale: clamped_timing_scale,
             vsync_enabled: config.vsync_enabled,
             fullscreen: config.fullscreen,
             paused: false,
@@ -348,30 +342,6 @@ impl SdlEventLoop {
         }
 
         Ok((controllers, controller_player_map))
-    }
-
-    /// Clamps the timing scaling factor to the valid range [0.001, 100.0].
-    /// Prints a warning to stderr if clamping occurs.
-    fn clamp_timing_scale(scale: f32) -> f32 {
-        if scale < Self::MIN_TIMING_SCALE {
-            log_info(format!(
-                "Warning: Timing scaling factor {} is below minimum {}. Clamping to {}.",
-                scale,
-                Self::MIN_TIMING_SCALE,
-                Self::MIN_TIMING_SCALE
-            ));
-            Self::MIN_TIMING_SCALE
-        } else if scale > Self::MAX_TIMING_SCALE {
-            log_info(format!(
-                "Warning: Timing scaling factor {} is above maximum {}. Clamping to {}.",
-                scale,
-                Self::MAX_TIMING_SCALE,
-                Self::MAX_TIMING_SCALE
-            ));
-            Self::MAX_TIMING_SCALE
-        } else {
-            scale
-        }
     }
 
     fn should_manual_frame_limit(vsync_enabled: bool) -> bool {
@@ -757,12 +727,12 @@ impl SdlEventLoop {
                     crosshair,
                 );
 
-                // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
+                // 4. Frame limiting - maintain ~60 FPS
                 let current_time = timer.performance_counter();
                 let elapsed_ticks = (current_time - last_frame_time) as f64;
                 let elapsed_seconds = elapsed_ticks / performance_frequency;
                 // Adjust target frame time by timing scale (1.0 = normal speed, 2.0 = 2x speed, etc.)
-                let target_frame_time = (1.0 / 60.0) / self.timing_scale as f64;
+                let target_frame_time = (1.0 / 60.0) as f64;
 
                 // Calculate FPS before sleeping
                 // let fps = 1.0 / elapsed_seconds;

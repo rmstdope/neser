@@ -2070,7 +2070,6 @@ impl Cpu {
             }
             "*ISB" => {
                 // *ISB (undocumented): Increment memory then SBC
-                // TODO This should use get_operand_value instead
                 self.isb(operand);
             }
             "INX" => {

@@ -313,8 +313,6 @@ pub struct Config {
     pub apu_channels: ApuChannels,
     /// Window height in pixels (windowed mode only).
     pub window_height: u32,
-    /// Emulation speed multiplier.
-    pub timing_scale: f32,
     /// Optional ROM path from CLI positional argument.
     pub rom_path: Option<String>,
     /// Controller type connected to port 1.
@@ -369,7 +367,6 @@ impl Default for Config {
             tracing: Tracing::default(),
             apu_channels: ApuChannels::ALL,
             window_height: 960,
-            timing_scale: 1.0,
             rom_path: None,
             controller_port1: ControllerType::Joypad,
             controller_port2: ControllerType::Joypad,
@@ -1078,12 +1075,6 @@ impl Config {
                     }
                 }
             }
-            // NOTE: timing_scale is disabled as it doesn't work with the current eventloop design
-            // "timing_scale" => {
-            //     if let Ok(s) = value.parse::<f32>() {
-            //         self.timing_scale = s;
-            //     }
-            // }
             _ => {} // Unknown keys are silently ignored
         }
         Ok(())
@@ -1643,18 +1634,6 @@ mod tests {
         assert_eq!(config.window_height, 720);
     }
 
-    // NOTE: timing_scale tests disabled as the feature doesn't work with current eventloop design
-    // #[test]
-    // fn test_config_timing_scale() {
-    //     let args = vec![
-    //         "neser".to_string(),
-    //         "--timing-scale".to_string(),
-    //         "2.0".to_string(),
-    //     ];
-    //     let config = parse_config(args);
-    //     assert!((config.timing_scale - 2.0).abs() < 0.001);
-    // }
-
     #[test]
     fn test_config_window_height_invalid_errors() {
         let args = vec![
@@ -1676,17 +1655,6 @@ mod tests {
         let result = config_new(args);
         assert!(result.is_err());
     }
-
-    // #[test]
-    // fn test_config_timing_scale_invalid_errors() {
-    //     let args = vec![
-    //         "neser".to_string(),
-    //         "--timing-scale".to_string(),
-    //         "abc".to_string(),
-    //     ];
-    //     let result = Config::new(&args);
-    //     assert!(result.is_err());
-    // }
 
     // Config file tests
 
@@ -2007,13 +1975,6 @@ mod tests {
         assert!(!config.tracing.enabled);
         assert_eq!(config.tracing.cpu, 0);
     }
-
-    // #[test]
-    // fn test_config_file_timing_scale() {
-    //     let mut config = Config::default();
-    //     config.apply_config_value("timing_scale", "1.5").unwrap();
-    //     assert!((config.timing_scale - 1.5).abs() < 0.001);
-    // }
 
     #[test]
     fn test_config_file_bool_formats() {
