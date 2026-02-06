@@ -17,7 +17,6 @@ pub enum ControllerType {
     Zapper,
 }
 
-// TODO remove the "paddle" variant
 impl ControllerType {
     /// Parse a controller type from a string configuration value.
     pub fn parse(value: &str) -> Option<Self> {

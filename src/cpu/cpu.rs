@@ -65,20 +65,11 @@ pub struct Cpu {
     forced_irq_pending: bool,
     /// Master clock (timing model)
     master_clock: MasterClock,
-
     /// When set, the next CPU cycle will not latch IRQ/NMI line state at the end of the cycle.
     ///
     /// This is used to model edge-case timing where certain instructions (notably taken
     /// non-page-crossing branches) ignore interrupts during their final clock.
     skip_interrupt_latch_this_cycle: bool,
-
-    /// Out-of-band master clock used when the CPU itself must tick PPU/APU for
-    /// synthetic CPU cycles (e.g., DMA stalls or interrupt sequences).
-    ///
-    /// This is kept separate from `master_clock` because `master_clock` is also
-    /// advanced by bus accesses during normal instruction execution.
-    // TODO This must go in the future.
-    oob_master_clock: MasterClock,
 
     // DMC DMA state machine
     dmc_dma_running: bool,
@@ -172,7 +163,6 @@ impl Cpu {
             irq_pending: false,
             forced_irq_pending: false,
             master_clock: MasterClock::new(tv_system),
-            oob_master_clock: MasterClock::new(tv_system),
 
             skip_interrupt_latch_this_cycle: false,
 
@@ -279,8 +269,6 @@ impl Cpu {
             skip_interrupt_latch_this_cycle: self.skip_interrupt_latch_this_cycle,
             master_clock: self.master_clock.master_cycles(),
             master_clock_ppu: self.master_clock.ppu_cycles(),
-            oob_master_clock: self.oob_master_clock.master_cycles(),
-            oob_master_clock_ppu: self.oob_master_clock.ppu_cycles(),
             dmc_dma_running: self.dmc_dma_running,
             dmc_dma_need_halt: self.dmc_dma_need_halt,
             dmc_dma_need_dummy_read: self.dmc_dma_need_dummy_read,
@@ -309,10 +297,6 @@ impl Cpu {
         self.skip_interrupt_latch_this_cycle = state.skip_interrupt_latch_this_cycle;
         self.master_clock.set_master_cycles(state.master_clock);
         self.master_clock.set_ppu_cycles(state.master_clock_ppu);
-        self.oob_master_clock
-            .set_master_cycles(state.oob_master_clock);
-        self.oob_master_clock
-            .set_ppu_cycles(state.oob_master_clock_ppu);
         self.dmc_dma_running = state.dmc_dma_running;
         self.dmc_dma_need_halt = state.dmc_dma_need_halt;
         self.dmc_dma_need_dummy_read = state.dmc_dma_need_dummy_read;
@@ -430,11 +414,8 @@ impl Cpu {
     /// Tick a single DMA cycle (advances PPU/APU by one CPU cycle).
     /// Also increments the internal CPU cycle counter for get/put cycle tracking.
     fn tick_single_dma_cycle(&mut self) {
-        let cpu_divider = self.oob_master_clock.cpu_divider();
-        self.oob_master_clock
-            .set_master_cycles(self.oob_master_clock.master_cycles() + cpu_divider);
-
-        let ppu_cycles = self.oob_master_clock.ppu_cycles_since_last();
+        self.master_clock.advance_cpu_cycles(1);
+        let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
         let expansion = self.bus.borrow().mapper_expansion_audio_sample();
@@ -462,12 +443,8 @@ impl Cpu {
     // }
 
     fn tick_ppu_apu_for_cpu_cycles(&mut self, cpu_cycles: u16) {
-        let cpu_divider = self.oob_master_clock.cpu_divider();
-        let master_ticks_to_add = cpu_divider * cpu_cycles as u64;
-        self.oob_master_clock
-            .set_master_cycles(self.oob_master_clock.master_cycles() + master_ticks_to_add);
-
-        let ppu_cycles = self.oob_master_clock.ppu_cycles_since_last();
+        self.master_clock.advance_cpu_cycles(cpu_cycles as u64);
+        let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
         for _ in 0..cpu_cycles {
@@ -564,7 +541,6 @@ impl Cpu {
         // Reset cycle counters and master clock alignment.
         self.total_cycles = 0;
         self.master_clock.reset();
-        self.oob_master_clock.reset();
 
         // Reset takes 7 CPU cycles total: 5 internal cycles + 2 reset-vector reads.
         for _ in 0..5 {
@@ -2434,8 +2410,6 @@ mod tests {
         cpu.skip_interrupt_latch_this_cycle = true;
         cpu.master_clock.set_master_cycles(111);
         cpu.master_clock.set_ppu_cycles(222);
-        cpu.oob_master_clock.set_master_cycles(333);
-        cpu.oob_master_clock.set_ppu_cycles(444);
         cpu.dmc_dma_running = true;
         cpu.dmc_dma_need_halt = true;
         cpu.dmc_dma_need_dummy_read = true;
@@ -2473,14 +2447,6 @@ mod tests {
         assert_eq!(
             restored.master_clock.ppu_cycles(),
             cpu.master_clock.ppu_cycles()
-        );
-        assert_eq!(
-            restored.oob_master_clock.master_cycles(),
-            cpu.oob_master_clock.master_cycles()
-        );
-        assert_eq!(
-            restored.oob_master_clock.ppu_cycles(),
-            cpu.oob_master_clock.ppu_cycles()
         );
         assert_eq!(restored.dmc_dma_running, cpu.dmc_dma_running);
         assert_eq!(restored.dmc_dma_need_halt, cpu.dmc_dma_need_halt);
@@ -3069,6 +3035,30 @@ mod tests {
 
         assert_eq!(ppu_after - ppu_before, dma_cycles as u64 * 3);
         assert_eq!(apu_after - apu_before, dma_cycles as u32);
+    }
+
+    #[test]
+    fn test_oam_dma_advances_master_clock_for_synthetic_cycles() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        cpu.set_total_cycles(8); // even cycle start => 514
+        cpu.master_clock.set_master_cycles(0);
+        cpu.master_clock.set_ppu_cycles(0);
+
+        memory.borrow_mut().write(0x4014, 0x02, false);
+
+        let dma_cycles = cpu
+            .handle_oam_dma_if_pending()
+            .expect("DMA should be pending");
+
+        let expected_master_ticks = cpu.master_clock.cpu_divider() * dma_cycles as u64;
+        assert_eq!(cpu.master_clock.master_cycles(), expected_master_ticks);
     }
 
     #[test]

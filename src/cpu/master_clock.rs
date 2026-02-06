@@ -33,6 +33,10 @@ impl MasterClock {
         self.master_clock = cycles;
     }
 
+    pub fn advance_cpu_cycles(&mut self, cpu_cycles: u64) {
+        self.master_clock += self.cpu_divider * cpu_cycles;
+    }
+
     pub fn before_cpu_cycle(&mut self, is_write: bool) {
         self.master_clock += if is_write {
             self.master_ticks_before_cpu + 1

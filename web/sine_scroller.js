@@ -2,8 +2,6 @@ export function buildFontString(fontSizePx, fontFamily) {
     return `bold ${fontSizePx}px ${fontFamily}`;
 }
 
-// TODO Render scroller to a smaller offscreen buffer and scale up in WebGL.
-
 export function sampleWaveY({ x, timeSeconds, baseY, amplitude, frequency }) {
     const phase = (x * frequency) + timeSeconds;
     return baseY + Math.sin(phase) * amplitude;

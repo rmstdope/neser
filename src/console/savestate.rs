@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 /// Current save-state format version.
 /// Increment this when making breaking changes to the state format.
-pub const SAVESTATE_VERSION: u32 = 7;
+pub const SAVESTATE_VERSION: u32 = 8;
 
 /// Complete emulator state snapshot.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -49,8 +49,6 @@ pub struct CpuState {
     pub skip_interrupt_latch_this_cycle: bool,
     pub master_clock: u64,
     pub master_clock_ppu: u64,
-    pub oob_master_clock: u64,
-    pub oob_master_clock_ppu: u64,
     pub dmc_dma_running: bool,
     pub dmc_dma_need_halt: bool,
     pub dmc_dma_need_dummy_read: bool,
@@ -411,8 +409,6 @@ mod tests {
             skip_interrupt_latch_this_cycle: false,
             master_clock: 0,
             master_clock_ppu: 0,
-            oob_master_clock: 0,
-            oob_master_clock_ppu: 0,
             dmc_dma_running: false,
             dmc_dma_need_halt: false,
             dmc_dma_need_dummy_read: false,
@@ -623,7 +619,7 @@ mod tests {
 
     #[test]
     fn test_savestate_version() {
-        assert_eq!(SAVESTATE_VERSION, 7);
+        assert_eq!(SAVESTATE_VERSION, 8);
     }
 
     #[test]

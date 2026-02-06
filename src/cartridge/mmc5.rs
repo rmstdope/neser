@@ -1991,8 +1991,10 @@ mod tests {
         chr_rom: Vec<u8>,
         mirroring: MirroringMode,
     ) -> std::io::Result<Box<dyn Mapper>> {
-        let context = MapperContext::new(5, prg_rom, chr_rom, mirroring)
-            .with_prg_ram_banks(MMC5Mapper::PRG_RAM_BANK_COUNT_MAX as u8);
+        let context = MapperContext {
+            prg_ram_banks_8k: (MMC5Mapper::PRG_RAM_BANK_COUNT_MAX as u8).max(1),
+            ..MapperContext::new(5, prg_rom, chr_rom, mirroring)
+        };
         create_mapper(context)
     }
 

@@ -5,7 +5,6 @@
 /// out MSB-first (inverted) when strobe is low.
 use super::ControllerInput;
 
-// TODO Change file name to arkanoid_controller.rs
 pub struct ArkanoidController {
     strobe: bool,
     shift_index: u8,

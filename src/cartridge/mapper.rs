@@ -479,8 +479,10 @@ mod tests {
     fn create_mapper_uses_metadata_for_mmc5_prg_ram_size() {
         let prg_rom = vec![0u8; 8 * 1024 * 4];
         let chr_rom = vec![0u8; 8 * 1024];
-        let metadata = MapperContext::new(5, prg_rom, chr_rom, MirroringMode::Horizontal)
-            .with_prg_ram_banks(2);
+        let metadata = MapperContext {
+            prg_ram_banks_8k: 2,
+            ..MapperContext::new(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+        };
 
         let mapper = create_mapper(metadata).expect("MMC5 mapper should be created");
         assert_eq!(mapper.wram_size(), 16 * 1024);
