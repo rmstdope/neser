@@ -177,7 +177,7 @@ impl GlBackend {
             (tex, id)
         };
 
-        // Create glow context for librashader
+        // Create glow context (kept for future use if needed)
         let glow_context = unsafe {
             let proc_address = proc_address.clone();
             std::sync::Arc::new(glow::Context::from_loader_function(|s| {
@@ -289,10 +289,9 @@ impl GlBackend {
                 gl::UNSIGNED_BYTE,
                 self.framebuffer.as_ptr() as *const _,
             );
-            // librashader's OpenGL runtime uses sampler objects whose MIN_FILTER always
-            // includes a mipmap variant (e.g. LINEAR_MIPMAP_LINEAR). Ensure the NES texture
-            // is mipmap-complete, otherwise some drivers (notably macOS) will treat it as
-            // unloadable and sample black.
+            // Custom shaders may use mipmaps for trilinear filtering.
+            // Ensure the NES texture is mipmap-complete, otherwise some drivers (notably macOS)
+            // will treat it as unloadable and sample black.
             gl::GenerateMipmap(gl::TEXTURE_2D);
             gl::Clear(gl::COLOR_BUFFER_BIT);
         }
@@ -300,10 +299,8 @@ impl GlBackend {
         let target_aspect = self.target_aspect();
 
         // Apply shader post-processing if a shader is loaded
-        // The shader will render the NES texture to the screen with filtering applied
-        // Note: librashader's OpenGL runtime renders into a texture-backed output, not
-        // directly into the default framebuffer. We therefore render into an output texture
-        // and draw that texture as the background.
+        // The shader will render the NES texture with filtering applied
+        // For most filters, output goes to a texture; for NTSC, it renders directly to framebuffer.
         let mut shader_output_texture_id: Option<imgui::TextureId> = None;
         if self.shader_manager.has_shader() {
             // Compute a drawable-space letterbox size for the shader output.

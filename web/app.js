@@ -62,6 +62,24 @@ const filters = {
             }
         `
     },
+    smooth: {
+        name: "Smooth",
+        type: "single",
+        fragmentShader: `
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+                precision highp float;
+            #else
+                precision mediump float;
+            #endif
+            varying vec2 v_texCoord;
+            uniform sampler2D u_texture;
+
+            void main() {
+                // Simple sampling - smoothing is done by GL_LINEAR filtering
+                gl_FragColor = texture2D(u_texture, v_texCoord);
+            }
+        `
+    },
     ntsc: {
         name: "NTSC",
         type: "ntsc"
@@ -1103,6 +1121,16 @@ function renderSinglePass(frame) {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+    
+    // Use LINEAR filtering for smooth filter, NEAREST for others
+    if (currentFilter === 'smooth') {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    } else {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    }
+    
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, frame);
 
     gl.useProgram(shaderProgram);
