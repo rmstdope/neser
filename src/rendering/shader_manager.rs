@@ -5,7 +5,6 @@
 
 use crate::rendering::shader_programs::*;
 use gl::types::GLuint;
-use std::ffi::CString;
 use std::ptr;
 
 /// CRT filter parameters
@@ -65,6 +64,7 @@ impl FilterType {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_name(name: &str) -> Option<Self> {
         match name.to_lowercase().as_str() {
             "stock" | "none" => Some(FilterType::Stock),

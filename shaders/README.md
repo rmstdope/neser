@@ -1,45 +1,49 @@
-# Shader Presets
+# Shader Filters
 
-This directory contains curated shader presets from the libretro slang-shaders project.
+NESER supports custom shader filters for visual effects. These filters are implemented using custom GLSL shaders in both the SDL and web frontends.
 
-## Available Presets
+## Available Filters
 
-- **stock.slangp**: Nearest neighbor (no filtering) - default
-- **xbrz-freescale.slangp**: xBRZ pixel art upscaler
-- **crt-lottes.slangp**: CRT simulation by Timothy Lottes (accurate scanlines, shadow mask, bloom)
-- **ntsc-256px-composite.slangp**: NTSC composite video simulation
+- **stock**: No filtering (nearest neighbor) - default
+- **smooth**: Smooth (bilinear/trilinear filtering)
+- **crt**: CRT simulation (scanlines, shadow mask, bloom, screen warp)
+- **ntsc**: NTSC composite video simulation (YIQ encoding with chroma artifacts)
+
+## Implementation
+
+**SDL Frontend**: Custom OpenGL shaders compiled at runtime from GLSL source embedded in the binary.
+
+**Web Frontend**: Custom WebGL shaders with the same visual effects.
+
+Both frontends use custom shader implementations to avoid external dependencies and ensure consistent behavior across platforms.
 
 ## Usage
 
-Use the `--filter` flag with a simplified name:
-
+Via command line:
 ```bash
-neser rom.nes --filter crt     # CRT simulation
-neser rom.nes --filter ntsc    # NTSC composite
-neser rom.nes --filter smooth  # Smooth upscaling
-neser rom.nes --filter none    # No filter
+neser --filter crt
+neser --filter ntsc
+neser --filter smooth
+neser --filter none
 ```
 
-Or set in config file:
-
-```text
+Via config file:
+```
 filter=crt
 ```
 
-You can also cycle through shaders at runtime with F6.
+Or cycle through filters at runtime by pressing F6.
 
-## Implementation Status
+## Technical Details
 
-✅ **COMPLETE** - Shader infrastructure is fully functional:
+The shader presets (.slangp files) in this directory are retained for backward compatibility but are no longer required. The actual shader implementation is now in:
+- SDL: `src/rendering/shader_programs.rs` (GLSL source) and `src/rendering/shader_manager.rs` (compilation and management)
+- Web: `web/app.js` (WebGL shader source and rendering)
 
-- Shader preset loading via librashader ✓
-- CLI flag and runtime cycling ✓
-- Shader application in rendering pipeline ✓
-- FilterChain::frame() properly integrated ✓
-- ImGui debugger renders correctly on top ✓
+## Filter Order
 
-The shader system is production-ready. All shaders render to the screen with hardware acceleration, and the ImGui debugger overlay continues to work correctly.
-
-## Source
-
-Shaders sourced from: <https://github.com/libretro/slang-shaders>
+When cycling filters with F6, the order is:
+1. None (stock)
+2. NTSC
+3. CRT
+4. Smooth
