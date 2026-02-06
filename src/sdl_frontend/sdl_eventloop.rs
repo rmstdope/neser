@@ -20,6 +20,7 @@ pub struct SdlEventLoop {
     event_pump: sdl2::EventPump,
     timing_scale: f32,
     vsync_enabled: bool,
+    fullscreen: bool,
     paused: bool,
     help_overlay_visible: bool,
     debugger_open_requested: bool,
@@ -279,6 +280,7 @@ impl SdlEventLoop {
             event_pump,
             timing_scale: clamped_timing_scale,
             vsync_enabled: config.vsync_enabled,
+            fullscreen: config.fullscreen,
             paused: false,
             help_overlay_visible: false,
             debugger_open_requested: false,
@@ -379,6 +381,19 @@ impl SdlEventLoop {
     fn enter_debugger(&mut self) {
         self.paused = true;
         self.debugger_open_requested = true;
+    }
+
+    fn toggle_fullscreen(&mut self, gl_backend: Option<&mut SdlGlWrapper>) {
+        let next = !self.fullscreen;
+
+        if let Some(gl_backend) = gl_backend {
+            if let Err(err) = gl_backend.set_fullscreen(next) {
+                log_info(format!("Failed to toggle fullscreen: {err}"));
+                return;
+            }
+        }
+
+        self.fullscreen = next;
     }
 
     fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
@@ -600,6 +615,8 @@ impl SdlEventLoop {
                             // Handle F4 for shader cycling
                             if keycode == Keycode::F4 {
                                 gl_backend.cycle_shader();
+                            } else if keycode == Keycode::F12 {
+                                self.toggle_fullscreen(Some(&mut gl_backend));
                             } else if self.handle_key_down_for_run(nes, keycode)
                                 == KeyDownOutcome::Quit
                             {
@@ -853,6 +870,11 @@ impl SdlEventLoop {
         self.debugger_open_requested
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn is_fullscreen(&self) -> bool {
+        self.fullscreen
+    }
+
     fn tick_headless_once_for_run(&mut self, nes: &mut Nes) -> bool {
         // Returns `true` if the caller should quit the event loop.
         let events: Vec<_> = self.event_pump.poll_iter().collect();
@@ -989,6 +1011,11 @@ impl SdlEventLoop {
             return KeyDownOutcome::Continue;
         }
 
+        if keycode == Keycode::F12 {
+            self.toggle_fullscreen(None);
+            return KeyDownOutcome::Continue;
+        }
+
         let keyboard_ports = Self::keyboard_ports(nes, &self.controller_player_map);
         Self::handle_key_down_with_keyboard_ports(
             nes,
@@ -1079,6 +1106,7 @@ impl SdlEventLoop {
     /// - F5: Open debugger (when closed) / Continue (when debugger open)
     /// - F10: Debugger step-over (JSR runs until RTS)
     /// - F11: Debugger step-into (single CPU tick)
+    /// - F12: Toggle fullscreen
     /// - F2/F3: Volume up/down (when audio is enabled)
     /// - F6: Save state (when a ROM is loaded)
     /// - F7: Load state (when a ROM is loaded)
@@ -1205,6 +1233,7 @@ F6: Save state\n\
 F7: Load state\n\
 F10: Step over\n\
 F11: Step into\n\
+F12: Fullscreen\n\
 \n\
 Controller (Player 1)\n\
 W/A/S/D: D-Pad\n\
@@ -1606,6 +1635,22 @@ mod tests {
 
         assert_eq!(read_joypad_buttons(&mut nes, 1), [0; 8]);
         assert_eq!(read_joypad_buttons(&mut nes, 2), [0, 0, 0, 0, 1, 0, 0, 0]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_key_down_f12_toggles_fullscreen_state() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(Config::default());
+
+        assert!(!event_loop.is_fullscreen());
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::F12);
+        assert!(event_loop.is_fullscreen());
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::F12);
+        assert!(!event_loop.is_fullscreen());
     }
 
     #[test]
@@ -2037,6 +2082,7 @@ mod tests {
         assert!(text.contains("F7"));
         assert!(text.contains("F10"));
         assert!(text.contains("F11"));
+        assert!(text.contains("F12"));
         assert!(text.contains("W/A/S/D"));
         assert!(text.contains("G"));
         assert!(text.contains("F"));

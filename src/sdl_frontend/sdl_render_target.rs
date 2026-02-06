@@ -1,6 +1,6 @@
 use crate::rendering::RenderTarget;
 
-use sdl2::video::{GLContext, Window};
+use sdl2::video::{FullscreenType, GLContext, Window};
 
 /// SDL-backed render target that exposes window/GL context operations
 /// to the renderer without leaking SDL types into the rendering module.
@@ -30,5 +30,15 @@ impl RenderTarget for SdlRenderTarget {
         self.window
             .gl_make_current(&self.gl_context)
             .map_err(|e| e.to_string())
+    }
+
+    /// Enables or disables fullscreen mode for the SDL window.
+    fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String> {
+        let mode = if enabled {
+            FullscreenType::Desktop
+        } else {
+            FullscreenType::Off
+        };
+        self.window.set_fullscreen(mode).map_err(|e| e.to_string())
     }
 }

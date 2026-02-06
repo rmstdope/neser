@@ -21,6 +21,8 @@ pub trait RenderTarget {
     fn swap_buffers(&self);
     /// Makes the render target's GL context current.
     fn make_current(&self) -> Result<(), String>;
+    /// Toggles fullscreen mode for the render target.
+    fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String>;
 }
 
 /// Loader for GL procedure addresses used by OpenGL and related backends.
@@ -97,6 +99,11 @@ impl GlBackend {
     /// Returns the logical window size in pixels reported by the render target.
     pub fn window_size(&self) -> (u32, u32) {
         self.render_target.window_size()
+    }
+
+    /// Enables or disables fullscreen mode for the underlying render target.
+    pub fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String> {
+        self.render_target.set_fullscreen(enabled)
     }
 
     /// Computes windowed mode dimensions preserving the target aspect ratio.

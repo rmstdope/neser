@@ -115,6 +115,11 @@ impl SdlGlWrapper {
     pub fn cycle_shader(&mut self) {
         self.gl_backend.cycle_shader();
     }
+
+    /// Enables or disables fullscreen mode for the SDL window.
+    pub fn set_fullscreen(&mut self, enabled: bool) -> Result<(), String> {
+        self.gl_backend.set_fullscreen(enabled)
+    }
 }
 
 /// Chooses which display to use for fullscreen rendering.
