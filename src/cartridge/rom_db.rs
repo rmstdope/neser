@@ -30,7 +30,7 @@ pub fn calculate_rom_crc32(prg_rom: &[u8], chr_rom: &[u8]) -> u32 {
         let index = ((crc ^ byte as u32) & 0xFF) as usize;
         crc = (crc >> 8) ^ CRC32_TABLE[index];
     }
-    // crate::debugging::log_info(format!("Calculated CRC32: {:08X}", crc ^ 0xFFFFFFFF));
+    crate::debugging::log_info(format!("Calculated CRC32: {:08X}", crc ^ 0xFFFFFFFF));
     !crc
 }
 
@@ -54,6 +54,7 @@ const ARKANOID_PADDLE_PORT1_CRCS: &[u32] = &[
 /// CRC32 values for ROMs that default to Zapper input on port 2.
 const ZAPPER_PORT2_CRCS: &[u32] = &[
     0x24598791, // Duck Hunt (World)
+    0xFF24D794, // Hogan's Alley (World)
 ];
 
 /// Check if a ROM CRC requires alternate MMC3 IRQ behavior.
