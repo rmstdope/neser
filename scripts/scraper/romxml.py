@@ -1,7 +1,7 @@
 """ Stream parser for ROM XML files """
 import xml.etree.ElementTree as ET
 from typing import Dict, Optional
-from rom_database import RomDbKey
+from rom_database import ControllerType, RomDbKey
 
 
 class RomXml:
@@ -175,19 +175,6 @@ class RomXml:
         # on nescart
         if crc == "343C7BB0":
             record[RomDbKey.MAPPER.value] = 3
-        # The following titles have EEPROM and hence no battery
-        # Dragon Ball Z III: Ressen Jinzou Ningen (DC52BF0C)
-        # Dragon Ball Z Gaiden: Saiyajin Zetsumetsu Keikaku (136CA449)
-        # Famicom Jump II: Saikyou no 7 Nin (E170404C)
-        # Magical Taruruuto-kun: Fantastic World!! (Version 2.0) (DCB972CE, 0CF42E69)
-        # Dragon Ball Z II: Gekishin Freeza!! (Version 2.0) (A9541452, 99240573)
-        # SD Gundam Gaiden: Knight Gundam Monogatari 2: Hikari no Kishi (B049A8C4)
-        # SD Gundam Gaiden: Knight Gundam Monogatari 3: Densetsu no Kishi Dan (C2840372)
-        # Dragon Ball Z: Kyoushuu! Saiyajin (183859D2)
-        # SD Gundam Gaiden: Knight Gundam Monogatari (Version 2.0) (276AC722)
-        if crc in ["DC52BF0C", "136CA449", "E170404C", "DCB972CE", "0CF42E69",
-                "A9541452", "99240573", "B049A8C4", "C2840372", "183859D2", "276AC722"]:
-            record[RomDbKey.BATTERY.value] = 0
         # Dokuganryuu Masamune (10C8F2FA) as 8kB of PRGM NVRAM according to component list
         # on nescart
         if crc == "10C8F2FA":
@@ -201,6 +188,16 @@ class RomXml:
         # Rad Racer II (404B2E8B) has a 8kB VRAM chip, but likely not all address lines connected
         if crc == "404B2E8B":
             record[RomDbKey.CHR_RAM_SIZE.value] = 4096
+        # These games used side A of the Power PAd
+        # Super Team Games (D74B2719)
+        # World Class Track Meet (5734EB9E, AF4010EA)
+        # Dance Aerobics (9E382EBF)
+        # Stadium Events (FCE71311, 0DA28A50)
+        if crc in ["D74B2719", "5734EB9E", "AF4010EA", "9E382EBF", "FCE71311"]:
+            record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.POWER_PAD_SIDE_A
+        # Quattro Sports (CCCAF368) did not use four score, but needed an Aladdin Deck enhancer
+        if crc == "CCCAF368":
+            record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.ALADDIN_DECK_ENHANCER
 
     def next_record(self) -> Optional[Dict[str, str]]:
         """Return the next parsed game record dict, or None if finished."""

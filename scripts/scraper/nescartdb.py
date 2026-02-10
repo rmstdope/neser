@@ -38,18 +38,23 @@ class NesCartDb:
             if s == "all":
                 ids_list = list(range(0, MAX_ID + 1))
             else:
-                m = re.match(r"^(\d+)-(\d+)$", s)
-                if m:
-                    start, end = int(m.group(1)), int(m.group(2))
-                    if start > end:
-                        start, end = end, start
-                    start = max(0, start)
-                    end = min(MAX_ID, end)
-                    ids_list = list(range(start, end + 1))
-                elif s.isdigit():
-                    ids_list = [int(s)]
-                else:
-                    raise ValueError(f"invalid ids string: {ids}")
+                tokens = [token.strip() for token in s.split(",") if token.strip()]
+                ids_list = []
+                for token in tokens:
+                    if token == "all":
+                        raise ValueError("'all' cannot be combined with other ids")
+                    m = re.match(r"^(\d+)-(\d+)$", token)
+                    if m:
+                        start, end = int(m.group(1)), int(m.group(2))
+                        if start > end:
+                            start, end = end, start
+                        start = max(0, start)
+                        end = min(MAX_ID, end)
+                        ids_list.extend(range(start, end + 1))
+                    elif token.isdigit():
+                        ids_list.append(int(token))
+                    else:
+                        raise ValueError(f"invalid ids string: {ids}")
         elif isinstance(ids, int):
             ids_list = [ids]
         else:
@@ -205,18 +210,32 @@ class NesCartDb:
         return None
 
     @staticmethod
-    def _match_non_standard_controller(value: str) -> Optional[int]:
+    def _match_non_standard_controller(rom_id: int, value: str,) -> Optional[int]:
         normalized = value.strip().lower()
         if "4-player adapter" in normalized:
+            # Smash T.V. is double fisted, which implies a four score
+            if rom_id == 927:
+                return ControllerType.DOUBLE_FISTED
             return ControllerType.NES_FOUR_SCORE
         elif "zapper light gun" in normalized:
             return ControllerType.ZAPPER_4017
+        # 525, 600, 780, 910, 928 should be B not A
         elif "power pad" in normalized or "family fun fitness mat" in normalized:
+            # Only Athletic world (525) and Street Cop (928) used B side
+            if rom_id in [525, 928]:
+                return ControllerType.POWER_PAD_SIDE_B
             return ControllerType.POWER_PAD_SIDE_A
-        elif "r. o. b." in normalized:
-            return ControllerType.ROB_STACK_UP
+        # All Japaneese titles used the A side of the mat
         elif "family trainer mat" in normalized:
             return ControllerType.FAMILY_TRAINER_SIDE_A
+        # ROB is one and the same hardware but need to patch as they differ in nes20db
+        elif "r. o. b." in normalized:
+            # Gyromite ROB
+            if rom_id in [266, 584, 785]:
+                return ControllerType.ROB_GYROMITE
+            # Stack Up ROB
+            else:
+                return ControllerType.ROB_STACK_UP
         elif "3-d glasses" in normalized:
             return ControllerType.THREE_D_GLASSES
         elif "power glove" in normalized:
@@ -225,6 +244,7 @@ class NesCartDb:
             return ControllerType.ARKANOID_VAUS_NES
         elif "miracle piano" in normalized:
             return ControllerType.MIRACLE_PIANO
+        # 550 says FOUR SCORE
         elif "aladdin deck enhancer" in normalized:
             return ControllerType.ALADDIN_DECK_ENHANCER
         elif "barcode battler" in normalized:
@@ -242,18 +262,18 @@ class NesCartDb:
         return None
 
     @staticmethod
-    def _parse_periphereals(value: str) -> Optional[int]:
+    def _parse_periphereals(rom_id: int, value: str) -> Optional[int]:
         # If there are more than one value, one is bound to be Famicom/NES controller, so ignore that
         # Accommodate for an empty value bug on the web page
         value = ",".join(v.strip() for v in value.split(",") if v.strip())
         if ',' in value:
             for val in value.split(','):
-                matched = NesCartDb._match_non_standard_controller(val)
+                matched = NesCartDb._match_non_standard_controller(rom_id, val)
                 if matched is not None:
                     return matched
             print(f"\nUnrecognized peripherals value: '{value}'")
             exit(1)
-        matched = NesCartDb._match_non_standard_controller(value)
+        matched = NesCartDb._match_non_standard_controller(rom_id, value)
         if matched is not None:
             return matched
         if "nes controller" in value.lower() or "famicom controller" in value.lower():
@@ -261,7 +281,7 @@ class NesCartDb:
         print(f"\nUnrecognized peripherals value: '{value}'")
         exit(1)
 
-    def _build_result(self, html: str) -> Optional[Dict[str, str]]:
+    def _build_result(self, rom_id: int, html: str) -> Optional[Dict[str, str]]:
         soup = BeautifulSoup(html, "html.parser")
         invalid_header = soup.find("h3")
         if invalid_header and invalid_header.get_text(strip=True) == "Invalid profile specified!":
@@ -297,6 +317,9 @@ class NesCartDb:
         work_ram = self._first_value(kv, ["WRAM", "Work RAM"])
         eeprom_size = self._parse_eeprom_size_from_chip_info(chip_info) or 0
         batt = self._first_value(kv, ["Battery present", "Battery"])
+        # In iNES 2.0, battery means "battery or other non-volatile memory"
+        if eeprom_size > 0:
+            batt = '1'
         peri = self._first_value(kv, ["Peripherals", "Controllers"])
         if mapper:
             result[RomDbKey.MAPPER.value] = self._parse_int(mapper)
@@ -317,7 +340,7 @@ class NesCartDb:
         if batt:
             result[RomDbKey.BATTERY.value] = self._parse_yes_no(batt)
         if peri:
-            peri_value = self._parse_periphereals(peri)
+            peri_value = self._parse_periphereals(rom_id, peri)
             if peri_value:
                 result[RomDbKey.EXPANSION_TYPE.value] = peri_value
         # Peripherals/Controller fields are text and have no matching DB column.
@@ -342,15 +365,6 @@ class NesCartDb:
         # nes20db says no 4 so let's go with that
         if rom_id in [473, 1316]:
             record[RomDbKey.MAPPER.value] = 4
-        # # Dragon Ball Z III: Ressen Jinzou Ningen (1536, 1751, 3084, 3085, 3086,
-        # # 3087, 3088, 3296) has a 256 byte EEPROM
-        # # Dragon Ball Z Gaiden: Saiyajin Zetsumetsu Keikaku (1537, 2616, 3122, 3299) too
-        # # Dragon Ball Z II: Gekishin Freeza!! (Version 2.0) (1748, 2604, 2089, 3090, 3091, 3298) too
-        # # SD Gundam Gaiden: Knight Gundam Monogatari 2: Hikari no Kishi (1752, 3076, 3077, 3078) too
-        # # SD Gundam Gaiden: Knight Gundam Monogatari 3: Densetsu no Kishi Dan (1753) too
-        # if rom_id in [1536, 1751, 3084, 3085, 3086, 3087, 3088, 3296, 1537, 2616, 3122, 3299, 1748,
-        #                 2604, 2089, 3090, 3091, 3298, 1752, 3076, 3077, 3078, 1753]:
-        #     record[RomDbKey.PRG_NVRAM_SIZE] = 256
         # Kyonshiizu 2 (ROM_ID 1559) has a X1-005 (mapper 80) with internal Save RAM
         # Taito Grand Prix: Eikou e no License (ROM_ID 1758) too
         # Fudou Myouou Den (ROM_ID 1762) too
@@ -396,7 +410,7 @@ class NesCartDb:
 
             url = self._base_url.format(rom_id)
             html = self._fetch_html(url)
-            record = self._build_result(html)
+            record = self._build_result(rom_id, html)
             self._patch(rom_id, record)
             self._remaining -= 1
         return record
