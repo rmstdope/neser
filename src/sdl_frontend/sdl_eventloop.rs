@@ -356,11 +356,11 @@ impl SdlEventLoop {
     fn toggle_fullscreen(&mut self, gl_backend: Option<&mut SdlGlWrapper>) {
         let next = !self.fullscreen;
 
-        if let Some(gl_backend) = gl_backend {
-            if let Err(err) = gl_backend.set_fullscreen(next) {
-                log_info(format!("Failed to toggle fullscreen: {err}"));
-                return;
-            }
+        if let Some(gl_backend) = gl_backend
+            && let Err(err) = gl_backend.set_fullscreen(next)
+        {
+            log_info(format!("Failed to toggle fullscreen: {err}"));
+            return;
         }
 
         self.fullscreen = next;
@@ -732,7 +732,7 @@ impl SdlEventLoop {
                 let elapsed_ticks = (current_time - last_frame_time) as f64;
                 let elapsed_seconds = elapsed_ticks / performance_frequency;
                 // Adjust target frame time by timing scale (1.0 = normal speed, 2.0 = 2x speed, etc.)
-                let target_frame_time = (1.0 / 60.0) as f64;
+                let target_frame_time = 1.0 / 60.0;
 
                 // Calculate FPS before sleeping
                 // let fps = 1.0 / elapsed_seconds;

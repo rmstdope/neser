@@ -792,6 +792,7 @@ impl Ppu {
         self.prev_a12 = state.prev_a12;
     }
 
+    #[allow(dead_code)]
     pub fn scroll_state(&self) -> (u16, u16, u8, bool) {
         self.registers.scroll_state()
     }

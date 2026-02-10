@@ -428,6 +428,7 @@ impl Registers {
         self.cycle_count = cycles;
     }
 
+    #[allow(dead_code)]
     pub fn scroll_state(&self) -> (u16, u16, u8, bool) {
         (self.t, self.v, self.x, self.w)
     }

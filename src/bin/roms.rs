@@ -453,7 +453,7 @@ mod tests {
         let info = parse_rom_header(&header).expect("parse header");
 
         assert_eq!(info.prg_rom_size_bytes, 2 * 16 * 1024);
-        assert_eq!(info.chr_rom_size_bytes, 1 * 8 * 1024);
+        assert_eq!(info.chr_rom_size_bytes, 8 * 1024);
         assert_eq!(info.prg_ram_size_bytes, Some(2 * 8 * 1024));
         assert_eq!(info.mapper, 0x50);
         assert_eq!(info.mirroring, Mirroring::Vertical);
