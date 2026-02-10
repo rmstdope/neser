@@ -137,11 +137,11 @@ impl Cartridge {
         let crc32 = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
 
         // Create mapper instance
-        let mapper = crate::cartridge::mapper::create_mapper(
-            MapperContext::new(mapper_number, prg_rom, chr_rom, mirroring)
-                .with_prg_ram_banks(prg_ram_banks_8k)
-                .with_battery_backed_prg_ram(battery_backed_prg_ram),
-        )
+        let mapper = crate::cartridge::mapper::create_mapper(MapperContext {
+            prg_ram_banks_8k: prg_ram_banks_8k.max(1),
+            battery_backed_prg_ram,
+            ..MapperContext::new(mapper_number, prg_rom, chr_rom, mirroring)
+        })
         .map_err(|err| {
             if err.kind() == io::ErrorKind::Unsupported {
                 CartridgeError::UnsupportedMapper(mapper_number)

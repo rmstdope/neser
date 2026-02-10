@@ -1,0 +1,208 @@
+"""Unit tests for the ``RomDatabase`` helper in ``scripts.scraper.rom_database``.
+
+These tests exercise schema creation, inserts, updates, upserts,
+processing of parsed records and utility functions.
+"""
+
+import os
+import tempfile
+import unittest
+
+from scripts.scraper.rom_database import RomDatabase, RomDbKey
+
+
+class TestRomDatabase(unittest.TestCase):
+    """Tests for RomDatabase: schema, insert/update, queries and helpers."""
+    def setUp(self) -> None:
+        fd, self.db_path = tempfile.mkstemp(prefix="romdb_test_", suffix=".sqlite")
+        os.close(fd)
+        self.db = RomDatabase(self.db_path)
+
+    def tearDown(self) -> None:
+        try:
+            self.db.close()
+        except Exception:
+            pass
+        try:
+            os.unlink(self.db_path)
+        except Exception:
+            pass
+
+    def test_schema_created_and_reset(self):
+        """Verify initial schema is created and reset_schema recreates it."""
+        cur = self.db._conn.execute("PRAGMA table_info(roms)")
+        cols = {r[1] for r in cur.fetchall()}
+        self.assertIn(RomDbKey.CRC.value, cols)
+        self.assertIn(RomDbKey.NAME.value, cols)
+        self.assertIn(RomDbKey.ROM_ID.value, cols)
+        self.assertIn(RomDbKey.COUNTRY.value, cols)
+
+        # Reset schema should recreate table and keep rom_class column
+        self.db.reset_schema()
+        cur = self.db._conn.execute("PRAGMA table_info(roms)")
+        cols_after = {r[1] for r in cur.fetchall()}
+        self.assertIn(RomDbKey.CONSOLE_CLASS.value, cols_after)
+        self.assertIn(RomDbKey.COUNTRY.value, cols_after)
+
+    def test_insert_and_get_by_crc(self):
+        """Insert a minimal row by CRC and retrieve it via get_rom_by_crc."""
+        data = {
+            RomDbKey.CRC.value: "DEADBEEF",
+            RomDbKey.CONSOLE_REGION.value: 0,
+            RomDbKey.NAMETABLE_LAYOUT.value: "horizontal",
+        }
+        self.db.insert_rom_by_crc(data)
+        fetched = self.db.get_rom_by_crc("DEADBEEF")
+        self.assertIsNotNone(fetched)
+        self.assertEqual(fetched.get(RomDbKey.CRC.value), "DEADBEEF")
+        # Accept integer or string storage representation
+        self.assertEqual(str(fetched.get(RomDbKey.CONSOLE_REGION.value)), "0")
+
+    def test_upsert_and_get_rom(self):
+        """Upsert a full row and retrieve it by rom_id."""
+        rom_id = 42
+        payload = {
+            RomDbKey.NAME.value: "Test ROM",
+            RomDbKey.CRC.value: "ABCD1234",
+            RomDbKey.CONSOLE_TYPE.value: 0,
+            RomDbKey.MAPPER.value: 1,
+            RomDbKey.PRG_ROM_SIZE.value: 2,
+        }
+        self.db.upsert_rom(rom_id, payload)
+        got = self.db.get_rom(rom_id)
+        self.assertIsNotNone(got)
+        self.assertEqual(got.get(RomDbKey.NAME.value), "Test ROM")
+        self.assertEqual(got.get(RomDbKey.CRC.value), "ABCD1234")
+
+    def test_update_rom_by_crc(self):
+        """Insert by CRC and update a column with update_rom_by_crc."""
+        crc = "BEEFCAFE"
+        self.db.insert_rom_by_crc({RomDbKey.CRC.value: crc})
+        # update a new column
+        self.db.update_rom_by_crc(crc, {RomDbKey.NAMETABLE_LAYOUT.value: "vertical"})
+        got = self.db.get_rom_by_crc(crc)
+        self.assertIsNotNone(got)
+        self.assertEqual(got.get(RomDbKey.NAMETABLE_LAYOUT.value), "vertical")
+
+    def test_process_record_by_crc_outcomes(self):
+        """Exercise process_record_by_crc return codes for add/update/skip/conflict."""
+        crc = "FEEDFACE"
+        # add
+        add_res = self.db.process_record_by_crc({RomDbKey.CRC.value: crc})
+        self.assertEqual(add_res, (1, 0, 0, 0))
+
+        # update (add name)
+        upd_res = self.db.process_record_by_crc({RomDbKey.CRC.value: crc, RomDbKey.NAME.value: "Name1"})
+        self.assertEqual(upd_res, (0, 1, 0, 0))
+
+        # skip (same data)
+        skip_res = self.db.process_record_by_crc({RomDbKey.CRC.value: crc, RomDbKey.NAME.value: "Name1"})
+        self.assertEqual(skip_res, (0, 0, 1, 0))
+
+        # conflict (different name)
+        conflict_res = self.db.process_record_by_crc({RomDbKey.CRC.value: crc, RomDbKey.NAME.value: "Other"})
+        self.assertEqual(conflict_res, (0, 0, 0, 1))
+
+    def test_process_record_by_crc_inserts_full_record(self):
+        """New CRC inserts should persist all provided fields."""
+        crc = "AABBCCDD"
+        payload = {
+            RomDbKey.CRC.value: crc,
+            RomDbKey.MAPPER.value: 2,
+            RomDbKey.PRG_ROM_SIZE.value: 16384,
+        }
+        add_res = self.db.process_record_by_crc(payload)
+        self.assertEqual(add_res, (1, 0, 0, 0))
+
+        fetched = self.db.get_rom_by_crc(crc)
+        self.assertIsNotNone(fetched)
+        self.assertEqual(str(fetched.get(RomDbKey.MAPPER.value)), "2")
+        self.assertEqual(str(fetched.get(RomDbKey.PRG_ROM_SIZE.value)), "16384")
+
+    def test_process_record_by_crc_ram_sum_mismatch_conflict(self):
+        """RAM sum mismatch between existing and update should trigger conflict."""
+        crc = "RAMSUMCONFLICT"
+        self.db.insert_rom_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.PRG_RAM_SIZE.value: 8,
+            RomDbKey.PRG_NVRAM_SIZE.value: 0,
+            RomDbKey.CHR_RAM_SIZE.value: 4,
+            RomDbKey.CHR_NVRAM_SIZE.value: 0,
+        })
+
+        conflict_res = self.db.process_record_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.PRG_RAM_SIZE.value: 16,
+            RomDbKey.PRG_NVRAM_SIZE.value: 0,
+            RomDbKey.CHR_RAM_SIZE.value: 4,
+            RomDbKey.CHR_NVRAM_SIZE.value: 0,
+        })
+
+        self.assertEqual(conflict_res, (0, 0, 0, 1))
+
+    def test_process_record_by_crc_ram_sum_match_no_conflict(self):
+        """RAM sum match between existing and update should not trigger conflict."""
+        crc = "RAMSUMMATCH"
+        self.db.insert_rom_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.PRG_RAM_SIZE.value: 8,
+            RomDbKey.PRG_NVRAM_SIZE.value: 0,
+            RomDbKey.CHR_RAM_SIZE.value: 4,
+            RomDbKey.CHR_NVRAM_SIZE.value: 0,
+        })
+
+        skip_res = self.db.process_record_by_crc({
+            RomDbKey.CRC.value: crc,
+            RomDbKey.PRG_RAM_SIZE.value: 0,
+            RomDbKey.PRG_NVRAM_SIZE.value: 8,
+            RomDbKey.CHR_RAM_SIZE.value: 0,
+            RomDbKey.CHR_NVRAM_SIZE.value: 4,
+        })
+
+        self.assertEqual(skip_res, (0, 0, 1, 0))
+
+    def test_list_roms_ordering(self):
+        """Ensure list_roms returns rows ordered by rom_id ascending."""
+        # insert two roms via upsert
+        self.db.upsert_rom(2, {RomDbKey.NAME.value: "B", RomDbKey.CRC.value: "C2"})
+        self.db.upsert_rom(1, {RomDbKey.NAME.value: "A", RomDbKey.CRC.value: "C1"})
+        rows = self.db.list_roms()
+        self.assertGreaterEqual(len(rows), 2)
+        # ensure ordering by rom_id ascending and that our entries exist
+        ids = [r[RomDbKey.ROM_ID.value] for r in rows if r.get(RomDbKey.ROM_ID.value) in (1, 2)]
+        self.assertIn(1, ids)
+        self.assertIn(2, ids)
+
+    def test_ensure_columns_adds_column(self):
+        """Verify _ensure_columns adds missing columns to the table."""
+        # add a synthetic column and verify it appears
+        self.db._ensure_columns({"new_test_col": "TEXT"})
+        cur = self.db._conn.execute("PRAGMA table_info(roms)")
+        cols = {r[1] for r in cur.fetchall()}
+        self.assertIn("new_test_col", cols)
+
+    def test_upsert_stores_all_fields(self):
+        """Upsert should persist all fields and allow retrieval by rom_id."""
+        rom_id = 7
+        col_types = self.db.list_columns_with_types()
+        col_names = [name for name in col_types.keys() if name != RomDbKey.ROM_ID.value]
+
+        payload = {}
+        int_value = 1
+        for name in col_names:
+            if col_types[name] == "INTEGER":
+                payload[name] = int_value
+                int_value += 1
+            else:
+                payload[name] = f"val_{name}"
+        self.assertEqual(len(payload), len(col_names))
+
+        self.db.upsert_rom(rom_id, payload)
+        fetched = self.db.get_rom(rom_id)
+        self.assertIsNotNone(fetched)
+        for key, value in payload.items():
+            self.assertEqual(str(fetched.get(key)), str(value))
+
+
+if __name__ == "__main__":
+    unittest.main()

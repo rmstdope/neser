@@ -62,7 +62,6 @@ impl WasmNes {
         if !self.rom_loaded {
             return vec![0u8; 256 * 240 * 3];
         }
-        // NOTE: MVP implementation runs a synchronous loop until a frame is ready.
         // For browser responsiveness, this could be broken into smaller chunks via
         // async/yield in a future enhancement. See web/README.md for notes about
         // potential main-thread blocking with heavy frames.

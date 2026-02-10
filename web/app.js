@@ -43,7 +43,7 @@ const SCROLLER_FREQUENCY = 0.009;
 const SCROLLER_FONT_SIZE_PX = 20;
 const SCROLLER_FONT_FAMILY = "'VT323', monospace";
 
-// WebGL shader setup for filters - Thorough manual port from SDL .slang shaders
+// WebGL shader setup for filters
 const filters = {
     stock: {
         name: "None",

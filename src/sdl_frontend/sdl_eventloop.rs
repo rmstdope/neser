@@ -18,8 +18,8 @@ pub struct SdlEventLoop {
     _sdl_context: sdl2::Sdl,
     gl_backend: Option<SdlGlWrapper>,
     event_pump: sdl2::EventPump,
-    timing_scale: f32,
     vsync_enabled: bool,
+    fullscreen: bool,
     paused: bool,
     help_overlay_visible: bool,
     debugger_open_requested: bool,
@@ -217,8 +217,6 @@ impl SdlEventLoop {
             nes.set_button(*port, button, pressed);
         }
     }
-    const MIN_TIMING_SCALE: f32 = 0.001;
-    const MAX_TIMING_SCALE: f32 = 100.0;
 
     /// Creates a new EventLoop instance.
     ///
@@ -255,8 +253,6 @@ impl SdlEventLoop {
         audio: Option<SdlNesAudio>,
         config: &Config,
     ) -> Result<Self, String> {
-        let clamped_timing_scale = Self::clamp_timing_scale(config.timing_scale);
-
         let sdl_context = sdl2::init()?;
         let event_pump = sdl_context.event_pump()?;
 
@@ -277,8 +273,8 @@ impl SdlEventLoop {
             _sdl_context: sdl_context,
             gl_backend,
             event_pump,
-            timing_scale: clamped_timing_scale,
             vsync_enabled: config.vsync_enabled,
+            fullscreen: config.fullscreen,
             paused: false,
             help_overlay_visible: false,
             debugger_open_requested: false,
@@ -348,30 +344,6 @@ impl SdlEventLoop {
         Ok((controllers, controller_player_map))
     }
 
-    /// Clamps the timing scaling factor to the valid range [0.001, 100.0].
-    /// Prints a warning to stderr if clamping occurs.
-    fn clamp_timing_scale(scale: f32) -> f32 {
-        if scale < Self::MIN_TIMING_SCALE {
-            log_info(format!(
-                "Warning: Timing scaling factor {} is below minimum {}. Clamping to {}.",
-                scale,
-                Self::MIN_TIMING_SCALE,
-                Self::MIN_TIMING_SCALE
-            ));
-            Self::MIN_TIMING_SCALE
-        } else if scale > Self::MAX_TIMING_SCALE {
-            log_info(format!(
-                "Warning: Timing scaling factor {} is above maximum {}. Clamping to {}.",
-                scale,
-                Self::MAX_TIMING_SCALE,
-                Self::MAX_TIMING_SCALE
-            ));
-            Self::MAX_TIMING_SCALE
-        } else {
-            scale
-        }
-    }
-
     fn should_manual_frame_limit(vsync_enabled: bool) -> bool {
         !vsync_enabled
     }
@@ -379,6 +351,19 @@ impl SdlEventLoop {
     fn enter_debugger(&mut self) {
         self.paused = true;
         self.debugger_open_requested = true;
+    }
+
+    fn toggle_fullscreen(&mut self, gl_backend: Option<&mut SdlGlWrapper>) {
+        let next = !self.fullscreen;
+
+        if let Some(gl_backend) = gl_backend
+            && let Err(err) = gl_backend.set_fullscreen(next)
+        {
+            log_info(format!("Failed to toggle fullscreen: {err}"));
+            return;
+        }
+
+        self.fullscreen = next;
     }
 
     fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
@@ -600,6 +585,8 @@ impl SdlEventLoop {
                             // Handle F4 for shader cycling
                             if keycode == Keycode::F4 {
                                 gl_backend.cycle_shader();
+                            } else if keycode == Keycode::F12 {
+                                self.toggle_fullscreen(Some(&mut gl_backend));
                             } else if self.handle_key_down_for_run(nes, keycode)
                                 == KeyDownOutcome::Quit
                             {
@@ -740,12 +727,12 @@ impl SdlEventLoop {
                     crosshair,
                 );
 
-                // 4. Frame limiting - maintain ~60 FPS (or scaled by timing_scale)
+                // 4. Frame limiting - maintain ~60 FPS
                 let current_time = timer.performance_counter();
                 let elapsed_ticks = (current_time - last_frame_time) as f64;
                 let elapsed_seconds = elapsed_ticks / performance_frequency;
                 // Adjust target frame time by timing scale (1.0 = normal speed, 2.0 = 2x speed, etc.)
-                let target_frame_time = (1.0 / 60.0) / self.timing_scale as f64;
+                let target_frame_time = 1.0 / 60.0;
 
                 // Calculate FPS before sleeping
                 // let fps = 1.0 / elapsed_seconds;
@@ -851,6 +838,11 @@ impl SdlEventLoop {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn debugger_open_requested(&self) -> bool {
         self.debugger_open_requested
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn is_fullscreen(&self) -> bool {
+        self.fullscreen
     }
 
     fn tick_headless_once_for_run(&mut self, nes: &mut Nes) -> bool {
@@ -989,6 +981,11 @@ impl SdlEventLoop {
             return KeyDownOutcome::Continue;
         }
 
+        if keycode == Keycode::F12 {
+            self.toggle_fullscreen(None);
+            return KeyDownOutcome::Continue;
+        }
+
         let keyboard_ports = Self::keyboard_ports(nes, &self.controller_player_map);
         Self::handle_key_down_with_keyboard_ports(
             nes,
@@ -1079,6 +1076,7 @@ impl SdlEventLoop {
     /// - F5: Open debugger (when closed) / Continue (when debugger open)
     /// - F10: Debugger step-over (JSR runs until RTS)
     /// - F11: Debugger step-into (single CPU tick)
+    /// - F12: Toggle fullscreen
     /// - F2/F3: Volume up/down (when audio is enabled)
     /// - F6: Save state (when a ROM is loaded)
     /// - F7: Load state (when a ROM is loaded)
@@ -1205,6 +1203,7 @@ F6: Save state\n\
 F7: Load state\n\
 F10: Step over\n\
 F11: Step into\n\
+F12: Fullscreen\n\
 \n\
 Controller (Player 1)\n\
 W/A/S/D: D-Pad\n\
@@ -1476,7 +1475,7 @@ mod tests {
         let addr = if port == 1 { 0x4016 } else { 0x4017 };
         let mut out = [0u8; 8];
         for slot in &mut out {
-            let value = nes.bus.borrow_mut().read(addr) & 0x01;
+            let value = nes.bus.borrow_mut().read(addr, false) & 0x01;
             *slot = value;
         }
         out
@@ -1488,7 +1487,7 @@ mod tests {
 
     fn read_paddle_trigger_bit_for_port(nes: &mut Nes, port: u8) -> u8 {
         let addr = if port == 1 { 0x4016 } else { 0x4017 };
-        let value = nes.bus.borrow_mut().read(addr);
+        let value = nes.bus.borrow_mut().read(addr, false);
         (value >> 3) & 0x01
     }
 
@@ -1506,7 +1505,7 @@ mod tests {
         let addr = if port == 1 { 0x4016 } else { 0x4017 };
         let mut position = 0u8;
         for bit_index in (0..8).rev() {
-            let value = nes.bus.borrow_mut().read(addr);
+            let value = nes.bus.borrow_mut().read(addr, false);
             let bit = (value >> 4) & 0x01;
             position |= bit << bit_index;
         }
@@ -1606,6 +1605,22 @@ mod tests {
 
         assert_eq!(read_joypad_buttons(&mut nes, 1), [0; 8]);
         assert_eq!(read_joypad_buttons(&mut nes, 2), [0, 0, 0, 0, 1, 0, 0, 0]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_handle_key_down_f12_toggles_fullscreen_state() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(Config::default());
+
+        assert!(!event_loop.is_fullscreen());
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::F12);
+        assert!(event_loop.is_fullscreen());
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::F12);
+        assert!(!event_loop.is_fullscreen());
     }
 
     #[test]
@@ -2037,6 +2052,7 @@ mod tests {
         assert!(text.contains("F7"));
         assert!(text.contains("F10"));
         assert!(text.contains("F11"));
+        assert!(text.contains("F12"));
         assert!(text.contains("W/A/S/D"));
         assert!(text.contains("G"));
         assert!(text.contains("F"));

@@ -1,4 +1,10 @@
 {
   "cSpell.enabled": false,
-  "rust-analyzer.cargo.features": ["sdl"]
+  "rust-analyzer.cargo.features": [
+    "sdl"
+  ],
+  "python.testing.pytestArgs": [
+    "scripts/scraper"
+  ],
+  "python.testing.pytestEnabled": true,
 }

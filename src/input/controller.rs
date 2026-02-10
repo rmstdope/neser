@@ -17,7 +17,6 @@ pub enum ControllerType {
     Zapper,
 }
 
-// TODO remove the "paddle" variant
 impl ControllerType {
     /// Parse a controller type from a string configuration value.
     pub fn parse(value: &str) -> Option<Self> {
@@ -54,11 +53,8 @@ pub trait Controller {
     /// Write to strobe register ($4016).
     fn write_strobe(&mut self, value: u8);
 
-    /// Read controller state, advancing the shift register.
-    fn read(&mut self) -> u8;
-
-    /// Read controller state without advancing the shift register.
-    fn read_no_clock(&self) -> u8;
+    /// Read controller state, optionally treating the read as a dummy cycle.
+    fn read(&mut self, is_dummy_read: bool) -> u8;
 
     /// Capture controller state for save-state.
     fn capture_state(&self) -> ControllerState;

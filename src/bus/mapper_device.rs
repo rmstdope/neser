@@ -21,7 +21,7 @@ impl MapperDevice {
 }
 
 impl BusDevice for MapperDevice {
-    fn read(&mut self, addr: u16, open_bus: u8, _clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, addr: u16, open_bus: u8, _is_dummy_read: bool) -> Option<u8> {
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             return match addr {
                 0x4020..=0x5FFF => Some(open_bus),

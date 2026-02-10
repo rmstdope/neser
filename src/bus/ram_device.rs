@@ -14,7 +14,7 @@ impl RamDevice {
 }
 
 impl BusDevice for RamDevice {
-    fn read(&mut self, addr: u16, _open_bus: u8, _clock_joypads: bool) -> Option<u8> {
+    fn read(&mut self, addr: u16, _open_bus: u8, _is_dummy_read: bool) -> Option<u8> {
         Some(self.cpu_ram.borrow()[(addr & 0x07FF) as usize])
     }
 

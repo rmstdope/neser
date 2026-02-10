@@ -33,6 +33,6 @@ pub use common::{BankedRom, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZ
 #[allow(unused_imports)]
 pub use mapper::{Mapper, MapperContext};
 #[allow(unused_imports)]
-pub(crate) use rom_db::calculate_rom_crc32;
+pub use rom_db::calculate_rom_crc32;
 pub(crate) use rom_db::default_arkanoid_on_port;
 pub(crate) use rom_db::default_zapper_on_port;

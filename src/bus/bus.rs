@@ -10,7 +10,6 @@ use crate::console::{BusState, MapperState};
 use crate::debugging::log_info;
 use crate::input::{ArkanoidController, Button, Controller, ControllerType, NesJoypad, Zapper};
 use crate::ppu;
-use crate::trace_mapper;
 use std::cell::RefCell;
 use std::io;
 use std::ops::RangeInclusive;
@@ -18,7 +17,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 pub trait BusDevice {
-    fn read(&mut self, addr: u16, open_bus: u8, clock_joypads: bool) -> Option<u8>;
+    fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8>;
     fn write(&mut self, addr: u16, value: u8, is_dummy_write: bool) -> bool;
     fn address_range(&self) -> RangeInclusive<u16>;
 }
@@ -35,7 +34,6 @@ pub struct Bus {
     controllers: [Rc<RefCell<Box<dyn Controller>>>; 2], // Port 1 and Port 2 controllers
     open_bus: u8, // Last value on the data bus for open bus behavior
     devices: Vec<Box<dyn BusDevice>>,
-    mmc5_scroll_log_active: bool,
 }
 
 impl Bus {
@@ -81,7 +79,6 @@ impl Bus {
             controllers,
             open_bus: 0xFF, // Initialize to 0xFF (common power-on state)
             devices: Vec::new(),
-            mmc5_scroll_log_active: false,
         };
 
         controller.register_device(Box::new(RamDevice::new(controller.cpu_ram.clone())));
@@ -159,11 +156,6 @@ impl Bus {
             .and_then(|cart| cart.borrow().state_path())
     }
 
-    /// Read a byte from memory
-    pub fn read(&mut self, addr: u16) -> u8 {
-        self.read_internal(addr, true)
-    }
-
     /// Debug-only-ish helper: read PRG ROM without affecting open bus or joypads.
     ///
     /// This is intended for debugger visualization (e.g., PRG ROM hexdumps).
@@ -203,23 +195,14 @@ impl Bus {
         }
     }
 
-    /// Read a byte from memory, optionally clocking joypad shift registers.
-    ///
-    /// During DMA no-op cycles, the CPU repeats the last read externally. For joypad
-    /// registers ($4016/$4017), real hardware does not necessarily clock the controller
-    /// shift register on these repeated reads; callers can disable joypad clocking.
-    pub fn read_without_joypad_clock(&mut self, addr: u16) -> u8 {
-        self.read_internal(addr, false)
-    }
-
-    fn read_internal(&mut self, addr: u16, clock_joypads: bool) -> u8 {
+    pub fn read(&mut self, addr: u16, is_dummy_read: bool) -> u8 {
         if (0xFFFA..=0xFFFB).contains(&addr)
             && let Some(cartridge) = self.cartridge.borrow().as_ref().cloned()
         {
             cartridge.borrow_mut().mapper_mut().on_irq_vector_read(addr);
         }
 
-        if let Some(value) = self.read_from_devices(addr, clock_joypads) {
+        if let Some(value) = self.read_from_devices(addr, is_dummy_read) {
             self.open_bus = value;
             return value;
         }
@@ -238,10 +221,10 @@ impl Bus {
         value
     }
 
-    fn read_from_devices(&mut self, addr: u16, clock_joypads: bool) -> Option<u8> {
+    fn read_from_devices(&mut self, addr: u16, is_dummy_read: bool) -> Option<u8> {
         for device in self.devices.iter_mut() {
             if device.address_range().contains(&addr)
-                && let Some(value) = device.read(addr, self.open_bus, clock_joypads)
+                && let Some(value) = device.read(addr, self.open_bus, is_dummy_read)
             {
                 return Some(value);
             }
@@ -292,7 +275,7 @@ impl Bus {
     #[allow(dead_code)]
     pub fn read_for_testing(&mut self, addr: u16) -> u8 {
         let old_open_bus = self.open_bus;
-        let value = self.read(addr);
+        let value = self.read(addr, false);
         self.open_bus = old_open_bus;
         value
     }
@@ -322,43 +305,7 @@ impl Bus {
         // Update open bus with the value being written
         self.open_bus = value;
 
-        let mapper_number = self
-            .cartridge
-            .borrow()
-            .as_ref()
-            .map(|cart| cart.borrow().mapper().mapper_number())
-            .unwrap_or(0);
-
-        // TODO Clean up old MMC5 trace code or move them to the mmc5 mapper module
-        if addr == 0x5105 && mapper_number == 5 {
-            self.mmc5_scroll_log_active = value == 0x55;
-        }
-
-        if Self::should_log_mmc5_scroll(addr, value, mapper_number) {
-            let ppu = self.ppu.borrow();
-            let (t, v, fine_x, w) = ppu.scroll_state();
-            trace_mapper!(1; "[mmc5][scroll] $5105=0x55 t=0x{:04X} v=0x{:04X} fine_x={} w={}",
-                t, v, fine_x, w
-            );
-            let _ = (t, v, fine_x, w);
-        }
-
         let wrote = self.write_to_devices(addr, value, is_dummy_write);
-        if wrote
-            && Self::should_log_mmc5_ppu_scroll_write(
-                addr,
-                mapper_number,
-                self.mmc5_scroll_log_active,
-            )
-        {
-            let ppu = self.ppu.borrow();
-            let (t, v, fine_x, w) = ppu.scroll_state();
-            trace_mapper!(4; "[mmc5][scroll] ${:04X}={:#04X} t=0x{:04X} v=0x{:04X} fine_x={} w={}",
-                addr, value, t, v, fine_x, w
-            );
-            let _ = (t, v, fine_x, w);
-        }
-
         if wrote {
             if addr == 0x4014
                 && !is_dummy_write
@@ -388,26 +335,6 @@ impl Bus {
         false
     }
 
-    #[cfg(debug_assertions)]
-    fn should_log_mmc5_scroll(addr: u16, value: u8, mapper_number: u8) -> bool {
-        mapper_number == 5 && addr == 0x5105 && value == 0x55
-    }
-
-    #[cfg(debug_assertions)]
-    fn should_log_mmc5_ppu_scroll_write(addr: u16, mapper_number: u8, active: bool) -> bool {
-        mapper_number == 5 && active && matches!(addr, 0x2000 | 0x2005 | 0x2006)
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn should_log_mmc5_scroll(_addr: u16, _value: u8, _mapper_number: u8) -> bool {
-        false
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn should_log_mmc5_ppu_scroll_write(_addr: u16, _mapper_number: u8, _active: bool) -> bool {
-        false
-    }
-
     /// Write a 16-bit word to memory (little-endian)
     #[cfg(test)]
     pub fn write_u16(&mut self, addr: u16, value: u16) {
@@ -434,7 +361,7 @@ impl Bus {
     pub fn execute_oam_dma(&mut self, page: u8) {
         let source_page = (page as u16) << 8;
         for i in 0..256u16 {
-            let byte = self.read(source_page + i);
+            let byte = self.read(source_page + i, false);
             self.ppu.borrow_mut().write_oam_data(byte);
         }
     }
@@ -690,7 +617,7 @@ mod tests {
     }
 
     impl BusDevice for TestBusDevice {
-        fn read(&mut self, addr: u16, _open_bus: u8, _clock_joypads: bool) -> Option<u8> {
+        fn read(&mut self, addr: u16, _open_bus: u8, _is_dummy_read: bool) -> Option<u8> {
             if self.range.contains(&addr) {
                 return Some(self.read_value);
             }
@@ -793,24 +720,6 @@ mod tests {
         ppu.write_address(0x00, false);
         let _ = ppu.read_data();
         assert_eq!(ppu.read_data(), 0x55);
-    }
-
-    #[test]
-    fn test_should_log_mmc5_scroll_on_nametable_change() {
-        assert!(Bus::should_log_mmc5_scroll(0x5105, 0x55, 5));
-        assert!(!Bus::should_log_mmc5_scroll(0x5105, 0x44, 5));
-        assert!(!Bus::should_log_mmc5_scroll(0x5104, 0x55, 5));
-        assert!(!Bus::should_log_mmc5_scroll(0x5105, 0x55, 4));
-    }
-
-    #[test]
-    fn test_should_log_mmc5_ppu_scroll_write() {
-        assert!(Bus::should_log_mmc5_ppu_scroll_write(0x2005, 5, true));
-        assert!(Bus::should_log_mmc5_ppu_scroll_write(0x2006, 5, true));
-        assert!(Bus::should_log_mmc5_ppu_scroll_write(0x2000, 5, true));
-        assert!(!Bus::should_log_mmc5_ppu_scroll_write(0x2001, 5, true));
-        assert!(!Bus::should_log_mmc5_ppu_scroll_write(0x2005, 4, true));
-        assert!(!Bus::should_log_mmc5_ppu_scroll_write(0x2005, 5, false));
     }
 
     #[test]
@@ -921,7 +830,7 @@ mod tests {
             )),
         );
 
-        assert_eq!(memory.read(0x4100), 0xAB);
+        assert_eq!(memory.read(0x4100, false), 0xAB);
 
         let dma = memory.write(0x4101, 0x55, false);
         assert!(!dma);
@@ -942,7 +851,7 @@ mod tests {
             )),
         );
 
-        assert_eq!(memory.read(0x4016), 0xAA);
+        assert_eq!(memory.read(0x4016, false), 0xAA);
 
         let dma = memory.write(0x4016, 0x55, false);
         assert!(!dma);
@@ -1001,7 +910,7 @@ mod tests {
         let mut memory = create_test_memory();
 
         memory.write(0x0000, 0x3C, false);
-        let value = memory.read(0x0000);
+        let value = memory.read(0x0000, false);
 
         assert_eq!(value, 0x3C);
         assert_eq!(memory.open_bus_value_for_test(), 0x3C);
@@ -1053,10 +962,10 @@ mod tests {
         let mut memory = create_test_memory();
 
         memory.write(0x0000, 0x3C, false);
-        let open_bus = memory.read(0x0000);
+        let open_bus = memory.read(0x0000, false);
 
         assert_eq!(open_bus, 0x3C);
-        assert_eq!(memory.read(0x4020), open_bus);
+        assert_eq!(memory.read(0x4020, false), open_bus);
     }
 
     #[test]
@@ -1067,10 +976,10 @@ mod tests {
         memory.map_cartridge(cartridge);
 
         memory.write(0x0000, 0x5A, false);
-        let open_bus = memory.read(0x0000);
+        let open_bus = memory.read(0x0000, false);
 
         assert_eq!(open_bus, 0x5A);
-        assert_eq!(memory.read(0x4020), open_bus);
+        assert_eq!(memory.read(0x4020, false), open_bus);
     }
 
     #[test]
@@ -1081,10 +990,10 @@ mod tests {
         memory.map_cartridge(cartridge);
 
         memory.write(0x0000, 0xA5, false);
-        let open_bus = memory.read(0x0000);
+        let open_bus = memory.read(0x0000, false);
 
         assert_eq!(open_bus, 0xA5);
-        assert_eq!(memory.read(0x4020), open_bus);
+        assert_eq!(memory.read(0x4020, false), open_bus);
     }
 
     #[test]
@@ -1099,8 +1008,8 @@ mod tests {
         memory.set_button(1, crate::input::Button::Right, true);
         memory.write(0x4016, 0x01, false); // Strobe high
         memory.write(0x4016, 0x00, false); // Strobe low - latches and resets index
-        memory.read(0x4016); // Read A button
-        memory.read(0x4016); // Read B button
+        memory.read(0x4016, false); // Read A button
+        memory.read(0x4016, false); // Read B button
         // Now button_index is 2
 
         let expected_open_bus = memory.open_bus_value_for_test();
@@ -1118,7 +1027,7 @@ mod tests {
         // Reading should continue from where we left off
         let expected_sequence = [0, 0, 0, 0, 0, 1]; // Select, Start, Up, Down, Left, Right
         for expected in expected_sequence {
-            assert_eq!(restored.read(0x4016) & 0x01, expected);
+            assert_eq!(restored.read(0x4016, false) & 0x01, expected);
         }
     }
 
@@ -1140,8 +1049,11 @@ mod tests {
 
         // Port 1 should have Paddle with position 0xA5 and trigger=true
         restored.write(0x0000, 0x00, false);
-        restored.read(0x0000);
-        let restored_paddle = [restored.read(0x4016) & 0x18, restored.read(0x4016) & 0x18];
+        restored.read(0x0000, false);
+        let restored_paddle = [
+            restored.read(0x4016, false) & 0x18,
+            restored.read(0x4016, false) & 0x18,
+        ];
         assert_eq!(restored_paddle, expected_paddle);
     }
 
@@ -1212,15 +1124,15 @@ mod tests {
 
         // Prime open bus to a known value, then read from disabled WRAM.
         mem.write(0x0000, 0xAB, false);
-        assert_eq!(mem.read(0x6000), 0xAB);
+        assert_eq!(mem.read(0x6000, false), 0xAB);
     }
 
     #[test]
     fn test_new_memory_is_initialized() {
         let mut memory = create_test_memory();
-        assert_eq!(memory.read(0x0000), 0);
-        assert_eq!(memory.read(0x1234), 0);
-        assert_eq!(memory.read(0x3FFF), 0);
+        assert_eq!(memory.read(0x0000, false), 0);
+        assert_eq!(memory.read(0x1234, false), 0);
+        assert_eq!(memory.read(0x3FFF, false), 0);
     }
 
     #[test]
@@ -1228,42 +1140,42 @@ mod tests {
         let mut memory = create_test_memory();
         let dma = memory.write(0x1234, 0x42, false);
         assert!(!dma);
-        assert_eq!(memory.read(0x1234), 0x42);
+        assert_eq!(memory.read(0x1234, false), 0x42);
     }
 
     #[test]
     fn test_write_u16_little_endian() {
         let mut memory = create_test_memory();
         memory.write_u16(0x1234, 0xABCD);
-        assert_eq!(memory.read(0x1234), 0xCD); // Low byte
-        assert_eq!(memory.read(0x1235), 0xAB); // High byte
+        assert_eq!(memory.read(0x1234, false), 0xCD); // Low byte
+        assert_eq!(memory.read(0x1235, false), 0xAB); // High byte
     }
 
     #[test]
     fn test_ram_mirror_0800() {
         let mut memory = create_test_memory();
         memory.write(0x0000, 0x42, false);
-        assert_eq!(memory.read(0x0800), 0x42);
-        assert_eq!(memory.read(0x1000), 0x42);
-        assert_eq!(memory.read(0x1800), 0x42);
+        assert_eq!(memory.read(0x0800, false), 0x42);
+        assert_eq!(memory.read(0x1000, false), 0x42);
+        assert_eq!(memory.read(0x1800, false), 0x42);
     }
 
     #[test]
     fn test_ram_mirror_write_to_mirror() {
         let mut memory = create_test_memory();
         memory.write(0x0800, 0x55, false);
-        assert_eq!(memory.read(0x0000), 0x55);
-        assert_eq!(memory.read(0x1000), 0x55);
-        assert_eq!(memory.read(0x1800), 0x55);
+        assert_eq!(memory.read(0x0000, false), 0x55);
+        assert_eq!(memory.read(0x1000, false), 0x55);
+        assert_eq!(memory.read(0x1800, false), 0x55);
     }
 
     #[test]
     fn test_ram_mirror_different_addresses() {
         let mut memory = create_test_memory();
         memory.write(0x01FF, 0xAA, false);
-        assert_eq!(memory.read(0x09FF), 0xAA);
-        assert_eq!(memory.read(0x11FF), 0xAA);
-        assert_eq!(memory.read(0x19FF), 0xAA);
+        assert_eq!(memory.read(0x09FF, false), 0xAA);
+        assert_eq!(memory.read(0x11FF, false), 0xAA);
+        assert_eq!(memory.read(0x19FF, false), 0xAA);
     }
 
     #[test]
@@ -1283,13 +1195,13 @@ mod tests {
         memory.map_cartridge(cartridge);
 
         // Read from $8000 (start of PRG ROM)
-        assert_eq!(memory.read(0x8000), 0xAA);
+        assert_eq!(memory.read(0x8000, false), 0xAA);
         // Read from $BFFF (end of first 16KB)
-        assert_eq!(memory.read(0xBFFF), 0xBB);
+        assert_eq!(memory.read(0xBFFF, false), 0xBB);
         // Read from $C000 (should mirror to $8000)
-        assert_eq!(memory.read(0xC000), 0xAA);
+        assert_eq!(memory.read(0xC000, false), 0xAA);
         // Read from $FFFF (should mirror to $BFFF)
-        assert_eq!(memory.read(0xFFFF), 0xBB);
+        assert_eq!(memory.read(0xFFFF, false), 0xBB);
     }
 
     #[test]
@@ -1310,11 +1222,11 @@ mod tests {
         memory.map_cartridge(cartridge);
 
         // Read from $8000
-        assert_eq!(memory.read(0x8000), 0xAA);
+        assert_eq!(memory.read(0x8000, false), 0xAA);
         // Read from $C000 (different from $8000 in 32KB ROM)
-        assert_eq!(memory.read(0xC000), 0xCC);
+        assert_eq!(memory.read(0xC000, false), 0xCC);
         // Read from $FFFF
-        assert_eq!(memory.read(0xFFFF), 0xDD);
+        assert_eq!(memory.read(0xFFFF, false), 0xDD);
     }
 
     #[test]
@@ -1333,11 +1245,11 @@ mod tests {
 
         // RAM should still be writable
         memory.write(0x0000, 0x55, false);
-        assert_eq!(memory.read(0x0000), 0x55);
+        assert_eq!(memory.read(0x0000, false), 0x55);
 
         // Another RAM location should still be writable
         memory.write(0x0100, 0x66, false);
-        assert_eq!(memory.read(0x0100), 0x66);
+        assert_eq!(memory.read(0x0100, false), 0x66);
     }
 
     #[test]
@@ -1357,8 +1269,8 @@ mod tests {
         memory.write(0x2006, 0x00, false);
 
         // Read from PPUDATA (first read returns buffer, second returns actual value)
-        memory.read(0x2007); // Skip buffered read
-        assert_eq!(memory.read(0x2007), 0x42);
+        memory.read(0x2007, false); // Skip buffered read
+        assert_eq!(memory.read(0x2007, false), 0x42);
     }
 
     #[test]
@@ -1374,8 +1286,8 @@ mod tests {
 
         // Reset OAM address and read back
         memory.write(0x2003, 0x40, false);
-        assert_eq!(memory.read(0x2004), 0xAA);
-        assert_eq!(memory.read(0x2004), 0xAA); // Reading doesn't increment
+        assert_eq!(memory.read(0x2004, false), 0xAA);
+        assert_eq!(memory.read(0x2004, false), 0xAA); // Reading doesn't increment
     }
 
     #[test]
@@ -1392,14 +1304,14 @@ mod tests {
 
         // Reset OAM address and read back
         memory.write(0x2003, 0x00, false);
-        assert_eq!(memory.read(0x2004), 0x11);
+        assert_eq!(memory.read(0x2004, false), 0x11);
 
         memory.write(0x2003, 0x01, false);
-        assert_eq!(memory.read(0x2004), 0x22);
+        assert_eq!(memory.read(0x2004, false), 0x22);
 
         memory.write(0x2003, 0x02, false);
         // Attribute byte: 0x33 with masking = 0x33 & 0xE3 = 0x23
-        assert_eq!(memory.read(0x2004), 0x23);
+        assert_eq!(memory.read(0x2004, false), 0x23);
     }
 
     #[test]
@@ -1415,10 +1327,10 @@ mod tests {
 
         // Verify wrap
         memory.write(0x2003, 0xFF, false);
-        assert_eq!(memory.read(0x2004), 0xAA);
+        assert_eq!(memory.read(0x2004, false), 0xAA);
 
         memory.write(0x2003, 0x00, false);
-        assert_eq!(memory.read(0x2004), 0xBB);
+        assert_eq!(memory.read(0x2004, false), 0xBB);
     }
 
     #[test]
@@ -1431,9 +1343,9 @@ mod tests {
 
         // Reset address and read multiple times
         memory.write(0x2003, 0x10, false);
-        assert_eq!(memory.read(0x2004), 0x88);
-        assert_eq!(memory.read(0x2004), 0x88);
-        assert_eq!(memory.read(0x2004), 0x88);
+        assert_eq!(memory.read(0x2004, false), 0x88);
+        assert_eq!(memory.read(0x2004, false), 0x88);
+        assert_eq!(memory.read(0x2004, false), 0x88);
     }
 
     #[test]
@@ -1449,13 +1361,13 @@ mod tests {
 
         // Read back the sprite data
         memory.write(0x2003, 0x00, false);
-        assert_eq!(memory.read(0x2004), 0x10);
+        assert_eq!(memory.read(0x2004, false), 0x10);
         memory.write(0x2003, 0x01, false);
-        assert_eq!(memory.read(0x2004), 0x20);
+        assert_eq!(memory.read(0x2004, false), 0x20);
         memory.write(0x2003, 0x02, false);
-        assert_eq!(memory.read(0x2004), 0xE3);
+        assert_eq!(memory.read(0x2004, false), 0xE3);
         memory.write(0x2003, 0x03, false);
-        assert_eq!(memory.read(0x2004), 0x40);
+        assert_eq!(memory.read(0x2004, false), 0x40);
     }
 
     #[test]
@@ -1475,17 +1387,17 @@ mod tests {
 
         // Read back from PRG-RAM
         assert_eq!(
-            memory.read(0x6000),
+            memory.read(0x6000, false),
             0x42,
             "PRG-RAM at $6000 should return written value"
         );
         assert_eq!(
-            memory.read(0x6001),
+            memory.read(0x6001, false),
             0x43,
             "PRG-RAM at $6001 should return written value"
         );
         assert_eq!(
-            memory.read(0x7FFF),
+            memory.read(0x7FFF, false),
             0xFF,
             "PRG-RAM at $7FFF should return written value"
         );
@@ -1503,9 +1415,9 @@ mod tests {
         memory.write(0x6100, 0xAB, false);
 
         // Multiple reads should return the same value
-        assert_eq!(memory.read(0x6100), 0xAB);
-        assert_eq!(memory.read(0x6100), 0xAB);
-        assert_eq!(memory.read(0x6100), 0xAB);
+        assert_eq!(memory.read(0x6100, false), 0xAB);
+        assert_eq!(memory.read(0x6100, false), 0xAB);
+        assert_eq!(memory.read(0x6100, false), 0xAB);
     }
 
     #[test]
@@ -1521,11 +1433,11 @@ mod tests {
         memory.write(0x6000, 0x01, false);
         memory.write(0x7FFF, 0xFF, false);
 
-        assert_eq!(memory.read(0x6000), 0x01);
-        assert_eq!(memory.read(0x7FFF), 0xFF);
+        assert_eq!(memory.read(0x6000, false), 0x01);
+        assert_eq!(memory.read(0x7FFF, false), 0xFF);
 
         // They should be different addresses (not mirrored)
-        assert_ne!(memory.read(0x6000), memory.read(0x7FFF));
+        assert_ne!(memory.read(0x6000, false), memory.read(0x7FFF, false));
     }
 
     #[test]
@@ -1538,10 +1450,10 @@ mod tests {
         memory.map_cartridge(cartridge);
 
         // Check various addresses are initialized to 0
-        assert_eq!(memory.read(0x6000), 0x00);
-        assert_eq!(memory.read(0x6100), 0x00);
-        assert_eq!(memory.read(0x7000), 0x00);
-        assert_eq!(memory.read(0x7FFF), 0x00);
+        assert_eq!(memory.read(0x6000, false), 0x00);
+        assert_eq!(memory.read(0x6100, false), 0x00);
+        assert_eq!(memory.read(0x7000, false), 0x00);
+        assert_eq!(memory.read(0x7FFF, false), 0x00);
     }
 
     /// Helper function to create a minimal NROM ROM with PRG-RAM support
@@ -1571,7 +1483,7 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Reading $4015 should return the APU status register
-        let status = memory.read(0x4015);
+        let status = memory.read(0x4015, false);
 
         // Initially all channels should be disabled, so status should be 0
         // except for bit 5 which returns the current open bus value (0xFF at power-on)
@@ -1595,7 +1507,7 @@ mod tests {
         }
 
         // Read status through memory controller - pulse 1 bit should be set
-        let status = memory.read(0x4015);
+        let status = memory.read(0x4015, false);
         assert_eq!(status & 0b0000_0001, 0b0000_0001);
     }
 
@@ -1605,7 +1517,7 @@ mod tests {
         let mut memory = create_test_memory();
 
         // Reading exactly $4015 should work
-        let status = memory.read(0x4015);
+        let status = memory.read(0x4015, false);
         // Bit 5 is open bus, so mask it out
         assert_eq!(status & 0b1101_1111, 0x00);
 
@@ -1843,7 +1755,7 @@ mod tests {
         }
 
         // Read status to verify both are enabled
-        let status = memory.read(0x4015);
+        let status = memory.read(0x4015, false);
         assert_eq!(status & 0b00000011, 0b00000011);
     }
 
@@ -1887,8 +1799,8 @@ mod tests {
         memory.write(0x4016, 0x00, false);
 
         // Read paddle data from port 1 - bits 4 and 3
-        let paddle_bits1 = memory.read(0x4016) & 0x18;
-        let paddle_bits2 = memory.read(0x4016) & 0x18;
+        let paddle_bits1 = memory.read(0x4016, false) & 0x18;
+        let paddle_bits2 = memory.read(0x4016, false) & 0x18;
 
         // Verify paddle data is present
         assert_eq!(paddle_bits1, 0x08);
@@ -1906,7 +1818,7 @@ mod tests {
 
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
-        let zapper_bits = memory.read(0x4017) & 0x18;
+        let zapper_bits = memory.read(0x4017, false) & 0x18;
         assert_eq!(zapper_bits, 0x18);
     }
 
@@ -1925,8 +1837,8 @@ mod tests {
         memory.write(0x4016, 0x00, false);
 
         // Read paddle data from port 2 - bits 4 and 3
-        let paddle_bits1 = memory.read(0x4017) & 0x18;
-        let paddle_bits2 = memory.read(0x4017) & 0x18;
+        let paddle_bits1 = memory.read(0x4017, false) & 0x18;
+        let paddle_bits2 = memory.read(0x4017, false) & 0x18;
 
         // Verify paddle data is present
         // Position 0xB3: inverted = 0x4C = 0b01001100, trigger=false
@@ -1955,15 +1867,15 @@ mod tests {
         memory.write(0x4016, 0x00, false);
 
         // Read joypad from port 1
-        assert_eq!(memory.read(0x4016) & 0x01, 1); // A button
-        assert_eq!(memory.read(0x4016) & 0x01, 1); // B button
+        assert_eq!(memory.read(0x4016, false) & 0x01, 1); // A button
+        assert_eq!(memory.read(0x4016, false) & 0x01, 1); // B button
 
         // Verify port 2 returns paddle data
         memory.set_mouse_x_position(0xA5);
         memory.set_mouse_left_button(true); // Set trigger so bit 3 is set
         memory.write(0x4016, 0x01, false);
         memory.write(0x4016, 0x00, false);
-        let paddle_bits = memory.read(0x4017) & 0x18;
+        let paddle_bits = memory.read(0x4017, false) & 0x18;
         assert!(paddle_bits != 0); // Should have paddle data (at least bit 3)
     }
 
@@ -1994,11 +1906,11 @@ mod tests {
         memory.write(0x4016, 0x00, false);
 
         // Port 1 should have joypad data (bit 0)
-        let joypad_bit = memory.read(0x4016) & 0x01;
+        let joypad_bit = memory.read(0x4016, false) & 0x01;
         assert_eq!(joypad_bit, 1); // A button pressed on joypad
 
         // Port 2 should have paddle data (bits 4 and 3)
-        let paddle_bits = memory.read(0x4017) & 0x18;
+        let paddle_bits = memory.read(0x4017, false) & 0x18;
         assert!(paddle_bits != 0); // Should have paddle data on port 2
     }
 }

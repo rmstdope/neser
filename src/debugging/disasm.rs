@@ -105,9 +105,7 @@ fn prev_instruction_start<F: Fn(u16) -> u8>(read: &F, pc: u16) -> Option<u16> {
     for len in (1u16..=3u16).rev() {
         let start = pc.wrapping_sub(len);
         let op = read(start);
-        let Some(meta) = cpu::lookup(op) else {
-            continue;
-        };
+        let meta = cpu::lookup(op);
 
         if meta.bytes() as u16 == len {
             return Some(start);
@@ -120,18 +118,14 @@ fn prev_instruction_start<F: Fn(u16) -> u8>(read: &F, pc: u16) -> Option<u16> {
 fn disassemble_one<F: Fn(u16) -> u8>(read: &F, addr: u16, pc: u16) -> CpuDisasmLineSnapshot {
     let op = read(addr);
     let meta = cpu::lookup(op);
-    let len = meta.map(|m| m.bytes()).unwrap_or(1) as usize;
+    let len = meta.bytes() as usize;
 
     let mut bytes = Vec::with_capacity(len);
     for i in 0..len {
         bytes.push(read(addr.wrapping_add(i as u16)));
     }
 
-    let text = if let Some(meta) = meta {
-        format_instruction(meta, addr, &bytes)
-    } else {
-        "???".to_string()
-    };
+    let text = format_instruction(meta, addr, &bytes);
 
     CpuDisasmLineSnapshot {
         addr,

@@ -38,9 +38,15 @@ roms/games
 \#*\#
 prompts.txt
 
-# NESER config
+# NESER user stuff
 neser.conf
+roms.sqlite
 
 # wasm-bindgen output
 web/pkg/
 node_modules/
+
+# Python
+__pycache__/
+*.pyc
+.venv/

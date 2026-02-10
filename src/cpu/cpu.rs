@@ -32,7 +32,7 @@ pub struct Cpu {
     /// Bit 0: C (Carry)
     p: u8,
     /// Memory
-    memory: Rc<RefCell<Bus>>,
+    bus: Rc<RefCell<Bus>>,
     /// PPU
     ppu: Rc<RefCell<Ppu>>,
     /// APU
@@ -65,20 +65,11 @@ pub struct Cpu {
     forced_irq_pending: bool,
     /// Master clock (timing model)
     master_clock: MasterClock,
-
     /// When set, the next CPU cycle will not latch IRQ/NMI line state at the end of the cycle.
     ///
     /// This is used to model edge-case timing where certain instructions (notably taken
     /// non-page-crossing branches) ignore interrupts during their final clock.
     skip_interrupt_latch_this_cycle: bool,
-
-    /// Out-of-band master clock used when the CPU itself must tick PPU/APU for
-    /// synthetic CPU cycles (e.g., DMA stalls or interrupt sequences).
-    ///
-    /// This is kept separate from `master_clock` because `master_clock` is also
-    /// advanced by bus accesses during normal instruction execution.
-    // TODO This must go in the future.
-    oob_master_clock: MasterClock,
 
     // DMC DMA state machine
     dmc_dma_running: bool,
@@ -159,7 +150,7 @@ impl Cpu {
             // The reset sequence will set the I flag, resulting in 0x24.
             // Note: B flag (bit 4) is not actually stored in P register,
             // it only appears when P is pushed to stack during BRK/PHP
-            memory,
+            bus: memory,
             ppu,
             apu,
             halted: false,
@@ -172,7 +163,6 @@ impl Cpu {
             irq_pending: false,
             forced_irq_pending: false,
             master_clock: MasterClock::new(tv_system),
-            oob_master_clock: MasterClock::new(tv_system),
 
             skip_interrupt_latch_this_cycle: false,
 
@@ -279,8 +269,6 @@ impl Cpu {
             skip_interrupt_latch_this_cycle: self.skip_interrupt_latch_this_cycle,
             master_clock: self.master_clock.master_cycles(),
             master_clock_ppu: self.master_clock.ppu_cycles(),
-            oob_master_clock: self.oob_master_clock.master_cycles(),
-            oob_master_clock_ppu: self.oob_master_clock.ppu_cycles(),
             dmc_dma_running: self.dmc_dma_running,
             dmc_dma_need_halt: self.dmc_dma_need_halt,
             dmc_dma_need_dummy_read: self.dmc_dma_need_dummy_read,
@@ -309,10 +297,6 @@ impl Cpu {
         self.skip_interrupt_latch_this_cycle = state.skip_interrupt_latch_this_cycle;
         self.master_clock.set_master_cycles(state.master_clock);
         self.master_clock.set_ppu_cycles(state.master_clock_ppu);
-        self.oob_master_clock
-            .set_master_cycles(state.oob_master_clock);
-        self.oob_master_clock
-            .set_ppu_cycles(state.oob_master_clock_ppu);
         self.dmc_dma_running = state.dmc_dma_running;
         self.dmc_dma_need_halt = state.dmc_dma_need_halt;
         self.dmc_dma_need_dummy_read = state.dmc_dma_need_dummy_read;
@@ -334,7 +318,7 @@ impl Cpu {
         // Level-triggered IRQ line: sample hardware lines each CPU cycle.
         // Unit tests may force an asserted IRQ via `forced_irq_pending`.
         let irq_asserted_from_apu = self.apu.borrow().poll_irq();
-        let irq_asserted_from_mapper = self.memory.borrow().mapper_irq_pending();
+        let irq_asserted_from_mapper = self.bus.borrow().mapper_irq_pending();
         self.irq_pending =
             irq_asserted_from_apu || irq_asserted_from_mapper || self.forced_irq_pending;
 
@@ -404,7 +388,7 @@ impl Cpu {
     /// - DMC and OAM share cycles where possible
     /// - Extra 2-4 cycles depending on when collision occurs
     pub fn handle_oam_dma_if_pending(&mut self) -> Option<u16> {
-        let page = self.memory.borrow_mut().take_oam_dma_page()?;
+        let page = self.bus.borrow_mut().take_oam_dma_page()?;
 
         let cycles_before = self.total_cycles;
 
@@ -430,18 +414,15 @@ impl Cpu {
     /// Tick a single DMA cycle (advances PPU/APU by one CPU cycle).
     /// Also increments the internal CPU cycle counter for get/put cycle tracking.
     fn tick_single_dma_cycle(&mut self) {
-        let cpu_divider = self.oob_master_clock.cpu_divider();
-        self.oob_master_clock
-            .set_master_cycles(self.oob_master_clock.master_cycles() + cpu_divider);
-
-        let ppu_cycles = self.oob_master_clock.ppu_cycles_since_last();
+        self.master_clock.advance_cpu_cycles(1);
+        let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
-        let expansion = self.memory.borrow().mapper_expansion_audio_sample();
+        let expansion = self.bus.borrow().mapper_expansion_audio_sample();
         self.apu.borrow_mut().clock_with_expansion(expansion);
 
         // Synthetic cycles (DMA stalls) still advance mapper IRQ counters and expansion audio.
-        self.memory.borrow_mut().mapper_cpu_cycle();
+        self.bus.borrow_mut().mapper_cpu_cycle();
         self.end_cpu_cycle_latch_irq_line_only();
 
         // Increment internal cycle counter for get/put cycle tracking
@@ -462,20 +443,16 @@ impl Cpu {
     // }
 
     fn tick_ppu_apu_for_cpu_cycles(&mut self, cpu_cycles: u16) {
-        let cpu_divider = self.oob_master_clock.cpu_divider();
-        let master_ticks_to_add = cpu_divider * cpu_cycles as u64;
-        self.oob_master_clock
-            .set_master_cycles(self.oob_master_clock.master_cycles() + master_ticks_to_add);
-
-        let ppu_cycles = self.oob_master_clock.ppu_cycles_since_last();
+        self.master_clock.advance_cpu_cycles(cpu_cycles as u64);
+        let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
         for _ in 0..cpu_cycles {
-            let expansion = self.memory.borrow().mapper_expansion_audio_sample();
+            let expansion = self.bus.borrow().mapper_expansion_audio_sample();
             self.apu.borrow_mut().clock_with_expansion(expansion);
 
             // Synthetic cycles still advance mapper IRQ counters and expansion audio.
-            self.memory.borrow_mut().mapper_cpu_cycle();
+            self.bus.borrow_mut().mapper_cpu_cycle();
             self.end_cpu_cycle_latch_irq_line_only();
         }
     }
@@ -486,7 +463,7 @@ impl Cpu {
         self.prev_run_irq = self.run_irq;
 
         let irq_asserted_from_apu = self.apu.borrow().poll_irq();
-        let irq_asserted_from_mapper = self.memory.borrow().mapper_irq_pending();
+        let irq_asserted_from_mapper = self.bus.borrow().mapper_irq_pending();
         self.irq_pending =
             irq_asserted_from_apu || irq_asserted_from_mapper || self.forced_irq_pending;
 
@@ -501,25 +478,23 @@ impl Cpu {
 
         // Push PC (high then low)
         let addr = 0x0100 | (self.sp as u16);
-        self.memory.borrow_mut().write(addr, (pc >> 8) as u8, false);
+        self.bus.borrow_mut().write(addr, (pc >> 8) as u8, false);
         self.sp = self.sp.wrapping_sub(1);
 
         let addr = 0x0100 | (self.sp as u16);
-        self.memory
-            .borrow_mut()
-            .write(addr, (pc & 0xFF) as u8, false);
+        self.bus.borrow_mut().write(addr, (pc & 0xFF) as u8, false);
         self.sp = self.sp.wrapping_sub(1);
 
         // Push status (B clear, unused set)
         let mut p_with_break = self.p & !FLAG_BREAK;
         p_with_break |= FLAG_UNUSED;
         let addr = 0x0100 | (self.sp as u16);
-        self.memory.borrow_mut().write(addr, p_with_break, false);
+        self.bus.borrow_mut().write(addr, p_with_break, false);
         self.sp = self.sp.wrapping_sub(1);
 
         // Read NMI vector and set PC
-        let lo = self.memory.borrow_mut().read(NMI_VECTOR) as u16;
-        let hi = self.memory.borrow_mut().read(NMI_VECTOR + 1) as u16;
+        let lo = self.bus.borrow_mut().read(NMI_VECTOR, false) as u16;
+        let hi = self.bus.borrow_mut().read(NMI_VECTOR + 1, false) as u16;
         self.pc = (hi << 8) | lo;
 
         self.interrupt_stack.push(InterruptKind::Nmi);
@@ -566,7 +541,6 @@ impl Cpu {
         // Reset cycle counters and master clock alignment.
         self.total_cycles = 0;
         self.master_clock.reset();
-        self.oob_master_clock.reset();
 
         // Reset takes 7 CPU cycles total: 5 internal cycles + 2 reset-vector reads.
         for _ in 0..5 {
@@ -605,7 +579,7 @@ impl Cpu {
         self.total_cycles += 1;
         let ppu_cycles = self.master_clock.ppu_cycles_since_last();
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
-        let expansion = self.memory.borrow().mapper_expansion_audio_sample();
+        let expansion = self.bus.borrow().mapper_expansion_audio_sample();
         self.apu.borrow_mut().clock_with_expansion(expansion);
     }
 
@@ -615,7 +589,7 @@ impl Cpu {
         self.ppu.borrow_mut().run_ppu_cycles(ppu_cycles);
 
         // Some mappers (e.g., Konami VRC) use CPU-cycle-driven IRQ counters.
-        self.memory.borrow_mut().mapper_cpu_cycle();
+        self.bus.borrow_mut().mapper_cpu_cycle();
 
         // Latch interrupt lines at the end of each CPU cycle.
         // Some edge cases require skipping latching for a single cycle.
@@ -657,7 +631,7 @@ impl Cpu {
 
                 if let Some(addr) = dma_addr {
                     self.before_cpu_cycle(false);
-                    let value = self.memory.borrow_mut().read(addr);
+                    let value = self.bus.borrow_mut().read(addr, false);
                     self.after_cpu_cycle(false);
                     self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
                 }
@@ -666,10 +640,7 @@ impl Cpu {
             } else {
                 // Dummy read / alignment cycle
                 self.before_cpu_cycle(false);
-                let _ = self
-                    .memory
-                    .borrow_mut()
-                    .read_without_joypad_clock(read_address);
+                let _ = self.bus.borrow_mut().read(read_address, true);
                 self.after_cpu_cycle(false);
 
                 if self.dmc_dma_need_dummy_read {
@@ -683,7 +654,7 @@ impl Cpu {
     /// Returns true if DMA was processed and the read should be retried.
     fn process_pending_dma(&mut self, read_address: u16) -> bool {
         // Check if OAM DMA is pending
-        let oam_dma_pending = self.memory.borrow().oam_dma_pending();
+        let oam_dma_pending = self.bus.borrow().oam_dma_pending();
 
         // Check if DMC DMA is pending (and not already running)
         let dmc_dma_pending = !self.dmc_dma_running && {
@@ -703,7 +674,7 @@ impl Cpu {
             self.start_dmc_dma();
 
             // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
-            let _ = self.memory.borrow_mut().read(read_address);
+            let _ = self.bus.borrow_mut().read(read_address, false);
             self.after_cpu_cycle(false);
             self.dmc_dma_need_halt = false;
 
@@ -715,11 +686,11 @@ impl Cpu {
 
         // OAM DMA is pending (possibly with DMC collision)
         // Halt cycle: complete the CPU cycle started by read() - the read value is discarded
-        let _ = self.memory.borrow_mut().read(read_address);
+        let _ = self.bus.borrow_mut().read(read_address, false);
         self.after_cpu_cycle(false);
 
         // Now run the OAM DMA (which handles DMC collision internally)
-        let page = self.memory.borrow_mut().take_oam_dma_page();
+        let page = self.bus.borrow_mut().take_oam_dma_page();
         if let Some(page) = page {
             self.run_oam_dma_internal(page);
         }
@@ -796,7 +767,7 @@ impl Cpu {
                 };
 
                 if let Some(addr) = dma_addr {
-                    let value = self.memory.borrow_mut().read(addr);
+                    let value = self.bus.borrow_mut().read(addr, false);
                     self.apu.borrow_mut().dmc_mut().complete_dma_read(value);
                 }
                 self.tick_single_dma_cycle();
@@ -807,7 +778,7 @@ impl Cpu {
                     dmc_progress = DMC_READY_TO_READ; // dummy done
                 }
                 let addr = source_base.wrapping_add(sprite_offset);
-                let value = self.memory.borrow_mut().read(addr);
+                let value = self.bus.borrow_mut().read(addr, false);
                 sprite_dma_value = Some(value);
                 self.tick_single_dma_cycle();
             } else if oam_ready_to_write {
@@ -855,6 +826,15 @@ impl Cpu {
 
     /// Read a byte from memory at the specified address
     fn read(&mut self, addr: u16) -> u8 {
+        self.read_with_dummy_flag(addr, false)
+    }
+
+    /// Dummy read a byte from memory at the specified address
+    fn dummy_read(&mut self, addr: u16) -> u8 {
+        self.read_with_dummy_flag(addr, true)
+    }
+
+    fn read_with_dummy_flag(&mut self, addr: u16, is_dummy_read: bool) -> u8 {
         loop {
             if let Some((ref mut tick, total)) = self.current_tick_info {
                 trace_cpu!(2;
@@ -877,16 +857,11 @@ impl Cpu {
                 continue;
             }
 
-            let value = self.memory.borrow_mut().read(addr);
+            let value = self.bus.borrow_mut().read(addr, is_dummy_read);
 
             self.after_cpu_cycle(false);
             return value;
         }
-    }
-
-    /// Dummy read a byte from memory at the specified address
-    fn dummy_read(&mut self, addr: u16) -> u8 {
-        self.read(addr)
     }
 
     /// Read a 16-bit word from memory at the specified address
@@ -918,7 +893,7 @@ impl Cpu {
             );
         }
         self.before_cpu_cycle(true);
-        self.memory.borrow_mut().write(addr, value, dummy);
+        self.bus.borrow_mut().write(addr, value, dummy);
 
         self.after_cpu_cycle(true);
     }
@@ -1507,82 +1482,79 @@ impl Cpu {
         #[cfg(debug_assertions)]
         if crate::debugging::is_cpu_tracing_enabled() {
             let pc = self.pc;
-            let mut memory = self.memory.borrow_mut();
+            let mut memory = self.bus.borrow_mut();
             let opcode_byte = memory.read_for_testing(pc);
-            if let Some(op) = super::opcode::lookup(opcode_byte) {
-                let byte1 = if op.bytes() > 1 {
-                    memory.read_for_testing(pc.wrapping_add(1))
-                } else {
-                    0
-                };
-                let byte2 = if op.bytes() > 2 {
-                    memory.read_for_testing(pc.wrapping_add(2))
-                } else {
-                    0
-                };
-                drop(memory); // Release borrow before trace macro may do other operations
-                let hex_dump = match op.bytes() {
-                    1 => format!("{:02X}", opcode_byte),
-                    2 => format!("{:02X} {:02X}", opcode_byte, byte1),
-                    _ => format!("{:02X} {:02X} {:02X}", opcode_byte, byte1, byte2),
-                };
-                let asm = match op.mode {
-                    "IMP" => op.mnemonic.to_string(),
-                    "ACC" => format!("{} A", op.mnemonic),
-                    "IMM" => format!("{} #${:02X}", op.mnemonic, byte1),
-                    "ZP" => format!("{} ${:02X}", op.mnemonic, byte1),
-                    "ZPX" => format!("{} ${:02X},X", op.mnemonic, byte1),
-                    "ZPY" => format!("{} ${:02X},Y", op.mnemonic, byte1),
-                    "ABS" => format!(
-                        "{} ${:04X}",
-                        op.mnemonic,
-                        u16::from_le_bytes([byte1, byte2])
-                    ),
-                    "ABSX" | "ABSXW" => format!(
-                        "{} ${:04X},X",
-                        op.mnemonic,
-                        u16::from_le_bytes([byte1, byte2])
-                    ),
-                    "ABSY" | "ABSYW" => format!(
-                        "{} ${:04X},Y",
-                        op.mnemonic,
-                        u16::from_le_bytes([byte1, byte2])
-                    ),
-                    "IND" => format!(
-                        "{} (${:04X})",
-                        op.mnemonic,
-                        u16::from_le_bytes([byte1, byte2])
-                    ),
-                    "INDX" => format!("{} (${:02X},X)", op.mnemonic, byte1),
-                    "INDY" | "INDYW" => format!("{} (${:02X}),Y", op.mnemonic, byte1),
-                    "REL" => {
-                        let offset = byte1 as i8;
-                        let target = pc.wrapping_add(2).wrapping_add(offset as u16);
-                        format!("{} ${:04X}", op.mnemonic, target)
-                    }
-                    _ => op.mnemonic.to_string(),
-                };
-                // Set up tick tracking for this instruction
-                self.current_tick_info = Some((1, op.cycles));
-                trace_cpu!(1;
-                    "exec PC={:04X} {} {:14}  A={:02X}  X={:02X}  Y={:02X}  P={:02X}  SP={:02X}  cyc={:<3}",
-                    pc,
-                    hex_dump,
-                    asm,
-                    self.a,
-                    self.x,
-                    self.y,
-                    self.p,
-                    self.sp,
-                    self.total_cycles
-                );
-            }
+            let op = super::opcode::lookup(opcode_byte);
+            let byte1 = if op.bytes() > 1 {
+                memory.read_for_testing(pc.wrapping_add(1))
+            } else {
+                0
+            };
+            let byte2 = if op.bytes() > 2 {
+                memory.read_for_testing(pc.wrapping_add(2))
+            } else {
+                0
+            };
+            drop(memory); // Release borrow before trace macro may do other operations
+            let hex_dump = match op.bytes() {
+                1 => format!("{:02X}", opcode_byte),
+                2 => format!("{:02X} {:02X}", opcode_byte, byte1),
+                _ => format!("{:02X} {:02X} {:02X}", opcode_byte, byte1, byte2),
+            };
+            let asm = match op.mode {
+                "IMP" => op.mnemonic.to_string(),
+                "ACC" => format!("{} A", op.mnemonic),
+                "IMM" => format!("{} #${:02X}", op.mnemonic, byte1),
+                "ZP" => format!("{} ${:02X}", op.mnemonic, byte1),
+                "ZPX" => format!("{} ${:02X},X", op.mnemonic, byte1),
+                "ZPY" => format!("{} ${:02X},Y", op.mnemonic, byte1),
+                "ABS" => format!(
+                    "{} ${:04X}",
+                    op.mnemonic,
+                    u16::from_le_bytes([byte1, byte2])
+                ),
+                "ABSX" | "ABSXW" => format!(
+                    "{} ${:04X},X",
+                    op.mnemonic,
+                    u16::from_le_bytes([byte1, byte2])
+                ),
+                "ABSY" | "ABSYW" => format!(
+                    "{} ${:04X},Y",
+                    op.mnemonic,
+                    u16::from_le_bytes([byte1, byte2])
+                ),
+                "IND" => format!(
+                    "{} (${:04X})",
+                    op.mnemonic,
+                    u16::from_le_bytes([byte1, byte2])
+                ),
+                "INDX" => format!("{} (${:02X},X)", op.mnemonic, byte1),
+                "INDY" | "INDYW" => format!("{} (${:02X}),Y", op.mnemonic, byte1),
+                "REL" => {
+                    let offset = byte1 as i8;
+                    let target = pc.wrapping_add(2).wrapping_add(offset as u16);
+                    format!("{} ${:04X}", op.mnemonic, target)
+                }
+                _ => op.mnemonic.to_string(),
+            };
+            // Set up tick tracking for this instruction
+            self.current_tick_info = Some((1, op.cycles));
+            trace_cpu!(1;
+                "exec PC={:04X} {} {:14}  A={:02X}  X={:02X}  Y={:02X}  P={:02X}  SP={:02X}  cyc={:<3}",
+                pc,
+                hex_dump,
+                asm,
+                self.a,
+                self.x,
+                self.y,
+                self.p,
+                self.sp,
+                self.total_cycles
+            );
         }
 
         let opcode = self.read_byte_from_pc();
-        let Some(op) = super::opcode::lookup(opcode) else {
-            panic!("Invalid opcode: 0x{:02X}", opcode);
-        };
+        let op = super::opcode::lookup(opcode);
         let operand = self.get_operand(*op);
 
         match op.mnemonic {
@@ -2098,7 +2070,6 @@ impl Cpu {
             }
             "*ISB" => {
                 // *ISB (undocumented): Increment memory then SBC
-                // TODO This should use get_operand_value instead
                 self.isb(operand);
             }
             "INX" => {
@@ -2327,7 +2298,7 @@ mod tests {
         prg_rom[0x0000] = 0xEA; // NOP at $8000
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
     }
 
     #[test]
@@ -2438,8 +2409,6 @@ mod tests {
         cpu.skip_interrupt_latch_this_cycle = true;
         cpu.master_clock.set_master_cycles(111);
         cpu.master_clock.set_ppu_cycles(222);
-        cpu.oob_master_clock.set_master_cycles(333);
-        cpu.oob_master_clock.set_ppu_cycles(444);
         cpu.dmc_dma_running = true;
         cpu.dmc_dma_need_halt = true;
         cpu.dmc_dma_need_dummy_read = true;
@@ -2477,14 +2446,6 @@ mod tests {
         assert_eq!(
             restored.master_clock.ppu_cycles(),
             cpu.master_clock.ppu_cycles()
-        );
-        assert_eq!(
-            restored.oob_master_clock.master_cycles(),
-            cpu.oob_master_clock.master_cycles()
-        );
-        assert_eq!(
-            restored.oob_master_clock.ppu_cycles(),
-            cpu.oob_master_clock.ppu_cycles()
         );
         assert_eq!(restored.dmc_dma_running, cpu.dmc_dma_running);
         assert_eq!(restored.dmc_dma_need_halt, cpu.dmc_dma_need_halt);
@@ -2596,7 +2557,7 @@ mod tests {
         prg_rom[0x1000] = 0xEA; // NOP at $9000
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
 
@@ -2644,7 +2605,7 @@ mod tests {
         prg_rom[0x1000] = 0x40; // RTI at $9000
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
 
@@ -2752,7 +2713,7 @@ mod tests {
         // Verify all 256 bytes were copied to OAM by reading through $2004
         for i in 0..256u16 {
             memory.borrow_mut().write(0x2003, i as u8, false);
-            let oam_byte = memory.borrow_mut().read(0x2004);
+            let oam_byte = memory.borrow_mut().read(0x2004, false);
             let expected = if (i & 0x03) == 2 {
                 ((i & 0xFF) as u8) & 0xE3
             } else {
@@ -2836,7 +2797,7 @@ mod tests {
         prg_rom[0x0000] = 0xEA; // NOP at $8000
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
         cpu.p &= !FLAG_INTERRUPT;
@@ -2876,7 +2837,7 @@ mod tests {
         prg_rom[0x1000] = 0xEA; // NOP at $9000
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
 
@@ -2918,9 +2879,9 @@ mod tests {
         let pcl_addr = 0x0100 | (sp_before.wrapping_sub(1) as u16);
         let p_addr = 0x0100 | (sp_before.wrapping_sub(2) as u16);
 
-        let pch = memory.borrow_mut().read(pch_addr);
-        let pcl = memory.borrow_mut().read(pcl_addr);
-        let pushed_p = memory.borrow_mut().read(p_addr);
+        let pch = memory.borrow_mut().read(pch_addr, false);
+        let pcl = memory.borrow_mut().read(pcl_addr, false);
+        let pushed_p = memory.borrow_mut().read(p_addr, false);
 
         let expected_return_pc = pc_before.wrapping_add(1);
         assert_eq!(pch, (expected_return_pc >> 8) as u8);
@@ -2969,7 +2930,7 @@ mod tests {
         rom.extend_from_slice(&chr_rom);
 
         let cartridge = Cartridge::new(&rom).expect("MMC3 iNES ROM should parse");
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
         cpu.p &= !FLAG_INTERRUPT; // allow IRQs
@@ -3026,7 +2987,7 @@ mod tests {
         prg_rom[0x0000] = 0xEA; // NOP at $8000
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
 
@@ -3073,6 +3034,30 @@ mod tests {
 
         assert_eq!(ppu_after - ppu_before, dma_cycles as u64 * 3);
         assert_eq!(apu_after - apu_before, dma_cycles as u32);
+    }
+
+    #[test]
+    fn test_oam_dma_advances_master_clock_for_synthetic_cycles() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TvSystem::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        cpu.set_total_cycles(8); // even cycle start => 514
+        cpu.master_clock.set_master_cycles(0);
+        cpu.master_clock.set_ppu_cycles(0);
+
+        memory.borrow_mut().write(0x4014, 0x02, false);
+
+        let dma_cycles = cpu
+            .handle_oam_dma_if_pending()
+            .expect("DMA should be pending");
+
+        let expected_master_ticks = cpu.master_clock.cpu_divider() * dma_cycles as u64;
+        assert_eq!(cpu.master_clock.master_cycles(), expected_master_ticks);
     }
 
     #[test]
@@ -3125,7 +3110,7 @@ mod tests {
         prg_rom[0x3FFD] = 0x80;
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         // Enable NMI on VBlank (PPUCTRL bit 7)
         memory.borrow_mut().write(0x2000, 0x80, false);
@@ -3218,7 +3203,7 @@ mod tests {
 
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
 
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
     }
 
     #[test]
@@ -3353,7 +3338,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0x10;
-        cpu.memory.borrow_mut().write(0x42, 0x33, false);
+        cpu.bus.borrow_mut().write(0x42, 0x33, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x43);
     }
@@ -3366,7 +3351,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0x20;
-        cpu.memory.borrow_mut().write(0x1234, 0x55, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x55, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x75);
     }
@@ -3380,7 +3365,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x10;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1239, 0x44, false); // 0x1234 + 0x05
+        cpu.bus.borrow_mut().write(0x1239, 0x44, false); // 0x1234 + 0x05
         run(&mut cpu);
         assert_eq!(cpu.a, 0x54);
     }
@@ -3394,7 +3379,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x15;
         cpu.x = 0x03;
-        cpu.memory.borrow_mut().write(0x45, 0x22, false); // 0x42 + 0x03
+        cpu.bus.borrow_mut().write(0x45, 0x22, false); // 0x42 + 0x03
         run(&mut cpu);
         assert_eq!(cpu.a, 0x37);
     }
@@ -3408,7 +3393,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x08;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x1010, 0x17, false); // 0x1000 + 0x10
+        cpu.bus.borrow_mut().write(0x1010, 0x17, false); // 0x1000 + 0x10
         run(&mut cpu);
         assert_eq!(cpu.a, 0x1F);
     }
@@ -3422,9 +3407,9 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x05;
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x24, 0x74, false); // Pointer at 0x20 + 0x04: low byte
-        cpu.memory.borrow_mut().write(0x25, 0x10, false); // Pointer at 0x20 + 0x04: high byte
-        cpu.memory.borrow_mut().write(0x1074, 0x33, false); // Value at address 0x1074
+        cpu.bus.borrow_mut().write(0x24, 0x74, false); // Pointer at 0x20 + 0x04: low byte
+        cpu.bus.borrow_mut().write(0x25, 0x10, false); // Pointer at 0x20 + 0x04: high byte
+        cpu.bus.borrow_mut().write(0x1074, 0x33, false); // Value at address 0x1074
         run(&mut cpu);
         assert_eq!(cpu.a, 0x38);
     }
@@ -3438,9 +3423,9 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x0A;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x86, 0x28, false); // Pointer at 0x86: low byte
-        cpu.memory.borrow_mut().write(0x87, 0x10, false); // Pointer at 0x86: high byte
-        cpu.memory.borrow_mut().write(0x1038, 0x06, false); // Value at 0x1028 + 0x10
+        cpu.bus.borrow_mut().write(0x86, 0x28, false); // Pointer at 0x86: low byte
+        cpu.bus.borrow_mut().write(0x87, 0x10, false); // Pointer at 0x86: high byte
+        cpu.bus.borrow_mut().write(0x1038, 0x06, false); // Value at 0x1028 + 0x10
         run(&mut cpu);
         assert_eq!(cpu.a, 0x10);
     }
@@ -3496,7 +3481,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0b1100_1100;
-        cpu.memory.borrow_mut().write(0x42, 0b1010_1010, false);
+        cpu.bus.borrow_mut().write(0x42, 0b1010_1010, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0b1000_1000);
     }
@@ -3510,7 +3495,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b1111_0000;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0b0011_1111, false); // 0x42 + 0x05
+        cpu.bus.borrow_mut().write(0x47, 0b0011_1111, false); // 0x42 + 0x05
         run(&mut cpu);
         assert_eq!(cpu.a, 0b0011_0000);
     }
@@ -3523,7 +3508,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0b1010_1010;
-        cpu.memory.borrow_mut().write(0x1234, 0b1100_1100, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b1100_1100, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0b1000_1000);
     }
@@ -3537,7 +3522,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b1111_1111;
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0b0101_0101, false); // 0x1234 + 0x10
+        cpu.bus.borrow_mut().write(0x1244, 0b0101_0101, false); // 0x1234 + 0x10
         run(&mut cpu);
         assert_eq!(cpu.a, 0b0101_0101);
     }
@@ -3551,7 +3536,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b1100_0011;
         cpu.y = 0x20;
-        cpu.memory.borrow_mut().write(0x1020, 0b0011_1100, false); // 0x1000 + 0x20
+        cpu.bus.borrow_mut().write(0x1020, 0b0011_1100, false); // 0x1000 + 0x20
         run(&mut cpu);
         assert_eq!(cpu.a, 0b0000_0000);
     }
@@ -3565,9 +3550,9 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b1111_0000;
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x24, 0x74, false); // Pointer at 0x20 + 0x04: low byte
-        cpu.memory.borrow_mut().write(0x25, 0x10, false); // Pointer at 0x20 + 0x04: high byte
-        cpu.memory.borrow_mut().write(0x1074, 0b0000_1111, false); // Value at address 0x1074
+        cpu.bus.borrow_mut().write(0x24, 0x74, false); // Pointer at 0x20 + 0x04: low byte
+        cpu.bus.borrow_mut().write(0x25, 0x10, false); // Pointer at 0x20 + 0x04: high byte
+        cpu.bus.borrow_mut().write(0x1074, 0b0000_1111, false); // Value at address 0x1074
         run(&mut cpu);
         assert_eq!(cpu.a, 0b0000_0000);
     }
@@ -3581,9 +3566,9 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b1010_1010;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x86, 0x28, false); // Pointer at 0x86: low byte
-        cpu.memory.borrow_mut().write(0x87, 0x10, false); // Pointer at 0x86: high byte
-        cpu.memory.borrow_mut().write(0x1038, 0b1111_0000, false); // Value at 0x1028 + 0x10
+        cpu.bus.borrow_mut().write(0x86, 0x28, false); // Pointer at 0x86: low byte
+        cpu.bus.borrow_mut().write(0x87, 0x10, false); // Pointer at 0x86: high byte
+        cpu.bus.borrow_mut().write(0x1038, 0b1111_0000, false); // Value at 0x1028 + 0x10
         run(&mut cpu);
         assert_eq!(cpu.a, 0b1010_0000);
     }
@@ -3640,9 +3625,9 @@ mod tests {
         let program = vec![ASL_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0b0011_0011, false);
+        cpu.bus.borrow_mut().write(0x42, 0b0011_0011, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0b0110_0110);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0b0110_0110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -3654,9 +3639,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0b1010_0101, false); // 0x42 + 0x05
+        cpu.bus.borrow_mut().write(0x47, 0b1010_0101, false); // 0x42 + 0x05
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0b0100_1010);
+        assert_eq!(cpu.bus.borrow_mut().read(0x47, false), 0b0100_1010);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -3667,9 +3652,9 @@ mod tests {
         let program = vec![ASL_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x1234, 0b0100_0001, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b0100_0001, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0b1000_0010);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1234, false), 0b1000_0010);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 
@@ -3681,9 +3666,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0b0000_0001, false); // 0x1234 + 0x10
+        cpu.bus.borrow_mut().write(0x1244, 0b0000_0001, false); // 0x1234 + 0x10
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0b0000_0010);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1244, false), 0b0000_0010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
     }
@@ -3696,7 +3681,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0b1111_0000;
-        cpu.memory.borrow_mut().write(0x42, 0b1100_0011, false);
+        cpu.bus.borrow_mut().write(0x42, 0b1100_0011, false);
         run(&mut cpu);
         // A & memory = 0b1111_0000 & 0b1100_0011 = 0b1100_0000 (not zero)
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3714,7 +3699,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0b0000_1111;
-        cpu.memory.borrow_mut().write(0x42, 0b1111_0000, false);
+        cpu.bus.borrow_mut().write(0x42, 0b1111_0000, false);
         run(&mut cpu);
         // A & memory = 0b0000_1111 & 0b1111_0000 = 0b0000_0000 (zero)
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -3732,7 +3717,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0b1111_1111;
-        cpu.memory.borrow_mut().write(0x42, 0b0011_1111, false);
+        cpu.bus.borrow_mut().write(0x42, 0b0011_1111, false);
         run(&mut cpu);
         // A & memory = 0b1111_1111 & 0b0011_1111 = 0b0011_1111 (not zero)
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -3750,7 +3735,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0b1010_1010;
-        cpu.memory.borrow_mut().write(0x1234, 0b0101_1010, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b0101_1010, false);
         run(&mut cpu);
         // A & memory = 0b1010_1010 & 0b0101_1010 = 0b0000_1010 (not zero)
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -4019,7 +4004,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0x80;
-        cpu.memory.borrow_mut().write(0x42, 0x80, false);
+        cpu.bus.borrow_mut().write(0x42, 0x80, false);
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
@@ -4034,7 +4019,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x10;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0x05, false); // 0x42 + 0x05
+        cpu.bus.borrow_mut().write(0x47, 0x05, false); // 0x42 + 0x05
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // 0x10 >= 0x05
     }
@@ -4047,7 +4032,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0x20;
-        cpu.memory.borrow_mut().write(0x1234, 0x30, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x20 < 0x30
     }
@@ -4061,7 +4046,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0xFF;
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x1244, 0xFF, false);
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -4075,7 +4060,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x55;
         cpu.y = 0x20;
-        cpu.memory.borrow_mut().write(0x1020, 0x44, false);
+        cpu.bus.borrow_mut().write(0x1020, 0x44, false);
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // 0x55 >= 0x44
     }
@@ -4089,9 +4074,9 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x33;
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x24, 0x74, false);
-        cpu.memory.borrow_mut().write(0x25, 0x10, false);
-        cpu.memory.borrow_mut().write(0x1074, 0x33, false);
+        cpu.bus.borrow_mut().write(0x24, 0x74, false);
+        cpu.bus.borrow_mut().write(0x25, 0x10, false);
+        cpu.bus.borrow_mut().write(0x1074, 0x33, false);
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
     }
@@ -4105,9 +4090,9 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x77;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x86, 0x28, false);
-        cpu.memory.borrow_mut().write(0x87, 0x10, false);
-        cpu.memory.borrow_mut().write(0x1038, 0x88, false);
+        cpu.bus.borrow_mut().write(0x86, 0x28, false);
+        cpu.bus.borrow_mut().write(0x87, 0x10, false);
+        cpu.bus.borrow_mut().write(0x1038, 0x88, false);
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x77 < 0x88
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -4163,7 +4148,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x80;
-        cpu.memory.borrow_mut().write(0x42, 0x80, false);
+        cpu.bus.borrow_mut().write(0x42, 0x80, false);
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
@@ -4177,7 +4162,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x20;
-        cpu.memory.borrow_mut().write(0x1234, 0x30, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x20 < 0x30
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -4233,7 +4218,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x80;
-        cpu.memory.borrow_mut().write(0x42, 0x80, false);
+        cpu.bus.borrow_mut().write(0x42, 0x80, false);
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
@@ -4247,7 +4232,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x20;
-        cpu.memory.borrow_mut().write(0x1234, 0x30, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // 0x20 < 0x30
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -4260,9 +4245,9 @@ mod tests {
         let program = vec![DEC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x50, false);
+        cpu.bus.borrow_mut().write(0x42, 0x50, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x4F);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0x4F);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -4274,9 +4259,9 @@ mod tests {
         let program = vec![DEC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x01, false);
+        cpu.bus.borrow_mut().write(0x42, 0x01, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x00);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -4288,9 +4273,9 @@ mod tests {
         let program = vec![DEC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x00, false);
+        cpu.bus.borrow_mut().write(0x42, 0x00, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0xFF);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0xFF);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -4303,9 +4288,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0x80, false);
+        cpu.bus.borrow_mut().write(0x47, 0x80, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0x7F);
+        assert_eq!(cpu.bus.borrow_mut().read(0x47, false), 0x7F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -4316,9 +4301,9 @@ mod tests {
         let program = vec![DEC_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x1234, 0x30, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0x2F);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1234, false), 0x2F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -4330,9 +4315,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0x90, false);
+        cpu.bus.borrow_mut().write(0x1244, 0x90, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0x8F);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1244, false), 0x8F);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 
@@ -4384,7 +4369,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0xFF;
-        cpu.memory.borrow_mut().write(0x42, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x42, 0x0F, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0xF0);
     }
@@ -4398,7 +4383,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0xFF;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0x55, false);
+        cpu.bus.borrow_mut().write(0x47, 0x55, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0xAA);
     }
@@ -4411,7 +4396,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0x12;
-        cpu.memory.borrow_mut().write(0x1234, 0x34, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x34, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x26);
     }
@@ -4425,7 +4410,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0xAA;
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0x55, false);
+        cpu.bus.borrow_mut().write(0x1244, 0x55, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0xFF);
     }
@@ -4439,7 +4424,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0xF0;
         cpu.y = 0x20;
-        cpu.memory.borrow_mut().write(0x1254, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x1254, 0x0F, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0xFF);
     }
@@ -4453,9 +4438,9 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b1100_0011;
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x24, 0x74, false);
-        cpu.memory.borrow_mut().write(0x25, 0x10, false);
-        cpu.memory.borrow_mut().write(0x1074, 0b0011_1100, false);
+        cpu.bus.borrow_mut().write(0x24, 0x74, false);
+        cpu.bus.borrow_mut().write(0x25, 0x10, false);
+        cpu.bus.borrow_mut().write(0x1074, 0b0011_1100, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0b1111_1111);
     }
@@ -4469,9 +4454,9 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b1010_0101;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x86, 0x28, false);
-        cpu.memory.borrow_mut().write(0x87, 0x10, false);
-        cpu.memory.borrow_mut().write(0x1038, 0b0101_1010, false);
+        cpu.bus.borrow_mut().write(0x86, 0x28, false);
+        cpu.bus.borrow_mut().write(0x87, 0x10, false);
+        cpu.bus.borrow_mut().write(0x1038, 0b0101_1010, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0xFF);
     }
@@ -4567,9 +4552,9 @@ mod tests {
         let program = vec![INC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x50, false);
+        cpu.bus.borrow_mut().write(0x42, 0x50, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x51);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0x51);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -4581,9 +4566,9 @@ mod tests {
         let program = vec![INC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x42, 0xFF, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x00);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
@@ -4595,9 +4580,9 @@ mod tests {
         let program = vec![INC_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x7F, false);
+        cpu.bus.borrow_mut().write(0x42, 0x7F, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x80);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0x80);
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
@@ -4610,9 +4595,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0x20, false);
+        cpu.bus.borrow_mut().write(0x47, 0x20, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0x21);
+        assert_eq!(cpu.bus.borrow_mut().read(0x47, false), 0x21);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -4623,9 +4608,9 @@ mod tests {
         let program = vec![INC_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x1234, 0x30, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x30, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0x31);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1234, false), 0x31);
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
     }
 
@@ -4637,9 +4622,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0x8F, false);
+        cpu.bus.borrow_mut().write(0x1244, 0x8F, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0x90);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1244, false), 0x90);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
     }
 
@@ -4649,10 +4634,10 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         fake_cartridge(&mut cpu, &[]);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x0600, JMP_ABS, false);
-        cpu.memory.borrow_mut().write(0x0601, 0x34, false);
-        cpu.memory.borrow_mut().write(0x0602, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1234, KIL, false);
+        cpu.bus.borrow_mut().write(0x0600, JMP_ABS, false);
+        cpu.bus.borrow_mut().write(0x0601, 0x34, false);
+        cpu.bus.borrow_mut().write(0x0602, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1234, KIL, false);
         cpu.pc = 0x0600;
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK at 0x1234
@@ -4664,12 +4649,12 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         fake_cartridge(&mut cpu, &[]);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x0600, JMP_IND, false);
-        cpu.memory.borrow_mut().write(0x0601, 0x20, false);
-        cpu.memory.borrow_mut().write(0x0602, 0x10, false);
-        cpu.memory.borrow_mut().write(0x1020, 0x56, false);
-        cpu.memory.borrow_mut().write(0x1021, 0x18, false);
-        cpu.memory.borrow_mut().write(0x1856, KIL, false);
+        cpu.bus.borrow_mut().write(0x0600, JMP_IND, false);
+        cpu.bus.borrow_mut().write(0x0601, 0x20, false);
+        cpu.bus.borrow_mut().write(0x0602, 0x10, false);
+        cpu.bus.borrow_mut().write(0x1020, 0x56, false);
+        cpu.bus.borrow_mut().write(0x1021, 0x18, false);
+        cpu.bus.borrow_mut().write(0x1856, KIL, false);
         cpu.pc = 0x0600;
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x1857); // PC after BRK at 0x1856
@@ -4684,12 +4669,12 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         fake_cartridge(&mut cpu, &[]);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x0600, JMP_IND, false);
-        cpu.memory.borrow_mut().write(0x0601, 0xFF, false);
-        cpu.memory.borrow_mut().write(0x0602, 0x10, false);
-        cpu.memory.borrow_mut().write(0x10FF, 0x34, false);
-        cpu.memory.borrow_mut().write(0x1000, 0x12, false); // Wraps to start of page, not 0x1100
-        cpu.memory.borrow_mut().write(0x1234, KIL, false);
+        cpu.bus.borrow_mut().write(0x0600, JMP_IND, false);
+        cpu.bus.borrow_mut().write(0x0601, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x0602, 0x10, false);
+        cpu.bus.borrow_mut().write(0x10FF, 0x34, false);
+        cpu.bus.borrow_mut().write(0x1000, 0x12, false); // Wraps to start of page, not 0x1100
+        cpu.bus.borrow_mut().write(0x1234, KIL, false);
         cpu.pc = 0x0600;
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // Should jump to 0x1234 (low=0x34, high=0x12)
@@ -4701,18 +4686,18 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         fake_cartridge(&mut cpu, &[]);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x0600, JSR, false);
-        cpu.memory.borrow_mut().write(0x0601, 0x34, false);
-        cpu.memory.borrow_mut().write(0x0602, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1234, KIL, false);
+        cpu.bus.borrow_mut().write(0x0600, JSR, false);
+        cpu.bus.borrow_mut().write(0x0601, 0x34, false);
+        cpu.bus.borrow_mut().write(0x0602, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1234, KIL, false);
         cpu.pc = 0x0600;
         cpu.sp = 0xFF;
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK at 0x1234
         assert_eq!(cpu.sp, 0xFD); // SP decremented by 2 (pushed 2 bytes)
         // Return address should be 0x0602 (address of last byte of JSR instruction)
-        assert_eq!(cpu.memory.borrow_mut().read(0x01FF), 0x06); // High byte of return address
-        assert_eq!(cpu.memory.borrow_mut().read(0x01FE), 0x02); // Low byte of return address
+        assert_eq!(cpu.bus.borrow_mut().read(0x01FF, false), 0x06); // High byte of return address
+        assert_eq!(cpu.bus.borrow_mut().read(0x01FE, false), 0x02); // Low byte of return address
     }
 
     #[test]
@@ -4759,7 +4744,7 @@ mod tests {
         let program = vec![LDA_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x55, false);
+        cpu.bus.borrow_mut().write(0x42, 0x55, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x55);
     }
@@ -4772,7 +4757,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0xAA, false);
+        cpu.bus.borrow_mut().write(0x47, 0xAA, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0xAA);
     }
@@ -4784,7 +4769,7 @@ mod tests {
         let program = vec![LDA_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x1234, 0x77, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x77, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x77);
     }
@@ -4797,7 +4782,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0x88, false);
+        cpu.bus.borrow_mut().write(0x1244, 0x88, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x88);
     }
@@ -4810,7 +4795,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x20;
-        cpu.memory.borrow_mut().write(0x1254, 0x99, false);
+        cpu.bus.borrow_mut().write(0x1254, 0x99, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x99);
     }
@@ -4823,9 +4808,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x24, 0x74, false);
-        cpu.memory.borrow_mut().write(0x25, 0x10, false);
-        cpu.memory.borrow_mut().write(0x1074, 0xCC, false);
+        cpu.bus.borrow_mut().write(0x24, 0x74, false);
+        cpu.bus.borrow_mut().write(0x25, 0x10, false);
+        cpu.bus.borrow_mut().write(0x1074, 0xCC, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0xCC);
     }
@@ -4838,9 +4823,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x86, 0x28, false);
-        cpu.memory.borrow_mut().write(0x87, 0x10, false);
-        cpu.memory.borrow_mut().write(0x1038, 0xDD, false);
+        cpu.bus.borrow_mut().write(0x86, 0x28, false);
+        cpu.bus.borrow_mut().write(0x87, 0x10, false);
+        cpu.bus.borrow_mut().write(0x1038, 0xDD, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0xDD);
     }
@@ -4889,7 +4874,7 @@ mod tests {
         let program = vec![LDX_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x55, false);
+        cpu.bus.borrow_mut().write(0x42, 0x55, false);
         run(&mut cpu);
         assert_eq!(cpu.x, 0x55);
     }
@@ -4902,7 +4887,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0xAA, false);
+        cpu.bus.borrow_mut().write(0x47, 0xAA, false);
         run(&mut cpu);
         assert_eq!(cpu.x, 0xAA);
     }
@@ -4914,7 +4899,7 @@ mod tests {
         let program = vec![LDX_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x1234, 0x77, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x77, false);
         run(&mut cpu);
         assert_eq!(cpu.x, 0x77);
     }
@@ -4927,7 +4912,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x20;
-        cpu.memory.borrow_mut().write(0x1254, 0x99, false);
+        cpu.bus.borrow_mut().write(0x1254, 0x99, false);
         run(&mut cpu);
         assert_eq!(cpu.x, 0x99);
     }
@@ -4976,7 +4961,7 @@ mod tests {
         let program = vec![LDY_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x55, false);
+        cpu.bus.borrow_mut().write(0x42, 0x55, false);
         run(&mut cpu);
         assert_eq!(cpu.y, 0x55);
     }
@@ -4989,7 +4974,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0xAA, false);
+        cpu.bus.borrow_mut().write(0x47, 0xAA, false);
         run(&mut cpu);
         assert_eq!(cpu.y, 0xAA);
     }
@@ -5001,7 +4986,7 @@ mod tests {
         let program = vec![LDY_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x1234, 0x77, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x77, false);
         run(&mut cpu);
         assert_eq!(cpu.y, 0x77);
     }
@@ -5014,7 +4999,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0x88, false);
+        cpu.bus.borrow_mut().write(0x1244, 0x88, false);
         run(&mut cpu);
         assert_eq!(cpu.y, 0x88);
     }
@@ -5055,9 +5040,9 @@ mod tests {
         let program = vec![LSR_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0b11001100, false);
+        cpu.bus.borrow_mut().write(0x42, 0b11001100, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0b01100110);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0b01100110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -5069,9 +5054,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0b10101011, false);
+        cpu.bus.borrow_mut().write(0x47, 0b10101011, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0b01010101);
+        assert_eq!(cpu.bus.borrow_mut().read(0x47, false), 0b01010101);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5082,9 +5067,9 @@ mod tests {
         let program = vec![LSR_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x1234, 0b01010100, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b01010100, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0b00101010);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1234, false), 0b00101010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -5096,9 +5081,9 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0b00000011, false);
+        cpu.bus.borrow_mut().write(0x1244, 0b00000011, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0b00000001);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1244, false), 0b00000001);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5156,7 +5141,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0b11110000;
-        cpu.memory.borrow_mut().write(0x42, 0b00001111, false);
+        cpu.bus.borrow_mut().write(0x42, 0b00001111, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -5170,7 +5155,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b10000000;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0b01000000, false);
+        cpu.bus.borrow_mut().write(0x47, 0b01000000, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0b11000000);
     }
@@ -5183,7 +5168,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0b00110011;
-        cpu.memory.borrow_mut().write(0x1234, 0b11001100, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b11001100, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -5197,7 +5182,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b00001111;
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0b11110000, false);
+        cpu.bus.borrow_mut().write(0x1244, 0b11110000, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -5211,7 +5196,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b01010101;
         cpu.y = 0x20;
-        cpu.memory.borrow_mut().write(0x1254, 0b10101010, false);
+        cpu.bus.borrow_mut().write(0x1254, 0b10101010, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -5225,9 +5210,9 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b00110011;
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x86, 0x34, false);
-        cpu.memory.borrow_mut().write(0x87, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1234, 0b11001100, false);
+        cpu.bus.borrow_mut().write(0x86, 0x34, false);
+        cpu.bus.borrow_mut().write(0x87, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b11001100, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -5241,9 +5226,9 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0b10101010;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x86, 0x28, false);
-        cpu.memory.borrow_mut().write(0x87, 0x10, false);
-        cpu.memory.borrow_mut().write(0x1038, 0b01010101, false);
+        cpu.bus.borrow_mut().write(0x86, 0x28, false);
+        cpu.bus.borrow_mut().write(0x87, 0x10, false);
+        cpu.bus.borrow_mut().write(0x1038, 0b01010101, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0b11111111);
     }
@@ -5477,10 +5462,10 @@ mod tests {
         let program = vec![ROL_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0b11001100, false);
+        cpu.bus.borrow_mut().write(0x42, 0b11001100, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0b10011000);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0b10011000);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5492,10 +5477,10 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0b10101011, false);
+        cpu.bus.borrow_mut().write(0x47, 0b10101011, false);
         cpu.p = FLAG_CARRY;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0b01010111);
+        assert_eq!(cpu.bus.borrow_mut().read(0x47, false), 0b01010111);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5506,10 +5491,10 @@ mod tests {
         let program = vec![ROL_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x1234, 0b01010100, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b01010100, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0b10101000);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1234, false), 0b10101000);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -5521,10 +5506,10 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0b00000011, false);
+        cpu.bus.borrow_mut().write(0x1244, 0b00000011, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0b00000110);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1244, false), 0b00000110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -5566,10 +5551,10 @@ mod tests {
         let program = vec![ROR_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0b11001100, false);
+        cpu.bus.borrow_mut().write(0x42, 0b11001100, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0b01100110);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0b01100110);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -5581,10 +5566,10 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x47, 0b10101011, false);
+        cpu.bus.borrow_mut().write(0x47, 0b10101011, false);
         cpu.p = FLAG_CARRY;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x47), 0b11010101);
+        assert_eq!(cpu.bus.borrow_mut().read(0x47, false), 0b11010101);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5595,10 +5580,10 @@ mod tests {
         let program = vec![ROR_ABS, 0x34, 0x12, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x1234, 0b01010100, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b01010100, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1234), 0b00101010);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1234, false), 0b00101010);
         assert_eq!(cpu.p & FLAG_CARRY, 0);
     }
 
@@ -5610,10 +5595,10 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1244, 0b00000011, false);
+        cpu.bus.borrow_mut().write(0x1244, 0b00000011, false);
         cpu.p = 0;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1244), 0b00000001);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1244, false), 0b00000001);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
     }
 
@@ -5626,10 +5611,10 @@ mod tests {
         cpu.reset(true);
         // Set up stack with saved processor status and return address
         cpu.sp = 0xFC;
-        cpu.memory.borrow_mut().write(0x01FD, 0b11010011, false); // Saved status flags
-        cpu.memory.borrow_mut().write(0x01FE, 0x34, false); // PC low byte
-        cpu.memory.borrow_mut().write(0x01FF, 0x12, false); // PC high byte
-        cpu.memory.borrow_mut().write(0x1234, KIL, false); // BRK at return address
+        cpu.bus.borrow_mut().write(0x01FD, 0b11010011, false); // Saved status flags
+        cpu.bus.borrow_mut().write(0x01FE, 0x34, false); // PC low byte
+        cpu.bus.borrow_mut().write(0x01FF, 0x12, false); // PC high byte
+        cpu.bus.borrow_mut().write(0x1234, KIL, false); // BRK at return address
         run(&mut cpu);
         // RTI should behave like PLP - ignore B flag and unused bit, always set unused to 1
         // 0b11010011 with B flag cleared and unused set: 0b11100011 = 0xE3
@@ -5647,9 +5632,9 @@ mod tests {
         cpu.reset(true);
         // Set up stack with saved return address (PC-1)
         cpu.sp = 0xFD;
-        cpu.memory.borrow_mut().write(0x01FE, 0x33, false); // PC-1 low byte (0x1233)
-        cpu.memory.borrow_mut().write(0x01FF, 0x12, false); // PC-1 high byte
-        cpu.memory.borrow_mut().write(0x1234, KIL, false); // BRK at return address
+        cpu.bus.borrow_mut().write(0x01FE, 0x33, false); // PC-1 low byte (0x1233)
+        cpu.bus.borrow_mut().write(0x01FF, 0x12, false); // PC-1 high byte
+        cpu.bus.borrow_mut().write(0x1234, KIL, false); // BRK at return address
         run(&mut cpu);
         assert_eq!(cpu.pc, 0x1235); // PC after BRK instruction (0x1234 + 1)
         assert_eq!(cpu.sp, 0xFF);
@@ -5694,7 +5679,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x80;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x42, 0x40, false);
+        cpu.bus.borrow_mut().write(0x42, 0x40, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
@@ -5709,7 +5694,7 @@ mod tests {
         cpu.a = 0x50;
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x47, 0x10, false);
+        cpu.bus.borrow_mut().write(0x47, 0x10, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
@@ -5723,7 +5708,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x60;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x1234, 0x20, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x20, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
@@ -5738,7 +5723,7 @@ mod tests {
         cpu.a = 0x70;
         cpu.x = 0x10;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x1244, 0x30, false);
+        cpu.bus.borrow_mut().write(0x1244, 0x30, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
@@ -5753,7 +5738,7 @@ mod tests {
         cpu.a = 0x90;
         cpu.y = 0x20;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x1254, 0x50, false);
+        cpu.bus.borrow_mut().write(0x1254, 0x50, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
@@ -5768,9 +5753,9 @@ mod tests {
         cpu.a = 0xA0;
         cpu.x = 0x04;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x86, 0x34, false);
-        cpu.memory.borrow_mut().write(0x87, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1234, 0x60, false);
+        cpu.bus.borrow_mut().write(0x86, 0x34, false);
+        cpu.bus.borrow_mut().write(0x87, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x60, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
@@ -5785,9 +5770,9 @@ mod tests {
         cpu.a = 0xB0;
         cpu.y = 0x10;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x86, 0x28, false);
-        cpu.memory.borrow_mut().write(0x87, 0x10, false);
-        cpu.memory.borrow_mut().write(0x1038, 0x70, false);
+        cpu.bus.borrow_mut().write(0x86, 0x28, false);
+        cpu.bus.borrow_mut().write(0x87, 0x10, false);
+        cpu.bus.borrow_mut().write(0x1038, 0x70, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x40);
     }
@@ -5816,7 +5801,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x10), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x10, false), 0x42);
     }
 
     #[test]
@@ -5829,7 +5814,7 @@ mod tests {
         cpu.a = 0x42;
         cpu.x = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x15), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x15, false), 0x42);
     }
 
     #[test]
@@ -5841,7 +5826,7 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1000, false), 0x42);
     }
 
     #[test]
@@ -5854,7 +5839,7 @@ mod tests {
         cpu.a = 0x42;
         cpu.x = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1005, false), 0x42);
     }
 
     #[test]
@@ -5867,7 +5852,7 @@ mod tests {
         cpu.a = 0x42;
         cpu.y = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1005, false), 0x42);
     }
 
     #[test]
@@ -5879,10 +5864,10 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x42;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x15, 0x00, false);
-        cpu.memory.borrow_mut().write(0x16, 0x10, false);
+        cpu.bus.borrow_mut().write(0x15, 0x00, false);
+        cpu.bus.borrow_mut().write(0x16, 0x10, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1000, false), 0x42);
     }
 
     #[test]
@@ -5894,10 +5879,10 @@ mod tests {
         cpu.reset(true);
         cpu.a = 0x42;
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x10, 0x00, false);
-        cpu.memory.borrow_mut().write(0x11, 0x10, false);
+        cpu.bus.borrow_mut().write(0x10, 0x00, false);
+        cpu.bus.borrow_mut().write(0x11, 0x10, false);
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1005, false), 0x42);
     }
 
     #[test]
@@ -5951,7 +5936,7 @@ mod tests {
         cpu.sp = 0xFD;
         run(&mut cpu);
         assert_eq!(cpu.sp, 0xFC);
-        assert_eq!(cpu.memory.borrow_mut().read(0x01FD), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x01FD, false), 0x42);
     }
 
     #[test]
@@ -5962,7 +5947,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.sp = 0xFC;
-        cpu.memory.borrow_mut().write(0x01FD, 0x42, false);
+        cpu.bus.borrow_mut().write(0x01FD, 0x42, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
         assert_eq!(cpu.sp, 0xFD);
@@ -5978,7 +5963,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.sp = 0xFC;
-        cpu.memory.borrow_mut().write(0x01FD, 0x00, false);
+        cpu.bus.borrow_mut().write(0x01FD, 0x00, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -5992,7 +5977,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.sp = 0xFC;
-        cpu.memory.borrow_mut().write(0x01FD, 0x80, false);
+        cpu.bus.borrow_mut().write(0x01FD, 0x80, false);
         run(&mut cpu);
         assert_eq!(cpu.a, 0x80);
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE);
@@ -6010,7 +5995,7 @@ mod tests {
         run(&mut cpu);
         assert_eq!(cpu.sp, 0xFC);
         // PHP should push P with B flag (bit 4) and unused bit (bit 5) set to 1
-        assert_eq!(cpu.memory.borrow_mut().read(0x01FD), 0xFF);
+        assert_eq!(cpu.bus.borrow_mut().read(0x01FD, false), 0xFF);
     }
 
     #[test]
@@ -6026,7 +6011,7 @@ mod tests {
         run(&mut cpu);
         assert_eq!(cpu.sp, 0xFC);
         // Should push 0xF0 (0xC0 | 0x30) - B flag and unused bit both set
-        assert_eq!(cpu.memory.borrow_mut().read(0x01FD), 0xF0);
+        assert_eq!(cpu.bus.borrow_mut().read(0x01FD, false), 0xF0);
     }
 
     #[test]
@@ -6037,7 +6022,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.sp = 0xFC;
-        cpu.memory.borrow_mut().write(0x01FD, 0xC3, false);
+        cpu.bus.borrow_mut().write(0x01FD, 0xC3, false);
         run(&mut cpu);
         // PLP should load flags but ignore B flag and always set unused bit (bit 5)
         // 0xC3 = 0b11000011, after PLP with unused bit set: 0b11100011 = 0xE3
@@ -6054,7 +6039,7 @@ mod tests {
         cpu.reset(true);
         cpu.sp = 0xFC;
         // Stack has 0xFF (all bits set including B and unused)
-        cpu.memory.borrow_mut().write(0x01FD, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x01FD, 0xFF, false);
         // But P register starts with B and unused cleared
         cpu.p = 0xC0; // Only N and V set
         run(&mut cpu);
@@ -6074,7 +6059,7 @@ mod tests {
         cpu.reset(true);
         cpu.x = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x10), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x10, false), 0x42);
     }
 
     #[test]
@@ -6087,7 +6072,7 @@ mod tests {
         cpu.x = 0x42;
         cpu.y = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x15), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x15, false), 0x42);
     }
 
     #[test]
@@ -6099,7 +6084,7 @@ mod tests {
         cpu.reset(true);
         cpu.x = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1000, false), 0x42);
     }
 
     #[test]
@@ -6111,7 +6096,7 @@ mod tests {
         cpu.reset(true);
         cpu.y = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x10), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x10, false), 0x42);
     }
 
     #[test]
@@ -6124,7 +6109,7 @@ mod tests {
         cpu.y = 0x42;
         cpu.x = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x15), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x15, false), 0x42);
     }
 
     #[test]
@@ -6136,7 +6121,7 @@ mod tests {
         cpu.reset(true);
         cpu.y = 0x42;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1000, false), 0x42);
     }
 
     #[test]
@@ -6149,9 +6134,9 @@ mod tests {
         run(&mut cpu);
         assert_eq!(cpu.a, 0x42);
         // Verify program was loaded at 0x8000
-        assert_eq!(cpu.memory.borrow_mut().read(0x8000), LDA_IMM);
-        assert_eq!(cpu.memory.borrow_mut().read(0x8001), 0x42);
-        assert_eq!(cpu.memory.borrow_mut().read(0x8002), KIL);
+        assert_eq!(cpu.bus.borrow_mut().read(0x8000, false), LDA_IMM);
+        assert_eq!(cpu.bus.borrow_mut().read(0x8001, false), 0x42);
+        assert_eq!(cpu.bus.borrow_mut().read(0x8002, false), KIL);
     }
 
     #[test]
@@ -6194,7 +6179,7 @@ mod tests {
         cpu.a = 0b11110000;
         cpu.x = 0b10101010;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x0050), 0b10100000);
+        assert_eq!(cpu.bus.borrow_mut().read(0x0050, false), 0b10100000);
     }
 
     #[test]
@@ -6208,7 +6193,7 @@ mod tests {
         cpu.x = 0b10101010;
         cpu.y = 0x05;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x0055), 0b10100000);
+        assert_eq!(cpu.bus.borrow_mut().read(0x0055, false), 0b10100000);
     }
 
     #[test]
@@ -6221,7 +6206,7 @@ mod tests {
         cpu.a = 0b11110000;
         cpu.x = 0b10101010;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0b10100000);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1000, false), 0b10100000);
     }
 
     #[test]
@@ -6235,11 +6220,11 @@ mod tests {
         cpu.x = 0b10101010;
         // The pointer is at 0x40 + X (wrapping in zero page)
         // So we need to set up the pointer at 0x40 + 0xAA = 0xEA
-        cpu.memory.borrow_mut().write(0x00EA, 0x00, false);
-        cpu.memory.borrow_mut().write(0x00EB, 0x10, false);
+        cpu.bus.borrow_mut().write(0x00EA, 0x00, false);
+        cpu.bus.borrow_mut().write(0x00EB, 0x10, false);
         run(&mut cpu);
         // Should store A & X = 0b11111111 & 0b10101010 = 0b10101010 at 0x1000
-        assert_eq!(cpu.memory.borrow_mut().read(0x1000), 0b10101010);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1000, false), 0b10101010);
     }
 
     #[test]
@@ -6402,8 +6387,8 @@ mod tests {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         // Set up indirect address at ZP location 0x20
-        cpu.memory.borrow_mut().write(0x20, 0x00, false); // Low byte
-        cpu.memory.borrow_mut().write(0x21, 0x10, false); // High byte = 0x10, so address is 0x1000
+        cpu.bus.borrow_mut().write(0x20, 0x00, false); // Low byte
+        cpu.bus.borrow_mut().write(0x21, 0x10, false); // High byte = 0x10, so address is 0x1000
         let program = vec![AXA_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
@@ -6414,7 +6399,7 @@ mod tests {
         // Value = A AND X AND (high byte of address + 1)
         // high byte of final address 0x1005 is 0x10
         // Value = 0xFF AND 0x7F AND (0x10 + 1) = 0xFF AND 0x7F AND 0x11 = 0x11
-        let stored_value = cpu.memory.borrow_mut().read(0x1005);
+        let stored_value = cpu.bus.borrow_mut().read(0x1005, false);
         assert_eq!(stored_value, 0x11);
     }
 
@@ -6432,7 +6417,7 @@ mod tests {
         // Value = A AND X AND (high byte of address + 1)
         // high byte of final address 0x1010 is 0x10
         // Value = 0xFF AND 0x3F AND (0x10 + 1) = 0xFF AND 0x3F AND 0x11 = 0x11
-        let stored_value = cpu.memory.borrow_mut().read(0x1010);
+        let stored_value = cpu.bus.borrow_mut().read(0x1010, false);
         assert_eq!(stored_value, 0x11);
     }
 
@@ -6450,7 +6435,7 @@ mod tests {
         // Value = A AND X AND (high byte of address + 1)
         // high byte of final address 0x1100 is 0x11
         // Value = 0xFF AND 0xFF AND (0x11 + 1) = 0xFF AND 0xFF AND 0x12 = 0x12
-        let stored_value = cpu.memory.borrow_mut().read(0x1100);
+        let stored_value = cpu.bus.borrow_mut().read(0x1100, false);
         assert_eq!(stored_value, 0x12);
     }
 
@@ -6515,11 +6500,11 @@ mod tests {
         let program = vec![DCP_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x10, false);
+        cpu.bus.borrow_mut().write(0x42, 0x10, false);
         cpu.a = 0x0F;
         run(&mut cpu);
         // Memory at 0x42: 0x10 - 1 = 0x0F
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x0F);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0x0F);
         // Compare A (0x0F) with memory (0x0F)
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Equal
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // A >= memory
@@ -6534,11 +6519,11 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1005, 0x20, false);
+        cpu.bus.borrow_mut().write(0x1005, 0x20, false);
         cpu.a = 0x30;
         run(&mut cpu);
         // Memory at 0x1005: 0x20 - 1 = 0x1F
-        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x1F);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1005, false), 0x1F);
         // Compare A (0x30) with memory (0x1F): 0x30 > 0x1F
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // A >= memory
@@ -6549,17 +6534,17 @@ mod tests {
     fn test_dcp_indirect_y() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write(0x20, 0x00, false);
-        cpu.memory.borrow_mut().write(0x21, 0x10, false);
+        cpu.bus.borrow_mut().write(0x20, 0x00, false);
+        cpu.bus.borrow_mut().write(0x21, 0x10, false);
         let program = vec![DCP_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x1010, 0x05, false);
+        cpu.bus.borrow_mut().write(0x1010, 0x05, false);
         cpu.a = 0x03;
         run(&mut cpu);
         // Memory at 0x1010: 0x05 - 1 = 0x04
-        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x04);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1010, false), 0x04);
         // Compare A (0x03) with memory (0x04): 0x03 < 0x04
         assert_eq!(cpu.p & FLAG_ZERO, 0);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // A < memory (borrow)
@@ -6573,14 +6558,14 @@ mod tests {
         let program = vec![DOP_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x42, 0xFF, false);
         cpu.a = 0x10;
         cpu.x = 0x20;
         cpu.y = 0x30;
         let saved_status = cpu.p;
         run(&mut cpu);
         // DOP does nothing - just reads memory and discards
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0xFF); // Memory unchanged
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0xFF); // Memory unchanged
         assert_eq!(cpu.a, 0x10); // A unchanged
         assert_eq!(cpu.x, 0x20); // X unchanged
         assert_eq!(cpu.y, 0x30); // Y unchanged
@@ -6595,13 +6580,13 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x45, 0xAA, false);
+        cpu.bus.borrow_mut().write(0x45, 0xAA, false);
         cpu.a = 0x10;
         cpu.y = 0x30;
         let saved_status = cpu.p;
         run(&mut cpu);
         // DOP does nothing - just reads memory at 0x40 + X = 0x45 and discards
-        assert_eq!(cpu.memory.borrow_mut().read(0x45), 0xAA); // Memory unchanged
+        assert_eq!(cpu.bus.borrow_mut().read(0x45, false), 0xAA); // Memory unchanged
         assert_eq!(cpu.a, 0x10); // A unchanged
         assert_eq!(cpu.x, 0x05); // X unchanged
         assert_eq!(cpu.y, 0x30); // Y unchanged
@@ -6634,12 +6619,12 @@ mod tests {
         let program = vec![ISB_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x10, false);
+        cpu.bus.borrow_mut().write(0x42, 0x10, false);
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
         run(&mut cpu);
         // Memory at 0x42: 0x10 + 1 = 0x11
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x11);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0x11);
         // Then SBC: A = 0x50 - 0x11 - (1 - carry) = 0x50 - 0x11 - 0 = 0x3F
         assert_eq!(cpu.a, 0x3F);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // No borrow
@@ -6655,12 +6640,12 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1005, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x1005, 0xFF, false);
         cpu.a = 0x00;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
         run(&mut cpu);
         // Memory at 0x1005: 0xFF + 1 = 0x00 (wraps)
-        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x00);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1005, false), 0x00);
         // Then SBC: A = 0x00 - 0x00 - 0 = 0x00
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO);
@@ -6671,18 +6656,18 @@ mod tests {
     fn test_isb_indirect_y() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write(0x20, 0x00, false);
-        cpu.memory.borrow_mut().write(0x21, 0x10, false);
+        cpu.bus.borrow_mut().write(0x20, 0x00, false);
+        cpu.bus.borrow_mut().write(0x21, 0x10, false);
         let program = vec![ISB_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x1010, 0x05, false);
+        cpu.bus.borrow_mut().write(0x1010, 0x05, false);
         cpu.a = 0x10;
         cpu.p |= FLAG_CARRY; // Set carry (no borrow)
         run(&mut cpu);
         // Memory at 0x1010: 0x05 + 1 = 0x06
-        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x06);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1010, false), 0x06);
         // Then SBC: A = 0x10 - 0x06 - 0 = 0x0A
         assert_eq!(cpu.a, 0x0A);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY);
@@ -6755,7 +6740,7 @@ mod tests {
         cpu.reset(true);
         cpu.y = 0x05;
         cpu.sp = 0xFD;
-        cpu.memory.borrow_mut().write(0x1005, 0xAB, false);
+        cpu.bus.borrow_mut().write(0x1005, 0xAB, false);
         run(&mut cpu);
         // LAR: SP & M -> A, X, SP
         // 0xFD & 0xAB = 0xA9
@@ -6773,7 +6758,7 @@ mod tests {
         let program = vec![LAX_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0x55, false);
+        cpu.bus.borrow_mut().write(0x42, 0x55, false);
         run(&mut cpu);
         // LAX: Load both A and X with memory value
         assert_eq!(cpu.a, 0x55);
@@ -6790,7 +6775,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x1010, 0x80, false);
+        cpu.bus.borrow_mut().write(0x1010, 0x80, false);
         run(&mut cpu);
         // LAX: Load both A and X with memory value
         assert_eq!(cpu.a, 0x80);
@@ -6803,13 +6788,13 @@ mod tests {
     fn test_lax_indirect_y() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write(0x20, 0x00, false);
-        cpu.memory.borrow_mut().write(0x21, 0x10, false);
+        cpu.bus.borrow_mut().write(0x20, 0x00, false);
+        cpu.bus.borrow_mut().write(0x21, 0x10, false);
         let program = vec![LAX_INDY, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x1005, 0x00, false);
+        cpu.bus.borrow_mut().write(0x1005, 0x00, false);
         run(&mut cpu);
         // LAX: Load both A and X with memory value (0x00)
         assert_eq!(cpu.a, 0x00);
@@ -6861,13 +6846,13 @@ mod tests {
         let program = vec![RLA_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x42, 0b0110_1010, false); // 0x6A
+        cpu.bus.borrow_mut().write(0x42, 0b0110_1010, false); // 0x6A
         cpu.a = 0b1111_0000; // 0xF0
         cpu.p &= !FLAG_CARRY; // Clear carry
         run(&mut cpu);
         // RLA: ROL memory (0x6A << 1 = 0xD4), then AND with A
         // Memory should be 0xD4, A should be 0xF0 & 0xD4 = 0xD0
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0xD4);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0xD4);
         assert_eq!(cpu.a, 0xD0);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // Carry clear (bit 7 was 0)
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Negative set
@@ -6882,13 +6867,13 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1005, 0b1000_0001, false); // 0x81
+        cpu.bus.borrow_mut().write(0x1005, 0b1000_0001, false); // 0x81
         cpu.a = 0xFF;
         cpu.p |= FLAG_CARRY; // Set carry
         run(&mut cpu);
         // RLA: ROL memory (0x81 << 1 + carry = 0x03), then AND with A
         // Memory should be 0x03, A should be 0xFF & 0x03 = 0x03
-        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x03);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1005, false), 0x03);
         assert_eq!(cpu.a, 0x03);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry set (bit 7 was 1)
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -6899,19 +6884,19 @@ mod tests {
     fn test_rla_indirect_y() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write(0x20, 0x00, false);
-        cpu.memory.borrow_mut().write(0x21, 0x10, false);
+        cpu.bus.borrow_mut().write(0x20, 0x00, false);
+        cpu.bus.borrow_mut().write(0x21, 0x10, false);
         let program = vec![RLA_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x1010, 0x01, false);
+        cpu.bus.borrow_mut().write(0x1010, 0x01, false);
         cpu.a = 0x01;
         cpu.p &= !FLAG_CARRY;
         run(&mut cpu);
         // RLA: ROL memory (0x01 << 1 = 0x02), then AND with A
         // Memory should be 0x02, A should be 0x01 & 0x02 = 0x00
-        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x02);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1010, false), 0x02);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Zero flag set
         assert_eq!(cpu.p & FLAG_NEGATIVE, 0);
@@ -6924,12 +6909,12 @@ mod tests {
         let program = vec![RRA_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x10, 0b1010_1010, false); // 0xAA
+        cpu.bus.borrow_mut().write(0x10, 0b1010_1010, false); // 0xAA
         cpu.a = 0x10;
         cpu.p &= !FLAG_CARRY; // Clear carry
         run(&mut cpu);
         // RRA: ROR memory (0xAA >> 1 = 0x55), then ADC with A (0x10 + 0x55 = 0x65)
-        assert_eq!(cpu.memory.borrow_mut().read(0x10), 0x55);
+        assert_eq!(cpu.bus.borrow_mut().read(0x10, false), 0x55);
         assert_eq!(cpu.a, 0x65);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry from addition
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -6944,14 +6929,14 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1005, 0b0000_0001, false); // 0x01
+        cpu.bus.borrow_mut().write(0x1005, 0b0000_0001, false); // 0x01
         cpu.a = 0xFF;
         cpu.p |= FLAG_CARRY; // Set carry
         run(&mut cpu);
         // RRA: ROR memory (0x01 >> 1 with carry = 0x80), then ADC with A (0xFF + 0x80 + carry=1)
         // Memory rotates to 0x80 (carry goes into bit 7), bit 0 goes to carry
         // Then: 0xFF + 0x80 + 1 (carry from ROR) = 0x180 = 0x80 with carry set
-        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x80);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1005, false), 0x80);
         assert_eq!(cpu.a, 0x80);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry from addition
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Result is negative
@@ -6961,18 +6946,18 @@ mod tests {
     fn test_rra_indirect_y() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write(0x20, 0x00, false);
-        cpu.memory.borrow_mut().write(0x21, 0x10, false);
+        cpu.bus.borrow_mut().write(0x20, 0x00, false);
+        cpu.bus.borrow_mut().write(0x21, 0x10, false);
         let program = vec![RRA_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x1010, 0b0000_0010, false); // 0x02
+        cpu.bus.borrow_mut().write(0x1010, 0b0000_0010, false); // 0x02
         cpu.a = 0x00;
         cpu.p &= !FLAG_CARRY;
         run(&mut cpu);
         // RRA: ROR memory (0x02 >> 1 = 0x01), then ADC with A (0x00 + 0x01 = 0x01)
-        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x01);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1010, false), 0x01);
         assert_eq!(cpu.a, 0x01);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -7003,11 +6988,11 @@ mod tests {
         let program = vec![SLO_ZP, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
-        cpu.memory.borrow_mut().write(0x10, 0b0101_0101, false); // 0x55
+        cpu.bus.borrow_mut().write(0x10, 0b0101_0101, false); // 0x55
         cpu.a = 0b0000_1111; // 0x0F
         run(&mut cpu);
         // SLO: ASL memory (0x55 << 1 = 0xAA), then ORA with A (0x0F | 0xAA = 0xAF)
-        assert_eq!(cpu.memory.borrow_mut().read(0x10), 0xAA);
+        assert_eq!(cpu.bus.borrow_mut().read(0x10, false), 0xAA);
         assert_eq!(cpu.a, 0xAF);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry from shift
         assert_eq!(cpu.p & FLAG_NEGATIVE, FLAG_NEGATIVE); // Result is negative
@@ -7021,11 +7006,11 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1005, 0b1000_0001, false); // 0x81
+        cpu.bus.borrow_mut().write(0x1005, 0b1000_0001, false); // 0x81
         cpu.a = 0b0000_0010; // 0x02
         run(&mut cpu);
         // SLO: ASL memory (0x81 << 1 = 0x02, carry set), then ORA with A (0x02 | 0x02 = 0x02)
-        assert_eq!(cpu.memory.borrow_mut().read(0x1005), 0x02);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1005, false), 0x02);
         assert_eq!(cpu.a, 0x02);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry from shift
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -7035,17 +7020,17 @@ mod tests {
     fn test_slo_indirect_y() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write(0x20, 0x00, false);
-        cpu.memory.borrow_mut().write(0x21, 0x10, false);
+        cpu.bus.borrow_mut().write(0x20, 0x00, false);
+        cpu.bus.borrow_mut().write(0x21, 0x10, false);
         let program = vec![SLO_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x1010, 0b0000_0001, false); // 0x01
+        cpu.bus.borrow_mut().write(0x1010, 0b0000_0001, false); // 0x01
         cpu.a = 0b0000_0000; // 0x00
         run(&mut cpu);
         // SLO: ASL memory (0x01 << 1 = 0x02), then ORA with A (0x00 | 0x02 = 0x02)
-        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x02);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1010, false), 0x02);
         assert_eq!(cpu.a, 0x02);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -7055,14 +7040,14 @@ mod tests {
     fn test_sre_zero_page() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write(0x42, 0b0000_0110, false); // 0x06
+        cpu.bus.borrow_mut().write(0x42, 0b0000_0110, false); // 0x06
         let program = vec![SRE_ZP, 0x42, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.a = 0b0000_0001; // 0x01
         run(&mut cpu);
         // SRE: LSR memory (0x06 >> 1 = 0x03), then EOR with A (0x01 ^ 0x03 = 0x02)
-        assert_eq!(cpu.memory.borrow_mut().read(0x42), 0x03);
+        assert_eq!(cpu.bus.borrow_mut().read(0x42, false), 0x03);
         assert_eq!(cpu.a, 0x02);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry from shift
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -7072,17 +7057,17 @@ mod tests {
     fn test_sre_absolute_x() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write(0x20, 0x00, false);
-        cpu.memory.borrow_mut().write(0x21, 0x10, false);
+        cpu.bus.borrow_mut().write(0x20, 0x00, false);
+        cpu.bus.borrow_mut().write(0x21, 0x10, false);
         let program = vec![SRE_ABSXW, 0x00, 0x10, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1010, 0b0000_0101, false); // 0x05
+        cpu.bus.borrow_mut().write(0x1010, 0b0000_0101, false); // 0x05
         cpu.a = 0b0000_0011; // 0x03
         run(&mut cpu);
         // SRE: LSR memory (0x05 >> 1 = 0x02 with carry), then EOR with A (0x03 ^ 0x02 = 0x01)
-        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x02);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1010, false), 0x02);
         assert_eq!(cpu.a, 0x01);
         assert_eq!(cpu.p & FLAG_CARRY, FLAG_CARRY); // Carry from LSR
         assert_eq!(cpu.p & FLAG_ZERO, 0);
@@ -7092,17 +7077,17 @@ mod tests {
     fn test_sre_indirect_y() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
-        cpu.memory.borrow_mut().write(0x20, 0x00, false);
-        cpu.memory.borrow_mut().write(0x21, 0x10, false);
+        cpu.bus.borrow_mut().write(0x20, 0x00, false);
+        cpu.bus.borrow_mut().write(0x21, 0x10, false);
         let program = vec![SRE_INDYW, 0x20, KIL];
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x1010, 0b0000_1000, false); // 0x08
+        cpu.bus.borrow_mut().write(0x1010, 0b0000_1000, false); // 0x08
         cpu.a = 0b0000_0100; // 0x04
         run(&mut cpu);
         // SRE: LSR memory (0x08 >> 1 = 0x04), then EOR with A (0x04 ^ 0x04 = 0x00)
-        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x04);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1010, false), 0x04);
         assert_eq!(cpu.a, 0x00);
         assert_eq!(cpu.p & FLAG_CARRY, 0); // No carry
         assert_eq!(cpu.p & FLAG_ZERO, FLAG_ZERO); // Result is zero
@@ -7123,7 +7108,7 @@ mod tests {
         cpu.x = 0xFF;
         cpu.y = 0x10;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x11); // X AND (0x10 + 1)
+        assert_eq!(cpu.bus.borrow_mut().read(0x1010, false), 0x11); // X AND (0x10 + 1)
     }
 
     #[test]
@@ -7141,7 +7126,7 @@ mod tests {
         cpu.y = 0xFF;
         cpu.x = 0x10;
         run(&mut cpu);
-        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x11); // Y AND (0x10 + 1)
+        assert_eq!(cpu.bus.borrow_mut().read(0x1010, false), 0x11); // Y AND (0x10 + 1)
     }
 
     #[test]
@@ -7213,7 +7198,7 @@ mod tests {
         // SP should be A & X
         assert_eq!(cpu.sp, 0xF0);
         // Memory at $1010 should be SP & (HIGH(addr) + 1) = 0xF0 & 0x11 = 0x10
-        assert_eq!(cpu.memory.borrow_mut().read(0x1010), 0x10);
+        assert_eq!(cpu.bus.borrow_mut().read(0x1010, false), 0x10);
     }
 
     // Cycle counter tests
@@ -7272,9 +7257,9 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory, ppu, apu);
         // Setup: Write a value to PPUADDR to set it up and clear w flag
         // First write $20 to $2006 (sets high byte, w becomes true)
-        cpu.memory.borrow_mut().write(0x2006, 0x20, false);
+        cpu.bus.borrow_mut().write(0x2006, 0x20, false);
         // Second write $00 to $2006 (sets low byte, w becomes false, v = $2000)
-        cpu.memory.borrow_mut().write(0x2006, 0x00, false);
+        cpu.bus.borrow_mut().write(0x2006, 0x00, false);
 
         // The w flag should now be false (after two writes)
         // PPUADDR should be $2000
@@ -7286,8 +7271,8 @@ mod tests {
         cpu.reset(true);
 
         // Re-setup PPUADDR after reset
-        cpu.memory.borrow_mut().write(0x2006, 0x20, false);
-        cpu.memory.borrow_mut().write(0x2006, 0x00, false);
+        cpu.bus.borrow_mut().write(0x2006, 0x20, false);
+        cpu.bus.borrow_mut().write(0x2006, 0x00, false);
 
         // Execute the INC $2006 instruction
         // This will:
@@ -7303,15 +7288,15 @@ mod tests {
         // Since we don't know the exact open bus value, let's just verify
         // that the dummy write affected the state by checking that subsequent
         // writes work correctly
-        cpu.memory.borrow_mut().write(0x2006, 0x30, false);
-        cpu.memory.borrow_mut().write(0x2006, 0x40, false);
-        cpu.memory.borrow_mut().write(0x2007, 0xAB, false);
+        cpu.bus.borrow_mut().write(0x2006, 0x30, false);
+        cpu.bus.borrow_mut().write(0x2006, 0x40, false);
+        cpu.bus.borrow_mut().write(0x2007, 0xAB, false);
 
         // Read back from PPU memory at $3040 to verify
-        cpu.memory.borrow_mut().write(0x2006, 0x30, false);
-        cpu.memory.borrow_mut().write(0x2006, 0x40, false);
-        let _ = cpu.memory.borrow_mut().read(0x2007); // Dummy read (buffered)
-        let value = cpu.memory.borrow_mut().read(0x2007); // Actual value
+        cpu.bus.borrow_mut().write(0x2006, 0x30, false);
+        cpu.bus.borrow_mut().write(0x2006, 0x40, false);
+        let _ = cpu.bus.borrow_mut().read(0x2007, false); // Dummy read (buffered)
+        let value = cpu.bus.borrow_mut().read(0x2007, false); // Actual value
 
         assert_eq!(
             value, 0xAB,
@@ -7326,11 +7311,11 @@ mod tests {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         // Test NOP (Implied)
-        let op = opcode::lookup(0xEA).unwrap();
+        let op = opcode::lookup(0xEA);
         assert_eq!(cpu.get_operand(*op), 0, "Implied mode should return 0");
 
         // Test INX (Implied)
-        let op = opcode::lookup(0xE8).unwrap();
+        let op = opcode::lookup(0xE8);
         assert_eq!(cpu.get_operand(*op), 0, "Implied mode should return 0");
     }
 
@@ -7339,11 +7324,11 @@ mod tests {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         // Test ASL A (Accumulator)
-        let op = opcode::lookup(0x0A).unwrap();
+        let op = opcode::lookup(0x0A);
         assert_eq!(cpu.get_operand(*op), 0, "Accumulator mode should return 0");
 
         // Test LSR A (Accumulator)
-        let op = opcode::lookup(0x4A).unwrap();
+        let op = opcode::lookup(0x4A);
         assert_eq!(cpu.get_operand(*op), 0, "Accumulator mode should return 0");
     }
 
@@ -7353,10 +7338,10 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         // Set up: Write immediate value at PC
         cpu.pc = 0x0100;
-        cpu.memory.borrow_mut().write(0x0100, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0100, 0x42, false);
 
         // Test LDA #$42 (Immediate)
-        let op = opcode::lookup(0xA9).unwrap();
+        let op = opcode::lookup(0xA9);
         assert_eq!(
             cpu.get_operand(*op),
             0x42,
@@ -7370,10 +7355,10 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         // Set up: Write ZP address at PC
         cpu.pc = 0x0100;
-        cpu.memory.borrow_mut().write(0x0100, 0x80, false);
+        cpu.bus.borrow_mut().write(0x0100, 0x80, false);
 
         // Test LDA $80 (Zero Page)
-        let op = opcode::lookup(0xA5).unwrap();
+        let op = opcode::lookup(0xA5);
         assert_eq!(
             cpu.get_operand(*op),
             0x80,
@@ -7388,10 +7373,10 @@ mod tests {
         // Set up: Write ZP base address at PC, set X register
         cpu.pc = 0x0100;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0100, 0x80, false);
+        cpu.bus.borrow_mut().write(0x0100, 0x80, false);
 
         // Test LDA $80,X (Zero Page,X)
-        let op = opcode::lookup(0xB5).unwrap();
+        let op = opcode::lookup(0xB5);
         assert_eq!(
             cpu.get_operand(*op),
             0x85,
@@ -7406,10 +7391,10 @@ mod tests {
         // Test wrapping behavior in zero page
         cpu.pc = 0x0100;
         cpu.x = 0xFF;
-        cpu.memory.borrow_mut().write(0x0100, 0x80, false);
+        cpu.bus.borrow_mut().write(0x0100, 0x80, false);
 
         // 0x80 + 0xFF = 0x17F, but should wrap to 0x7F
-        let op = opcode::lookup(0xB5).unwrap();
+        let op = opcode::lookup(0xB5);
         assert_eq!(
             cpu.get_operand(*op),
             0x7F,
@@ -7424,10 +7409,10 @@ mod tests {
         // Set up: Write ZP base address at PC, set Y register
         cpu.pc = 0x0100;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x0100, 0x20, false);
+        cpu.bus.borrow_mut().write(0x0100, 0x20, false);
 
         // Test LDX $20,Y (Zero Page,Y)
-        let op = opcode::lookup(0xB6).unwrap();
+        let op = opcode::lookup(0xB6);
         assert_eq!(
             cpu.get_operand(*op),
             0x30,
@@ -7441,11 +7426,11 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         // Set up: Write 16-bit address at PC (little-endian)
         cpu.pc = 0x0100;
-        cpu.memory.borrow_mut().write(0x0100, 0x34, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0101, 0x12, false); // High byte
+        cpu.bus.borrow_mut().write(0x0100, 0x34, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0101, 0x12, false); // High byte
 
         // Test LDA $1234 (Absolute)
-        let op = opcode::lookup(0xAD).unwrap();
+        let op = opcode::lookup(0xAD);
         assert_eq!(
             cpu.get_operand(*op),
             0x1234,
@@ -7460,11 +7445,11 @@ mod tests {
         // Set up: Write 16-bit base address at PC, set X register
         cpu.pc = 0x0100;
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x0100, 0x00, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0101, 0x20, false); // High byte
+        cpu.bus.borrow_mut().write(0x0100, 0x00, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0101, 0x20, false); // High byte
 
         // Test LDA $2000,X (Absolute,X)
-        let op = opcode::lookup(0xBD).unwrap();
+        let op = opcode::lookup(0xBD);
         assert_eq!(
             cpu.get_operand(*op),
             0x2010,
@@ -7479,11 +7464,11 @@ mod tests {
         // Test page crossing
         cpu.pc = 0x0100;
         cpu.x = 0xFF;
-        cpu.memory.borrow_mut().write(0x0100, 0x80, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0101, 0x20, false); // High byte
+        cpu.bus.borrow_mut().write(0x0100, 0x80, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0101, 0x20, false); // High byte
 
         // 0x2080 + 0xFF = 0x217F (page crossing)
-        let op = opcode::lookup(0xBD).unwrap();
+        let op = opcode::lookup(0xBD);
         assert_eq!(
             cpu.get_operand(*op),
             0x217F,
@@ -7498,11 +7483,11 @@ mod tests {
         // Set up: Write 16-bit base address at PC, set Y register
         cpu.pc = 0x0100;
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x0100, 0x00, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0101, 0x30, false); // High byte
+        cpu.bus.borrow_mut().write(0x0100, 0x00, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0101, 0x30, false); // High byte
 
         // Test LDA $3000,Y (Absolute,Y)
-        let op = opcode::lookup(0xB9).unwrap();
+        let op = opcode::lookup(0xB9);
         assert_eq!(
             cpu.get_operand(*op),
             0x3005,
@@ -7516,10 +7501,10 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         // Set up: Write positive offset at PC
         cpu.pc = 0x0100;
-        cpu.memory.borrow_mut().write(0x0100, 0x10, false); // +16
+        cpu.bus.borrow_mut().write(0x0100, 0x10, false); // +16
 
         // Test BNE (Relative) - should return the raw offset byte
-        let op = opcode::lookup(0xD0).unwrap();
+        let op = opcode::lookup(0xD0);
         assert_eq!(
             cpu.get_operand(*op),
             0x10,
@@ -7535,10 +7520,10 @@ mod tests {
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
         // Set up: Write negative offset at PC
         cpu.pc = 0x0100;
-        cpu.memory.borrow_mut().write(0x0100, 0xF0, false); // -16 (as signed byte)
+        cpu.bus.borrow_mut().write(0x0100, 0xF0, false); // -16 (as signed byte)
 
         // Test BEQ (Relative) - should return the raw offset byte
-        let op = opcode::lookup(0xF0).unwrap();
+        let op = opcode::lookup(0xF0);
         assert_eq!(
             cpu.get_operand(*op),
             0xF0,
@@ -7555,15 +7540,15 @@ mod tests {
         // Set up: JMP ($1234)
         // Write pointer address at PC
         cpu.pc = 0x0100;
-        cpu.memory.borrow_mut().write(0x0100, 0x34, false); // Pointer low
-        cpu.memory.borrow_mut().write(0x0101, 0x12, false); // Pointer high
+        cpu.bus.borrow_mut().write(0x0100, 0x34, false); // Pointer low
+        cpu.bus.borrow_mut().write(0x0101, 0x12, false); // Pointer high
 
         // Write target address at pointer location
-        cpu.memory.borrow_mut().write(0x1234, 0x00, false); // Target low
-        cpu.memory.borrow_mut().write(0x1235, 0x80, false); // Target high
+        cpu.bus.borrow_mut().write(0x1234, 0x00, false); // Target low
+        cpu.bus.borrow_mut().write(0x1235, 0x80, false); // Target high
 
         // Test JMP ($1234) (Indirect)
-        let op = opcode::lookup(0x6C).unwrap();
+        let op = opcode::lookup(0x6C);
         assert_eq!(
             cpu.get_operand(*op),
             0x8000,
@@ -7578,16 +7563,16 @@ mod tests {
         // Test the famous 6502 JMP indirect bug
         // When pointer is at page boundary (e.g., $02FF), high byte wraps to $0200
         cpu.pc = 0x0100;
-        cpu.memory.borrow_mut().write(0x0100, 0xFF, false); // Pointer low
-        cpu.memory.borrow_mut().write(0x0101, 0x02, false); // Pointer high
+        cpu.bus.borrow_mut().write(0x0100, 0xFF, false); // Pointer low
+        cpu.bus.borrow_mut().write(0x0101, 0x02, false); // Pointer high
 
         // Write target bytes
-        cpu.memory.borrow_mut().write(0x02FF, 0x34, false); // Target low
-        cpu.memory.borrow_mut().write(0x0200, 0x12, false); // Target high (wraps!)
-        cpu.memory.borrow_mut().write(0x0300, 0x56, false); // What it should be if no bug
+        cpu.bus.borrow_mut().write(0x02FF, 0x34, false); // Target low
+        cpu.bus.borrow_mut().write(0x0200, 0x12, false); // Target high (wraps!)
+        cpu.bus.borrow_mut().write(0x0300, 0x56, false); // What it should be if no bug
 
         // The bug causes high byte to be read from $0200 instead of $0300
-        let op = opcode::lookup(0x6C).unwrap();
+        let op = opcode::lookup(0x6C);
         assert_eq!(
             cpu.get_operand(*op),
             0x1234,
@@ -7602,14 +7587,14 @@ mod tests {
         // Set up: LDA ($20,X)
         cpu.pc = 0x0100;
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x0100, 0x20, false); // ZP base
+        cpu.bus.borrow_mut().write(0x0100, 0x20, false); // ZP base
 
         // Write pointer at ZP location ($20 + $04 = $24)
-        cpu.memory.borrow_mut().write(0x0024, 0x00, false); // Pointer low
-        cpu.memory.borrow_mut().write(0x0025, 0x30, false); // Pointer high
+        cpu.bus.borrow_mut().write(0x0024, 0x00, false); // Pointer low
+        cpu.bus.borrow_mut().write(0x0025, 0x30, false); // Pointer high
 
         // Test LDA ($20,X) (Indexed Indirect)
-        let op = opcode::lookup(0xA1).unwrap();
+        let op = opcode::lookup(0xA1);
         assert_eq!(
             cpu.get_operand(*op),
             0x3000,
@@ -7624,13 +7609,13 @@ mod tests {
         // Test zero page wrapping in indexed indirect
         cpu.pc = 0x0100;
         cpu.x = 0xFF;
-        cpu.memory.borrow_mut().write(0x0100, 0x80, false); // ZP base
+        cpu.bus.borrow_mut().write(0x0100, 0x80, false); // ZP base
 
         // $80 + $FF = $17F, wraps to $7F in zero page
-        cpu.memory.borrow_mut().write(0x007F, 0x34, false); // Pointer low
-        cpu.memory.borrow_mut().write(0x0080, 0x12, false); // Pointer high (wraps in ZP)
+        cpu.bus.borrow_mut().write(0x007F, 0x34, false); // Pointer low
+        cpu.bus.borrow_mut().write(0x0080, 0x12, false); // Pointer high (wraps in ZP)
 
-        let op = opcode::lookup(0xA1).unwrap();
+        let op = opcode::lookup(0xA1);
         assert_eq!(
             cpu.get_operand(*op),
             0x1234,
@@ -7645,15 +7630,15 @@ mod tests {
         // Set up: LDA ($20),Y
         cpu.pc = 0x0100;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x0100, 0x20, false); // ZP pointer
+        cpu.bus.borrow_mut().write(0x0100, 0x20, false); // ZP pointer
 
         // Write base address at ZP pointer
-        cpu.memory.borrow_mut().write(0x0020, 0x00, false); // Base low
-        cpu.memory.borrow_mut().write(0x0021, 0x30, false); // Base high
+        cpu.bus.borrow_mut().write(0x0020, 0x00, false); // Base low
+        cpu.bus.borrow_mut().write(0x0021, 0x30, false); // Base high
 
         // Test LDA ($20),Y (Indirect Indexed)
         // Should return ($3000) + Y = $3000 + $10 = $3010
-        let op = opcode::lookup(0xB1).unwrap();
+        let op = opcode::lookup(0xB1);
         assert_eq!(
             cpu.get_operand(*op),
             0x3010,
@@ -7668,14 +7653,14 @@ mod tests {
         // Test page crossing in indirect indexed
         cpu.pc = 0x0100;
         cpu.y = 0xFF;
-        cpu.memory.borrow_mut().write(0x0100, 0x20, false); // ZP pointer
+        cpu.bus.borrow_mut().write(0x0100, 0x20, false); // ZP pointer
 
         // Write base address at ZP pointer
-        cpu.memory.borrow_mut().write(0x0020, 0x80, false); // Base low
-        cpu.memory.borrow_mut().write(0x0021, 0x20, false); // Base high
+        cpu.bus.borrow_mut().write(0x0020, 0x80, false); // Base low
+        cpu.bus.borrow_mut().write(0x0021, 0x20, false); // Base high
 
         // $2080 + $FF = $217F (page crossing)
-        let op = opcode::lookup(0xB1).unwrap();
+        let op = opcode::lookup(0xB1);
         assert_eq!(
             cpu.get_operand(*op),
             0x217F,
@@ -7690,14 +7675,14 @@ mod tests {
         // Test zero page pointer wrapping
         cpu.pc = 0x0100;
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x0100, 0xFF, false); // ZP pointer at $FF
+        cpu.bus.borrow_mut().write(0x0100, 0xFF, false); // ZP pointer at $FF
 
         // Pointer spans $FF and $00 (wraps in zero page)
-        cpu.memory.borrow_mut().write(0x00FF, 0x00, false); // Base low
-        cpu.memory.borrow_mut().write(0x0000, 0x40, false); // Base high (wrapped)
+        cpu.bus.borrow_mut().write(0x00FF, 0x00, false); // Base low
+        cpu.bus.borrow_mut().write(0x0000, 0x40, false); // Base high (wrapped)
 
         // $4000 + $05 = $4005
-        let op = opcode::lookup(0xB1).unwrap();
+        let op = opcode::lookup(0xB1);
         assert_eq!(
             cpu.get_operand(*op),
             0x4005,
@@ -7709,10 +7694,8 @@ mod tests {
     fn test_get_operand_invalid_opcode() {
         let (ppu, apu, memory) = create_test_memory();
         let mut cpu = Cpu::new(TvSystem::Ntsc, memory.clone(), ppu.clone(), apu.clone());
-        // Test with an invalid opcode (one not in lookup table)
-        // Note: Most 6502 opcodes are defined, but lookup returns None for invalid ones
-        // This tests the None branch of the match
-        let op = opcode::lookup(0xFF).unwrap(); // 0xFF is SBC
+        // All 256 opcodes are defined (including undocumented ones).
+        let op = opcode::lookup(0xFF); // 0xFF is SBC
         let result = cpu.get_operand(*op);
 
         // The function should not panic
@@ -7744,7 +7727,7 @@ mod tests {
 
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
         cpu.reset(true);
 
         cpu.sp = 0xFF;
@@ -7804,7 +7787,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0x0F, false); // Value at zero page $42
+        cpu.bus.borrow_mut().write(0x0042, 0x0F, false); // Value at zero page $42
         cpu.a = 0xF0;
 
         cpu.execute();
@@ -7821,7 +7804,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0x0F, false); // Value at zero page $42 (base + X)
+        cpu.bus.borrow_mut().write(0x0042, 0x0F, false); // Value at zero page $42 (base + X)
         cpu.a = 0xF0;
         cpu.x = 0x02;
 
@@ -7839,7 +7822,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1234, 0x0F, false); // Value at $1234
+        cpu.bus.borrow_mut().write(0x1234, 0x0F, false); // Value at $1234
         cpu.a = 0xF0;
 
         cpu.execute();
@@ -7856,7 +7839,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1236, 0x0F, false); // Value at $1236 (base + X)
+        cpu.bus.borrow_mut().write(0x1236, 0x0F, false); // Value at $1236 (base + X)
         cpu.a = 0xF0;
         cpu.x = 0x02;
 
@@ -7874,7 +7857,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1237, 0x0F, false); // Value at $1237 (base + Y)
+        cpu.bus.borrow_mut().write(0x1237, 0x0F, false); // Value at $1237 (base + Y)
         cpu.a = 0xF0;
         cpu.y = 0x03;
 
@@ -7893,9 +7876,9 @@ mod tests {
         cpu.reset(true);
 
         // Set up indirect address at zero page $42 (base + X)
-        cpu.memory.borrow_mut().write(0x0042, 0x34, false); // Low byte of target address
-        cpu.memory.borrow_mut().write(0x0043, 0x12, false); // High byte of target address
-        cpu.memory.borrow_mut().write(0x1234, 0x0F, false); // Value at target address
+        cpu.bus.borrow_mut().write(0x0042, 0x34, false); // Low byte of target address
+        cpu.bus.borrow_mut().write(0x0043, 0x12, false); // High byte of target address
+        cpu.bus.borrow_mut().write(0x1234, 0x0F, false); // Value at target address
         cpu.a = 0xF0;
         cpu.x = 0x02;
 
@@ -7914,9 +7897,9 @@ mod tests {
         cpu.reset(true);
 
         // Set up indirect address at zero page $40
-        cpu.memory.borrow_mut().write(0x0040, 0x34, false); // Low byte of base address
-        cpu.memory.borrow_mut().write(0x0041, 0x12, false); // High byte of base address
-        cpu.memory.borrow_mut().write(0x1237, 0x0F, false); // Value at base + Y
+        cpu.bus.borrow_mut().write(0x0040, 0x34, false); // Low byte of base address
+        cpu.bus.borrow_mut().write(0x0041, 0x12, false); // High byte of base address
+        cpu.bus.borrow_mut().write(0x1237, 0x0F, false); // Value at base + Y
         cpu.a = 0xF0;
         cpu.y = 0x03;
 
@@ -7955,9 +7938,9 @@ mod tests {
         cpu.reset(true);
 
         // Set up indirect address at zero page $42 (base + X)
-        cpu.memory.borrow_mut().write(0x0042, 0x34, false); // Low byte of target address
-        cpu.memory.borrow_mut().write(0x0043, 0x12, false); // High byte of target address
-        cpu.memory.borrow_mut().write(0x1234, 0b00000101, false); // Value at target (5)
+        cpu.bus.borrow_mut().write(0x0042, 0x34, false); // Low byte of target address
+        cpu.bus.borrow_mut().write(0x0043, 0x12, false); // High byte of target address
+        cpu.bus.borrow_mut().write(0x1234, 0b00000101, false); // Value at target (5)
 
         cpu.a = 0b11110000; // 0xF0
         cpu.x = 0x02;
@@ -7968,7 +7951,7 @@ mod tests {
         // 0b11110000 | 0b00001010 = 0b11111010 (250)
         assert_eq!(cpu.a, 0b11111010, "A should be 0xF0 | (5 << 1)");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1234),
+            cpu.bus.borrow_mut().read(0x1234, false),
             0b00001010,
             "Memory should contain shifted value"
         );
@@ -7989,7 +7972,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b01000000, false); // Value at ZP (64)
+        cpu.bus.borrow_mut().write(0x0042, 0b01000000, false); // Value at ZP (64)
         cpu.a = 0b00001111; // 15
 
         cpu.execute();
@@ -7998,7 +7981,7 @@ mod tests {
         // 0b00001111 | 0b10000000 = 0b10001111 (143)
         assert_eq!(cpu.a, 0b10001111, "A should be 15 | (64 << 1)");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b10000000,
             "Memory should contain shifted value"
         );
@@ -8019,7 +8002,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1234, 0b10000001, false); // Value (129)
+        cpu.bus.borrow_mut().write(0x1234, 0b10000001, false); // Value (129)
         cpu.a = 0b00001111; // 15
 
         cpu.execute();
@@ -8028,7 +8011,7 @@ mod tests {
         // 0b00001111 | 0b00000010 = 0b00001111 (15)
         assert_eq!(cpu.a, 0b00001111, "A should be 15 | (129 << 1)");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1234),
+            cpu.bus.borrow_mut().read(0x1234, false),
             0b00000010,
             "Memory should contain shifted value"
         );
@@ -8050,9 +8033,9 @@ mod tests {
         cpu.reset(true);
 
         // Set up indirect address at zero page $40
-        cpu.memory.borrow_mut().write(0x0040, 0x34, false); // Low byte of base address
-        cpu.memory.borrow_mut().write(0x0041, 0x12, false); // High byte of base address
-        cpu.memory.borrow_mut().write(0x1237, 0b00000011, false); // Value at base + Y (3)
+        cpu.bus.borrow_mut().write(0x0040, 0x34, false); // Low byte of base address
+        cpu.bus.borrow_mut().write(0x0041, 0x12, false); // High byte of base address
+        cpu.bus.borrow_mut().write(0x1237, 0b00000011, false); // Value at base + Y (3)
 
         cpu.a = 0b11000000; // 192
         cpu.y = 0x03;
@@ -8063,7 +8046,7 @@ mod tests {
         // 0b11000000 | 0b00000110 = 0b11000110 (198)
         assert_eq!(cpu.a, 0b11000110, "A should be 192 | (3 << 1)");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1237),
+            cpu.bus.borrow_mut().read(0x1237, false),
             0b00000110,
             "Memory should contain shifted value"
         );
@@ -8078,7 +8061,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b00010000, false); // Value at ZP $42 (16)
+        cpu.bus.borrow_mut().write(0x0042, 0b00010000, false); // Value at ZP $42 (16)
         cpu.a = 0b00000001; // 1
         cpu.x = 0x02;
 
@@ -8088,7 +8071,7 @@ mod tests {
         // 0b00000001 | 0b00100000 = 0b00100001 (33)
         assert_eq!(cpu.a, 0b00100001, "A should be 1 | (16 << 1)");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b00100000,
             "Memory should contain shifted value"
         );
@@ -8103,7 +8086,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1237, 0b00000010, false); // Value at $1237 (2)
+        cpu.bus.borrow_mut().write(0x1237, 0b00000010, false); // Value at $1237 (2)
         cpu.a = 0b01010101; // 85
         cpu.y = 0x03;
 
@@ -8113,7 +8096,7 @@ mod tests {
         // 0b01010101 | 0b00000100 = 0b01010101 (85)
         assert_eq!(cpu.a, 0b01010101, "A should be 85 | (2 << 1)");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1237),
+            cpu.bus.borrow_mut().read(0x1237, false),
             0b00000100,
             "Memory should contain shifted value"
         );
@@ -8128,7 +8111,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1236, 0b00001000, false); // Value at $1236 (8)
+        cpu.bus.borrow_mut().write(0x1236, 0b00001000, false); // Value at $1236 (8)
         cpu.a = 0b00000000; // 0
         cpu.x = 0x02;
         let initial_cycles = cpu.total_cycles;
@@ -8139,7 +8122,7 @@ mod tests {
         // 0b00000000 | 0b00010000 = 0b00010000 (16)
         assert_eq!(cpu.a, 0b00010000, "A should be 0 | (8 << 1)");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1236),
+            cpu.bus.borrow_mut().read(0x1236, false),
             0b00010000,
             "Memory should contain shifted value"
         );
@@ -8159,7 +8142,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b00000000, false); // Zero value
+        cpu.bus.borrow_mut().write(0x0042, 0b00000000, false); // Zero value
         cpu.a = 0b00000000; // 0
         let initial_cycles = cpu.total_cycles;
 
@@ -8490,13 +8473,13 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b01010101, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b01010101, false);
         let initial_cycles = cpu.total_cycles;
 
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b10101010,
             "Memory should be shifted left"
         );
@@ -8524,13 +8507,13 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0045, 0b11000000, false);
+        cpu.bus.borrow_mut().write(0x0045, 0b11000000, false);
         let initial_cycles = cpu.total_cycles;
 
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0045),
+            cpu.bus.borrow_mut().read(0x0045, false),
             0b10000000,
             "Memory at $45 should be shifted left"
         );
@@ -8561,13 +8544,13 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1234, 0b00100000, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b00100000, false);
         let initial_cycles = cpu.total_cycles;
 
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1234),
+            cpu.bus.borrow_mut().read(0x1234, false),
             0b01000000,
             "Memory at $1234 should be shifted left"
         );
@@ -8591,13 +8574,13 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x1234, 0b10000000, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b10000000, false);
         let initial_cycles = cpu.total_cycles;
 
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1234),
+            cpu.bus.borrow_mut().read(0x1234, false),
             0b00000000,
             "Memory at $1234 should be shifted left to 0"
         );
@@ -8634,7 +8617,7 @@ mod tests {
         cpu.execute();
 
         // PHP should push P with bits 4 and 5 set (BREAK and UNUSED flags)
-        let pushed_value = cpu.memory.borrow_mut().read(0x01FF);
+        let pushed_value = cpu.bus.borrow_mut().read(0x01FF, false);
         assert_eq!(
             pushed_value,
             0b10110101 | FLAG_BREAK | FLAG_UNUSED,
@@ -9005,7 +8988,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0xF0, false);
+        cpu.bus.borrow_mut().write(0x0042, 0xF0, false);
         cpu.a = 0x55;
         let initial_cycles = cpu.total_cycles;
 
@@ -9029,7 +9012,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0045, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x0045, 0x0F, false);
         cpu.a = 0xFF;
         let initial_cycles = cpu.total_cycles;
 
@@ -9052,7 +9035,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1234, 0xAA, false);
+        cpu.bus.borrow_mut().write(0x1234, 0xAA, false);
         cpu.a = 0x55;
         let initial_cycles = cpu.total_cycles;
 
@@ -9077,7 +9060,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x1234, 0xCC, false);
+        cpu.bus.borrow_mut().write(0x1234, 0xCC, false);
         cpu.a = 0xFF;
         let initial_cycles = cpu.total_cycles;
 
@@ -9101,7 +9084,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x04;
-        cpu.memory.borrow_mut().write(0x1234, 0x3C, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x3C, false);
         cpu.a = 0xFF;
         let initial_cycles = cpu.total_cycles;
 
@@ -9126,9 +9109,9 @@ mod tests {
 
         cpu.x = 0x05;
         // Set up pointer at $45 pointing to $1234
-        cpu.memory.borrow_mut().write(0x0045, 0x34, false);
-        cpu.memory.borrow_mut().write(0x0046, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1234, 0x77, false);
+        cpu.bus.borrow_mut().write(0x0045, 0x34, false);
+        cpu.bus.borrow_mut().write(0x0046, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x77, false);
         cpu.a = 0xFF;
         let initial_cycles = cpu.total_cycles;
 
@@ -9153,9 +9136,9 @@ mod tests {
 
         cpu.y = 0x05;
         // Set up pointer at $40 pointing to $1230
-        cpu.memory.borrow_mut().write(0x0040, 0x30, false);
-        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1235, 0x88, false);
+        cpu.bus.borrow_mut().write(0x0040, 0x30, false);
+        cpu.bus.borrow_mut().write(0x0041, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1235, 0x88, false);
         cpu.a = 0xFF;
         let initial_cycles = cpu.total_cycles;
 
@@ -9180,7 +9163,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b01010101, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b01010101, false);
         cpu.a = 0xFF;
         cpu.p &= !FLAG_CARRY; // Clear carry
         let initial_cycles = cpu.total_cycles;
@@ -9191,7 +9174,7 @@ mod tests {
         // 0b01010101 ROL with carry=0 -> 0b10101010
         // 0xFF AND 0b10101010 -> 0b10101010
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b10101010,
             "Memory should be rotated left"
         );
@@ -9222,7 +9205,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b10000001, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b10000001, false);
         cpu.a = 0xFF;
         cpu.p |= FLAG_CARRY; // Set carry
 
@@ -9232,7 +9215,7 @@ mod tests {
         // 0b10000001 ROL with carry=1 -> 0b00000011 (carry out = 1)
         // 0xFF AND 0b00000011 -> 0b00000011
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b00000011,
             "Memory should be rotated left with carry in"
         );
@@ -9255,7 +9238,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0045, 0b00110011, false);
+        cpu.bus.borrow_mut().write(0x0045, 0b00110011, false);
         cpu.a = 0b11110000;
         cpu.p &= !FLAG_CARRY;
         let initial_cycles = cpu.total_cycles;
@@ -9281,7 +9264,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1234, 0b01000000, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b01000000, false);
         cpu.a = 0b11111111;
         cpu.p &= !FLAG_CARRY;
         let initial_cycles = cpu.total_cycles;
@@ -9313,7 +9296,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x1234, 0b00000001, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b00000001, false);
         cpu.a = 0b11111111;
         cpu.p &= !FLAG_CARRY;
         let initial_cycles = cpu.total_cycles;
@@ -9340,7 +9323,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x04;
-        cpu.memory.borrow_mut().write(0x1234, 0b11000000, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b11000000, false);
         cpu.a = 0b11111111;
         cpu.p &= !FLAG_CARRY;
         let initial_cycles = cpu.total_cycles;
@@ -9369,9 +9352,9 @@ mod tests {
 
         cpu.x = 0x05;
         // Set up pointer at $45 pointing to $1234
-        cpu.memory.borrow_mut().write(0x0045, 0x34, false);
-        cpu.memory.borrow_mut().write(0x0046, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1234, 0b00001111, false);
+        cpu.bus.borrow_mut().write(0x0045, 0x34, false);
+        cpu.bus.borrow_mut().write(0x0046, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b00001111, false);
         cpu.a = 0b11110000;
         cpu.p &= !FLAG_CARRY;
         let initial_cycles = cpu.total_cycles;
@@ -9399,9 +9382,9 @@ mod tests {
 
         cpu.y = 0x05;
         // Set up pointer at $40 pointing to $1230
-        cpu.memory.borrow_mut().write(0x0040, 0x30, false);
-        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1235, 0b10101010, false);
+        cpu.bus.borrow_mut().write(0x0040, 0x30, false);
+        cpu.bus.borrow_mut().write(0x0041, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1235, 0b10101010, false);
         cpu.a = 0b11111111;
         cpu.p &= !FLAG_CARRY;
         let initial_cycles = cpu.total_cycles;
@@ -9441,12 +9424,12 @@ mod tests {
 
         // Check stack contents (return address high byte first, then low byte)
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x01FF),
+            cpu.bus.borrow_mut().read(0x01FF, false),
             0x80,
             "High byte of return address on stack"
         );
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x01FE),
+            cpu.bus.borrow_mut().read(0x01FE, false),
             0x02,
             "Low byte of return address on stack"
         );
@@ -9474,12 +9457,12 @@ mod tests {
         // Check stack wrapping
         assert_eq!(cpu.sp, 0xFF, "SP should wrap around");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0101),
+            cpu.bus.borrow_mut().read(0x0101, false),
             0x80,
             "High byte pushed at correct location"
         );
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0100),
+            cpu.bus.borrow_mut().read(0x0100, false),
             0x02,
             "Low byte pushed at correct location"
         );
@@ -9495,7 +9478,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b11000000, false); // Bit 7 and 6 set
+        cpu.bus.borrow_mut().write(0x0042, 0b11000000, false); // Bit 7 and 6 set
         cpu.a = 0b00001111; // Only lower bits set
 
         let initial_cycles = cpu.total_cycles;
@@ -9530,7 +9513,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1234, 0b01110000, false); // Bit 6, 5 and 4 set
+        cpu.bus.borrow_mut().write(0x1234, 0b01110000, false); // Bit 6, 5 and 4 set
         cpu.a = 0b00110000; // Bit 5 and 4 set
 
         cpu.execute();
@@ -9586,7 +9569,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b01000000, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b01000000, false);
         cpu.p &= !FLAG_CARRY; // Carry in = 0
 
         let initial_cycles = cpu.total_cycles;
@@ -9594,7 +9577,7 @@ mod tests {
 
         // 0b01000000 << 1 | 0 = 0b10000000
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b10000000,
             "Memory should be rotated left"
         );
@@ -9620,14 +9603,14 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x02;
-        cpu.memory.borrow_mut().write(0x0042, 0b11111111, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b11111111, false);
         cpu.p |= FLAG_CARRY;
 
         cpu.execute();
 
         // 0b11111111 << 1 | 1 = 0b11111111 (with carry out)
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b11111111,
             "Memory at ZP+X should be rotated"
         );
@@ -9642,14 +9625,14 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1234, 0b00000001, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b00000001, false);
         cpu.p &= !FLAG_CARRY;
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1234),
+            cpu.bus.borrow_mut().read(0x1234, false),
             0b00000010,
             "Memory should be rotated left"
         );
@@ -9670,7 +9653,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x34;
-        cpu.memory.borrow_mut().write(0x1234, 0b10000000, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b10000000, false);
         cpu.p &= !FLAG_CARRY;
 
         let initial_cycles = cpu.total_cycles;
@@ -9678,7 +9661,7 @@ mod tests {
 
         // 0b10000000 << 1 | 0 = 0b00000000
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1234),
+            cpu.bus.borrow_mut().read(0x1234, false),
             0b00000000,
             "Memory at ABS+X should be rotated"
         );
@@ -9706,7 +9689,7 @@ mod tests {
 
         // Push a status value onto stack
         cpu.sp = 0xFF;
-        cpu.memory.borrow_mut().write(0x01FE, 0b11001010, false); // Some flags
+        cpu.bus.borrow_mut().write(0x01FE, 0b11001010, false); // Some flags
         cpu.sp = 0xFD; // Simulate already pushed
 
         cpu.p = 0b00000000; // Clear all flags
@@ -9757,7 +9740,7 @@ mod tests {
         cpu.reset(true);
 
         // Push status with BREAK flag set
-        cpu.memory.borrow_mut().write(0x01FF, 0b00010000, false); // Only BREAK set
+        cpu.bus.borrow_mut().write(0x01FF, 0b00010000, false); // Only BREAK set
         cpu.sp = 0xFE;
 
         cpu.execute();
@@ -9924,9 +9907,9 @@ mod tests {
 
         // Set up stack as if returning from interrupt
         cpu.sp = 0xFC;
-        cpu.memory.borrow_mut().write(0x01FD, 0b11001010, false); // Status byte
-        cpu.memory.borrow_mut().write(0x01FE, 0x34, false); // PCL
-        cpu.memory.borrow_mut().write(0x01FF, 0x12, false); // PCH
+        cpu.bus.borrow_mut().write(0x01FD, 0b11001010, false); // Status byte
+        cpu.bus.borrow_mut().write(0x01FE, 0x34, false); // PCL
+        cpu.bus.borrow_mut().write(0x01FF, 0x12, false); // PCH
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -9958,9 +9941,9 @@ mod tests {
 
         // Set up stack
         cpu.sp = 0xFC;
-        cpu.memory.borrow_mut().write(0x01FD, 0b00000000, false); // Status with I cleared
-        cpu.memory.borrow_mut().write(0x01FE, 0x00, false);
-        cpu.memory.borrow_mut().write(0x01FF, 0x80, false);
+        cpu.bus.borrow_mut().write(0x01FD, 0b00000000, false); // Status with I cleared
+        cpu.bus.borrow_mut().write(0x01FE, 0x00, false);
+        cpu.bus.borrow_mut().write(0x01FF, 0x80, false);
 
         cpu.execute();
 
@@ -9978,9 +9961,9 @@ mod tests {
 
         // Set up stack with BREAK set (should be ignored like PLP)
         cpu.sp = 0xFC;
-        cpu.memory.borrow_mut().write(0x01FD, 0b00110000, false); // BREAK and UNUSED set
-        cpu.memory.borrow_mut().write(0x01FE, 0x00, false);
-        cpu.memory.borrow_mut().write(0x01FF, 0x80, false);
+        cpu.bus.borrow_mut().write(0x01FD, 0b00110000, false); // BREAK and UNUSED set
+        cpu.bus.borrow_mut().write(0x01FE, 0x00, false);
+        cpu.bus.borrow_mut().write(0x01FF, 0x80, false);
 
         cpu.execute();
 
@@ -10022,7 +10005,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x0042, 0xFF, false);
         cpu.a = 0xFF;
 
         cpu.execute();
@@ -10041,7 +10024,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x02;
-        cpu.memory.borrow_mut().write(0x0042, 0b10000000, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b10000000, false);
         cpu.a = 0b00000000;
 
         cpu.execute();
@@ -10062,7 +10045,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1234, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x0F, false);
         cpu.a = 0xF0;
 
         cpu.execute();
@@ -10080,7 +10063,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x34;
-        cpu.memory.borrow_mut().write(0x1234, 0xAA, false);
+        cpu.bus.borrow_mut().write(0x1234, 0xAA, false);
         cpu.a = 0x55;
 
         cpu.execute();
@@ -10098,7 +10081,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x34;
-        cpu.memory.borrow_mut().write(0x1234, 0b00110011, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b00110011, false);
         cpu.a = 0b11001100;
 
         cpu.execute();
@@ -10116,9 +10099,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x02;
-        cpu.memory.borrow_mut().write(0x0042, 0x34, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0043, 0x12, false); // High byte
-        cpu.memory.borrow_mut().write(0x1234, 0x01, false);
+        cpu.bus.borrow_mut().write(0x0042, 0x34, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0043, 0x12, false); // High byte
+        cpu.bus.borrow_mut().write(0x1234, 0x01, false);
         cpu.a = 0x00;
 
         cpu.execute();
@@ -10135,9 +10118,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x03;
-        cpu.memory.borrow_mut().write(0x0040, 0x31, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0041, 0x12, false); // High byte
-        cpu.memory.borrow_mut().write(0x1234, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x0040, 0x31, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0041, 0x12, false); // High byte
+        cpu.bus.borrow_mut().write(0x1234, 0xFF, false);
         cpu.a = 0xAA;
 
         cpu.execute();
@@ -10184,14 +10167,14 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b00000010, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b00000010, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         // 0b00000010 >> 1 = 0b00000001
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b00000001,
             "Memory should be shifted right"
         );
@@ -10212,13 +10195,13 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x02;
-        cpu.memory.borrow_mut().write(0x0042, 0b00000001, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b00000001, false);
 
         cpu.execute();
 
         // 0b00000001 >> 1 = 0b00000000
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b00000000,
             "Memory should be 0"
         );
@@ -10234,13 +10217,13 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1234, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x1234, 0xFF, false);
 
         cpu.execute();
 
         // 0xFF >> 1 = 0x7F
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1234),
+            cpu.bus.borrow_mut().read(0x1234, false),
             0x7F,
             "Memory should be 0x7F"
         );
@@ -10256,14 +10239,14 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x34;
-        cpu.memory.borrow_mut().write(0x1234, 0b10101010, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b10101010, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         // 0b10101010 >> 1 = 0b01010101
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1234),
+            cpu.bus.borrow_mut().read(0x1234, false),
             0b01010101,
             "Memory should be shifted"
         );
@@ -10284,7 +10267,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b00001111, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b00001111, false);
         cpu.a = 0b11110000;
 
         let initial_cycles = cpu.total_cycles;
@@ -10294,7 +10277,7 @@ mod tests {
         // 0b11110000 XOR 0b00000111 = 0b11110111
         assert_eq!(cpu.a, 0b11110111, "A should be XORed with shifted value");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b00000111,
             "Memory should be shifted"
         );
@@ -10319,7 +10302,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x02;
-        cpu.memory.borrow_mut().write(0x0042, 0b11111110, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b11111110, false);
         cpu.a = 0xFF;
 
         cpu.execute();
@@ -10342,7 +10325,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1234, 0b10101010, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b10101010, false);
         cpu.a = 0b01010101;
 
         cpu.execute();
@@ -10362,7 +10345,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x34;
-        cpu.memory.borrow_mut().write(0x1234, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x1234, 0xFF, false);
         cpu.a = 0x00;
 
         let initial_cycles = cpu.total_cycles;
@@ -10387,7 +10370,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x34;
-        cpu.memory.borrow_mut().write(0x1234, 0b00000010, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b00000010, false);
         cpu.a = 0xFF;
 
         cpu.execute();
@@ -10406,9 +10389,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x02;
-        cpu.memory.borrow_mut().write(0x0042, 0x34, false);
-        cpu.memory.borrow_mut().write(0x0043, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1234, 0b11000000, false);
+        cpu.bus.borrow_mut().write(0x0042, 0x34, false);
+        cpu.bus.borrow_mut().write(0x0043, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b11000000, false);
         cpu.a = 0b01100000;
 
         let initial_cycles = cpu.total_cycles;
@@ -10434,9 +10417,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x03;
-        cpu.memory.borrow_mut().write(0x0040, 0x31, false);
-        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1234, 0b10101010, false);
+        cpu.bus.borrow_mut().write(0x0040, 0x31, false);
+        cpu.bus.borrow_mut().write(0x0041, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1234, 0b10101010, false);
         cpu.a = 0xFF;
 
         let initial_cycles = cpu.total_cycles;
@@ -10470,7 +10453,7 @@ mod tests {
 
         assert_eq!(cpu.sp, 0xFE, "SP should decrement");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x01FF),
+            cpu.bus.borrow_mut().read(0x01FF, false),
             0x42,
             "A should be pushed to stack"
         );
@@ -10492,7 +10475,7 @@ mod tests {
 
         assert_eq!(cpu.sp, 0xFF, "SP should wrap around");
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0100),
+            cpu.bus.borrow_mut().read(0x0100, false),
             0xAB,
             "A should be pushed to correct location"
         );
@@ -10591,8 +10574,8 @@ mod tests {
         cpu.reset(true);
 
         // Set up indirect address
-        cpu.memory.borrow_mut().write(0x1200, 0x34, false); // Low byte
-        cpu.memory.borrow_mut().write(0x1201, 0x56, false); // High byte
+        cpu.bus.borrow_mut().write(0x1200, 0x34, false); // Low byte
+        cpu.bus.borrow_mut().write(0x1201, 0x56, false); // High byte
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -10614,9 +10597,9 @@ mod tests {
         cpu.reset(true);
 
         // Set up addresses at page boundary
-        cpu.memory.borrow_mut().write(0x12FF, 0x34, false); // Low byte
-        cpu.memory.borrow_mut().write(0x1200, 0x56, false); // High byte (wraps to same page)
-        cpu.memory.borrow_mut().write(0x1300, 0x78, false); // This should NOT be read
+        cpu.bus.borrow_mut().write(0x12FF, 0x34, false); // Low byte
+        cpu.bus.borrow_mut().write(0x1200, 0x56, false); // High byte (wraps to same page)
+        cpu.bus.borrow_mut().write(0x1300, 0x78, false); // This should NOT be read
 
         cpu.execute();
 
@@ -10804,7 +10787,7 @@ mod tests {
         prg_rom[0x0001] = NOP;
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
 
@@ -10850,7 +10833,7 @@ mod tests {
         prg_rom[0x0002] = NOP;
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
-        cpu.memory.borrow_mut().map_cartridge(cartridge);
+        cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
 
@@ -11104,7 +11087,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0x33, false);
+        cpu.bus.borrow_mut().write(0x0042, 0x33, false);
         cpu.a = 0x10;
         cpu.p = 0;
 
@@ -11128,7 +11111,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0045, 0x25, false);
+        cpu.bus.borrow_mut().write(0x0045, 0x25, false);
         cpu.a = 0x10;
         cpu.p = 0;
 
@@ -11151,7 +11134,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1200, 0x44, false);
+        cpu.bus.borrow_mut().write(0x1200, 0x44, false);
         cpu.a = 0x11;
         cpu.p = 0;
 
@@ -11175,7 +11158,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x08;
-        cpu.memory.borrow_mut().write(0x1208, 0x22, false);
+        cpu.bus.borrow_mut().write(0x1208, 0x22, false);
         cpu.a = 0x10;
         cpu.p = 0;
 
@@ -11199,7 +11182,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x03;
-        cpu.memory.borrow_mut().write(0x1203, 0x15, false);
+        cpu.bus.borrow_mut().write(0x1203, 0x15, false);
         cpu.a = 0x20;
         cpu.p = 0;
 
@@ -11224,9 +11207,9 @@ mod tests {
 
         cpu.x = 0x05;
         // Zero page address 0x45 contains pointer to 0x1234
-        cpu.memory.borrow_mut().write(0x0045, 0x34, false);
-        cpu.memory.borrow_mut().write(0x0046, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1234, 0x50, false);
+        cpu.bus.borrow_mut().write(0x0045, 0x34, false);
+        cpu.bus.borrow_mut().write(0x0046, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1234, 0x50, false);
         cpu.a = 0x10;
         cpu.p = 0;
 
@@ -11251,9 +11234,9 @@ mod tests {
 
         cpu.y = 0x08;
         // Zero page address 0x40 contains base address 0x1200
-        cpu.memory.borrow_mut().write(0x0040, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1208, 0x33, false);
+        cpu.bus.borrow_mut().write(0x0040, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0041, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1208, 0x33, false);
         cpu.a = 0x11;
         cpu.p = 0;
 
@@ -11344,14 +11327,14 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b11001100, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b11001100, false);
         cpu.p = 0;
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b01100110,
             "Memory should be rotated right"
         );
@@ -11372,14 +11355,14 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0045, 0b10101010, false);
+        cpu.bus.borrow_mut().write(0x0045, 0b10101010, false);
         cpu.p = FLAG_CARRY;
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0045),
+            cpu.bus.borrow_mut().read(0x0045, false),
             0b11010101,
             "Memory should be rotated right with carry in"
         );
@@ -11399,14 +11382,14 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1200, 0b00110011, false);
+        cpu.bus.borrow_mut().write(0x1200, 0b00110011, false);
         cpu.p = 0;
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0b00011001,
             "Memory should be rotated right"
         );
@@ -11431,14 +11414,14 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x08;
-        cpu.memory.borrow_mut().write(0x1208, 0b11110000, false);
+        cpu.bus.borrow_mut().write(0x1208, 0b11110000, false);
         cpu.p = 0;
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1208),
+            cpu.bus.borrow_mut().read(0x1208, false),
             0b01111000,
             "Memory should be rotated right"
         );
@@ -11458,7 +11441,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0b10000000, false);
+        cpu.bus.borrow_mut().write(0x0042, 0b10000000, false);
         cpu.a = 0x10;
         cpu.p = 0;
 
@@ -11468,7 +11451,7 @@ mod tests {
         // Memory: 0b10000000 rotated right = 0b01000000 (0x40)
         // A = 0x10 + 0x40 = 0x50
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0x40,
             "Memory should be rotated right"
         );
@@ -11490,7 +11473,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0045, 0b00000011, false); // Bit 0 is set
+        cpu.bus.borrow_mut().write(0x0045, 0b00000011, false); // Bit 0 is set
         cpu.a = 0x05;
         cpu.p = 0;
 
@@ -11500,7 +11483,7 @@ mod tests {
         // Memory: 0b00000011 rotated right = 0b00000001, carry set
         // A = 0x05 + 0x01 + 1(carry from rotation) = 0x07
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0045),
+            cpu.bus.borrow_mut().read(0x0045, false),
             0x01,
             "Memory should be rotated right"
         );
@@ -11525,7 +11508,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1200, 0x02, false);
+        cpu.bus.borrow_mut().write(0x1200, 0x02, false);
         cpu.a = 0xFF;
         cpu.p = 0;
 
@@ -11535,7 +11518,7 @@ mod tests {
         // Memory: 0x02 rotated right = 0x01
         // A = 0xFF + 0x01 = 0x00 (with carry)
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x01,
             "Memory should be rotated right"
         );
@@ -11562,7 +11545,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x1210, 0x20, false);
+        cpu.bus.borrow_mut().write(0x1210, 0x20, false);
         cpu.a = 0x05;
         cpu.p = 0;
 
@@ -11572,7 +11555,7 @@ mod tests {
         // Memory: 0x20 rotated right = 0x10
         // A = 0x05 + 0x10 = 0x15
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1210),
+            cpu.bus.borrow_mut().read(0x1210, false),
             0x10,
             "Memory should be rotated right"
         );
@@ -11593,7 +11576,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x08;
-        cpu.memory.borrow_mut().write(0x1208, 0x04, false);
+        cpu.bus.borrow_mut().write(0x1208, 0x04, false);
         cpu.a = 0x01;
         cpu.p = 0;
 
@@ -11603,7 +11586,7 @@ mod tests {
         // Memory: 0x04 rotated right = 0x02
         // A = 0x01 + 0x02 = 0x03
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1208),
+            cpu.bus.borrow_mut().read(0x1208, false),
             0x02,
             "Memory should be rotated right"
         );
@@ -11624,9 +11607,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0045, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0046, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1200, 0x08, false);
+        cpu.bus.borrow_mut().write(0x0045, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0046, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1200, 0x08, false);
         cpu.a = 0x01;
         cpu.p = 0;
 
@@ -11636,7 +11619,7 @@ mod tests {
         // Memory: 0x08 rotated right = 0x04
         // A = 0x01 + 0x04 = 0x05
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x04,
             "Memory should be rotated right"
         );
@@ -11657,9 +11640,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x08;
-        cpu.memory.borrow_mut().write(0x0040, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
-        cpu.memory.borrow_mut().write(0x1208, 0x10, false);
+        cpu.bus.borrow_mut().write(0x0040, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0041, 0x12, false);
+        cpu.bus.borrow_mut().write(0x1208, 0x10, false);
         cpu.a = 0x0F;
         cpu.p = 0;
 
@@ -11669,7 +11652,7 @@ mod tests {
         // Memory: 0x10 rotated right = 0x08
         // A = 0x0F + 0x08 = 0x17
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1208),
+            cpu.bus.borrow_mut().read(0x1208, false),
             0x08,
             "Memory should be rotated right"
         );
@@ -12000,7 +11983,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0x55,
             "Memory should contain A"
         );
@@ -12026,7 +12009,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0045),
+            cpu.bus.borrow_mut().read(0x0045, false),
             0xAA,
             "Memory should contain A"
         );
@@ -12051,7 +12034,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x77,
             "Memory should contain A"
         );
@@ -12077,7 +12060,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1210),
+            cpu.bus.borrow_mut().read(0x1210, false),
             0x88,
             "Memory should contain A"
         );
@@ -12103,7 +12086,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1208),
+            cpu.bus.borrow_mut().read(0x1208, false),
             0x99,
             "Memory should contain A"
         );
@@ -12124,14 +12107,14 @@ mod tests {
 
         cpu.a = 0xCC;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0045, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0046, 0x12, false);
+        cpu.bus.borrow_mut().write(0x0045, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0046, 0x12, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0xCC,
             "Memory should contain A"
         );
@@ -12152,14 +12135,14 @@ mod tests {
 
         cpu.a = 0xDD;
         cpu.y = 0x08;
-        cpu.memory.borrow_mut().write(0x0040, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
+        cpu.bus.borrow_mut().write(0x0040, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0041, 0x12, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1208),
+            cpu.bus.borrow_mut().read(0x1208, false),
             0xDD,
             "Memory should contain A"
         );
@@ -12186,7 +12169,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0b11000000,
             "Memory should contain A AND X"
         );
@@ -12213,7 +12196,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0045),
+            cpu.bus.borrow_mut().read(0x0045, false),
             0x55,
             "Memory should contain A AND X"
         );
@@ -12239,7 +12222,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x00,
             "Memory should contain A AND X (0x00)"
         );
@@ -12260,14 +12243,14 @@ mod tests {
 
         cpu.a = 0xFF;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0045, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0046, 0x12, false);
+        cpu.bus.borrow_mut().write(0x0045, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0046, 0x12, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x05,
             "Memory should contain A AND X"
         );
@@ -12293,7 +12276,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0x66,
             "Memory should contain Y"
         );
@@ -12319,7 +12302,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0045),
+            cpu.bus.borrow_mut().read(0x0045, false),
             0x77,
             "Memory should contain Y"
         );
@@ -12344,7 +12327,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x88,
             "Memory should contain Y"
         );
@@ -12370,7 +12353,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0042),
+            cpu.bus.borrow_mut().read(0x0042, false),
             0x99,
             "Memory should contain X"
         );
@@ -12396,7 +12379,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0045),
+            cpu.bus.borrow_mut().read(0x0045, false),
             0xAA,
             "Memory should contain X"
         );
@@ -12421,7 +12404,7 @@ mod tests {
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0xBB,
             "Memory should contain X"
         );
@@ -12725,7 +12708,7 @@ mod tests {
         // High byte of address = 0x12, so (0x12 + 1) = 0x13
         // Result: 0xFF & 0xFF & 0x13 = 0x13
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x13,
             "Memory should contain A & X & (H+1)"
         );
@@ -12751,7 +12734,7 @@ mod tests {
         // High byte = 0x11, so (0x11 + 1) = 0x12
         // Result: 0xFF & 0xFF & 0x12 = 0x12
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x11F8),
+            cpu.bus.borrow_mut().read(0x11F8, false),
             0x12,
             "Memory should contain A & X & (H+1)"
         );
@@ -12774,7 +12757,7 @@ mod tests {
         // High byte = 0x02, so (0x02 + 1) = 0x03
         // Result: 0b11110000 & 0b11001100 & 0x03 = 0b11000000 & 0x03 = 0x00
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0200),
+            cpu.bus.borrow_mut().read(0x0200, false),
             0x00,
             "Memory should contain masked value"
         );
@@ -12894,7 +12877,7 @@ mod tests {
         // High byte of address = 0x12, so (0x12 + 1) = 0x13
         // Result: 0xFF & 0x13 = 0x13
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x13,
             "Memory should contain Y & (H+1)"
         );
@@ -12917,7 +12900,7 @@ mod tests {
         // High byte = 0x03, so (0x03 + 1) = 0x04
         // Result: 0b11110000 & 0x04 = 0x00
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0300),
+            cpu.bus.borrow_mut().read(0x0300, false),
             0x00,
             "Memory should contain masked value"
         );
@@ -12942,7 +12925,7 @@ mod tests {
         // On page crossing, the high byte of the *target address* is ANDed with Y:
         // high(0x1300) & 0x0F = 0x13 & 0x0F = 0x03 => final addr 0x0300
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0300),
+            cpu.bus.borrow_mut().read(0x0300, false),
             0x03,
             "SYA should use base high byte and apply page-crossing high-byte quirk"
         );
@@ -12967,7 +12950,7 @@ mod tests {
         // High byte of address = 0x12, so (0x12 + 1) = 0x13
         // Result: 0xFF & 0x13 = 0x13
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x13,
             "Memory should contain X & (H+1)"
         );
@@ -12990,7 +12973,7 @@ mod tests {
         // High byte = 0x03, so (0x03 + 1) = 0x04
         // Result: 0b11110000 & 0x04 = 0x00
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0300),
+            cpu.bus.borrow_mut().read(0x0300, false),
             0x00,
             "Memory should contain masked value"
         );
@@ -13015,7 +12998,7 @@ mod tests {
         // On page crossing, the high byte of the *target address* is ANDed with X:
         // high(0x1300) & 0x0F = 0x13 & 0x0F = 0x03 => final addr 0x0300
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0300),
+            cpu.bus.borrow_mut().read(0x0300, false),
             0x03,
             "SXA should use base high byte and apply page-crossing high-byte quirk"
         );
@@ -13031,8 +13014,8 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0040, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0041, 0x12, false);
+        cpu.bus.borrow_mut().write(0x0040, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0041, 0x12, false);
 
         cpu.a = 0xFF;
         cpu.x = 0xFF;
@@ -13044,7 +13027,7 @@ mod tests {
         // High byte of address = 0x12, so (0x12 + 1) = 0x13
         // Result: 0xFF & 0xFF & 0x13 = 0x13
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x13,
             "Memory should contain A & X & (H+1)"
         );
@@ -13068,7 +13051,7 @@ mod tests {
         // High byte of address = 0x12, so (0x12 + 1) = 0x13
         // Result: 0xFF & 0xFF & 0x13 = 0x13
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x1200),
+            cpu.bus.borrow_mut().read(0x1200, false),
             0x13,
             "Memory should contain A & X & (H+1)"
         );
@@ -13104,7 +13087,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0042, 0x99, false);
+        cpu.bus.borrow_mut().write(0x0042, 0x99, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13126,7 +13109,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0045, 0xAA, false);
+        cpu.bus.borrow_mut().write(0x0045, 0xAA, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13147,7 +13130,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1200, 0xBB, false);
+        cpu.bus.borrow_mut().write(0x1200, 0xBB, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13169,7 +13152,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1205, 0xCC, false);
+        cpu.bus.borrow_mut().write(0x1205, 0xCC, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13191,7 +13174,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x02; // Crosses page boundary
-        cpu.memory.borrow_mut().write(0x1201, 0xDD, false);
+        cpu.bus.borrow_mut().write(0x1201, 0xDD, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13388,7 +13371,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0x55, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x55, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13410,7 +13393,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0015, 0x66, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x66, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13431,7 +13414,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1200, 0x77, false);
+        cpu.bus.borrow_mut().write(0x1200, 0x77, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13453,7 +13436,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1205, 0x88, false);
+        cpu.bus.borrow_mut().write(0x1205, 0x88, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13475,7 +13458,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x1204, 0x99, false);
+        cpu.bus.borrow_mut().write(0x1204, 0x99, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13497,7 +13480,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x1205, 0xAA, false);
+        cpu.bus.borrow_mut().write(0x1205, 0xAA, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13519,7 +13502,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x1204, 0xBB, false);
+        cpu.bus.borrow_mut().write(0x1204, 0xBB, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13541,9 +13524,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x0024, 0x00, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0025, 0x13, false); // High byte
-        cpu.memory.borrow_mut().write(0x1300, 0xCC, false);
+        cpu.bus.borrow_mut().write(0x0024, 0x00, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0025, 0x13, false); // High byte
+        cpu.bus.borrow_mut().write(0x1300, 0xCC, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13565,9 +13548,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x04;
-        cpu.memory.borrow_mut().write(0x0020, 0x00, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0021, 0x13, false); // High byte
-        cpu.memory.borrow_mut().write(0x1304, 0xDD, false);
+        cpu.bus.borrow_mut().write(0x0020, 0x00, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0021, 0x13, false); // High byte
+        cpu.bus.borrow_mut().write(0x1304, 0xDD, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13589,9 +13572,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0xFF;
-        cpu.memory.borrow_mut().write(0x0020, 0x10, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0021, 0x12, false); // High byte
-        cpu.memory.borrow_mut().write(0x130F, 0xEE, false);
+        cpu.bus.borrow_mut().write(0x0020, 0x10, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0021, 0x12, false); // High byte
+        cpu.bus.borrow_mut().write(0x130F, 0xEE, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13666,7 +13649,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0x55, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x55, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13688,7 +13671,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x0015, 0x66, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x66, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13709,7 +13692,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1200, 0x77, false);
+        cpu.bus.borrow_mut().write(0x1200, 0x77, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13731,7 +13714,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x1205, 0x88, false);
+        cpu.bus.borrow_mut().write(0x1205, 0x88, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13753,7 +13736,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x1204, 0x99, false);
+        cpu.bus.borrow_mut().write(0x1204, 0x99, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13807,7 +13790,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13830,7 +13813,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x0015, 0x55, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x55, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13852,7 +13835,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x1200, 0x66, false);
+        cpu.bus.borrow_mut().write(0x1200, 0x66, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13875,7 +13858,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x1205, 0x77, false);
+        cpu.bus.borrow_mut().write(0x1205, 0x77, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13898,7 +13881,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x05;
-        cpu.memory.borrow_mut().write(0x1204, 0x88, false);
+        cpu.bus.borrow_mut().write(0x1204, 0x88, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13921,9 +13904,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x04;
-        cpu.memory.borrow_mut().write(0x0024, 0x00, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0025, 0x13, false); // High byte
-        cpu.memory.borrow_mut().write(0x1300, 0x99, false);
+        cpu.bus.borrow_mut().write(0x0024, 0x00, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0025, 0x13, false); // High byte
+        cpu.bus.borrow_mut().write(0x1300, 0x99, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13946,9 +13929,9 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x04;
-        cpu.memory.borrow_mut().write(0x0020, 0x00, false); // Low byte
-        cpu.memory.borrow_mut().write(0x0021, 0x13, false); // High byte
-        cpu.memory.borrow_mut().write(0x1304, 0xAA, false);
+        cpu.bus.borrow_mut().write(0x0020, 0x00, false); // Low byte
+        cpu.bus.borrow_mut().write(0x0021, 0x13, false); // High byte
+        cpu.bus.borrow_mut().write(0x1304, 0xAA, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -13970,7 +13953,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x00, false);
 
         cpu.execute();
 
@@ -13987,7 +13970,7 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0x80, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x80, false);
 
         cpu.execute();
 
@@ -14399,7 +14382,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x42;
-        cpu.memory.borrow_mut().write(0x0010, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -14421,7 +14404,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.y = 0x42;
-        cpu.memory.borrow_mut().write(0x2000, 0x42, false);
+        cpu.bus.borrow_mut().write(0x2000, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -14466,7 +14449,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.a = 0x50;
-        cpu.memory.borrow_mut().write(0x0010, 0x40, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x40, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -14489,7 +14472,7 @@ mod tests {
 
         cpu.a = 0x50;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0015, 0x40, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x40, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -14511,7 +14494,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.a = 0x50;
-        cpu.memory.borrow_mut().write(0x2000, 0x40, false);
+        cpu.bus.borrow_mut().write(0x2000, 0x40, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -14534,7 +14517,7 @@ mod tests {
 
         cpu.a = 0x50;
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x2010, 0x40, false);
+        cpu.bus.borrow_mut().write(0x2010, 0x40, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -14557,7 +14540,7 @@ mod tests {
 
         cpu.a = 0x50;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x2010, 0x40, false);
+        cpu.bus.borrow_mut().write(0x2010, 0x40, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -14580,9 +14563,9 @@ mod tests {
 
         cpu.a = 0x50;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0015, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0016, 0x30, false);
-        cpu.memory.borrow_mut().write(0x3000, 0x40, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0016, 0x30, false);
+        cpu.bus.borrow_mut().write(0x3000, 0x40, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -14605,9 +14588,9 @@ mod tests {
 
         cpu.a = 0x50;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0011, 0x30, false);
-        cpu.memory.borrow_mut().write(0x3010, 0x40, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0011, 0x30, false);
+        cpu.bus.borrow_mut().write(0x3010, 0x40, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -14630,13 +14613,13 @@ mod tests {
         cpu.reset(true);
 
         cpu.a = 0x42;
-        cpu.memory.borrow_mut().write(0x0010, 0x43, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x43, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0010),
+            cpu.bus.borrow_mut().read(0x0010, false),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14659,13 +14642,13 @@ mod tests {
 
         cpu.a = 0x42;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0015, 0x43, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x43, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0015),
+            cpu.bus.borrow_mut().read(0x0015, false),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14686,13 +14669,13 @@ mod tests {
         cpu.reset(true);
 
         cpu.a = 0x42;
-        cpu.memory.borrow_mut().write(0x2000, 0x43, false);
+        cpu.bus.borrow_mut().write(0x2000, 0x43, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x2000),
+            cpu.bus.borrow_mut().read(0x2000, false),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14714,13 +14697,13 @@ mod tests {
 
         cpu.a = 0x42;
         cpu.x = 0x10;
-        cpu.memory.borrow_mut().write(0x2010, 0x43, false);
+        cpu.bus.borrow_mut().write(0x2010, 0x43, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x2010),
+            cpu.bus.borrow_mut().read(0x2010, false),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14742,13 +14725,13 @@ mod tests {
 
         cpu.a = 0x42;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x2010, 0x43, false);
+        cpu.bus.borrow_mut().write(0x2010, 0x43, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x2010),
+            cpu.bus.borrow_mut().read(0x2010, false),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14770,15 +14753,15 @@ mod tests {
 
         cpu.a = 0x42;
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0015, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0016, 0x30, false);
-        cpu.memory.borrow_mut().write(0x3000, 0x43, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0016, 0x30, false);
+        cpu.bus.borrow_mut().write(0x3000, 0x43, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x3000),
+            cpu.bus.borrow_mut().read(0x3000, false),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14800,15 +14783,15 @@ mod tests {
 
         cpu.a = 0x42;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0011, 0x30, false);
-        cpu.memory.borrow_mut().write(0x3010, 0x43, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0011, 0x30, false);
+        cpu.bus.borrow_mut().write(0x3010, 0x43, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x3010),
+            cpu.bus.borrow_mut().read(0x3010, false),
             0x42,
             "Memory should be decremented to 0x42"
         );
@@ -14831,7 +14814,7 @@ mod tests {
 
         cpu.sp = 0xFF;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x2010, 0x42, false);
+        cpu.bus.borrow_mut().write(0x2010, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -14857,7 +14840,7 @@ mod tests {
 
         cpu.sp = 0xFF;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x2010, 0x00, false);
+        cpu.bus.borrow_mut().write(0x2010, 0x00, false);
 
         cpu.execute();
 
@@ -14877,7 +14860,7 @@ mod tests {
 
         cpu.sp = 0xFF;
         cpu.y = 0x10;
-        cpu.memory.borrow_mut().write(0x2010, 0x80, false);
+        cpu.bus.borrow_mut().write(0x2010, 0x80, false);
 
         cpu.execute();
 
@@ -15020,7 +15003,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x42;
-        cpu.memory.borrow_mut().write(0x0010, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15042,7 +15025,7 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x42;
-        cpu.memory.borrow_mut().write(0x2000, 0x42, false);
+        cpu.bus.borrow_mut().write(0x2000, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15565,7 +15548,7 @@ mod tests {
 
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0010, 0x10, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x10, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15589,7 +15572,7 @@ mod tests {
         cpu.a = 0x50;
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0015, 0x10, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x10, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15612,7 +15595,7 @@ mod tests {
 
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x2000, 0x10, false);
+        cpu.bus.borrow_mut().write(0x2000, 0x10, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15636,7 +15619,7 @@ mod tests {
         cpu.a = 0x50;
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x2005, 0x10, false);
+        cpu.bus.borrow_mut().write(0x2005, 0x10, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15660,7 +15643,7 @@ mod tests {
         cpu.a = 0x50;
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0204, 0x10, false);
+        cpu.bus.borrow_mut().write(0x0204, 0x10, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15684,7 +15667,7 @@ mod tests {
         cpu.a = 0x50;
         cpu.y = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x2005, 0x10, false);
+        cpu.bus.borrow_mut().write(0x2005, 0x10, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15708,7 +15691,7 @@ mod tests {
         cpu.a = 0x50;
         cpu.y = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0204, 0x10, false);
+        cpu.bus.borrow_mut().write(0x0204, 0x10, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15732,9 +15715,9 @@ mod tests {
         cpu.a = 0x50;
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0015, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0016, 0x20, false);
-        cpu.memory.borrow_mut().write(0x2000, 0x10, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0016, 0x20, false);
+        cpu.bus.borrow_mut().write(0x2000, 0x10, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15758,9 +15741,9 @@ mod tests {
         cpu.a = 0x50;
         cpu.y = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0011, 0x20, false);
-        cpu.memory.borrow_mut().write(0x2005, 0x10, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0011, 0x20, false);
+        cpu.bus.borrow_mut().write(0x2005, 0x10, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15784,9 +15767,9 @@ mod tests {
         cpu.a = 0x50;
         cpu.y = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0010, 0xFF, false);
-        cpu.memory.borrow_mut().write(0x0011, 0x01, false);
-        cpu.memory.borrow_mut().write(0x0204, 0x10, false);
+        cpu.bus.borrow_mut().write(0x0010, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x0011, 0x01, false);
+        cpu.bus.borrow_mut().write(0x0204, 0x10, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
@@ -15810,14 +15793,14 @@ mod tests {
 
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0010, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x0F, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         // Memory increments from 0x0F to 0x10, then 0x50 - 0x10 = 0x40
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0010),
+            cpu.bus.borrow_mut().read(0x0010, false),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15840,13 +15823,13 @@ mod tests {
         cpu.a = 0x50;
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0015, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x0F, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0015),
+            cpu.bus.borrow_mut().read(0x0015, false),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15868,13 +15851,13 @@ mod tests {
 
         cpu.a = 0x50;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x2000, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x2000, 0x0F, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x2000),
+            cpu.bus.borrow_mut().read(0x2000, false),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15897,13 +15880,13 @@ mod tests {
         cpu.a = 0x50;
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x2005, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x2005, 0x0F, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x2005),
+            cpu.bus.borrow_mut().read(0x2005, false),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15926,13 +15909,13 @@ mod tests {
         cpu.a = 0x50;
         cpu.y = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x2005, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x2005, 0x0F, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x2005),
+            cpu.bus.borrow_mut().read(0x2005, false),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15955,15 +15938,15 @@ mod tests {
         cpu.a = 0x50;
         cpu.x = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0015, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0016, 0x20, false);
-        cpu.memory.borrow_mut().write(0x2000, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0016, 0x20, false);
+        cpu.bus.borrow_mut().write(0x2000, 0x0F, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x2000),
+            cpu.bus.borrow_mut().read(0x2000, false),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -15986,15 +15969,15 @@ mod tests {
         cpu.a = 0x50;
         cpu.y = 0x05;
         cpu.p |= FLAG_CARRY;
-        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
-        cpu.memory.borrow_mut().write(0x0011, 0x20, false);
-        cpu.memory.borrow_mut().write(0x2005, 0x0F, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0011, 0x20, false);
+        cpu.bus.borrow_mut().write(0x2005, 0x0F, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x2005),
+            cpu.bus.borrow_mut().read(0x2005, false),
             0x10,
             "Memory should be incremented to 0x10"
         );
@@ -16056,13 +16039,13 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0010),
+            cpu.bus.borrow_mut().read(0x0010, false),
             0x43,
             "Memory should be incremented to 0x43"
         );
@@ -16083,12 +16066,12 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0xFF, false);
+        cpu.bus.borrow_mut().write(0x0010, 0xFF, false);
 
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0010),
+            cpu.bus.borrow_mut().read(0x0010, false),
             0x00,
             "Memory should wrap to 0x00"
         );
@@ -16104,12 +16087,12 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0x7F, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x7F, false);
 
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0010),
+            cpu.bus.borrow_mut().read(0x0010, false),
             0x80,
             "Memory should be 0x80"
         );
@@ -16130,13 +16113,13 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0015, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0015),
+            cpu.bus.borrow_mut().read(0x0015, false),
             0x43,
             "Memory should be incremented to 0x43"
         );
@@ -16155,13 +16138,13 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0200, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0200, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0200),
+            cpu.bus.borrow_mut().read(0x0200, false),
             0x43,
             "Memory should be incremented to 0x43"
         );
@@ -16181,13 +16164,13 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0205, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0205, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0205),
+            cpu.bus.borrow_mut().read(0x0205, false),
             0x43,
             "Memory should be incremented to 0x43"
         );
@@ -16207,13 +16190,13 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0010),
+            cpu.bus.borrow_mut().read(0x0010, false),
             0x41,
             "Memory should be decremented to 0x41"
         );
@@ -16234,12 +16217,12 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0x01, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x01, false);
 
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0010),
+            cpu.bus.borrow_mut().read(0x0010, false),
             0x00,
             "Memory should be 0x00"
         );
@@ -16255,12 +16238,12 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0010, 0x00, false);
+        cpu.bus.borrow_mut().write(0x0010, 0x00, false);
 
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0010),
+            cpu.bus.borrow_mut().read(0x0010, false),
             0xFF,
             "Memory should wrap to 0xFF"
         );
@@ -16281,13 +16264,13 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0015, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0015, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0015),
+            cpu.bus.borrow_mut().read(0x0015, false),
             0x41,
             "Memory should be decremented to 0x41"
         );
@@ -16306,13 +16289,13 @@ mod tests {
         fake_cartridge(&mut cpu, &program);
         cpu.reset(true);
 
-        cpu.memory.borrow_mut().write(0x0200, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0200, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0200),
+            cpu.bus.borrow_mut().read(0x0200, false),
             0x41,
             "Memory should be decremented to 0x41"
         );
@@ -16332,13 +16315,13 @@ mod tests {
         cpu.reset(true);
 
         cpu.x = 0x05;
-        cpu.memory.borrow_mut().write(0x0205, 0x42, false);
+        cpu.bus.borrow_mut().write(0x0205, 0x42, false);
 
         let initial_cycles = cpu.total_cycles;
         cpu.execute();
 
         assert_eq!(
-            cpu.memory.borrow_mut().read(0x0205),
+            cpu.bus.borrow_mut().read(0x0205, false),
             0x41,
             "Memory should be decremented to 0x41"
         );
