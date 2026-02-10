@@ -22,11 +22,17 @@ def print_csv_header(field_order: list[str]) -> None:
     print("# Each line is a single ROM entry. Empty fields are left blank.")
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Scrape NES Cart Database ROM data")
-    parser.add_argument(
-        "--csv",
-        action="store_true",
-        help="Output as CSV with comments instead of JSON."
+    parser = argparse.ArgumentParser(
+        description="Scrape NES Cart Database ROM data",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "Examples:\n"
+            "  # python main.py list json\n"
+            "  # python main.py list csv\n"
+            "  # python main.py scrape 123\n"
+            "  # python main.py scrape 100-200\n"
+            "  # python main.py import nes20db.xml"
+        ),
     )
     parser.add_argument(
         "--db",
@@ -35,13 +41,33 @@ def parse_arguments():
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
-    list_parser = subparsers.add_parser("list", help="List all ROM entries in the database")
+    list_parser = subparsers.add_parser(
+        "list",
+        help="List all ROM entries in the database",
+        description="List ROM entries with a required output format (json or csv).",
+    )
+    list_parser.add_argument(
+        "format",
+        choices=["json", "csv"],
+        help="Output format for list results",
+    )
     list_parser.set_defaults(command="list")
 
-    scrape_parser = subparsers.add_parser("scrape", help="Scrape a range of ROM ids")
+    scrape_parser = subparsers.add_parser(
+        "scrape",
+        help="Scrape a range of ROM ids from nescartdb.com and merge into the database",
+        description=(
+            "Scrape ROM profiles by id, range, or comma-separated list "
+            "(e.g. 123, 100-200, or 123,200-250). The keyword 'all' "
+            "can be used to scrape every profile."
+        ),
+    )
     scrape_parser.add_argument(
         "rom_id",
-        help="ROM profile ID or range (xxxx-yyyy) from nescartdb.com"
+        help=(
+            "ROM profile id, range (xxxx-yyyy), or comma-separated list "
+            "of ids/ranges from nescartdb.com; use 'all' to scrape every profile"
+        ),
     )
     scrape_parser.add_argument(
         "--url",
@@ -50,7 +76,11 @@ def parse_arguments():
     )
     scrape_parser.set_defaults(command="scrape")
 
-    import_parser = subparsers.add_parser("import", help="Import XML file and merge entries into the database")
+    import_parser = subparsers.add_parser(
+        "import",
+        help="Import XML file and merge into the database",
+        description="Import ROM entries from a NES 2.0 XML file.",
+    )
     import_parser.add_argument("filename", help="XML file to import")
     import_parser.set_defaults(command="import")
 
@@ -82,7 +112,7 @@ def main() -> int:
         field_order = db.list_columns()
         if args.command == "list":
             rows = db.list_roms()
-            if args.csv:
+            if args.format == "csv":
                 print_csv_header(field_order)
                 for row in rows:
                     cleaned = {
