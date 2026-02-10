@@ -123,7 +123,6 @@ class ControllerType(IntEnum):
     IBM_PC_XT_KEYBOARD = 0x4E
     SUBOR_KEYBOARD_MEGA_BOOK_MOUSE = 0x4F
     # Values not in iNES 2.0 spec:
-    THREE_D_GLASSES = 0x50
     POWER_GLOVE = 0x51
     ALADDIN_DECK_ENHANCER = 0x52
 
@@ -405,24 +404,23 @@ class RomDatabase:
             if key == RomDbKey.CRC.value or value is None or value == "":
                 continue
             old_value = existing.get(key)
-            if old_value is None or old_value == "":
+            if old_value is None or (old_value == "" and value != ""):
                 updates[key] = value
             elif str(old_value) != str(value):
                 # Extra merge of controller types
                 if key == RomDbKey.EXPANSION_TYPE.value:
-                    # if one source says multicart, select that one
-                    if ControllerType.MULTICART.value in [value, old_value]:
-                        updates[key] = ControllerType.MULTICART.value
-                    # If one surce says standard controller, select the other one
-                    elif ControllerType.STANDARD_CONTROLLERS.value in [value, old_value]:
-                        updates[key] = max(old_value, value)
-                    else:
-                        print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
-                        has_conflict = True
-                elif key == RomDbKey.NAME.value:
-                    # "Stack-up" is the same as "Block Set"
-                    if updates.get(key) in ["Stack-up", "Block Set"] and old_value in ["Stack-up", "Block Set"]:
-                        updates[key] = "Stack-up"
+                    # if new value is multicart, update to that
+                    if value == ControllerType.MULTICART.value:
+                        updates[key] = value
+                    # If old is multicaart, do nothing
+                    elif old_value == ControllerType.MULTICART.value:
+                        pass
+                    # If old value says standard controller, select the other one
+                    elif old_value == ControllerType.STANDARD_CONTROLLERS.value:
+                        updates[key] = value
+                    # If new value says standard controller, do nothing
+                    elif value == ControllerType.STANDARD_CONTROLLERS.value:
+                        pass
                     else:
                         print(f"\nConflict on CRC {crc}: column '{key}' has existing value '{old_value}', new value '{value}'")
                         has_conflict = True
@@ -466,7 +464,7 @@ class RomDatabase:
                 print(f"\nConflict on CRC {crc}: CHR RAM+NVRAM size sum mismatch existing={existing_chr_sum}, new={update_chr_sum}")
                 has_conflict = True
 
-        if updates and not has_conflict:
+        if len(updates) > 0 and not has_conflict:
             self.update_rom_by_crc(crc, updates)
             return (0, 1, 0, 0)
         if not has_conflict:

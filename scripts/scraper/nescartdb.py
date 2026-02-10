@@ -2,6 +2,7 @@ from typing import Dict, Optional, List, Iterator, Union
 from urllib.request import Request, urlopen
 from rom_database import RomDbKey, ConsoleType, ControllerType
 import re
+from pathlib import Path
 
 try:
     from bs4 import BeautifulSoup
@@ -36,7 +37,7 @@ class NesCartDb:
         if isinstance(ids, str):
             s = ids.strip().lower()
             if s == "all":
-                ids_list = list(range(0, MAX_ID + 1))
+                ids_list = list(range(1, MAX_ID + 1))
             else:
                 tokens = [token.strip() for token in s.split(",") if token.strip()]
                 ids_list = []
@@ -64,11 +65,22 @@ class NesCartDb:
         self._remaining = len(ids_list)
         self._ids_iter: Iterator[int] = iter(ids_list)
         self._base_url = base_url or BASE_URL
+        self._cache_dir = Path(".html_cache")
 
     def _fetch_html(self, url: str) -> str:
         req = Request(url, headers={"User-Agent": "neser-rom-scraper/1.0"})
         with urlopen(req, timeout=30) as resp:
             return resp.read().decode("utf-8", errors="replace")
+
+    def _fetch_html_with_cache(self, rom_id: int, url: str) -> str:
+        cache_path = self._cache_dir / f"{rom_id}.html"
+        if cache_path.exists():
+            return cache_path.read_text(encoding="utf-8", errors="replace")
+
+        html = self._fetch_html(url)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(html, encoding="utf-8")
+        return html
 
     @staticmethod
     def _normalize_label(text: Optional[str]) -> str:
@@ -214,51 +226,69 @@ class NesCartDb:
         normalized = value.strip().lower()
         if "4-player adapter" in normalized:
             # Smash T.V. is double fisted, which implies a four score
-            if rom_id == 927:
-                return ControllerType.DOUBLE_FISTED
-            return ControllerType.NES_FOUR_SCORE
+            if rom_id in [927, 1306, 2025]:
+                return ControllerType.DOUBLE_FISTED.value
+            # Famicom variants of four score
+            elif rom_id in [2163, 2236, 3601]:
+                return ControllerType.FAMICOM_FOUR_PLAYERS_SIMPLE.value
+            return ControllerType.NES_FOUR_SCORE.value
         elif "zapper light gun" in normalized:
-            return ControllerType.ZAPPER_4017
+            return ControllerType.ZAPPER_4017.value
         # 525, 600, 780, 910, 928 should be B not A
         elif "power pad" in normalized or "family fun fitness mat" in normalized:
             # Only Athletic world (525) and Street Cop (928) used B side
             if rom_id in [525, 928]:
-                return ControllerType.POWER_PAD_SIDE_B
-            return ControllerType.POWER_PAD_SIDE_A
+                return ControllerType.POWER_PAD_SIDE_B.value
+            return ControllerType.POWER_PAD_SIDE_A.value
         # All Japaneese titles used the A side of the mat
         elif "family trainer mat" in normalized:
-            return ControllerType.FAMILY_TRAINER_SIDE_A
+            # Special case with the Pokkun Moguraa whack-a-mole mat and mole mallet
+            if rom_id == 4686:
+                return ControllerType.POKKUN_MOGURAA_TAP_MAT.value
+            return ControllerType.FAMILY_TRAINER_SIDE_A.value
         # ROB is one and the same hardware but need to patch as they differ in nes20db
         elif "r. o. b." in normalized:
             # Gyromite ROB
-            if rom_id in [266, 584, 785]:
-                return ControllerType.ROB_GYROMITE
+            if rom_id in [266, 584, 785, 1286, 2789, 2788, 2354, 4063, 4423, 4524, 4542, 4543]:
+                return ControllerType.ROB_GYROMITE.value
             # Stack Up ROB
             else:
-                return ControllerType.ROB_STACK_UP
+                return ControllerType.ROB_STACK_UP.value
         elif "3-d glasses" in normalized:
-            return ControllerType.THREE_D_GLASSES
+            return ControllerType.FAMICOM_3D_SYSTEM.value
         elif "power glove" in normalized:
-            return ControllerType.POWER_GLOVE
+            return ControllerType.POWER_GLOVE.value
         elif "vaus controller" in normalized:
-            return ControllerType.ARKANOID_VAUS_NES
+            # Famicom version
+            if rom_id == 1757:
+                return ControllerType.ARKANOID_VAUS_FAMICOM.value
+            return ControllerType.ARKANOID_VAUS_NES.value
         elif "miracle piano" in normalized:
-            return ControllerType.MIRACLE_PIANO
-        # 550 says FOUR SCORE
+            return ControllerType.MIRACLE_PIANO.value
         elif "aladdin deck enhancer" in normalized:
-            return ControllerType.ALADDIN_DECK_ENHANCER
+            return ControllerType.ALADDIN_DECK_ENHANCER.value
         elif "barcode battler" in normalized:
-            return ControllerType.SUNSOFT_BARCODE_BATTLER
+            return ControllerType.SUNSOFT_BARCODE_BATTLER.value
         elif "top rider bike" in normalized:
-            return ControllerType.TOP_RIDER
+            return ControllerType.TOP_RIDER.value
         elif "konami hypershot" in normalized:
-            return ControllerType.KONAMI_HYPER_SHOT
+            return ControllerType.KONAMI_HYPER_SHOT.value
         elif "mahjong controller" in normalized:
-            return ControllerType.JISSEN_MAHJONG
+            return ControllerType.JISSEN_MAHJONG.value
         elif "battle box" in normalized:
-            return ControllerType.IGS_STORAGE_BATTLE_BOX
+            return ControllerType.IGS_STORAGE_BATTLE_BOX.value
         elif "racermate bike" in normalized:
-            return ControllerType.RACERMATE_BICYCLE
+            return ControllerType.RACERMATE_BICYCLE.value
+        elif "family keyboard" in normalized:
+            return ControllerType.FAMILY_BASIC_KEYBOARD_RECORDER.value
+        elif "party tap" in normalized:
+            return ControllerType.YONEZAWA_PARTY_TAP.value
+        elif "oeka kids tablet" in normalized:
+            return ControllerType.OEKA_KIDS_TABLET.value
+        elif "pachinko controller" in normalized:
+            return ControllerType.COCONUTS_PACHINKO.value
+        elif "u-force" in normalized:
+            return ControllerType.U_FORCE.value
         return None
 
     @staticmethod
@@ -293,7 +323,7 @@ class NesCartDb:
         game_name = None
         title_tag = soup.find("title")
         if title_tag and title_tag.text:
-            game_name = title_tag.text.split("-")[0].strip()
+            game_name = title_tag.text.split(" - ")[0].strip()
         h1_tag = soup.find("h1")
         if h1_tag and h1_tag.text:
             game_name = h1_tag.text.strip()
@@ -310,7 +340,7 @@ class NesCartDb:
             result[RomDbKey.NAME.value] = game_name
         if rom_details.get("crc"):
             result[RomDbKey.CRC.value] = rom_details.get("crc")
-        result[RomDbKey.CONSOLE_TYPE.value] = ConsoleType.NES_FAMICOM
+        result[RomDbKey.CONSOLE_TYPE.value] = ConsoleType.NES_FAMICOM.value
         mapper = self._first_value(kv, ["iNES Mapper", "Mapper"])
         submapper = self._first_value(kv, ["Submapper", "SubMapper"])
         chr_ram = self._first_value(kv, ["CHR RAM", "CHR-RAM", "VRAM"])
@@ -365,19 +395,24 @@ class NesCartDb:
         # nes20db says no 4 so let's go with that
         if rom_id in [473, 1316]:
             record[RomDbKey.MAPPER.value] = 4
-        # Kyonshiizu 2 (ROM_ID 1559) has a X1-005 (mapper 80) with internal Save RAM
+        # Kyonshiizu 2 (ROM_ID 1559, 3151, 3152, 3153, 3300) has a X1-005 with internal Save RAM
         # Taito Grand Prix: Eikou e no License (ROM_ID 1758) too
         # Fudou Myouou Den (ROM_ID 1762) too
-        # Mirai Shinwa Jarvas (ROM_ID 1763) too
+        # Mirai Shinwa Jarvas (ROM_ID 1763, 3163) too
         # Kyuukyoku Harikiri Stadium (ROM_IDs 1765, 1766, 3071, 3147, 3148, 3149, 3150, 3303) too
-        if rom_id in [1559, 1758, 1762, 1763, 1765, 1766, 3071, 3147, 3148, 3149, 3150, 3303]:
+        # Yamamura Misa Suspense: Kyouto Ryuu no Tera Satsujin Jiken (3954) too
+        # Minelvaton Saga: Ragon no Fukkatsu (3955) too
+        if rom_id in [1559, 3151, 3152, 3153, 3300, 1758, 1762, 1763, 3163, 1765, 1766, 3071, 3147, 3148, 3149, 3150, 3303, 3954, 3955]:
             record[RomDbKey.PRG_NVRAM_SIZE.value] = 128
-        # Kyuukyoku Harikiri Stadium: Heisei Gannen Ban (1767, 2254) has a Taito X1-017 with Save RAM
-        if rom_id in [1767, 2254]:
+        # Kyuukyoku Harikiri Stadium: Heisei Gannen Ban (1767, 2254, 3161) has a Taito X1-017 with Save RAM
+        # Kyuukyoku Harikiri Koushien (3956) too
+        # Kyuukyoku Harikiri Stadium III (3961) too
+        # SD Keiji: Blader (3989) too
+        if rom_id in [1767, 2254, 3161, 3956, 3961, 3989]:
             record[RomDbKey.PRG_NVRAM_SIZE.value] = 1024
         # Famicom Jump II: Saikyou no 7 Nin (ROM_ID 1734) is mapper 153 (not 16) as PRG-ROM
         # is larger than 128 kB
-        if rom_id == 1734:
+        if rom_id in [1734, 3280]:
             record[RomDbKey.MAPPER.value] = 153
         # # Dragon Ball Z: Kyoushuu! Saiyajin (2248) has a 128 byte EEPROM
         # # Magical Taruruuto-kun: Fantastic World!! (Version 2.0) (ROM_ID 1747, 2244) too
@@ -397,7 +432,62 @@ class NesCartDb:
         # for a non-switching 8kB ROMs seems odd
         if rom_id == 2949:
             record[RomDbKey.MAPPER.value] = 79
-
+        # Solstics have different names in different languagues, but with same CRC. Align on English.
+        if rom_id in [1617, 1998, 2018]:
+            record[RomDbKey.NAME.value] = "Solstice: The Quest for the Staff of Demnos"
+        # The same for Solar Jetman
+        if rom_id in [2153, 2653]:
+            record[RomDbKey.NAME.value] = "Solar Jetman: Hunt for the Golden Warpship"
+        # The same for Die Schlümpfe (The Smurfs)
+        if rom_id in [1615, 1933, 2121]:
+            record[RomDbKey.NAME.value] = "The Smurfs"
+        # The same for Arch Rivals: A Basketbrawl!
+        if rom_id in [1301, 2403, 4435, 4492]:
+            record[RomDbKey.NAME.value] = "Arch Rivals: A Basketbrawl!"
+        # And The Lion King
+        if rom_id in [2037, 2704, 2886, 4500]:
+            record[RomDbKey.NAME.value] = "Disney's The Lion King"
+        # and The Jungle Book
+        if rom_id in [1931, 4465]:
+            record[RomDbKey.NAME.value] = "Disney's The Jungle Book"
+        # and War in the Gulf
+        if rom_id == 4247:
+            record[RomDbKey.NAME.value] = "War In The Gulf"
+        # and The Hunt for Red October
+        if rom_id in [4416, 4444, 4445]:
+            record[RomDbKey.NAME.value] = "The Hunt for Red October"
+        # Stack-up and Block Set are the same game, but with different names in different regions.
+        # Align on Stack-Up as it's more common
+        if RomDbKey.NAME.value in record and record[RomDbKey.NAME.value] == "Block Set":
+            record[RomDbKey.NAME.value] = "Stack-Up"
+        # Bakushou!! Jinsei Gekijou 2 (1764) has a X1-005 chip which means mapper 33
+        if rom_id == 1764:
+            record[RomDbKey.MAPPER.value] = 33
+        # The Money Game (3458) Uses MMC1A, which is mapper 155, not 1
+        # Tatakae!! Ramen Man: Sakuretsu Choujin 102 Gei (3736) too
+        if rom_id in [3458, 3736]:
+            record[RomDbKey.MAPPER.value] = 155
+        # Advanced Dungeons & Dragons Heroes of the Lance Prototype (4625) has a battery (PCB image)
+        # Taro's Quest Prototype (4639) too
+        # Thomas The Tank Engine & Friends Prototype (4640) too
+        if rom_id in [4625, 4639, 4640]:
+            record[RomDbKey.BATTERY.value] = 1
+        # Days of Thunder and its Protoype have the same CRC. Align on non-prototype.
+        if rom_id in [4729]:
+            record[RomDbKey.BATTERY.value] = 0
+            record[RomDbKey.PRG_NVRAM_SIZE.value] = 0
+        # Same for Where in Time is Carmen Sandiego?
+        if rom_id in [4642]:
+            record[RomDbKey.BATTERY.value] = 0
+        # Japaneese version of Gyromite is called Gyro, but has the same CRC. Align on Gyromite.
+        if rom_id == 4063:
+            record[RomDbKey.NAME.value] = "Gyromite"
+        # One of The Simpsons:  Bart vs. The Space Mutants is spelled with a small t in 'the'
+        if rom_id == 4394:
+            record[RomDbKey.NAME.value] = "The Simpsons:  Bart vs. The Space Mutants"
+        # Same game different names in different regions. Align on the more common name, which is the English one.
+        if rom_id in [4424, 4461]:
+            record[RomDbKey.NAME.value] = "Goal! 2"
 
     def next_record(self) -> Optional[Dict[str, str]]:
         """Fetch and return the next parsed profile record, or None if done."""
@@ -409,8 +499,9 @@ class NesCartDb:
                 return None
 
             url = self._base_url.format(rom_id)
-            html = self._fetch_html(url)
+            html = self._fetch_html_with_cache(rom_id, url)
             record = self._build_result(rom_id, html)
-            self._patch(rom_id, record)
+            if record is not None:
+                self._patch(rom_id, record)
             self._remaining -= 1
         return record

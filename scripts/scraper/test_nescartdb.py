@@ -711,7 +711,7 @@ class TestNesCartDb(unittest.TestCase):
 
     def test_build_result_converts_types(self) -> None:
         scraper = NesCartDb(1)
-        result = scraper._build_result(self._static_html())
+        result = scraper._build_result(1, self._static_html())
 
         self.assertEqual(result[RomDbKey.NAME.value], "Super Mario Bros.")
         self.assertEqual(result[RomDbKey.CRC.value], "D445F698")

@@ -173,18 +173,26 @@ class RomXml:
             record[RomDbKey.CHR_RAM_SIZE.value] = 2048
         # Tetris (343C7BB0) is a mapper 3, not 148 according to component list
         # on nescart
+        # TODO Investigate
         if crc == "343C7BB0":
             record[RomDbKey.MAPPER.value] = 3
-        # Dokuganryuu Masamune (10C8F2FA) as 8kB of PRGM NVRAM according to component list
+        # Volley Ball (A23CB659) is Mapper 79 (discrete 74xx‑based unlicensed board), not Mapper 36
+        if crc == "A23CB659":
+            record[RomDbKey.MAPPER.value] = 79
+        # Dokuganryuu Masamune (10C8F2FA) as 8kB of PRG NVRAM according to component list
         # on nescart
         if crc == "10C8F2FA":
             record[RomDbKey.PRG_NVRAM_SIZE.value] = 8192
+        # Superman Prototype also have 8kB of PRG RAM, but the battery slot is not populated according to PCB images,
+        # so we won't set the battery flag
+        if crc == "47F7F860":
+            record[RomDbKey.PRG_RAM_SIZE.value] = 8192
         # Kyuukyoku Harikiri Stadium: Heisei Gannen Ban (0BBF80CB) has a X1-017 with 1kB Save RAM
-        if crc == "0BBF80CB":
+        # Kyuukyoku Harikiri Stadium III (2BB3DABE) too
+        # Kyuukyoku Harikiri Koushien (8CA72D80) too
+        # SD Keiji: Blader (05F04EAC) too
+        if crc in ["0BBF80CB", "2BB3DABE", "8CA72D80", "05F04EAC"]:
             record[RomDbKey.PRG_NVRAM_SIZE.value] = 1024
-        # Bakushou!! Jinsei Gekijou 2 (BC7B1D0F) has a X1-005 chip which means mapper 80
-        if crc == "BC7B1D0F":
-            record[RomDbKey.MAPPER.value] = 80
         # Rad Racer II (404B2E8B) has a 8kB VRAM chip, but likely not all address lines connected
         if crc == "404B2E8B":
             record[RomDbKey.CHR_RAM_SIZE.value] = 4096
@@ -193,11 +201,21 @@ class RomXml:
         # World Class Track Meet (5734EB9E, AF4010EA)
         # Dance Aerobics (9E382EBF)
         # Stadium Events (FCE71311, 0DA28A50)
-        if crc in ["D74B2719", "5734EB9E", "AF4010EA", "9E382EBF", "FCE71311"]:
+        if crc in ["D74B2719", "5734EB9E", "AF4010EA", "9E382EBF", "FCE71311", "0DA28A50"]:
             record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.POWER_PAD_SIDE_A
+        # No Japaneese titles ever used side B of the Family Trainer Mat
+        if record[RomDbKey.EXPANSION_TYPE.value] == str(ControllerType.FAMILY_TRAINER_SIDE_B.value):
+            record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.FAMILY_TRAINER_SIDE_A.value
         # Quattro Sports (CCCAF368) did not use four score, but needed an Aladdin Deck enhancer
         if crc == "CCCAF368":
             record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.ALADDIN_DECK_ENHANCER
+        # Star Wars Proptotype (B30599A1) had a battery (PCB image)
+        # Thomas The Tank Engine & Friends Prototype (E46AEE21) too
+        if crc in ["B30599A1", "E46AEE21"]:
+            record[RomDbKey.BATTERY.value] = 1
+        # Thomas The Tank Engine & Friends Prototype (E46AEE21) also had 8kB PRG NVRAM
+        if crc in ["E46AEE21"]:
+            record[RomDbKey.PRG_NVRAM_SIZE.value] = 8192
 
     def next_record(self) -> Optional[Dict[str, str]]:
         """Return the next parsed game record dict, or None if finished."""
