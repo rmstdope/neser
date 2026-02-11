@@ -367,12 +367,12 @@ mod tests {
 
         // Append PRG (32KB) and CHR (8KB)
         rom.extend(vec![0xAAu8; 2 * 16 * 1024]);
-        rom.extend(vec![0xBBu8; 1 * 8 * 1024]);
+        rom.extend(vec![0xBBu8; 8 * 1024]);
 
         let (hdr, prg, chr, crc) = parse_rom(&rom).expect("parse_rom v1");
         assert_eq!(hdr.header_version, "1.0");
         assert_eq!(prg.len(), 2 * 16 * 1024);
-        assert_eq!(chr.len(), 1 * 8 * 1024);
+        assert_eq!(chr.len(), 8 * 1024);
         assert_eq!(crc, crate::cartridge::calculate_rom_crc32(&prg, &chr));
     }
 
@@ -389,16 +389,16 @@ mod tests {
         rom[9] = 0x01;
 
         // Only provide small v1-sized data (16KB + 8KB)
-        rom.extend(vec![0xAAu8; 1 * 16 * 1024]);
-        rom.extend(vec![0xBBu8; 1 * 8 * 1024]);
+        rom.extend(vec![0xAAu8; 16 * 1024]);
+        rom.extend(vec![0xBBu8; 8 * 1024]);
 
         let (hdr, prg, chr, _crc) = parse_rom(&rom).expect("parse_rom fallback");
         // Fallback should update reported sizes to v1 values
         assert_eq!(hdr.header_version, "2.0");
-        assert_eq!(hdr.prg_rom_size_bytes, 1 * 16 * 1024);
-        assert_eq!(hdr.chr_rom_size_bytes, 1 * 8 * 1024);
-        assert_eq!(prg.len(), 1 * 16 * 1024);
-        assert_eq!(chr.len(), 1 * 8 * 1024);
+        assert_eq!(hdr.prg_rom_size_bytes, 16 * 1024);
+        assert_eq!(hdr.chr_rom_size_bytes, 8 * 1024);
+        assert_eq!(prg.len(), 16 * 1024);
+        assert_eq!(chr.len(), 8 * 1024);
     }
 
     #[test]
@@ -415,7 +415,10 @@ mod tests {
 
         let err = parse_rom(&rom).expect_err("should be too small");
         match err {
-            RomParseError::FileTooSmall { expected: _, actual } => assert!(actual < 2000),
+            RomParseError::FileTooSmall {
+                expected: _,
+                actual,
+            } => assert!(actual < 2000),
             _ => panic!("unexpected error"),
         }
     }

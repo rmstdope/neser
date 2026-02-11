@@ -22,7 +22,7 @@ pub enum MirroringMode {
 pub enum CartridgeError {
     InvalidHeader,
     FileTooSmall { expected: usize, actual: usize },
-    UnsupportedMapper(u8),
+    UnsupportedMapper(u16),
     Io(io::Error),
 }
 
@@ -97,10 +97,12 @@ impl Cartridge {
         // which we map into `CartridgeError` here.
         let (info, prg_rom, chr_rom, crc32) = match crate::cartridge::parse_rom(data) {
             Ok(tuple) => tuple,
-            Err(crate::cartridge::ines::RomParseError::InvalidHeader) =>
-                return Err(CartridgeError::InvalidHeader),
-            Err(crate::cartridge::ines::RomParseError::FileTooSmall { expected, actual }) =>
-                return Err(CartridgeError::FileTooSmall { expected, actual }),
+            Err(crate::cartridge::ines::RomParseError::InvalidHeader) => {
+                return Err(CartridgeError::InvalidHeader);
+            }
+            Err(crate::cartridge::ines::RomParseError::FileTooSmall { expected, actual }) => {
+                return Err(CartridgeError::FileTooSmall { expected, actual });
+            }
         };
 
         // Determine PRG-RAM banks (8KB units)
@@ -134,7 +136,7 @@ impl Cartridge {
         };
 
         // Create mapper metadata and instance
-        let mut ctx = MapperContext::new(info.mapper as u8, prg_rom, chr_rom, mirroring);
+        let mut ctx = MapperContext::new(info.mapper, prg_rom, chr_rom, mirroring);
         ctx = ctx
             .with_prg_ram_banks(prg_ram_banks_8k)
             .with_battery_backed_prg_ram(battery_backed_prg_ram);
@@ -144,7 +146,7 @@ impl Cartridge {
 
         let mapper = crate::cartridge::mapper::create_mapper(ctx).map_err(|err| {
             if err.kind() == io::ErrorKind::Unsupported {
-                CartridgeError::UnsupportedMapper(info.mapper as u8)
+                CartridgeError::UnsupportedMapper(info.mapper)
             } else {
                 CartridgeError::Io(err)
             }
@@ -591,6 +593,30 @@ mod tests {
         assert!(matches!(
             result,
             Err(CartridgeError::UnsupportedMapper(0xFF))
+        ));
+    }
+
+    #[test]
+    fn test_unsupported_nes2_mapper_does_not_truncate() {
+        let mut rom_data = vec![
+            b'N', b'E', b'S', 0x1A, // iNES header
+            1,    // PRG ROM size (16KB units)
+            1,    // CHR ROM size (8KB units)
+            0x00, // Flags 6 (mapper low nibble = 0)
+            0x08, // Flags 7 (NES2.0 identifier)
+            0x01, // Flags 8 (mapper MSB nibble = 1 => mapper 0x100)
+            0x00, // Flags 9
+            0x00, // Flags 10
+            0, 0, 0, 0, 0, // Reserved
+        ];
+
+        rom_data.extend(vec![0xAA; 16 * 1024]);
+        rom_data.extend(vec![0xBB; 8 * 1024]);
+
+        let result = Cartridge::new(&rom_data);
+        assert!(matches!(
+            result,
+            Err(CartridgeError::UnsupportedMapper(0x100))
         ));
     }
 

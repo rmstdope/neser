@@ -49,14 +49,13 @@ pub struct MapperContext {
     pub crc32: u32,
 }
 
-#[allow(dead_code)]
 impl MapperContext {
     /// Create mapper metadata with default submapper 0, 1×8KB PRG-RAM (not battery-backed),
     /// and CRC32 computed from PRG+CHR data.
-    pub fn new(mapper: u8, prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(mapper: u16, prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         let crc32 = rom_db::calculate_rom_crc32(&prg_rom, &chr_rom);
         Self {
-            mapper: mapper as u16,
+            mapper,
             submapper: 0,
             mirroring,
             prg_rom,
@@ -86,13 +85,14 @@ impl MapperContext {
     }
 
     /// Override CRC32 value (useful for tests with synthetic ROM data).
+    #[allow(dead_code)]
     pub fn with_crc32(mut self, crc32: u32) -> Self {
         self.crc32 = crc32;
         self
     }
 
-    fn mapper_u8(&self) -> u8 {
-        self.mapper as u8
+    fn mapper_u16(&self) -> u16 {
+        self.mapper
     }
 
     fn into_parts(self) -> (Vec<u8>, Vec<u8>, MirroringMode) {
@@ -357,7 +357,7 @@ macro_rules! mapper_registry {
         fn create_registry_mapper(
             metadata: MapperContext,
         ) -> Option<Box<dyn Mapper>> {
-            match metadata.mapper_u8() {
+            match metadata.mapper_u16() {
                 $(
                     $id => {
                         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
@@ -412,7 +412,7 @@ pub fn supported_mappers() -> &'static [u8] {
 
 /// Create a mapper instance based on mapper metadata.
 pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
-    let mapper_number = metadata.mapper_u8();
+    let mapper_number = metadata.mapper_u16();
 
     if mapper_number == 4 {
         let crc32 = metadata.crc32;

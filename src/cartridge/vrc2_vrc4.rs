@@ -493,7 +493,7 @@ mod tests {
     }
 
     fn create_vrc_mapper(
-        mapper_number: u8,
+        mapper_number: u16,
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
         mirroring: MirroringMode,
