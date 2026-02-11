@@ -4,7 +4,7 @@ use crate::debugging::ppu_trace_level;
 use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 use crate::ppu::timing::{
     BG_PREFETCH_END, BG_PREFETCH_START, DUMMY_NT_FETCH_1, DUMMY_NT_FETCH_2,
-    FINE_Y_INCREMENT_PIXEL, FIRST_VISIBLE_PIXEL, FIRST_VISIBLE_SCANLINE,
+    FINE_Y_INCREMENT_PIXEL, FIRST_DOT, FIRST_VISIBLE_PIXEL, FIRST_VISIBLE_SCANLINE,
     HORIZONTAL_BITS_COPY_PIXEL, LAST_DOT, LAST_VISIBLE_PIXEL, LAST_VISIBLE_SCANLINE_PLUS_ONE,
     NTSC_PRERENDER_SCANLINE, PAL_PRERENDER_SCANLINE, SPRITE_TILE_LOAD_END,
     SPRITE_TILE_LOAD_START, VBLANK_NMI_LATCH_PIXEL, VBLANK_START_SCANLINE,
@@ -377,8 +377,8 @@ fn tick_sprites(ppu: &mut Ppu) {
     // Only happens when rendering is enabled (either sprites or background)
     // Per NESdev: "Sprite evaluation does not happen on the pre-render scanline"
     if is_visible_scanline && is_rendering_enabled {
-        if pixel == FIRST_VISIBLE_SCANLINE {
-            // Reset sprite evaluation at start of scanline
+        if pixel == FIRST_DOT {
+            // Reset sprite evaluation at start of scanline (dot 0)
             ppu.sprites.reset_evaluation();
         } else if (1..=64).contains(&pixel) {
             // Initialize secondary OAM
@@ -564,7 +564,7 @@ mod tests {
 
     #[test]
     fn test_is_rendering_pixel_bounds() {
-        assert!(!is_rendering_pixel(FIRST_VISIBLE_SCANLINE));
+        assert!(!is_rendering_pixel(FIRST_DOT));
         assert!(is_rendering_pixel(FIRST_VISIBLE_PIXEL));
         assert!(is_rendering_pixel(LAST_VISIBLE_PIXEL));
         assert!(!is_rendering_pixel(HORIZONTAL_BITS_COPY_PIXEL));
@@ -572,7 +572,7 @@ mod tests {
 
     #[test]
     fn test_is_bg_fetch_pixel_bounds() {
-        assert!(!is_bg_fetch_pixel(FIRST_VISIBLE_SCANLINE));
+        assert!(!is_bg_fetch_pixel(FIRST_DOT));
         assert!(is_bg_fetch_pixel(FIRST_VISIBLE_PIXEL));
         assert!(is_bg_fetch_pixel(LAST_VISIBLE_PIXEL));
         assert!(!is_bg_fetch_pixel(HORIZONTAL_BITS_COPY_PIXEL));
@@ -594,7 +594,8 @@ mod tests {
     fn test_should_trace_vblank_exit() {
         let prerender = prerender_scanline(TvSystem::Ntsc);
         assert!(should_trace_vblank_exit(prerender, prerender, FIRST_VISIBLE_PIXEL));
-        assert!(!should_trace_vblank_exit(prerender, prerender, FIRST_VISIBLE_SCANLINE));
+        assert!(!should_trace_vblank_exit(prerender, prerender, FIRST_DOT));
+        // Test that scanline 0 (FIRST_VISIBLE_SCANLINE) is not the pre-render scanline
         assert!(!should_trace_vblank_exit(FIRST_VISIBLE_SCANLINE, prerender, FIRST_VISIBLE_PIXEL));
     }
 }

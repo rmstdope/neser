@@ -20,6 +20,8 @@ pub(crate) const PAL_PRERENDER_SCANLINE: u16 = 311;
 // Dot/pixel constants
 /// Last dot in a scanline (dots 0-340)
 pub(crate) const LAST_DOT: u16 = 340;
+/// First dot/pixel in a scanline (0)
+pub(crate) const FIRST_DOT: u16 = 0;
 /// Dot where NTSC odd frame skip occurs on pre-render scanline
 const ODD_FRAME_SKIP_DOT: u16 = 339;
 /// First visible pixel (pixels 1-256 are visible)
@@ -122,7 +124,7 @@ impl Timing {
 
         if should_skip_odd_frame {
             // Skip dot 340 and go directly to scanline 0, dot 0
-            self.pixel = 0;
+            self.pixel = FIRST_DOT;
             self.scanline = FIRST_VISIBLE_SCANLINE;
             self.frame_count += 1;
             true
@@ -387,7 +389,7 @@ mod tests {
         assert!(timing.is_visible_pixel());
 
         // Pixel 0 is not visible
-        timing.pixel = FIRST_VISIBLE_SCANLINE;
+        timing.pixel = FIRST_DOT;
         assert!(!timing.is_visible_pixel());
 
         // Vblank is not visible
@@ -463,7 +465,7 @@ mod tests {
             "Should skip dot 340 on odd NTSC frame with rendering enabled"
         );
         assert_eq!(timing.scanline(), FIRST_VISIBLE_SCANLINE, "Should jump to scanline 0");
-        assert_eq!(timing.pixel(), FIRST_VISIBLE_SCANLINE, "Should jump to pixel 0");
+        assert_eq!(timing.pixel(), FIRST_DOT, "Should jump to pixel 0");
         assert_eq!(timing.frame_count(), 2, "Frame count should increment");
     }
 
@@ -544,7 +546,7 @@ mod tests {
             "NTSC odd frame with rendering should have 89341 cycles (89342 - 1)"
         );
         assert_eq!(timing.scanline(), FIRST_VISIBLE_SCANLINE, "Should wrap back to scanline 0");
-        assert_eq!(timing.pixel(), FIRST_VISIBLE_SCANLINE, "Should wrap back to pixel 0");
+        assert_eq!(timing.pixel(), FIRST_DOT, "Should wrap back to pixel 0");
         assert_eq!(timing.frame_count(), 2, "Frame count should be 2");
     }
 
