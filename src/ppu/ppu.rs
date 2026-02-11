@@ -75,6 +75,26 @@ impl Ppu {
         }
     }
 
+    fn prime_a12_and_notify_mapper(&mut self, old_addr: u16, new_addr: u16) {
+        if old_addr == new_addr {
+            return;
+        }
+
+        if self.cartridge.is_none() {
+            return;
+        }
+
+        self.with_mapper_mut(|mapper| {
+            // MMC3's A12 filter requires several PPU cycles with A12 low before
+            // a rising edge will clock the IRQ counter; replay the old address
+            // to simulate those cycles when the CPU manually changes PPUADDR/PPUDATA.
+            for _ in 0..8 {
+                mapper.ppu_address_changed(old_addr);
+            }
+            mapper.ppu_address_changed(new_addr);
+        });
+    }
+
     fn set_vblank_for_nmi(&mut self) {
         self.vblank_for_nmi = true;
     }
@@ -317,19 +337,7 @@ impl Ppu {
         // Notify mapper if v register changed (happens on second write to $2006)
         // This is needed for MMC3 A12 detection when manually toggling address
         let new_v = self.registers.v();
-        if old_v != new_v
-            && let Some(ref cartridge) = self.cartridge
-        {
-            // When manually changing the PPU address via $2006, we need to ensure
-            // the MMC3 A12 filter has enough "cycles" to detect the change properly.
-            // We simulate this by calling ppu_address_changed with the old address
-            // multiple times before notifying about the new address.
-            let mapper = &mut *cartridge.borrow_mut();
-            for _ in 0..8 {
-                mapper.mapper_mut().ppu_address_changed(old_v);
-            }
-            mapper.mapper_mut().ppu_address_changed(new_v);
-        }
+        self.prime_a12_and_notify_mapper(old_v, new_v);
     }
 
     /// Read from data register ($2007)
@@ -380,17 +388,7 @@ impl Ppu {
 
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
-        if old_addr != new_addr
-            && let Some(ref cartridge) = self.cartridge
-        {
-            // For PPUDATA reads/writes, we need to prime the A12 filter similar
-            // to PPUADDR writes, as these are also manual address changes
-            let mapper = &mut *cartridge.borrow_mut();
-            for _ in 0..8 {
-                mapper.mapper_mut().ppu_address_changed(old_addr);
-            }
-            mapper.mapper_mut().ppu_address_changed(new_addr);
-        }
+        self.prime_a12_and_notify_mapper(old_addr, new_addr);
 
         // Update I/O bus with value read
         // For palette reads (addr 0x3F00-0x3FFF), only refresh bits 5-0
@@ -432,17 +430,7 @@ impl Ppu {
 
         // Notify mapper of address change after increment (for MMC3 A12 detection)
         let new_addr = self.registers.v();
-        if old_addr != new_addr
-            && let Some(ref cartridge) = self.cartridge
-        {
-            // For PPUDATA reads/writes, we need to prime the A12 filter similar
-            // to PPUADDR writes, as these are also manual address changes
-            let mapper = &mut *cartridge.borrow_mut();
-            for _ in 0..8 {
-                mapper.mapper_mut().ppu_address_changed(old_addr);
-            }
-            mapper.mapper_mut().ppu_address_changed(new_addr);
-        }
+        self.prime_a12_and_notify_mapper(old_addr, new_addr);
     }
 
     /// Set the cartridge reference for dynamic CHR ROM/RAM access
@@ -1211,6 +1199,32 @@ mod tests {
         }
     }
 
+    struct A12PrimingSpyMapper {
+        calls: Rc<RefCell<Vec<u16>>>,
+    }
+
+    impl crate::cartridge::Mapper for A12PrimingSpyMapper {
+        fn read_prg(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_prg(&mut self, _addr: u16, _value: u8) {}
+
+        fn read_chr(&self, _addr: u16) -> u8 {
+            0
+        }
+
+        fn write_chr(&mut self, _addr: u16, _value: u8) {}
+
+        fn ppu_address_changed(&mut self, addr: u16) {
+            self.calls.borrow_mut().push(addr);
+        }
+
+        fn get_mirroring(&self) -> MirroringMode {
+            MirroringMode::Horizontal
+        }
+    }
+
     #[test]
     fn test_mapper_ppu_set_chr_fetch_is_sprite_is_applied_to_rendering_fetches() {
         let events: Rc<RefCell<Vec<ChrFetchEvent>>> = Rc::new(RefCell::new(Vec::new()));
@@ -1296,6 +1310,48 @@ mod tests {
         // Reading returns palette bits 5-0 combined with open bus bits 7-6
         // After writing 0x00 to address, io_bus = 0x00, so result is 0x02
         assert_eq!(ppu.read_data(), 0x02);
+    }
+
+    #[test]
+    fn test_manual_address_changes_prime_mapper_a12_filter() {
+        let calls = Rc::new(RefCell::new(Vec::new()));
+
+        let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
+            A12PrimingSpyMapper {
+                calls: calls.clone(),
+            },
+        ))));
+
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+        ppu.set_cartridge(cart);
+
+        fn expected_calls(old: u16, new: u16) -> Vec<u16> {
+            let mut calls = vec![old; 8];
+            calls.push(new);
+            calls
+        }
+
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x20, false);
+
+        let expected_ppuaddr_calls = expected_calls(0, 0x3F20);
+        assert_eq!(*calls.borrow(), expected_ppuaddr_calls);
+
+        calls.borrow_mut().clear();
+        let mut state = ppu.debug_state();
+        state.registers.v = 0x2000;
+        ppu.set_debug_state(state);
+        ppu.read_data();
+        let expected_read_calls = expected_calls(0x2000, 0x2001);
+        assert_eq!(*calls.borrow(), expected_read_calls);
+
+        calls.borrow_mut().clear();
+        let mut state = ppu.debug_state();
+        state.registers.v = 0x2000;
+        ppu.set_debug_state(state);
+        ppu.write_data(0x12);
+        let expected_write_calls = expected_calls(0x2000, 0x2001);
+        assert_eq!(*calls.borrow(), expected_write_calls);
     }
 
     #[test]
