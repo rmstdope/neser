@@ -182,6 +182,7 @@ mod tests {
             None,
             true, // grayscale
             0,
+            // Distinct palette values ensure masking happens on the palette value (0 -> 0x00, 1 -> 0x2F)
             |palette_index| {
                 if palette_index == 0 {
                     0x00
