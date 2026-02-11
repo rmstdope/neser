@@ -1,6 +1,4 @@
 use super::screen_buffer::ScreenBuffer;
-#[cfg(test)]
-use super::color_effects::{apply_color_emphasis, apply_grayscale};
 
 /// Manages final pixel composition, color effects, and screen output
 pub struct Rendering {
@@ -64,13 +62,14 @@ impl Rendering {
         let mut color_value = palette_lookup(palette_index);
 
         // Apply grayscale mode if enabled
-        color_value = apply_grayscale(color_value, grayscale);
+        color_value = crate::ppu::color_effects::apply_grayscale(color_value, grayscale);
 
         // Convert to RGB using the system palette
         let (mut r, mut g, mut b) = system_palette_lookup(color_value);
 
         // Apply color emphasis/tint
-        (r, g, b) = apply_color_emphasis(r, g, b, color_emphasis);
+        (r, g, b) =
+            crate::ppu::color_effects::apply_color_emphasis(r, g, b, color_emphasis);
 
         // Write to the screen buffer
         self.screen_buffer.set_pixel(screen_x, screen_y, r, g, b);
@@ -117,6 +116,7 @@ fn select_palette_index(bg_pixel: u8, sprite_pixel: Option<(u8, usize, bool)>) -
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 
     #[test]
     fn test_rendering_new() {

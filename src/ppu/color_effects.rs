@@ -48,6 +48,10 @@ pub(crate) fn apply_color_emphasis(r: u8, g: u8, b: u8, color_emphasis: u8) -> (
         }
     }
 
+    fr = fr.min(255.0);
+    fg = fg.min(255.0);
+    fb = fb.min(255.0);
+
     (fr as u8, fg as u8, fb as u8)
 }
 
