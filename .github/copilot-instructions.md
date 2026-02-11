@@ -77,8 +77,8 @@ Before merging or committing to main, the following checkpoint shall pass:
 - Run `cargo fmt`
 - Run `cargo test --all-features` and fix all warnings and ensure all tests pass
 - Run `wasm-pack test --headless --chrome --features wasm` and fix all warnings and ensure all tests pass
-- Run `npm test` in the `web/` directory and ensure all tests pass (if any tests exist)
 - Run `source .venv/bin/activate && python -m unittest discover -s scripts/scraper -p "test_*.py"` and ensure all tests pass
+- Run `npm test` in the `web/` directory and ensure all tests pass (if any tests exist)
 
 ### Fixing Bugs
 

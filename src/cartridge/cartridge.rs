@@ -22,7 +22,7 @@ pub enum MirroringMode {
 pub enum CartridgeError {
     InvalidHeader,
     FileTooSmall { expected: usize, actual: usize },
-    UnsupportedMapper(u8),
+    UnsupportedMapper(u16),
     Io(io::Error),
 }
 
@@ -92,88 +92,61 @@ pub struct Cartridge {
 impl Cartridge {
     /// Create a new cartridge by parsing iNES v1 file data
     pub fn new(data: &[u8]) -> Result<Self, CartridgeError> {
-        if data.len() < 16 {
-            return Err(CartridgeError::FileTooSmall {
-                expected: 16,
-                actual: data.len(),
-            });
-        }
+        // Delegate full parsing (header, PRG/CHR extraction, CRC) to centralized parser.
+        // `parse_rom` will validate the header and sizes and return rich errors
+        // which we map into `CartridgeError` here.
+        let (info, prg_rom, chr_rom, crc32) = match crate::cartridge::parse_rom(data) {
+            Ok(tuple) => tuple,
+            Err(crate::cartridge::ines::RomParseError::InvalidHeader) => {
+                return Err(CartridgeError::InvalidHeader);
+            }
+            Err(crate::cartridge::ines::RomParseError::FileTooSmall { expected, actual }) => {
+                return Err(CartridgeError::FileTooSmall { expected, actual });
+            }
+        };
 
-        // Validate iNES header (first 4 bytes should be "NES\x1A")
-        if &data[0..4] != b"NES\x1A" {
-            return Err(CartridgeError::InvalidHeader);
-        }
+        // Determine PRG-RAM banks (8KB units)
+        #[allow(clippy::manual_div_ceil)]
+        let prg_ram_banks_8k: u8 = info
+            .prg_ram_size_bytes
+            .map(|sz| {
+                let banks = (sz + 8191) / 8192;
+                let clamped = banks.max(1).min(u8::MAX as usize);
+                clamped as u8
+            })
+            .unwrap_or(1);
 
-        // Parse iNES header
-        let prg_rom_size = data[4] as usize * 16384; // 16 KB units
-        let chr_rom_size = data[5] as usize * 8192; // 8 KB units
-        let flags6 = data[6];
-        let flags7 = data[7];
-        // iNES v1 header byte 8 encodes PRG-RAM size in 8KB units.
-        // A value of 0 commonly means 8KB.
-        let prg_ram_banks_8k = data[8].max(1);
+        // Map battery flag
+        let battery_backed_prg_ram = info.battery_backed_prg_ram;
 
-        let flags9 = data[9];
-
-        let rom_tv_system = if (flags7 & 0x0C) == 0x08 {
+        // Map TV system: keep Unknown for NES2 headers to preserve previous behavior
+        let rom_tv_system = if info.header_version == "2.0" {
             RomTvSystem::Unknown
-        } else if (flags9 & 0x01) != 0 {
+        } else if matches!(info.timing_mode, crate::cartridge::TimingMode::Pal) {
             RomTvSystem::Pal
         } else {
             RomTvSystem::Ntsc
         };
 
-        // Battery-backed PRG-RAM present (iNES v1): bit 1 of flags6.
-        let battery_backed_prg_ram = (flags6 & 0x02) != 0;
-
-        // Parse mapper number from flags6 and flags7
-        // Lower nibble: bits 4-7 of flags6
-        // Upper nibble: bits 4-7 of flags7
-        let mapper_number = (flags6 >> 4) | (flags7 & 0xF0);
-
-        // Parse mirroring from flags6
-        // Bit 0: Mirroring (0 = horizontal, 1 = vertical)
-        // Bit 3: Four-screen mode
-        let mirroring = if (flags6 & 0x08) != 0 {
-            MirroringMode::FourScreen
-        } else if (flags6 & 0x01) != 0 {
-            MirroringMode::Vertical
-        } else {
-            MirroringMode::Horizontal
+        // Map mirroring
+        let mirroring = match info.mirroring {
+            crate::cartridge::Mirroring::FourScreen => MirroringMode::FourScreen,
+            crate::cartridge::Mirroring::Vertical => MirroringMode::Vertical,
+            crate::cartridge::Mirroring::Horizontal => MirroringMode::Horizontal,
         };
 
-        // Check if trainer is present (bit 2 of flags6)
-        let has_trainer = (flags6 & 0x04) != 0;
-        let trainer_offset = if has_trainer { 512 } else { 0 };
-
-        // Calculate ROM positions
-        let prg_rom_start = 16 + trainer_offset;
-        let prg_rom_end = prg_rom_start + prg_rom_size;
-        let chr_rom_start = prg_rom_end;
-        let chr_rom_end = chr_rom_start + chr_rom_size;
-
-        // Validate buffer size
-        if data.len() < chr_rom_end {
-            return Err(CartridgeError::FileTooSmall {
-                expected: chr_rom_end,
-                actual: data.len(),
-            });
+        // Create mapper metadata and instance
+        let mut ctx = MapperContext::new(info.mapper, prg_rom, chr_rom, mirroring);
+        ctx = ctx
+            .with_prg_ram_banks(prg_ram_banks_8k)
+            .with_battery_backed_prg_ram(battery_backed_prg_ram);
+        if info.submapper != 0 {
+            ctx = ctx.with_submapper(info.submapper);
         }
 
-        // Extract PRG ROM and CHR ROM
-        let prg_rom = data[prg_rom_start..prg_rom_end].to_vec();
-        let chr_rom = data[chr_rom_start..chr_rom_end].to_vec();
-        let crc32 = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
-
-        // Create mapper instance
-        let mapper = crate::cartridge::mapper::create_mapper(MapperContext {
-            prg_ram_banks_8k: prg_ram_banks_8k.max(1),
-            battery_backed_prg_ram,
-            ..MapperContext::new(mapper_number, prg_rom, chr_rom, mirroring)
-        })
-        .map_err(|err| {
+        let mapper = crate::cartridge::mapper::create_mapper(ctx).map_err(|err| {
             if err.kind() == io::ErrorKind::Unsupported {
-                CartridgeError::UnsupportedMapper(mapper_number)
+                CartridgeError::UnsupportedMapper(info.mapper)
             } else {
                 CartridgeError::Io(err)
             }
@@ -620,6 +593,30 @@ mod tests {
         assert!(matches!(
             result,
             Err(CartridgeError::UnsupportedMapper(0xFF))
+        ));
+    }
+
+    #[test]
+    fn test_unsupported_nes2_mapper_does_not_truncate() {
+        let mut rom_data = vec![
+            b'N', b'E', b'S', 0x1A, // iNES header
+            1,    // PRG ROM size (16KB units)
+            1,    // CHR ROM size (8KB units)
+            0x00, // Flags 6 (mapper low nibble = 0)
+            0x08, // Flags 7 (NES2.0 identifier)
+            0x01, // Flags 8 (mapper MSB nibble = 1 => mapper 0x100)
+            0x00, // Flags 9
+            0x00, // Flags 10
+            0, 0, 0, 0, 0, // Reserved
+        ];
+
+        rom_data.extend(vec![0xAA; 16 * 1024]);
+        rom_data.extend(vec![0xBB; 8 * 1024]);
+
+        let result = Cartridge::new(&rom_data);
+        assert!(matches!(
+            result,
+            Err(CartridgeError::UnsupportedMapper(0x100))
         ));
     }
 

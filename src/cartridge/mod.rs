@@ -9,6 +9,7 @@ mod colordreams;
 mod common;
 mod cprom;
 mod gxrom;
+mod ines;
 mod mapper;
 mod mmc1;
 mod mmc2;
@@ -30,6 +31,8 @@ mod vrc6;
 pub use cartridge::{Cartridge, MirroringMode, RomTvSystem};
 #[allow(unused_imports)]
 pub use common::{BankedRom, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
+#[allow(unused_imports)]
+pub use ines::{ConsoleType, InesHeader, Mirroring, TimingMode, parse_header, parse_rom};
 #[allow(unused_imports)]
 pub use mapper::{Mapper, MapperContext};
 #[allow(unused_imports)]
