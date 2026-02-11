@@ -2,33 +2,42 @@ use super::Ppu;
 use crate::console::{Nes, TvSystem};
 use crate::debugging::ppu_trace_level;
 use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
+use crate::ppu::timing::{
+    BG_PREFETCH_END, BG_PREFETCH_SHIFT_START, BG_PREFETCH_START, DUMMY_NT_FETCH_1,
+    DUMMY_NT_FETCH_2, FINE_Y_INCREMENT_PIXEL, FIRST_DOT, FIRST_VISIBLE_PIXEL,
+    FIRST_VISIBLE_SCANLINE, HORIZONTAL_BITS_COPY_PIXEL, LAST_DOT, LAST_VISIBLE_PIXEL,
+    LAST_VISIBLE_SCANLINE_PLUS_ONE, NTSC_PRERENDER_SCANLINE, PAL_PRERENDER_SCANLINE,
+    SPRITE_TILE_LOAD_END, SPRITE_TILE_LOAD_START, VBLANK_NMI_LATCH_PIXEL,
+    VBLANK_START_SCANLINE, VERTICAL_BITS_COPY_END, VERTICAL_BITS_COPY_START,
+};
 use crate::trace_ppu;
 
 pub(super) fn prerender_scanline(tv_system: TvSystem) -> u16 {
     match tv_system {
-        TvSystem::Ntsc => 261,
-        TvSystem::Pal => 311,
+        TvSystem::Ntsc => NTSC_PRERENDER_SCANLINE,
+        TvSystem::Pal => PAL_PRERENDER_SCANLINE,
     }
 }
 
 #[inline(always)]
 fn is_rendering_pixel(pixel: u16) -> bool {
-    (1..=256).contains(&pixel)
+    (FIRST_VISIBLE_PIXEL..=LAST_VISIBLE_PIXEL).contains(&pixel)
 }
 
 #[inline(always)]
 fn is_bg_fetch_pixel(pixel: u16) -> bool {
-    (1..=256).contains(&pixel) || (321..=336).contains(&pixel)
+    (FIRST_VISIBLE_PIXEL..=LAST_VISIBLE_PIXEL).contains(&pixel) 
+        || (BG_PREFETCH_START..=BG_PREFETCH_END).contains(&pixel)
 }
 
 #[inline(always)]
 fn should_trace_vblank_enter(scanline: u16, pixel: u16, vblank_suppressed: bool) -> bool {
-    scanline == 241 && pixel == 1 && !vblank_suppressed
+    scanline == VBLANK_START_SCANLINE && pixel == FIRST_VISIBLE_PIXEL && !vblank_suppressed
 }
 
 #[inline(always)]
 fn should_trace_vblank_exit(scanline: u16, prerender_scanline: u16, pixel: u16) -> bool {
-    scanline == prerender_scanline && pixel == 1
+    scanline == prerender_scanline && pixel == FIRST_VISIBLE_PIXEL
 }
 
 pub(super) fn tick(ppu: &mut Ppu) {
@@ -71,7 +80,7 @@ fn tick_timing(ppu: &mut Ppu) {
 
     // New frame begins when the pre-render scanline wraps back to scanline 0.
     // This also includes the NTSC odd-frame skip path.
-    let frame_wrapped = skipped || (scanline_before_tick == prerender && pixel_before_tick == 340);
+    let frame_wrapped = skipped || (scanline_before_tick == prerender && pixel_before_tick == LAST_DOT);
 
     if frame_wrapped {
         trace_ppu!(1; "frame wrap y={} x={} frame={} cyc={}",
@@ -113,7 +122,7 @@ fn tick_vblank_and_nmi(ppu: &mut Ppu) {
         );
     }
 
-    if scanline == 241 && pixel == 1 && !ppu.vblank_suppressed_for_frame {
+    if scanline == VBLANK_START_SCANLINE && pixel == FIRST_VISIBLE_PIXEL && !ppu.vblank_suppressed_for_frame {
         // Hardware quirk/timing: VBlank flag is set at dot 1, but the NMI edge is observed
         // slightly later. We latch the NMI edge at dot 2 (see below).
         ppu.status.enter_vblank();
@@ -121,8 +130,8 @@ fn tick_vblank_and_nmi(ppu: &mut Ppu) {
     }
 
     // Latch the VBlank-start NMI edge one dot after the VBlank flag is set.
-    if scanline == 241
-        && pixel == 2
+    if scanline == VBLANK_START_SCANLINE
+        && pixel == VBLANK_NMI_LATCH_PIXEL
         && !ppu.vblank_suppressed_for_frame
         && ppu.status.is_in_vblank()
         && ppu.registers.should_generate_nmi()
@@ -168,7 +177,7 @@ fn tick_background(ppu: &mut Ppu) {
     let pixel = ppu.timing.pixel();
     let prerender = prerender_scanline(ppu.timing.tv_system());
     let is_rendering_enabled = ppu.registers.is_rendering_enabled();
-    let is_visible_scanline = scanline < 240;
+    let is_visible_scanline = scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
     let is_prerender = scanline == prerender;
     let is_rendering_scanline = is_visible_scanline || is_prerender;
 
@@ -239,7 +248,7 @@ fn tick_background(ppu: &mut Ppu) {
         // In our pixel numbering (pixel 1 = cycle 1), this is pixels 9, 17, 25, ..., 257
         // Also pre-fetch loads at pixels 329, 337 (cycles 329, 337)
         // Note: pixel 321 is % 8 == 1 but should NOT load (fetch not complete yet)
-        if pixel % 8 == 1 && pixel > 1 && (pixel <= 257 || pixel >= 329) {
+        if pixel % 8 == 1 && pixel > FIRST_VISIBLE_PIXEL && (pixel <= HORIZONTAL_BITS_COPY_PIXEL || pixel >= BG_PREFETCH_SHIFT_START) {
             ppu.background.load_shift_registers(ppu.registers.v());
             ppu.registers.increment_coarse_x();
         }
@@ -250,11 +259,11 @@ fn tick_background(ppu: &mut Ppu) {
         // Pixels 330-336: continue shifting (shifts 2-8/8)
         // Pixel 337: load second tile
         // This applies to ALL rendering scanlines, not just pre-render!
-        if (329..=336).contains(&pixel) {
+        if (BG_PREFETCH_SHIFT_START..=BG_PREFETCH_END).contains(&pixel) {
             ppu.background.shift_registers();
         }
 
-        if pixel == 337 || pixel == 339 {
+        if pixel == DUMMY_NT_FETCH_1 || pixel == DUMMY_NT_FETCH_2 {
             // Two dummy nametable fetches at pixels 337 and 339
             // (The NES PPU does these but they're not used)
             let v = ppu.registers.v();
@@ -263,7 +272,7 @@ fn tick_background(ppu: &mut Ppu) {
         }
 
         // Handle scroll register updates during visible pixels
-        if pixel == 256 {
+        if pixel == FINE_Y_INCREMENT_PIXEL {
             // Increment fine Y at end of visible scanline
             trace_ppu!(3; "fine_y inc y={} x={} t_before={:04X} v_before={:04X}",
                 scanline,
@@ -278,7 +287,7 @@ fn tick_background(ppu: &mut Ppu) {
                 ppu.registers.t(),
                 ppu.registers.v(),
             );
-        } else if pixel == 257 {
+        } else if pixel == HORIZONTAL_BITS_COPY_PIXEL {
             // Copy horizontal bits from t to v
             trace_ppu!(3; "hcopy y={} x={} t={:04X} v_before={:04X}",
                 scanline,
@@ -298,7 +307,7 @@ fn tick_background(ppu: &mut Ppu) {
 
     // Copy horizontal and vertical bits during pre-render scanline
     if is_rendering_enabled && is_prerender {
-        if pixel == 257 {
+        if pixel == HORIZONTAL_BITS_COPY_PIXEL {
             // Copy horizontal bits from t to v at pixel 257
             trace_ppu!(3; "prerender hcopy y={} x={} t={:04X} v_before={:04X}",
                 scanline,
@@ -313,7 +322,7 @@ fn tick_background(ppu: &mut Ppu) {
                 ppu.registers.t(),
                 ppu.registers.v(),
             );
-        } else if (280..=304).contains(&pixel) {
+        } else if (VERTICAL_BITS_COPY_START..=VERTICAL_BITS_COPY_END).contains(&pixel) {
             // Copy vertical bits from t to v during pixels 280-304
             trace_ppu!(3; "vcopy y={} x={} t={:04X} v_before={:04X}",
                 scanline,
@@ -338,7 +347,7 @@ fn tick_sprites(ppu: &mut Ppu) {
     let pixel = ppu.timing.pixel();
     let prerender = prerender_scanline(ppu.timing.tv_system());
     let is_rendering_enabled = ppu.registers.is_rendering_enabled();
-    let is_visible_scanline = scanline < 240;
+    let is_visible_scanline = scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
     let is_prerender = scanline == prerender;
     let is_rendering_scanline = is_visible_scanline || is_prerender;
     let sprite_height = ppu.registers.sprite_height();
@@ -346,7 +355,7 @@ fn tick_sprites(ppu: &mut Ppu) {
     // OAM corruption bug: If OAMADDR >= 8 when sprite tile loading starts,
     // copy 8 bytes from (OAMADDR & 0xF8) to OAM[0..7]
     // This happens at pixel 257 of the pre-render scanline
-    if is_rendering_enabled && is_prerender && pixel == 257 {
+    if is_rendering_enabled && is_prerender && pixel == SPRITE_TILE_LOAD_START {
         let oam_address = ppu.registers.oam_address;
         if oam_address >= 8 {
             let source_addr = (oam_address & 0xF8) as usize;
@@ -360,7 +369,7 @@ fn tick_sprites(ppu: &mut Ppu) {
 
     // Clear OAMADDR during sprite tile loading (pixels 257-320) on visible and pre-render scanlines
     // This is critical NES PPU hardware behavior
-    if is_rendering_enabled && is_rendering_scanline && (257..=320).contains(&pixel) {
+    if is_rendering_enabled && is_rendering_scanline && (SPRITE_TILE_LOAD_START..=SPRITE_TILE_LOAD_END).contains(&pixel) {
         ppu.registers.oam_address = 0;
     }
 
@@ -368,13 +377,13 @@ fn tick_sprites(ppu: &mut Ppu) {
     // Only happens when rendering is enabled (either sprites or background)
     // Per NESdev: "Sprite evaluation does not happen on the pre-render scanline"
     if is_visible_scanline && is_rendering_enabled {
-        if pixel == 0 {
+        if pixel == FIRST_DOT {
             // Reset sprite evaluation at start of scanline
             ppu.sprites.reset_evaluation();
         } else if (1..=64).contains(&pixel) {
             // Initialize secondary OAM
             ppu.sprites.initialize_secondary_oam_byte(pixel);
-        } else if (65..=256).contains(&pixel) {
+        } else if (65..=LAST_VISIBLE_PIXEL).contains(&pixel) {
             // Evaluate sprites for next scanline
             let overflow = ppu.sprites.evaluate_sprites(pixel, scanline, sprite_height);
 
@@ -383,11 +392,11 @@ fn tick_sprites(ppu: &mut Ppu) {
                 ppu.status.set_sprite_overflow();
             }
 
-            if pixel == 256 {
+            if pixel == LAST_VISIBLE_PIXEL {
                 // Finalize evaluation
                 ppu.sprites.finalize_evaluation();
             }
-        } else if pixel == 321 {
+        } else if pixel == BG_PREFETCH_START {
             // Swap sprite buffers for rendering
             ppu.sprites.mark_buffers_ready();
             ppu.sprites.swap_buffers();
@@ -399,7 +408,7 @@ fn tick_sprites(ppu: &mut Ppu) {
     // sprite ($1xxx) pattern fetches must happen 241 times per frame.
     // Note: The PPU fetches 8 sprite patterns even on pre-render, using tile $FF
     // for any sprites not found (since evaluation doesn't happen on pre-render).
-    if is_rendering_enabled && is_rendering_scanline && (257..=320).contains(&pixel) {
+    if is_rendering_enabled && is_rendering_scanline && (SPRITE_TILE_LOAD_START..=SPRITE_TILE_LOAD_END).contains(&pixel) {
         let sprite_pattern_table = ppu.registers.sprite_pattern_table_addr();
         let cartridge = &ppu.cartridge;
         ppu.sprites.fetch_sprite_pattern(
@@ -420,7 +429,7 @@ fn tick_sprites(ppu: &mut Ppu) {
 fn tick_pixel_output(ppu: &mut Ppu) {
     let scanline = ppu.timing.scanline();
     let pixel = ppu.timing.pixel();
-    let is_visible_scanline = scanline < 240;
+    let is_visible_scanline = scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
     let rendering_pixel = is_rendering_pixel(pixel);
 
     // Render pixels to screen buffer during visible scanlines and pixels
@@ -555,37 +564,38 @@ mod tests {
 
     #[test]
     fn test_is_rendering_pixel_bounds() {
-        assert!(!is_rendering_pixel(0));
-        assert!(is_rendering_pixel(1));
-        assert!(is_rendering_pixel(256));
-        assert!(!is_rendering_pixel(257));
+        assert!(!is_rendering_pixel(FIRST_DOT));
+        assert!(is_rendering_pixel(FIRST_VISIBLE_PIXEL));
+        assert!(is_rendering_pixel(LAST_VISIBLE_PIXEL));
+        assert!(!is_rendering_pixel(HORIZONTAL_BITS_COPY_PIXEL));
     }
 
     #[test]
     fn test_is_bg_fetch_pixel_bounds() {
-        assert!(!is_bg_fetch_pixel(0));
-        assert!(is_bg_fetch_pixel(1));
-        assert!(is_bg_fetch_pixel(256));
-        assert!(!is_bg_fetch_pixel(257));
-        assert!(is_bg_fetch_pixel(321));
-        assert!(is_bg_fetch_pixel(336));
-        assert!(!is_bg_fetch_pixel(337));
-        assert!(!is_bg_fetch_pixel(340));
+        assert!(!is_bg_fetch_pixel(FIRST_DOT));
+        assert!(is_bg_fetch_pixel(FIRST_VISIBLE_PIXEL));
+        assert!(is_bg_fetch_pixel(LAST_VISIBLE_PIXEL));
+        assert!(!is_bg_fetch_pixel(HORIZONTAL_BITS_COPY_PIXEL));
+        assert!(is_bg_fetch_pixel(BG_PREFETCH_START));
+        assert!(is_bg_fetch_pixel(BG_PREFETCH_END));
+        assert!(!is_bg_fetch_pixel(DUMMY_NT_FETCH_1));
+        assert!(!is_bg_fetch_pixel(LAST_DOT));
     }
 
     #[test]
     fn test_should_trace_vblank_enter() {
-        assert!(should_trace_vblank_enter(241, 1, false));
-        assert!(!should_trace_vblank_enter(241, 1, true));
-        assert!(!should_trace_vblank_enter(240, 1, false));
-        assert!(!should_trace_vblank_enter(241, 2, false));
+        assert!(should_trace_vblank_enter(VBLANK_START_SCANLINE, FIRST_VISIBLE_PIXEL, false));
+        assert!(!should_trace_vblank_enter(VBLANK_START_SCANLINE, FIRST_VISIBLE_PIXEL, true));
+        assert!(!should_trace_vblank_enter(LAST_VISIBLE_SCANLINE_PLUS_ONE - 1, FIRST_VISIBLE_PIXEL, false));
+        assert!(!should_trace_vblank_enter(VBLANK_START_SCANLINE, VBLANK_NMI_LATCH_PIXEL, false));
     }
 
     #[test]
     fn test_should_trace_vblank_exit() {
         let prerender = prerender_scanline(TvSystem::Ntsc);
-        assert!(should_trace_vblank_exit(prerender, prerender, 1));
-        assert!(!should_trace_vblank_exit(prerender, prerender, 0));
-        assert!(!should_trace_vblank_exit(0, prerender, 1));
+        assert!(should_trace_vblank_exit(prerender, prerender, FIRST_VISIBLE_PIXEL));
+        assert!(!should_trace_vblank_exit(prerender, prerender, FIRST_DOT));
+        // Test that scanline 0 (FIRST_VISIBLE_SCANLINE) is not the pre-render scanline
+        assert!(!should_trace_vblank_exit(FIRST_VISIBLE_SCANLINE, prerender, FIRST_VISIBLE_PIXEL));
     }
 }
