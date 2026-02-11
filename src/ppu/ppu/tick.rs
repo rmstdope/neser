@@ -378,7 +378,7 @@ fn tick_sprites(ppu: &mut Ppu) {
     // Per NESdev: "Sprite evaluation does not happen on the pre-render scanline"
     if is_visible_scanline && is_rendering_enabled {
         if pixel == FIRST_DOT {
-            // Reset sprite evaluation at start of scanline (pixel 0)
+            // Reset sprite evaluation at start of scanline
             ppu.sprites.reset_evaluation();
         } else if (1..=64).contains(&pixel) {
             // Initialize secondary OAM
