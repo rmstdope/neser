@@ -421,10 +421,10 @@ fn tick_pixel_output(ppu: &mut Ppu) {
     let scanline = ppu.timing.scanline();
     let pixel = ppu.timing.pixel();
     let is_visible_scanline = scanline < 240;
-    let is_rendering_pixel = is_rendering_pixel(pixel);
+    let rendering_pixel = is_rendering_pixel(pixel);
 
     // Render pixels to screen buffer during visible scanlines and pixels
-    if is_visible_scanline && is_rendering_pixel {
+    if is_visible_scanline && rendering_pixel {
         let is_rendering_enabled = ppu.registers.is_rendering_enabled();
         let palette_base: u16 = 0x3F00;
         let screen_x = (pixel - 1) as u32;
