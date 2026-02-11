@@ -51,8 +51,17 @@ pub(super) fn tick(ppu: &mut Ppu) {
         ppu.timing.total_cycles(),
     );
 
+    tick_timing(ppu);
+    tick_vblank_and_nmi(ppu);
+    tick_background(ppu);
+    tick_sprites(ppu);
+    tick_pixel_output(ppu);
+}
+
+/// Phase 1: Advance timing, detect frame boundaries, and notify mappers.
+fn tick_timing(ppu: &mut Ppu) {
     let is_rendering_enabled = ppu.registers.is_rendering_enabled();
-    let prerender_scanline = prerender_scanline(ppu.timing.tv_system());
+    let prerender = prerender_scanline(ppu.timing.tv_system());
     let scanline_before_tick = ppu.timing.scanline();
     let pixel_before_tick = ppu.timing.pixel();
 
@@ -62,7 +71,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
     // New frame begins when the pre-render scanline wraps back to scanline 0.
     // This also includes the NTSC odd-frame skip path.
     let frame_wrapped =
-        skipped || (scanline_before_tick == prerender_scanline && pixel_before_tick == 340);
+        skipped || (scanline_before_tick == prerender && pixel_before_tick == 340);
 
     if frame_wrapped {
         trace_ppu!(1; "frame wrap y={} x={} frame={} cyc={}",
@@ -77,17 +86,22 @@ pub(super) fn tick(ppu: &mut Ppu) {
         ppu.with_mapper_mut(|mapper| mapper.ppu_end_frame());
     }
 
-    let scanline = ppu.timing.scanline();
-    let pixel = ppu.timing.pixel();
-
     // Notify mapper at scanline boundaries (start of scanline: pixel == 0).
     // This is a PPU-driven hook for mappers with scanline counters (e.g., MMC5).
-    if pixel == 0 {
+    if ppu.timing.pixel() == 0 {
+        let scanline = ppu.timing.scanline();
         ppu.with_mapper_mut(|mapper| mapper.ppu_scanline(scanline, is_rendering_enabled));
     }
 
     // Tick the registers for decay timing
     ppu.registers.tick();
+}
+
+/// Phase 2: VBlank enter/exit and NMI generation.
+fn tick_vblank_and_nmi(ppu: &mut Ppu) {
+    let scanline = ppu.timing.scanline();
+    let pixel = ppu.timing.pixel();
+    let prerender = prerender_scanline(ppu.timing.tv_system());
 
     // Enter VBlank at scanline 241, pixel 1.
     // Note: reading PPUSTATUS right at VBlank set time can suppress VBlank for the frame.
@@ -122,7 +136,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
     }
 
     // Exit VBlank at the pre-render scanline, pixel 1.
-    if should_trace_vblank_exit(scanline, prerender_scanline, pixel) {
+    if should_trace_vblank_exit(scanline, prerender, pixel) {
         trace_ppu!(1; "vblank exit y={} x={} status={:02X}",
             scanline,
             pixel,
@@ -130,13 +144,13 @@ pub(super) fn tick(ppu: &mut Ppu) {
         );
     }
 
-    if scanline == prerender_scanline && pixel == 1 {
+    if scanline == prerender && pixel == 1 {
         ppu.status.exit_vblank();
     }
 
     // Clear sprite 0 hit and sprite overflow at dot 0 of pre-render scanline
     // For sprite_hit timing test: clear_time = 6819 cycles after VBL = scanline 261, pixel 0
-    if scanline == prerender_scanline && pixel == 0 {
+    if scanline == prerender && pixel == 0 {
         ppu.status.clear_sprite_flags();
 
         // For immediate-NMI enable behavior, treat VBlank as ending slightly earlier
@@ -146,23 +160,17 @@ pub(super) fn tick(ppu: &mut Ppu) {
         // New frame is about to start; clear any VBlank suppression state.
         ppu.vblank_suppressed_for_frame = false;
     }
-    // Background rendering pipeline during rendering cycles
+}
+
+/// Phase 3: Background rendering pipeline (tile fetches, shift registers, scroll updates).
+fn tick_background(ppu: &mut Ppu) {
+    let scanline = ppu.timing.scanline();
+    let pixel = ppu.timing.pixel();
+    let prerender = prerender_scanline(ppu.timing.tv_system());
+    let is_rendering_enabled = ppu.registers.is_rendering_enabled();
     let is_visible_scanline = scanline < 240;
-    let is_prerender = scanline == prerender_scanline;
+    let is_prerender = scanline == prerender;
     let is_rendering_scanline = is_visible_scanline || is_prerender;
-    let is_rendering_pixel = is_rendering_pixel(pixel);
-    let palette_base: u16 = 0x3F00;
-    let palette_base_u16 = palette_base;
-    let bg_enabled = ppu.registers.is_background_enabled();
-    let sp_enabled = ppu.registers.is_sprite_enabled();
-    let show_sprites_left = ppu.registers.show_sprites_left();
-    let show_background_left = ppu.registers.show_background_left();
-    let grayscale = ppu.registers.is_grayscale();
-    let color_emphasis = ppu.registers.color_emphasis();
-    let screen_y = scanline as u32;
-    let sprite_height = ppu.registers.sprite_height();
-    let sprite_height_u16 = sprite_height as u16;
-    let sprite_0_y = ppu.sprites.sprite_0_oam_y();
 
     // Background rendering pipeline during rendering cycles
     // Fetches happen during pixels 1-256 (visible) and 321-336 (pre-fetch for next scanline)
@@ -322,6 +330,18 @@ pub(super) fn tick(ppu: &mut Ppu) {
             );
         }
     }
+}
+
+/// Phase 4: Sprite evaluation, OAM handling, and sprite pattern fetching.
+fn tick_sprites(ppu: &mut Ppu) {
+    let scanline = ppu.timing.scanline();
+    let pixel = ppu.timing.pixel();
+    let prerender = prerender_scanline(ppu.timing.tv_system());
+    let is_rendering_enabled = ppu.registers.is_rendering_enabled();
+    let is_visible_scanline = scanline < 240;
+    let is_prerender = scanline == prerender;
+    let is_rendering_scanline = is_visible_scanline || is_prerender;
+    let sprite_height = ppu.registers.sprite_height();
 
     // OAM corruption bug: If OAMADDR >= 8 when sprite tile loading starts,
     // copy 8 bytes from (OAMADDR & 0xF8) to OAM[0..7]
@@ -385,7 +405,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
         ppu.sprites.fetch_sprite_pattern(
             pixel,
             scanline,
-            prerender_scanline,
+            prerender,
             sprite_height,
             sprite_pattern_table,
             |addr| {
@@ -394,13 +414,33 @@ pub(super) fn tick(ppu: &mut Ppu) {
             },
         );
     }
+}
+
+/// Phase 5: Pixel composition and screen output.
+fn tick_pixel_output(ppu: &mut Ppu) {
+    let scanline = ppu.timing.scanline();
+    let pixel = ppu.timing.pixel();
+    let is_visible_scanline = scanline < 240;
+    let rendering_pixel = is_rendering_pixel(pixel);
 
     // Render pixels to screen buffer during visible scanlines and pixels
-    if is_visible_scanline && is_rendering_pixel {
+    if is_visible_scanline && rendering_pixel {
+        let is_rendering_enabled = ppu.registers.is_rendering_enabled();
+        let palette_base: u16 = 0x3F00;
         let screen_x = (pixel - 1) as u32;
+        let screen_y = scanline as u32;
         let screen_x_i16 = screen_x as i16;
 
         if is_rendering_enabled {
+            let bg_enabled = ppu.registers.is_background_enabled();
+            let sp_enabled = ppu.registers.is_sprite_enabled();
+            let show_sprites_left = ppu.registers.show_sprites_left();
+            let show_background_left = ppu.registers.show_background_left();
+            let grayscale = ppu.registers.is_grayscale();
+            let color_emphasis = ppu.registers.color_emphasis();
+            let sprite_height = ppu.registers.sprite_height();
+            let sprite_0_y = ppu.sprites.sprite_0_oam_y();
+
             // Get background pixel (only if background rendering is enabled)
             // Note: Shift registers were shifted above, after load (if any) but before reading
             let fine_x = ppu.registers.x();
@@ -435,7 +475,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
             ppu.track_recent_pixel(screen_x, screen_y, palette_index);
 
             // Look up color in palette (convert index to address)
-            let palette_addr = palette_base_u16 + palette_index_u16;
+            let palette_addr = palette_base + palette_index_u16;
             let mut color_value = ppu.memory.read_palette(palette_addr);
             // PPUMASK grayscale removes color by masking the palette *value* (hardware behavior),
             // which affects only chroma while preserving brightness selection.
@@ -520,7 +560,8 @@ pub(super) fn tick(ppu: &mut Ppu) {
                     // Sprites render starting at scanline (Y+1), so check range
                     // Use actual sprite height (8 or 16) from PPUCTRL
                     let sprite_render_start = (sprite_0_y as u16).wrapping_add(1);
-                    let sprite_render_end = sprite_render_start.wrapping_add(sprite_height_u16);
+                    let sprite_render_end =
+                        sprite_render_start.wrapping_add(sprite_height as u16);
                     let in_y_range =
                         scanline >= sprite_render_start && scanline < sprite_render_end;
 
