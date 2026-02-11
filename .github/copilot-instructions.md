@@ -10,7 +10,9 @@ The application shall ALWAYS be developed in very small, manageable increments t
 
 ### Test-driven Development (TDD)
 
-In the development process, the application should be developed using Test-driven Development (TDD) principles. This means that tests are written before the actual code is implemented. This should always be the case for all implementation, not just feature additions. The development cycle should always follow the "Red-Green-Refactor" approach:
+In the development process, the application should be developed using Test-driven Development (TDD) principles. This means that tests are written before the actual code is implemented. This should always be the case for all implementation, not just feature additions.
+
+<!-- The development cycle should always follow the "Red-Green-Refactor" approach:
 
 1. **Red**: Write failing test(s) that defines a desired improvement or new function. Be sure to test all relevant aspects of the functionality. Check that the test cases actually fail.
 2. **Green**: Write the code necessary to make the test pass and verify that the tests actually pass. You MUST ALWAYS verify that both the new and old test cases pass before asking for approval from the navigator.
@@ -22,7 +24,7 @@ It is VERY VERY important to:
 - ALWAYS stop after the green phase and ask the navigator to review the implementation and approve before moving on to the refactor phase.
 - If any code was changed, ALWAYS stop after the refactor phase and ask the navigator to review the refactored code and approve before moving on. If nothing was changed in the refactor phase, you can skip this step. In that case, don't wait for any approval, just continue with merging into main.
 - ALWAYS use a TDD approach for all kinds of code, feature implementation, bug fixing, feature enhancements.
-- After the refactor phase, continue with merging into main.
+- After the refactor phase, continue with merging into main. -->
 
 Never stray from the TDD process unless you are just adding traces/logging or are explicitly instructed to do so by the navigator.
 

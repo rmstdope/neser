@@ -911,6 +911,35 @@ mod tests {
     }
 
     #[test]
+    fn test_grayscale_applies_to_recent_pixels() {
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+
+        // Seed palette entries for recent pixels.
+        ppu.memory.write_palette(0x3F01, 0x16);
+        ppu.memory.write_palette(0x3F02, 0x2A);
+
+        // Track three pixels; only the last two should be updated.
+        ppu.track_recent_pixel(10, 10, 0x01);
+        ppu.track_recent_pixel(11, 10, 0x02);
+        ppu.track_recent_pixel(12, 10, 0x01);
+
+        ppu.apply_grayscale_to_recent_pixels(true);
+
+        let (expected_r1, expected_g1, expected_b1) = Nes::lookup_system_palette(0x2A & 0x30);
+        let (expected_r2, expected_g2, expected_b2) = Nes::lookup_system_palette(0x16 & 0x30);
+
+        assert_eq!(
+            ppu.screen_buffer().get_pixel(11, 10),
+            (expected_r1, expected_g1, expected_b1)
+        );
+        assert_eq!(
+            ppu.screen_buffer().get_pixel(12, 10),
+            (expected_r2, expected_g2, expected_b2)
+        );
+        assert_eq!(ppu.screen_buffer().get_pixel(10, 10), (0, 0, 0));
+    }
+
+    #[test]
     fn test_mapper_ppu_scanline_is_called_on_scanline_boundaries() {
         let calls: Rc<RefCell<Vec<(u16, bool)>>> = Rc::new(RefCell::new(Vec::new()));
 
@@ -1384,6 +1413,30 @@ mod tests {
         ppu.write_address(0x00, false);
         assert_eq!(ppu.read_data(), 0x10);
         assert_eq!(ppu.read_data(), 0x20);
+    }
+
+    #[test]
+    fn test_ppudata_write_increments_with_rendering_glitch() {
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+        ppu.write_mask(0x18); // Enable rendering
+
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
+        ppu.write_data(0x12);
+
+        assert_eq!(ppu.v_register(), 0x3001);
+    }
+
+    #[test]
+    fn test_ppudata_write_increments_normally_when_rendering_disabled() {
+        let mut ppu = Ppu::new(TvSystem::Ntsc);
+        ppu.write_mask(0x00); // Rendering disabled
+
+        ppu.write_address(0x20, false);
+        ppu.write_address(0x00, false);
+        ppu.write_data(0x12);
+
+        assert_eq!(ppu.v_register(), 0x2001);
     }
 
     #[test]

@@ -874,4 +874,21 @@ mod tests {
         let result = sprites.get_pixel(11, true);
         assert!(result.is_none());
     }
+
+    #[test]
+    fn test_sprite_overflow_evaluation_branch() {
+        let mut sprites = Sprites::new();
+        sprites.sprites_found = 8;
+        sprites.sprite_eval_n = 0;
+        sprites.sprite_eval_m = 0;
+        sprites.oam_data[0] = 0x00; // Y position in range
+
+        let overflow = sprites.evaluate_sprites(1, 0, 8);
+        assert!(!overflow);
+
+        let overflow = sprites.evaluate_sprites(2, 0, 8);
+        assert!(overflow);
+        assert_eq!(sprites.sprite_eval_n, 1);
+        assert_eq!(sprites.sprite_eval_m, 1);
+    }
 }

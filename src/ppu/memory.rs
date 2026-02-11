@@ -481,6 +481,22 @@ mod tests {
     }
 
     #[test]
+    fn test_palette_mirroring_3f18_to_3f08() {
+        let mut mem = Memory::new();
+        mem.write_palette(0x3F08, 0x66);
+        // Palette RAM only stores 6 bits (0x66 & 0x3F = 0x26)
+        assert_eq!(mem.read_palette(0x3F18), 0x26);
+    }
+
+    #[test]
+    fn test_palette_mirroring_3f1c_to_3f0c() {
+        let mut mem = Memory::new();
+        mem.write_palette(0x3F0C, 0x7F);
+        // Palette RAM only stores 6 bits (0x7F & 0x3F = 0x3F)
+        assert_eq!(mem.read_palette(0x3F1C), 0x3F);
+    }
+
+    #[test]
     fn test_vertical_mirroring() {
         let mut mem = Memory::new();
         mem.set_mirroring(MirroringMode::Vertical);

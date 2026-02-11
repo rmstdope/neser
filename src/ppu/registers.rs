@@ -632,4 +632,32 @@ mod tests {
         regs.write_mask(EMPHASIZE_RED);
         assert_eq!(regs.color_emphasis() & 0x01, 0x01);
     }
+
+    const IO_BUS_DECAY_CYCLES: u64 = 3_216_312;
+
+    #[test]
+    fn test_io_bus_decay_after_threshold() {
+        let mut regs = Registers::new();
+
+        regs.set_cycle_count(0);
+        regs.set_io_bus(0xF0);
+
+        regs.set_cycle_count(IO_BUS_DECAY_CYCLES + 1);
+        assert_eq!(regs.io_bus(), 0x00);
+    }
+
+    #[test]
+    fn test_io_bus_decay_refreshes_on_update() {
+        let mut regs = Registers::new();
+
+        regs.set_cycle_count(0);
+        regs.set_io_bus(0x01);
+
+        regs.set_cycle_count(IO_BUS_DECAY_CYCLES + 1);
+        assert_eq!(regs.io_bus(), 0x00);
+
+        regs.set_io_bus(0x01);
+        regs.set_cycle_count(IO_BUS_DECAY_CYCLES + 1 + (IO_BUS_DECAY_CYCLES / 2));
+        assert_eq!(regs.io_bus(), 0x01);
+    }
 }
