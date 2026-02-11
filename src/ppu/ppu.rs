@@ -1,6 +1,7 @@
 use crate::cartridge::{Cartridge, MirroringMode};
 use crate::console::{Nes, PpuRegisterState, PpuState, PpuTimingState, SpritesState, TvSystem};
 use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
+use crate::ppu::color_effects::apply_grayscale;
 use crate::trace_ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -228,9 +229,7 @@ impl Ppu {
             let mut color_value = self.memory.read_palette(palette_addr);
             // Grayscale masks the palette *output*, not the palette index.
             // This preserves correct brightness selection while removing chroma.
-            if grayscale {
-                color_value &= 0x30;
-            }
+            color_value = apply_grayscale(color_value, grayscale);
             let (r, g, b) = Nes::lookup_system_palette(color_value);
             self.rendering
                 .screen_buffer_mut()

@@ -1,4 +1,5 @@
 mod background;
+mod color_effects;
 mod memory;
 #[allow(clippy::module_inception)]
 mod ppu;
