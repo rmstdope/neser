@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod tests {
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes};
+    use crate::console::{Config, Nes, TvSystem};
     use crate::integration_tests::rom_test_runner::tests::init_tracing_from_env;
     use crate::{setup_rom_address_test, setup_rom_test};
     use std::fs;
@@ -25,7 +25,9 @@ mod tests {
     }
 
     const NTSC_CPU_CYCLES_PER_FRAME: u32 = 29_780;
-    const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
+    fn cpu_clock_ntsc() -> f32 {
+        TvSystem::Ntsc.cpu_clock_hz()
+    }
     const SAMPLE_RATE_HZ: f32 = 44_100.0;
     const WARMUP_SAMPLES: usize = 2_000;
 
@@ -145,7 +147,7 @@ mod tests {
     }
     /// Convert a capture length into total CPU cycles at the emulator sample rate.
     fn capture_cycles_for_samples(sample_len: usize, warmup: usize, extra: usize) -> u32 {
-        let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
+        let cycles_per_sample = cpu_clock_ntsc() / SAMPLE_RATE_HZ;
         let capture_samples = sample_len + warmup + extra;
         (capture_samples as f32 * cycles_per_sample) as u32
     }
@@ -556,14 +558,14 @@ mod tests {
 
     /// Convert a pulse timer value into an expected sample period (NTSC timing).
     fn expected_pulse_period_samples(timer: u16) -> f32 {
-        let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
+        let cycles_per_sample = cpu_clock_ntsc() / SAMPLE_RATE_HZ;
         let period_cycles = 16.0 * (timer as f32 + 1.0);
         period_cycles / cycles_per_sample
     }
 
     /// Convert a CPU-cycle offset into samples (NTSC timing).
     fn expected_phase_offset_samples(cpu_cycles: u32) -> f32 {
-        let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
+        let cycles_per_sample = cpu_clock_ntsc() / SAMPLE_RATE_HZ;
         cpu_cycles as f32 / cycles_per_sample
     }
 
@@ -786,7 +788,7 @@ mod tests {
     fn test_square_timer_div2() {
         // Run the ROM long enough to cover the pre-loop delay, the loop body, and
         // the post-loop tones for verification against the reference WAV.
-        let cycles_per_ms = CPU_CLOCK_NTSC / 1000.0;
+        let cycles_per_ms = cpu_clock_ntsc() / 1000.0;
         let pre_loop_cycles = (cycles_per_ms * 350.0) as u32; // 250ms + 100ms delay
         let loop_cycles = 1792u32 * 256;
         let post_cycles = (cycles_per_ms * 600.0) as u32; // 250ms + 250ms + buffer
@@ -803,8 +805,8 @@ mod tests {
         // Drop power-on transients before analysis.
         let samples = trim_warmup(&samples, WARMUP_SAMPLES);
 
-        let cycles_per_sample = CPU_CLOCK_NTSC / SAMPLE_RATE_HZ;
-        let pre_loop_cycles = CPU_CLOCK_NTSC * 0.35;
+        let cycles_per_sample = cpu_clock_ntsc() / SAMPLE_RATE_HZ;
+        let pre_loop_cycles = cpu_clock_ntsc() * 0.35;
         let loop_cycles = 1792.0 * 256.0;
 
         // Focus the analysis window on the middle half of the loop to avoid edges.

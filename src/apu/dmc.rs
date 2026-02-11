@@ -8,15 +8,21 @@
 //! - Output unit (shift register + 7-bit output level 0-127)
 //! - IRQ flag
 //! - Loop flag for sample restart
-use crate::console::DmcState;
+use crate::console::{DmcState, TvSystem};
 use crate::trace_apu;
 
 // NTSC rate periods (in CPU cycles)
-const DMC_RATE_TABLE: [u16; 16] = [
+const DMC_RATE_TABLE_NTSC: [u16; 16] = [
     428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54,
 ];
 
+// PAL rate periods (in CPU cycles)
+const DMC_RATE_TABLE_PAL: [u16; 16] = [
+    398, 354, 316, 298, 276, 236, 210, 198, 176, 148, 132, 118, 98, 78, 66, 50,
+];
+
 pub struct Dmc {
+    tv_system: TvSystem,
     // Timer
     timer: u16,
     timer_period: u16,
@@ -62,9 +68,19 @@ impl Default for Dmc {
 
 impl Dmc {
     pub fn new() -> Self {
+        Self::new_with_tv_system(TvSystem::Ntsc)
+    }
+
+    pub fn new_with_tv_system(tv_system: TvSystem) -> Self {
+        let timer_period = match tv_system {
+            TvSystem::Ntsc => DMC_RATE_TABLE_NTSC[0],
+            TvSystem::Pal => DMC_RATE_TABLE_PAL[0],
+        };
+
         Dmc {
+            tv_system,
             timer: 0,
-            timer_period: DMC_RATE_TABLE[0],
+            timer_period,
             irq_enabled: false,
             loop_flag: false,
             output_level: 0,
@@ -87,7 +103,8 @@ impl Dmc {
     /// Reset DMC channel to initial state
     pub fn reset(&mut self) {
         trace_apu!(2; "dmc reset");
-        *self = Self::new();
+        let tv_system = self.tv_system;
+        *self = Self::new_with_tv_system(tv_system);
     }
 
     /// Returns true if the DMC has a pending DMA request for the next sample byte.
@@ -140,7 +157,10 @@ impl Dmc {
         self.irq_enabled = (value >> 7) & 1 == 1;
         self.loop_flag = (value >> 6) & 1 == 1;
         let rate_index = (value & 0x0F) as usize;
-        self.timer_period = DMC_RATE_TABLE[rate_index];
+        self.timer_period = match self.tv_system {
+            TvSystem::Ntsc => DMC_RATE_TABLE_NTSC[rate_index],
+            TvSystem::Pal => DMC_RATE_TABLE_PAL[rate_index],
+        };
         trace_apu!(2; "dmc write_flags_and_rate value=0x{:02X} irq_enabled={} loop={} rate_index={} period={}", value, self.irq_enabled, self.loop_flag, rate_index, self.timer_period);
 
         // If IRQ is disabled, clear the interrupt flag
@@ -441,6 +461,7 @@ impl Dmc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::console::TvSystem;
 
     #[test]
     fn test_dmc_new() {
@@ -449,6 +470,18 @@ mod tests {
         assert_eq!(dmc.timer_period, 428); // Rate 0
         assert_eq!(dmc.bits_remaining, 8);
         assert!(dmc.silence_flag);
+    }
+
+    #[test]
+    fn test_dmc_pal_rate_table() {
+        let mut dmc = Dmc::new_with_tv_system(TvSystem::Pal);
+
+        // PAL rate 0
+        assert_eq!(dmc.timer_period, 398);
+
+        // PAL rate $F
+        dmc.write_flags_and_rate(0x0F);
+        assert_eq!(dmc.timer_period, 50);
     }
 
     #[test]
