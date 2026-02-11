@@ -433,7 +433,7 @@ class NesCartDb:
         if rom_id in [2639, 2640, 2647]:
             record[RomDbKey.MAPPER.value] = 0
         # Galactic Crusader (2949) could be either mapper 79 or 146. Both will work.
-        # Chosing 79 as 146 for a non-switching 8kB ROMs seems odd
+        # Choosing 79 as 146 for a non-switching 8kB ROMs seems odd
         if rom_id == 2949:
             record[RomDbKey.MAPPER.value] = 79
         # Solstics have different names in different languagues, but with same CRC.
