@@ -3,6 +3,54 @@ use crate::console::TvSystem;
 /// Number of PPU cycles (pixels) per scanline
 const PIXELS_PER_SCANLINE: u16 = 341;
 
+// Scanline constants
+/// First scanline where VBlank begins (scanlines 241-260 for NTSC, 241-310 for PAL)
+pub(crate) const VBLANK_START_SCANLINE: u16 = 241;
+/// VBlank NMI edge latching occurs at pixel 2 of the VBlank start scanline
+pub(crate) const VBLANK_NMI_LATCH_PIXEL: u16 = 2;
+/// First visible scanline (0-239 are visible scanlines)
+pub(crate) const FIRST_VISIBLE_SCANLINE: u16 = 0;
+/// Last visible scanline + 1 (scanlines 0-239 are visible)
+pub(crate) const LAST_VISIBLE_SCANLINE_PLUS_ONE: u16 = 240;
+/// NTSC pre-render scanline (scanline 261)
+pub(crate) const NTSC_PRERENDER_SCANLINE: u16 = 261;
+/// PAL pre-render scanline (scanline 311)
+pub(crate) const PAL_PRERENDER_SCANLINE: u16 = 311;
+
+// Dot/pixel constants
+/// Last dot in a scanline (dots 0-340)
+pub(crate) const LAST_DOT: u16 = 340;
+/// Dot where NTSC odd frame skip occurs on pre-render scanline
+const ODD_FRAME_SKIP_DOT: u16 = 339;
+/// First visible pixel (pixels 1-256 are visible)
+pub(crate) const FIRST_VISIBLE_PIXEL: u16 = 1;
+/// Last visible pixel (pixels 1-256 are visible)
+pub(crate) const LAST_VISIBLE_PIXEL: u16 = 256;
+/// Pixel where fine Y increment happens (end of visible scanline)
+pub(crate) const FINE_Y_INCREMENT_PIXEL: u16 = 256;
+/// Pixel where horizontal bits are copied from t to v
+pub(crate) const HORIZONTAL_BITS_COPY_PIXEL: u16 = 257;
+/// First pixel of sprite tile loading range (pixels 257-320)
+pub(crate) const SPRITE_TILE_LOAD_START: u16 = 257;
+/// Last pixel of sprite tile loading range (pixels 257-320)
+pub(crate) const SPRITE_TILE_LOAD_END: u16 = 320;
+/// First pixel of background pre-fetch range (pixels 321-336)
+pub(crate) const BG_PREFETCH_START: u16 = 321;
+/// Last pixel of background pre-fetch range (pixels 321-336)
+pub(crate) const BG_PREFETCH_END: u16 = 336;
+/// First pixel of rendering cycle range (dots 328-336)
+const RENDERING_CYCLE_START: u16 = 328;
+/// Last pixel of rendering cycle range (dots 328-336)
+const RENDERING_CYCLE_END: u16 = 336;
+/// First dummy nametable fetch pixel
+pub(crate) const DUMMY_NT_FETCH_1: u16 = 337;
+/// Second dummy nametable fetch pixel
+pub(crate) const DUMMY_NT_FETCH_2: u16 = 339;
+/// First pixel of vertical bits copy range on pre-render scanline
+pub(crate) const VERTICAL_BITS_COPY_START: u16 = 280;
+/// Last pixel of vertical bits copy range on pre-render scanline
+pub(crate) const VERTICAL_BITS_COPY_END: u16 = 304;
+
 /// Manages PPU timing, including scanlines, pixels, cycles, and frame counting
 pub struct Timing {
     /// Total number of PPU ticks since reset
@@ -11,7 +59,7 @@ pub struct Timing {
     tv_system: TvSystem,
     /// Current scanline (0-261 for NTSC, 0-311 for PAL)
     pub scanline: u16,
-    /// Current pixel within scanline (0-340)
+    /// Current pixel within scanline (0-340, i.e., 0 to LAST_DOT)
     pub pixel: u16,
     /// Frame counter for odd/even frame tracking (used for NTSC odd frame skip)
     frame_count: u64,
@@ -69,13 +117,13 @@ impl Timing {
         let should_skip_odd_frame = self.tv_system == TvSystem::Ntsc
             && (self.frame_count & 1) == 1 // Odd frame
             && rendering_enabled_for_odd_skip
-            && self.scanline == 261 // Pre-render scanline
-            && self.pixel == 339;
+            && self.scanline == NTSC_PRERENDER_SCANLINE
+            && self.pixel == ODD_FRAME_SKIP_DOT;
 
         if should_skip_odd_frame {
             // Skip dot 340 and go directly to scanline 0, dot 0
             self.pixel = 0;
-            self.scanline = 0;
+            self.scanline = FIRST_VISIBLE_SCANLINE;
             self.frame_count += 1;
             true
         } else {
@@ -152,10 +200,10 @@ impl Timing {
     /// at pixel positions 0-256 and 328-336
     #[cfg(test)]
     pub fn is_rendering_cycle(&self) -> bool {
-        let is_visible_scanline = self.scanline < 240;
+        let is_visible_scanline = self.scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
         let is_prerender_scanline = match self.tv_system {
-            TvSystem::Ntsc => self.scanline == 261,
-            TvSystem::Pal => self.scanline == 311,
+            TvSystem::Ntsc => self.scanline == NTSC_PRERENDER_SCANLINE,
+            TvSystem::Pal => self.scanline == PAL_PRERENDER_SCANLINE,
         };
 
         if is_visible_scanline || is_prerender_scanline {
@@ -163,7 +211,7 @@ impl Timing {
             // Dots 257-320: sprite pattern fetching for next scanline
             // Dots 321-336: first two tiles for next scanline
             // Dots 337-340: unknown nametable fetches
-            self.pixel <= 256 || (self.pixel >= 328 && self.pixel <= 336)
+            self.pixel <= LAST_VISIBLE_PIXEL || (self.pixel >= RENDERING_CYCLE_START && self.pixel <= RENDERING_CYCLE_END)
         } else {
             false
         }
@@ -173,7 +221,9 @@ impl Timing {
     /// Visible pixels are rendered during scanlines 0-239, pixels 1-256
     #[cfg(test)]
     pub fn is_visible_pixel(&self) -> bool {
-        self.scanline < 240 && self.pixel >= 1 && self.pixel <= 256
+        self.scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE 
+            && self.pixel >= FIRST_VISIBLE_PIXEL 
+            && self.pixel <= LAST_VISIBLE_PIXEL
     }
 }
 
@@ -297,17 +347,17 @@ mod tests {
         let mut timing = Timing::new(TvSystem::Ntsc);
 
         // Visible scanline, pixel 100
-        timing.scanline = 0;
+        timing.scanline = FIRST_VISIBLE_SCANLINE;
         timing.pixel = 100;
         assert!(timing.is_rendering_cycle());
 
         // Vblank scanline
-        timing.scanline = 241;
+        timing.scanline = VBLANK_START_SCANLINE;
         timing.pixel = 100;
         assert!(!timing.is_rendering_cycle());
 
         // Pre-render scanline
-        timing.scanline = 261;
+        timing.scanline = NTSC_PRERENDER_SCANLINE;
         timing.pixel = 100;
         assert!(timing.is_rendering_cycle());
     }
@@ -317,12 +367,12 @@ mod tests {
         let mut timing = Timing::new(TvSystem::Pal);
 
         // PAL pre-render scanline is 311
-        timing.scanline = 311;
+        timing.scanline = PAL_PRERENDER_SCANLINE;
         timing.pixel = 100;
         assert!(timing.is_rendering_cycle());
 
         // NTSC pre-render scanline should not be treated as rendering for PAL
-        timing.scanline = 261;
+        timing.scanline = NTSC_PRERENDER_SCANLINE;
         timing.pixel = 100;
         assert!(!timing.is_rendering_cycle());
     }
@@ -337,11 +387,11 @@ mod tests {
         assert!(timing.is_visible_pixel());
 
         // Pixel 0 is not visible
-        timing.pixel = 0;
+        timing.pixel = FIRST_VISIBLE_SCANLINE;
         assert!(!timing.is_visible_pixel());
 
         // Vblank is not visible
-        timing.scanline = 241;
+        timing.scanline = VBLANK_START_SCANLINE;
         timing.pixel = 100;
         assert!(!timing.is_visible_pixel());
     }
@@ -352,13 +402,13 @@ mod tests {
 
         // NTSC should have exactly 262 scanlines (0-261)
         // Run through an entire frame and verify we hit scanline 0 after scanline 261
-        timing.scanline = 261;
-        timing.pixel = 340;
+        timing.scanline = NTSC_PRERENDER_SCANLINE;
+        timing.pixel = LAST_DOT;
 
         timing.tick(false); // Advance to next scanline
         assert_eq!(
             timing.scanline(),
-            0,
+            FIRST_VISIBLE_SCANLINE,
             "NTSC should wrap from scanline 261 to 0"
         );
         assert_eq!(timing.frame_count(), 1, "Frame count should increment");
@@ -370,13 +420,13 @@ mod tests {
 
         // PAL should have exactly 312 scanlines (0-311)
         // Run through an entire frame and verify we hit scanline 0 after scanline 311
-        timing.scanline = 311;
-        timing.pixel = 340;
+        timing.scanline = PAL_PRERENDER_SCANLINE;
+        timing.pixel = LAST_DOT;
 
         timing.tick(false); // Advance to next scanline
         assert_eq!(
             timing.scanline(),
-            0,
+            FIRST_VISIBLE_SCANLINE,
             "PAL should wrap from scanline 311 to 0"
         );
         assert_eq!(timing.frame_count(), 1, "Frame count should increment");
@@ -401,8 +451,8 @@ mod tests {
         // Odd frame with rendering enabled: skip dot 340 on pre-render scanline
         // Set up: odd frame (frame_count = 1), pre-render scanline 261, dot 339
         timing.frame_count = 1; // Odd frame
-        timing.scanline = 261;
-        timing.pixel = 339;
+        timing.scanline = NTSC_PRERENDER_SCANLINE;
+        timing.pixel = ODD_FRAME_SKIP_DOT;
 
         // Skip decision uses a delayed rendering-enabled state.
         timing.rendering_enabled_d2 = true;
@@ -412,8 +462,8 @@ mod tests {
             skipped,
             "Should skip dot 340 on odd NTSC frame with rendering enabled"
         );
-        assert_eq!(timing.scanline(), 0, "Should jump to scanline 0");
-        assert_eq!(timing.pixel(), 0, "Should jump to pixel 0");
+        assert_eq!(timing.scanline(), FIRST_VISIBLE_SCANLINE, "Should jump to scanline 0");
+        assert_eq!(timing.pixel(), FIRST_VISIBLE_SCANLINE, "Should jump to pixel 0");
         assert_eq!(timing.frame_count(), 2, "Frame count should increment");
     }
 
@@ -423,14 +473,14 @@ mod tests {
 
         // Even frame: no skip, normal 341 dots
         timing.frame_count = 0; // Even frame
-        timing.scanline = 261;
-        timing.pixel = 339;
+        timing.scanline = NTSC_PRERENDER_SCANLINE;
+        timing.pixel = ODD_FRAME_SKIP_DOT;
 
         timing.rendering_enabled_d2 = true;
 
         let skipped = timing.tick(true);
         assert!(!skipped, "Should not skip on even NTSC frame");
-        assert_eq!(timing.pixel(), 340, "Should advance to pixel 340");
+        assert_eq!(timing.pixel(), LAST_DOT, "Should advance to pixel 340");
     }
 
     #[test]
@@ -439,12 +489,12 @@ mod tests {
 
         // PAL never skips frames
         timing.frame_count = 1; // Odd frame
-        timing.scanline = 311;
-        timing.pixel = 339;
+        timing.scanline = PAL_PRERENDER_SCANLINE;
+        timing.pixel = ODD_FRAME_SKIP_DOT;
 
         let skipped = timing.tick(true);
         assert!(!skipped, "PAL should never skip frames");
-        assert_eq!(timing.pixel(), 340, "Should advance to pixel 340");
+        assert_eq!(timing.pixel(), LAST_DOT, "Should advance to pixel 340");
     }
 
     #[test]
@@ -482,7 +532,7 @@ mod tests {
 
         // Simulate entire odd frame with rendering enabled
         for scanline in 0..262 {
-            let dots = if scanline == 261 { 340 } else { 341 }; // Pre-render scanline skips 1 dot
+            let dots = if scanline == NTSC_PRERENDER_SCANLINE { LAST_DOT } else { 341 }; // Pre-render scanline skips 1 dot
             for _ in 0..dots {
                 timing.tick(true);
             }
@@ -493,8 +543,8 @@ mod tests {
             cycles_elapsed, 89341,
             "NTSC odd frame with rendering should have 89341 cycles (89342 - 1)"
         );
-        assert_eq!(timing.scanline(), 0, "Should wrap back to scanline 0");
-        assert_eq!(timing.pixel(), 0, "Should wrap back to pixel 0");
+        assert_eq!(timing.scanline(), FIRST_VISIBLE_SCANLINE, "Should wrap back to scanline 0");
+        assert_eq!(timing.pixel(), FIRST_VISIBLE_SCANLINE, "Should wrap back to pixel 0");
         assert_eq!(timing.frame_count(), 2, "Frame count should be 2");
     }
 
