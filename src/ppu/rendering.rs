@@ -182,8 +182,8 @@ mod tests {
             None,
             true, // grayscale
             0,
-            |idx| idx + 0x20,
-            |val| (val, val, val),
+            |palette_index| palette_index + 0x20,
+            |color_value| (color_value, color_value, color_value),
         );
         assert_eq!(
             rendering.screen_buffer().get_pixel(10, 10),

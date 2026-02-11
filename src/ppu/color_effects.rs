@@ -13,6 +13,10 @@ pub(crate) fn apply_grayscale(color_value: u8, grayscale: bool) -> u8 {
 /// boosting the emphasized channels and attenuating the others to mimic NES tinting.
 #[inline(always)]
 pub(crate) fn apply_color_emphasis(r: u8, g: u8, b: u8, color_emphasis: u8) -> (u8, u8, u8) {
+    if color_emphasis == 0 {
+        return (r, g, b);
+    }
+
     let emphasize_red = (color_emphasis & 0x01) != 0;
     let emphasize_green = (color_emphasis & 0x02) != 0;
     let emphasize_blue = (color_emphasis & 0x04) != 0;
