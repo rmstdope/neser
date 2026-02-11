@@ -148,7 +148,7 @@ impl Timing {
     }
 
     /// Check if we're currently in a rendering cycle
-    /// Rendering cycles occur during visible scanlines (0-239) and pre-render scanline (261)
+    /// Rendering cycles occur during visible scanlines and pre-render scanline
     /// at pixel positions 0-256 and 328-336
     #[cfg(test)]
     pub fn is_rendering_cycle(&self) -> bool {
