@@ -1,7 +1,7 @@
 use crate::cartridge::{Cartridge, MirroringMode};
 use crate::console::{Nes, PpuRegisterState, PpuState, PpuTimingState, SpritesState, TvSystem};
-use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
 use crate::ppu::color_effects::apply_grayscale;
+use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
 use crate::trace_ppu;
 use std::cell::RefCell;
 use std::rc::Rc;

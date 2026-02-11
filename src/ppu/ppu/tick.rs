@@ -71,8 +71,7 @@ fn tick_timing(ppu: &mut Ppu) {
 
     // New frame begins when the pre-render scanline wraps back to scanline 0.
     // This also includes the NTSC odd-frame skip path.
-    let frame_wrapped =
-        skipped || (scanline_before_tick == prerender && pixel_before_tick == 340);
+    let frame_wrapped = skipped || (scanline_before_tick == prerender && pixel_before_tick == 340);
 
     if frame_wrapped {
         trace_ppu!(1; "frame wrap y={} x={} frame={} cyc={}",
@@ -484,8 +483,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
             let (r, g, b) = Nes::lookup_system_palette(color_value);
 
             // Apply color emphasis/tint
-            let (final_r, final_g, final_b) =
-                apply_color_emphasis(r, g, b, color_emphasis);
+            let (final_r, final_g, final_b) = apply_color_emphasis(r, g, b, color_emphasis);
 
             // Write pixel to screen buffer
             ppu.rendering
@@ -517,8 +515,7 @@ fn tick_pixel_output(ppu: &mut Ppu) {
                     // Sprites render starting at scanline (Y+1), so check range
                     // Use actual sprite height (8 or 16) from PPUCTRL
                     let sprite_render_start = (sprite_0_y as u16).wrapping_add(1);
-                    let sprite_render_end =
-                        sprite_render_start.wrapping_add(sprite_height as u16);
+                    let sprite_render_end = sprite_render_start.wrapping_add(sprite_height as u16);
                     let in_y_range =
                         scanline >= sprite_render_start && scanline < sprite_render_end;
 

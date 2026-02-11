@@ -66,8 +66,7 @@ impl Rendering {
         let (mut r, mut g, mut b) = system_palette_lookup(color_value);
 
         // Apply color emphasis/tint
-        (r, g, b) =
-            crate::ppu::color_effects::apply_color_emphasis(r, g, b, color_emphasis);
+        (r, g, b) = crate::ppu::color_effects::apply_color_emphasis(r, g, b, color_emphasis);
 
         // Write to the screen buffer
         self.screen_buffer.set_pixel(screen_x, screen_y, r, g, b);
@@ -184,11 +183,7 @@ mod tests {
             0,
             // Distinct palette values ensure masking happens on the palette value (0 -> 0x00, 1 -> 0x2F)
             |palette_index| {
-                if palette_index == 0 {
-                    0x00
-                } else {
-                    0x2F
-                }
+                if palette_index == 0 { 0x00 } else { 0x2F }
             },
             |color_value| (color_value, color_value, color_value),
         );
