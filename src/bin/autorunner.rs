@@ -1,5 +1,5 @@
 use neser::cartridge::Cartridge;
-use neser::console::{Config, Nes, ParseResult};
+use neser::console::{Config, Nes, ParseResult, log_rom_tv_system_selection};
 use neser::input::Button;
 use neser::integration_tests::autorun::{
     AUTORUN_VERSION, AutorunFile, AutorunFrame, autorun_path_for_rom, crc32, load_autorun_file,
@@ -87,13 +87,18 @@ enum ExitReason {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let Some((mode, rom_path, config, headless, overwrite_recording, extend)) = parse_args(&args)?
+    let Some((mode, rom_path, mut config, headless, overwrite_recording, extend)) =
+        parse_args(&args)?
     else {
         return Ok(());
     };
 
-    let mut nes = Nes::new(config.clone());
     let cart = Cartridge::load_from_file(&rom_path)?;
+    let rom_tv_system = cart.rom_tv_system();
+    let applied = config.apply_rom_tv_system(rom_tv_system);
+    log_rom_tv_system_selection(&config, rom_tv_system, applied);
+
+    let mut nes = Nes::new(config.clone());
     nes.insert_cartridge(cart);
     nes.reset(false);
 

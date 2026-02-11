@@ -26,6 +26,23 @@ pub enum CartridgeError {
     Io(io::Error),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RomTvSystem {
+    Ntsc,
+    Pal,
+    Unknown,
+}
+
+impl RomTvSystem {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RomTvSystem::Ntsc => "ntsc",
+            RomTvSystem::Pal => "pal",
+            RomTvSystem::Unknown => "unknown",
+        }
+    }
+}
+
 impl fmt::Display for CartridgeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -65,6 +82,8 @@ pub struct Cartridge {
 
     crc32: u32,
 
+    rom_tv_system: RomTvSystem,
+
     rom_path: Option<PathBuf>,
     save_path: Option<PathBuf>,
     battery_backed_prg_ram: bool,
@@ -93,6 +112,16 @@ impl Cartridge {
         // iNES v1 header byte 8 encodes PRG-RAM size in 8KB units.
         // A value of 0 commonly means 8KB.
         let prg_ram_banks_8k = data[8].max(1);
+
+        let flags9 = data[9];
+
+        let rom_tv_system = if (flags7 & 0x0C) == 0x08 {
+            RomTvSystem::Unknown
+        } else if (flags9 & 0x01) != 0 {
+            RomTvSystem::Pal
+        } else {
+            RomTvSystem::Ntsc
+        };
 
         // Battery-backed PRG-RAM present (iNES v1): bit 1 of flags6.
         let battery_backed_prg_ram = (flags6 & 0x02) != 0;
@@ -153,6 +182,7 @@ impl Cartridge {
         Ok(Self {
             mapper,
             crc32,
+            rom_tv_system,
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram,
@@ -251,6 +281,10 @@ impl Cartridge {
         self.crc32
     }
 
+    pub fn rom_tv_system(&self) -> RomTvSystem {
+        self.rom_tv_system
+    }
+
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
@@ -260,6 +294,7 @@ impl Cartridge {
         Self {
             mapper,
             crc32,
+            rom_tv_system: RomTvSystem::Ntsc,
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram: false,
@@ -271,6 +306,7 @@ impl Cartridge {
         Self {
             mapper,
             crc32: 0,
+            rom_tv_system: RomTvSystem::Ntsc,
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram: false,
@@ -323,6 +359,46 @@ mod tests {
         rom.extend(vec![0xAA; prg_size]);
 
         // Add CHR ROM data
+        let chr_size = chr_rom_banks as usize * 8192;
+        rom.extend(vec![0xBB; chr_size]);
+
+        rom
+    }
+
+    fn create_test_rom_with_flags9(
+        prg_rom_banks: u8,
+        chr_rom_banks: u8,
+        flags6: u8,
+        flags7: u8,
+        flags9: u8,
+        include_trainer: bool,
+    ) -> Vec<u8> {
+        let mut rom = vec![
+            b'N',
+            b'E',
+            b'S',
+            0x1A,          // iNES header
+            prg_rom_banks, // PRG ROM size (16KB units)
+            chr_rom_banks, // CHR ROM size (8KB units)
+            flags6,        // Flags 6
+            flags7,        // Flags 7
+            0,             // Flags 8 (PRG RAM size)
+            flags9,        // Flags 9 (TV system)
+            0,             // Flags 10
+            0,
+            0,
+            0,
+            0,
+            0, // Reserved (unused)
+        ];
+
+        if include_trainer {
+            rom.extend(vec![0x00; 512]);
+        }
+
+        let prg_size = prg_rom_banks as usize * 16384;
+        rom.extend(vec![0xAA; prg_size]);
+
         let chr_size = chr_rom_banks as usize * 8192;
         rom.extend(vec![0xBB; chr_size]);
 
@@ -479,6 +555,27 @@ mod tests {
         // Verify CHR ROM can be read (only first 8KB used by NROM)
         assert_eq!(cartridge.mapper().read_chr(0x0000), 0xBB);
         assert_eq!(cartridge.mapper().read_chr(0x1FFF), 0xBB);
+    }
+
+    #[test]
+    fn test_rom_tv_system_defaults_to_ntsc() {
+        let rom_data = create_test_rom_with_flags9(1, 1, 0, 0, 0, false);
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert_eq!(cartridge.rom_tv_system(), RomTvSystem::Ntsc);
+    }
+
+    #[test]
+    fn test_rom_tv_system_parses_pal_flag() {
+        let rom_data = create_test_rom_with_flags9(1, 1, 0, 0, 0x01, false);
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert_eq!(cartridge.rom_tv_system(), RomTvSystem::Pal);
+    }
+
+    #[test]
+    fn test_rom_tv_system_unknown_for_nes2_header() {
+        let rom_data = create_test_rom_with_flags9(1, 1, 0, 0x08, 0x01, false);
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert_eq!(cartridge.rom_tv_system(), RomTvSystem::Unknown);
     }
 
     #[test]

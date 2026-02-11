@@ -57,6 +57,13 @@ impl TvSystem {
     pub fn screen_height(&self) -> u32 {
         240
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TvSystem::Ntsc => "ntsc",
+            TvSystem::Pal => "pal",
+        }
+    }
 }
 
 pub struct Nes {

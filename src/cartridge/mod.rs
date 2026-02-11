@@ -27,7 +27,7 @@ mod uxrom;
 mod vrc2_vrc4;
 mod vrc6;
 
-pub use cartridge::{Cartridge, MirroringMode};
+pub use cartridge::{Cartridge, MirroringMode, RomTvSystem};
 #[allow(unused_imports)]
 pub use common::{BankedRom, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
 #[allow(unused_imports)]

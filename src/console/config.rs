@@ -291,6 +291,8 @@ pub enum ParseResult {
 pub struct Config {
     /// TV system (NTSC or PAL).
     pub tv_system: TvSystem,
+    /// Whether the TV system was explicitly configured.
+    pub tv_system_explicit: bool,
     /// Whether audio is enabled.
     pub audio_enabled: bool,
     /// Whether VSync is enabled.
@@ -356,6 +358,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             tv_system: TvSystem::Ntsc,
+            tv_system_explicit: false,
             audio_enabled: true,
             vsync_enabled: true,
             gamepads_enabled: true,
@@ -450,8 +453,10 @@ impl Config {
         if let Some(tv_system) = Self::parse_string_arg(args, "--tv-system") {
             if tv_system.eq_ignore_ascii_case("pal") {
                 self.tv_system = TvSystem::Pal;
+                self.tv_system_explicit = true;
             } else if tv_system.eq_ignore_ascii_case("ntsc") {
                 self.tv_system = TvSystem::Ntsc;
+                self.tv_system_explicit = true;
             } else {
                 return Err(format!(
                     "Invalid --tv-system value: '{}'. Valid options are: ntsc, pal",
@@ -894,8 +899,10 @@ impl Config {
             "tv_system" => {
                 if value.eq_ignore_ascii_case("pal") {
                     self.tv_system = TvSystem::Pal;
+                    self.tv_system_explicit = true;
                 } else if value.eq_ignore_ascii_case("ntsc") {
                     self.tv_system = TvSystem::Ntsc;
+                    self.tv_system_explicit = true;
                 }
             }
             "audio" => {
@@ -1078,6 +1085,24 @@ impl Config {
             _ => {} // Unknown keys are silently ignored
         }
         Ok(())
+    }
+
+    pub fn apply_rom_tv_system(&mut self, rom_tv_system: crate::cartridge::RomTvSystem) -> bool {
+        if self.tv_system_explicit {
+            return false;
+        }
+
+        match rom_tv_system {
+            crate::cartridge::RomTvSystem::Ntsc => {
+                self.tv_system = TvSystem::Ntsc;
+                true
+            }
+            crate::cartridge::RomTvSystem::Pal => {
+                self.tv_system = TvSystem::Pal;
+                true
+            }
+            crate::cartridge::RomTvSystem::Unknown => false,
+        }
     }
 
     /// Parse a boolean value from config file.
@@ -1265,6 +1290,35 @@ mod tests {
         ];
         let config = parse_config(args);
         assert_eq!(config.tv_system, TvSystem::Pal);
+        assert!(config.tv_system_explicit);
+    }
+
+    #[test]
+    fn test_config_apply_rom_tv_system_when_not_explicit() {
+        let mut config = Config::default();
+        let applied = config.apply_rom_tv_system(crate::cartridge::RomTvSystem::Pal);
+        assert!(applied);
+        assert_eq!(config.tv_system, TvSystem::Pal);
+    }
+
+    #[test]
+    fn test_config_apply_rom_tv_system_does_not_override_explicit() {
+        let mut config = Config {
+            tv_system: TvSystem::Pal,
+            tv_system_explicit: true,
+            ..Default::default()
+        };
+        let applied = config.apply_rom_tv_system(crate::cartridge::RomTvSystem::Ntsc);
+        assert!(!applied);
+        assert_eq!(config.tv_system, TvSystem::Pal);
+    }
+
+    #[test]
+    fn test_config_apply_rom_tv_system_unknown_keeps_default() {
+        let mut config = Config::default();
+        let applied = config.apply_rom_tv_system(crate::cartridge::RomTvSystem::Unknown);
+        assert!(!applied);
+        assert_eq!(config.tv_system, TvSystem::Ntsc);
     }
 
     #[test]
@@ -1663,6 +1717,7 @@ mod tests {
         let mut config = Config::default();
         config.apply_config_value("tv_system", "pal").unwrap();
         assert_eq!(config.tv_system, TvSystem::Pal);
+        assert!(config.tv_system_explicit);
     }
 
     #[test]
@@ -1673,6 +1728,7 @@ mod tests {
         };
         config.apply_config_value("tv_system", "ntsc").unwrap();
         assert_eq!(config.tv_system, TvSystem::Ntsc);
+        assert!(config.tv_system_explicit);
     }
 
     #[test]

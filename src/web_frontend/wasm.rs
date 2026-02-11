@@ -1,5 +1,5 @@
 use crate::cartridge::Cartridge;
-use crate::console::{Config, Nes, SaveState};
+use crate::console::{Config, Nes, SaveState, log_rom_tv_system_selection};
 use crate::input::{Button, ControllerType};
 use wasm_bindgen::prelude::*;
 
@@ -38,9 +38,14 @@ impl WasmNes {
     /// Load a ROM from raw bytes.
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), JsValue> {
-        self.nes = Nes::new(Config::default());
+        let mut config = Config::default();
         self.rom_loaded = false;
         let cart = Cartridge::new(rom).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let rom_tv_system = cart.rom_tv_system();
+        let applied = config.apply_rom_tv_system(rom_tv_system);
+        log_rom_tv_system_selection(&config, rom_tv_system, applied);
+
+        self.nes = Nes::new(config);
         self.nes.insert_cartridge(cart);
         self.nes.reset(false);
         self.rom_loaded = true;
