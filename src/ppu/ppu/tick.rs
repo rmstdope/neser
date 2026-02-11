@@ -86,12 +86,10 @@ fn tick_timing(ppu: &mut Ppu) {
         ppu.with_mapper_mut(|mapper| mapper.ppu_end_frame());
     }
 
-    let scanline = ppu.timing.scanline();
-    let is_rendering_enabled = ppu.registers.is_rendering_enabled();
-
     // Notify mapper at scanline boundaries (start of scanline: pixel == 0).
     // This is a PPU-driven hook for mappers with scanline counters (e.g., MMC5).
     if ppu.timing.pixel() == 0 {
+        let scanline = ppu.timing.scanline();
         ppu.with_mapper_mut(|mapper| mapper.ppu_scanline(scanline, is_rendering_enabled));
     }
 
