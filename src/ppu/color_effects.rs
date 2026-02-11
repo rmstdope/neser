@@ -1,3 +1,5 @@
+/// Apply PPUMASK grayscale behavior by masking palette output to the high brightness bits (0x30),
+/// preserving luminance while removing chroma.
 #[inline(always)]
 pub(crate) fn apply_grayscale(color_value: u8, grayscale: bool) -> u8 {
     if grayscale {
@@ -7,6 +9,8 @@ pub(crate) fn apply_grayscale(color_value: u8, grayscale: bool) -> u8 {
     }
 }
 
+/// Apply PPUMASK color emphasis bits (0x01 = red, 0x02 = green, 0x04 = blue) to RGB output,
+/// boosting the emphasized channels and attenuating the others to mimic NES tinting.
 #[inline(always)]
 pub(crate) fn apply_color_emphasis(r: u8, g: u8, b: u8, color_emphasis: u8) -> (u8, u8, u8) {
     let emphasize_red = (color_emphasis & 0x01) != 0;
