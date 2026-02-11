@@ -85,6 +85,9 @@ impl Ppu {
         }
 
         self.with_mapper_mut(|mapper| {
+            // MMC3's A12 filter requires several PPU cycles with A12 low before
+            // a rising edge will clock the IRQ counter; replay the old address
+            // to simulate those cycles when the CPU manually changes PPUADDR/PPUDATA.
             for _ in 0..8 {
                 mapper.ppu_address_changed(old_addr);
             }
