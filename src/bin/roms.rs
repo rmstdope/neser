@@ -1,22 +1,6 @@
-fn parse_nes2_ram_size(nibble: u8) -> Option<usize> {
-    if nibble == 0 {
-        None
-    } else {
-        Some(64usize << nibble)
-    }
-}
-
-fn parse_nes2_rom_size_bytes(lsb: u8, msb_nibble: u8, unit_bytes: usize) -> usize {
-    if msb_nibble == 0x0F {
-        let exponent = (lsb >> 4) as usize;
-        let multiplier = (lsb & 0x0F) as usize;
-        let base = 1usize << (exponent + 10);
-        base * (multiplier * 2 + 1)
-    } else {
-        let size_units = ((msb_nibble as usize) << 8) | lsb as usize;
-        size_units * unit_bytes
-    }
-}
+// Helper functions for NES2 size parsing were moved to the centralized parser
+// in `src/cartridge/ines.rs`. The local copies were removed to avoid
+// dead-code warnings.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConsoleType {
@@ -59,127 +43,49 @@ struct Rom {
 }
 
 fn parse_rom_header(header: &[u8; 16]) -> Option<Rom> {
-    if &header[0..4] != b"NES\x1A" {
-        return None;
-    }
+    // Delegate parsing to centralized parser and convert to local `Rom` struct.
+    let parsed = neser::cartridge::parse_header(header)?;
 
-    let flags6 = header[6];
-    let flags7 = header[7];
-    let nes2 = (flags7 & 0x0C) == 0x08;
-
-    let header_version = if nes2 { "2.0" } else { "1.0" };
-    let has_trainer = (flags6 & 0x04) != 0;
-    let battery_backed_prg_ram = (flags6 & 0x02) != 0;
-    let mirroring = if (flags6 & 0x08) != 0 {
-        Mirroring::FourScreen
-    } else if (flags6 & 0x01) != 0 {
-        Mirroring::Vertical
-    } else {
-        Mirroring::Horizontal
+    let console_type = match parsed.console_type {
+        neser::cartridge::ConsoleType::NesFamicom => ConsoleType::NesFamicom,
+        neser::cartridge::ConsoleType::VsSystem => ConsoleType::VsSystem,
+        neser::cartridge::ConsoleType::Playchoice10 => ConsoleType::Playchoice10,
+        neser::cartridge::ConsoleType::Extended(v) => ConsoleType::Extended(v),
     };
 
-    let (mapper, submapper) = if nes2 {
-        let mapper =
-            (flags6 as u16 >> 4) | ((flags7 as u16) & 0xF0) | (((header[8] & 0x0F) as u16) << 8);
-        let submapper = header[8] >> 4;
-        (mapper, submapper)
-    } else {
-        let mapper = (flags6 >> 4) | (flags7 & 0xF0);
-        (mapper as u16, 0)
+    let mirroring = match parsed.mirroring {
+        neser::cartridge::Mirroring::Horizontal => Mirroring::Horizontal,
+        neser::cartridge::Mirroring::Vertical => Mirroring::Vertical,
+        neser::cartridge::Mirroring::FourScreen => Mirroring::FourScreen,
     };
 
-    let console_type = if nes2 {
-        match flags7 & 0x03 {
-            0x00 => ConsoleType::NesFamicom,
-            0x01 => ConsoleType::VsSystem,
-            0x02 => ConsoleType::Playchoice10,
-            _ => ConsoleType::Extended(header[13]),
-        }
-    } else if (flags7 & 0x01) != 0 {
-        ConsoleType::VsSystem
-    } else if (flags7 & 0x02) != 0 {
-        ConsoleType::Playchoice10
-    } else {
-        ConsoleType::NesFamicom
+    let timing_mode = match parsed.timing_mode {
+        neser::cartridge::TimingMode::Ntsc => TimingMode::Ntsc,
+        neser::cartridge::TimingMode::Pal => TimingMode::Pal,
+        neser::cartridge::TimingMode::MultiRegion => TimingMode::MultiRegion,
+        neser::cartridge::TimingMode::Dendy => TimingMode::Dendy,
+        neser::cartridge::TimingMode::Unknown(v) => TimingMode::Unknown(v),
     };
-
-    let (prg_rom_size_bytes, chr_rom_size_bytes) = if nes2 {
-        let prg_msb = header[9] & 0x0F;
-        let chr_msb = header[9] >> 4;
-        (
-            parse_nes2_rom_size_bytes(header[4], prg_msb, 16 * 1024),
-            parse_nes2_rom_size_bytes(header[5], chr_msb, 8 * 1024),
-        )
-    } else {
-        (
-            header[4] as usize * 16 * 1024,
-            header[5] as usize * 8 * 1024,
-        )
-    };
-
-    let (prg_ram_size_bytes, prg_nvram_size_bytes, chr_ram_size_bytes, chr_nvram_size_bytes) =
-        if nes2 {
-            let prg_ram = parse_nes2_ram_size(header[10] & 0x0F);
-            let prg_nvram = parse_nes2_ram_size(header[10] >> 4);
-            let chr_ram = parse_nes2_ram_size(header[11] & 0x0F);
-            let chr_nvram = parse_nes2_ram_size(header[11] >> 4);
-            (prg_ram, prg_nvram, chr_ram, chr_nvram)
-        } else {
-            let prg_ram = if header[8] == 0 {
-                Some(8 * 1024)
-            } else {
-                Some(header[8] as usize * 8 * 1024)
-            };
-            let chr_ram = if chr_rom_size_bytes == 0 {
-                Some(8 * 1024)
-            } else {
-                None
-            };
-            (prg_ram, None, chr_ram, None)
-        };
-
-    let timing_mode = if nes2 {
-        match header[12] & 0x03 {
-            0x00 => TimingMode::Ntsc,
-            0x01 => TimingMode::Pal,
-            0x02 => TimingMode::MultiRegion,
-            0x03 => TimingMode::Dendy,
-            value => TimingMode::Unknown(value),
-        }
-    } else if (header[9] & 0x01) != 0 {
-        TimingMode::Pal
-    } else {
-        TimingMode::Ntsc
-    };
-
-    let (vs_ppu_type, vs_hardware_type) = if matches!(console_type, ConsoleType::VsSystem) && nes2 {
-        (Some(header[13] & 0x0F), Some(header[13] >> 4))
-    } else {
-        (None, None)
-    };
-
-    let misc_roms = if nes2 { header[14] } else { 0 };
-    let default_expansion_device = if nes2 { header[15] } else { 0 };
 
     Some(Rom {
-        mapper,
-        submapper,
+        mapper: parsed.mapper,
+        submapper: parsed.submapper,
         console_type,
         mirroring,
-        has_trainer,
-        header_version,
-        battery_backed_prg_ram,
-        prg_rom_size_bytes,
-        chr_rom_size_bytes,
-        prg_ram_size_bytes,
-        prg_nvram_size_bytes,
-        chr_ram_size_bytes,
-        chr_nvram_size_bytes,
+        has_trainer: parsed.has_trainer,
+        header_version: parsed.header_version,
+        battery_backed_prg_ram: parsed.battery_backed_prg_ram,
+        prg_rom_size_bytes: parsed.prg_rom_size_bytes,
+        chr_rom_size_bytes: parsed.chr_rom_size_bytes,
+        prg_ram_size_bytes: parsed.prg_ram_size_bytes,
+        prg_nvram_size_bytes: parsed.prg_nvram_size_bytes,
+        chr_ram_size_bytes: parsed.chr_ram_size_bytes,
+        chr_nvram_size_bytes: parsed.chr_nvram_size_bytes,
         timing_mode,
-        vs_ppu_type,
-        vs_hardware_type,
-        misc_roms,
-        default_expansion_device,
+        vs_ppu_type: parsed.vs_ppu_type,
+        vs_hardware_type: parsed.vs_hardware_type,
+        misc_roms: parsed.misc_roms,
+        default_expansion_device: parsed.default_expansion_device,
         rom_crc32: None,
     })
 }
