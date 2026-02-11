@@ -9,8 +9,6 @@ pub struct MasterClock {
     ppu_clock: u64,
     cpu_divider: u64,
     ppu_divider: u64,
-    master_ticks_before_cpu: u64,
-    master_ticks_after_cpu: u64,
 }
 
 impl MasterClock {
@@ -21,8 +19,6 @@ impl MasterClock {
             ppu_clock: 0,
             cpu_divider: if tv_system == TvSystem::Ntsc { 12 } else { 16 },
             ppu_divider: if tv_system == TvSystem::Ntsc { 4 } else { 5 },
-            master_ticks_before_cpu: if tv_system == TvSystem::Ntsc { 6 } else { 8 },
-            master_ticks_after_cpu: if tv_system == TvSystem::Ntsc { 6 } else { 8 },
         }
     }
 

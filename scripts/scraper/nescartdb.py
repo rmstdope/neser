@@ -1,14 +1,15 @@
-from typing import Dict, Optional, List, Iterator, Union
-from urllib.request import Request, urlopen
-from rom_database import RomDbKey, ConsoleType, ControllerType
+""" Scraper for nescartdb.com """
 import re
 from pathlib import Path
+from typing import Dict, Iterator, List, Optional, Union
+from urllib.request import Request, urlopen
+
+from bs4 import BeautifulSoup
 
 try:
-    from bs4 import BeautifulSoup
-except ImportError:  # pragma: no cover - dependency handled by main
-    BeautifulSoup = None
-
+    from .rom_database import ConsoleType, ControllerType, RomDbKey
+except ImportError:  # pragma: no cover - allow running as a script
+    from rom_database import ConsoleType, ControllerType, RomDbKey
 
 BASE_URL = "https://nescartdb.com/profile/view/{}"
 
@@ -32,12 +33,12 @@ class NesCartDb:
         - An int or a list of ints (kept for backward compatibility)
         """
         # Normalize input into an iterator of ints
-        MAX_ID = 4800
+        max_id = 4800
         ids_list: List[int]
         if isinstance(ids, str):
             s = ids.strip().lower()
             if s == "all":
-                ids_list = list(range(1, MAX_ID + 1))
+                ids_list = list(range(1, max_id + 1))
             else:
                 tokens = [token.strip() for token in s.split(",") if token.strip()]
                 ids_list = []
@@ -50,7 +51,7 @@ class NesCartDb:
                         if start > end:
                             start, end = end, start
                         start = max(0, start)
-                        end = min(MAX_ID, end)
+                        end = min(max_id, end)
                         ids_list.extend(range(start, end + 1))
                     elif token.isdigit():
                         ids_list.append(int(token))
@@ -89,7 +90,7 @@ class NesCartDb:
         return re.sub(r"\s+", " ", text.strip().rstrip(":")).lower()
 
     @staticmethod
-    def _extract_key_value_pairs(soup: "BeautifulSoup") -> Dict[str, str]:
+    def _extract_key_value_pairs(soup: BeautifulSoup) -> Dict[str, str]:
         values: Dict[str, str] = {}
         for table in soup.find_all("table"):
             for row in table.find_all("tr"):
@@ -293,8 +294,8 @@ class NesCartDb:
 
     @staticmethod
     def _parse_periphereals(rom_id: int, value: str) -> Optional[int]:
-        # If there are more than one value, one is bound to be Famicom/NES controller, so ignore that
-        # Accommodate for an empty value bug on the web page
+        # If there are more than one value, one is bound to be Famicom/NES controller,
+        # so ignore that. Accommodate for an empty value bug on the web page
         value = ",".join(v.strip() for v in value.split(",") if v.strip())
         if ',' in value:
             for val in value.split(','):
@@ -383,7 +384,8 @@ class NesCartDb:
 
     def _patch(self, rom_id: int, record: Optional[Dict[str, str]]) -> None:
         """Apply hardcoded patches for known bad/missing data."""
-        # Startropics I and II (41, 814, 1896, 2449, 2769, 2780, 4171, 4365) has a 1kB PRG RAM in the MMC6 chip
+        # Startropics I and II (41, 814, 1896, 2449, 2769, 2780, 4171, 4365) has a 1kB PRG RAM in
+        # the MMC6 chip.
         # As it also has a battery, it will be converted to NVRAM later in the parsing
         if rom_id in [41, 814, 1896, 2449, 2769, 2780, 4171, 4365]:
             record[RomDbKey.PRG_RAM_SIZE.value] = 1024
@@ -402,9 +404,11 @@ class NesCartDb:
         # Kyuukyoku Harikiri Stadium (ROM_IDs 1765, 1766, 3071, 3147, 3148, 3149, 3150, 3303) too
         # Yamamura Misa Suspense: Kyouto Ryuu no Tera Satsujin Jiken (3954) too
         # Minelvaton Saga: Ragon no Fukkatsu (3955) too
-        if rom_id in [1559, 3151, 3152, 3153, 3300, 1758, 1762, 1763, 3163, 1765, 1766, 3071, 3147, 3148, 3149, 3150, 3303, 3954, 3955]:
+        if rom_id in [1559, 3151, 3152, 3153, 3300, 1758, 1762, 1763, 3163, 1765, 1766, 3071,
+                        3147, 3148, 3149, 3150, 3303, 3954, 3955]:
             record[RomDbKey.PRG_NVRAM_SIZE.value] = 128
-        # Kyuukyoku Harikiri Stadium: Heisei Gannen Ban (1767, 2254, 3161) has a Taito X1-017 with Save RAM
+        # Kyuukyoku Harikiri Stadium: Heisei Gannen Ban (1767, 2254, 3161) has a Taito X1-017 with
+        # Save RAM
         # Kyuukyoku Harikiri Koushien (3956) too
         # Kyuukyoku Harikiri Stadium III (3961) too
         # SD Keiji: Blader (3989) too
@@ -428,11 +432,12 @@ class NesCartDb:
         # Booky Man (2647) too
         if rom_id in [2639, 2640, 2647]:
             record[RomDbKey.MAPPER.value] = 0
-        # Galactic Crusader (2949) could be either mapper 79 or 146. Both will work. Chosing 79 as 146
-        # for a non-switching 8kB ROMs seems odd
+        # Galactic Crusader (2949) could be either mapper 79 or 146. Both will work.
+        # Choosing 79 as 146 for a non-switching 8kB ROMs seems odd
         if rom_id == 2949:
             record[RomDbKey.MAPPER.value] = 79
-        # Solstics have different names in different languagues, but with same CRC. Align on English.
+        # Solstics have different names in different languages, but with same CRC.
+        # Align on English.
         if rom_id in [1617, 1998, 2018]:
             record[RomDbKey.NAME.value] = "Solstice: The Quest for the Staff of Demnos"
         # The same for Solar Jetman
@@ -485,7 +490,8 @@ class NesCartDb:
         # One of The Simpsons:  Bart vs. The Space Mutants is spelled with a small t in 'the'
         if rom_id == 4394:
             record[RomDbKey.NAME.value] = "The Simpsons:  Bart vs. The Space Mutants"
-        # Same game different names in different regions. Align on the more common name, which is the English one.
+        # Same game different names in different regions. Align on the more common name,
+        # which is the English one.
         if rom_id in [4424, 4461]:
             record[RomDbKey.NAME.value] = "Goal! 2"
 

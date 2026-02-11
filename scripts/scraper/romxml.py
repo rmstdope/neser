@@ -1,7 +1,11 @@
 """ Stream parser for ROM XML files """
 import xml.etree.ElementTree as ET
 from typing import Dict, Optional
-from rom_database import ControllerType, RomDbKey
+
+try:
+    from .rom_database import ControllerType, RomDbKey
+except ImportError:  # pragma: no cover - allow running as a script
+    from rom_database import ControllerType, RomDbKey
 
 
 class RomXml:
@@ -183,8 +187,8 @@ class RomXml:
         # on nescart
         if crc == "10C8F2FA":
             record[RomDbKey.PRG_NVRAM_SIZE.value] = 8192
-        # Superman Prototype also have 8kB of PRG RAM, but the battery slot is not populated according to PCB images,
-        # so we won't set the battery flag
+        # Superman Prototype also have 8kB of PRG RAM, but the battery slot is not populated
+        # according to PCB images, so we won't set the battery flag
         if crc == "47F7F860":
             record[RomDbKey.PRG_RAM_SIZE.value] = 8192
         # Kyuukyoku Harikiri Stadium: Heisei Gannen Ban (0BBF80CB) has a X1-017 with 1kB Save RAM
@@ -203,8 +207,9 @@ class RomXml:
         # Stadium Events (FCE71311, 0DA28A50)
         if crc in ["D74B2719", "5734EB9E", "AF4010EA", "9E382EBF", "FCE71311", "0DA28A50"]:
             record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.POWER_PAD_SIDE_A
-        # No Japaneese titles ever used side B of the Family Trainer Mat
-        if record.get(RomDbKey.EXPANSION_TYPE.value) == str(ControllerType.FAMILY_TRAINER_SIDE_B.value):
+        # No Japanese titles ever used side B of the Family Trainer Mat
+        if record.get(RomDbKey.EXPANSION_TYPE.value) == \
+            str(ControllerType.FAMILY_TRAINER_SIDE_B.value):
             record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.FAMILY_TRAINER_SIDE_A.value
         # Quattro Sports (CCCAF368) did not use four score, but needed an Aladdin Deck enhancer
         if crc == "CCCAF368":
