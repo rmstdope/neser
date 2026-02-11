@@ -80,6 +80,10 @@ impl Ppu {
             return;
         }
 
+        if self.cartridge.is_none() {
+            return;
+        }
+
         self.with_mapper_mut(|mapper| {
             for _ in 0..8 {
                 mapper.ppu_address_changed(old_addr);
@@ -1321,27 +1325,27 @@ mod tests {
         ppu.write_address(0x3F, false);
         ppu.write_address(0x20, false);
 
-        let mut expected = vec![0u16; 8];
-        expected.push(0x3F20);
-        assert_eq!(*calls.borrow(), expected);
+        let mut expected_ppuaddr_calls = vec![0u16; 8];
+        expected_ppuaddr_calls.push(0x3F20);
+        assert_eq!(*calls.borrow(), expected_ppuaddr_calls);
 
         calls.borrow_mut().clear();
         let mut state = ppu.debug_state();
         state.registers.v = 0x2000;
         ppu.set_debug_state(state);
         ppu.read_data();
-        let mut expected = vec![0x2000; 8];
-        expected.push(0x2001);
-        assert_eq!(*calls.borrow(), expected);
+        let mut expected_read_calls = vec![0x2000; 8];
+        expected_read_calls.push(0x2001);
+        assert_eq!(*calls.borrow(), expected_read_calls);
 
         calls.borrow_mut().clear();
         let mut state = ppu.debug_state();
         state.registers.v = 0x2000;
         ppu.set_debug_state(state);
         ppu.write_data(0x12);
-        let mut expected = vec![0x2000; 8];
-        expected.push(0x2001);
-        assert_eq!(*calls.borrow(), expected);
+        let mut expected_write_calls = vec![0x2000; 8];
+        expected_write_calls.push(0x2001);
+        assert_eq!(*calls.borrow(), expected_write_calls);
     }
 
     #[test]
