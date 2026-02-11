@@ -59,10 +59,8 @@ impl Rendering {
         let (palette_index, sprite_0_hit) = select_palette_index(bg_pixel, sprite_pixel);
 
         // Look up the color in the palette RAM
-        let mut color_value = palette_lookup(palette_index);
-
-        // Apply grayscale mode if enabled
-        color_value = crate::ppu::color_effects::apply_grayscale(color_value, grayscale);
+        let color_value =
+            crate::ppu::color_effects::apply_grayscale(palette_lookup(palette_index), grayscale);
 
         // Convert to RGB using the system palette
         let (mut r, mut g, mut b) = system_palette_lookup(color_value);
