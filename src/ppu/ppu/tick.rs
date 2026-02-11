@@ -3,12 +3,12 @@ use crate::console::{Nes, TvSystem};
 use crate::debugging::ppu_trace_level;
 use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 use crate::ppu::timing::{
-    BG_PREFETCH_END, BG_PREFETCH_START, DUMMY_NT_FETCH_1, DUMMY_NT_FETCH_2,
-    FINE_Y_INCREMENT_PIXEL, FIRST_DOT, FIRST_VISIBLE_PIXEL, FIRST_VISIBLE_SCANLINE,
-    HORIZONTAL_BITS_COPY_PIXEL, LAST_DOT, LAST_VISIBLE_PIXEL, LAST_VISIBLE_SCANLINE_PLUS_ONE,
-    NTSC_PRERENDER_SCANLINE, PAL_PRERENDER_SCANLINE, SPRITE_TILE_LOAD_END,
-    SPRITE_TILE_LOAD_START, VBLANK_NMI_LATCH_PIXEL, VBLANK_START_SCANLINE,
-    VERTICAL_BITS_COPY_END, VERTICAL_BITS_COPY_START,
+    BG_PREFETCH_END, BG_PREFETCH_SHIFT_START, BG_PREFETCH_START, DUMMY_NT_FETCH_1,
+    DUMMY_NT_FETCH_2, FINE_Y_INCREMENT_PIXEL, FIRST_DOT, FIRST_VISIBLE_PIXEL,
+    FIRST_VISIBLE_SCANLINE, HORIZONTAL_BITS_COPY_PIXEL, LAST_DOT, LAST_VISIBLE_PIXEL,
+    LAST_VISIBLE_SCANLINE_PLUS_ONE, NTSC_PRERENDER_SCANLINE, PAL_PRERENDER_SCANLINE,
+    SPRITE_TILE_LOAD_END, SPRITE_TILE_LOAD_START, VBLANK_NMI_LATCH_PIXEL,
+    VBLANK_START_SCANLINE, VERTICAL_BITS_COPY_END, VERTICAL_BITS_COPY_START,
 };
 use crate::trace_ppu;
 
@@ -248,7 +248,7 @@ fn tick_background(ppu: &mut Ppu) {
         // In our pixel numbering (pixel 1 = cycle 1), this is pixels 9, 17, 25, ..., 257
         // Also pre-fetch loads at pixels 329, 337 (cycles 329, 337)
         // Note: pixel 321 is % 8 == 1 but should NOT load (fetch not complete yet)
-        if pixel % 8 == 1 && pixel > FIRST_VISIBLE_PIXEL && (pixel <= HORIZONTAL_BITS_COPY_PIXEL || pixel >= 329) {
+        if pixel % 8 == 1 && pixel > FIRST_VISIBLE_PIXEL && (pixel <= HORIZONTAL_BITS_COPY_PIXEL || pixel >= BG_PREFETCH_SHIFT_START) {
             ppu.background.load_shift_registers(ppu.registers.v());
             ppu.registers.increment_coarse_x();
         }
@@ -259,7 +259,7 @@ fn tick_background(ppu: &mut Ppu) {
         // Pixels 330-336: continue shifting (shifts 2-8/8)
         // Pixel 337: load second tile
         // This applies to ALL rendering scanlines, not just pre-render!
-        if (329..=BG_PREFETCH_END).contains(&pixel) {
+        if (BG_PREFETCH_SHIFT_START..=BG_PREFETCH_END).contains(&pixel) {
             ppu.background.shift_registers();
         }
 

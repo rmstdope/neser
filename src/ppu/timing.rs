@@ -1,7 +1,7 @@
 use crate::console::TvSystem;
 
 /// Number of PPU cycles (pixels) per scanline
-const PIXELS_PER_SCANLINE: u16 = 341;
+pub(crate) const PIXELS_PER_SCANLINE: u16 = 341;
 
 // Scanline constants
 /// First scanline where VBlank begins (scanlines 241-260 for NTSC, 241-310 for PAL)
@@ -40,6 +40,8 @@ pub(crate) const SPRITE_TILE_LOAD_END: u16 = 320;
 pub(crate) const BG_PREFETCH_START: u16 = 321;
 /// Last pixel of background pre-fetch range (pixels 321-336)
 pub(crate) const BG_PREFETCH_END: u16 = 336;
+/// First pixel where background pre-fetch shift happens (329)
+pub(crate) const BG_PREFETCH_SHIFT_START: u16 = 329;
 /// First pixel of rendering cycle range (dots 328-336)
 const RENDERING_CYCLE_START: u16 = 328;
 /// Last pixel of rendering cycle range (dots 328-336)
@@ -301,7 +303,7 @@ mod tests {
     fn test_timing_scanline_wraps() {
         let mut timing = Timing::new(TvSystem::Ntsc);
         // Advance to end of scanline
-        for _ in 0..341 {
+        for _ in 0..PIXELS_PER_SCANLINE {
             timing.tick(false);
         }
         assert_eq!(timing.scanline(), 1);
@@ -312,7 +314,7 @@ mod tests {
     fn test_timing_frame_wraps() {
         let mut timing = Timing::new(TvSystem::Ntsc);
         // Advance to end of frame (262 scanlines * 341 pixels)
-        for _ in 0..(262 * 341) {
+        for _ in 0..(262 * (PIXELS_PER_SCANLINE as usize)) {
             timing.tick(false);
         }
         assert_eq!(timing.scanline(), 0);
@@ -324,13 +326,13 @@ mod tests {
     fn test_timing_odd_frame_skip() {
         let mut timing = Timing::new(TvSystem::Ntsc);
         // Advance to frame 1 (odd frame)
-        for _ in 0..(262 * 341) {
+        for _ in 0..(262 * (PIXELS_PER_SCANLINE as usize)) {
             timing.tick(false);
         }
         assert_eq!(timing.frame_count(), 1);
 
         // Advance to scanline 261, pixel 339 with rendering enabled
-        for _ in 0..(261 * 341 + 339) {
+        for _ in 0..(261 * (PIXELS_PER_SCANLINE as usize) + 339) {
             timing.tick(true);
         }
 
@@ -509,7 +511,7 @@ mod tests {
 
         // Simulate entire frame (even frame, rendering disabled to avoid skip)
         for _ in 0..262 {
-            for _ in 0..341 {
+            for _ in 0..PIXELS_PER_SCANLINE {
                 timing.tick(false);
             }
         }
@@ -534,7 +536,11 @@ mod tests {
 
         // Simulate entire odd frame with rendering enabled
         for scanline in 0..262 {
-            let dots = if scanline == NTSC_PRERENDER_SCANLINE { LAST_DOT } else { 341 }; // Pre-render scanline skips 1 dot
+            let dots = if scanline == NTSC_PRERENDER_SCANLINE { 
+                LAST_DOT // Pre-render scanline skips 1 dot (only goes to 339 on odd frames)
+            } else { 
+                PIXELS_PER_SCANLINE 
+            };
             for _ in 0..dots {
                 timing.tick(true);
             }
@@ -559,7 +565,7 @@ mod tests {
 
         // Simulate entire frame
         for _ in 0..312 {
-            for _ in 0..341 {
+            for _ in 0..PIXELS_PER_SCANLINE {
                 timing.tick(false);
             }
         }
@@ -582,20 +588,20 @@ mod tests {
         assert_eq!(timing.frame_count(), 0);
 
         // Complete one frame
-        for _ in 0..(262 * 341) {
+        for _ in 0..(262 * (PIXELS_PER_SCANLINE as usize)) {
             timing.tick(false);
         }
         assert_eq!(timing.frame_count(), 1);
 
         // Complete another frame
-        for _ in 0..(262 * 341) {
+        for _ in 0..(262 * (PIXELS_PER_SCANLINE as usize)) {
             timing.tick(false);
         }
         assert_eq!(timing.frame_count(), 2);
 
         // Frame counter should continue incrementing (wraps at u64::MAX)
         timing.frame_count = u64::MAX - 1;
-        for _ in 0..(262 * 341) {
+        for _ in 0..(262 * (PIXELS_PER_SCANLINE as usize)) {
             timing.tick(false);
         }
         assert_eq!(timing.frame_count(), u64::MAX);
