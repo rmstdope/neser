@@ -55,6 +55,14 @@ impl InesRomBuilder {
         self
     }
 
+    /// Builds the iNES ROM data as a byte vector.
+    ///
+    /// Creates a complete iNES format ROM with:
+    /// - 16-byte iNES header (magic "NES\x1A" + size/flags)
+    /// - PRG ROM data (program code, padded to specified size)
+    /// - CHR ROM data (graphics patterns, padded to specified size)
+    ///
+    /// Returns a Vec<u8> containing the complete ROM that can be loaded by a cartridge.
     pub fn build(self) -> Vec<u8> {
         let mut ines_data = Vec::new();
 
@@ -72,10 +80,10 @@ impl InesRomBuilder {
             ines_data.extend_from_slice(&prg_data);
             // Pad if necessary
             if prg_data.len() < prg_size {
-                ines_data.extend_from_slice(&vec![0u8; prg_size - prg_data.len()]);
+                ines_data.resize(ines_data.len() + (prg_size - prg_data.len()), 0);
             }
         } else {
-            ines_data.extend_from_slice(&vec![0u8; prg_size]);
+            ines_data.resize(ines_data.len() + prg_size, 0);
         }
 
         // CHR ROM
@@ -84,10 +92,10 @@ impl InesRomBuilder {
             ines_data.extend_from_slice(&chr_data);
             // Pad if necessary
             if chr_data.len() < chr_size {
-                ines_data.extend_from_slice(&vec![0u8; chr_size - chr_data.len()]);
+                ines_data.resize(ines_data.len() + (chr_size - chr_data.len()), 0);
             }
         } else {
-            ines_data.extend_from_slice(&vec![0u8; chr_size]);
+            ines_data.resize(ines_data.len() + chr_size, 0);
         }
 
         ines_data
