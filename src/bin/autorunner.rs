@@ -1,5 +1,5 @@
 use neser::cartridge::Cartridge;
-use neser::console::{Config, Nes, ParseResult, log_rom_tv_system_selection};
+use neser::console::{Config, Nes, ParseResult, TvSystem, log_rom_tv_system_selection};
 use neser::input::Button;
 use neser::integration_tests::autorun::{
     AUTORUN_VERSION, AutorunFile, AutorunFrame, autorun_path_for_rom, crc32, load_autorun_file,
@@ -19,6 +19,7 @@ struct ProgressBar {
     width: usize,
     last_frame: usize,
     last_update: Instant,
+    tv_system: TvSystem,
 }
 
 impl ProgressBar {
@@ -26,12 +27,13 @@ impl ProgressBar {
     const UPDATE_FRAME_INTERVAL: usize = 60;
     const UPDATE_TIME_INTERVAL: Duration = Duration::from_millis(100);
 
-    fn new(total: usize) -> Self {
+    fn new(total: usize, tv_system: TvSystem) -> Self {
         Self {
             total: total.max(Self::MIN_TOTAL_FRAMES),
             width: 40,
             last_frame: 0,
             last_update: Instant::now(),
+            tv_system,
         }
     }
 
@@ -56,7 +58,7 @@ impl ProgressBar {
         let filled = (ratio * self.width as f32).round() as usize;
         let empty = self.width.saturating_sub(filled);
         let percent = (ratio * 100.0).round() as u32;
-        let (elapsed, total) = format_time_pair(clamped_frame, self.total);
+        let (elapsed, total) = format_time_pair_for(clamped_frame, self.total, self.tv_system);
         format!(
             "[{}{}] {:3}% ({} / {})",
             "#".repeat(filled),
@@ -307,6 +309,7 @@ fn run_loop(
     mode: Mode,
     state: &mut RunnerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let tv_system = nes.config.borrow().tv_system;
     let mut player1 = 0u8;
     let mut player2 = 0u8;
     let mut last_frame_crc = 0u32;
@@ -351,7 +354,11 @@ fn run_loop(
         last_frame_crc = frame_checksum(nes);
 
         let overlay_text = match mode {
-            Mode::Playback => Some(playback_overlay_text(state.frame_index, total_frames)),
+            Mode::Playback => Some(playback_overlay_text(
+                state.frame_index,
+                total_frames,
+                tv_system,
+            )),
             Mode::Record => {
                 let current_frames = if state.extending_playback {
                     state.frame_index
@@ -363,15 +370,20 @@ fn run_loop(
                         current_frames,
                         total_frames,
                         true,
+                        tv_system,
                     ))
                 } else {
-                    Some(record_overlay_text_with_mode(current_frames, false))
+                    Some(record_overlay_text_with_mode(
+                        current_frames,
+                        false,
+                        tv_system,
+                    ))
                 }
             }
         };
         let overlay_blink_red = matches!(mode, Mode::Record)
             && state.extending_playback
-            && extend_playback_blink_red(state.frame_index, total_frames);
+            && extend_playback_blink_red(state.frame_index, total_frames, tv_system);
         let _ = gl_backend.render(nes, false, overlay_text.as_deref(), overlay_blink_red, None);
     }
 }
@@ -382,7 +394,8 @@ fn run_headless_loop(
     state: &mut RunnerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let total_frames = state.autorun.frames.len();
-    let mut progress = ProgressBar::new(total_frames);
+    let tv_system = nes.config.borrow().tv_system;
+    let mut progress = ProgressBar::new(total_frames, tv_system);
     let mut last_frame_crc = 0u32;
 
     progress.update(0);
@@ -549,10 +562,14 @@ fn init_gamepads(
     Ok((controllers, controller_player_map))
 }
 
-fn format_time_pair(current_frames: usize, total_frames: usize) -> (String, String) {
-    const FPS: usize = 60;
-    let current_secs = current_frames / FPS;
-    let total_secs = total_frames / FPS;
+fn format_time_pair_for(
+    current_frames: usize,
+    total_frames: usize,
+    tv_system: TvSystem,
+) -> (String, String) {
+    let fps = fps_for(tv_system);
+    let current_secs = current_frames / fps;
+    let total_secs = total_frames / fps;
     (format_mm_ss(current_secs), format_mm_ss(total_secs))
 }
 
@@ -562,18 +579,26 @@ fn format_mm_ss(seconds: usize) -> String {
     format!("{minutes:02}:{secs:02}")
 }
 
-fn playback_overlay_text(current_frames: usize, total_frames: usize) -> String {
-    let (elapsed, total) = format_time_pair(current_frames, total_frames);
+fn playback_overlay_text(
+    current_frames: usize,
+    total_frames: usize,
+    tv_system: TvSystem,
+) -> String {
+    let (elapsed, total) = format_time_pair_for(current_frames, total_frames, tv_system);
     format!("Playback\n{elapsed} / {total}")
 }
 
 #[cfg(test)]
-fn record_overlay_text(current_frames: usize) -> String {
-    record_overlay_text_with_mode(current_frames, false)
+fn record_overlay_text(current_frames: usize, tv_system: TvSystem) -> String {
+    record_overlay_text_with_mode(current_frames, false, tv_system)
 }
 
-fn record_overlay_text_with_mode(current_frames: usize, playback: bool) -> String {
-    let (elapsed, _) = format_time_pair(current_frames, current_frames);
+fn record_overlay_text_with_mode(
+    current_frames: usize,
+    playback: bool,
+    tv_system: TvSystem,
+) -> String {
+    let (elapsed, _) = format_time_pair_for(current_frames, current_frames, tv_system);
     let label = if playback { "Playback" } else { "Recording" };
     format!("{label}\n{elapsed} / {elapsed}")
 }
@@ -582,20 +607,30 @@ fn record_overlay_text_with_total(
     current_frames: usize,
     total_frames: usize,
     playback: bool,
+    tv_system: TvSystem,
 ) -> String {
-    let (elapsed, total) = format_time_pair(current_frames, total_frames);
+    let (elapsed, total) = format_time_pair_for(current_frames, total_frames, tv_system);
     let label = if playback { "Playback" } else { "Recording" };
     format!("{label}\n{elapsed} / {total}")
 }
 
-fn extend_playback_blink_red(current_frames: usize, total_frames: usize) -> bool {
-    const BLINK_WINDOW_FRAMES: usize = 60 * 3;
-    const BLINK_HALF_PERIOD_FRAMES: usize = 15;
+fn extend_playback_blink_red(
+    current_frames: usize,
+    total_frames: usize,
+    tv_system: TvSystem,
+) -> bool {
+    let fps = fps_for(tv_system);
+    let blink_window_frames = fps * 3;
+    let blink_half_period_frames = (fps / 4).max(1);
     let frames_remaining = total_frames.saturating_sub(current_frames);
-    if frames_remaining > BLINK_WINDOW_FRAMES {
+    if frames_remaining > blink_window_frames {
         return false;
     }
-    (current_frames / BLINK_HALF_PERIOD_FRAMES).is_multiple_of(2)
+    (current_frames / blink_half_period_frames).is_multiple_of(2)
+}
+
+fn fps_for(tv_system: TvSystem) -> usize {
+    tv_system.frame_rate_hz().round().max(1.0) as usize
 }
 
 fn apply_button_change(
@@ -722,6 +757,7 @@ fn finalize_run(
 mod tests {
     use super::*;
     use neser::console::ControllerStateWrapper;
+    use neser::console::TvSystem;
     use tempfile::tempdir;
 
     fn parse_args_for_test(args: &[&str]) -> Result<(Mode, PathBuf, Config), String> {
@@ -736,7 +772,7 @@ mod tests {
 
     #[test]
     fn test_progress_bar_formats_time() {
-        let progress = ProgressBar::new(120 * 60);
+        let progress = ProgressBar::new(120 * 60, TvSystem::Ntsc);
         let text = progress.format_bar(90 * 60);
 
         assert!(text.contains("01:30"));
@@ -744,16 +780,23 @@ mod tests {
 
     #[test]
     fn test_playback_overlay_formats_time_pair() {
-        let text = playback_overlay_text(90 * 60, 120 * 60);
+        let text = playback_overlay_text(90 * 60, 120 * 60, TvSystem::Ntsc);
 
         assert_eq!(text, "Playback\n01:30 / 02:00");
     }
 
     #[test]
     fn test_record_overlay_formats_time_pair() {
-        let text = record_overlay_text(90 * 60);
+        let text = record_overlay_text(90 * 60, TvSystem::Ntsc);
 
         assert_eq!(text, "Recording\n01:30 / 01:30");
+    }
+
+    #[test]
+    fn test_pal_overlay_formats_time_pair() {
+        let text = playback_overlay_text(75 * 50, 120 * 50, TvSystem::Pal);
+
+        assert_eq!(text, "Playback\n01:15 / 02:00");
     }
 
     #[test]
@@ -846,16 +889,16 @@ mod tests {
 
     #[test]
     fn test_extend_overlay_label_switches_between_playback_and_recording() {
-        let playback_text = record_overlay_text_with_mode(0, true);
+        let playback_text = record_overlay_text_with_mode(0, true, TvSystem::Ntsc);
         assert!(playback_text.starts_with("Playback\n"));
 
-        let recording_text = record_overlay_text_with_mode(0, false);
+        let recording_text = record_overlay_text_with_mode(0, false, TvSystem::Ntsc);
         assert!(recording_text.starts_with("Recording\n"));
     }
 
     #[test]
     fn test_extend_playback_overlay_uses_total_recording_length() {
-        let text = record_overlay_text_with_total(30 * 60, 120 * 60, true);
+        let text = record_overlay_text_with_total(30 * 60, 120 * 60, true, TvSystem::Ntsc);
         assert_eq!(text, "Playback\n00:30 / 02:00");
     }
 
@@ -938,13 +981,13 @@ mod tests {
 
     #[test]
     fn test_extend_playback_blink_active_only_in_last_three_seconds() {
-        assert!(!extend_playback_blink_red(0, 500));
-        assert!(extend_playback_blink_red(0, 180));
+        assert!(!extend_playback_blink_red(0, 500, TvSystem::Ntsc));
+        assert!(extend_playback_blink_red(0, 180, TvSystem::Ntsc));
     }
 
     #[test]
     fn test_extend_playback_blink_toggles() {
-        assert!(extend_playback_blink_red(0, 180));
-        assert!(!extend_playback_blink_red(15, 180));
+        assert!(extend_playback_blink_red(0, 180, TvSystem::Ntsc));
+        assert!(!extend_playback_blink_red(15, 180, TvSystem::Ntsc));
     }
 }

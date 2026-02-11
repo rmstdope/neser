@@ -20,6 +20,9 @@ pub enum TvSystem {
 impl TvSystem {
     const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
     const CPU_CLOCK_PAL: f32 = 1_662_607.0;
+    const NTSC_SCANLINES: u16 = 262;
+    const PAL_SCANLINES: u16 = 312;
+    const DOTS_PER_SCANLINE: u16 = 341;
 
     /// Returns the CPU clock frequency in Hz for this TV system.
     pub fn cpu_clock_hz(&self) -> f32 {
@@ -29,11 +32,26 @@ impl TvSystem {
         }
     }
 
+    /// Returns the computed refresh rate for this TV system in Hz.
+    pub fn frame_rate_hz(&self) -> f64 {
+        let cpu_clock = f64::from(self.cpu_clock_hz());
+        let ppu_cycles_per_frame = match self {
+            TvSystem::Ntsc => {
+                let even_ppu_cycles =
+                    f64::from(Self::NTSC_SCANLINES) * f64::from(Self::DOTS_PER_SCANLINE);
+                let odd_ppu_cycles = even_ppu_cycles - 1.0;
+                (even_ppu_cycles + odd_ppu_cycles) / 2.0
+            }
+            TvSystem::Pal => f64::from(Self::PAL_SCANLINES) * f64::from(Self::DOTS_PER_SCANLINE),
+        };
+        let cpu_cycles_per_frame = ppu_cycles_per_frame / self.ppu_cycles_per_cpu_cycle();
+        cpu_clock / cpu_cycles_per_frame
+    }
+
     /// Returns the PPU cycles per CPU cycle ratio for this TV system
     ///
     /// NTSC: 3.0 PPU cycles per CPU cycle (exact)
     /// PAL: 3.2 PPU cycles per CPU cycle (requires fractional tracking)
-    #[cfg(test)]
     pub fn ppu_cycles_per_cpu_cycle(&self) -> f64 {
         match self {
             TvSystem::Ntsc => 3.0,
@@ -47,8 +65,8 @@ impl TvSystem {
     /// PAL: 312 scanlines per frame
     pub fn scanlines_per_frame(&self) -> u16 {
         match self {
-            TvSystem::Ntsc => 262,
-            TvSystem::Pal => 312,
+            TvSystem::Ntsc => Self::NTSC_SCANLINES,
+            TvSystem::Pal => Self::PAL_SCANLINES,
         }
     }
 
@@ -836,6 +854,26 @@ mod tests {
         let pal = TvSystem::Pal;
         // PAL: 312 scanlines per frame
         assert_eq!(pal.scanlines_per_frame(), 312);
+    }
+
+    #[test]
+    fn test_ntsc_frame_rate_hz() {
+        let ntsc = TvSystem::Ntsc;
+        let fps = ntsc.frame_rate_hz();
+        assert!(
+            (fps - 60.0988).abs() < 0.01,
+            "NTSC frame rate should be ~60.0988 Hz, got {fps}"
+        );
+    }
+
+    #[test]
+    fn test_pal_frame_rate_hz() {
+        let pal = TvSystem::Pal;
+        let fps = pal.frame_rate_hz();
+        assert!(
+            (fps - 50.00698).abs() < 0.01,
+            "PAL frame rate should be ~50.00698 Hz, got {fps}"
+        );
     }
 
     #[test]

@@ -731,8 +731,8 @@ impl SdlEventLoop {
                 let current_time = timer.performance_counter();
                 let elapsed_ticks = (current_time - last_frame_time) as f64;
                 let elapsed_seconds = elapsed_ticks / performance_frequency;
-                // Adjust target frame time by timing scale (1.0 = normal speed, 2.0 = 2x speed, etc.)
-                let target_frame_time = 1.0 / 60.0;
+                let tv_system = nes.config.borrow().tv_system;
+                let target_frame_time = 1.0 / tv_system.frame_rate_hz();
 
                 // Calculate FPS before sleeping
                 // let fps = 1.0 / elapsed_seconds;

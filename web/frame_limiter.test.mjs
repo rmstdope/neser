@@ -33,3 +33,13 @@ test("frame limiter stays stable under jitter", () => {
     assert.equal(limiter.shouldRender(28), false);
     assert.equal(limiter.shouldRender(40), true);
 });
+
+test("frame limiter updates target fps", () => {
+    const limiter = createFrameLimiter(60);
+
+    limiter.setTargetFps(50);
+
+    assert.equal(limiter.shouldRender(0), true);
+    assert.equal(limiter.shouldRender(10), false);
+    assert.equal(limiter.shouldRender(20), true);
+});

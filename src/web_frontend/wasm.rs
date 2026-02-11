@@ -4,8 +4,6 @@ use crate::input::{Button, ControllerType};
 use wasm_bindgen::prelude::*;
 
 /// Provides a minimal WASM bridge for running the emulator in the browser.
-///
-/// Note: NTSC timing is hardcoded for the MVP; PAL titles will run at the wrong speed.
 #[wasm_bindgen]
 pub struct WasmNes {
     nes: Nes,
@@ -192,6 +190,12 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn set_mouse_left_button(&mut self, pressed: bool) {
         self.nes.set_mouse_left_button(pressed);
+    }
+
+    /// Get the nominal TV-system refresh rate in Hz for the loaded ROM.
+    #[wasm_bindgen]
+    pub fn frame_rate_hz(&self) -> f64 {
+        self.nes.config.borrow().tv_system.frame_rate_hz()
     }
 
     /// Get all available audio samples from the emulator.

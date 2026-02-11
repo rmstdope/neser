@@ -1,5 +1,5 @@
 export function createFrameLimiter(targetFps = 60) {
-    const targetFrameMs = 1000 / targetFps;
+    let targetFrameMs = 1000 / targetFps;
     let lastTime = null;
     let accumulator = 0;
     return {
@@ -27,6 +27,12 @@ export function createFrameLimiter(targetFps = 60) {
 
             accumulator %= targetFrameMs;
             return true;
+        },
+        setTargetFps(nextFps) {
+            if (!Number.isFinite(nextFps) || nextFps <= 0) {
+                return;
+            }
+            targetFrameMs = 1000 / nextFps;
         },
         reset() {
             lastTime = null;

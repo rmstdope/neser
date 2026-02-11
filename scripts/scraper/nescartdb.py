@@ -6,7 +6,10 @@ from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
 
-from .rom_database import ConsoleType, ControllerType, RomDbKey
+try:
+    from .rom_database import ConsoleType, ControllerType, RomDbKey
+except ImportError:  # pragma: no cover - allow running as a script
+    from rom_database import ConsoleType, ControllerType, RomDbKey
 
 BASE_URL = "https://nescartdb.com/profile/view/{}"
 

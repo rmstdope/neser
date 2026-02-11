@@ -1,7 +1,11 @@
 """ Stream parser for ROM XML files """
 import xml.etree.ElementTree as ET
 from typing import Dict, Optional
-from .rom_database import ControllerType, RomDbKey
+
+try:
+    from .rom_database import ControllerType, RomDbKey
+except ImportError:  # pragma: no cover - allow running as a script
+    from rom_database import ControllerType, RomDbKey
 
 
 class RomXml:

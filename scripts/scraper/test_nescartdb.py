@@ -2,8 +2,12 @@
 
 import unittest
 
-from .nescartdb import NesCartDb, BeautifulSoup
-from .rom_database import RomDbKey, ConsoleType
+try:
+    from .nescartdb import NesCartDb, BeautifulSoup
+    from .rom_database import RomDbKey, ConsoleType
+except ImportError:  # pragma: no cover - allow running as a script
+    from nescartdb import NesCartDb, BeautifulSoup
+    from rom_database import RomDbKey, ConsoleType
 
 
 @unittest.skipIf(BeautifulSoup is None, "BeautifulSoup4 is required for nescartdb tests")

@@ -972,6 +972,7 @@ async function start() {
             nes = new WasmNes();
         }
         nes.load_rom(romBytes);
+        frameLimiter.setTargetFps(nes.frame_rate_hz());
         // Initialize audio context on user interaction (browser requirement)
         initAudioContext();
         nes.set_audio_muted(audioMuted);
