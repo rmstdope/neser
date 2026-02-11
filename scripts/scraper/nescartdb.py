@@ -436,7 +436,7 @@ class NesCartDb:
         # Choosing 79 as 146 for a non-switching 8kB ROMs seems odd
         if rom_id == 2949:
             record[RomDbKey.MAPPER.value] = 79
-        # Solstics have different names in different languagues, but with same CRC.
+        # Solstics have different names in different languages, but with same CRC.
         # Align on English.
         if rom_id in [1617, 1998, 2018]:
             record[RomDbKey.NAME.value] = "Solstice: The Quest for the Staff of Demnos"
