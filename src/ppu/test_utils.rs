@@ -13,6 +13,7 @@ pub struct InesRomBuilder {
 }
 
 #[cfg(test)]
+#[allow(dead_code)] // Builder methods may not all be used yet but are part of the API
 impl InesRomBuilder {
     pub fn new() -> Self {
         Self {
