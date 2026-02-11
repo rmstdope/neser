@@ -9,7 +9,7 @@ mod ppu;
 mod rendering;
 mod sdl_frontend;
 
-use console::{ApuChannels, Config, Nes, ParseResult, SaveState};
+use console::{ApuChannels, Config, Nes, ParseResult, SaveState, log_rom_tv_system_selection};
 use debugging::log_info;
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::fs;
@@ -18,7 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
     let args: Vec<String> = std::env::args().collect();
 
-    let config = match Config::new(&args)? {
+    let mut config = match Config::new(&args)? {
         ParseResult::Help => {
             Config::print_help();
             return Ok(());
@@ -31,29 +31,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize SDL2
     let sdl_context = sdl2::init()?;
-    let mut nes_instance = Nes::new(config.clone());
 
     // Create audio output (request 44.1 kHz) unless disabled.
     // SDL may open the device at a different rate; always sync the APU to the actual rate
     // to avoid steady underruns.
+    let mut audio_sample_rate = None;
     let audio = if !config.audio_enabled {
         None
     } else {
         let audio = SdlNesAudio::new(&sdl_context, 44100)?;
-        let actual_rate = audio.actual_sample_rate() as f32;
-        nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
+        audio_sample_rate = Some(audio.actual_sample_rate() as f32);
         Some(audio)
     };
-
-    let mut event_loop = SdlEventLoop::new(false, audio, &config)?;
-
-    // Request debugger open if enabled via CLI
-    if config.debugger_enabled {
-        event_loop.request_debugger_open();
-    }
-
-    // Temporary hard-coded breakpoint for debugger development.
-    // event_loop.add_breakpoint(0xE486);
 
     // Palette display requiring only scanline-based palette changes,
     // intended to demonstrate the full palette even on less advanced emulators
@@ -87,7 +76,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let rom_path = config.rom_path.as_deref().unwrap_or(default_rom_path);
     let cart = cartridge::Cartridge::load_from_file(rom_path)?;
+
+    let rom_tv_system = cart.rom_tv_system();
+    let applied = config.apply_rom_tv_system(rom_tv_system);
+    log_rom_tv_system_selection(&config, rom_tv_system, applied);
+
+    let mut nes_instance = Nes::new(config.clone());
     nes_instance.insert_cartridge(cart);
+
+    if let Some(actual_rate) = audio_sample_rate {
+        nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
+    }
+
+    let mut event_loop = SdlEventLoop::new(false, audio, &config)?;
+
+    // Request debugger open if enabled via CLI
+    if config.debugger_enabled {
+        event_loop.request_debugger_open();
+    }
+
+    // Temporary hard-coded breakpoint for debugger development.
+    // event_loop.add_breakpoint(0xE486);
 
     if config.load_state {
         let state_path = nes_instance
