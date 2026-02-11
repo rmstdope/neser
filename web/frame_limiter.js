@@ -32,7 +32,13 @@ export function createFrameLimiter(targetFps = 60) {
             if (!Number.isFinite(nextFps) || nextFps <= 0) {
                 return;
             }
-            targetFrameMs = 1000 / nextFps;
+            const newTargetFrameMs = 1000 / nextFps;
+            if (newTargetFrameMs === targetFrameMs) {
+                return;
+            }
+            targetFrameMs = newTargetFrameMs;
+            lastTime = null;
+            accumulator = 0;
         },
         reset() {
             lastTime = null;
