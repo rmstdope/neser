@@ -71,13 +71,21 @@ impl InesRomBuilder {
         ines_data.extend_from_slice(b"NES\x1A"); // Magic number
         ines_data.push(self.prg_rom_size);
         ines_data.push(self.chr_rom_size);
-        ines_data.push(self.mapper << 4 | self.mirroring); // Flags 6: mapper lower nibble + mirroring
+        ines_data.push((self.mapper << 4) | (self.mirroring & 0x01)); // Flags 6: mapper lower nibble + mirroring (bit 0)
         ines_data.push(self.mapper & 0xF0); // Flags 7: mapper upper nibble
         ines_data.extend_from_slice(&[0; 8]); // Padding to complete 16-byte header
 
         // PRG ROM
         let prg_size = self.prg_rom_size as usize * 0x4000; // 16KB units
         if let Some(prg_data) = self.prg_rom_data {
+            // Ensure provided data doesn't exceed declared size to avoid invalid ROM layout
+            if prg_data.len() > prg_size {
+                panic!(
+                    "PRG ROM data ({} bytes) exceeds declared size ({} bytes)",
+                    prg_data.len(),
+                    prg_size
+                );
+            }
             ines_data.extend_from_slice(&prg_data);
             // Pad if necessary
             if prg_data.len() < prg_size {
@@ -90,6 +98,14 @@ impl InesRomBuilder {
         // CHR ROM
         let chr_size = self.chr_rom_size as usize * 0x2000; // 8KB units
         if let Some(chr_data) = self.chr_rom_data {
+            // Ensure provided data doesn't exceed declared size to avoid invalid ROM layout
+            if chr_data.len() > chr_size {
+                panic!(
+                    "CHR ROM data ({} bytes) exceeds declared size ({} bytes)",
+                    chr_data.len(),
+                    chr_size
+                );
+            }
             ines_data.extend_from_slice(&chr_data);
             // Pad if necessary
             if chr_data.len() < chr_size {
