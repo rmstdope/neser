@@ -192,7 +192,7 @@ impl WasmNes {
         self.nes.set_mouse_left_button(pressed);
     }
 
-    /// Get the nominal TV-system refresh rate in Hz for the loaded ROM.
+    /// Get the nominal TV-system refresh rate in Hz for the loaded ROM or system default (if not ROM loaded).
     #[wasm_bindgen]
     pub fn frame_rate_hz(&self) -> f64 {
         self.nes.config.borrow().tv_system.frame_rate_hz()
