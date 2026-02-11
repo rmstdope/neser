@@ -56,21 +56,18 @@ impl Rendering {
         palette_lookup: impl Fn(u8) -> u8,
         system_palette_lookup: impl Fn(u8) -> (u8, u8, u8),
     ) -> bool {
-        let (mut palette_index, sprite_0_hit) = select_palette_index(bg_pixel, sprite_pixel);
-
-        // Apply grayscale mode if enabled
-        palette_index = apply_grayscale(palette_index, grayscale);
+        let (palette_index, sprite_0_hit) = select_palette_index(bg_pixel, sprite_pixel);
 
         // Look up the color in the palette RAM
-        let color_value = palette_lookup(palette_index);
+        let color_value =
+            crate::ppu::color_effects::apply_grayscale(palette_lookup(palette_index), grayscale);
 
         // Convert to RGB using the system palette
         let (mut r, mut g, mut b) = system_palette_lookup(color_value);
 
         // Apply color emphasis/tint
-        if color_emphasis != 0 {
-            (r, g, b) = apply_color_emphasis(r, g, b, color_emphasis);
-        }
+        (r, g, b) =
+            crate::ppu::color_effects::apply_color_emphasis(r, g, b, color_emphasis);
 
         // Write to the screen buffer
         self.screen_buffer.set_pixel(screen_x, screen_y, r, g, b);
@@ -115,63 +112,9 @@ fn select_palette_index(bg_pixel: u8, sprite_pixel: Option<(u8, usize, bool)>) -
 }
 
 #[cfg(test)]
-#[inline(always)]
-fn apply_color_emphasis(r: u8, g: u8, b: u8, color_emphasis: u8) -> (u8, u8, u8) {
-    let emphasize_red = (color_emphasis & 0x01) != 0;
-    let emphasize_green = (color_emphasis & 0x02) != 0;
-    let emphasize_blue = (color_emphasis & 0x04) != 0;
-
-    const ATTENUATION: f32 = 0.75;
-    const BOOST: f32 = 1.1;
-
-    let mut fr = r as f32;
-    let mut fg = g as f32;
-    let mut fb = b as f32;
-
-    if emphasize_red {
-        fr = (fr * BOOST).min(255.0);
-        if !emphasize_green {
-            fg *= ATTENUATION;
-        }
-        if !emphasize_blue {
-            fb *= ATTENUATION;
-        }
-    }
-    if emphasize_green {
-        fg = (fg * BOOST).min(255.0);
-        if !emphasize_red {
-            fr *= ATTENUATION;
-        }
-        if !emphasize_blue {
-            fb *= ATTENUATION;
-        }
-    }
-    if emphasize_blue {
-        fb = (fb * BOOST).min(255.0);
-        if !emphasize_red {
-            fr *= ATTENUATION;
-        }
-        if !emphasize_green {
-            fg *= ATTENUATION;
-        }
-    }
-
-    (fr as u8, fg as u8, fb as u8)
-}
-
-#[cfg(test)]
-#[inline(always)]
-fn apply_grayscale(palette_index: u8, grayscale: bool) -> u8 {
-    if grayscale {
-        palette_index & 0x30
-    } else {
-        palette_index
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 
     #[test]
     fn test_rendering_new() {
@@ -239,10 +182,20 @@ mod tests {
             None,
             true, // grayscale
             0,
-            |idx| idx & 0x30,
-            |_| (128, 128, 128),
+            // Distinct palette values ensure masking happens on the palette value (0 -> 0x00, 1 -> 0x2F)
+            |palette_index| {
+                if palette_index == 0 {
+                    0x00
+                } else {
+                    0x2F
+                }
+            },
+            |color_value| (color_value, color_value, color_value),
         );
-        assert_eq!(rendering.screen_buffer().get_pixel(10, 10), (128, 128, 128));
+        assert_eq!(
+            rendering.screen_buffer().get_pixel(10, 10),
+            (0x20, 0x20, 0x20)
+        );
     }
 
     #[test]

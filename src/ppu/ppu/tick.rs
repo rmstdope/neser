@@ -1,6 +1,7 @@
 use super::Ppu;
 use crate::console::{Nes, TvSystem};
 use crate::debugging::ppu_trace_level;
+use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 use crate::trace_ppu;
 
 pub(super) fn prerender_scanline(tv_system: TvSystem) -> u16 {
@@ -479,56 +480,12 @@ fn tick_pixel_output(ppu: &mut Ppu) {
             let mut color_value = ppu.memory.read_palette(palette_addr);
             // PPUMASK grayscale removes color by masking the palette *value* (hardware behavior),
             // which affects only chroma while preserving brightness selection.
-            if grayscale {
-                color_value &= 0x30;
-            }
+            color_value = apply_grayscale(color_value, grayscale);
             let (r, g, b) = Nes::lookup_system_palette(color_value);
 
             // Apply color emphasis/tint
-            let (final_r, final_g, final_b) = if color_emphasis != 0 {
-                let emphasize_red = (color_emphasis & 0x01) != 0;
-                let emphasize_green = (color_emphasis & 0x02) != 0;
-                let emphasize_blue = (color_emphasis & 0x04) != 0;
-
-                const ATTENUATION: f32 = 0.75;
-                const BOOST: f32 = 1.1;
-
-                let mut fr = r as f32;
-                let mut fg = g as f32;
-                let mut fb = b as f32;
-
-                if emphasize_red {
-                    fr = (fr * BOOST).min(255.0);
-                    if !emphasize_green {
-                        fg *= ATTENUATION;
-                    }
-                    if !emphasize_blue {
-                        fb *= ATTENUATION;
-                    }
-                }
-                if emphasize_green {
-                    fg = (fg * BOOST).min(255.0);
-                    if !emphasize_red {
-                        fr *= ATTENUATION;
-                    }
-                    if !emphasize_blue {
-                        fb *= ATTENUATION;
-                    }
-                }
-                if emphasize_blue {
-                    fb = (fb * BOOST).min(255.0);
-                    if !emphasize_red {
-                        fr *= ATTENUATION;
-                    }
-                    if !emphasize_green {
-                        fg *= ATTENUATION;
-                    }
-                }
-
-                (fr as u8, fg as u8, fb as u8)
-            } else {
-                (r, g, b)
-            };
+            let (final_r, final_g, final_b) =
+                apply_color_emphasis(r, g, b, color_emphasis);
 
             // Write pixel to screen buffer
             ppu.rendering
