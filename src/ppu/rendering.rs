@@ -182,7 +182,13 @@ mod tests {
             None,
             true, // grayscale
             0,
-            |palette_index| palette_index + 0x20,
+            |palette_index| {
+                if palette_index == 0 {
+                    0x00
+                } else {
+                    0x2F
+                }
+            },
             |color_value| (color_value, color_value, color_value),
         );
         assert_eq!(

@@ -72,6 +72,44 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_color_emphasis_green_only() {
+        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x02);
+        assert_eq!(r, 75);
+        assert_eq!(g, 110);
+        assert_eq!(b, 75);
+    }
+
+    #[test]
+    fn test_apply_color_emphasis_blue_only() {
+        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x04);
+        assert_eq!(r, 75);
+        assert_eq!(g, 75);
+        assert_eq!(b, 110);
+    }
+
+    #[test]
+    fn test_apply_color_emphasis_red_green() {
+        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x03);
+        assert_eq!(r, 110);
+        assert_eq!(g, 110);
+        assert_eq!(b, 56);
+    }
+
+    #[test]
+    fn test_apply_color_emphasis_all() {
+        let (r, g, b) = apply_color_emphasis(100, 100, 100, 0x07);
+        assert_eq!(r, 110);
+        assert_eq!(g, 110);
+        assert_eq!(b, 110);
+    }
+
+    #[test]
+    fn test_apply_color_emphasis_none() {
+        let (r, g, b) = apply_color_emphasis(123, 45, 67, 0x00);
+        assert_eq!((r, g, b), (123, 45, 67));
+    }
+
+    #[test]
     fn test_apply_grayscale_enabled() {
         assert_eq!(apply_grayscale(0x2f, true), 0x20);
         assert_eq!(apply_grayscale(0x2f, false), 0x2f);
