@@ -207,7 +207,7 @@ class RomXml:
         # Stadium Events (FCE71311, 0DA28A50)
         if crc in ["D74B2719", "5734EB9E", "AF4010EA", "9E382EBF", "FCE71311", "0DA28A50"]:
             record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.POWER_PAD_SIDE_A
-        # No Japaneese titles ever used side B of the Family Trainer Mat
+        # No Japanese titles ever used side B of the Family Trainer Mat
         if record.get(RomDbKey.EXPANSION_TYPE.value) == \
             str(ControllerType.FAMILY_TRAINER_SIDE_B.value):
             record[RomDbKey.EXPANSION_TYPE.value] = ControllerType.FAMILY_TRAINER_SIDE_A.value
