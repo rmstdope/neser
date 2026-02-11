@@ -1322,11 +1322,16 @@ mod tests {
         let mut ppu = Ppu::new(TvSystem::Ntsc);
         ppu.set_cartridge(cart);
 
+        fn expected_calls(old: u16, new: u16) -> Vec<u16> {
+            let mut calls = vec![old; 8];
+            calls.push(new);
+            calls
+        }
+
         ppu.write_address(0x3F, false);
         ppu.write_address(0x20, false);
 
-        let mut expected_ppuaddr_calls = vec![0u16; 8];
-        expected_ppuaddr_calls.push(0x3F20);
+        let expected_ppuaddr_calls = expected_calls(0, 0x3F20);
         assert_eq!(*calls.borrow(), expected_ppuaddr_calls);
 
         calls.borrow_mut().clear();
@@ -1334,8 +1339,7 @@ mod tests {
         state.registers.v = 0x2000;
         ppu.set_debug_state(state);
         ppu.read_data();
-        let mut expected_read_calls = vec![0x2000; 8];
-        expected_read_calls.push(0x2001);
+        let expected_read_calls = expected_calls(0x2000, 0x2001);
         assert_eq!(*calls.borrow(), expected_read_calls);
 
         calls.borrow_mut().clear();
@@ -1343,8 +1347,7 @@ mod tests {
         state.registers.v = 0x2000;
         ppu.set_debug_state(state);
         ppu.write_data(0x12);
-        let mut expected_write_calls = vec![0x2000; 8];
-        expected_write_calls.push(0x2001);
+        let expected_write_calls = expected_calls(0x2000, 0x2001);
         assert_eq!(*calls.borrow(), expected_write_calls);
     }
 
