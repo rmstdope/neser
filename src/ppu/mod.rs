@@ -5,9 +5,13 @@ mod memory;
 mod ppu;
 mod registers;
 mod rendering;
+#[cfg(test)]
+mod rendering_alignment_tests;
 mod screen_buffer;
 mod sprites;
 mod status;
+#[cfg(test)]
+mod test_utils;
 mod timing;
 
 pub use background::Background;
