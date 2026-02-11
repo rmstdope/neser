@@ -107,9 +107,12 @@ impl Cartridge {
         #[allow(clippy::manual_div_ceil)]
         let prg_ram_banks_8k: u8 = info
             .prg_ram_size_bytes
-            .map(|sz| ((sz + 8191) / 8192) as u8)
-            .unwrap_or(1)
-            .max(1);
+            .map(|sz| {
+                let banks = (sz + 8191) / 8192;
+                let clamped = banks.max(1).min(u8::MAX as usize);
+                clamped as u8
+            })
+            .unwrap_or(1);
 
         // Map battery flag
         let battery_backed_prg_ram = info.battery_backed_prg_ram;
