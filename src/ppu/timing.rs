@@ -537,7 +537,9 @@ mod tests {
         // Simulate entire odd frame with rendering enabled
         for scanline in 0..262 {
             let dots = if scanline == NTSC_PRERENDER_SCANLINE { 
-                LAST_DOT // Pre-render scanline skips 1 dot (only goes to 339 on odd frames)
+                // Pre-render scanline skips pixel 340 on odd frames with rendering enabled,
+                // so we only loop up to pixel 339 (ODD_FRAME_SKIP_DOT)
+                LAST_DOT 
             } else { 
                 PIXELS_PER_SCANLINE 
             };
