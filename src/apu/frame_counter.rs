@@ -1,8 +1,10 @@
 /// Frame Counter for the NES APU
 /// Sequences envelope, sweep, and length counter clocks
 /// Operates in two modes: 4-step and 5-step
+use crate::console::TvSystem;
 use crate::trace_apu;
 pub struct FrameCounter {
+    tv_system: TvSystem,
     mode: Mode,
     irq_inhibit: bool,
     cycle_counter: u32,
@@ -47,7 +49,12 @@ impl Default for FrameCounter {
 impl FrameCounter {
     /// Create a new frame counter
     pub fn new() -> Self {
+        Self::new_with_tv_system(TvSystem::Ntsc)
+    }
+
+    pub fn new_with_tv_system(tv_system: TvSystem) -> Self {
         Self {
+            tv_system,
             mode: Mode::FourStep,
             irq_inhibit: false,
             cycle_counter: 0,
@@ -64,7 +71,8 @@ impl FrameCounter {
 
     /// Reset frame counter to initial state
     pub fn reset(&mut self) {
-        *self = Self::new();
+        let tv_system = self.tv_system;
+        *self = Self::new_with_tv_system(tv_system);
     }
 
     /// Write to frame counter register ($4017) immediately (for internal/test use only)
@@ -405,23 +413,22 @@ impl FrameCounter {
     /// - Remove the `irq_assert_cycles_remaining` mechanism
     /// - This will likely break blargg test 6
     fn clock_four_step(&mut self) -> (bool, bool) {
-        const STEP_1_CYCLES: u32 = 7457;
-        const STEP_2_CYCLES: u32 = 14913;
-        const STEP_3_CYCLES: u32 = 22371;
-        const STEP_4_CYCLES: u32 = 29829;
-        const IRQ_CYCLE: u32 = 29828; // Frame IRQ begins asserting (APU 14914 GET)
         const IRQ_ASSERT_CYCLES: u8 = 3; // How long the internal IRQ signal keeps asserting
-        const FRAME_CYCLES: u32 = 29830;
 
-        let quarter_frame = matches!(
-            self.cycle_counter,
-            STEP_1_CYCLES | STEP_2_CYCLES | STEP_3_CYCLES | STEP_4_CYCLES
-        );
-        let half_frame = matches!(self.cycle_counter, STEP_2_CYCLES | STEP_4_CYCLES);
+        let (step_1, step_2, step_3, step_4, irq_cycle, frame_cycles) = match self.tv_system {
+            TvSystem::Ntsc => (7457, 14913, 22371, 29829, 29828, 29830),
+            TvSystem::Pal => (8313, 16627, 24939, 33253, 33252, 33254),
+        };
+
+        let quarter_frame = self.cycle_counter == step_1
+            || self.cycle_counter == step_2
+            || self.cycle_counter == step_3
+            || self.cycle_counter == step_4;
+        let half_frame = self.cycle_counter == step_2 || self.cycle_counter == step_4;
 
         // Start the IRQ asserting window at the designated cycle.
         // See doc comment above for why we use a multi-cycle window instead of a one-shot.
-        if self.cycle_counter == IRQ_CYCLE && !self.irq_inhibit {
+        if self.cycle_counter == irq_cycle && !self.irq_inhibit {
             trace_apu!(2; "frame_counter irq_assert start cycle={}", self.cycle_counter);
             self.irq_assert_cycles_remaining = IRQ_ASSERT_CYCLES;
         }
@@ -436,7 +443,7 @@ impl FrameCounter {
         }
 
         // 4-step sequence length is 29830 CPU cycles.
-        if self.cycle_counter >= FRAME_CYCLES {
+        if self.cycle_counter >= frame_cycles {
             self.cycle_counter = 0;
         }
 
@@ -452,20 +459,23 @@ impl FrameCounter {
     /// - 29829: None (no clocks)
     /// - 37281: HalfFrame (envelope + length)
     fn clock_five_step(&mut self) -> (bool, bool) {
-        const STEP_1_CYCLES: u32 = 7457;
-        const STEP_2_CYCLES: u32 = 14913;
-        const STEP_3_CYCLES: u32 = 22371;
-        // Note: Step 4 (cycle 29829) has no clocks in 5-step mode
-        const STEP_5_CYCLES: u32 = 37281;
+        let (step_1_base, step_2_base, step_3_base, step_5_base) = match self.tv_system {
+            TvSystem::Ntsc => (7457, 14913, 22371, 37281),
+            TvSystem::Pal => (8313, 16627, 24939, 41565),
+        };
 
         // The 5-step sequence length is odd, which causes the relative phase to alternate.
         // Model this by shifting the sequence boundaries by +1 CPU cycle every other 5-step run.
-        let offset: u32 = self.five_step_extra_cycle as u32;
+        let offset: u32 = if self.tv_system == TvSystem::Ntsc {
+            self.five_step_extra_cycle as u32
+        } else {
+            0
+        };
 
-        let step_1 = STEP_1_CYCLES + offset;
-        let step_2 = STEP_2_CYCLES + offset;
-        let step_3 = STEP_3_CYCLES + offset;
-        let step_5 = STEP_5_CYCLES + offset;
+        let step_1 = step_1_base + offset;
+        let step_2 = step_2_base + offset;
+        let step_3 = step_3_base + offset;
+        let step_5 = step_5_base + offset;
 
         // Quarter frame (envelope) clocks at steps 1, 2, 3, and 5 (NOT step 4)
         let quarter_frame = self.cycle_counter == step_1
@@ -478,7 +488,9 @@ impl FrameCounter {
         // Wrap around after step 5
         if self.cycle_counter >= step_5 {
             self.cycle_counter = 0;
-            self.five_step_extra_cycle = !self.five_step_extra_cycle;
+            if self.tv_system == TvSystem::Ntsc {
+                self.five_step_extra_cycle = !self.five_step_extra_cycle;
+            }
         }
 
         (quarter_frame, half_frame)
@@ -488,6 +500,7 @@ impl FrameCounter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::console::TvSystem;
 
     #[test]
     fn test_frame_counter_new() {
@@ -689,6 +702,23 @@ mod tests {
     }
 
     #[test]
+    fn test_pal_four_step_step_1_signals() {
+        let mut fc = FrameCounter::new_with_tv_system(TvSystem::Pal);
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Clock up to PAL step 1 (8313 cycles)
+        for _ in 0..8312 {
+            let (quarter, half) = fc.clock();
+            assert!(!quarter);
+            assert!(!half);
+        }
+
+        let (quarter, half) = fc.clock();
+        assert!(quarter);
+        assert!(!half);
+    }
+
+    #[test]
     fn test_four_step_step_2_signals() {
         let mut fc = FrameCounter::new();
         fc.write_register(0b0000_0000); // 4-step mode
@@ -750,6 +780,21 @@ mod tests {
         assert_eq!(fc.get_cycle_counter(), 0);
 
         // Next clock should be at cycle 1
+        fc.clock();
+        assert_eq!(fc.get_cycle_counter(), 1);
+    }
+
+    #[test]
+    fn test_pal_four_step_wraparound() {
+        let mut fc = FrameCounter::new_with_tv_system(TvSystem::Pal);
+        fc.write_register(0b0000_0000); // 4-step mode
+
+        // Clock through full PAL sequence (33254 cycles)
+        for _ in 0..33254 {
+            fc.clock();
+        }
+
+        assert_eq!(fc.get_cycle_counter(), 0);
         fc.clock();
         assert_eq!(fc.get_cycle_counter(), 1);
     }

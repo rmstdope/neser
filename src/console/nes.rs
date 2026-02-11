@@ -18,6 +18,17 @@ pub enum TvSystem {
 }
 
 impl TvSystem {
+    const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
+    const CPU_CLOCK_PAL: f32 = 1_662_607.0;
+
+    /// Returns the CPU clock frequency in Hz for this TV system.
+    pub fn cpu_clock_hz(&self) -> f32 {
+        match self {
+            TvSystem::Ntsc => Self::CPU_CLOCK_NTSC,
+            TvSystem::Pal => Self::CPU_CLOCK_PAL,
+        }
+    }
+
     /// Returns the PPU cycles per CPU cycle ratio for this TV system
     ///
     /// NTSC: 3.0 PPU cycles per CPU cycle (exact)
@@ -80,7 +91,7 @@ impl Nes {
     pub fn new(config: Config) -> Self {
         let tv_system = config.tv_system;
         let ppu = Rc::new(RefCell::new(Ppu::new(tv_system)));
-        let apu = Rc::new(RefCell::new(Apu::new()));
+        let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
         let config_rc = Rc::new(RefCell::new(config));
         let memory = Rc::new(RefCell::new(Bus::new(
             ppu.clone(),

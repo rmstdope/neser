@@ -3,13 +3,10 @@ use super::frame_counter::FrameCounter;
 use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
-use crate::console::{ApuState, FrameCounterState};
+use crate::console::{ApuState, FrameCounterState, TvSystem};
 use crate::trace_apu;
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, RingBuffer};
-
-// CPU clock frequency (NTSC)
-const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
 
 // Upper bound for queued audio samples awaiting retrieval.
 //
@@ -80,6 +77,7 @@ const TND_TABLE: [f32; 203] = [
 
 /// Main APU module integrating frame counter and sound channels
 pub struct Apu {
+    tv_system: TvSystem,
     frame_counter: FrameCounter,
     pulse1: Pulse,
     pulse2: Pulse,
@@ -107,19 +105,25 @@ pub struct Apu {
 impl Apu {
     /// Create a new APU
     pub fn new() -> Self {
+        Self::new_with_tv_system(TvSystem::Ntsc)
+    }
+
+    pub fn new_with_tv_system(tv_system: TvSystem) -> Self {
         const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
 
         let pending_samples = HeapRb::<f32>::new(MAX_PENDING_SAMPLES);
+        let cpu_clock = tv_system.cpu_clock_hz();
 
         let mut apu = Self {
-            frame_counter: FrameCounter::new(),
+            tv_system,
+            frame_counter: FrameCounter::new_with_tv_system(tv_system),
             pulse1: Pulse::new(true),  // Pulse 1 uses ones' complement
             pulse2: Pulse::new(false), // Pulse 2 uses two's complement
             triangle: Triangle::new(),
-            noise: Noise::new(),
-            dmc: Dmc::new(),
+            noise: Noise::new_with_tv_system(tv_system),
+            dmc: Dmc::new_with_tv_system(tv_system),
             sample_accumulator: 0.0,
-            cycles_per_sample: CPU_CLOCK_NTSC / DEFAULT_SAMPLE_RATE,
+            cycles_per_sample: cpu_clock / DEFAULT_SAMPLE_RATE,
             pending_samples,
             pulse1_enabled: true,
             pulse2_enabled: true,
@@ -147,8 +151,10 @@ impl Apu {
         const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
 
         let pending_samples = HeapRb::<f32>::new(MAX_PENDING_SAMPLES);
+        let cpu_clock = TvSystem::Ntsc.cpu_clock_hz();
 
         let mut apu = Self {
+            tv_system: TvSystem::Ntsc,
             frame_counter: FrameCounter::new(),
             pulse1: Pulse::new(true),
             pulse2: Pulse::new(false),
@@ -156,7 +162,7 @@ impl Apu {
             noise: Noise::new(),
             dmc: Dmc::new(),
             sample_accumulator: 0.0,
-            cycles_per_sample: CPU_CLOCK_NTSC / DEFAULT_SAMPLE_RATE,
+            cycles_per_sample: cpu_clock / DEFAULT_SAMPLE_RATE,
             pending_samples,
             // For testing: start with all channels enabled for convenience
             pulse1_enabled: true,
@@ -622,7 +628,7 @@ impl Apu {
     /// # Arguments
     /// * `sample_rate` - Target sample rate in Hz (e.g., 44100.0, 48000.0)
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
-        self.cycles_per_sample = CPU_CLOCK_NTSC / sample_rate;
+        self.cycles_per_sample = self.tv_system.cpu_clock_hz() / sample_rate;
         self.sample_accumulator = 0.0;
         self.clear_pending_samples();
     }

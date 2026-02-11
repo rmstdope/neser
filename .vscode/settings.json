@@ -7,4 +7,11 @@
     "scripts/scraper"
   ],
   "python.testing.pytestEnabled": true,
+  "chat.tools.terminal.autoApprove": {
+    "/Users/henrikku/repos/neser/.venv/bin/python": true,
+    "/^cd /Users/henrikku/repos/neser && source \\.venv/bin/activate && python -m unittest discover -s scripts/scraper -p \"test_\\*\\.py\"$/": {
+      "approve": true,
+      "matchCommandLine": true
+    }
+  },
 }

@@ -14,6 +14,7 @@ pub struct MasterClock {
 }
 
 impl MasterClock {
+    const READ_WRITE_SHIFT: u64 = 1;
     pub fn new(tv_system: TvSystem) -> Self {
         Self {
             master_clock: 0,
@@ -39,17 +40,17 @@ impl MasterClock {
 
     pub fn before_cpu_cycle(&mut self, is_write: bool) {
         self.master_clock += if is_write {
-            self.master_ticks_before_cpu + 1
+            self.cpu_divider / 2 + Self::READ_WRITE_SHIFT
         } else {
-            self.master_ticks_before_cpu - 1
+            self.cpu_divider / 2 - Self::READ_WRITE_SHIFT
         };
     }
 
     pub fn after_cpu_cycle(&mut self, is_write: bool) {
         self.master_clock += if is_write {
-            self.master_ticks_after_cpu - 1
+            self.cpu_divider / 2 - Self::READ_WRITE_SHIFT
         } else {
-            self.master_ticks_after_cpu + 1
+            self.cpu_divider / 2 + Self::READ_WRITE_SHIFT
         };
     }
 

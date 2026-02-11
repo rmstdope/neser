@@ -3,10 +3,10 @@ mod tests {
     use crate::apu::Apu;
     use crate::bus::BusDevice;
     use crate::bus::apu_device::ApuDevice;
+    use crate::console::TvSystem;
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
     const NOISE_PERIOD_TABLE: [u16; 16] = [
         4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068,
     ];
@@ -15,7 +15,7 @@ mod tests {
         let apu = Rc::new(RefCell::new(Apu::new()));
         {
             let mut apu_mut = apu.borrow_mut();
-            apu_mut.set_sample_rate(CPU_CLOCK_NTSC);
+            apu_mut.set_sample_rate(TvSystem::Ntsc.cpu_clock_hz());
             apu_mut.set_pulse1_enabled(false);
             apu_mut.set_pulse2_enabled(false);
             apu_mut.set_triangle_enabled(false);
