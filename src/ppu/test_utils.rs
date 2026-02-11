@@ -71,7 +71,7 @@ impl InesRomBuilder {
         ines_data.extend_from_slice(b"NES\x1A"); // Magic number
         ines_data.push(self.prg_rom_size);
         ines_data.push(self.chr_rom_size);
-        ines_data.push((self.mapper << 4) | (self.mirroring & 0x01)); // Flags 6: mapper lower nibble + mirroring (bit 0)
+        ines_data.push((self.mapper << 4) | (self.mirroring & 0x01)); // Flags 6: mapper lower nibble + mirroring mode (bit 0: 0=horizontal, 1=vertical)
         ines_data.push(self.mapper & 0xF0); // Flags 7: mapper upper nibble
         ines_data.extend_from_slice(&[0; 8]); // Padding to complete 16-byte header
 
