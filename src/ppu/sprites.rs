@@ -294,6 +294,7 @@ impl Sprites {
         &mut self,
         pixel: u16,
         scanline: u16,
+        prerender_scanline: u16,
         sprite_height: u8,
         sprite_pattern_table_base: u16,
         mut read_chr: F,
@@ -312,12 +313,12 @@ impl Sprites {
         let is_pattern_lo_cycle = fetch_step == 5;
         let is_pattern_hi_cycle = fetch_step == 7;
 
-        // On pre-render scanline (261), sprite evaluation doesn't happen, so
+        // On pre-render scanline, sprite evaluation doesn't happen, so
         // secondary_oam contains stale data from scanline 239's evaluation.
         // Those sprites were evaluated for scanline 240, not scanline 0.
         // We must treat all sprites as "dummy" on pre-render to avoid using
         // stale data that would cause calculation errors.
-        let is_prerender = scanline == 261;
+        let is_prerender = scanline == prerender_scanline;
 
         // Determine if this is a real sprite or a "dummy" fetch
         let is_real_sprite = !is_prerender && sprite_index < self.sprites_found as usize;
@@ -335,7 +336,11 @@ impl Sprites {
             (0xFF, 0, 0xFF)
         };
 
-        let next_scanline = if scanline == 261 { 0 } else { scanline + 1 };
+        let next_scanline = if scanline == prerender_scanline {
+            0
+        } else {
+            scanline + 1
+        };
         // Adjust Y position: add 1 to sprite_y to move sprites 2 pixels down
         let sprite_row = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16) as u8;
 
@@ -802,13 +807,34 @@ mod tests {
         // Fetch pattern for scanline 52
         // With our +1 adjustment: sprite_row = 52 - (50 + 1) = 1
         // Need to call for both low byte (fetch_step 5) and high byte (fetch_step 7)
-        sprites.fetch_sprite_pattern(257 + 5, 51, 8, 0x0000, read_chr);
-        sprites.fetch_sprite_pattern(257 + 7, 51, 8, 0x0000, read_chr);
+        sprites.fetch_sprite_pattern(257 + 5, 51, 261, 8, 0x0000, read_chr);
+        sprites.fetch_sprite_pattern(257 + 7, 51, 261, 8, 0x0000, read_chr);
 
         // Verify pattern data was fetched
         assert_eq!(sprites.next_sprite_pattern_shift_lo[0], 0xAA);
         assert_eq!(sprites.next_sprite_pattern_shift_hi[0], 0x55);
         assert_eq!(sprites.next_sprite_x_positions[0], 100);
+    }
+
+    #[test]
+    fn test_sprite_pattern_fetch_uses_dummy_tiles_on_pal_prerender() {
+        let mut sprites = Sprites::new();
+        sprites.sprites_found = 1;
+        sprites.secondary_oam[0] = 0x00; // Y position
+        sprites.secondary_oam[1] = 0x01; // Tile index
+        sprites.secondary_oam[2] = 0x00; // Attributes
+        sprites.secondary_oam[3] = 0x20; // X position
+
+        let seen_addr = std::cell::RefCell::new(None);
+        let read_chr = |addr: u16| -> u8 {
+            *seen_addr.borrow_mut() = Some(addr);
+            0x00
+        };
+
+        // PAL pre-render scanline is 311, should use dummy tile $FF.
+        sprites.fetch_sprite_pattern(257 + 5, 311, 311, 8, 0x0000, read_chr);
+
+        assert_eq!(seen_addr.into_inner(), Some(0x0FF0));
     }
 
     #[test]

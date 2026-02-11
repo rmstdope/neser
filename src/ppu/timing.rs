@@ -153,7 +153,10 @@ impl Timing {
     #[cfg(test)]
     pub fn is_rendering_cycle(&self) -> bool {
         let is_visible_scanline = self.scanline < 240;
-        let is_prerender_scanline = self.scanline == 261;
+        let is_prerender_scanline = match self.tv_system {
+            TvSystem::Ntsc => self.scanline == 261,
+            TvSystem::Pal => self.scanline == 311,
+        };
 
         if is_visible_scanline || is_prerender_scanline {
             // Dots 0-256: background and sprite fetching/rendering
@@ -307,6 +310,21 @@ mod tests {
         timing.scanline = 261;
         timing.pixel = 100;
         assert!(timing.is_rendering_cycle());
+    }
+
+    #[test]
+    fn test_is_rendering_cycle_pal_prerender_scanline() {
+        let mut timing = Timing::new(TvSystem::Pal);
+
+        // PAL pre-render scanline is 311
+        timing.scanline = 311;
+        timing.pixel = 100;
+        assert!(timing.is_rendering_cycle());
+
+        // NTSC pre-render scanline should not be treated as rendering for PAL
+        timing.scanline = 261;
+        timing.pixel = 100;
+        assert!(!timing.is_rendering_cycle());
     }
 
     #[test]
