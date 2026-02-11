@@ -385,6 +385,7 @@ pub(super) fn tick(ppu: &mut Ppu) {
         ppu.sprites.fetch_sprite_pattern(
             pixel,
             scanline,
+            prerender_scanline,
             sprite_height,
             sprite_pattern_table,
             |addr| {
