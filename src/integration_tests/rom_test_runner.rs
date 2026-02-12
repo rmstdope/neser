@@ -119,7 +119,7 @@ pub(crate) mod tests {
 
             // Create NES with configuration based on cartridge's TV system
             let mut config = Config::default();
-            
+
             // Use override if provided, otherwise auto-detect from ROM header
             if let Some(tv_system) = self.tv_system_override {
                 config.tv_system = tv_system;

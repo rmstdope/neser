@@ -173,7 +173,7 @@ mod tests {
         assert_eq!(upper_run[0], (82, 105));
         assert_eq!(lower_run[0], (84, 105));
 
-        //  Middle line on the two frames should start somewhere between upper and lower 
+        //  Middle line on the two frames should start somewhere between upper and lower
         assert!(runs_a[0].0 >= 82 && runs_a[0].0 <= 84);
         assert!(runs_b[0].0 >= 82 && runs_b[0].0 <= 84);
         // and end on the same pixel as upper and lower

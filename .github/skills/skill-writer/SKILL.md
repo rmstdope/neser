@@ -1,7 +1,6 @@
 ---
-name: skill-creator
+name: skill-writer
 description: Guide for creating and updating effective skills to be used for github copilot to extend its capabilities with specialized knowledge, workflows, or tool integrations.
-license: Complete terms in LICENSE.txt
 ---
 
 # Skill Creator
