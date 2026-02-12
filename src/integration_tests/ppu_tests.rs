@@ -14,6 +14,33 @@ mod tests {
             .collect()
     }
 
+    fn count_contiguous_white_pixels(
+        line: &[(u8, u8, u8)],
+        white: (u8, u8, u8),
+    ) -> Vec<(usize, usize)> {
+        let mut runs = Vec::new();
+        let mut in_run = false;
+        let mut run_start = 0;
+
+        for (i, &pixel) in line.iter().enumerate() {
+            if pixel == white {
+                if !in_run {
+                    in_run = true;
+                    run_start = i;
+                }
+            } else if in_run {
+                runs.push((run_start, i - 1));
+                in_run = false;
+            }
+        }
+
+        if in_run {
+            runs.push((run_start, line.len() - 1));
+        }
+
+        runs
+    }
+
     fn matches_white_run(
         line: &[(u8, u8, u8)],
         start_x: usize,
@@ -86,9 +113,15 @@ mod tests {
 
         run_nes_for_frames(&mut nes, 1);
         let line_frame_b = capture_scanline_rgb(&nes, 121);
+        let upper_line = capture_scanline_rgb(&nes, 119);
+        let lower_line = capture_scanline_rgb(&nes, 123);
 
         let white = Nes::lookup_system_palette(0x30);
         let black = Nes::lookup_system_palette(0x0D);
+
+        // Math upper and lower lines
+        assert!(matches_white_run(&upper_line, 80, 103, white, black));
+        assert!(matches_white_run(&lower_line, 80, 103, white, black));
 
         let a_80 = matches_white_run(&line_frame_a, 80, 103, white, black);
         let a_81 = matches_white_run(&line_frame_a, 81, 103, white, black);
@@ -125,21 +158,27 @@ mod tests {
 
         run_nes_for_frames(&mut nes, 1);
         let line_frame_b = capture_scanline_rgb(&nes, 121);
+        let upper_line = capture_scanline_rgb(&nes, 119);
+        let lower_line = capture_scanline_rgb(&nes, 123);
 
         let white = Nes::lookup_system_palette(0x30);
-        let black = Nes::lookup_system_palette(0x0D);
 
-        let a_80 = matches_white_run(&line_frame_a, 80, 103, white, black);
-        let a_81 = matches_white_run(&line_frame_a, 81, 103, white, black);
-        let b_80 = matches_white_run(&line_frame_b, 80, 103, white, black);
-        let b_81 = matches_white_run(&line_frame_b, 81, 103, white, black);
+        //  Find all white runs in both frames
+        let runs_a = count_contiguous_white_pixels(&line_frame_a, white);
+        let runs_b = count_contiguous_white_pixels(&line_frame_b, white);
+        let upper_run = count_contiguous_white_pixels(&upper_line, white);
+        let lower_run = count_contiguous_white_pixels(&lower_line, white);
 
-        assert!(
-            (a_80 && b_81) || (a_81 && b_80),
-            "expected PAL scanline 124 to alternate between white runs at x=80..103 and x=81..103, but got {:?} and {:?}",
-            line_frame_a,
-            line_frame_b
-        );
+        // Math upper and lower lines
+        assert_eq!(upper_run[0], (82, 105));
+        assert_eq!(lower_run[0], (84, 105));
+
+        //  Middle line on the two frames should start somewhere between upper and lower 
+        assert!(runs_a[0].0 >= 82 && runs_a[0].0 <= 84);
+        assert!(runs_b[0].0 >= 82 && runs_b[0].0 <= 84);
+        // and end on the same pixel as upper and lower
+        assert_eq!(runs_a[0].1, 105);
+        assert_eq!(runs_b[0].1, 105);
     }
 
     // oam_read

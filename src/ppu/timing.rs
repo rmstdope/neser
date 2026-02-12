@@ -43,8 +43,10 @@ pub(crate) const BG_PREFETCH_END: u16 = 336;
 /// First pixel where background pre-fetch shift happens (329)
 pub(crate) const BG_PREFETCH_SHIFT_START: u16 = 329;
 /// First pixel of rendering cycle range (dots 328-336)
+#[cfg(test)]
 const RENDERING_CYCLE_START: u16 = 328;
 /// Last pixel of rendering cycle range (dots 328-336)
+#[cfg(test)]
 const RENDERING_CYCLE_END: u16 = 336;
 /// First dummy nametable fetch pixel
 pub(crate) const DUMMY_NT_FETCH_1: u16 = 337;
