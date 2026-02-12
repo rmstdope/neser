@@ -464,13 +464,9 @@ impl FrameCounter {
             TvSystem::Pal => (8313, 16627, 24939, 41565),
         };
 
-        // The 5-step sequence length is odd, which causes the relative phase to alternate.
-        // Model this by shifting the sequence boundaries by +1 CPU cycle every other 5-step run.
-        let offset: u32 = if self.tv_system == TvSystem::Ntsc {
-            self.five_step_extra_cycle as u32
-        } else {
-            0
-        };
+        // The 5-step sequence length is odd for both PAL and NTSC , which causes the relative phase to
+        // alternate; we model that as a +1 cycle offset every other sequence.
+        let offset: u32 = self.five_step_extra_cycle as u32;
 
         let step_1 = step_1_base + offset;
         let step_2 = step_2_base + offset;
@@ -488,9 +484,8 @@ impl FrameCounter {
         // Wrap around after step 5
         if self.cycle_counter >= step_5 {
             self.cycle_counter = 0;
-            if self.tv_system == TvSystem::Ntsc {
-                self.five_step_extra_cycle = !self.five_step_extra_cycle;
-            }
+            // Toggle alternating phase
+            self.five_step_extra_cycle = !self.five_step_extra_cycle;
         }
 
         (quarter_frame, half_frame)

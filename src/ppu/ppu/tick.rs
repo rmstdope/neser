@@ -5,11 +5,14 @@ use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 use crate::ppu::timing::{
     BG_PREFETCH_END, BG_PREFETCH_SHIFT_START, BG_PREFETCH_START, DUMMY_NT_FETCH_1,
     DUMMY_NT_FETCH_2, FINE_Y_INCREMENT_PIXEL, FIRST_DOT, FIRST_VISIBLE_PIXEL,
-    FIRST_VISIBLE_SCANLINE, HORIZONTAL_BITS_COPY_PIXEL, LAST_DOT, LAST_VISIBLE_PIXEL,
-    LAST_VISIBLE_SCANLINE_PLUS_ONE, NTSC_PRERENDER_SCANLINE, PAL_PRERENDER_SCANLINE,
-    SPRITE_TILE_LOAD_END, SPRITE_TILE_LOAD_START, VBLANK_NMI_LATCH_PIXEL,
-    VBLANK_START_SCANLINE, VERTICAL_BITS_COPY_END, VERTICAL_BITS_COPY_START,
+    HORIZONTAL_BITS_COPY_PIXEL, LAST_DOT, LAST_VISIBLE_PIXEL, LAST_VISIBLE_SCANLINE_PLUS_ONE,
+    NTSC_PRERENDER_SCANLINE, PAL_PRERENDER_SCANLINE, SPRITE_TILE_LOAD_END, SPRITE_TILE_LOAD_START,
+    VBLANK_NMI_LATCH_PIXEL, VBLANK_START_SCANLINE, VERTICAL_BITS_COPY_END,
+    VERTICAL_BITS_COPY_START,
 };
+
+#[cfg(test)]
+use crate::ppu::timing::FIRST_VISIBLE_SCANLINE;
 use crate::trace_ppu;
 
 pub(super) fn prerender_scanline(tv_system: TvSystem) -> u16 {
@@ -26,7 +29,7 @@ fn is_rendering_pixel(pixel: u16) -> bool {
 
 #[inline(always)]
 fn is_bg_fetch_pixel(pixel: u16) -> bool {
-    (FIRST_VISIBLE_PIXEL..=LAST_VISIBLE_PIXEL).contains(&pixel) 
+    (FIRST_VISIBLE_PIXEL..=LAST_VISIBLE_PIXEL).contains(&pixel)
         || (BG_PREFETCH_START..=BG_PREFETCH_END).contains(&pixel)
 }
 
@@ -80,7 +83,8 @@ fn tick_timing(ppu: &mut Ppu) {
 
     // New frame begins when the pre-render scanline wraps back to scanline 0.
     // This also includes the NTSC odd-frame skip path.
-    let frame_wrapped = skipped || (scanline_before_tick == prerender && pixel_before_tick == LAST_DOT);
+    let frame_wrapped =
+        skipped || (scanline_before_tick == prerender && pixel_before_tick == LAST_DOT);
 
     if frame_wrapped {
         trace_ppu!(1; "frame wrap y={} x={} frame={} cyc={}",
@@ -122,7 +126,10 @@ fn tick_vblank_and_nmi(ppu: &mut Ppu) {
         );
     }
 
-    if scanline == VBLANK_START_SCANLINE && pixel == FIRST_VISIBLE_PIXEL && !ppu.vblank_suppressed_for_frame {
+    if scanline == VBLANK_START_SCANLINE
+        && pixel == FIRST_VISIBLE_PIXEL
+        && !ppu.vblank_suppressed_for_frame
+    {
         // Hardware quirk/timing: VBlank flag is set at dot 1, but the NMI edge is observed
         // slightly later. We latch the NMI edge at dot 2 (see below).
         ppu.status.enter_vblank();
@@ -248,7 +255,10 @@ fn tick_background(ppu: &mut Ppu) {
         // In our pixel numbering (pixel 1 = cycle 1), this is pixels 9, 17, 25, ..., 257
         // Also pre-fetch loads at pixels 329, 337 (cycles 329, 337)
         // Note: pixel 321 is % 8 == 1 but should NOT load (fetch not complete yet)
-        if pixel % 8 == 1 && pixel > FIRST_VISIBLE_PIXEL && (pixel <= HORIZONTAL_BITS_COPY_PIXEL || pixel >= BG_PREFETCH_SHIFT_START) {
+        if pixel % 8 == 1
+            && pixel > FIRST_VISIBLE_PIXEL
+            && (pixel <= HORIZONTAL_BITS_COPY_PIXEL || pixel >= BG_PREFETCH_SHIFT_START)
+        {
             ppu.background.load_shift_registers(ppu.registers.v());
             ppu.registers.increment_coarse_x();
         }
@@ -369,7 +379,10 @@ fn tick_sprites(ppu: &mut Ppu) {
 
     // Clear OAMADDR during sprite tile loading (pixels 257-320) on visible and pre-render scanlines
     // This is critical NES PPU hardware behavior
-    if is_rendering_enabled && is_rendering_scanline && (SPRITE_TILE_LOAD_START..=SPRITE_TILE_LOAD_END).contains(&pixel) {
+    if is_rendering_enabled
+        && is_rendering_scanline
+        && (SPRITE_TILE_LOAD_START..=SPRITE_TILE_LOAD_END).contains(&pixel)
+    {
         ppu.registers.oam_address = 0;
     }
 
@@ -408,7 +421,10 @@ fn tick_sprites(ppu: &mut Ppu) {
     // sprite ($1xxx) pattern fetches must happen 241 times per frame.
     // Note: The PPU fetches 8 sprite patterns even on pre-render, using tile $FF
     // for any sprites not found (since evaluation doesn't happen on pre-render).
-    if is_rendering_enabled && is_rendering_scanline && (SPRITE_TILE_LOAD_START..=SPRITE_TILE_LOAD_END).contains(&pixel) {
+    if is_rendering_enabled
+        && is_rendering_scanline
+        && (SPRITE_TILE_LOAD_START..=SPRITE_TILE_LOAD_END).contains(&pixel)
+    {
         let sprite_pattern_table = ppu.registers.sprite_pattern_table_addr();
         let cartridge = &ppu.cartridge;
         ppu.sprites.fetch_sprite_pattern(
@@ -584,18 +600,42 @@ mod tests {
 
     #[test]
     fn test_should_trace_vblank_enter() {
-        assert!(should_trace_vblank_enter(VBLANK_START_SCANLINE, FIRST_VISIBLE_PIXEL, false));
-        assert!(!should_trace_vblank_enter(VBLANK_START_SCANLINE, FIRST_VISIBLE_PIXEL, true));
-        assert!(!should_trace_vblank_enter(LAST_VISIBLE_SCANLINE_PLUS_ONE - 1, FIRST_VISIBLE_PIXEL, false));
-        assert!(!should_trace_vblank_enter(VBLANK_START_SCANLINE, VBLANK_NMI_LATCH_PIXEL, false));
+        assert!(should_trace_vblank_enter(
+            VBLANK_START_SCANLINE,
+            FIRST_VISIBLE_PIXEL,
+            false
+        ));
+        assert!(!should_trace_vblank_enter(
+            VBLANK_START_SCANLINE,
+            FIRST_VISIBLE_PIXEL,
+            true
+        ));
+        assert!(!should_trace_vblank_enter(
+            LAST_VISIBLE_SCANLINE_PLUS_ONE - 1,
+            FIRST_VISIBLE_PIXEL,
+            false
+        ));
+        assert!(!should_trace_vblank_enter(
+            VBLANK_START_SCANLINE,
+            VBLANK_NMI_LATCH_PIXEL,
+            false
+        ));
     }
 
     #[test]
     fn test_should_trace_vblank_exit() {
         let prerender = prerender_scanline(TvSystem::Ntsc);
-        assert!(should_trace_vblank_exit(prerender, prerender, FIRST_VISIBLE_PIXEL));
+        assert!(should_trace_vblank_exit(
+            prerender,
+            prerender,
+            FIRST_VISIBLE_PIXEL
+        ));
         assert!(!should_trace_vblank_exit(prerender, prerender, FIRST_DOT));
         // Test that scanline 0 (FIRST_VISIBLE_SCANLINE) is not the pre-render scanline
-        assert!(!should_trace_vblank_exit(FIRST_VISIBLE_SCANLINE, prerender, FIRST_VISIBLE_PIXEL));
+        assert!(!should_trace_vblank_exit(
+            FIRST_VISIBLE_SCANLINE,
+            prerender,
+            FIRST_VISIBLE_PIXEL
+        ));
     }
 }
