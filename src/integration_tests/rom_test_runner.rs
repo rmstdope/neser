@@ -55,6 +55,7 @@ pub(crate) mod tests {
         max_frames: u32,
         wait_reset: u32,
         verification: RomTestVerification,
+        tv_system_override: Option<crate::console::TvSystem>,
     }
 
     impl RomTestRunner {
@@ -65,6 +66,23 @@ pub(crate) mod tests {
                 max_frames,
                 wait_reset: 1,
                 verification,
+                tv_system_override: None,
+            }
+        }
+
+        /// Create a new test runner with explicit TV system override
+        pub fn new_with_tv_system(
+            rom_path: &str,
+            max_frames: u32,
+            verification: RomTestVerification,
+            tv_system: crate::console::TvSystem,
+        ) -> Self {
+            Self {
+                rom_path: rom_path.to_string(),
+                max_frames,
+                wait_reset: 1,
+                verification,
+                tv_system_override: Some(tv_system),
             }
         }
 
@@ -101,16 +119,22 @@ pub(crate) mod tests {
 
             // Create NES with configuration based on cartridge's TV system
             let mut config = Config::default();
-            match cartridge.rom_tv_system() {
-                crate::cartridge::RomTvSystem::Pal => {
-                    config.tv_system = crate::console::TvSystem::Pal;
-                }
-                crate::cartridge::RomTvSystem::Ntsc => {
-                    config.tv_system = crate::console::TvSystem::Ntsc;
-                }
-                crate::cartridge::RomTvSystem::Unknown => {
-                    // Default to NTSC for unknown region
-                    config.tv_system = crate::console::TvSystem::Ntsc;
+            
+            // Use override if provided, otherwise auto-detect from ROM header
+            if let Some(tv_system) = self.tv_system_override {
+                config.tv_system = tv_system;
+            } else {
+                match cartridge.rom_tv_system() {
+                    crate::cartridge::RomTvSystem::Pal => {
+                        config.tv_system = crate::console::TvSystem::Pal;
+                    }
+                    crate::cartridge::RomTvSystem::Ntsc => {
+                        config.tv_system = crate::console::TvSystem::Ntsc;
+                    }
+                    crate::cartridge::RomTvSystem::Unknown => {
+                        // Default to NTSC for unknown region
+                        config.tv_system = crate::console::TvSystem::Ntsc;
+                    }
                 }
             }
 
@@ -475,6 +499,27 @@ pub(crate) mod tests {
                     $crate::integration_tests::rom_test_runner::tests::RomTestVerification::Console {
                         pass_string: $pass_string.to_string(),
                     },
+                );
+                let result = runner.run_test();
+                let rom_name = $rom_path.split('/').last().unwrap();
+                assert_eq!(
+                    result,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    "{} should pass",
+                    rom_name
+                );
+            }
+        };
+        ($test_name:ident, $rom_path:expr, $pass_string:expr, $tv_system:expr) => {
+            #[test]
+            fn $test_name() {
+                let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new_with_tv_system(
+                    $rom_path,
+                    60 * 30,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::Console {
+                        pass_string: $pass_string.to_string(),
+                    },
+                    $tv_system,
                 );
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();
