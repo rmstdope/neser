@@ -38,8 +38,6 @@ pub(crate) mod tests {
         Timeout,
     }
 
-    const NTSC_CPU_CYCLES_PER_FRAME: u32 = 29_780;
-
     /// Test verification method
     #[derive(Debug, PartialEq, Eq)]
     pub(crate) enum RomTestVerification {
@@ -101,11 +99,31 @@ pub(crate) mod tests {
                 }
             };
 
-            // Create NES and insert cartridge
-            let mut nes = Nes::new(Config::default());
+            // Create NES with configuration based on cartridge's TV system
+            let mut config = Config::default();
+            match cartridge.rom_tv_system() {
+                crate::cartridge::RomTvSystem::Pal => {
+                    config.tv_system = crate::console::TvSystem::Pal;
+                }
+                crate::cartridge::RomTvSystem::Ntsc => {
+                    config.tv_system = crate::console::TvSystem::Ntsc;
+                }
+                crate::cartridge::RomTvSystem::Unknown => {
+                    // Default to NTSC for unknown region
+                    config.tv_system = crate::console::TvSystem::Ntsc;
+                }
+            }
+
+            let mut nes = Nes::new(config);
             nes.insert_cartridge(cartridge);
             // Initial reset is treated as power-on.
             nes.reset(false);
+
+            // CPU cycles per frame depends on TV system
+            let cpu_cycles_per_frame = match nes.config.borrow().tv_system {
+                crate::console::TvSystem::Ntsc => 29_780u32,
+                crate::console::TvSystem::Pal => 33_247u32,
+            };
 
             let mut running = false;
             let mut first_nonzero_status = None;
@@ -115,7 +133,7 @@ pub(crate) mod tests {
             let mut release_after_frames: u8 = 0;
             // Run frames and check for results
             for frame in 1..=self.max_frames {
-                // Run one frame (roughly 29780 CPU cycles for NTSC)
+                // Run one frame (roughly 29780 CPU cycles for NTSC, 33247 for PAL)
                 let mut current_status = nes.bus.borrow_mut().read_for_testing(0x6000);
                 if current_status == 0x80 {
                     running = true;
@@ -124,7 +142,7 @@ pub(crate) mod tests {
                     first_nonzero_status = Some((frame, current_status));
                 }
                 const STATUS_POLL_INTERVAL: u32 = 256;
-                for cpu_cycle in 0..NTSC_CPU_CYCLES_PER_FRAME {
+                for cpu_cycle in 0..cpu_cycles_per_frame {
                     nes.run_cpu_tick();
 
                     if cpu_cycle != 0 && cpu_cycle % STATUS_POLL_INTERVAL == 0 {
@@ -299,12 +317,33 @@ pub(crate) mod tests {
             }
         };
 
-        let mut nes = Nes::new(Config::default());
+        // Create NES with configuration based on cartridge's TV system
+        let mut config = Config::default();
+        match cartridge.rom_tv_system() {
+            crate::cartridge::RomTvSystem::Pal => {
+                config.tv_system = crate::console::TvSystem::Pal;
+            }
+            crate::cartridge::RomTvSystem::Ntsc => {
+                config.tv_system = crate::console::TvSystem::Ntsc;
+            }
+            crate::cartridge::RomTvSystem::Unknown => {
+                // Default to NTSC for unknown region
+                config.tv_system = crate::console::TvSystem::Ntsc;
+            }
+        }
+
+        let mut nes = Nes::new(config);
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
+        // CPU cycles per frame depends on TV system
+        let cpu_cycles_per_frame = match nes.config.borrow().tv_system {
+            crate::console::TvSystem::Ntsc => 29_780u32,
+            crate::console::TvSystem::Pal => 33_247u32,
+        };
+
         for _frame in 1..=max_frames {
-            for _cpu_cycle in 0..NTSC_CPU_CYCLES_PER_FRAME {
+            for _cpu_cycle in 0..cpu_cycles_per_frame {
                 if nes.cpu.pc() == stop_address {
                     // while nes.sample_ready() {
                     //     println!("SampleX: {}", nes.get_sample().unwrap());

@@ -215,7 +215,8 @@ impl Timing {
             // Dots 257-320: sprite pattern fetching for next scanline
             // Dots 321-336: first two tiles for next scanline
             // Dots 337-340: unknown nametable fetches
-            self.pixel <= LAST_VISIBLE_PIXEL || (self.pixel >= RENDERING_CYCLE_START && self.pixel <= RENDERING_CYCLE_END)
+            self.pixel <= LAST_VISIBLE_PIXEL
+                || (self.pixel >= RENDERING_CYCLE_START && self.pixel <= RENDERING_CYCLE_END)
         } else {
             false
         }
@@ -225,8 +226,8 @@ impl Timing {
     /// Visible pixels are rendered during scanlines 0-239, pixels 1-256
     #[cfg(test)]
     pub fn is_visible_pixel(&self) -> bool {
-        self.scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE 
-            && self.pixel >= FIRST_VISIBLE_PIXEL 
+        self.scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE
+            && self.pixel >= FIRST_VISIBLE_PIXEL
             && self.pixel <= LAST_VISIBLE_PIXEL
     }
 }
@@ -466,7 +467,11 @@ mod tests {
             skipped,
             "Should skip dot 340 on odd NTSC frame with rendering enabled"
         );
-        assert_eq!(timing.scanline(), FIRST_VISIBLE_SCANLINE, "Should jump to scanline 0");
+        assert_eq!(
+            timing.scanline(),
+            FIRST_VISIBLE_SCANLINE,
+            "Should jump to scanline 0"
+        );
         assert_eq!(timing.pixel(), FIRST_DOT, "Should jump to pixel 0");
         assert_eq!(timing.frame_count(), 2, "Frame count should increment");
     }
@@ -538,10 +543,10 @@ mod tests {
         for scanline in 0..262 {
             // Pre-render scanline with rendering enabled on odd frames skips pixel 340,
             // so we use LAST_DOT (340) as the limit to iterate through pixels 0-339
-            let dots = if scanline == NTSC_PRERENDER_SCANLINE { 
-                LAST_DOT 
-            } else { 
-                PIXELS_PER_SCANLINE 
+            let dots = if scanline == NTSC_PRERENDER_SCANLINE {
+                LAST_DOT
+            } else {
+                PIXELS_PER_SCANLINE
             };
             for _ in 0..dots {
                 timing.tick(true);
@@ -553,7 +558,11 @@ mod tests {
             cycles_elapsed, 89341,
             "NTSC odd frame with rendering should have 89341 cycles (89342 - 1)"
         );
-        assert_eq!(timing.scanline(), FIRST_VISIBLE_SCANLINE, "Should wrap back to scanline 0");
+        assert_eq!(
+            timing.scanline(),
+            FIRST_VISIBLE_SCANLINE,
+            "Should wrap back to scanline 0"
+        );
         assert_eq!(timing.pixel(), FIRST_DOT, "Should wrap back to pixel 0");
         assert_eq!(timing.frame_count(), 2, "Frame count should be 2");
     }

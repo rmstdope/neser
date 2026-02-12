@@ -102,7 +102,45 @@ mod tests {
             line_frame_b
         );
     }
-    // TODO demo_pal
+
+    #[test]
+    fn test_nmi_sync_demo_pal() {
+        let rom_path = "roms/automated_tests/nmi_sync/demo_pal.nes";
+        let rom_data = fs::read(rom_path).expect("demo_pal ROM should load");
+        let cartridge = Cartridge::new(&rom_data).expect("demo_pal ROM should parse");
+
+        let config = Config {
+            tv_system: crate::console::TvSystem::Pal,
+            ..Default::default()
+        };
+        let mut nes = Nes::new(config);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        const WARMUP_FRAMES: u32 = 25;
+        run_nes_for_frames(&mut nes, WARMUP_FRAMES);
+
+        run_nes_for_frames(&mut nes, 1);
+        let line_frame_a = capture_scanline_rgb(&nes, 121);
+
+        run_nes_for_frames(&mut nes, 1);
+        let line_frame_b = capture_scanline_rgb(&nes, 121);
+
+        let white = Nes::lookup_system_palette(0x30);
+        let black = Nes::lookup_system_palette(0x0D);
+
+        let a_80 = matches_white_run(&line_frame_a, 80, 103, white, black);
+        let a_81 = matches_white_run(&line_frame_a, 81, 103, white, black);
+        let b_80 = matches_white_run(&line_frame_b, 80, 103, white, black);
+        let b_81 = matches_white_run(&line_frame_b, 81, 103, white, black);
+
+        assert!(
+            (a_80 && b_81) || (a_81 && b_80),
+            "expected PAL scanline 124 to alternate between white runs at x=80..103 and x=81..103, but got {:?} and {:?}",
+            line_frame_a,
+            line_frame_b
+        );
+    }
 
     // oam_read
     setup_rom_test!(test_oam_read, "roms/automated_tests/oam_read/oam_read.nes");
