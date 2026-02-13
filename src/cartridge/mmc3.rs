@@ -1004,29 +1004,19 @@ mod tests {
         let chr_rom = banked_data(1024, 8);
 
         // Create mapper with default (Sharp) IRQ behavior
-        let mapper_default = MMC3Mapper::new(
-            prg_rom.clone(),
-            chr_rom.clone(),
-            MirroringMode::Horizontal,
-        );
+        let mapper_default =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
         assert!(!mapper_default.use_alternate_irq);
 
         // Create mapper with alternate (NEC) IRQ behavior using builder pattern
-        let mapper_alternate = MMC3Mapper::new(
-            prg_rom.clone(),
-            chr_rom.clone(),
-            MirroringMode::Horizontal,
-        )
-        .with_irq_mode(true);
+        let mapper_alternate =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
+                .with_irq_mode(true);
         assert!(mapper_alternate.use_alternate_irq);
 
         // Verify new_with_irq_mode still works
-        let mapper_explicit = MMC3Mapper::new_with_irq_mode(
-            prg_rom,
-            chr_rom,
-            MirroringMode::Horizontal,
-            true,
-        );
+        let mapper_explicit =
+            MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, MirroringMode::Horizontal, true);
         assert!(mapper_explicit.use_alternate_irq);
     }
 }
