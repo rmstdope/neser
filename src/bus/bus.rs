@@ -130,7 +130,8 @@ impl Bus {
             let mut cart = cartridge_rc.borrow_mut();
             let mapper = cart.mapper_mut();
             // Write each byte of trainer data to $7000-$71FF
-            for (i, byte) in trainer_bytes.iter().enumerate() {
+            // Limit to 512 bytes to ensure we stay within $7000-$71FF range
+            for (i, byte) in trainer_bytes.iter().take(512).enumerate() {
                 mapper.write_prg(0x7000 + i as u16, *byte);
             }
         }
@@ -1930,6 +1931,9 @@ mod tests {
     #[test]
     fn test_trainer_loaded_into_ram() {
         // Test that trainer data from ROM is loaded into CPU memory at $7000-$71FF
+        // Use a test pattern offset to create distinctive data (arbitrary value to avoid 0x00/0xFF)
+        const TEST_OFFSET: u8 = 0x42;
+        
         let mut memory = create_test_memory();
 
         // Create a ROM with trainer data
@@ -1944,9 +1948,9 @@ mod tests {
         ];
 
         // Add 512 bytes of trainer data with a specific pattern
-        // Use a pattern that's easy to verify: byte value = (offset + 0x42)
+        // byte value = (offset + TEST_OFFSET) with wrapping
         for i in 0..512 {
-            rom.push((i + 0x42) as u8);
+            rom.push((i as u8).wrapping_add(TEST_OFFSET));
         }
 
         // Add PRG ROM data
@@ -1962,7 +1966,7 @@ mod tests {
         // Verify trainer data was loaded into RAM at $7000-$71FF
         for i in 0..512 {
             let addr = 0x7000 + i;
-            let expected = ((i + 0x42) & 0xFF) as u8;
+            let expected = (i as u8).wrapping_add(TEST_OFFSET);
             let actual = memory.read(addr, false);
             assert_eq!(
                 actual, expected,
