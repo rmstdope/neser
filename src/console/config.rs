@@ -260,6 +260,31 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Do not load save-state on startup (equivalent to --load-state false)"),
         has_value: false,
     },
+    CliFlag {
+        flag: "--record",
+        help: Some("Record controller input to <ROM>.autorun file"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--playback",
+        help: Some("Play back controller input from <ROM>.autorun file"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--extend",
+        help: Some("Extend an existing autorun recording (requires --record)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--headless",
+        help: Some("Run playback without display (requires --playback)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--overwrite-recording",
+        help: Some("Replace existing autorun recording (requires --record)"),
+        has_value: false,
+    },
 ];
 
 /// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
@@ -340,6 +365,25 @@ pub struct Config {
     /// number of pixels sampled per check and can noticeably impact performance,
     /// so values above 10 are generally not recommended.
     pub zapper_detection_size: u8,
+    /// Autorun mode (None, Record, or Playback).
+    pub autorun_mode: AutorunMode,
+    /// Whether to run in headless mode (no display, requires playback).
+    pub autorun_headless: bool,
+    /// Whether to extend an existing recording (requires record mode).
+    pub autorun_extend: bool,
+    /// Whether to overwrite an existing recording (requires record mode).
+    pub autorun_overwrite: bool,
+}
+
+/// Autorun operating mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutorunMode {
+    /// Normal operation (no autorun).
+    None,
+    /// Record controller input to file.
+    Record,
+    /// Play back controller input from file.
+    Playback,
 }
 
 bitflags! {
@@ -376,6 +420,10 @@ impl Default for Config {
             controller_port1_explicit: false,
             controller_port2_explicit: false,
             zapper_detection_size: 0,
+            autorun_mode: AutorunMode::None,
+            autorun_headless: false,
+            autorun_extend: false,
+            autorun_overwrite: false,
         }
     }
 }
@@ -594,6 +642,36 @@ impl Config {
         // Window height
         if let Some(height) = Self::parse_u32_arg(args, "--window-height")? {
             self.window_height = height;
+        }
+
+        // Autorun mode flags
+        let has_record = args.iter().any(|arg| arg == "--record");
+        let has_playback = args.iter().any(|arg| arg == "--playback");
+        
+        if has_record && has_playback {
+            return Err("Cannot specify both --record and --playback".to_string());
+        }
+        
+        if has_record {
+            self.autorun_mode = AutorunMode::Record;
+        } else if has_playback {
+            self.autorun_mode = AutorunMode::Playback;
+        }
+        
+        // Autorun option flags
+        self.autorun_headless = args.iter().any(|arg| arg == "--headless");
+        self.autorun_extend = args.iter().any(|arg| arg == "--extend");
+        self.autorun_overwrite = args.iter().any(|arg| arg == "--overwrite-recording");
+        
+        // Validate autorun flag combinations
+        if self.autorun_headless && self.autorun_mode != AutorunMode::Playback {
+            return Err("--headless requires --playback".to_string());
+        }
+        if self.autorun_extend && self.autorun_mode != AutorunMode::Record {
+            return Err("--extend requires --record".to_string());
+        }
+        if self.autorun_overwrite && self.autorun_mode != AutorunMode::Record {
+            return Err("--overwrite-recording requires --record".to_string());
         }
 
         Ok(())
