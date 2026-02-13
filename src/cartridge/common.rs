@@ -85,7 +85,7 @@
 /// }
 /// ```
 ///
-/// ## Integration with Mapper::registers_snapshot
+/// ## Integration with `Mapper::registers_snapshot()`
 ///
 /// ```rust,ignore
 /// use neser::cartridge::{Mapper, StateSnapshot};
@@ -220,7 +220,10 @@ impl PrgRam {
 
 impl StateSnapshot for PrgRam {
     fn snapshot(&self) -> Vec<u8> {
-        self.snapshot()
+        // Explicitly call the inherent method to avoid infinite recursion.
+        // Without type qualification, `self.snapshot()` would recursively call
+        // this trait method instead of the inherent `PrgRam::snapshot()`.
+        PrgRam::snapshot(self)
     }
 
     fn restore(&mut self, data: &[u8]) {
@@ -329,7 +332,10 @@ impl ChrMemory {
 
 impl StateSnapshot for ChrMemory {
     fn snapshot(&self) -> Vec<u8> {
-        self.snapshot()
+        // Explicitly call the inherent method to avoid infinite recursion.
+        // Without type qualification, `self.snapshot()` would recursively call
+        // this trait method instead of the inherent `ChrMemory::snapshot()`.
+        ChrMemory::snapshot(self)
     }
 
     fn restore(&mut self, data: &[u8]) {
