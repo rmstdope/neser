@@ -1,5 +1,4 @@
 use crate::cartridge::mapper_templates::SimpleBankedPrgMapper;
-use crate::cartridge::MirroringMode;
 
 /// Mapper 2 - UxROM (UNROM, UOROM boards)
 ///
@@ -28,7 +27,7 @@ pub type UxROMMapper = SimpleBankedPrgMapper<16, 2>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::Mapper;
+    use crate::cartridge::{Mapper, MirroringMode};
 
     #[test]
     fn test_uxrom_128kb_prg_bank_switching() {

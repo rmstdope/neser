@@ -1,5 +1,4 @@
 use crate::cartridge::mapper_templates::SimpleFixedPrgMapper;
-use crate::cartridge::MirroringMode;
 
 /// Mapper 3 - CNROM
 ///
@@ -27,7 +26,7 @@ pub type CNROMMapper = SimpleFixedPrgMapper<8, 3>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::Mapper;
+    use crate::cartridge::{Mapper, MirroringMode};
 
     #[test]
     fn test_cnrom_32kb_prg_no_banking() {

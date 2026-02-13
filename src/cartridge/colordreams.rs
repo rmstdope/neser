@@ -1,5 +1,4 @@
 use crate::cartridge::mapper_templates::DualBank32Mapper;
-use crate::cartridge::MirroringMode;
 
 /// Mapper 11 - Color Dreams
 ///
