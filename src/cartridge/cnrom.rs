@@ -289,28 +289,27 @@ mod tests {
     }
 
     #[test]
-    fn test_cnrom_registers_snapshot_roundtrip() {
-        // Test that register state can be saved and restored correctly
+    fn test_cnrom_registers_snapshot_bank_wrapping() {
+        // Test edge case: bank selection wrapping when bank number exceeds available banks
         let prg_rom = vec![0; 32 * 1024];
-        let mut chr_rom = vec![0; 32 * 1024];
+        let mut chr_rom = vec![0; 16 * 1024]; // Only 2 banks (16KB)
 
         // Fill CHR ROM with bank-specific data
-        for bank in 0..4 {
+        for bank in 0..2 {
             let start = bank * 8 * 1024;
             let end = start + 8 * 1024;
             for byte in &mut chr_rom[start..end] {
-                *byte = (bank * 20 + 10) as u8;
+                *byte = (bank + 50) as u8;
             }
         }
 
-        // Create mapper and set it to a specific state
+        // Create mapper and attempt to select bank 3 (should wrap to bank 1)
         let mut mapper =
             CNROMMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
-        mapper.write_prg(0x8000, 2); // Select CHR bank 2
+        mapper.write_prg(0x8000, 3); // Select bank 3, should wrap to bank 1 (3 % 2 = 1)
 
-        // Verify the bank is selected
-        assert_eq!(mapper.read_chr(0x0000), 50);
-        assert_eq!(mapper.read_chr(0x1FFF), 50);
+        // Verify bank wrapping before snapshot
+        assert_eq!(mapper.read_chr(0x0000), 51); // Bank 1
 
         // Take snapshot
         let registers = mapper.registers_snapshot();
@@ -319,9 +318,9 @@ mod tests {
         let mut restored = CNROMMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
         restored.restore_registers(&registers);
 
-        // Verify the restored state matches
-        assert_eq!(restored.read_chr(0x0000), 50);
-        assert_eq!(restored.read_chr(0x1FFF), 50);
+        // Verify the restored state maintains bank wrapping
+        assert_eq!(restored.read_chr(0x0000), 51);
+        assert_eq!(restored.read_chr(0x1FFF), 51);
     }
 
     #[test]

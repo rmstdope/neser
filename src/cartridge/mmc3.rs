@@ -939,6 +939,67 @@ mod tests {
 
         assert_eq!(restored.irq_counter(), 4);
     }
+
+    #[test]
+    fn test_mmc3_mirroring_modes_roundtrip() {
+        // Test that FourScreen and SingleScreen mirroring modes are preserved across save/load
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        // Test FourScreen mirroring
+        let mut mapper_fourscreen =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::FourScreen);
+
+        // Configure some state to make the test more realistic
+        mapper_fourscreen.write_prg(0x8000, 0x00); // Select R0
+        mapper_fourscreen.write_prg(0x8001, 0x05); // R0 = bank 5
+
+        // FourScreen mode should be preserved even without explicit write (it's set at construction)
+        assert_eq!(mapper_fourscreen.get_mirroring(), MirroringMode::FourScreen);
+
+        // Take snapshot
+        let registers_fourscreen = mapper_fourscreen.registers_snapshot();
+
+        // Restore to fresh mapper (initially Horizontal) and verify FourScreen is restored
+        let mut restored_fourscreen =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        restored_fourscreen.restore_registers(&registers_fourscreen);
+
+        assert_eq!(
+            restored_fourscreen.get_mirroring(),
+            MirroringMode::FourScreen,
+            "FourScreen mirroring should be preserved across save/load"
+        );
+
+        // Test SingleScreen mirroring
+        let mut mapper_singlescreen = MMC3Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            MirroringMode::SingleScreen,
+        );
+
+        // Configure some state
+        mapper_singlescreen.write_prg(0x8000, 0x01); // Select R1
+        mapper_singlescreen.write_prg(0x8001, 0x08); // R1 = bank 8
+
+        assert_eq!(
+            mapper_singlescreen.get_mirroring(),
+            MirroringMode::SingleScreen
+        );
+
+        // Take snapshot
+        let registers_singlescreen = mapper_singlescreen.registers_snapshot();
+
+        // Restore to fresh mapper and verify SingleScreen is restored
+        let mut restored_singlescreen = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        restored_singlescreen.restore_registers(&registers_singlescreen);
+
+        assert_eq!(
+            restored_singlescreen.get_mirroring(),
+            MirroringMode::SingleScreen,
+            "SingleScreen mirroring should be preserved across save/load"
+        );
+    }
 }
 
 impl Mapper for MMC3Mapper {
