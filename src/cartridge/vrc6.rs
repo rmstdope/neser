@@ -1,5 +1,5 @@
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
 use crate::trace_mapper;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -671,6 +671,18 @@ impl Mapper for VRC6Mapper {
                     self.audio.saw.step = data[46];
                 }
             }
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: true,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
         }
     }
 }

@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
 
 /// Mapper 19 - Namco 163 (Namco 129/163 with expansion audio)
 ///
@@ -493,6 +493,18 @@ impl Mapper for Namco163Mapper {
             self.audio_update_counter = data[165];
             self.audio_current_channel = data[166] as i8;
             self.audio_last_output = i16::from_le_bytes([data[167], data[168]]);
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: true,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
         }
     }
 }

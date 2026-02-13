@@ -64,7 +64,7 @@
 
 use crate::cartridge::cartridge::MirroringMode;
 use crate::cartridge::common::ChrMemory;
-use crate::cartridge::mapper::Mapper;
+use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 use crate::trace_mapper;
 use std::cell::Cell;
 
@@ -2087,6 +2087,18 @@ impl Mapper for MMC5Mapper {
         self.pcm_enabled = pcm_enabled;
         self.pcm_value = pcm_value;
         self.mirroring = mirroring;
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: true,
+            max_prg_ram_kb: 64,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
+        }
     }
 }
 

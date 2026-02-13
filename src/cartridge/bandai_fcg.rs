@@ -28,7 +28,7 @@ use crate::trace_mapper;
 
 use crate::cartridge::cartridge::MirroringMode;
 use crate::cartridge::common::{BankedRom, ChrMemory};
-use crate::cartridge::mapper::Mapper;
+use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
 /// Submapper variants for Bandai FCG
 #[allow(dead_code)]
@@ -332,6 +332,18 @@ impl Mapper for BandaiFcgMapper {
                 4 => MirroringMode::FourScreen,
                 _ => MirroringMode::Horizontal,
             };
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 0,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 1,
         }
     }
 }

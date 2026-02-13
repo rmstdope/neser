@@ -106,6 +106,7 @@
 ///     // ... other trait methods
 /// }
 /// ```
+#[allow(dead_code)]
 pub trait StateSnapshot {
     /// Create a snapshot of the current state.
     ///

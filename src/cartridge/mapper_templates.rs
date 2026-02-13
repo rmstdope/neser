@@ -86,7 +86,7 @@
 //! ```
 
 use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
 
 /// Simple mapper with fixed PRG-ROM and bank-selectable CHR-ROM.
 ///
@@ -206,6 +206,18 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
             self.chr_bank.set(value);
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: true,
+            has_dynamic_mirroring: false,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: CHR_BANK_KB,
         }
     }
 }
@@ -342,6 +354,18 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
     fn restore_registers(&mut self, data: &[u8]) {
         if !data.is_empty() {
             self.bank_select = data[0];
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: false,
+            has_dynamic_mirroring: false,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: PRG_BANK_KB,
+            chr_bank_size_kb: 8,
         }
     }
 }
@@ -494,6 +518,18 @@ impl<
         }
         if let Some(&value) = data.get(1) {
             self.chr_bank.set(value);
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: true,
+            has_dynamic_mirroring: false,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: 8,
         }
     }
 }
