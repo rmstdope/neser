@@ -33,12 +33,14 @@ pub struct CNROMMapper {
 
 impl CNROMMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        let chr_bank = BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE);
+
         Self {
             prg_rom,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom: BankedRom::new(chr_rom.clone(), CHR_BANK_SIZE),
+            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
             mirroring,
-            chr_bank: BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE),
+            chr_bank,
         }
     }
 }

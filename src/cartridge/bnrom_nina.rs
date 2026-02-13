@@ -49,19 +49,20 @@ impl BnromNinaMapper {
         let is_nina = !chr_rom.is_empty();
 
         // For CHR bank calculation, use actual ROM size for NINA-001, or CHR-RAM size for BNROM
-        let chr_bank_count = if is_nina {
+        let chr_bank = if is_nina {
             BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE)
         } else {
             BankSwitch::new(DEFAULT_CHR_RAM_SIZE / CHR_BANK_SIZE)
         };
+        let prg_bank = BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE);
 
         Self {
-            prg_rom: BankedRom::new(prg_rom.clone(), PRG_BANK_SIZE),
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_memory: ChrMemory::new(chr_rom),
             mirroring,
-            prg_bank: BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE),
-            chr_bank: chr_bank_count,
+            prg_bank,
+            chr_bank,
             is_nina,
         }
     }

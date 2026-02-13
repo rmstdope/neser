@@ -36,13 +36,16 @@ pub struct ColorDreamsMapper {
 impl ColorDreamsMapper {
     /// Create a new ColorDreams mapper.
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        let prg_bank = BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE);
+        let chr_bank = BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE);
+
         Self {
-            prg_rom: BankedRom::new(prg_rom.clone(), PRG_BANK_SIZE),
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom: BankedRom::new(chr_rom.clone(), CHR_BANK_SIZE),
+            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
             mirroring,
-            prg_bank: BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE),
-            chr_bank: BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE),
+            prg_bank,
+            chr_bank,
         }
     }
 }

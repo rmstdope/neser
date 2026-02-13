@@ -35,11 +35,13 @@ pub struct AxROMMapper {
 impl AxROMMapper {
     pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, _mirroring: MirroringMode) -> Self {
         // AxROM uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
+        let prg_bank = BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE_32K);
+
         Self {
-            prg_rom: BankedRom::new(prg_rom.clone(), PRG_BANK_SIZE_32K),
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_32K),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_memory: ChrMemory::new_ram(8192),
-            prg_bank: BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE_32K),
+            prg_bank,
             mirroring_bit: false, // Default to lower nametable
         }
     }
