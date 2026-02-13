@@ -1,13 +1,13 @@
 ---
-name: github-issue-administration
-description: Guidance for creating and updating GitHub issues with the gh CLI, including safe quoting practices.
+name: github-administration
+description: Guidance for creating and updating GitHub issues and pull requests with the gh CLI, including safe quoting practices.
 ---
 
-# GitHub Issue Administration Skill
+# GitHub Administration Skill
 
 ## Introduction
 
-Use this skill when creating, updating, or managing GitHub issues. It covers issue writing, workflow updates, and safe `gh` command usage with reliable quoting.
+Use this skill when creating, updating, or managing GitHub issues and pull requests. It covers issue and PR writing, workflow updates, safe `gh` command usage with reliable quoting, and the complete lifecycle from issue creation through branch management to PR merge.
 
 ## Instructions
 
@@ -16,8 +16,9 @@ Use this skill when creating, updating, or managing GitHub issues. It covers iss
    - Title: short, action-oriented, and specific.
    - Body: problem statement, expected behavior, scope, and acceptance criteria.
    - Add relevant labels (bug, enhancement, games, mapper, refactoring, testing).
+   - Assign issue: Use `--assignee @me` to assign to yourself, or `--assignee <username>` for others.
 3. **Sub-issues**: For large work, split into smaller issues and prefix the title with `Sub-issue (<parent-issue-number>):`.
-4. **Assign owner**: Always assign the issue to the developer doing the work.
+4. **Assign owner**: Always assign the issue using `--assignee @me` (for yourself) or `--assignee <username>` when creating the issue - don't leave it unassigned.
 5. **Update during workflow**:
    - Add progress notes when major steps are completed.
    - Link related PRs and reference test results when available.
@@ -83,7 +84,32 @@ If formatting or content is incorrect, update the issue:
 gh issue edit <issue-number> --body-file /tmp/corrected-body.md
 ```
 
-9. **Troubleshooting - Shell state corruption**:
+## Troubleshooting
+
+### PR creation prompts for where to push branch
+
+**Problem:** When running `gh pr create`, you get an interactive prompt asking "Where should we push the '{branch-name}' branch?"
+
+**Cause:** The feature branch exists locally but hasn't been pushed to the remote repository yet.
+
+**Solution:**
+
+```sh
+# Push the branch first
+git push origin your-branch-name
+
+# Then create the PR
+gh pr create --title "..." --body "..." --head your-branch-name
+```
+
+**Prevention:** Always use the `--head` flag when creating a PR to explicitly specify the branch:
+
+```sh
+# This won't prompt if branch doesn't exist, but tells you to push first
+gh pr create --title "..." --body "..." --head branch-that-needs-pushing
+```
+
+### Shell state corruption from gh commands
 
 If terminal shows `dquote>` prompt or similar after `gh` commands:
 
@@ -103,7 +129,7 @@ result = subprocess.run([
 print(result.stdout)
 ```
 
-10. **Troubleshooting - Label not found**:
+### Label not found error
 
 If you get error: `could not add label: 'X' not found`:
 
@@ -132,15 +158,59 @@ For multi-issue creation, use IDE file creation tools:
    /tmp/issue3.md - Third issue body
 
 2. Create issues:
-   gh issue create --title "Issue 1 title" --body-file /tmp/issue1.md --label enhancement
-   gh issue create --title "Issue 2 title" --body-file /tmp/issue2.md --label refactoring
-   gh issue create --title "Issue 3 title" --body-file /tmp/issue3.md --label testing
+   gh issue create --title "Issue 1 title" --body-file /tmp/issue1.md --label enhancement --assignee @me
+   gh issue create --title "Issue 2 title" --body-file /tmp/issue2.md --label refactoring --assignee @me
+   gh issue create --title "Issue 3 title" --body-file /tmp/issue3.md --label testing --assignee @me
 
 3. Verify:
-   gh issue list --state open --limit 5 --json number,title
+   gh issue list --state open --limit 5 --json number,title,assignees
 ```
 
-**Advantages:** No shell quoting issues, supports unlimited issue body length, clear separation of concerns.
+**Advantages:** No shell quoting issues, supports unlimited issue body length, clear separation of concerns, tracks issue assignments.
+
+### Creating pull requests
+
+When creating a PR after work is complete on a feature branch:
+
+**IMPORTANT: Always push the branch before creating the PR** to avoid interactive prompts:
+
+```sh
+# Step 1: Ensure branch is pushed to remote
+git push origin your-branch-name
+
+# Step 2: Create the PR with explicit branch reference
+gh pr create \
+  --title "Fix #492: Brief description of the fix" \
+  --body "Your PR body can be inline for PRs (unlike issues).
+
+## Changes
+- What was changed
+- Additional improvements
+
+## Testing
+- How it was tested
+- Test coverage details
+
+Fixes #492" \
+  --head your-branch-name
+```
+
+**PR body guidelines:**
+
+- Can use inline content (unlike issues where multi-line should use --body-file)
+- Use clear section headers: `## Changes`, `## Testing`, `## Fixes`
+- Reference the issue with `Fixes #123` which will auto-link and close the issue on merge
+- Keep formatting clear and scannable
+
+**Verification after PR creation:**
+
+```sh
+# View the created PR
+gh pr view <pr-number>
+
+# Or list recent open PRs
+gh pr list --state open --limit 5 --json number,title
+```
 
 ### Batch creation for large grouped initiatives
 
@@ -153,21 +223,21 @@ When creating many related issues (e.g. Phase 1, 2, 3 recommendations from code 
 
    # Phase 1 (Critical issues)
    for i in 1 2 3; do
-     gh issue create --title "Phase 1 issue $i" --body-file /tmp/phase1_issue$i.md --label "critical,enhancement"
+     gh issue create --title "Phase 1 issue $i" --body-file /tmp/phase1_issue$i.md --label "critical,enhancement" --assignee @me
    done
 
    # Phase 2 (Important issues)
    for i in 1 2 3 4; do
-     gh issue create --title "Phase 2 issue $i" --body-file /tmp/phase2_issue$i.md --label "enhancement,refactoring"
+     gh issue create --title "Phase 2 issue $i" --body-file /tmp/phase2_issue$i.md --label "enhancement,refactoring" --assignee @me
    done
 
    # Phase 3 (Nice-to-have issues)
    for i in 1 2 3 4 5; do
-     gh issue create --title "Phase 3 issue $i" --body-file /tmp/phase3_issue$i.md --label "refactoring"
+     gh issue create --title "Phase 3 issue $i" --body-file /tmp/phase3_issue$i.md --label "refactoring" --assignee @me
    done
 
 3. Verify by phase (using grep to filter):
-   gh issue list --state open --limit 20 --json number,title | grep -E "Phase 1|Phase 2|Phase 3"
+   gh issue list --state open --limit 20 --json number,title,assignees | grep -E "Phase 1|Phase 2|Phase 3"
 ```
 
 This approach ensures:
@@ -180,7 +250,7 @@ This approach ensures:
 ### Alternative: Creating issues with inline short bodies
 
 ```sh
-gh issue create --title "Fix save state corruption" --body "Problem: ..." --label bug
+gh issue create --title "Fix save state corruption" --body "Problem: ..." --label bug --assignee @me
 ```
 
 ### Update existing issue
@@ -239,38 +309,95 @@ gh issue comment 123 --body "Progress: tests added; implementation in progress."
      Phase 4 (Documentation): Issues #536-#539 (Documentation polish)
      ```
 
-7. **Complete workflow for multi-phase initiatives**:
-   
-   When working from a comprehensive code review or analysis document:
-   
+7. **Complete issue → branch → PR → merge workflow**:
+
+   This is the end-to-end workflow for working on an issue:
+
    ```
-   Step 1: Analysis & Prioritization
+   Step 1: Create the issue (if not already created)
+   gh issue create --title "Issue title" --body-file /tmp/issue.md --label bug --assignee @me
+   # Returns issue number (e.g., #492)
+
+   Step 2: Create a branch from main
+   git checkout main
+   git pull origin main
+   git checkout -b 492-short-description
+   # Branch name format: <issue-number>-<short-kebab-case-description>
+
+   Step 3: Implement, test, and commit
+   # Make changes
+   cargo test --all-features  # Verify tests pass
+   cargo fmt
+   cargo clippy --all-targets --all-features -- -D warnings
+   git add <files>
+   git commit -m "Fixes #492: description of the change"
+
+   Step 4: Push the branch to remote
+   git push origin 492-short-description
+
+   Step 5: Create the PR
+   gh pr create \
+     --title "Fix #492: Implement SOCD handling for joypad" \
+     --body "Description of what was changed and why.
+
+   ## Changes
+   - What was changed
+
+   Fixes #492" \
+     --head 492-short-description
+   # The --head flag ensures gh knows which branch to use, avoiding interactive prompts
+
+   Step 6: Request review
+   # Share the PR URL with your navigator/reviewer
+   # Wait for approval and feedback
+
+   Step 7: Merge the PR (after approval and all checks pass)
+   gh pr merge <pr-number> --squash --delete-branch
+   # --squash: Combines all commits into one for clean history
+   # --delete-branch: Automatically deletes the feature branch after merge
+
+   Step 8: Verify and close related issue
+   # The issue is auto-closed if PR body contains "Fixes #492"
+   # Verify it's closed: gh issue view 492
+   ```
+
+8. **Complete multi-phase workflow**:
+
+   When working from a comprehensive code review or analysis document:
+
+   ```
+   Phase A: Analysis & Issue Creation
    - Conduct code review/analysis
    - Document findings in structured markdown (REVIEW.md)
    - Organize recommendations into phases by priority
-   - Define acceptance criteria for each recommendation
-   
-   Step 2: Create Issue Bodies
-   - Create body files for each phase using IDE file creation
-   - Name files consistently: phase1_issue1.md, phase1_issue2.md, etc.
-   - Include clear sections: Problem, Current State, Solution, Acceptance Criteria, Reference
-   - Review all body files before creating issues
-   
-   Step 3: Create Issues by Phase
-   - Create Phase 1 (Critical) issues first
-   - Verify they were created successfully
+   - Define acceptance criteria for each issue
+   - Create all body files using IDE file creation tools
+
+   Phase B: Batch Create All Issues
+   - Create Phase 1 (Critical) issues with --assignee @me
+   - Verify successful creation: gh issue list --state open --limit 10
    - Create Phase 2 (Important) issues
-   - Verify success
-   - Continue for subsequent phases
-   
-   Step 4: Verify Complete Initiative
-   - List all created issues with filtering
-   - Review issue formatting with gh issue view
-   - Update REVIEW.md with issue links
-   - Create summary comment linking all phases
-   
-   Step 5: Track Progress
-   - Mark phases complete as work progresses
-   - Update issue bodies with implementation notes
-   - Close issues as PRs merge
+   - Create Phase 3 (Refactoring) issues
+   - Create Phase 4 (Documentation) issues
+
+   Phase C: Work on Issues (One at a Time)
+   For each issue (in priority order):
+   - Create branch: git checkout -b <issue-number>-description
+   - Implement and test locally
+   - Push branch: git push origin <branch-name>
+   - Create PR: gh pr create --title "Fix #<number>: ..." --head <branch-name>
+   - Request review and wait for approval
+   - Merge: gh pr merge <pr-number> --squash --delete-branch
+   - Verify issue is closed automatically
+
+   Phase D: Track Overall Progress
+   - Update REVIEW.md with links to created issues
+   - Monitor issue completion with: gh issue list --assignee @me --state open
+
+   This phased approach ensures:
+   - All issues planned and approved before any work starts
+   - Work is tracked per issue with clear ownership
+   - Each issue has a corresponding PR for review
+   - Clean commit history with squashed merges
+   - Automatic tracking via issue closure on PR merge
    ```
