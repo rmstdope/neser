@@ -332,7 +332,7 @@ mod tests {
     fn test_axrom_open_bus() {
         let prg_rom = vec![0; 128 * 1024];
         let mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
-        
+
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0xEE), 0xEE);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0xFF), 0xFF);
     }

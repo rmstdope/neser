@@ -88,6 +88,11 @@ impl SdlGlWrapper {
         }
     }
 
+    /// Queues a transient toast notification.
+    pub fn add_toast(&mut self, text: impl Into<String>) {
+        self.gl_backend.add_toast(text);
+    }
+
     /// Returns the current SDL window size as `(width, height)` in pixels.
     pub fn window_size(&self) -> (u32, u32) {
         self.gl_backend.window_size()
@@ -207,16 +212,20 @@ fn translate_event(event: &Event) -> Option<InputEvent> {
         }),
         Event::TextInput { text, .. } => Some(InputEvent::TextInput(text.clone())),
         Event::KeyDown {
-            keycode: Some(keycode),
-            repeat: false,
-            ..
-        } => map_key(*keycode).map(|key| InputEvent::Key { key, down: true }),
-        Event::KeyUp {
-            keycode: Some(keycode),
-            ..
-        } => map_key(*keycode).map(|key| InputEvent::Key { key, down: false }),
+            keycode, repeat, ..
+        } => translate_key_input(*keycode, *repeat, true),
+        Event::KeyUp { keycode, .. } => translate_key_input(*keycode, false, false),
         _ => None,
     }
+}
+
+fn translate_key_input(keycode: Option<Keycode>, repeat: bool, down: bool) -> Option<InputEvent> {
+    if repeat {
+        return None;
+    }
+
+    let keycode = keycode?;
+    map_key(keycode).map(|key| InputEvent::Key { key, down })
 }
 
 /// Maps SDL mouse button identifiers to renderer mouse buttons.

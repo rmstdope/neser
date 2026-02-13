@@ -196,9 +196,6 @@ pub fn parse_header(header: &[u8; 16]) -> Option<InesHeader> {
         default_expansion_device,
     })
 }
-
-/// Parse a full iNES/NES2 ROM blob. Returns the parsed header, owned PRG ROM
-/// bytes, owned CHR ROM bytes, and the combined CRC32 of PRG+CHR.
 /// Errors that can occur while parsing a full ROM blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RomParseError {
@@ -206,21 +203,48 @@ pub enum RomParseError {
     FileTooSmall { expected: usize, actual: usize },
 }
 
-pub fn parse_rom(data: &[u8]) -> Result<(InesHeader, Vec<u8>, Vec<u8>, u32), RomParseError> {
-    if data.len() < 16 {
+// iNES format layout constants
+const HEADER_SIZE: usize = 16;
+const TRAINER_SIZE: usize = 512;
+
+type ParsedRom = (InesHeader, Vec<u8>, Vec<u8>, Option<Vec<u8>>, u32);
+
+/// Parse a full iNES/NES2 ROM blob. Returns the parsed header, owned PRG ROM
+/// bytes, owned CHR ROM bytes, optional trainer data (512 bytes if present),
+/// and the combined CRC32 of PRG+CHR.
+///
+/// # Errors
+///
+/// Returns `RomParseError::InvalidHeader` if the magic bytes are invalid.
+/// Returns `RomParseError::FileTooSmall` if the file is smaller than expected.
+pub fn parse_rom(data: &[u8]) -> Result<ParsedRom, RomParseError> {
+    if data.len() < HEADER_SIZE {
         return Err(RomParseError::FileTooSmall {
-            expected: 16,
+            expected: HEADER_SIZE,
             actual: data.len(),
         });
     }
 
-    let header: [u8; 16] = data[0..16]
+    let header: [u8; HEADER_SIZE] = data[0..HEADER_SIZE]
         .try_into()
         .map_err(|_| RomParseError::InvalidHeader)?;
     let info = parse_header(&header).ok_or(RomParseError::InvalidHeader)?;
 
-    let trainer_offset = if info.has_trainer { 512 } else { 0 };
-    let prg_rom_start = 16 + trainer_offset;
+    let trainer_offset = if info.has_trainer { TRAINER_SIZE } else { 0 };
+    let prg_rom_start = HEADER_SIZE + trainer_offset;
+
+    // Extract trainer data if present
+    let trainer = if info.has_trainer {
+        if data.len() < HEADER_SIZE + TRAINER_SIZE {
+            return Err(RomParseError::FileTooSmall {
+                expected: HEADER_SIZE + TRAINER_SIZE,
+                actual: data.len(),
+            });
+        }
+        Some(data[HEADER_SIZE..HEADER_SIZE + TRAINER_SIZE].to_vec())
+    } else {
+        None
+    };
 
     // Primary sizes come from parsed header (NES2-aware). If these sizes
     // don't fit in the provided data and the header is marked as NES2,
@@ -267,7 +291,7 @@ pub fn parse_rom(data: &[u8]) -> Result<(InesHeader, Vec<u8>, Vec<u8>, u32), Rom
 
     let crc = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
 
-    Ok((header_for_return, prg_rom, chr_rom, crc))
+    Ok((header_for_return, prg_rom, chr_rom, trainer, crc))
 }
 
 #[cfg(test)]
@@ -369,10 +393,11 @@ mod tests {
         rom.extend(vec![0xAAu8; 2 * 16 * 1024]);
         rom.extend(vec![0xBBu8; 8 * 1024]);
 
-        let (hdr, prg, chr, crc) = parse_rom(&rom).expect("parse_rom v1");
+        let (hdr, prg, chr, trainer, crc) = parse_rom(&rom).expect("parse_rom v1");
         assert_eq!(hdr.header_version, "1.0");
         assert_eq!(prg.len(), 2 * 16 * 1024);
         assert_eq!(chr.len(), 8 * 1024);
+        assert!(trainer.is_none());
         assert_eq!(crc, crate::cartridge::calculate_rom_crc32(&prg, &chr));
     }
 
@@ -392,13 +417,14 @@ mod tests {
         rom.extend(vec![0xAAu8; 16 * 1024]);
         rom.extend(vec![0xBBu8; 8 * 1024]);
 
-        let (hdr, prg, chr, _crc) = parse_rom(&rom).expect("parse_rom fallback");
+        let (hdr, prg, chr, trainer, _crc) = parse_rom(&rom).expect("parse_rom fallback");
         // Fallback should update reported sizes to v1 values
         assert_eq!(hdr.header_version, "2.0");
         assert_eq!(hdr.prg_rom_size_bytes, 16 * 1024);
         assert_eq!(hdr.chr_rom_size_bytes, 8 * 1024);
         assert_eq!(prg.len(), 16 * 1024);
         assert_eq!(chr.len(), 8 * 1024);
+        assert!(trainer.is_none());
     }
 
     #[test]
@@ -432,6 +458,97 @@ mod tests {
         match err {
             RomParseError::InvalidHeader => {}
             _ => panic!("expected InvalidHeader"),
+        }
+    }
+
+    #[test]
+    fn parse_rom_with_trainer_extracts_trainer_data() {
+        // Test that when trainer flag is set, the 512-byte trainer is extracted
+        let mut rom = vec![0u8; 16];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1; // 1 * 16KB PRG
+        rom[5] = 1; // 1 * 8KB CHR
+        rom[6] = 0x04; // flags6 with trainer bit set (bit 2)
+        rom[7] = 0; // flags7
+
+        // Add 512 bytes of trainer data with a pattern
+        let trainer_data: Vec<u8> = (0..512).map(|i| i as u8).collect();
+        rom.extend(&trainer_data);
+
+        // Add PRG (16KB) and CHR (8KB)
+        rom.extend(vec![0xAAu8; 16 * 1024]);
+        rom.extend(vec![0xBBu8; 8 * 1024]);
+
+        let (hdr, prg, chr, trainer, _crc) = parse_rom(&rom).expect("parse_rom with trainer");
+
+        // Verify header recognizes trainer
+        assert!(hdr.has_trainer);
+
+        // Verify trainer data is extracted
+        assert!(trainer.is_some());
+        let extracted_trainer = trainer.unwrap();
+        assert_eq!(extracted_trainer.len(), 512);
+
+        // Verify trainer data matches what we put in
+        for (i, &byte) in extracted_trainer.iter().enumerate() {
+            assert_eq!(byte, i as u8);
+        }
+
+        // Verify PRG and CHR are still correct
+        assert_eq!(prg.len(), 16 * 1024);
+        assert_eq!(chr.len(), 8 * 1024);
+        assert_eq!(prg[0], 0xAA);
+        assert_eq!(chr[0], 0xBB);
+    }
+
+    #[test]
+    fn parse_rom_without_trainer_returns_none() {
+        // Test that when trainer flag is not set, no trainer data is returned
+        let mut rom = vec![0u8; 16];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1; // 1 * 16KB PRG
+        rom[5] = 1; // 1 * 8KB CHR
+        rom[6] = 0x00; // flags6 without trainer bit
+        rom[7] = 0; // flags7
+
+        // Add PRG (16KB) and CHR (8KB)
+        rom.extend(vec![0xAAu8; 16 * 1024]);
+        rom.extend(vec![0xBBu8; 8 * 1024]);
+
+        let (hdr, prg, chr, trainer, _crc) = parse_rom(&rom).expect("parse_rom without trainer");
+
+        // Verify header doesn't have trainer
+        assert!(!hdr.has_trainer);
+
+        // Verify no trainer data is returned
+        assert!(trainer.is_none());
+
+        // Verify PRG and CHR are correct
+        assert_eq!(prg.len(), 16 * 1024);
+        assert_eq!(chr.len(), 8 * 1024);
+    }
+
+    #[test]
+    fn parse_rom_with_trainer_file_too_small() {
+        // Test that if trainer flag is set but file is too small, error is returned
+        let mut rom = vec![0u8; 16];
+        rom[0..4].copy_from_slice(b"NES\x1A");
+        rom[4] = 1; // 1 * 16KB PRG
+        rom[5] = 1; // 1 * 8KB CHR
+        rom[6] = 0x04; // flags6 with trainer bit set
+        rom[7] = 0; // flags7
+
+        // Only add 100 bytes (not enough for trainer)
+        rom.extend(vec![0x00u8; 100]);
+
+        let err = parse_rom(&rom).expect_err("should be too small");
+        match err {
+            RomParseError::FileTooSmall { expected, actual } => {
+                // Expected: 16 (header) + 512 (trainer) = 528
+                assert_eq!(expected, 528);
+                assert_eq!(actual, 116);
+            }
+            _ => panic!("expected FileTooSmall error"),
         }
     }
 }

@@ -363,8 +363,12 @@ mod tests {
 
     #[test]
     fn test_cnrom_open_bus() {
-        let mapper = CNROMMapper::new(vec![0; 32 * 1024], vec![0; 32 * 1024], MirroringMode::Horizontal);
-        
+        let mapper = CNROMMapper::new(
+            vec![0; 32 * 1024],
+            vec![0; 32 * 1024],
+            MirroringMode::Horizontal,
+        );
+
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0xCC), 0xCC);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0xDD), 0xDD);
     }

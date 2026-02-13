@@ -1,6 +1,21 @@
+// ============================================================================
+// MMC3 Mapper (Mapper 4) - Nintendo TxROM boards
+// ============================================================================
+//
+// References:
+// - Main: https://www.nesdev.org/wiki/MMC3
+// - IRQ: https://www.nesdev.org/wiki/MMC3#IRQ_Specifics
+// - Variants: https://www.nesdev.org/wiki/TxROM
+//
+// ============================================================================
+
 use crate::cartridge::common::ChrMemory;
 use crate::cartridge::{Mapper, MirroringMode};
 use crate::trace_mapper;
+
+// ============================================================================
+// Mapper Structure & Constants
+// ============================================================================
 
 /// Mapper 4 - MMC3 (TxROM boards)
 ///
@@ -55,6 +70,10 @@ pub struct MMC3Mapper {
     use_alternate_irq: bool,
 }
 
+// ============================================================================
+// Mapper Initialization & Configuration
+// ============================================================================
+
 impl MMC3Mapper {
     const PRG_BANK_SIZE: usize = 0x2000; // 8KB
     const CHR_BANK_SIZE: usize = 0x0400; // 1KB
@@ -65,7 +84,14 @@ impl MMC3Mapper {
     const PRG_RAM_ENABLE_MASK: u8 = 0b1000_0000;
     const PRG_RAM_WRITE_PROTECT_MASK: u8 = 0b0100_0000;
 
-    #[cfg(test)]
+    /// Create an MMC3 mapper with default (Sharp) IRQ behavior.
+    ///
+    /// For alternate (NEC) IRQ behavior, use the builder pattern:
+    /// ```ignore
+    /// // true enables alternate (NEC) IRQ behavior
+    /// let mapper = MMC3Mapper::new(prg_rom, chr_rom, mirroring).with_irq_mode(true);
+    /// ```
+    #[allow(dead_code)]
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         Self::new_with_irq_mode(prg_rom, chr_rom, mirroring, false)
     }
@@ -74,6 +100,8 @@ impl MMC3Mapper {
     ///
     /// - `use_alternate_irq = false`: Normal (Sharp) behavior - IRQ when counter is 0
     /// - `use_alternate_irq = true`: Alternate (NEC) behavior - IRQ only on 1→0 transition
+    ///
+    /// **Prefer using the builder pattern with `with_irq_mode()` instead.**
     pub fn new_with_irq_mode(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
@@ -102,6 +130,27 @@ impl MMC3Mapper {
             use_alternate_irq,
         }
     }
+
+    /// Builder method to set alternate (NEC) IRQ behavior.
+    ///
+    /// This allows for fluent construction:
+    /// ```ignore
+    /// let mapper = MMC3Mapper::new(prg_rom, chr_rom, mirroring)
+    ///     .with_irq_mode(true);  // true = NEC behavior, false = Sharp behavior
+    /// ```
+    ///
+    /// # Arguments
+    /// * `use_alternate_irq` - Pass `true` for alternate (NEC) IRQ behavior (only fire on 1→0 transition),
+    ///   or `false` for normal (Sharp) IRQ behavior (fire when counter is 0)
+    #[allow(dead_code)]
+    pub fn with_irq_mode(mut self, use_alternate_irq: bool) -> Self {
+        self.use_alternate_irq = use_alternate_irq;
+        self
+    }
+
+    // ============================================================================
+    // Bank Management Utilities
+    // ============================================================================
 
     fn prg_bank_count(&self) -> usize {
         self.prg_rom.len() / Self::PRG_BANK_SIZE
@@ -158,6 +207,56 @@ impl MMC3Mapper {
     fn irq_counter(&self) -> u8 {
         self.irq_counter
     }
+
+    // ============================================================================
+    // PPU A12 Edge Detection for IRQ Timing
+    // ============================================================================
+    //
+    // The MMC3 mapper generates IRQs via cycle-accurate A12 edge detection.
+    // A12 is PPU address line 12 (bit 12 of the PPU address bus).
+    //
+    // Edge detection process:
+    // 1. Track A12 state changes via PPU address bus
+    // 2. Detect rising edge (transition from 0 to 1)
+    // 3. A12 must be low for at least 3 CPU cycles before rising edge counts
+    // 4. Each valid rising edge clocks the IRQ counter
+    // 5. Generate IRQ when counter reaches 0 (behavior varies by chip)
+    //
+    // A12 Low-Pass Filter:
+    // ```text
+    // CPU Cycle: 1     2     3     4
+    // A12:       Low   Low   Low   High → Valid rising edge, clocks IRQ
+    //
+    // CPU Cycle: 1     2     3
+    // A12:       Low   Low   High       → Invalid, only 2 cycles low
+    // ```
+    //
+    // IRQ Counter Behavior:
+    // - Sharp MMC3: IRQ when counter IS 0 after clocking
+    // - NEC MMC3: IRQ only on 1→0 TRANSITION
+    //
+    // Register Layout:
+    // ```text
+    // $C000 (write): IRQ Latch
+    // 7  bit  0
+    // ---- ----
+    // LLLL LLLL
+    // |||| ||||
+    // ++++-++++- IRQ counter reload value
+    //
+    // $C001 (write): IRQ Reload
+    // - Clears counter to 0 immediately
+    // - Sets reload flag for next A12 rising edge
+    //
+    // $E000 (write): IRQ Disable
+    // - Disables IRQ generation
+    // - Acknowledges pending IRQ
+    //
+    // $E001 (write): IRQ Enable
+    // - Enables IRQ generation
+    // ```
+    //
+    // See: https://www.nesdev.org/wiki/MMC3#IRQ_Specifics
 
     fn a12_rising_edge(&mut self, current_a12: bool) -> bool {
         let rising_edge = !self.prev_a12 && current_a12;
@@ -230,6 +329,10 @@ impl MMC3Mapper {
         }
     }
 
+    // ============================================================================
+    // CHR Bank Switching Logic
+    // ============================================================================
+
     fn map_chr_addr_to_bank_1k(&self, chr_addr: usize) -> (usize, usize) {
         let bank_offset = chr_addr & (Self::CHR_BANK_SIZE - 1);
 
@@ -271,6 +374,10 @@ impl MMC3Mapper {
         (self.chr_bank_index_1k(bank_1k), bank_offset)
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
@@ -975,20 +1082,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_mmc3_builder_pattern_with_irq_mode() {
+        // Test builder pattern for alternate IRQ mode
+        let prg_rom = banked_data(8 * 1024, 4);
+        let chr_rom = banked_data(1024, 8);
+
+        // Create mapper with default (Sharp) IRQ behavior
+        let mapper_default =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        assert!(!mapper_default.use_alternate_irq);
+
+        // Create mapper with alternate (NEC) IRQ behavior using builder pattern
+        let mapper_alternate =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
+                .with_irq_mode(true);
+        assert!(mapper_alternate.use_alternate_irq);
+
+        // Verify new_with_irq_mode still works
+        let mapper_explicit =
+            MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, MirroringMode::Horizontal, true);
+        assert!(mapper_explicit.use_alternate_irq);
+    }
+
     /// Test MMC3 enabled PRG-RAM doesn't return open-bus
     #[test]
     fn test_mmc3_enabled_prg_ram_returns_data_not_open_bus() {
-        let mut mapper = MMC3Mapper::new(vec![0; 128 * 1024], vec![0; 128 * 1024], MirroringMode::Horizontal);
-        
+        let mut mapper = MMC3Mapper::new(
+            vec![0; 128 * 1024],
+            vec![0; 128 * 1024],
+            MirroringMode::Horizontal,
+        );
+
         // Enable PRG-RAM (bit 7 = 1)
         mapper.write_prg(0xA001, 0b1000_0000);
-        
+
         // Write to PRG-RAM
         mapper.write_prg(0x6000, 0x99);
-        
+
         let open_bus = 0xFF;
         let result = mapper.read_prg_open_bus(0x6000, open_bus);
-        
+
         // Should return the written value, not open-bus
         assert_eq!(
             result, 0x99,
@@ -996,6 +1130,10 @@ mod tests {
         );
     }
 }
+
+// ============================================================================
+// CPU & PPU I/O (Mapper Trait Implementation)
+// ============================================================================
 
 impl Mapper for MMC3Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
@@ -1194,6 +1332,10 @@ impl Mapper for MMC3Mapper {
     fn restore_chr_ram(&mut self, data: &[u8]) {
         self.chr_memory.load_snapshot(data);
     }
+
+    // ============================================================================
+    // Save State Management
+    // ============================================================================
 
     fn registers_snapshot(&self) -> Vec<u8> {
         // Serialize MMC3 internal registers:

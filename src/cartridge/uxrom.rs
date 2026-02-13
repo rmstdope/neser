@@ -308,7 +308,7 @@ mod tests {
     #[test]
     fn test_uxrom_open_bus() {
         let mapper = UxROMMapper::new(vec![0; 128 * 1024], vec![], MirroringMode::Horizontal);
-        
+
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0xAA), 0xAA);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0xBB), 0xBB);
     }

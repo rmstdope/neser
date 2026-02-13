@@ -87,6 +87,10 @@ pub struct Cartridge {
     rom_path: Option<PathBuf>,
     save_path: Option<PathBuf>,
     battery_backed_prg_ram: bool,
+
+    /// Optional 512-byte trainer data loaded from iNES header.
+    /// If present, should be loaded into CPU memory at $7000-$71FF.
+    trainer: Option<Vec<u8>>,
 }
 
 impl Cartridge {
@@ -95,7 +99,7 @@ impl Cartridge {
         // Delegate full parsing (header, PRG/CHR extraction, CRC) to centralized parser.
         // `parse_rom` will validate the header and sizes and return rich errors
         // which we map into `CartridgeError` here.
-        let (info, prg_rom, chr_rom, crc32) = match crate::cartridge::parse_rom(data) {
+        let (info, prg_rom, chr_rom, trainer, crc32) = match crate::cartridge::parse_rom(data) {
             Ok(tuple) => tuple,
             Err(crate::cartridge::ines::RomParseError::InvalidHeader) => {
                 return Err(CartridgeError::InvalidHeader);
@@ -159,6 +163,7 @@ impl Cartridge {
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram,
+            trainer,
         })
     }
 
@@ -258,6 +263,12 @@ impl Cartridge {
         self.rom_tv_system
     }
 
+    /// Returns a reference to the trainer data if present.
+    /// The trainer is a 512-byte block that should be loaded into CPU memory at $7000-$71FF.
+    pub fn trainer(&self) -> Option<&[u8]> {
+        self.trainer.as_deref()
+    }
+
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
@@ -271,6 +282,7 @@ impl Cartridge {
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram: false,
+            trainer: None,
         }
     }
 
@@ -283,6 +295,7 @@ impl Cartridge {
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram: false,
+            trainer: None,
         }
     }
 
@@ -504,6 +517,56 @@ mod tests {
         assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
         // Verify mapper can read CHR ROM (8KB at $0000-$1FFF)
         assert_eq!(cartridge.mapper().read_chr(0x0000), 0xBB);
+        // Verify no trainer data
+        assert!(cartridge.trainer().is_none());
+    }
+
+    #[test]
+    fn test_load_rom_with_trainer_stores_trainer_data() {
+        // Create a ROM with trainer bit set and custom trainer data
+        let mut rom = vec![
+            b'N', b'E', b'S', 0x1A, // iNES header
+            1,    // PRG ROM size (16KB units)
+            1,    // CHR ROM size (8KB units)
+            0x04, // Flags 6 with trainer bit set (bit 2)
+            0,    // Flags 7
+            0,    // Flags 8 (PRG RAM size)
+            0,    // Flags 9
+            0,    // Flags 10
+            0, 0, 0, 0, 0, // Reserved (unused)
+        ];
+
+        // Add 512 bytes of trainer data with a pattern
+        let trainer_pattern: Vec<u8> = (0..512).map(|i| (i + 100) as u8).collect();
+        rom.extend(&trainer_pattern);
+
+        // Add PRG ROM data
+        rom.extend(vec![0xAA; 16 * 1024]);
+
+        // Add CHR ROM data
+        rom.extend(vec![0xBB; 8 * 1024]);
+
+        let cartridge = Cartridge::new(&rom).unwrap();
+
+        // Verify trainer data is accessible
+        let trainer = cartridge.trainer().expect("Trainer should be present");
+        assert_eq!(trainer.len(), 512);
+
+        // Verify trainer data matches what we put in
+        for (i, &byte) in trainer.iter().enumerate() {
+            assert_eq!(byte, (i + 100) as u8);
+        }
+
+        // Verify mapper can still read PRG and CHR correctly
+        assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
+        assert_eq!(cartridge.mapper().read_chr(0x0000), 0xBB);
+    }
+
+    #[test]
+    fn test_load_rom_without_trainer_has_none() {
+        let rom_data = create_test_rom(1, 1, 0, false);
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert!(cartridge.trainer().is_none());
     }
 
     #[test]
