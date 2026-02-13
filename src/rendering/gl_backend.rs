@@ -6,7 +6,7 @@ use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Backend-agnostic surface for presenting rendered frames.
 ///
@@ -84,8 +84,9 @@ impl ToastManager {
     }
 
     fn prune_expired(&mut self, now: Instant) {
+        let lifetime = Duration::from_secs(TOAST_LIFETIME_SECS);
         self.toasts.retain(|toast| {
-            now.saturating_duration_since(toast.created_at).as_secs() <= TOAST_LIFETIME_SECS
+            now.saturating_duration_since(toast.created_at) <= lifetime
         });
     }
 
@@ -672,6 +673,21 @@ mod tests {
 
         let visible = manager.visible_toasts(now + Duration::from_secs(TOAST_LIFETIME_SECS + 1));
         assert!(visible.is_empty());
+    }
+
+    #[test]
+    fn test_toast_manager_expires_without_extra_truncated_second() {
+        let mut manager = ToastManager::new();
+        let now = Instant::now();
+        manager.push("Saved state".to_string(), now);
+
+        let visible = manager.visible_toasts(
+            now + Duration::from_secs(TOAST_LIFETIME_SECS) + Duration::from_millis(999),
+        );
+        assert!(
+            visible.is_empty(),
+            "toast should expire once lifetime is exceeded, even within the next second"
+        );
     }
 
     #[test]
