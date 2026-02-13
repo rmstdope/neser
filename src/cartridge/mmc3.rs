@@ -974,6 +974,27 @@ mod tests {
             "SingleScreen mirroring should be preserved across save/load"
         );
     }
+
+    /// Test MMC3 enabled PRG-RAM doesn't return open-bus
+    #[test]
+    fn test_mmc3_enabled_prg_ram_returns_data_not_open_bus() {
+        let mut mapper = MMC3Mapper::new(vec![0; 128 * 1024], vec![0; 128 * 1024], MirroringMode::Horizontal);
+        
+        // Enable PRG-RAM (bit 7 = 1)
+        mapper.write_prg(0xA001, 0b1000_0000);
+        
+        // Write to PRG-RAM
+        mapper.write_prg(0x6000, 0x99);
+        
+        let open_bus = 0xFF;
+        let result = mapper.read_prg_open_bus(0x6000, open_bus);
+        
+        // Should return the written value, not open-bus
+        assert_eq!(
+            result, 0x99,
+            "Enabled PRG-RAM should return written data, not open-bus"
+        );
+    }
 }
 
 impl Mapper for MMC3Mapper {

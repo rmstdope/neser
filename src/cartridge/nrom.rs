@@ -250,4 +250,57 @@ mod tests {
         assert_eq!(restored.read_chr(0x0000), 0xAA);
         assert_eq!(restored.read_chr(0x1FFF), 0xBB);
     }
+
+    #[test]
+    fn test_nrom_open_bus() {
+        let mapper = NROMMapper::new(vec![0; 32 * 1024], vec![0; 8192], MirroringMode::Horizontal);
+        
+        // Test various open-bus scenarios
+        assert_eq!(mapper.read_prg_open_bus(0x0000, 0x12), 0x12);
+        assert_eq!(mapper.read_prg_open_bus(0x1000, 0x34), 0x34);
+        assert_eq!(mapper.read_prg_open_bus(0x2000, 0x56), 0x56);
+        assert_eq!(mapper.read_prg_open_bus(0x3000, 0x78), 0x78);
+        assert_eq!(mapper.read_prg_open_bus(0x4000, 0x9A), 0x9A);
+        assert_eq!(mapper.read_prg_open_bus(0x5000, 0xBC), 0xBC);
+        assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0xDE), 0xDE);
+    }
+
+    #[test]
+    fn test_nrom_mapped_regions_dont_return_open_bus() {
+        let prg_rom = vec![0xAB; 32 * 1024];
+        let chr_rom = vec![0; 8 * 1024];
+        let mapper = NROMMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        
+        let open_bus = 0x42;
+        
+        // PRG-ROM region ($8000-$FFFF) should return ROM data, not open-bus
+        let rom_result = mapper.read_prg_open_bus(0x8000, open_bus);
+        assert_eq!(
+            rom_result, 0xAB,
+            "PRG-ROM region should return ROM data, not open-bus"
+        );
+        
+        let rom_result2 = mapper.read_prg_open_bus(0xC000, open_bus);
+        assert_eq!(
+            rom_result2, 0xAB,
+            "PRG-ROM region should return ROM data, not open-bus"
+        );
+    }
+
+    #[test]
+    fn test_nrom_open_bus_boundary_at_6000() {
+        let mapper = NROMMapper::new(vec![0; 32 * 1024], vec![0; 8192], MirroringMode::Horizontal);
+        let open_bus = 0x55;
+        
+        // $5FFF should return open-bus
+        assert_eq!(
+            mapper.read_prg_open_bus(0x5FFF, open_bus),
+            open_bus,
+            "$5FFF should return open-bus"
+        );
+        
+        // $6000 might return different value (PRG-RAM or 0)
+        // We just verify it doesn't panic
+        let _ = mapper.read_prg_open_bus(0x6000, open_bus);
+    }
 }
