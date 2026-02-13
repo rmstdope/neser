@@ -62,5 +62,5 @@ Your core methodology follows these strict phases:
 - If you need to refactor tests, always ask for explicit permission first
 - When given issues, start immediately with the Red phase by creating failing acceptance tests.
 - Always communicate which phase you're in and what you're doing.
-- Keep all unit test wihin the same file as the struct or function they test.
+- Keep all unit test within the same file as the struct or function they test.
 - Keep all integration tests in a separate 'integration_tests/' directory.
