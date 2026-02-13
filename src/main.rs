@@ -1,5 +1,6 @@
 mod app_context;
 mod apu;
+mod autorun;
 mod bus;
 mod cartridge;
 mod console;
@@ -76,8 +77,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
-    let rom_path = config.rom_path.as_deref().unwrap_or(default_rom_path);
-    let cart = cartridge::Cartridge::load_from_file(rom_path)?;
+    let rom_path = config
+        .rom_path
+        .clone()
+        .unwrap_or_else(|| default_rom_path.to_string());
+    let cart = cartridge::Cartridge::load_from_file(&rom_path)?;
 
     let rom_tv_system = cart.rom_tv_system();
     let applied = config.apply_rom_tv_system(rom_tv_system);
@@ -90,8 +94,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
     }
 
+    // Create event loop with headless mode if autorun playback is headless
+    let headless = config.autorun_headless;
+    // In headless autorun/playback, force audio to None so no audio device is required
+    let audio_for_frontend = if headless { None } else { audio };
     let app_context = AppContext::new();
-    let mut event_loop = SdlEventLoop::new_with_context(false, audio, &config, app_context)?;
+    let mut event_loop =
+        SdlEventLoop::new_with_context(headless, audio_for_frontend, &config, app_context)?;
+
+    // Initialize autorun if enabled
+    if config.autorun_mode != console::AutorunMode::None {
+        event_loop.init_autorun(
+            config.autorun_mode,
+            &rom_path,
+            config.autorun_overwrite,
+            config.autorun_extend,
+        )?;
+    }
 
     // Request debugger open if enabled via CLI
     if config.debugger_enabled {
@@ -126,6 +145,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let run_result = event_loop.run(&mut nes_instance, config.tracing);
+
+    // Handle autorun exit codes before save-on-shutdown
+    if let Err(ref e) = run_result {
+        if e.starts_with("AUTORUN_EXIT:") {
+            let exit_code = e
+                .strip_prefix("AUTORUN_EXIT:")
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(1);
+            std::process::exit(exit_code);
+        }
+    }
+
     // Best-effort save on clean shutdown (Escape/Quit).
     if run_result.is_ok()
         && let Err(e) = nes_instance.bus.borrow().save_ram()

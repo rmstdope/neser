@@ -6,6 +6,7 @@ use crate::cartridge::RomTvSystem;
 use crate::debugging::log_info;
 
 pub use config::ApuChannels;
+pub use config::AutorunMode;
 pub use config::Config;
 pub use config::ParseResult;
 pub use nes::Nes;

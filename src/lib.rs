@@ -3,6 +3,7 @@
 
 pub mod app_context;
 pub mod apu;
+pub mod autorun;
 pub mod bus;
 pub mod cartridge;
 pub mod console;

@@ -1,7 +1,8 @@
+use super::autorun_state::AutorunState;
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::app_context::AppContext;
-use crate::console::{Config, ControllerStateWrapper, Nes, SaveState};
+use crate::console::{AutorunMode, Config, ControllerStateWrapper, Nes, SaveState, TvSystem};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -12,6 +13,15 @@ use std::time::{Duration, Instant};
 use crate::debugging::{DebuggerSnapshot, Tracing, log_info, snapshot, ui};
 use crate::input::Button;
 use crate::rendering::Crosshair;
+
+/// Result type for autorun playback completion with exit code.
+#[derive(Debug)]
+pub enum AutorunExitCode {
+    /// Playback succeeded with CRC match
+    Success,
+    /// Playback failed with CRC mismatch
+    Failure,
+}
 
 /// EventLoop manages the SDL2 event loop for the application.
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
@@ -36,6 +46,7 @@ pub struct SdlEventLoop {
     controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
     last_mouse_position: Option<(i32, i32)>,
     cursor_hidden: bool,
+    autorun_state: Option<AutorunState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,6 +330,7 @@ impl SdlEventLoop {
             controller_player_map,
             last_mouse_position: None,
             cursor_hidden: false,
+            autorun_state: None,
         };
 
         let gamepad_toast =
@@ -326,6 +338,49 @@ impl SdlEventLoop {
         event_loop.app_context.add_toast(gamepad_toast);
 
         Ok(event_loop)
+    }
+
+    /// Initialize autorun state if autorun mode is enabled.
+    ///
+    /// Creates and configures the autorun subsystem based on the provided mode and options.
+    /// If `mode` is [`AutorunMode::None`], this method does nothing and autorun remains disabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `mode` - The autorun mode to use (`None`, `Record`, or `Playback`). If set to
+    ///   [`AutorunMode::None`], autorun is disabled and no state is initialized.
+    /// * `rom_path` - Path to the currently loaded ROM file. The autorun file will be stored
+    ///   alongside this ROM with a `.autorun` extension (e.g., `game.nes` → `game.autorun`).
+    /// * `overwrite` - If `true` and `mode` is `Record`, any existing `.autorun` file will be
+    ///   replaced. If `false` and the file exists, an error is returned. Ignored for other modes.
+    /// * `extend` - If `true` and `mode` is `Record`, loads any existing `.autorun` file, plays
+    ///   it back to the end, then continues recording new input (appending to the recording).
+    ///   If `false` or no existing file, starts a fresh recording. Ignored for other modes.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if autorun is successfully initialized or if `mode` is [`AutorunMode::None`].
+    /// Returns `Err(String)` if initialization fails (e.g., I/O errors, invalid autorun file format,
+    /// conflicting options).
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - The `.autorun` file cannot be read or parsed (in `Playback` or `Record` with `extend`)
+    /// - The `.autorun` file already exists and `overwrite` is `false` (in `Record` mode)
+    /// - File I/O operations fail (permissions, disk full, etc.)
+    /// - The autorun file format version is incompatible
+    pub fn init_autorun(
+        &mut self,
+        mode: AutorunMode,
+        rom_path: &str,
+        overwrite: bool,
+        extend: bool,
+    ) -> Result<(), String> {
+        if mode != AutorunMode::None {
+            self.autorun_state = Some(AutorunState::new(mode, rom_path, overwrite, extend)?);
+        }
+        Ok(())
     }
 
     /// Initialize game controllers
@@ -379,6 +434,215 @@ impl SdlEventLoop {
         }
 
         Ok((controllers, controller_player_map))
+    }
+
+    /// Capture current button states for both players as u8 bitmasks.
+    ///
+    /// Each returned `u8` is a bitmask where each bit represents the pressed state of a button.
+    /// The bit layout follows the NES joypad protocol and matches the `Button` enum values:
+    ///
+    /// - Bit 0 (LSB): `Button::A`
+    /// - Bit 1: `Button::B`
+    /// - Bit 2: `Button::Select`
+    /// - Bit 3: `Button::Start`
+    /// - Bit 4: `Button::Up`
+    /// - Bit 5: `Button::Down`
+    /// - Bit 6: `Button::Left`
+    /// - Bit 7: `Button::Right`
+    ///
+    /// A bit is set to `1` when the corresponding button is pressed, `0` when released.
+    ///
+    /// # Returns
+    ///
+    /// Returns `(player1_state, player2_state)` representing the button states for controller
+    /// ports 1 and 2 respectively.
+    #[allow(dead_code)]
+    fn capture_button_states(&self, nes: &Nes) -> (u8, u8) {
+        let player1 = nes.get_joypad_button_states(1);
+        let player2 = nes.get_joypad_button_states(2);
+        (player1, player2)
+    }
+
+    /// Apply button states from u8 bitmasks for both players.
+    ///
+    /// Sets the button states for both controller ports from `u8` bitmask values.
+    /// The bit layout must match the NES joypad protocol and `Button` enum values:
+    ///
+    /// - Bit 0 (LSB): `Button::A`
+    /// - Bit 1: `Button::B`
+    /// - Bit 2: `Button::Select`
+    /// - Bit 3: `Button::Start`
+    /// - Bit 4: `Button::Up`
+    /// - Bit 5: `Button::Down`
+    /// - Bit 6: `Button::Left`
+    /// - Bit 7: `Button::Right`
+    ///
+    /// A bit set to `1` means the corresponding button is pressed, `0` means released.
+    ///
+    /// # Arguments
+    ///
+    /// * `nes` - Mutable reference to the NES instance
+    /// * `player1` - Button state bitmask for controller port 1
+    /// * `player2` - Button state bitmask for controller port 2
+    fn apply_button_states(&self, nes: &mut Nes, player1: u8, player2: u8) {
+        let buttons = [
+            Button::A,
+            Button::B,
+            Button::Select,
+            Button::Start,
+            Button::Up,
+            Button::Down,
+            Button::Left,
+            Button::Right,
+        ];
+
+        // Apply player 1 state (port 1)
+        for button in &buttons {
+            let pressed = (player1 & (1 << (*button as u8))) != 0;
+            nes.set_button(1, *button, pressed);
+        }
+
+        // Apply player 2 state (port 2)
+        for button in &buttons {
+            let pressed = (player2 & (1 << (*button as u8))) != 0;
+            nes.set_button(2, *button, pressed);
+        }
+    }
+
+    /// Handle autorun logic before emulating a frame.
+    ///
+    /// In playback or extend mode, applies button states from the recording.
+    /// Returns Ok(true) if we should continue, Ok(false) for normal exit,
+    /// or Err(AutorunExitCode) when playback completes with CRC verification.
+    fn handle_autorun_before_frame(&mut self, nes: &mut Nes) -> Result<bool, AutorunExitCode> {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return Ok(true); // No autorun active
+        };
+
+        use crate::console::AutorunMode;
+
+        // In playback mode or extend mode with remaining frames, apply recorded input
+        if autorun_state.mode() == AutorunMode::Playback || autorun_state.is_extending_playback() {
+            if let Some(frame) = autorun_state.next_playback_frame() {
+                self.apply_button_states(nes, frame.player1, frame.player2);
+                return Ok(true);
+            }
+
+            // Playback finished
+            if autorun_state.mode() == AutorunMode::Playback {
+                // Verify CRC and exit
+                return self.finish_playback(nes);
+            }
+        }
+
+        Ok(true)
+    }
+
+    /// Handle autorun logic after processing input but before rendering.
+    ///
+    /// In record mode, captures current button states.
+    fn handle_autorun_after_input(&mut self, nes: &Nes) {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return; // No autorun active
+        };
+
+        use crate::console::AutorunMode;
+
+        // In record mode (or extend mode after playback), capture button states
+        if autorun_state.mode() == AutorunMode::Record && !autorun_state.is_extending_playback() {
+            // Capture button states without borrowing self
+            let player1 = nes.get_joypad_button_states(1);
+            let player2 = nes.get_joypad_button_states(2);
+            autorun_state.record_frame(player1, player2);
+        }
+    }
+
+    /// Finish playback by verifying CRC.
+    /// Returns false with AutorunExitCode error to signal the event loop should exit.
+    fn finish_playback(&mut self, nes: &Nes) -> Result<bool, AutorunExitCode> {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return Ok(true);
+        };
+
+        // Get the screen buffer snapshot for CRC verification
+        let snapshot = nes.ppu.borrow().screen_buffer().snapshot();
+        let crc = nes.ppu.borrow().screen_buffer().crc32();
+
+        match autorun_state.verify_checksum(&snapshot) {
+            Ok(()) => {
+                log_info(format!(
+                    "Autorun playback successful: CRC match (0x{:08X})",
+                    crc
+                ));
+                Err(AutorunExitCode::Success)
+            }
+            Err(e) => {
+                log_info(format!("Autorun playback failed: {}", e));
+                Err(AutorunExitCode::Failure)
+            }
+        }
+    }
+
+    /// Determine if the overlay should blink red for autorun extend mode.
+    ///
+    /// Red blinking occurs:
+    /// - Only in Record mode during extend playback
+    /// - Only during the last 3 seconds before playback ends
+    /// - Blinks at 4Hz (quarter of frame rate)
+    fn should_overlay_blink_red(&self, nes: &Nes) -> bool {
+        let Some(ref autorun_state) = self.autorun_state else {
+            return false;
+        };
+
+        // Only blink when extending and still in playback phase
+        if !autorun_state.is_extending_playback() {
+            return false;
+        }
+
+        let current_frame = autorun_state.current_frame_index();
+        let total_frames = autorun_state.total_frames();
+        let tv_system = nes.config.borrow().tv_system;
+
+        // Calculate FPS and blink parameters
+        let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
+        let blink_window_frames = fps * 3; // Last 3 seconds
+        let blink_half_period_frames = (fps / 4).max(1); // Quarter-second blinks (4Hz)
+
+        let frames_remaining = total_frames.saturating_sub(current_frame);
+
+        // Only blink in the last 3 seconds
+        if frames_remaining > blink_window_frames {
+            return false;
+        }
+
+        // Toggle every quarter second
+        (current_frame / blink_half_period_frames).is_multiple_of(2)
+    }
+
+    /// Finish recording by saving the autorun file with CRC.
+    fn finish_recording(&mut self, nes: &Nes) -> Result<(), String> {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return Ok(());
+        };
+
+        use crate::console::AutorunMode;
+
+        if autorun_state.mode() != AutorunMode::Record {
+            return Ok(());
+        }
+
+        // Calculate final screen buffer CRC
+        let crc = nes.ppu.borrow().screen_buffer().crc32();
+
+        // Save the recording with CRC
+        autorun_state.save_with_checksum(crc)?;
+        log_info(format!(
+            "Autorun recording saved: {} frames, CRC 0x{:08X}",
+            autorun_state.total_frames(),
+            crc
+        ));
+
+        Ok(())
     }
 
     fn should_manual_frame_limit(vsync_enabled: bool) -> bool {
@@ -613,6 +877,7 @@ impl SdlEventLoop {
                     match event {
                         Event::Quit { .. } => {
                             self.gl_backend = Some(gl_backend);
+                            self.finish_recording(nes)?;
                             return Ok(());
                         }
                         Event::KeyDown {
@@ -628,6 +893,7 @@ impl SdlEventLoop {
                                 == KeyDownOutcome::Quit
                             {
                                 self.gl_backend = Some(gl_backend);
+                                self.finish_recording(nes)?;
                                 return Ok(());
                             }
                         }
@@ -683,21 +949,44 @@ impl SdlEventLoop {
                         nes,
                     );
 
-                    let overlay_text = self.help_overlay_render_text();
+                    let overlay_text = self.overlay_render_text(nes);
                     let zapper_active = !Self::zapper_ports(nes).is_empty();
                     self.update_cursor_visibility(zapper_active);
                     let crosshair = self.zapper_crosshair(nes);
+                    let overlay_blink_red = self.should_overlay_blink_red(nes);
                     let action = gl_backend.render(
                         nes,
                         self.debugger_open_requested,
-                        overlay_text,
-                        false,
+                        overlay_text.as_deref(),
+                        overlay_blink_red,
                         crosshair,
                     );
                     self.apply_debugger_ui_action(nes, action);
                     std::thread::sleep(std::time::Duration::from_millis(16));
                     continue;
                 }
+
+                // Apply button states from autorun before emulation (autorun playback mode)
+                match self.handle_autorun_before_frame(nes) {
+                    Ok(true) => {} // Continue normally
+                    Ok(false) => {
+                        // Normal playback completion (shouldn't happen in current logic)
+                        self.gl_backend = Some(gl_backend);
+                        return self.finish_recording(nes);
+                    }
+                    Err(AutorunExitCode::Success) => {
+                        // Playback succeeded - exit with code 0
+                        return Err("AUTORUN_EXIT:0".to_string());
+                    }
+                    Err(AutorunExitCode::Failure) => {
+                        // Playback failed - exit with code 1
+                        return Err("AUTORUN_EXIT:1".to_string());
+                    }
+                }
+
+                // Record button states after input processing (autorun record mode)
+                // This happens after the pause check to ensure we only record frames that are actually emulated
+                self.handle_autorun_after_input(nes);
 
                 // 2. Emulate until PPU completes a full frame (reaches VBlank)
                 // The PPU runs at 3x CPU clock (NTSC) or 3.2x (PAL), so run_cpu_tick()
@@ -752,15 +1041,16 @@ impl SdlEventLoop {
                 nes.clear_ready_to_render();
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
-                let overlay_text = self.help_overlay_render_text();
+                let overlay_text = self.overlay_render_text(nes);
                 let zapper_active = !Self::zapper_ports(nes).is_empty();
                 self.update_cursor_visibility(zapper_active);
                 let crosshair = self.zapper_crosshair(nes);
+                let overlay_blink_red = self.should_overlay_blink_red(nes);
                 let _ = gl_backend.render(
                     nes,
                     self.debugger_open_requested,
-                    overlay_text,
-                    false,
+                    overlay_text.as_deref(),
+                    overlay_blink_red,
                     crosshair,
                 );
 
@@ -788,9 +1078,30 @@ impl SdlEventLoop {
         } else {
             // Headless mode - just run without rendering
             loop {
+                // Handle autorun before frame
+                match self.handle_autorun_before_frame(nes) {
+                    Ok(true) => {} // Continue normally
+                    Ok(false) => {
+                        // Normal playback completion (shouldn't happen in current logic)
+                        return self.finish_recording(nes);
+                    }
+                    Err(AutorunExitCode::Success) => {
+                        // Playback succeeded - exit with code 0
+                        return Err("AUTORUN_EXIT:0".to_string());
+                    }
+                    Err(AutorunExitCode::Failure) => {
+                        // Playback failed - exit with code 1
+                        return Err("AUTORUN_EXIT:1".to_string());
+                    }
+                }
+
                 if self.tick_headless_once_for_run(nes) {
+                    self.finish_recording(nes)?;
                     return Ok(());
                 }
+
+                // After input processing, record if needed
+                self.handle_autorun_after_input(nes);
 
                 // Avoid a busy loop while paused.
                 if self.paused {
@@ -887,7 +1198,9 @@ impl SdlEventLoop {
         let events: Vec<_> = self.event_pump.poll_iter().collect();
         for event in events {
             match event {
-                Event::Quit { .. } => return true,
+                Event::Quit { .. } => {
+                    return true;
+                }
                 Event::KeyDown {
                     keycode: Some(keycode),
                     ..
@@ -1250,6 +1563,79 @@ R: Select\n\
 T: Start"
     }
 
+    /// Generate overlay text for rendering.
+    /// Returns autorun overlay text if in autorun mode, otherwise help overlay text if visible.
+    fn overlay_render_text(&self, nes: &Nes) -> Option<String> {
+        // Check if autorun is active and generate overlay
+        if let Some(ref autorun_state) = self.autorun_state {
+            let tv_system = nes.config.borrow().tv_system;
+            let overlay = self.autorun_overlay_text(autorun_state, tv_system);
+            return Some(overlay);
+        }
+
+        // Fall back to help overlay if visible
+        if self.help_overlay_visible {
+            Some(Self::help_overlay_text().to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Generate autorun overlay text based on current mode and state.
+    fn autorun_overlay_text(&self, autorun_state: &AutorunState, tv_system: TvSystem) -> String {
+        use crate::console::AutorunMode;
+
+        match autorun_state.mode() {
+            AutorunMode::Playback => {
+                let current_frames = autorun_state.current_frame_index();
+                let total_frames = autorun_state.total_frames();
+                let (elapsed, total) =
+                    Self::format_time_pair_for(current_frames, total_frames, tv_system);
+                format!("Playback\n{} / {}", elapsed, total)
+            }
+            AutorunMode::Record => {
+                if autorun_state.is_extending_playback() {
+                    // In extend mode during playback phase
+                    let current_frames = autorun_state.current_frame_index();
+                    let total_frames = autorun_state.total_frames();
+                    let (elapsed, total) =
+                        Self::format_time_pair_for(current_frames, total_frames, tv_system);
+                    format!("Playback\n{} / {}", elapsed, total)
+                } else {
+                    // In record mode (or extend mode after playback finished)
+                    let current_frames = autorun_state.total_frames();
+                    let (elapsed, _) =
+                        Self::format_time_pair_for(current_frames, current_frames, tv_system);
+                    format!("Recording\n{} / {}", elapsed, elapsed)
+                }
+            }
+            AutorunMode::None => String::new(),
+        }
+    }
+
+    /// Format frame counts as MM:SS time pairs.
+    fn format_time_pair_for(
+        current_frames: usize,
+        total_frames: usize,
+        tv_system: TvSystem,
+    ) -> (String, String) {
+        let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
+        let current_secs = current_frames / fps;
+        let total_secs = total_frames / fps;
+        (
+            Self::format_mm_ss(current_secs),
+            Self::format_mm_ss(total_secs),
+        )
+    }
+
+    /// Format seconds as MM:SS.
+    fn format_mm_ss(seconds: usize) -> String {
+        let minutes = seconds / 60;
+        let secs = seconds % 60;
+        format!("{:02}:{:02}", minutes, secs)
+    }
+
+    #[allow(dead_code)]
     fn help_overlay_render_text(&self) -> Option<&'static str> {
         if self.help_overlay_visible {
             Some(Self::help_overlay_text())
