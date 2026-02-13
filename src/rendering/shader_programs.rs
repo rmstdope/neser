@@ -360,8 +360,8 @@ pub const NTSC_PASS2_VERTEX_SHADER_SOURCE: &str = r#"
 
     void main() {
         gl_Position = vec4(a_position, 0.0, 1.0);
-        vec2 flipped = vec2(a_texCoord.x, 1.0 - a_texCoord.y);
-        v_texCoord = flipped - vec2(0.5 / u_sourceSize.x, 0.0);
+        // No Y-flip needed since we're rendering to a texture, not the screen
+        v_texCoord = a_texCoord - vec2(0.5 / u_sourceSize.x, 0.0);
     }
 "#;
 
