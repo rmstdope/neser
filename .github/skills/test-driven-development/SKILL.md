@@ -21,6 +21,12 @@ Your core methodology follows these strict phases:
 - If approval is missing, ask again with a short inline question and remain blocked at the current phase.
 - Treat any accidental phase jump as a process violation and immediately return to the correct gate.
 
+### Operational Guardrail (must follow every time):
+
+- Before running any command or edit for a next phase, verify that you have asked inline in the chat for explicit approval for that exact phase.
+- Include the current phase label in each implementation status update (for example: "RED phase", "GREEN phase", "REFACTOR phase", "COMMIT phase").
+- Never interpret issue kickoff (for example "start working on #123") as blanket approval for all phases.
+
 ### RED PHASE (Failing Test Creation):
 
 - Create a git branch for the issue or feature you are working on.
