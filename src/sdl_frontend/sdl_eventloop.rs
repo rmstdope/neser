@@ -1,5 +1,6 @@
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
+use crate::app_context::AppContext;
 use crate::console::{Config, ControllerStateWrapper, Nes, SaveState};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -16,6 +17,7 @@ use crate::rendering::Crosshair;
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
 pub struct SdlEventLoop {
     _sdl_context: sdl2::Sdl,
+    app_context: AppContext,
     gl_backend: Option<SdlGlWrapper>,
     event_pump: sdl2::EventPump,
     vsync_enabled: bool,
@@ -218,12 +220,6 @@ impl SdlEventLoop {
         }
     }
 
-    fn add_toast(&mut self, text: impl Into<String>) {
-        if let Some(gl_backend) = self.gl_backend.as_mut() {
-            gl_backend.add_toast(text);
-        }
-    }
-
     fn gamepad_init_toast_message(gamepads_enabled: bool, detected_controllers: usize) -> String {
         if !gamepads_enabled {
             return "Gamepads disabled: using keyboard controls".to_string();
@@ -268,10 +264,20 @@ impl SdlEventLoop {
     /// let windowed = SdlEventLoop::new(false, None, &config)?;
     /// # Ok::<(), String>(())
     /// ```
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(
         headless: bool,
         audio: Option<SdlNesAudio>,
         config: &Config,
+    ) -> Result<Self, String> {
+        Self::new_with_context(headless, audio, config, AppContext::new())
+    }
+
+    pub fn new_with_context(
+        headless: bool,
+        audio: Option<SdlNesAudio>,
+        config: &Config,
+        app_context: AppContext,
     ) -> Result<Self, String> {
         let sdl_context = sdl2::init()?;
         let event_pump = sdl_context.event_pump()?;
@@ -279,7 +285,11 @@ impl SdlEventLoop {
         let gl_backend = if headless {
             None
         } else {
-            Some(SdlGlWrapper::new(&sdl_context, config)?)
+            Some(SdlGlWrapper::new(
+                &sdl_context,
+                config,
+                app_context.clone(),
+            )?)
         };
 
         // Initialize gamepads if enabled
@@ -289,8 +299,9 @@ impl SdlEventLoop {
             (Vec::new(), HashMap::new())
         };
 
-        let mut event_loop = SdlEventLoop {
+        let event_loop = SdlEventLoop {
             _sdl_context: sdl_context,
+            app_context,
             gl_backend,
             event_pump,
             vsync_enabled: config.vsync_enabled,
@@ -312,7 +323,7 @@ impl SdlEventLoop {
 
         let gamepad_toast =
             Self::gamepad_init_toast_message(config.gamepads_enabled, event_loop.controllers.len());
-        event_loop.add_toast(gamepad_toast);
+        event_loop.app_context.add_toast(gamepad_toast);
 
         Ok(event_loop)
     }

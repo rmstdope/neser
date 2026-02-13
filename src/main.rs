@@ -1,3 +1,4 @@
+mod app_context;
 mod apu;
 mod bus;
 mod cartridge;
@@ -9,6 +10,7 @@ mod ppu;
 mod rendering;
 mod sdl_frontend;
 
+use app_context::AppContext;
 use console::{ApuChannels, Config, Nes, ParseResult, SaveState, log_rom_tv_system_selection};
 use debugging::log_info;
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
@@ -88,7 +90,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
     }
 
-    let mut event_loop = SdlEventLoop::new(false, audio, &config)?;
+    let app_context = AppContext::new();
+    let mut event_loop = SdlEventLoop::new_with_context(false, audio, &config, app_context)?;
 
     // Request debugger open if enabled via CLI
     if config.debugger_enabled {
