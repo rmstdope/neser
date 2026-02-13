@@ -6,6 +6,7 @@
 - Public API exposes internal types or fields without need.
 - Deep or cyclic module dependencies.
 - Large files with mixed domain responsibilities.
+- Repeated business logic pattern across multiple implementations (suggests helper struct or trait method).
 
 ## Ownership and Borrowing
 - Excessive `clone()` or `to_owned()` without justification.
@@ -34,3 +35,11 @@
 - Missing unit tests around refactored areas.
 - Unsafe blocks without a clear safety comment.
 - Tests that only cover the happy path.
+
+## Trait Implementations
+- Inconsistent patterns across trait implementations (some override a method, others use default).
+- Constructors marked `#[cfg(test)]` only - prevents production code from using the API.
+- Missing required method overrides (e.g., snapshot methods for mappers with >8KB WRAM).
+- Different naming for the same concept across trait implementers (e.g., `chr_rom` vs `chr_memory`).
+- Trait methods with `default` implementations that don't apply to all implementers without additional override.
+- Repeated business logic in multiple trait implementations that could be extracted to a helper struct.

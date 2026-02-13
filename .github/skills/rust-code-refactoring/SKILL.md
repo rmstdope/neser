@@ -28,6 +28,31 @@ Use this skill when refactoring Rust code. It highlights Rust-specific code smel
 7. **Document intent**: Add small comments only for non-obvious invariants or safety assumptions.
 8. **Verify**: Ensure tests cover the refactor and update or add tests if behavior changes.
 
+## Trait-Based Code Refactoring
+
+When working with Rust trait implementations, watch for:
+
+1. **Inconsistent trait method implementations** - Different implementers override/use defaults differently
+   - Check if all implementations need the same behavior
+   - Consider if defaults should apply uniformly across all implementers
+   - Document which methods are "must override" vs "may override"
+
+2. **Constructor consistency across trait implementations**
+   - Avoid marking constructors as `#[cfg(test)]` only - makes them unavailable to production code
+   - All implementations of the same trait should follow the same constructor pattern
+   - If factory pattern is needed, use explicit factory functions rather than conditional compilation
+
+3. **Pattern extraction in trait implementations**
+   - When multiple trait implementers have identical or very similar code, extract to helper functions
+   - Create intermediate struct types to encapsulate repeated patterns (e.g., bank offset calculation)
+   - Use generics to parameterize trait implementations over common patterns
+
+4. **Default trait method override completeness**
+   - Document trait contract: which methods must be overridden, which may be overridden
+   - If a default implementation may be insufficient for some implementers (e.g., complex internal state),
+     mark it as "MUST override if condition X" and add compile-time checks
+   - Use compile-time markers or assertion tests to catch missing overrides
+
 ## References
 
 - references/smells-checklist.md: Rust code smells and structural checklist.
