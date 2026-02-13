@@ -23,10 +23,12 @@
 /// - Document the byte layout in implementation
 /// - Handle gracefully if restore data is incomplete/invalid
 ///
-/// # Example
+/// # Examples
+///
+/// ## Simple Register Set
 ///
 /// ```rust
-/// use neser::cartridge::common::StateSnapshot;
+/// use neser::cartridge::StateSnapshot;
 ///
 /// struct ShiftRegister {
 ///     value: u8,
@@ -45,6 +47,63 @@
 ///             self.count = data[1];
 ///         }
 ///     }
+/// }
+/// ```
+///
+/// ## Composite Register Structure
+///
+/// ```rust
+/// use neser::cartridge::StateSnapshot;
+///
+/// struct BankRegisters {
+///     prg_bank: u8,
+///     chr_banks: [u8; 8],
+///     mirroring: u8,
+/// }
+///
+/// impl StateSnapshot for BankRegisters {
+///     fn snapshot(&self) -> Vec<u8> {
+///         // Layout: [prg_bank, chr_banks[0..8], mirroring]
+///         let mut data = Vec::with_capacity(10);
+///         data.push(self.prg_bank);
+///         data.extend_from_slice(&self.chr_banks);
+///         data.push(self.mirroring);
+///         data
+///     }
+///
+///     fn restore(&mut self, data: &[u8]) {
+///         if let Some(&prg) = data.get(0) {
+///             self.prg_bank = prg;
+///         }
+///         if data.len() >= 9 {
+///             self.chr_banks.copy_from_slice(&data[1..9]);
+///         }
+///         if let Some(&mir) = data.get(9) {
+///             self.mirroring = mir;
+///         }
+///     }
+/// }
+/// ```
+///
+/// ## Integration with Mapper::registers_snapshot
+///
+/// ```rust,ignore
+/// use neser::cartridge::{Mapper, StateSnapshot};
+///
+/// struct MyMapper {
+///     registers: MyRegisterSet,
+///     // ... other fields
+/// }
+///
+/// impl Mapper for MyMapper {
+///     fn registers_snapshot(&self) -> Vec<u8> {
+///         self.registers.snapshot()
+///     }
+///
+///     fn restore_registers(&mut self, data: &[u8]) {
+///         self.registers.restore(data);
+///     }
+///     // ... other trait methods
 /// }
 /// ```
 pub trait StateSnapshot {
