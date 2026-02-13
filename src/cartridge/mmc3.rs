@@ -815,6 +815,182 @@ mod tests {
         assert_eq!(mapper.read_prg(0xFFFC), 0xBB);
         assert_eq!(mapper.read_prg(0xFFFD), 0xBB);
     }
+
+    #[test]
+    fn test_mmc3_comprehensive_state_roundtrip() {
+        // Test complete MMC3 state including banks, IRQ, and PRG-RAM
+        let prg_rom = banked_data(8 * 1024, 32); // 256KB = 32 8KB banks
+        let chr_rom = banked_data(1024, 128); // 128KB = 128 1KB banks
+
+        let mut mapper = MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+
+        // Configure all 8 bank registers
+        mapper.write_prg(0x8000, 0x00); // Select R0 (2KB CHR)
+        mapper.write_prg(0x8001, 0x10); // R0 = bank 16
+        mapper.write_prg(0x8000, 0x01); // Select R1 (2KB CHR)
+        mapper.write_prg(0x8001, 0x20); // R1 = bank 32
+        mapper.write_prg(0x8000, 0x02); // Select R2 (1KB CHR)
+        mapper.write_prg(0x8001, 0x05); // R2 = bank 5
+        mapper.write_prg(0x8000, 0x03); // Select R3 (1KB CHR)
+        mapper.write_prg(0x8001, 0x06); // R3 = bank 6
+        mapper.write_prg(0x8000, 0x04); // Select R4 (1KB CHR)
+        mapper.write_prg(0x8001, 0x07); // R4 = bank 7
+        mapper.write_prg(0x8000, 0x05); // Select R5 (1KB CHR)
+        mapper.write_prg(0x8001, 0x08); // R5 = bank 8
+        mapper.write_prg(0x8000, 0x06); // Select R6 (8KB PRG)
+        mapper.write_prg(0x8001, 0x02); // R6 = bank 2
+        mapper.write_prg(0x8000, 0x07); // Select R7 (8KB PRG)
+        mapper.write_prg(0x8001, 0x03); // R7 = bank 3
+
+        // Configure IRQ
+        mapper.write_prg(0xC000, 10); // IRQ latch = 10
+        mapper.write_prg(0xC001, 0); // Reload IRQ counter
+        mapper.write_prg(0xE001, 0); // Enable IRQ
+
+        // Set mirroring (bit 0: 0 = Vertical, 1 = Horizontal)
+        mapper.write_prg(0xA000, 0x00); // Vertical mirroring
+
+        // Configure PRG-RAM
+        mapper.write_prg(0xA001, 0x80); // Enable PRG-RAM, no write protect
+        mapper.write_prg(0x6000, 0xAA); // Write to PRG-RAM
+        mapper.write_prg(0x7FFF, 0x55);
+
+        // Verify state before snapshot
+        assert_eq!(mapper.read_prg(0x8000), 2); // R6 bank
+        assert_eq!(mapper.read_prg(0xA000), 3); // R7 bank
+        assert_eq!(mapper.read_chr(0x0000), 16); // R0 bank (even 2KB)
+        assert_eq!(mapper.read_chr(0x0400), 17); // R0 bank + 1 (odd 2KB)
+        assert_eq!(mapper.read_prg(0x6000), 0xAA); // PRG-RAM
+        assert_eq!(mapper.read_prg(0x7FFF), 0x55);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+
+        // Take snapshot
+        let registers = mapper.registers_snapshot();
+        let prg_ram = mapper.wram_snapshot();
+
+        // Create fresh mapper and restore
+        let mut restored = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        restored.restore_registers(&registers);
+        restored.load_wram_snapshot(&prg_ram);
+
+        // Verify all state is restored
+        assert_eq!(restored.read_prg(0x8000), 2);
+        assert_eq!(restored.read_prg(0xA000), 3);
+        assert_eq!(restored.read_chr(0x0000), 16);
+        assert_eq!(restored.read_chr(0x0400), 17);
+        assert_eq!(restored.read_prg(0x6000), 0xAA);
+        assert_eq!(restored.read_prg(0x7FFF), 0x55);
+        assert_eq!(restored.get_mirroring(), MirroringMode::Vertical);
+    }
+
+    #[test]
+    fn test_mmc3_irq_state_roundtrip() {
+        // Test that IRQ counter and state are preserved across save/load
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        let mut mapper =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+
+        // Configure IRQ
+        mapper.write_prg(0xC000, 5); // Latch = 5
+        mapper.write_prg(0xC001, 0); // Reload
+        mapper.write_prg(0xE001, 0); // Enable IRQ
+
+        // Set up A12 low state
+        mapper.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            mapper.cpu_cycle();
+        }
+
+        // Trigger A12 rising edge to reload counter
+        mapper.ppu_address_changed(0x1000);
+
+        // Counter should now be at latch value (5)
+        assert_eq!(mapper.irq_counter(), 5);
+        assert!(!mapper.irq_pending());
+
+        // Take snapshot with counter at 5
+        let registers = mapper.registers_snapshot();
+
+        // Create fresh mapper and restore
+        let mut restored = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        restored.restore_registers(&registers);
+
+        // Verify IRQ state is preserved
+        assert_eq!(restored.irq_counter(), 5);
+        assert!(!restored.irq_pending());
+
+        // Continue decrementing on restored mapper
+        restored.ppu_address_changed(0x0FFF);
+        for _ in 0..3 {
+            restored.cpu_cycle();
+        }
+        restored.ppu_address_changed(0x1000); // Counter: 5 -> 4
+
+        assert_eq!(restored.irq_counter(), 4);
+    }
+
+    #[test]
+    fn test_mmc3_mirroring_modes_roundtrip() {
+        // Test that FourScreen and SingleScreen mirroring modes are preserved across save/load
+        let prg_rom = banked_data(8 * 1024, 8);
+        let chr_rom = banked_data(1024, 16);
+
+        // Test FourScreen mirroring
+        let mut mapper_fourscreen =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::FourScreen);
+
+        // Configure some state to make the test more realistic
+        mapper_fourscreen.write_prg(0x8000, 0x00); // Select R0
+        mapper_fourscreen.write_prg(0x8001, 0x05); // R0 = bank 5
+
+        // FourScreen mode should be preserved even without explicit write (it's set at construction)
+        assert_eq!(mapper_fourscreen.get_mirroring(), MirroringMode::FourScreen);
+
+        // Take snapshot
+        let registers_fourscreen = mapper_fourscreen.registers_snapshot();
+
+        // Restore to fresh mapper (initially Horizontal) and verify FourScreen is restored
+        let mut restored_fourscreen =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        restored_fourscreen.restore_registers(&registers_fourscreen);
+
+        assert_eq!(
+            restored_fourscreen.get_mirroring(),
+            MirroringMode::FourScreen,
+            "FourScreen mirroring should be preserved across save/load"
+        );
+
+        // Test SingleScreen mirroring
+        let mut mapper_singlescreen = MMC3Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            MirroringMode::SingleScreen,
+        );
+
+        // Configure some state
+        mapper_singlescreen.write_prg(0x8000, 0x01); // Select R1
+        mapper_singlescreen.write_prg(0x8001, 0x08); // R1 = bank 8
+
+        assert_eq!(
+            mapper_singlescreen.get_mirroring(),
+            MirroringMode::SingleScreen
+        );
+
+        // Take snapshot
+        let registers_singlescreen = mapper_singlescreen.registers_snapshot();
+
+        // Restore to fresh mapper and verify SingleScreen is restored
+        let mut restored_singlescreen = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        restored_singlescreen.restore_registers(&registers_singlescreen);
+
+        assert_eq!(
+            restored_singlescreen.get_mirroring(),
+            MirroringMode::SingleScreen,
+            "SingleScreen mirroring should be preserved across save/load"
+        );
+    }
 }
 
 impl Mapper for MMC3Mapper {
@@ -1064,10 +1240,10 @@ impl Mapper for MMC3Mapper {
             self.prg_ram_enabled = (flags & 8) != 0;
             self.prg_ram_write_protected = (flags & 16) != 0;
             self.mirroring = match data[12] {
-                0 => MirroringMode::Horizontal,
-                1 => MirroringMode::Vertical,
-                2 => MirroringMode::SingleScreen,
-                3 => MirroringMode::FourScreen,
+                0 => MirroringMode::Vertical,
+                1 => MirroringMode::Horizontal,
+                2 => MirroringMode::FourScreen,
+                3 => MirroringMode::SingleScreen,
                 _ => MirroringMode::Horizontal,
             };
         }

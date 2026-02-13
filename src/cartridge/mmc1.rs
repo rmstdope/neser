@@ -1150,4 +1150,130 @@ mod tests {
         // Should have mirroring mode 0 = SingleScreenLower
         assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
     }
+
+    #[test]
+    fn test_mmc1_comprehensive_state_roundtrip() {
+        // Test round-trip of complete MMC1 state including all registers and banking modes
+        let mut prg_rom = vec![0; 512 * 1024]; // 512KB = 32 banks
+        let mut chr_rom = vec![0; 128 * 1024]; // 128KB = 32 4KB banks
+
+        // Fill PRG ROM with bank-specific data
+        for bank in 0..32 {
+            let start = bank * 16 * 1024;
+            let end = start + 16 * 1024;
+            for byte in &mut prg_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        // Fill CHR ROM with bank-specific data
+        for bank in 0..32 {
+            let start = bank * 4 * 1024;
+            let end = start + 4 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = (bank + 100) as u8;
+            }
+        }
+
+        let mut mapper =
+            MMC1Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+
+        // Configure complex state with all registers
+        // Control register: CHR mode 1 (two 4KB banks), PRG mode 3 (switch at $8000, fixed last at $C000), horizontal mirroring
+        // Control value: bits 0-1 = 11 (horizontal), bits 2-3 = 11 (PRG mode 3), bit 4 = 1 (CHR mode 1)
+        // = 0b11111 = 31
+        for i in 0..5 {
+            mapper.cpu_cycle();
+            mapper.write_prg(0x8000, (31 >> i) & 0x01); // Control = 31
+        }
+
+        // CHR bank 0: Select bank 5
+        for i in 0..5 {
+            mapper.cpu_cycle();
+            mapper.write_prg(0xA000, (5 >> i) & 0x01);
+        }
+
+        // CHR bank 1: Select bank 10
+        for i in 0..5 {
+            mapper.cpu_cycle();
+            mapper.write_prg(0xC000, (10 >> i) & 0x01);
+        }
+
+        // PRG bank: Select bank 7
+        for i in 0..5 {
+            mapper.cpu_cycle();
+            mapper.write_prg(0xE000, (7 >> i) & 0x01);
+        }
+
+        // Write to PRG-RAM
+        for i in 0..256 {
+            mapper.write_prg(0x6000 + i, (i & 0xFF) as u8);
+        }
+
+        // Verify state before snapshot
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.read_chr(0x0000), 105); // CHR bank 5
+        assert_eq!(mapper.read_chr(0x1000), 110); // CHR bank 10
+        assert_eq!(mapper.read_prg(0x8000), 7); // Switchable bank 7 (PRG mode 3)
+        assert_eq!(mapper.read_prg(0xC000), 31); // Fixed last bank
+        assert_eq!(mapper.read_prg(0x6000), 0); // PRG-RAM
+
+        // Take snapshot
+        let registers = mapper.registers_snapshot();
+        let prg_ram = mapper.wram_snapshot();
+        let chr_ram = mapper.chr_ram_snapshot();
+
+        // Create fresh mapper and restore
+        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        restored.restore_registers(&registers);
+        restored.load_wram_snapshot(&prg_ram);
+        restored.restore_chr_ram(&chr_ram);
+
+        // Verify all state is restored correctly
+        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.read_chr(0x0000), 105); // CHR bank 5
+        assert_eq!(restored.read_chr(0x1000), 110); // CHR bank 10
+        assert_eq!(restored.read_prg(0x8000), 7); // Switchable bank 7
+        assert_eq!(restored.read_prg(0xC000), 31); // Fixed last bank
+        assert_eq!(restored.read_prg(0x6000), 0); // PRG-RAM restored
+        assert_eq!(restored.read_prg(0x60FF), 0xFF); // PRG-RAM restored
+    }
+
+    #[test]
+    fn test_mmc1_shift_register_mid_write_roundtrip() {
+        // Test that a partially-loaded shift register is preserved across save/load
+        let prg_rom = vec![0; 256 * 1024];
+        let chr_rom = vec![0; 128 * 1024];
+
+        let mut mapper =
+            MMC1Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+
+        // Start writing to control register but don't finish
+        mapper.cpu_cycle();
+        mapper.write_prg(0x8000, 0x01); // 1st bit
+        mapper.cpu_cycle();
+        mapper.write_prg(0x8000, 0x01); // 2nd bit
+        mapper.cpu_cycle();
+        mapper.write_prg(0x8000, 0x00); // 3rd bit (now shift_register has 0b00000101, write_count=3)
+
+        // Take snapshot mid-write
+        let registers = mapper.registers_snapshot();
+
+        // Restore to new mapper
+        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        restored.restore_registers(&registers);
+
+        // Complete the write sequence
+        restored.cpu_cycle();
+        restored.write_prg(0x8000, 0x01); // 4th bit
+        restored.cpu_cycle();
+        restored.write_prg(0x8000, 0x01); // 5th bit (completes write sequence)
+
+        // The control register should now be set to 0b11011 = 27
+        // Bits are loaded LSB first: 1, 1, 0, 1, 1
+        // Mirroring mode (bits 0-1): 11 = Horizontal
+        // PRG mode (bits 2-3): 01 = mode 1
+        // CHR mode (bit 4): 1 = two 4KB banks
+        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+    }
 }

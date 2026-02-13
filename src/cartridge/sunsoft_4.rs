@@ -390,4 +390,67 @@ mod tests {
         // Horizontal mirroring: $2800 uses the upper bank.
         assert_eq!(mapper.read_nametable(0x2800), Some(0x82));
     }
+
+    #[test]
+    fn test_sunsoft4_registers_snapshot_roundtrip() {
+        // Test comprehensive state save/restore for Sunsoft-4
+        let mut prg_rom = vec![0u8; 4 * PRG_BANK_SIZE];
+        let mut chr_rom = vec![0u8; 256 * 1024]; // 256KB CHR-ROM
+
+        // Fill PRG ROM with bank-specific data
+        for bank in 0..4 {
+            let start = bank * PRG_BANK_SIZE;
+            let end = start + PRG_BANK_SIZE;
+            for byte in &mut prg_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        // Fill CHR ROM with bank-specific data (each 2KB bank)
+        for bank in 0..128 {
+            let start = bank * 2048;
+            let end = start + 2048;
+            for byte in &mut chr_rom[start..end] {
+                *byte = bank as u8;
+            }
+        }
+
+        let mut mapper =
+            Sunsoft4Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+
+        // Configure complex state
+        mapper.write_prg(0x8000, 10); // CHR bank 0 (addresses $8000-$8FFF)
+        mapper.write_prg(0x9000, 20); // CHR bank 1 (addresses $9000-$9FFF)
+        mapper.write_prg(0xA000, 30); // CHR bank 2 (addresses $A000-$AFFF)
+        mapper.write_prg(0xB000, 40); // CHR bank 3 (addresses $B000-$BFFF)
+        mapper.write_prg(0xF000, 2); // PRG bank at $8000 (addresses $F000-$FFFF)
+        mapper.write_prg(0xE000, 1); // Mirroring control (addresses $E000-$EFFF): 1 = horizontal
+        mapper.write_prg(0xC000, 50); // Nametable bank 0 (addresses $C000-$CFFF)
+        mapper.write_prg(0xD000, 60); // Nametable bank 1 (addresses $D000-$DFFF)
+
+        // Verify state before snapshot
+        assert_eq!(mapper.read_chr(0x0000), 10);
+        assert_eq!(mapper.read_chr(0x0800), 20);
+        assert_eq!(mapper.read_chr(0x1000), 30);
+        assert_eq!(mapper.read_chr(0x1800), 40);
+        assert_eq!(mapper.read_prg(0x8000), 2);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+
+        // Take snapshot
+        let registers = mapper.registers_snapshot();
+        let prg_ram = mapper.wram_snapshot();
+
+        // Create fresh mapper and restore
+        let mut restored = Sunsoft4Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        restored.restore_registers(&registers);
+        restored.load_wram_snapshot(&prg_ram);
+
+        // Verify all state is restored correctly
+        assert_eq!(restored.read_chr(0x0000), 10);
+        assert_eq!(restored.read_chr(0x0800), 20);
+        assert_eq!(restored.read_chr(0x1000), 30);
+        assert_eq!(restored.read_chr(0x1800), 40);
+        assert_eq!(restored.read_prg(0x8000), 2);
+        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+    }
 }
