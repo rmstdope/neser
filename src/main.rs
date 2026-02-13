@@ -1,3 +1,4 @@
+mod app_context;
 mod apu;
 mod bus;
 mod cartridge;
@@ -9,6 +10,7 @@ mod ppu;
 mod rendering;
 mod sdl_frontend;
 
+use app_context::AppContext;
 use console::{ApuChannels, Config, Nes, ParseResult, SaveState, log_rom_tv_system_selection};
 use debugging::log_info;
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
@@ -91,7 +93,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create event loop with headless mode if autorun playback is headless
     let headless = config.autorun_headless;
-    let mut event_loop = SdlEventLoop::new(headless, audio, &config)?;
+    let app_context = AppContext::new();
+    let mut event_loop = SdlEventLoop::new_with_context(headless, audio, &config, app_context)?;
 
     // Initialize autorun if enabled
     if config.autorun_mode != console::AutorunMode::None {

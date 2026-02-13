@@ -1,6 +1,7 @@
 // Internal library for testing purposes only
 // This is not published or exposed externally
 
+pub mod app_context;
 pub mod apu;
 pub mod autorun;
 pub mod bus;

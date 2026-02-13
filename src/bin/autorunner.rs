@@ -1,3 +1,4 @@
+use neser::app_context::AppContext;
 use neser::cartridge::Cartridge;
 use neser::console::{Config, Nes, ParseResult, TvSystem, log_rom_tv_system_selection};
 use neser::input::Button;
@@ -112,7 +113,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         let sdl_context = sdl2::init()?;
         let mut event_pump = sdl_context.event_pump()?;
-        let mut gl_backend = SdlGlWrapper::new(&sdl_context, &config)?;
+        let app_context = AppContext::new();
+        let mut gl_backend = SdlGlWrapper::new(&sdl_context, &config, app_context)?;
         state.init_gamepads(&sdl_context)?;
 
         run_loop(&mut nes, &mut gl_backend, &mut event_pump, mode, &mut state)?;
