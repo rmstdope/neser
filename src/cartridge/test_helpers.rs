@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 //! Common test utilities for mapper testing
 //!
 //! This module provides shared helper functions used across mapper test modules
@@ -86,7 +84,7 @@ mod tests {
     fn test_banked_data_creates_distinct_banks() {
         let rom = banked_data(1024, 4);
         assert_eq!(rom.len(), 4096);
-        
+
         // Verify each bank is filled with its index
         assert_eq!(rom[0], 0);
         assert_eq!(rom[1023], 0);
@@ -115,7 +113,7 @@ mod tests {
     fn test_banked_data_with_upper_marker_basic() {
         let rom = banked_data_with_upper_marker(1024, 4);
         assert_eq!(rom.len(), 4096);
-        
+
         // All banks 0-3 should have marker 0 (0 >> 8 = 0)
         assert!(rom.iter().all(|&b| b == 0));
     }
@@ -125,11 +123,11 @@ mod tests {
         // Test with bank numbers that have different upper bytes
         let rom = banked_data_with_upper_marker(1024, 512);
         assert_eq!(rom.len(), 512 * 1024);
-        
+
         // Banks 0-255 should have marker 0
         assert_eq!(rom[0], 0);
         assert_eq!(rom[255 * 1024], 0);
-        
+
         // Banks 256-511 should have marker 1
         assert_eq!(rom[256 * 1024], 1);
         assert_eq!(rom[511 * 1024], 1);
@@ -139,13 +137,13 @@ mod tests {
     fn test_banked_data_with_upper_marker_boundary() {
         // Test bank 255 (0xFF) and 256 (0x100)
         let rom = banked_data_with_upper_marker(10, 260);
-        
+
         // Bank 255: 255 >> 8 = 0
         assert_eq!(rom[255 * 10], 0);
-        
+
         // Bank 256: 256 >> 8 = 1
         assert_eq!(rom[256 * 10], 1);
-        
+
         // Bank 259: 259 >> 8 = 1
         assert_eq!(rom[259 * 10], 1);
     }
