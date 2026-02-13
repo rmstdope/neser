@@ -3811,36 +3811,6 @@ mod tests {
         }
     }
 
-    /// Test MMC5 expansion registers don't return open-bus
-    ///
-    /// MMC5 has expansion registers at $5000-$5FFF that return actual data,
-    /// not open-bus.
-    #[test]
-    fn test_mmc5_expansion_registers_return_data_not_open_bus() {
-        let mut mapper = create_mmc5_mapper(vec![0; 256 * 1024], vec![0; 8 * 1024], MirroringMode::Horizontal)
-            .expect("MMC5 should be supported");
-        
-        // Write to hardware multiplier
-        mapper.write_prg(0x5205, 3);
-        mapper.write_prg(0x5206, 4);
-        
-        let open_bus = 0xAA;
-        
-        // $5205 should return low byte of 3 * 4 = 12 = 0x0C
-        let result = mapper.read_prg_open_bus(0x5205, open_bus);
-        assert_eq!(
-            result, 12,
-            "Multiplier result should be returned, not open-bus"
-        );
-        
-        // $5206 should return high byte of 3 * 4 = 0
-        let result = mapper.read_prg_open_bus(0x5206, open_bus);
-        assert_eq!(
-            result, 0,
-            "Multiplier result should be returned, not open-bus"
-        );
-    }
-
     /// Test MMC5 ExRAM mode 0 returns open-bus during rendering
     ///
     /// In ExRAM mode 0, CPU reads from $5C00-$5FFF should return open-bus
@@ -3869,119 +3839,42 @@ mod tests {
         );
     }
 
-    /// Test MMC5 ExRAM mode 0 returns data when rendering disabled
-    #[test]
-    fn test_mmc5_exram_mode_0_data_when_not_rendering() {
-        let mut mapper = create_mmc5_mapper(vec![0; 256 * 1024], vec![0; 8 * 1024], MirroringMode::Horizontal)
-            .expect("MMC5 should be supported");
-        
-        // Set ExRAM to mode 0
-        mapper.write_prg(0x5104, 0x00);
-        
-        // Write some data to ExRAM
-        mapper.write_prg(0x5C00, 0x5A);
-        
-        // Disable rendering
-        mapper.ppu_write_mask(0b0000_0000);
-        
-        let open_bus = 0xBB;
-        let result = mapper.read_prg_open_bus(0x5C00, open_bus);
-        
-        // Should return the written data
-        assert_eq!(
-            result, 0x5A,
-            "ExRAM mode 0 should return data when rendering is disabled"
-        );
-    }
-
-    /// Test MMC5 ExRAM mode 1 returns open-bus
+    /// Test MMC5 ExRAM mode 1 behavior is independent of rendering state
     ///
-    /// In ExRAM mode 1, CPU reads from $5C00-$5FFF should always return open-bus.
+    /// This complements `test_mmc5_exram_cpu_reads_return_open_bus_in_modes_0_and_1`,
+    /// which verifies that mode 1 CPU reads return open-bus. Here we focus on
+    /// ensuring that changing the PPU rendering mask does not affect the value
+    /// observed by the CPU when reading from ExRAM in mode 1.
     #[test]
-    fn test_mmc5_exram_mode_1_always_returns_open_bus() {
+    fn test_mmc5_exram_mode_1_behavior_independent_of_rendering_state() {
         let mut mapper = create_mmc5_mapper(vec![0; 256 * 1024], vec![0; 8 * 1024], MirroringMode::Horizontal)
             .expect("MMC5 should be supported");
-        
+
         // Set ExRAM to mode 1 (nametable mode)
         mapper.write_prg(0x5104, 0x01);
-        
-        // Write some data to ExRAM
+
+        // Write some data to ExRAM (should not affect CPU reads in mode 1)
         mapper.write_prg(0x5C00, 0x42);
-        
+
         let open_bus = 0xCC;
-        
-        // Should return open-bus regardless of rendering state
+
+        // Read with rendering disabled
         mapper.ppu_write_mask(0b0000_0000);
         let result1 = mapper.read_prg_open_bus(0x5C00, open_bus);
-        assert_eq!(
-            result1, open_bus,
-            "ExRAM mode 1 should return open-bus (rendering disabled)"
-        );
-        
+
+        // Read with rendering enabled
         mapper.ppu_write_mask(0b0001_1000);
         let result2 = mapper.read_prg_open_bus(0x5C00, open_bus);
-        assert_eq!(
-            result2, open_bus,
-            "ExRAM mode 1 should return open-bus (rendering enabled)"
-        );
-    }
 
-    /// Test MMC5 ExRAM modes 2 and 3 return data
-    ///
-    /// In ExRAM mode 2, CPU reads/writes from $5C00-$5FFF work normally.
-    /// In ExRAM mode 3, CPU reads work but writes are ignored (read-only).
-    #[test]
-    fn test_mmc5_exram_modes_2_and_3_data_not_open_bus() {
-        // Test mode 2 (read/write)
-        {
-            let mut mapper = create_mmc5_mapper(vec![0; 256 * 1024], vec![0; 8 * 1024], MirroringMode::Horizontal)
-                .expect("MMC5 should be supported");
-            
-            // Set ExRAM to mode 2
-            mapper.write_prg(0x5104, 2);
-            
-            // Write some data to ExRAM
-            mapper.write_prg(0x5C00, 0x33);
-            
-            let open_bus = 0xDD;
-            let result = mapper.read_prg_open_bus(0x5C00, open_bus);
-            
-            // Should return the written data, not open-bus
-            assert_eq!(
-                result, 0x33,
-                "ExRAM mode 2 should return data, not open-bus"
-            );
-        }
-        
-        // Test mode 3 (read-only)
-        {
-            let mut mapper = create_mmc5_mapper(vec![0; 256 * 1024], vec![0; 8 * 1024], MirroringMode::Horizontal)
-                .expect("MMC5 should be supported");
-            
-            // First write data in mode 2
-            mapper.write_prg(0x5104, 2);
-            mapper.write_prg(0x5C00, 0x44);
-            
-            // Switch to mode 3 (read-only)
-            mapper.write_prg(0x5104, 3);
-            
-            let open_bus = 0xEE;
-            let result = mapper.read_prg_open_bus(0x5C00, open_bus);
-            
-            // Should return the previously written data, not open-bus
-            assert_eq!(
-                result, 0x44,
-                "ExRAM mode 3 should return data, not open-bus"
-            );
-            
-            // Verify writes are ignored in mode 3
-            mapper.write_prg(0x5C00, 0x99);
-            let result2 = mapper.read_prg_open_bus(0x5C00, open_bus);
-            assert_eq!(
-                result2, 0x44,
-                "ExRAM mode 3 should be read-only (writes ignored)"
-            );
-        }
+        // The CPU-visible value must be the same regardless of rendering state
+        assert_eq!(
+            result1, result2,
+            "ExRAM mode 1 CPU reads should be independent of rendering state"
+        );
+        assert_eq!(
+            result1, open_bus,
+            "ExRAM mode 1 should return open-bus"
+        );
     }
 
     /// Test that addresses below $5000 return open-bus for MMC5

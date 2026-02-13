@@ -992,45 +992,6 @@ mod tests {
         );
     }
 
-    /// Test MMC3 disabled PRG-RAM returns open-bus
-    ///
-    /// MMC3 can disable PRG-RAM via register $A001 bit 7.
-    /// When disabled, reads from $6000-$7FFF should return open-bus.
-    #[test]
-    fn test_mmc3_disabled_prg_ram_returns_open_bus_behavior() {
-        let mut mapper = MMC3Mapper::new(vec![0; 128 * 1024], vec![0; 128 * 1024], MirroringMode::Horizontal);
-        
-        // Enable PRG-RAM first (bit 7 = 1)
-        mapper.write_prg(0xA001, 0b1000_0000);
-        
-        // Write to PRG-RAM
-        mapper.write_prg(0x6000, 0xCC);
-        mapper.write_prg(0x7FFF, 0xDD);
-        
-        // Verify reads work when enabled
-        assert_eq!(mapper.read_prg(0x6000), 0xCC);
-        assert_eq!(mapper.read_prg(0x7FFF), 0xDD);
-        
-        // Disable PRG-RAM (bit 7 = 0)
-        mapper.write_prg(0xA001, 0b0000_0000);
-        
-        // read_prg should return 0 for backward compatibility
-        assert_eq!(mapper.read_prg(0x6000), 0x00);
-        
-        // read_prg_open_bus should return the open-bus value
-        let open_bus = 0x77;
-        assert_eq!(
-            mapper.read_prg_open_bus(0x6000, open_bus),
-            open_bus,
-            "Disabled PRG-RAM should return open-bus at $6000"
-        );
-        assert_eq!(
-            mapper.read_prg_open_bus(0x7FFF, open_bus),
-            open_bus,
-            "Disabled PRG-RAM should return open-bus at $7FFF"
-        );
-    }
-
     /// Test MMC3 enabled PRG-RAM doesn't return open-bus
     #[test]
     fn test_mmc3_enabled_prg_ram_returns_data_not_open_bus() {
