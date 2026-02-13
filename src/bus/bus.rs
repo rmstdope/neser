@@ -130,8 +130,8 @@ impl Bus {
             let mut cart = cartridge_rc.borrow_mut();
             let mapper = cart.mapper_mut();
             // Write each byte of trainer data to $7000-$71FF
-            // Limit to 512 bytes to ensure we stay within $7000-$71FF range
-            for (i, byte) in trainer_bytes.iter().take(512).enumerate() {
+            // Trainer data is always exactly 512 bytes from parsing validation
+            for (i, byte) in trainer_bytes.iter().enumerate() {
                 mapper.write_prg(0x7000 + i as u16, *byte);
             }
         }
