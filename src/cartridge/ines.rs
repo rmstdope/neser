@@ -196,6 +196,16 @@ pub fn parse_header(header: &[u8; 16]) -> Option<InesHeader> {
         default_expansion_device,
     })
 }
+/// Errors that can occur while parsing a full ROM blob.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RomParseError {
+    InvalidHeader,
+    FileTooSmall { expected: usize, actual: usize },
+}
+
+// iNES format layout constants
+const HEADER_SIZE: usize = 16;
+const TRAINER_SIZE: usize = 512;
 
 /// Parse a full iNES/NES2 ROM blob. Returns the parsed header, owned PRG ROM
 /// bytes, owned CHR ROM bytes, optional trainer data (512 bytes if present),
@@ -205,39 +215,33 @@ pub fn parse_header(header: &[u8; 16]) -> Option<InesHeader> {
 ///
 /// Returns `RomParseError::InvalidHeader` if the magic bytes are invalid.
 /// Returns `RomParseError::FileTooSmall` if the file is smaller than expected.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum RomParseError {
-    InvalidHeader,
-    FileTooSmall { expected: usize, actual: usize },
-}
-
 pub fn parse_rom(
     data: &[u8],
 ) -> Result<(InesHeader, Vec<u8>, Vec<u8>, Option<Vec<u8>>, u32), RomParseError> {
-    if data.len() < 16 {
+    if data.len() < HEADER_SIZE {
         return Err(RomParseError::FileTooSmall {
-            expected: 16,
+            expected: HEADER_SIZE,
             actual: data.len(),
         });
     }
 
-    let header: [u8; 16] = data[0..16]
+    let header: [u8; HEADER_SIZE] = data[0..HEADER_SIZE]
         .try_into()
         .map_err(|_| RomParseError::InvalidHeader)?;
     let info = parse_header(&header).ok_or(RomParseError::InvalidHeader)?;
 
-    let trainer_offset = if info.has_trainer { 512 } else { 0 };
-    let prg_rom_start = 16 + trainer_offset;
+    let trainer_offset = if info.has_trainer { TRAINER_SIZE } else { 0 };
+    let prg_rom_start = HEADER_SIZE + trainer_offset;
 
     // Extract trainer data if present
     let trainer = if info.has_trainer {
-        if data.len() < 16 + 512 {
+        if data.len() < HEADER_SIZE + TRAINER_SIZE {
             return Err(RomParseError::FileTooSmall {
-                expected: 16 + 512,
+                expected: HEADER_SIZE + TRAINER_SIZE,
                 actual: data.len(),
             });
         }
-        Some(data[16..16 + 512].to_vec())
+        Some(data[HEADER_SIZE..HEADER_SIZE + TRAINER_SIZE].to_vec())
     } else {
         None
     };
