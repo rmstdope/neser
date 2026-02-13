@@ -1,6 +1,6 @@
 ---
 name: self-learning-skills
-description: Guide for how skills should be self learning and updated after each successful issue implementation. It shall be used after each github (sub-)issue have been fully merged and closed.
+description: Guide for how skills should be self learning and updated after each successful issue implementation. It shall be used whnever a task has been completed, e.g. an issue written and created, a issue merged and closed, a bug fixed, etc.
 ---
 
 # Self-Learning Skills
