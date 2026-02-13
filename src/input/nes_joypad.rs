@@ -446,4 +446,29 @@ mod tests {
         assert_eq!(joypad.read(false), 0); // Left - cancelled
         assert_eq!(joypad.read(false), 0); // Right - cancelled
     }
+
+    #[test]
+    fn test_socd_in_strobe_mode() {
+        let mut joypad = NesJoypad::new();
+
+        // Press opposite horizontal directions simultaneously
+        joypad.set_button(Button::Left, true);
+        joypad.set_button(Button::Right, true);
+
+        // Advance reads to reach the Left button (index 6).
+        // Buttons order: A(0), B(1), Select(2), Start(3), Up(4), Down(5), Left(6), Right(7)
+        for _ in 0..6 {
+            joypad.read(false);
+        }
+
+        // Enable strobe mode and repeatedly read the same button index (Left).
+        // SOCD cleaning should still apply, so Left should read as 0.
+        assert_eq!(joypad.read(true), 0); // Left under strobe - cancelled
+        assert_eq!(joypad.read(true), 0); // Left under strobe - still cancelled
+        assert_eq!(joypad.read(true), 0); // Left under strobe - still cancelled
+
+        // Disable strobe and continue reading; the next button is Right.
+        // SOCD cleaning should also cancel Right.
+        assert_eq!(joypad.read(false), 0); // Right - cancelled
+    }
 }
