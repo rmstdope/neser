@@ -3591,4 +3591,237 @@ mod tests {
             mmc5.scanline_counter
         );
     }
+
+    #[test]
+    fn test_mmc5_wram_snapshot_with_8kb_single_bank() {
+        // Test WRAM snapshot with 1 bank (8KB) configuration.
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper =
+            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, MirroringMode::Horizontal, 1);
+
+        // Verify PRG-RAM size is 8KB (1 bank).
+        assert_eq!(mapper.wram_size(), 8 * 1024);
+
+        // Enable PRG-RAM writes (set $5102/$5103 magic values).
+        mapper.write_prg(0x5102, 0x02);
+        mapper.write_prg(0x5103, 0x01);
+
+        // Write test pattern to PRG-RAM at $6000-$7FFF.
+        for i in 0..0x2000 {
+            mapper.write_prg(0x6000 + i, (i & 0xFF) as u8);
+        }
+
+        // Take snapshot of WRAM.
+        let snapshot = mapper.wram_snapshot();
+        assert_eq!(snapshot.len(), 8 * 1024);
+
+        // Verify snapshot contains the data we wrote.
+        for i in 0..0x2000 {
+            assert_eq!(
+                snapshot[i as usize],
+                (i & 0xFF) as u8,
+                "snapshot byte {} mismatch",
+                i
+            );
+        }
+
+        // Clear PRG-RAM by writing zeros.
+        for i in 0..0x2000 {
+            mapper.write_prg(0x6000 + i, 0x00);
+        }
+
+        // Verify PRG-RAM is cleared.
+        for i in 0..0x2000 {
+            assert_eq!(
+                mapper.read_prg(0x6000 + i),
+                0x00,
+                "PRG-RAM should be cleared before restore"
+            );
+        }
+
+        // Restore from snapshot.
+        mapper.load_wram_snapshot(&snapshot);
+
+        // Verify PRG-RAM is restored.
+        for i in 0..0x2000 {
+            assert_eq!(
+                mapper.read_prg(0x6000 + i),
+                (i & 0xFF) as u8,
+                "restored byte at {} mismatch",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_mmc5_wram_snapshot_with_64kb_full_banks() {
+        // Test WRAM snapshot with 8 banks (64KB) configuration.
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper =
+            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, MirroringMode::Horizontal, 8);
+
+        // Verify PRG-RAM size is 64KB (8 banks).
+        assert_eq!(mapper.wram_size(), 64 * 1024);
+
+        // Enable PRG-RAM writes.
+        mapper.write_prg(0x5102, 0x02);
+        mapper.write_prg(0x5103, 0x01);
+
+        // Write unique patterns to each of the 8 banks via bank switching.
+        for bank in 0..8u8 {
+            // Select bank via $5113.
+            mapper.write_prg(0x5113, bank);
+
+            // Write bank number as pattern to this bank.
+            for i in 0..0x2000 {
+                mapper.write_prg(0x6000 + i, bank.wrapping_add((i & 0xFF) as u8));
+            }
+        }
+
+        // Take snapshot of all WRAM.
+        let snapshot = mapper.wram_snapshot();
+        assert_eq!(snapshot.len(), 64 * 1024);
+
+        // Verify snapshot contains all banks' data.
+        for bank in 0..8 {
+            let bank_offset = bank * 8 * 1024;
+            for i in 0..0x2000 {
+                let expected = (bank as u8).wrapping_add((i & 0xFF) as u8);
+                assert_eq!(
+                    snapshot[bank_offset + i],
+                    expected,
+                    "snapshot bank {} byte {} mismatch",
+                    bank,
+                    i
+                );
+            }
+        }
+
+        // Clear all banks by writing zeros via bank switching.
+        for bank in 0..8u8 {
+            mapper.write_prg(0x5113, bank);
+            for i in 0..0x2000 {
+                mapper.write_prg(0x6000 + i, 0x00);
+            }
+        }
+
+        // Restore from snapshot.
+        mapper.load_wram_snapshot(&snapshot);
+
+        // Verify all banks are restored correctly via bank switching.
+        for bank in 0..8u8 {
+            mapper.write_prg(0x5113, bank);
+            for i in 0..0x2000 {
+                let expected = bank.wrapping_add((i & 0xFF) as u8);
+                assert_eq!(
+                    mapper.read_prg(0x6000 + i),
+                    expected,
+                    "restored bank {} byte {} mismatch",
+                    bank,
+                    i
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_mmc5_wram_snapshot_bypasses_write_protection() {
+        // Test that load_wram_snapshot() bypasses write protection.
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper =
+            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, MirroringMode::Horizontal, 2);
+
+        // Enable PRG-RAM writes temporarily.
+        mapper.write_prg(0x5102, 0x02);
+        mapper.write_prg(0x5103, 0x01);
+
+        // Write test data to PRG-RAM.
+        for i in 0..0x2000 {
+            mapper.write_prg(0x6000 + i, 0xAA);
+        }
+
+        // Take snapshot.
+        let snapshot = mapper.wram_snapshot();
+
+        // Disable PRG-RAM writes.
+        mapper.write_prg(0x5102, 0x00);
+        mapper.write_prg(0x5103, 0x00);
+
+        // Verify writes are now blocked.
+        mapper.write_prg(0x6000, 0xBB);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAA,
+            "write protection should block writes"
+        );
+
+        // Clear PRG-RAM via direct access (to simulate corrupted state).
+        for i in 0..0x2000 {
+            mapper.prg_ram[i] = 0x00;
+        }
+
+        // Restore from snapshot should bypass write protection.
+        mapper.load_wram_snapshot(&snapshot);
+
+        // Verify PRG-RAM is restored despite write protection.
+        for i in 0..0x2000 {
+            assert_eq!(
+                mapper.read_prg(0x6000 + i),
+                0xAA,
+                "snapshot restore should bypass write protection at offset {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_mmc5_wram_snapshot_captures_all_banks_regardless_of_current_selection() {
+        // Test that snapshot captures all banks, not just the currently selected bank.
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1 * 1024, 8);
+
+        let mut mapper =
+            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, MirroringMode::Horizontal, 4);
+
+        // Enable PRG-RAM writes.
+        mapper.write_prg(0x5102, 0x02);
+        mapper.write_prg(0x5103, 0x01);
+
+        // Write different patterns to banks 0, 1, 2, 3.
+        for bank in 0..4u8 {
+            mapper.write_prg(0x5113, bank);
+            // Write bank-specific pattern.
+            for i in 0..0x2000 {
+                mapper.write_prg(0x6000 + i, bank.wrapping_mul(0x10).wrapping_add((i & 0x0F) as u8));
+            }
+        }
+
+        // Select bank 2 as current bank.
+        mapper.write_prg(0x5113, 2);
+
+        // Take snapshot while bank 2 is selected.
+        let snapshot = mapper.wram_snapshot();
+        assert_eq!(snapshot.len(), 32 * 1024); // 4 banks * 8KB
+
+        // Verify snapshot contains ALL banks, not just bank 2.
+        for bank in 0..4 {
+            let bank_offset = bank * 8 * 1024;
+            for i in 0..0x2000 {
+                let expected = (bank as u8).wrapping_mul(0x10).wrapping_add((i & 0x0F) as u8);
+                assert_eq!(
+                    snapshot[bank_offset + i],
+                    expected,
+                    "snapshot should capture bank {} data even when bank 2 is selected, byte {} mismatch",
+                    bank,
+                    i
+                );
+            }
+        }
+    }
 }
