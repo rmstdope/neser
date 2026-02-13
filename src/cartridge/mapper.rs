@@ -131,7 +131,7 @@ impl Default for MapperCapabilities {
             has_chr_banking: false,
             has_dynamic_mirroring: false,
             has_expansion_audio: false,
-            max_prg_ram_kb: 8,
+            max_prg_ram_kb: 0,
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
         }
