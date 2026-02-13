@@ -10,9 +10,9 @@ This document lists the hardware capabilities reported by each supported mapper 
 | `has_chr_banking` | `bool` | Mapper supports CHR bank switching |
 | `has_dynamic_mirroring` | `bool` | Mapper can change nametable mirroring at runtime |
 | `has_expansion_audio` | `bool` | Mapper provides additional audio channels |
-| `max_prg_ram_kb` | `u16` | Maximum PRG-RAM (WRAM/SRAM) size in KB |
-| `prg_bank_size_kb` | `u16` | Smallest switchable PRG-ROM bank size in KB |
-| `chr_bank_size_kb` | `u16` | Smallest switchable CHR bank size in KB |
+| `max_prg_ram_kb` | `usize` | Maximum PRG-RAM (WRAM/SRAM) size in KB |
+| `prg_bank_size_kb` | `usize` | Smallest switchable PRG-ROM bank size in KB |
+| `chr_bank_size_kb` | `usize` | Smallest switchable CHR bank size in KB |
 
 ## Capabilities by Mapper
 
