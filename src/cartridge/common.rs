@@ -3,6 +3,126 @@
 //! This module provides reusable components that are shared across multiple mappers,
 //! reducing code duplication and ensuring consistent behavior.
 
+/// Trait for consistent state snapshot and restoration.
+///
+/// This trait provides a standard interface for capturing and restoring mapper state,
+/// making it easier to implement save states and test state preservation.
+///
+/// # When to Implement
+///
+/// Implement `StateSnapshot` for:
+/// - Mapper register structures that need to be preserved across save states
+/// - Any component with internal state that affects emulation behavior
+/// - Register banks, shift registers, counters, and other stateful components
+///
+/// # Design Guidelines
+///
+/// - Keep snapshots compact but complete
+/// - Use deterministic serialization (no HashMap iteration, etc.)
+/// - Version your snapshot format if it may change
+/// - Document the byte layout in implementation
+/// - Handle gracefully if restore data is incomplete/invalid
+///
+/// # Examples
+///
+/// ## Simple Register Set
+///
+/// ```rust
+/// use neser::cartridge::StateSnapshot;
+///
+/// struct ShiftRegister {
+///     value: u8,
+///     count: u8,
+/// }
+///
+/// impl StateSnapshot for ShiftRegister {
+///     fn snapshot(&self) -> Vec<u8> {
+///         // Layout: [value, count]
+///         vec![self.value, self.count]
+///     }
+///
+///     fn restore(&mut self, data: &[u8]) {
+///         if data.len() >= 2 {
+///             self.value = data[0];
+///             self.count = data[1];
+///         }
+///     }
+/// }
+/// ```
+///
+/// ## Composite Register Structure
+///
+/// ```rust
+/// use neser::cartridge::StateSnapshot;
+///
+/// struct BankRegisters {
+///     prg_bank: u8,
+///     chr_banks: [u8; 8],
+///     mirroring: u8,
+/// }
+///
+/// impl StateSnapshot for BankRegisters {
+///     fn snapshot(&self) -> Vec<u8> {
+///         // Layout: [prg_bank, chr_banks[0..8], mirroring]
+///         let mut data = Vec::with_capacity(10);
+///         data.push(self.prg_bank);
+///         data.extend_from_slice(&self.chr_banks);
+///         data.push(self.mirroring);
+///         data
+///     }
+///
+///     fn restore(&mut self, data: &[u8]) {
+///         if let Some(&prg) = data.get(0) {
+///             self.prg_bank = prg;
+///         }
+///         if data.len() >= 9 {
+///             self.chr_banks.copy_from_slice(&data[1..9]);
+///         }
+///         if let Some(&mir) = data.get(9) {
+///             self.mirroring = mir;
+///         }
+///     }
+/// }
+/// ```
+///
+/// ## Integration with `Mapper::registers_snapshot()`
+///
+/// ```rust,ignore
+/// use neser::cartridge::{Mapper, StateSnapshot};
+///
+/// struct MyMapper {
+///     registers: MyRegisterSet,
+///     // ... other fields
+/// }
+///
+/// impl Mapper for MyMapper {
+///     fn registers_snapshot(&self) -> Vec<u8> {
+///         self.registers.snapshot()
+///     }
+///
+///     fn restore_registers(&mut self, data: &[u8]) {
+///         self.registers.restore(data);
+///     }
+///     // ... other trait methods
+/// }
+/// ```
+pub trait StateSnapshot {
+    /// Create a snapshot of the current state.
+    ///
+    /// Returns a byte vector containing all state needed to restore this component.
+    /// The format is implementation-defined but should be documented.
+    fn snapshot(&self) -> Vec<u8>;
+
+    /// Restore state from a snapshot.
+    ///
+    /// Loads state from a byte slice previously created by `snapshot()`.
+    /// If the data is incomplete or invalid, implementations should:
+    /// - Restore as much as possible
+    /// - Leave unrestorable fields at safe default values
+    /// - Not panic (use bounds checking, Option::unwrap_or, etc.)
+    fn restore(&mut self, data: &[u8]);
+}
+
 /// Standard PRG-RAM size (8KB)
 pub const DEFAULT_PRG_RAM_SIZE: usize = 8192;
 
@@ -95,6 +215,19 @@ impl PrgRam {
     pub fn load_snapshot(&mut self, data: &[u8]) {
         let to_copy = data.len().min(self.data.len());
         self.data[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+}
+
+impl StateSnapshot for PrgRam {
+    fn snapshot(&self) -> Vec<u8> {
+        // Explicitly call the inherent method to avoid infinite recursion.
+        // Without type qualification, `self.snapshot()` would recursively call
+        // this trait method instead of the inherent `PrgRam::snapshot()`.
+        PrgRam::snapshot(self)
+    }
+
+    fn restore(&mut self, data: &[u8]) {
+        self.load_snapshot(data);
     }
 }
 
@@ -194,6 +327,19 @@ impl ChrMemory {
 
         let to_copy = data.len().min(self.data.len());
         self.data[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+}
+
+impl StateSnapshot for ChrMemory {
+    fn snapshot(&self) -> Vec<u8> {
+        // Explicitly call the inherent method to avoid infinite recursion.
+        // Without type qualification, `self.snapshot()` would recursively call
+        // this trait method instead of the inherent `ChrMemory::snapshot()`.
+        ChrMemory::snapshot(self)
+    }
+
+    fn restore(&mut self, data: &[u8]) {
+        self.load_snapshot(data);
     }
 }
 
@@ -300,6 +446,108 @@ impl BankedRom {
     // pub fn bank_size(&self) -> usize {
     //     self.bank_size
     // }
+}
+
+/// Helper for bank-switching logic used across mappers.
+///
+/// Encapsulates common patterns for bank selection, wrapping, and offset calculation.
+/// Eliminates manual `.max(1)` calls and reduces duplicated bank calculation code.
+///
+/// # Example
+/// ```rust
+/// use neser::cartridge::BankSwitch;
+///
+/// // PRG-ROM with 128KB (4 banks of 32KB)
+/// let prg_bank = BankSwitch::new(4);
+///
+/// // Switch to bank 2
+/// let mut bank = prg_bank;
+/// bank.set(2);
+/// assert_eq!(bank.current(), 2);
+/// assert_eq!(bank.offset(0x8000), 0x10000); // 2 * 32KB
+///
+/// // Bank wraps when exceeding available banks
+/// bank.set(5);
+/// assert_eq!(bank.current(), 1); // 5 % 4 = 1
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct BankSwitch {
+    num_banks: usize,
+    bank: u8,
+}
+
+impl BankSwitch {
+    /// Create a new bank switch helper.
+    ///
+    /// # Arguments
+    /// * `num_banks` - Total number of banks available (0 for empty ROM)
+    pub fn new(num_banks: usize) -> Self {
+        Self { num_banks, bank: 0 }
+    }
+
+    /// Create a new bank switch from ROM data and bank size.
+    ///
+    /// # Arguments
+    /// * `rom_data` - The ROM data
+    /// * `bank_size` - Size of each bank in bytes
+    ///
+    /// # Returns
+    /// A BankSwitch configured with the appropriate number of banks
+    pub fn from_rom(rom_data: &[u8], bank_size: usize) -> Self {
+        let num_banks = if rom_data.is_empty() || bank_size == 0 {
+            0
+        } else {
+            rom_data.len() / bank_size
+        };
+        Self::new(num_banks)
+    }
+
+    /// Set the selected bank number.
+    ///
+    /// The bank value is stored as-is and wrapping is applied during `current()`.
+    pub fn set(&mut self, value: u8) {
+        self.bank = value;
+    }
+
+    /// Get the current bank index with wrapping applied.
+    ///
+    /// Returns the bank number modulo the available banks, with special
+    /// handling for empty ROM (returns 0).
+    pub fn current(&self) -> usize {
+        if self.num_banks == 0 {
+            0
+        } else {
+            (self.bank as usize) % self.num_banks
+        }
+    }
+
+    /// Calculate the byte offset for the current bank.
+    ///
+    /// # Arguments
+    /// * `bank_size` - Size of each bank in bytes
+    ///
+    /// # Returns
+    /// The offset into ROM data for the current bank
+    pub fn offset(&self, bank_size: usize) -> usize {
+        self.current() * bank_size
+    }
+
+    /// Get the raw bank value without wrapping.
+    pub fn raw(&self) -> u8 {
+        self.bank
+    }
+}
+
+impl StateSnapshot for BankSwitch {
+    fn snapshot(&self) -> Vec<u8> {
+        vec![self.bank]
+    }
+
+    fn restore(&mut self, data: &[u8]) {
+        if let Some(&value) = data.first() {
+            self.bank = value;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -529,5 +777,181 @@ mod tests {
         // Reading way beyond total ROM should return 0
         assert_eq!(banked.read(0, 10000), 0);
         assert_eq!(banked.read(99, 10000), 0);
+    }
+
+    #[test]
+    fn test_state_snapshot_prg_ram() {
+        let mut prg_ram = PrgRam::new(8192);
+        prg_ram.try_write(0x6000, 0x42);
+        prg_ram.try_write(0x7FFF, 0xAB);
+
+        // Use StateSnapshot trait
+        let snapshot = prg_ram.snapshot();
+        assert_eq!(snapshot.len(), 8192);
+        assert_eq!(snapshot[0], 0x42);
+        assert_eq!(snapshot[0x1FFF], 0xAB);
+
+        // Restore to a new instance
+        let mut prg_ram2 = PrgRam::new(8192);
+        prg_ram2.restore(&snapshot);
+        assert_eq!(prg_ram2.try_read(0x6000), Some(0x42));
+        assert_eq!(prg_ram2.try_read(0x7FFF), Some(0xAB));
+    }
+
+    #[test]
+    fn test_state_snapshot_chr_memory() {
+        let mut chr = ChrMemory::new_ram(8192);
+        chr.write(0x0000, 0x11);
+        chr.write(0x1FFF, 0x22);
+
+        // Use StateSnapshot trait
+        let snapshot = chr.snapshot();
+        assert_eq!(snapshot.len(), 8192);
+        assert_eq!(snapshot[0], 0x11);
+        assert_eq!(snapshot[0x1FFF], 0x22);
+
+        // Restore to a new instance
+        let mut chr2 = ChrMemory::new_ram(8192);
+        chr2.restore(&snapshot);
+        assert_eq!(chr2.read(0x0000), 0x11);
+        assert_eq!(chr2.read(0x1FFF), 0x22);
+    }
+
+    #[test]
+    fn test_state_snapshot_chr_rom_empty() {
+        // CHR-ROM should return empty snapshot
+        let chr_rom_data = vec![0xAA; 8192];
+        let chr = ChrMemory::new(chr_rom_data);
+
+        let snapshot = chr.snapshot();
+        assert!(snapshot.is_empty(), "CHR-ROM snapshot should be empty");
+    }
+
+    #[test]
+    fn test_state_snapshot_chr_rom_restore_is_noop() {
+        // CHR-ROM should ignore restore attempts (ROM is read-only)
+        let chr_rom_data = vec![0xAA; 8192];
+        let mut chr = ChrMemory::new(chr_rom_data);
+
+        // Try to restore different data
+        let restore_data = vec![0x55; 8192];
+        chr.restore(&restore_data);
+
+        // CHR-ROM should still contain original data
+        assert_eq!(chr.read(0x0000), 0xAA);
+        assert_eq!(chr.read(0x1FFF), 0xAA);
+        assert!(!chr.is_ram(), "Should still be ROM, not RAM");
+    }
+
+    #[test]
+    fn test_bank_switch_basic() {
+        let mut bank = BankSwitch::new(4);
+
+        // Default bank is 0
+        assert_eq!(bank.current(), 0);
+        assert_eq!(bank.raw(), 0);
+
+        // Set to bank 2
+        bank.set(2);
+        assert_eq!(bank.current(), 2);
+        assert_eq!(bank.raw(), 2);
+    }
+
+    #[test]
+    fn test_bank_switch_wrapping() {
+        let mut bank = BankSwitch::new(4);
+
+        // Bank 5 wraps to 1 (5 % 4 = 1)
+        bank.set(5);
+        assert_eq!(bank.current(), 1);
+        assert_eq!(bank.raw(), 5);
+
+        // Bank 8 wraps to 0 (8 % 4 = 0)
+        bank.set(8);
+        assert_eq!(bank.current(), 0);
+
+        // Bank 255 wraps appropriately
+        bank.set(255);
+        assert_eq!(bank.current(), 255 % 4);
+    }
+
+    #[test]
+    fn test_bank_switch_empty_rom() {
+        let mut bank = BankSwitch::new(0);
+
+        // With 0 banks, always returns 0 (safe default)
+        assert_eq!(bank.current(), 0);
+
+        bank.set(5);
+        assert_eq!(bank.current(), 0);
+        assert_eq!(bank.raw(), 5);
+    }
+
+    #[test]
+    fn test_bank_switch_offset_calculation() {
+        let mut bank = BankSwitch::new(4);
+        const BANK_SIZE: usize = 0x8000; // 32KB
+
+        // Bank 0
+        assert_eq!(bank.offset(BANK_SIZE), 0);
+
+        // Bank 1
+        bank.set(1);
+        assert_eq!(bank.offset(BANK_SIZE), 0x8000);
+
+        // Bank 2
+        bank.set(2);
+        assert_eq!(bank.offset(BANK_SIZE), 0x10000);
+
+        // Bank 3
+        bank.set(3);
+        assert_eq!(bank.offset(BANK_SIZE), 0x18000);
+
+        // Bank 5 wraps to 1
+        bank.set(5);
+        assert_eq!(bank.offset(BANK_SIZE), 0x8000);
+    }
+
+    #[test]
+    fn test_bank_switch_snapshot() {
+        let mut bank = BankSwitch::new(8);
+        bank.set(5);
+
+        // Take snapshot
+        let snapshot = bank.snapshot();
+        assert_eq!(snapshot, vec![5]);
+
+        // Restore to new instance
+        let mut bank2 = BankSwitch::new(8);
+        bank2.restore(&snapshot);
+        assert_eq!(bank2.current(), 5);
+        assert_eq!(bank2.raw(), 5);
+    }
+
+    #[test]
+    fn test_bank_switch_snapshot_empty_data() {
+        let mut bank = BankSwitch::new(4);
+        bank.set(3);
+
+        // Restore with empty data should not panic
+        bank.restore(&[]);
+        assert_eq!(bank.raw(), 3); // Should remain unchanged
+    }
+
+    #[test]
+    fn test_bank_switch_from_rom() {
+        // Normal ROM with 4 banks of 8KB
+        let rom_data = vec![0u8; 32 * 1024];
+        let bank = BankSwitch::from_rom(&rom_data, 8 * 1024);
+        assert_eq!(bank.current(), 0);
+
+        // Empty ROM
+        let empty_rom: Vec<u8> = vec![];
+        let empty_bank = BankSwitch::from_rom(&empty_rom, 8 * 1024);
+        assert_eq!(empty_bank.current(), 0);
+
+        // Zero bank size
+        let zero_bank = BankSwitch::from_rom(&rom_data, 0);
+        assert_eq!(zero_bank.current(), 0);
     }
 }

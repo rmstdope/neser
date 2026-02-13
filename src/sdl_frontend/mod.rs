@@ -1,3 +1,4 @@
+mod autorun_state;
 mod sdl_audio;
 mod sdl_audio_callback;
 mod sdl_audio_resampler;
