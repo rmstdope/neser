@@ -34,7 +34,7 @@ const CHR_BANK_SIZE: usize = 0x2000; // 8KB
 pub struct NinaTengenMapper {
     prg_rom: BankedRom,
     prg_ram: PrgRam,
-    chr_rom: Vec<u8>,
+    chr_rom: BankedRom,
     prg_bank_select: u8,
     chr_bank_select: u8,
     mirroring: MirroringMode,
@@ -45,17 +45,11 @@ impl NinaTengenMapper {
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom,
+            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
             prg_bank_select: 0,
             chr_bank_select: 0,
             mirroring,
         }
-    }
-
-    fn get_chr_bank_offset(&self) -> usize {
-        let num_banks = (self.chr_rom.len() / CHR_BANK_SIZE).max(1);
-        let bank = (self.chr_bank_select as usize) % num_banks;
-        bank * CHR_BANK_SIZE
     }
 
     fn get_last_prg_bank(&self) -> usize {
@@ -112,10 +106,8 @@ impl Mapper for NinaTengenMapper {
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        let bank_offset = self.get_chr_bank_offset();
-        let offset = (addr & 0x1FFF) as usize;
-        let index = bank_offset + offset;
-        self.chr_rom.get(index).copied().unwrap_or(0)
+        self.chr_rom
+            .read_with_base(self.chr_bank_select as usize, 0x0000, addr)
     }
 
     fn write_chr(&mut self, _addr: u16, _value: u8) {

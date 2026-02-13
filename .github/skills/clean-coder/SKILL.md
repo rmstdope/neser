@@ -61,7 +61,7 @@ Keep comments close to the code they describe and maintain them alongside that c
 
 ### Tests
 
-Keep all unit test wihin the same file as the struct or function they test. This keeps tests close to the code and makes it easier to maintain them together.
+Keep all unit test within the same file as the struct or function they test. This keeps tests close to the code and makes it easier to maintain them together.
 
 Keep all integration tests in a separate 'integration_tests/' directory. This keeps them organised and separate from unit tests.
 
