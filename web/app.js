@@ -62,24 +62,6 @@ const filters = {
             }
         `
     },
-    smooth: {
-        name: "Smooth",
-        type: "single",
-        fragmentShader: `
-            #ifdef GL_FRAGMENT_PRECISION_HIGH
-                precision highp float;
-            #else
-                precision mediump float;
-            #endif
-            varying vec2 v_texCoord;
-            uniform sampler2D u_texture;
-
-            void main() {
-                // Simple sampling - smoothing is done by GL_LINEAR filtering
-                gl_FragColor = texture2D(u_texture, v_texCoord);
-            }
-        `
-    },
     ntsc: {
         name: "NTSC",
         type: "ntsc"
@@ -328,6 +310,24 @@ const filters = {
                 }
 
                 gl_FragColor = vec4(ToSrgb(outColor.rgb), 1.0);
+            }
+        `
+    },
+    smooth: {
+        name: "Smooth",
+        type: "single",
+        fragmentShader: `
+            #ifdef GL_FRAGMENT_PRECISION_HIGH
+                precision highp float;
+            #else
+                precision mediump float;
+            #endif
+            varying vec2 v_texCoord;
+            uniform sampler2D u_texture;
+
+            void main() {
+                // Simple sampling - smoothing is done by GL_LINEAR filtering
+                gl_FragColor = texture2D(u_texture, v_texCoord);
             }
         `
     }

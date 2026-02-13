@@ -9,12 +9,13 @@ use std::ffi::CString;
 use std::ptr;
 
 /// Common vertex shader used by all single-pass filters.
+/// Updated to GLSL 1.50 for OpenGL 3.2 core compatibility.
 pub const VERTEX_SHADER_SOURCE: &str = r#"
-    #version 120
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    varying vec2 v_texCoord;
-    varying vec2 v_pixelCoord;
+    #version 150 core
+    in vec2 a_position;
+    in vec2 a_texCoord;
+    out vec2 v_texCoord;
+    out vec2 v_pixelCoord;
     uniform vec2 u_textureSize;
 
     void main() {
@@ -26,17 +27,13 @@ pub const VERTEX_SHADER_SOURCE: &str = r#"
 
 /// Stock/None filter - simple pass-through with no effects.
 pub const STOCK_FRAGMENT_SHADER_SOURCE: &str = r#"
-    #version 120
-    #ifdef GL_FRAGMENT_PRECISION_HIGH
-        precision highp float;
-    #else
-        precision mediump float;
-    #endif
-    varying vec2 v_texCoord;
+    #version 150 core
+    in vec2 v_texCoord;
+    out vec4 fragColor;
     uniform sampler2D u_texture;
 
     void main() {
-        gl_FragColor = texture2D(u_texture, v_texCoord);
+        fragColor = texture(u_texture, v_texCoord);
     }
 "#;
 
@@ -45,31 +42,23 @@ pub const STOCK_FRAGMENT_SHADER_SOURCE: &str = r#"
 /// Mipmaps are generated for the input texture in gl_backend.rs, enabling trilinear
 /// filtering when GL_LINEAR_MIPMAP_LINEAR is used.
 pub const SMOOTH_FRAGMENT_SHADER_SOURCE: &str = r#"
-    #version 120
-    #ifdef GL_FRAGMENT_PRECISION_HIGH
-        precision highp float;
-    #else
-        precision mediump float;
-    #endif
-    varying vec2 v_texCoord;
+    #version 150 core
+    in vec2 v_texCoord;
+    out vec4 fragColor;
     uniform sampler2D u_texture;
 
     void main() {
         // Simple sampling - the smoothing is done by GL_LINEAR filtering
-        gl_FragColor = texture2D(u_texture, v_texCoord);
+        fragColor = texture(u_texture, v_texCoord);
     }
 "#;
 
 /// CRT filter - scanlines, shadow mask, bloom, and screen warp effects.
 /// Ported from the web frontend implementation.
 pub const CRT_FRAGMENT_SHADER_SOURCE: &str = r#"
-    #version 120
-    #ifdef GL_FRAGMENT_PRECISION_HIGH
-        precision highp float;
-    #else
-        precision mediump float;
-    #endif
-    varying vec2 v_texCoord;
+    #version 150 core
+    in vec2 v_texCoord;
+    out vec4 fragColor;
     uniform sampler2D u_texture;
     uniform vec2 u_sourceSize;
     uniform vec2 u_outputSize;
@@ -119,7 +108,7 @@ pub const CRT_FRAGMENT_SHADER_SOURCE: &str = r#"
 
     vec3 Fetch(vec2 pos, vec2 off) {
         pos = (floor(pos * u_sourceSize + off) + vec2(0.5, 0.5)) / u_sourceSize;
-        return ToLinear(u_brightBoost * texture2D(u_texture, pos.xy).rgb);
+        return ToLinear(u_brightBoost * texture(u_texture, pos.xy).rgb);
     }
 
     vec2 Dist(vec2 pos) {
@@ -275,7 +264,7 @@ pub const CRT_FRAGMENT_SHADER_SOURCE: &str = r#"
     void main() {
         vec2 pos = Warp(v_texCoord);
         if (pos.x < 0.0 || pos.x > 1.0 || pos.y < 0.0 || pos.y > 1.0) {
-            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+            fragColor = vec4(0.0, 0.0, 0.0, 1.0);
             return;
         }
         vec3 outColor = Tri(pos);
@@ -288,17 +277,17 @@ pub const CRT_FRAGMENT_SHADER_SOURCE: &str = r#"
             outColor.rgb *= Mask(v_texCoord * u_outputSize * 1.000001);
         }
 
-        gl_FragColor = vec4(ToSrgb(outColor.rgb), 1.0);
+        fragColor = vec4(ToSrgb(outColor.rgb), 1.0);
     }
 "#;
 
 /// NTSC Pass 1 vertex shader - encodes RGB to YIQ with chroma modulation.
 pub const NTSC_PASS1_VERTEX_SHADER_SOURCE: &str = r#"
-    #version 120
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    varying vec2 v_texCoord;
-    varying vec2 v_pixNo;
+    #version 150 core
+    in vec2 a_position;
+    in vec2 a_texCoord;
+    out vec2 v_texCoord;
+    out vec2 v_pixNo;
     uniform vec2 u_outputSize;
 
     void main() {
@@ -310,14 +299,10 @@ pub const NTSC_PASS1_VERTEX_SHADER_SOURCE: &str = r#"
 
 /// NTSC Pass 1 fragment shader - RGB to YIQ encoding with chroma modulation.
 pub const NTSC_PASS1_FRAGMENT_SHADER_SOURCE: &str = r#"
-    #version 120
-    #ifdef GL_FRAGMENT_PRECISION_HIGH
-      precision highp float;
-    #else
-      precision mediump float;
-    #endif
-    varying vec2 v_texCoord;
-    varying vec2 v_pixNo;
+    #version 150 core
+    in vec2 v_texCoord;
+    in vec2 v_pixNo;
+    out vec4 fragColor;
     uniform sampler2D u_texture;
     uniform float u_frameCount;
     uniform float u_chromaEncode;
@@ -346,7 +331,7 @@ pub const NTSC_PASS1_FRAGMENT_SHADER_SOURCE: &str = r#"
     }
 
     void main() {
-        vec3 col = texture2D(u_texture, v_texCoord).rgb;
+        vec3 col = texture(u_texture, v_texCoord).rgb;
         vec3 yiq = rgb2yiq(col);
 
         float chroma_phase = 0.6667 * PI * (mod(v_pixNo.y, 3.0) + u_frameCount);
@@ -361,16 +346,16 @@ pub const NTSC_PASS1_FRAGMENT_SHADER_SOURCE: &str = r#"
         // Optional encoding for UNORM render targets: pack I/Q into 0..1
         yiq.yz = mix(yiq.yz, yiq.yz * 0.5 + 0.5, u_chromaEncode);
 
-        gl_FragColor = vec4(yiq, 1.0);
+        fragColor = vec4(yiq, 1.0);
     }
 "#;
 
 /// NTSC Pass 2 vertex shader - prepares for horizontal filtering.
 pub const NTSC_PASS2_VERTEX_SHADER_SOURCE: &str = r#"
-    #version 120
-    attribute vec2 a_position;
-    attribute vec2 a_texCoord;
-    varying vec2 v_texCoord;
+    #version 150 core
+    in vec2 a_position;
+    in vec2 a_texCoord;
+    out vec2 v_texCoord;
     uniform vec2 u_sourceSize;
 
     void main() {
@@ -382,13 +367,9 @@ pub const NTSC_PASS2_VERTEX_SHADER_SOURCE: &str = r#"
 
 /// NTSC Pass 2 fragment shader - YIQ to RGB decoding with filtering.
 pub const NTSC_PASS2_FRAGMENT_SHADER_SOURCE: &str = r#"
-    #version 120
-    #ifdef GL_FRAGMENT_PRECISION_HIGH
-        precision highp float;
-    #else
-        precision mediump float;
-    #endif
-    varying vec2 v_texCoord;
+    #version 150 core
+    in vec2 v_texCoord;
+    out vec4 fragColor;
     uniform sampler2D u_texture;
     uniform vec2 u_sourceSize;
     uniform float u_chromaEncode;
@@ -465,7 +446,7 @@ pub const NTSC_PASS2_FRAGMENT_SHADER_SOURCE: &str = r#"
     }
 
     vec3 fetch_offset(float offset, float one_x) {
-        return texture2D(u_texture, v_texCoord + vec2(offset * one_x, 0.0)).xyz;
+        return texture(u_texture, v_texCoord + vec2(offset * one_x, 0.0)).xyz;
     }
 
     void main() {
@@ -479,14 +460,14 @@ pub const NTSC_PASS2_FRAGMENT_SHADER_SOURCE: &str = r#"
             float chroma = chromaTap(i);
             signal += sums * vec3(luma, chroma, chroma);
         }
-        signal += texture2D(u_texture, v_texCoord).xyz *
+        signal += texture(u_texture, v_texCoord).xyz *
             vec3(lumaTap(TAPS), chromaTap(TAPS), chromaTap(TAPS));
 
         // Optional decoding for UNORM render targets
         signal.yz = mix(signal.yz, signal.yz * 2.0 - vec2(u_chromaSum), u_chromaEncode);
 
         vec3 rgb = yiq2rgb(signal);
-        gl_FragColor = vec4(pow(rgb, vec3(NTSC_CRT_GAMMA / NTSC_MONITOR_GAMMA)), 1.0);
+        fragColor = vec4(pow(rgb, vec3(NTSC_CRT_GAMMA / NTSC_MONITOR_GAMMA)), 1.0);
     }
 "#;
 
@@ -596,5 +577,16 @@ mod tests {
         assert!(CRT_FRAGMENT_SHADER_SOURCE.contains("void main()"));
         assert!(NTSC_PASS1_FRAGMENT_SHADER_SOURCE.contains("void main()"));
         assert!(NTSC_PASS2_FRAGMENT_SHADER_SOURCE.contains("void main()"));
+    }
+
+    #[test]
+    fn test_shader_version_150() {
+        assert!(VERTEX_SHADER_SOURCE.contains("#version 150"));
+        assert!(STOCK_FRAGMENT_SHADER_SOURCE.contains("#version 150"));
+        assert!(CRT_FRAGMENT_SHADER_SOURCE.contains("#version 150"));
+        assert!(NTSC_PASS1_VERTEX_SHADER_SOURCE.contains("#version 150"));
+        assert!(NTSC_PASS1_FRAGMENT_SHADER_SOURCE.contains("#version 150"));
+        assert!(NTSC_PASS2_VERTEX_SHADER_SOURCE.contains("#version 150"));
+        assert!(NTSC_PASS2_FRAGMENT_SHADER_SOURCE.contains("#version 150"));
     }
 }

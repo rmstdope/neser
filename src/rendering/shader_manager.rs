@@ -275,19 +275,21 @@ impl NtscShader {
 
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, self.intermediate_texture);
+            // Use RGB16F for floating-point YIQ values (can be negative or >1.0)
             gl::TexImage2D(
                 gl::TEXTURE_2D,
                 0,
-                gl::RGB as i32,
+                gl::RGB16F as i32,
                 width as i32,
                 height as i32,
                 0,
                 gl::RGB,
-                gl::UNSIGNED_BYTE,
+                gl::FLOAT,
                 ptr::null(),
             );
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR as i32);
-            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
+            // Use NEAREST filtering to avoid blending YIQ samples before decode
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+            gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
 
@@ -333,17 +335,26 @@ pub struct ShaderManager {
     frame_count: usize,
     output_texture: Option<GLuint>,
     output_size: Option<(u32, u32)>,
-    // Vertex buffers for quad rendering
+    // Vertex buffers and VAO for quad rendering
+    vao: GLuint,
     position_buffer: GLuint,
     tex_coord_buffer: GLuint,
+    // Reusable framebuffer for rendering to output texture
+    output_fbo: GLuint,
 }
 
 impl ShaderManager {
     pub fn new() -> Self {
+        let mut vao = 0;
         let mut position_buffer = 0;
         let mut tex_coord_buffer = 0;
+        let mut output_fbo = 0;
 
         unsafe {
+            // Create VAO (required for OpenGL 3.2 core context)
+            gl::GenVertexArrays(1, &mut vao);
+            gl::BindVertexArray(vao);
+
             // Create vertex buffers for full-screen quad
             gl::GenBuffers(1, &mut position_buffer);
             gl::BindBuffer(gl::ARRAY_BUFFER, position_buffer);
@@ -364,6 +375,12 @@ impl ShaderManager {
                 tex_coords.as_ptr() as *const _,
                 gl::STATIC_DRAW,
             );
+
+            // Create reusable framebuffer for rendering to output texture
+            gl::GenFramebuffers(1, &mut output_fbo);
+
+            // Unbind VAO
+            gl::BindVertexArray(0);
         }
 
         ShaderManager {
@@ -376,8 +393,10 @@ impl ShaderManager {
             frame_count: 0,
             output_texture: None,
             output_size: None,
+            vao,
             position_buffer,
             tex_coord_buffer,
+            output_fbo,
         }
     }
 
@@ -499,6 +518,9 @@ impl ShaderManager {
 
     fn bind_quad_attributes(&self, program: &ShaderProgram) {
         unsafe {
+            // Bind VAO (required for OpenGL 3.2 core)
+            gl::BindVertexArray(self.vao);
+
             if program.a_position != -1 {
                 gl::BindBuffer(gl::ARRAY_BUFFER, self.position_buffer);
                 gl::EnableVertexAttribArray(program.a_position as u32);
@@ -608,7 +630,7 @@ impl ShaderManager {
         Ok(())
     }
 
-    fn render_ntsc_pass(
+    fn render_ntsc_to_texture(
         &mut self,
         input_texture: GLuint,
         viewport_width: u32,
@@ -622,7 +644,10 @@ impl ShaderManager {
         ntsc.ensure_intermediate_texture(intermediate_width, intermediate_height)?;
 
         unsafe {
-            // Pass 1: Encode to YIQ
+            // Bind VAO for both passes
+            gl::BindVertexArray(self.vao);
+
+            // Pass 1: Encode to YIQ (render to intermediate framebuffer)
             gl::BindFramebuffer(gl::FRAMEBUFFER, ntsc.framebuffer);
             gl::Viewport(0, 0, intermediate_width as i32, intermediate_height as i32);
 
@@ -644,6 +669,7 @@ impl ShaderManager {
                 gl::Uniform1f(ntsc.pass1_u_frame_count, (self.frame_count % 3) as f32);
             }
             if ntsc.pass1_u_chroma_encode != -1 {
+                // Use 0.0 for float textures (no packing needed)
                 gl::Uniform1f(ntsc.pass1_u_chroma_encode, 0.0);
             }
 
@@ -674,8 +700,8 @@ impl ShaderManager {
 
             gl::DrawArrays(gl::TRIANGLE_STRIP, 0, 4);
 
-            // Pass 2: Decode from YIQ to RGB
-            gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
+            // Pass 2: Decode from YIQ to RGB (render to output framebuffer, which is already bound)
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.output_fbo);
             gl::Viewport(0, 0, viewport_width as i32, viewport_height as i32);
 
             gl::UseProgram(ntsc.pass2_program);
@@ -693,6 +719,7 @@ impl ShaderManager {
                 );
             }
             if ntsc.pass2_u_chroma_encode != -1 {
+                // Use 0.0 for float textures (no unpacking needed)
                 gl::Uniform1f(ntsc.pass2_u_chroma_encode, 0.0);
             }
             if ntsc.pass2_u_chroma_sum != -1 {
@@ -738,21 +765,12 @@ impl ShaderManager {
     ) -> Result<(), String> {
         self.ensure_shader_compiled(self.current_filter)?;
 
-        // For NTSC, render directly to default framebuffer
-        if self.current_filter == FilterType::Ntsc {
-            self.render_ntsc_pass(input_texture, viewport_width, viewport_height)?;
-            self.frame_count = self.frame_count.wrapping_add(1);
-            return Ok(());
-        }
-
-        // For other filters, render to output texture
+        // All filters render to output texture (including NTSC)
         let output_texture = self.ensure_output_texture(viewport_width, viewport_height)?;
 
-        // Create a framebuffer to render to the output texture
-        let mut fbo = 0;
+        // Use reusable framebuffer to render to the output texture
         unsafe {
-            gl::GenFramebuffers(1, &mut fbo);
-            gl::BindFramebuffer(gl::FRAMEBUFFER, fbo);
+            gl::BindFramebuffer(gl::FRAMEBUFFER, self.output_fbo);
             gl::FramebufferTexture2D(
                 gl::FRAMEBUFFER,
                 gl::COLOR_ATTACHMENT0,
@@ -763,40 +781,58 @@ impl ShaderManager {
 
             let status = gl::CheckFramebufferStatus(gl::FRAMEBUFFER);
             if status != gl::FRAMEBUFFER_COMPLETE {
-                gl::DeleteFramebuffers(1, &fbo);
                 return Err(format!("Framebuffer incomplete: {}", status));
             }
 
             gl::Viewport(0, 0, viewport_width as i32, viewport_height as i32);
         }
 
+        // Ensure texture filtering is set appropriately for each filter
         match self.current_filter {
             FilterType::Stock => {
+                // Stock uses NEAREST filtering for pixel-perfect rendering
+                unsafe {
+                    gl::BindTexture(gl::TEXTURE_2D, input_texture);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+                }
                 let shader = self.stock_shader.as_ref().ok_or("Stock shader not loaded")?;
                 self.render_single_pass(shader, input_texture, viewport_width, viewport_height, false)?;
             }
             FilterType::Crt => {
+                // CRT uses NEAREST filtering for crisp scanlines
+                unsafe {
+                    gl::BindTexture(gl::TEXTURE_2D, input_texture);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+                }
                 let shader = self.crt_shader.as_ref().ok_or("CRT shader not loaded")?;
                 self.render_single_pass(shader, input_texture, viewport_width, viewport_height, true)?;
             }
             FilterType::Smooth => {
-                let shader = self.smooth_shader.as_ref().ok_or("Smooth shader not loaded")?;
-                // For smooth filter, use LINEAR filtering on the input texture.
-                // Mipmaps are generated for the NES texture in gl_backend.rs (GenerateMipmap call),
-                // so we can use LINEAR_MIPMAP_LINEAR for true trilinear filtering.
+                // Smooth filter uses LINEAR filtering for trilinear filtering
+                // Mipmaps are generated for the NES texture in gl_backend.rs (GenerateMipmap call)
                 unsafe {
                     gl::BindTexture(gl::TEXTURE_2D, input_texture);
                     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::LINEAR_MIPMAP_LINEAR as i32);
                     gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::LINEAR as i32);
                 }
+                let shader = self.smooth_shader.as_ref().ok_or("Smooth shader not loaded")?;
                 self.render_single_pass(shader, input_texture, viewport_width, viewport_height, false)?;
             }
-            FilterType::Ntsc => unreachable!(), // Handled above
+            FilterType::Ntsc => {
+                // NTSC uses NEAREST filtering for the input
+                unsafe {
+                    gl::BindTexture(gl::TEXTURE_2D, input_texture);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+                    gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+                }
+                self.render_ntsc_to_texture(input_texture, viewport_width, viewport_height)?;
+            }
         }
 
         unsafe {
             gl::BindFramebuffer(gl::FRAMEBUFFER, 0);
-            gl::DeleteFramebuffers(1, &fbo);
         }
 
         self.frame_count = self.frame_count.wrapping_add(1);
@@ -804,11 +840,8 @@ impl ShaderManager {
     }
 
     pub fn output_texture(&self) -> Option<GLuint> {
-        if self.current_filter == FilterType::Ntsc {
-            None // NTSC renders directly to framebuffer
-        } else {
-            self.output_texture
-        }
+        // All filters now render to output texture
+        self.output_texture
     }
 
     pub fn cycle_shader(&mut self, _gl_context: std::sync::Arc<glow::Context>) -> Result<(), String> {
@@ -859,6 +892,8 @@ impl Drop for ShaderManager {
         }
 
         unsafe {
+            gl::DeleteFramebuffers(1, &self.output_fbo);
+            gl::DeleteVertexArrays(1, &self.vao);
             gl::DeleteBuffers(1, &self.position_buffer);
             gl::DeleteBuffers(1, &self.tex_coord_buffer);
         }
