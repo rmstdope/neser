@@ -580,6 +580,42 @@ impl SdlEventLoop {
         }
     }
     
+    /// Determine if the overlay should blink red for autorun extend mode.
+    /// 
+    /// Red blinking occurs:
+    /// - Only in Record mode during extend playback
+    /// - Only during the last 3 seconds before playback ends
+    /// - Blinks at 4Hz (quarter of frame rate)
+    fn should_overlay_blink_red(&self, nes: &Nes) -> bool {
+        let Some(ref autorun_state) = self.autorun_state else {
+            return false;
+        };
+        
+        // Only blink when extending and still in playback phase
+        if !autorun_state.is_extending_playback() {
+            return false;
+        }
+        
+        let current_frame = autorun_state.current_frame_index();
+        let total_frames = autorun_state.total_frames();
+        let tv_system = nes.config.borrow().tv_system;
+        
+        // Calculate FPS and blink parameters
+        let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
+        let blink_window_frames = fps * 3; // Last 3 seconds
+        let blink_half_period_frames = (fps / 4).max(1); // Quarter-second blinks (4Hz)
+        
+        let frames_remaining = total_frames.saturating_sub(current_frame);
+        
+        // Only blink in the last 3 seconds
+        if frames_remaining > blink_window_frames {
+            return false;
+        }
+        
+        // Toggle every quarter second
+        (current_frame / blink_half_period_frames).is_multiple_of(2)
+    }
+    
     /// Finish recording by saving the autorun file with CRC.
     fn finish_recording(&mut self, nes: &Nes) -> Result<(), String> {
         let Some(ref mut autorun_state) = self.autorun_state else {
@@ -914,11 +950,12 @@ impl SdlEventLoop {
                     let zapper_active = !Self::zapper_ports(nes).is_empty();
                     self.update_cursor_visibility(zapper_active);
                     let crosshair = self.zapper_crosshair(nes);
+                    let overlay_blink_red = self.should_overlay_blink_red(nes);
                     let action = gl_backend.render(
                         nes,
                         self.debugger_open_requested,
                         overlay_text.as_deref(),
-                        false,
+                        overlay_blink_red,
                         crosshair,
                     );
                     self.apply_debugger_ui_action(nes, action);
@@ -1005,11 +1042,12 @@ impl SdlEventLoop {
                 let zapper_active = !Self::zapper_ports(nes).is_empty();
                 self.update_cursor_visibility(zapper_active);
                 let crosshair = self.zapper_crosshair(nes);
+                let overlay_blink_red = self.should_overlay_blink_red(nes);
                 let _ = gl_backend.render(
                     nes,
                     self.debugger_open_requested,
                     overlay_text.as_deref(),
-                    false,
+                    overlay_blink_red,
                     crosshair,
                 );
 
