@@ -10,4 +10,3 @@ pub use sdl_audio::SdlNesAudio;
 pub use sdl_eventloop::SdlEventLoop;
 #[allow(unused_imports)]
 pub use sdl_gl_wrapper::SdlGlWrapper;
-pub use autorun_state::AutorunState;

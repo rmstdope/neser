@@ -74,7 +74,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
-    let rom_path = config.rom_path.as_deref().unwrap_or(default_rom_path);
+    let rom_path_str = config.rom_path.as_deref().unwrap_or(default_rom_path);
+    let rom_path = rom_path_str;  // Keep a copy for later use
     let cart = cartridge::Cartridge::load_from_file(rom_path)?;
 
     let rom_tv_system = cart.rom_tv_system();

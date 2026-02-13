@@ -436,6 +436,7 @@ impl SdlEventLoop {
     ///
     /// Returns `(player1_state, player2_state)` representing the button states for controller
     /// ports 1 and 2 respectively.
+    #[allow(dead_code)]
     fn capture_button_states(&self, nes: &Nes) -> (u8, u8) {
         let player1 = nes.get_joypad_button_states(1);
         let player2 = nes.get_joypad_button_states(2);
@@ -528,7 +529,9 @@ impl SdlEventLoop {
         
         // In record mode (or extend mode after playback), capture button states
         if autorun_state.mode() == AutorunMode::Record && !autorun_state.is_extending_playback() {
-            let (player1, player2) = self.capture_button_states(nes);
+            // Capture button states without borrowing self
+            let player1 = nes.get_joypad_button_states(1);
+            let player2 = nes.get_joypad_button_states(2);
             autorun_state.record_frame(player1, player2);
         }
     }
@@ -540,13 +543,10 @@ impl SdlEventLoop {
             return true;
         };
         
-        // Get the screen buffer CRC
-        let screen_buffer = nes.get_screen_buffer();
-        let crc = screen_buffer.crc32();
-        drop(screen_buffer); // Release the borrow
+        // Get the screen buffer snapshot for CRC verification
+        let snapshot = nes.ppu.borrow().screen_buffer().snapshot();
+        let crc = nes.ppu.borrow().screen_buffer().crc32();
         
-        // Verify against stored CRC
-        let snapshot = nes.ppu.borrow().screen_buffer_snapshot();
         match autorun_state.verify_checksum(&snapshot) {
             Ok(()) => {
                 log_info(format!("Autorun playback successful: CRC match (0x{:08X})", crc));
@@ -572,9 +572,7 @@ impl SdlEventLoop {
         }
         
         // Calculate final screen buffer CRC
-        let screen_buffer = nes.get_screen_buffer();
-        let crc = screen_buffer.crc32();
-        drop(screen_buffer);
+        let crc = nes.ppu.borrow().screen_buffer().crc32();
         
         // Save the recording with CRC
         autorun_state.save_with_checksum(crc)?;
