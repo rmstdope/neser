@@ -32,7 +32,7 @@ mod vrc6;
 
 pub use cartridge::{Cartridge, MirroringMode, RomTvSystem};
 #[allow(unused_imports)]
-pub use common::{BankedRom, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
+pub use common::{BankedRom, ChrMemory, StateSnapshot, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
 #[allow(unused_imports)]
 pub use ines::{ConsoleType, InesHeader, Mirroring, TimingMode, parse_header, parse_rom};
 #[allow(unused_imports)]

@@ -3,6 +3,126 @@
 //! This module provides reusable components that are shared across multiple mappers,
 //! reducing code duplication and ensuring consistent behavior.
 
+/// Trait for consistent state snapshot and restoration.
+///
+/// This trait provides a standard interface for capturing and restoring mapper state,
+/// making it easier to implement save states and test state preservation.
+///
+/// # When to Implement
+///
+/// Implement `StateSnapshot` for:
+/// - Mapper register structures that need to be preserved across save states
+/// - Any component with internal state that affects emulation behavior
+/// - Register banks, shift registers, counters, and other stateful components
+///
+/// # Design Guidelines
+///
+/// - Keep snapshots compact but complete
+/// - Use deterministic serialization (no HashMap iteration, etc.)
+/// - Version your snapshot format if it may change
+/// - Document the byte layout in implementation
+/// - Handle gracefully if restore data is incomplete/invalid
+///
+/// # Examples
+///
+/// ## Simple Register Set
+///
+/// ```rust
+/// use neser::cartridge::StateSnapshot;
+///
+/// struct ShiftRegister {
+///     value: u8,
+///     count: u8,
+/// }
+///
+/// impl StateSnapshot for ShiftRegister {
+///     fn snapshot(&self) -> Vec<u8> {
+///         // Layout: [value, count]
+///         vec![self.value, self.count]
+///     }
+///
+///     fn restore(&mut self, data: &[u8]) {
+///         if data.len() >= 2 {
+///             self.value = data[0];
+///             self.count = data[1];
+///         }
+///     }
+/// }
+/// ```
+///
+/// ## Composite Register Structure
+///
+/// ```rust
+/// use neser::cartridge::StateSnapshot;
+///
+/// struct BankRegisters {
+///     prg_bank: u8,
+///     chr_banks: [u8; 8],
+///     mirroring: u8,
+/// }
+///
+/// impl StateSnapshot for BankRegisters {
+///     fn snapshot(&self) -> Vec<u8> {
+///         // Layout: [prg_bank, chr_banks[0..8], mirroring]
+///         let mut data = Vec::with_capacity(10);
+///         data.push(self.prg_bank);
+///         data.extend_from_slice(&self.chr_banks);
+///         data.push(self.mirroring);
+///         data
+///     }
+///
+///     fn restore(&mut self, data: &[u8]) {
+///         if let Some(&prg) = data.get(0) {
+///             self.prg_bank = prg;
+///         }
+///         if data.len() >= 9 {
+///             self.chr_banks.copy_from_slice(&data[1..9]);
+///         }
+///         if let Some(&mir) = data.get(9) {
+///             self.mirroring = mir;
+///         }
+///     }
+/// }
+/// ```
+///
+/// ## Integration with `Mapper::registers_snapshot()`
+///
+/// ```rust,ignore
+/// use neser::cartridge::{Mapper, StateSnapshot};
+///
+/// struct MyMapper {
+///     registers: MyRegisterSet,
+///     // ... other fields
+/// }
+///
+/// impl Mapper for MyMapper {
+///     fn registers_snapshot(&self) -> Vec<u8> {
+///         self.registers.snapshot()
+///     }
+///
+///     fn restore_registers(&mut self, data: &[u8]) {
+///         self.registers.restore(data);
+///     }
+///     // ... other trait methods
+/// }
+/// ```
+pub trait StateSnapshot {
+    /// Create a snapshot of the current state.
+    ///
+    /// Returns a byte vector containing all state needed to restore this component.
+    /// The format is implementation-defined but should be documented.
+    fn snapshot(&self) -> Vec<u8>;
+
+    /// Restore state from a snapshot.
+    ///
+    /// Loads state from a byte slice previously created by `snapshot()`.
+    /// If the data is incomplete or invalid, implementations should:
+    /// - Restore as much as possible
+    /// - Leave unrestorable fields at safe default values
+    /// - Not panic (use bounds checking, Option::unwrap_or, etc.)
+    fn restore(&mut self, data: &[u8]);
+}
+
 /// Standard PRG-RAM size (8KB)
 pub const DEFAULT_PRG_RAM_SIZE: usize = 8192;
 
@@ -95,6 +215,19 @@ impl PrgRam {
     pub fn load_snapshot(&mut self, data: &[u8]) {
         let to_copy = data.len().min(self.data.len());
         self.data[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+}
+
+impl StateSnapshot for PrgRam {
+    fn snapshot(&self) -> Vec<u8> {
+        // Explicitly call the inherent method to avoid infinite recursion.
+        // Without type qualification, `self.snapshot()` would recursively call
+        // this trait method instead of the inherent `PrgRam::snapshot()`.
+        PrgRam::snapshot(self)
+    }
+
+    fn restore(&mut self, data: &[u8]) {
+        self.load_snapshot(data);
     }
 }
 
@@ -194,6 +327,19 @@ impl ChrMemory {
 
         let to_copy = data.len().min(self.data.len());
         self.data[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+}
+
+impl StateSnapshot for ChrMemory {
+    fn snapshot(&self) -> Vec<u8> {
+        // Explicitly call the inherent method to avoid infinite recursion.
+        // Without type qualification, `self.snapshot()` would recursively call
+        // this trait method instead of the inherent `ChrMemory::snapshot()`.
+        ChrMemory::snapshot(self)
+    }
+
+    fn restore(&mut self, data: &[u8]) {
+        self.load_snapshot(data);
     }
 }
 
@@ -529,5 +675,69 @@ mod tests {
         // Reading way beyond total ROM should return 0
         assert_eq!(banked.read(0, 10000), 0);
         assert_eq!(banked.read(99, 10000), 0);
+    }
+
+    #[test]
+    fn test_state_snapshot_prg_ram() {
+        let mut prg_ram = PrgRam::new(8192);
+        prg_ram.try_write(0x6000, 0x42);
+        prg_ram.try_write(0x7FFF, 0xAB);
+
+        // Use StateSnapshot trait
+        let snapshot = prg_ram.snapshot();
+        assert_eq!(snapshot.len(), 8192);
+        assert_eq!(snapshot[0], 0x42);
+        assert_eq!(snapshot[0x1FFF], 0xAB);
+
+        // Restore to a new instance
+        let mut prg_ram2 = PrgRam::new(8192);
+        prg_ram2.restore(&snapshot);
+        assert_eq!(prg_ram2.try_read(0x6000), Some(0x42));
+        assert_eq!(prg_ram2.try_read(0x7FFF), Some(0xAB));
+    }
+
+    #[test]
+    fn test_state_snapshot_chr_memory() {
+        let mut chr = ChrMemory::new_ram(8192);
+        chr.write(0x0000, 0x11);
+        chr.write(0x1FFF, 0x22);
+
+        // Use StateSnapshot trait
+        let snapshot = chr.snapshot();
+        assert_eq!(snapshot.len(), 8192);
+        assert_eq!(snapshot[0], 0x11);
+        assert_eq!(snapshot[0x1FFF], 0x22);
+
+        // Restore to a new instance
+        let mut chr2 = ChrMemory::new_ram(8192);
+        chr2.restore(&snapshot);
+        assert_eq!(chr2.read(0x0000), 0x11);
+        assert_eq!(chr2.read(0x1FFF), 0x22);
+    }
+
+    #[test]
+    fn test_state_snapshot_chr_rom_empty() {
+        // CHR-ROM should return empty snapshot
+        let chr_rom_data = vec![0xAA; 8192];
+        let chr = ChrMemory::new(chr_rom_data);
+        
+        let snapshot = chr.snapshot();
+        assert!(snapshot.is_empty(), "CHR-ROM snapshot should be empty");
+    }
+
+    #[test]
+    fn test_state_snapshot_chr_rom_restore_is_noop() {
+        // CHR-ROM should ignore restore attempts (ROM is read-only)
+        let chr_rom_data = vec![0xAA; 8192];
+        let mut chr = ChrMemory::new(chr_rom_data);
+        
+        // Try to restore different data
+        let restore_data = vec![0x55; 8192];
+        chr.restore(&restore_data);
+        
+        // CHR-ROM should still contain original data
+        assert_eq!(chr.read(0x0000), 0xAA);
+        assert_eq!(chr.read(0x1FFF), 0xAA);
+        assert!(!chr.is_ram(), "Should still be ROM, not RAM");
     }
 }
