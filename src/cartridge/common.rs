@@ -724,4 +724,20 @@ mod tests {
         let snapshot = chr.snapshot();
         assert!(snapshot.is_empty(), "CHR-ROM snapshot should be empty");
     }
+
+    #[test]
+    fn test_state_snapshot_chr_rom_restore_is_noop() {
+        // CHR-ROM should ignore restore attempts (ROM is read-only)
+        let chr_rom_data = vec![0xAA; 8192];
+        let mut chr = ChrMemory::new(chr_rom_data);
+        
+        // Try to restore different data
+        let restore_data = vec![0x55; 8192];
+        chr.restore(&restore_data);
+        
+        // CHR-ROM should still contain original data
+        assert_eq!(chr.read(0x0000), 0xAA);
+        assert_eq!(chr.read(0x1FFF), 0xAA);
+        assert!(!chr.is_ram(), "Should still be ROM, not RAM");
+    }
 }
