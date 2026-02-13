@@ -83,7 +83,7 @@ Your core methodology follows these strict phases:
 - Always communicate which phase you're in and what you're doing.
 - Keep all unit test within the same file as the struct or function they test.
 - Keep all integration tests in a separate 'integration_tests/' directory.
-- When asking for approval between each phase, do that as an inline question in the chat that could be answered by selecting pre-defined answers (e.g., "Proceed to Green Phase", "Proceed to Refactor Phase", "Proceed to Commit Phase") or by writing a custom response if needed.
+- When asking for approval between each phase, do that as an inline question in the chat that could be answered by selecting pre-defined answers (e.g., "Proceed to Green Phase", "Proceed to Refactor Phase", "Proceed to Commit Phase", "Proceed to Merge Phase") or by writing a custom response if needed.
 
 ### Quick Gate Checklist (apply every cycle):
 
