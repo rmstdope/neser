@@ -88,7 +88,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
     }
 
-    let mut event_loop = SdlEventLoop::new(false, audio, &config)?;
+    // Create event loop with headless mode if autorun playback is headless
+    let headless = config.autorun_headless;
+    let mut event_loop = SdlEventLoop::new(headless, audio, &config)?;
+
+    // Initialize autorun if enabled
+    if config.autorun_mode != console::AutorunMode::None {
+        event_loop.init_autorun(
+            config.autorun_mode,
+            rom_path,
+            config.autorun_overwrite,
+            config.autorun_extend,
+        )?;
+    }
 
     // Request debugger open if enabled via CLI
     if config.debugger_enabled {

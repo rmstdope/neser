@@ -1,6 +1,7 @@
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
-use crate::console::{Config, ControllerStateWrapper, Nes, SaveState};
+use super::autorun_state::AutorunState;
+use crate::console::{AutorunMode, Config, ControllerStateWrapper, Nes, SaveState};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -34,6 +35,7 @@ pub struct SdlEventLoop {
     controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
     last_mouse_position: Option<(i32, i32)>,
     cursor_hidden: bool,
+    autorun_state: Option<AutorunState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -288,7 +290,22 @@ impl SdlEventLoop {
             controller_player_map,
             last_mouse_position: None,
             cursor_hidden: false,
+            autorun_state: None,
         })
+    }
+
+    /// Initialize autorun state if autorun mode is enabled.
+    pub fn init_autorun(
+        &mut self,
+        mode: AutorunMode,
+        rom_path: &str,
+        overwrite: bool,
+        extend: bool,
+    ) -> Result<(), String> {
+        if mode != AutorunMode::None {
+            self.autorun_state = Some(AutorunState::new(mode, rom_path, overwrite, extend)?);
+        }
+        Ok(())
     }
 
     /// Initialize game controllers
