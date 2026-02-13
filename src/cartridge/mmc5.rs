@@ -3798,7 +3798,10 @@ mod tests {
             mapper.write_prg(0x5113, bank);
             // Write bank-specific pattern.
             for i in 0..0x2000 {
-                mapper.write_prg(0x6000 + i, bank.wrapping_mul(0x10).wrapping_add((i & 0x0F) as u8));
+                mapper.write_prg(
+                    0x6000 + i,
+                    bank.wrapping_mul(0x10).wrapping_add((i & 0x0F) as u8),
+                );
             }
         }
 
@@ -3813,7 +3816,9 @@ mod tests {
         for bank in 0..4 {
             let bank_offset = bank * 8 * 1024;
             for i in 0..0x2000 {
-                let expected = (bank as u8).wrapping_mul(0x10).wrapping_add((i & 0x0F) as u8);
+                let expected = (bank as u8)
+                    .wrapping_mul(0x10)
+                    .wrapping_add((i & 0x0F) as u8);
                 assert_eq!(
                     snapshot[bank_offset + i],
                     expected,
