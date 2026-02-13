@@ -1,11 +1,30 @@
 use crate::cartridge::{Mapper, MirroringMode};
 
-/// Namco 118 / DxROM (iNES mapper 206)
+/// Mapper 206 - Namco 118 / Namco 108 (DxROM boards)
 ///
-/// A simplified MMC3:
-/// - Same bank register format ($8000/$8001) for PRG/CHR banking
-/// - No IRQ functionality
-/// - Mirroring is hardwired from the cartridge header (writes to $A000 are ignored)
+/// Hardware: Namco's mapper derived from MMC3 without IRQ functionality
+///
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/INES_Mapper_206>
+/// - Namco 108: <https://www.nesdev.org/wiki/Namco_108>
+/// - Namco 118: <https://www.nesdev.org/wiki/Namco_118>
+/// - PRG-ROM: Up to 512KB (64 8KB banks)
+/// - PRG-RAM: 8KB at $6000-$7FFF
+/// - CHR: Up to 256KB (256 1KB banks) or CHR-RAM
+/// - Mirroring: Fixed horizontal or vertical (solder pads, not programmable)
+///
+/// Common boards: Namco DxROM (derived from TxROM/MMC3)
+///
+/// Notes:
+/// - Identical to MMC3 register format ($8000 bank select, $8001 bank data)
+/// - Same PRG/CHR banking modes as MMC3
+/// - **No IRQ counter** (unlike MMC3)
+/// - **Mirroring not programmable** (writes to $A000 ignored, uses header value)
+/// - Used in Gauntlet, Dragon Buster, Family Circuit '91
+///
+/// Implementation:
+/// - Simplified MMC3 without IRQ functionality
+/// - Bank switching compatible with MMC3 behavior
 pub struct Namco118Mapper {
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,

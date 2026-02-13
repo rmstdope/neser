@@ -5,17 +5,24 @@ use crate::cartridge::common::{BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
 // Memory size constants
 const CHR_BANK_SIZE: usize = 8192; // 8KB
 
-/// CNROM mapper (Mapper 3)
+/// Mapper 3 - CNROM
 ///
-/// Simple CHR banking mapper with fixed PRG ROM.
-/// Supports:
-/// - 32KB fixed PRG ROM (no PRG banking)
-/// - 8KB PRG-RAM at $6000-$7FFF
-/// - 8KB switchable CHR ROM window (up to 4 banks = 32KB typical)
-/// - CHR bank select via writes to $8000-$FFFF
-/// - Fixed horizontal or vertical mirroring
+/// Hardware: Simple CHR banking with fixed PRG-ROM
 ///
-/// Used in many early NES games.
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/CNROM>
+/// - Variants: <https://www.nesdev.org/wiki/CNROM#Variants>
+/// - PRG-ROM: 16KB or 32KB fixed (no banking)
+/// - PRG-RAM: None (some bootleg boards have 8KB)
+/// - CHR-ROM: Up to 32KB (4 8KB banks)
+/// - Mirroring: Fixed horizontal or vertical (solder pads)
+///
+/// Common boards: NES-CNROM
+///
+/// Notes:
+/// - Any write to $8000-$FFFF selects CHR bank (bits 0-1)
+/// - Some variants support up to 2048KB CHR-ROM
+/// - Used in many early NES games like Solomon's Key, Arkanoid
 pub struct CNROMMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,

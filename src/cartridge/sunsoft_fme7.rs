@@ -1,38 +1,43 @@
-//! Mapper 69 (Sunsoft FME-7) Implementation
+//! Mapper 69 - Sunsoft FME-7 (Sunsoft 5A/5B)
 //!
-//! Also known as Sunsoft 5A and 5B (5B adds expansion audio).
-//! Used by games like Gimmick!, Batman: Return of the Joker, and Hebereke.
+//! Hardware: Sunsoft's advanced mapper with IRQ counter and optional expansion audio
 //!
-//! ## Hardware Specifications
-//! - **PRG ROM:** Up to 512 KB
-//! - **PRG RAM:** Up to 512 KB (unusual, can be banked)
-//! - **CHR ROM:** Up to 256 KB
-//! - **Bank switching:** 8 KB PRG banks, 1 KB CHR banks
-//! - **IRQ:** 16-bit countdown timer
-//! - **Mirroring:** Switchable (H/V/1-screen)
+//! Specifications:
+//! - Main: <https://www.nesdev.org/wiki/Sunsoft_FME-7>
+//! - Audio: <https://www.nesdev.org/wiki/Sunsoft_5B_audio> (5B variant only)
+//! - PRG-ROM: Up to 512KB with 8KB banking
+//! - PRG-RAM: Up to 512KB (unusual, can be banked at $6000-$7FFF)
+//! - CHR: Up to 256KB (eight 1KB switchable banks)
+//! - Mirroring: Programmable (horizontal, vertical, one-screen A/B)
+//! - IRQ: 16-bit CPU-cycle countdown timer
 //!
-//! ## Memory Map
-//! - $6000-$7FFF: Bank 0 (can be RAM or ROM)
-//! - $8000-$9FFF: Bank 1 (ROM)
-//! - $A000-$BFFF: Bank 2 (ROM)
-//! - $C000-$DFFF: Bank 3 (ROM)
-//! - $E000-$FFFF: Bank 4 (ROM, usually fixed to last bank)
+//! Common boards: Sunsoft FME-7 (5A without audio, 5B with audio)
 //!
-//! ## Registers
-//! Two-step register access at $8000-$FFFF:
+//! Memory Map:
+//! - $6000-$7FFF: Bank 0 (can be PRG-RAM or PRG-ROM)
+//! - $8000-$9FFF: Bank 1 (PRG-ROM)
+//! - $A000-$BFFF: Bank 2 (PRG-ROM)
+//! - $C000-$DFFF: Bank 3 (PRG-ROM)
+//! - $E000-$FFFF: Bank 4 (PRG-ROM, usually fixed to last bank)
+//!
+//! Registers (two-step access):
 //! 1. Write command number to $8000-$9FFF
 //! 2. Write parameter to $A000-$BFFF
 //!
 //! Commands:
 //! - $00-$07: CHR bank select (1KB each)
-//! - $08-$0B: PRG bank select (8KB each)
-//! - $0C: Mirroring
-//! - $0D: IRQ control
-//! - $0E: IRQ counter low
-//! - $0F: IRQ counter high
+//! - $08-$0B: PRG bank select (8KB each at $6000, $8000, $A000, $C000)
+//! - $0C: Mirroring control
+//! - $0D: IRQ control (enable/disable, acknowledge)
+//! - $0E: IRQ counter low byte
+//! - $0F: IRQ counter high byte
 //!
-//! ## References
-//! - <https://www.nesdev.org/wiki/Sunsoft_FME-7>
+//! Notes:
+//! - Used in Gimmick! (with 5B audio), Batman: Return of the Joker, Hebereke
+//! - 5B variant adds YM2149F-compatible expansion audio (3 square waves)
+//!
+//! Limitations:
+//! - **Expansion audio not implemented** (5B audio chip)
 
 use crate::cartridge::{Mapper, MirroringMode};
 use crate::trace_mapper;

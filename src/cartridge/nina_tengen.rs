@@ -6,23 +6,31 @@ use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 const CHR_BANK_SIZE: usize = 0x2000; // 8KB
 
-/// Mapper 78 (NINA-03/NINA-06)
+/// Mapper 78 - Irem Holy Diver / Jaleco JF-16
 ///
-/// Used by Tengen for unlicensed releases.
-/// Supports:
-/// - Up to 128KB PRG ROM (8 banks of 16KB)
-/// - Up to 128KB CHR ROM (16 banks of 8KB)
-/// - 16KB PRG bank switching at $8000-$BFFF
-/// - 16KB fixed PRG bank at $C000-$FFFF (last bank)
-/// - 8KB CHR bank switching
-/// - Configurable mirroring (horizontal/vertical via bit 3)
+/// Hardware: Two different board types sharing the same mapper number
 ///
-/// Bank select register at $8000-$FFFF:
-/// - Bits 0-2: PRG bank select
-/// - Bit 3: Mirroring (0=vertical, 1=horizontal)
-/// - Bits 4-7: CHR bank select
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/INES_Mapper_078>
+/// - Irem boards: <https://www.nesdev.org/wiki/INES_Mapper_078#Irem_boards>
+/// - Jaleco boards: <https://www.nesdev.org/wiki/INES_Mapper_078#Jaleco_boards>
+/// - PRG-ROM: Up to 128KB (8 16KB banks)
+/// - PRG-RAM: None
+/// - CHR-ROM: Up to 128KB (16 8KB banks)
+/// - Mirroring: Programmable (horizontal or vertical via register)
 ///
-/// Known games: Pac-Man (Tengen), RBI Baseball (Tengen), Tetris (Tengen)
+/// Common boards: Irem 74HC161/32, Jaleco JF-16
+///
+/// Register at $8000-$FFFF (any write):
+/// - Bits 0-2: Select 16KB PRG bank at $8000-$BFFF
+/// - Bit 3: Mirroring (0 = vertical, 1 = horizontal)
+/// - Bits 4-7: Select 8KB CHR bank
+///
+/// Notes:
+/// - Last 16KB PRG bank always fixed at $C000-$FFFF
+/// - Used in Tengen unlicensed games (due to similar design to NINA-03/06)
+/// - Games: Holy Diver (Irem), Uchuusen: Cosmo Carrier (Irem)
+/// - Also used by Tengen: Pac-Man, RBI Baseball, Tetris (unlicensed)
 pub struct NinaTengenMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,

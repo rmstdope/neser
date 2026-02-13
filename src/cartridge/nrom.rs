@@ -5,16 +5,23 @@ use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 
-/// NROM mapper (Mapper 0)
+/// Mapper 0 - NROM
 ///
-/// The simplest mapper with no bank switching.
-/// Supports:
-/// - 16KB or 32KB PRG ROM (16KB is mirrored at $C000)
-/// - 8KB PRG-RAM at $6000-$7FFF (battery-backed on some cartridges)
-/// - 8KB CHR ROM or CHR-RAM
-/// - Fixed nametable mirroring
+/// Hardware: Nintendo's simplest cartridge board with no bank switching
 ///
-/// This is the baseline mapper implementation that all other mappers build upon.
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/NROM>
+/// - PRG-ROM: 16KB or 32KB fixed (16KB mirrored at $C000-$FFFF)
+/// - PRG-RAM: 2KB or 4KB at $6000-$7FFF (family BASIC only), or none
+/// - CHR: 8KB fixed (ROM or RAM)
+/// - Mirroring: Fixed horizontal or vertical (solder pads)
+///
+/// Common boards: NES-NROM-128, NES-NROM-256, HVC-NROM-128, HVC-NROM-256
+///
+/// Notes:
+/// - This is the baseline mapper implementation
+/// - Used in early NES games like Super Mario Bros., Ice Climber, Excitebike
+/// - Some NROM boards have no PRG-RAM (depends on board variant)
 pub struct NROMMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,

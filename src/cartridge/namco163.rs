@@ -3,7 +3,31 @@ use std::cell::Cell;
 use crate::cartridge::common::{DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
-/// Namco 163 (iNES mapper 19) – basic banking + IRQ (audio omitted).
+/// Mapper 19 - Namco 163 (Namco 129/163 with expansion audio)
+///
+/// Hardware: Namco's advanced mapper with 8 wavetable synthesis channels
+///
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/Namco_163>
+/// - Audio: <https://www.nesdev.org/wiki/Namco_163_audio>
+/// - Expansion audio: <https://www.nesdev.org/wiki/Namco_163_audio#Synthesis>
+/// - PRG-ROM: Up to 512KB (three 8KB switchable banks + one fixed)
+/// - PRG-RAM: 8KB internal RAM at $6000-$7FFF
+/// - CHR: Up to 256KB (eight 1KB switchable banks) or CHR-RAM
+/// - Mirroring: Programmable via nametable control
+///
+/// Common boards: NAMCOT-163, NAMCOT-175, NAMCOT-340
+///
+/// Notes:
+/// - CPU-cycle driven IRQ counter (15-bit down-counter)
+/// - 128-byte internal RAM for wavetable storage and audio registers
+/// - Up to 8 channels of wavetable synthesis expansion audio
+/// - Nametable control allows flexible mirroring configurations
+/// - Used in Megami Tensei II, King of Kings, Famista series
+///
+/// Implementation:
+/// - Basic banking and IRQ fully implemented
+/// - Expansion audio implemented with wavetable synthesis
 pub struct Namco163Mapper {
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,

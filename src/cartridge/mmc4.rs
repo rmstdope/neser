@@ -3,9 +3,25 @@ use std::cell::Cell;
 use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
-/// MMC4 mapper (iNES Mapper 10)
+/// Mapper 10 - MMC4 (FxROM boards)
 ///
-/// Very similar to MMC2 but with 16KB PRG banking.
+/// Hardware: Similar to MMC2 but with 16KB PRG banking instead of 8KB
+///
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/MMC4>
+/// - Latch behavior: Same as MMC2, see <https://www.nesdev.org/wiki/MMC2#Latch_Behavior>
+/// - PRG-ROM: 128KB or 256KB (16KB switchable + 16KB fixed)
+/// - PRG-RAM: 8KB at $6000-$7FFF
+/// - CHR-ROM: 128KB with two 4KB regions controlled by PPU address latches
+/// - Mirroring: Programmable (horizontal or vertical)
+///
+/// Common boards: NES-FxROM
+///
+/// Notes:
+/// - Same CHR latch mechanism as MMC2 (FD/FE switching)
+/// - 16KB switchable PRG bank at $8000-$BFFF
+/// - Last 16KB PRG bank fixed at $C000-$FFFF
+/// - Used in Fire Emblem (Japan), Fire Emblem Gaiden (Japan)
 pub struct MMC4Mapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,

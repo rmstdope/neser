@@ -6,25 +6,31 @@ use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 const PRG_BANK_SIZE: usize = 0x8000; // 32KB
 const CHR_BANK_SIZE: usize = 0x2000; // 8KB
 
-/// Mapper 34 (BNROM/NINA-001)
+/// Mapper 34 - BNROM / NINA-001
 ///
-/// Two different hardware types:
-/// - BNROM: Simple PRG switching only, CHR-RAM
-/// - NINA-001: PRG + CHR switching
+/// Hardware: Two different hardware types sharing the same mapper number
 ///
-/// Detection: Games with CHR ROM use NINA-001, games with CHR-RAM use BNROM
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/INES_Mapper_034>
+/// - BNROM: <https://www.nesdev.org/wiki/BNROM>
+/// - NINA-001: <https://www.nesdev.org/wiki/NINA-001>
+/// - PRG-ROM: Up to 128KB (4 32KB banks)
+/// - PRG-RAM: 8KB at $6000-$7FFF (BNROM only)
+/// - CHR: 8KB CHR-RAM (BNROM) or up to 64KB CHR-ROM (NINA-001)
+/// - Mirroring: Fixed horizontal or vertical
 ///
-/// BNROM:
-/// - 32KB switchable PRG banks (up to 128KB total = 4 banks)
-/// - 8KB CHR-RAM
-/// - Bank select at $8000-$FFFF (any write)
-/// - Used by: Deadly Towers, various others
+/// Detection:
+/// - Games with CHR-ROM use NINA-001 variant
+/// - Games with CHR-RAM use BNROM variant
 ///
-/// NINA-001:
-/// - 32KB switchable PRG banks (up to 128KB total = 4 banks)
-/// - 8KB switchable CHR banks (up to 64KB total = 8 banks)
-/// - PRG bank select at $7FFD and $7FFF (both addresses write to same register)
-/// - CHR bank select at $7FFE
+/// BNROM variant:
+/// - Bank select at $8000-$FFFF (any write selects 32KB PRG bank)
+/// - Used in Deadly Towers, Mashou (Japan)
+///
+/// NINA-001 variant:
+/// - PRG bank select at $7FFD/$7FFF
+/// - CHR bank select at $7FFE (8KB CHR banks)
+/// - Used in Impossible Mission II, Puzzle, Rad Racket
 pub struct BnromNinaMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,

@@ -5,17 +5,25 @@ use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRa
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 
-/// UxROM mapper (Mapper 2)
+/// Mapper 2 - UxROM (UNROM, UOROM boards)
 ///
-/// PRG banking mapper with switchable lower bank and fixed upper bank.
-/// Supports:
-/// - 16KB switchable PRG bank at $8000-$BFFF
-/// - 16KB fixed PRG bank at $C000-$FFFF (always last bank)
-/// - 8KB PRG-RAM at $6000-$7FFF
-/// - 8KB CHR-RAM (no CHR ROM banking)
-/// - Bank select register at $8000-$FFFF (any write)
+/// Hardware: Simple PRG banking with fixed upper bank
 ///
-/// Common in games like Mega Man, Castlevania, Contra, Duck Tales, Metal Gear.
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/UxROM>
+/// - Variants: <https://www.nesdev.org/wiki/UxROM#Variants>
+/// - PRG-ROM: Up to 256KB (16 16KB banks)
+/// - PRG-RAM: None to 8KB (depends on board variant)
+/// - CHR: 8KB CHR-RAM fixed (no CHR-ROM support)
+/// - Mirroring: Fixed horizontal or vertical (solder pads)
+///
+/// Common boards: NES-UNROM, NES-UOROM
+///
+/// Notes:
+/// - Switchable 16KB PRG bank at $8000-$BFFF
+/// - Fixed last 16KB PRG bank at $C000-$FFFF
+/// - Any write to $8000-$FFFF selects bank (value = bank number)
+/// - Used in Mega Man, Castlevania, Contra, Duck Tales, Metal Gear
 pub struct UxROMMapper {
     prg_rom: BankedRom,
     prg_ram: PrgRam,

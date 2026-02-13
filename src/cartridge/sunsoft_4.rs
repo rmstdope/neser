@@ -1,11 +1,25 @@
-//! Mapper 68 (Sunsoft-4) Implementation
+//! Mapper 68 - Sunsoft-4
 //!
-//! Supports:
-//! - 16KB switchable PRG ROM at $8000-$BFFF
-//! - 16KB fixed PRG ROM at $C000-$FFFF (last bank)
-//! - 2KB CHR banks at $0000-$1FFF
-//! - Optional CHR-ROM nametable mapping at $2000-$2FFF
-//! - Switchable mirroring (H/V/1-screen)
+//! Hardware: Sunsoft's mapper with CHR-ROM nametable support
+//!
+//! Specifications:
+//! - Main: <https://www.nesdev.org/wiki/Sunsoft-4>
+//! - PRG-ROM: Up to 256KB (16KB switchable at $8000-$BFFF, last 16KB fixed at $C000-$FFFF)
+//! - PRG-RAM: Up to 64KB at $6000-$7FFF with write protection
+//! - CHR: Up to 256KB (four 2KB switchable banks) or CHR-RAM
+//! - Mirroring: Programmable (horizontal, vertical, one-screen A/B)
+//! - Nametable: Optional CHR-ROM mapping to nametables ($2000-$2FFF)
+//!
+//! Common boards: SUNSOFT-4
+//!
+//! Notes:
+//! - Register $8000-$8003: Select 2KB CHR banks
+//! - Register $8008: Select 16KB PRG bank at $8000-$BFFF
+//! - Register $8009: Mirroring control
+//! - Register $800A: CHR-ROM nametable mode enable
+//! - Register $800B-$800C: 1KB nametable banks (when CHR-ROM nametable mode)
+//! - Register $800D: PRG-RAM enable/write-protect
+//! - Used in After Burner II, Nantettatte!! Baseball
 
 use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
