@@ -1,4 +1,5 @@
 use crate::cartridge::Mapper;
+use crate::cartridge::MapperCapabilities;
 use crate::cartridge::MirroringMode;
 use crate::cartridge::common::{
     BankSwitch, BankedRom, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam,
@@ -177,6 +178,18 @@ impl Mapper for BnromNinaMapper {
         }
         if let Some(&value) = data.get(1) {
             self.chr_bank.set(value);
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: self.is_nina,
+            has_dynamic_mirroring: false,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: 8,
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::cartridge::common::ChrMemory;
-use crate::cartridge::{Mapper, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
 
 /// Mapper 206 - Namco 118 / Namco 108 (DxROM boards)
 ///
@@ -275,6 +275,18 @@ impl Mapper for Namco118Mapper {
         if data.len() >= 9 {
             self.bank_select = data[0];
             self.regs.copy_from_slice(&data[1..9]);
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: true,
+            has_dynamic_mirroring: false,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::cartridge::Mapper;
+use crate::cartridge::MapperCapabilities;
 use crate::cartridge::MirroringMode;
 use crate::cartridge::common::ChrMemory;
 use crate::trace_mapper;
@@ -446,6 +447,18 @@ impl Mapper for MMC1Mapper {
     fn cpu_cycle(&mut self) {
         // Increment CPU cycle counter for consecutive-write detection
         self.cpu_cycle_count += 1;
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 4,
+        }
     }
 }
 

@@ -40,7 +40,7 @@
 //! - **Expansion audio not implemented** (5B audio chip)
 
 use crate::cartridge::common::ChrMemory;
-use crate::cartridge::{Mapper, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
 use crate::trace_mapper;
 
 pub struct SunsoftFme7Mapper {
@@ -369,6 +369,18 @@ impl Mapper for SunsoftFme7Mapper {
                 4 => MirroringMode::FourScreen,
                 _ => MirroringMode::Horizontal,
             };
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: true,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
         }
     }
 }

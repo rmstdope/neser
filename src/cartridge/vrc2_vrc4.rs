@@ -1,5 +1,5 @@
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
 use crate::trace_mapper;
 
 /// Mappers 21, 22, 23, 25 - Konami VRC2/VRC4
@@ -462,6 +462,18 @@ impl Mapper for Vrc2Vrc4Mapper {
                 3 => MirroringMode::FourScreen,
                 _ => MirroringMode::Horizontal,
             };
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: self.variant.has_irq(),
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 1,
         }
     }
 }

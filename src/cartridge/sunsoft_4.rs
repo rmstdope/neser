@@ -22,7 +22,7 @@
 //! - Used in After Burner II, Nantettatte!! Baseball
 
 use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
 
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 const CHR_BANK_SIZE_2K: usize = 0x0800; // 2KB
@@ -290,6 +290,18 @@ impl Mapper for Sunsoft4Mapper {
         self.nametable_banks_1k = [0; 2];
         self.nametable_rom_mode = false;
         self.prg_ram_enabled = false;
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: self.prg_ram.size() / 1024,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 2,
+        }
     }
 }
 

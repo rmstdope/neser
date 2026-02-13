@@ -40,7 +40,7 @@ pub use common::{
 #[allow(unused_imports)]
 pub use ines::{ConsoleType, InesHeader, Mirroring, TimingMode, parse_header, parse_rom};
 #[allow(unused_imports)]
-pub use mapper::{Mapper, MapperContext};
+pub use mapper::{Mapper, MapperCapabilities, MapperContext};
 #[allow(unused_imports)]
 pub use mapper_templates::{DualBank32Mapper, SimpleBankedPrgMapper, SimpleFixedPrgMapper};
 #[allow(unused_imports)]

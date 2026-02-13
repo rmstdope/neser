@@ -100,6 +100,44 @@ impl MapperContext {
     }
 }
 
+/// Describes the hardware capabilities of a mapper.
+///
+/// Each mapper should return accurate capabilities from [`Mapper::capabilities()`]
+/// to enable runtime feature detection, conditional test execution, and
+/// documentation of the mapper feature matrix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub struct MapperCapabilities {
+    /// Whether the mapper can generate IRQ interrupts.
+    pub has_irq: bool,
+    /// Whether the mapper supports CHR bank switching.
+    pub has_chr_banking: bool,
+    /// Whether the mapper can change nametable mirroring mode dynamically.
+    pub has_dynamic_mirroring: bool,
+    /// Whether the mapper provides expansion audio channels.
+    pub has_expansion_audio: bool,
+    /// Maximum PRG-RAM size in KB.
+    pub max_prg_ram_kb: usize,
+    /// Smallest PRG bank size granularity in KB.
+    pub prg_bank_size_kb: usize,
+    /// Smallest CHR bank size granularity in KB.
+    pub chr_bank_size_kb: usize,
+}
+
+impl Default for MapperCapabilities {
+    fn default() -> Self {
+        Self {
+            has_irq: false,
+            has_chr_banking: false,
+            has_dynamic_mirroring: false,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 32,
+            chr_bank_size_kb: 8,
+        }
+    }
+}
+
 pub trait Mapper {
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, battery-backed on some cartridges)
@@ -326,6 +364,16 @@ pub trait Mapper {
     ///
     /// Default implementation is a no-op.
     fn restore_registers(&mut self, _data: &[u8]) {}
+
+    /// Return the hardware capabilities of this mapper.
+    ///
+    /// Each mapper should override this to accurately describe its features
+    /// (IRQ, CHR banking, dynamic mirroring, expansion audio, etc.).
+    /// The default returns conservative defaults suitable for the simplest mappers.
+    #[allow(dead_code)]
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities::default()
+    }
 }
 
 fn vrc2_vrc4_21(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
@@ -501,5 +549,206 @@ mod tests {
         mapper.ppu_address_changed(0x0000);
         mapper.ppu_address_changed(0x1000);
         mapper.ppu_address_changed(0x1FFF);
+    }
+
+    // --- MapperCapabilities tests ---
+
+    fn make_mapper(id: u16) -> Box<dyn Mapper> {
+        let prg_size = match id {
+            5 => 32 * 1024, // MMC5 requires minimum 32KB PRG-ROM
+            _ => 32 * 1024,
+        };
+        let prg_rom = vec![0u8; prg_size];
+        let chr_rom = vec![0u8; 8 * 1024];
+        let metadata = MapperContext::new(id, prg_rom, chr_rom, MirroringMode::Horizontal);
+        create_mapper(metadata).unwrap_or_else(|_| panic!("Mapper {} should be created", id))
+    }
+
+    // Capability: has_irq
+
+    #[test]
+    fn nrom_reports_no_irq() {
+        assert!(!make_mapper(0).capabilities().has_irq);
+    }
+
+    #[test]
+    fn mmc3_reports_irq_capability() {
+        assert!(make_mapper(4).capabilities().has_irq);
+    }
+
+    #[test]
+    fn mmc5_reports_irq_capability() {
+        assert!(make_mapper(5).capabilities().has_irq);
+    }
+
+    #[test]
+    fn sunsoft_fme7_reports_irq_capability() {
+        assert!(make_mapper(69).capabilities().has_irq);
+    }
+
+    // Capability: has_chr_banking
+
+    #[test]
+    fn nrom_reports_no_chr_banking() {
+        assert!(!make_mapper(0).capabilities().has_chr_banking);
+    }
+
+    #[test]
+    fn mmc1_reports_chr_banking() {
+        assert!(make_mapper(1).capabilities().has_chr_banking);
+    }
+
+    #[test]
+    fn mmc3_reports_chr_banking() {
+        assert!(make_mapper(4).capabilities().has_chr_banking);
+    }
+
+    // Capability: has_dynamic_mirroring
+
+    #[test]
+    fn nrom_reports_no_dynamic_mirroring() {
+        assert!(!make_mapper(0).capabilities().has_dynamic_mirroring);
+    }
+
+    #[test]
+    fn mmc1_reports_dynamic_mirroring() {
+        assert!(make_mapper(1).capabilities().has_dynamic_mirroring);
+    }
+
+    #[test]
+    fn axrom_reports_dynamic_mirroring() {
+        assert!(make_mapper(7).capabilities().has_dynamic_mirroring);
+    }
+
+    // Capability: has_expansion_audio
+
+    #[test]
+    fn nrom_reports_no_expansion_audio() {
+        assert!(!make_mapper(0).capabilities().has_expansion_audio);
+    }
+
+    #[test]
+    fn mmc5_reports_expansion_audio() {
+        assert!(make_mapper(5).capabilities().has_expansion_audio);
+    }
+
+    #[test]
+    fn vrc6_reports_expansion_audio() {
+        assert!(make_mapper(24).capabilities().has_expansion_audio);
+    }
+
+    #[test]
+    fn namco163_reports_expansion_audio() {
+        assert!(make_mapper(19).capabilities().has_expansion_audio);
+    }
+
+    // Capability: max_prg_ram_kb
+
+    #[test]
+    fn bandai_fcg_reports_zero_prg_ram() {
+        assert_eq!(make_mapper(16).capabilities().max_prg_ram_kb, 0);
+    }
+
+    #[test]
+    fn mmc1_reports_8kb_prg_ram() {
+        assert_eq!(make_mapper(1).capabilities().max_prg_ram_kb, 8);
+    }
+
+    #[test]
+    fn mmc5_reports_64kb_prg_ram() {
+        assert_eq!(make_mapper(5).capabilities().max_prg_ram_kb, 64);
+    }
+
+    // Capability: prg_bank_size_kb
+
+    #[test]
+    fn nrom_reports_32kb_prg_bank_size() {
+        assert_eq!(make_mapper(0).capabilities().prg_bank_size_kb, 32);
+    }
+
+    #[test]
+    fn mmc3_reports_8kb_prg_bank_size() {
+        assert_eq!(make_mapper(4).capabilities().prg_bank_size_kb, 8);
+    }
+
+    #[test]
+    fn uxrom_reports_16kb_prg_bank_size() {
+        assert_eq!(make_mapper(2).capabilities().prg_bank_size_kb, 16);
+    }
+
+    // Capability: chr_bank_size_kb
+
+    #[test]
+    fn nrom_reports_8kb_chr_bank_size() {
+        assert_eq!(make_mapper(0).capabilities().chr_bank_size_kb, 8);
+    }
+
+    #[test]
+    fn mmc3_reports_1kb_chr_bank_size() {
+        assert_eq!(make_mapper(4).capabilities().chr_bank_size_kb, 1);
+    }
+
+    #[test]
+    fn mmc1_reports_4kb_chr_bank_size() {
+        assert_eq!(make_mapper(1).capabilities().chr_bank_size_kb, 4);
+    }
+
+    // Cross-cutting: all mappers return valid capabilities
+
+    #[test]
+    fn all_supported_mappers_return_capabilities() {
+        for &id in supported_mappers() {
+            let mapper = make_mapper(id as u16);
+            let caps = mapper.capabilities();
+            // Verify the capabilities struct is populated (no panics)
+            let _ = format!("{:?}", caps);
+        }
+    }
+
+    // Conditional test execution: skip tests for mappers without IRQ
+
+    #[test]
+    fn irq_capable_mappers_report_irq_pending_false_initially() {
+        for &id in supported_mappers() {
+            let mapper = make_mapper(id as u16);
+            if mapper.capabilities().has_irq {
+                assert!(
+                    !mapper.irq_pending(),
+                    "Mapper {} should not have IRQ pending initially",
+                    id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn expansion_audio_mappers_return_silent_initially() {
+        for &id in supported_mappers() {
+            let mapper = make_mapper(id as u16);
+            if mapper.capabilities().has_expansion_audio {
+                assert_eq!(
+                    mapper.expansion_audio_sample(),
+                    0.0,
+                    "Mapper {} with expansion audio should be silent initially",
+                    id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn prg_ram_capable_mappers_report_nonzero_wram_size() {
+        for &id in supported_mappers() {
+            let mapper = make_mapper(id as u16);
+            let caps = mapper.capabilities();
+            if caps.max_prg_ram_kb > 0 {
+                assert!(
+                    mapper.wram_size() > 0,
+                    "Mapper {} reports {}KB PRG-RAM capability but wram_size() is 0",
+                    id,
+                    caps.max_prg_ram_kb
+                );
+            }
+        }
     }
 }

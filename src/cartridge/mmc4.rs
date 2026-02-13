@@ -1,7 +1,7 @@
 use std::cell::Cell;
 
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
 
 /// Mapper 10 - MMC4 (FxROM boards)
 ///
@@ -253,6 +253,18 @@ impl Mapper for MMC4Mapper {
                 1 => MirroringMode::Horizontal,
                 _ => MirroringMode::Horizontal,
             };
+        }
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_irq: false,
+            has_chr_banking: true,
+            has_dynamic_mirroring: true,
+            has_expansion_audio: false,
+            max_prg_ram_kb: 8,
+            prg_bank_size_kb: 16,
+            chr_bank_size_kb: 4,
         }
     }
 }
