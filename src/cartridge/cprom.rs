@@ -6,17 +6,24 @@ use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 const CHR_BANK_SIZE: usize = 0x1000; // 4KB
 const CHR_RAM_SIZE: usize = 0x4000; // 16KB
 
-/// CPROM mapper (Mapper 13)
+/// Mapper 13 - CPROM
 ///
-/// Simple CHR-RAM bank switching mapper.
-/// Supports:
-/// - 32KB fixed PRG ROM (no PRG banking)
-/// - 8KB PRG-RAM at $6000-$7FFF
-/// - 16KB CHR-RAM with 4KB bank switching
-/// - Bank select via writes to $8000-$FFFF
-/// - Fixed nametable mirroring
+/// Hardware: Simple CHR-RAM banking mapper used by a single game
 ///
-/// Known games: Videomation (only commercial game using this mapper)
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/CPROM>
+/// - PRG-ROM: 32KB fixed (no banking)
+/// - PRG-RAM: None
+/// - CHR-RAM: 16KB with 4KB banking at $0000-$0FFF
+/// - Mirroring: Fixed vertical
+///
+/// Common boards: NES-CPROM
+///
+/// Notes:
+/// - Any write to $8000-$FFFF selects 4KB CHR-RAM bank (bits 0-1)
+/// - CHR bank mapped at $0000-$0FFF (4KB)
+/// - $1000-$1FFF mirrors $0000-$0FFF
+/// - Used exclusively in Videomation (only commercial game with this mapper)
 pub struct CpromMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,

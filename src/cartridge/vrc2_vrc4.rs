@@ -2,11 +2,36 @@ use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 use crate::trace_mapper;
 
-/// VRC2/VRC4 mapper variants (iNES Mappers 21-23, 25).
+/// Mappers 21, 22, 23, 25 - Konami VRC2/VRC4
 ///
-/// These mappers represent different pin configurations of Konami's VRC2 and VRC4 chips.
-/// They share the same functionality but access registers at different addresses due to
-/// different address line connections.
+/// Hardware: Konami's VRC2 and VRC4 chips with different pin configurations
+///
+/// Specifications:
+/// - VRC2a (Mapper 22): <https://www.nesdev.org/wiki/VRC2_and_VRC4#VRC2a>
+/// - VRC2b (Mapper 23): <https://www.nesdev.org/wiki/VRC2_and_VRC4#VRC2b>
+/// - VRC4 variants: <https://www.nesdev.org/wiki/VRC2_and_VRC4#VRC4_Pinout>
+/// - IRQ: <https://www.nesdev.org/wiki/VRC_IRQ> (VRC4 only)
+/// - PRG-ROM: Up to 512KB (two 8KB banks switchable, one fixed)
+/// - PRG-RAM: 8KB at $6000-$7FFF
+/// - CHR: Up to 256KB (eight 1KB switchable banks) or CHR-RAM
+/// - Mirroring: Programmable (horizontal, vertical, one-screen A/B)
+///
+/// Mapper variants (different address line connections):
+/// - Mapper 21: VRC4a (Wai Wai World 2) / VRC4c (Ganbare Goemon Gaiden 2)
+/// - Mapper 22: VRC2a (no IRQ support)
+/// - Mapper 23: VRC2b / VRC4e (has IRQ, typically VRC4)
+/// - Mapper 25: VRC4b (Gradius II, Teenage Mutant Ninja Turtles II) / VRC4d (Bio Miracle)
+///
+/// Notes:
+/// - VRC2 variants (22, some 23) have no IRQ support
+/// - VRC4 has CPU-cycle or scanline-driven IRQ counter
+/// - Different mappers due to different A0/A1 pin connections
+/// - Used in Gradius II, Contra, Castlevania III (Japan)
+///
+/// Implementation:
+/// - Supports all address line variants via mapper number
+/// - VRC IRQ system fully implemented for VRC4 variants
+/// - No expansion audio (see VRC6 for audio)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Vrc2Vrc4Variant {
     Mapper21, // VRC4a, VRC4c
@@ -26,13 +51,7 @@ impl Vrc2Vrc4Variant {
     }
 }
 
-/// Konami VRC2/VRC4 mapper (iNES Mapper 21, 22, 23, 25).
-///
-/// This implementation supports PRG/CHR banking + mirroring control.
-/// VRC4 variants (21, 23, 25) also support the VRC IRQ system.
-/// VRC2 variant (22) has no IRQ support.
-///
-/// Unlike VRC6, these mappers have no expansion audio.
+/// Konami VRC2/VRC4 mapper implementation struct (iNES Mapper 21, 22, 23, 25).
 pub struct Vrc2Vrc4Mapper {
     variant: Vrc2Vrc4Variant,
 

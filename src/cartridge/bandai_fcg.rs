@@ -1,40 +1,30 @@
-// ...existing doc comments...
+//! # Mapper 16 - Bandai FCG (FCG-1, FCG-2, LZ93D50 with 24C01/24C02 EEPROM)
+//!
+//! Hardware: Bandai's mapper with CPU-driven IRQ counter and optional EEPROM
+//!
+//! Specifications:
+//! - Main: <https://www.nesdev.org/wiki/INES_Mapper_016>
+//! - Submappers: <https://www.nesdev.org/wiki/INES_Mapper_016#Submappers>
+//! - EEPROM: <https://www.nesdev.org/wiki/INES_Mapper_016#24C01_and_24C02_EEPROM>
+//! - PRG-ROM: Up to 256KB (16KB switchable at $8000-$BFFF, last bank fixed at $C000-$FFFF)
+//! - PRG-RAM: None
+//! - CHR: Up to 128KB (8×1KB switchable banks) or CHR-RAM
+//! - Mirroring: Programmable (horizontal, vertical, one-screen A/B)
+//!
+//! Common boards: Bandai FCG-1, FCG-2, LZ93D50
+//!
+//! Notes:
+//! - Three submapper variants (0=Both, 4=FCG-1/2, 5=LZ93D50)
+//! - Submapper 4: Registers at $6000-$7FFF, direct IRQ counter writes
+//! - Submapper 5: Registers at $8000-$800F, latched IRQ counter
+//! - CPU-cycle driven IRQ counter (counts down from 16-bit value)
+//! - Used in Dragon Ball series, SD Gundam series
+//!
+//! Limitations:
+//! - **EEPROM not implemented**: 24C02 EEPROM (register $800D) used for save data
+//!   in some games (Dragon Ball Z II/III, SD Gundam Gaiden) is not supported
+//! - Games requiring EEPROM cannot save progress
 use crate::trace_mapper;
-// # Mapper 16 (Bandai FCG) Implementation
-//
-// Used by Dragon Ball, SD Gundam, and other Bandai games.
-//
-// ## Banks
-// - PRG: 16KB switchable at $8000-$BFFF, fixed last bank at $C000-$FFFF
-// - CHR: 8 × 1KB switchable banks
-//
-// ## Submappers
-// - **Submapper 0 (Both)**: Responds to $6000-$7FFF and $8000-$FFFF (default)
-// - **Submapper 4 (FCG-1/2)**: Registers at $6000-$7FFF, direct IRQ counter writes
-// - **Submapper 5 (LZ93D50)**: Registers at $8000-$800F, latched IRQ counter
-//
-// ## Registers
-// - $x000-$x007: CHR bank select (1KB each)
-// - $x008: PRG bank select (16KB at $8000-$BFFF)
-// - $x009: Mirroring (0=V, 1=H, 2=1A, 3=1B)
-// - $x00A: IRQ control (bit 0 = enable)
-// - $x00B: IRQ counter/latch low byte
-// - $x00C: IRQ counter/latch high byte
-//
-// Where x = 6 for submapper 4, x = 8 for submapper 5.
-//
-// ## Limitations
-//
-// - **EEPROM not implemented**: The 24C02 EEPROM (register $800D) used by some
-//   games (Dragon Ball Z II/III, SD Gundam Gaiden series) for save data is not
-//   supported. Games requiring EEPROM will not be able to save progress.
-//
-// - **Not tested with real games**: Implementation is based on NESDev wiki
-//   documentation and unit tests only. Testing with actual mapper 16 ROMs
-//   (Dragon Ball, SD Gundam, etc.) is needed to verify correctness.
-//
-// ## References
-// - <https://www.nesdev.org/wiki/INES_Mapper_016>
 
 use crate::cartridge::cartridge::MirroringMode;
 use crate::cartridge::mapper::Mapper;

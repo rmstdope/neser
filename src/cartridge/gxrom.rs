@@ -5,13 +5,24 @@ use crate::cartridge::{Mapper, MirroringMode};
 const PRG_BANK_SIZE: usize = 32 * 1024; // 32KB
 const CHR_BANK_SIZE: usize = 8 * 1024; // 8KB
 
-/// GxROM/GNROM mapper (Mapper 66)
+/// Mapper 66 - GxROM / GNROM
 ///
-/// Simple mapper selecting both PRG and CHR banks with a single write.
+/// Hardware: Simple mapper selecting both PRG and CHR banks simultaneously
 ///
-/// - PRG: 32KB banks mapped at $8000-$FFFF (bits 4-5)
-/// - CHR: 8KB banks mapped at $0000-$1FFF (bits 0-1)
-/// - Mirroring: fixed from iNES header
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/GxROM>
+/// - PRG-ROM: Up to 128KB (4 32KB banks)
+/// - PRG-RAM: None (some bootleg boards have 8KB)
+/// - CHR-ROM: Up to 32KB (4 8KB banks)
+/// - Mirroring: Fixed horizontal or vertical (solder pads)
+///
+/// Common boards: NES-GNROM, NES-MHROM
+///
+/// Notes:
+/// - Any write to $8000-$FFFF selects banks
+/// - Bits 0-1: Select 8KB CHR bank
+/// - Bits 4-5: Select 32KB PRG bank
+/// - Used in Super Mario Bros. + Duck Hunt, Doraemon, Dragon Power
 pub struct GxROMMapper {
     prg_rom: BankedRom,
     prg_ram: PrgRam,

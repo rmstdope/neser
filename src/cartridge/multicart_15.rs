@@ -6,24 +6,26 @@ use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 const PRG_BANK_SIZE_8K: usize = 0x2000; // 8KB
 const PRG_BANK_SIZE_16K: usize = 0x4000; // 16KB
 
-/// Mapper 15 (100-in-1 Contra Function)
+/// Mapper 15 - 100-in-1 Contra Function
 ///
-/// Pirate multicart mapper with multiple banking modes.
-/// Supports:
-/// - Various PRG banking modes (8KB, 16KB, 32KB)
-/// - CHR-RAM (8KB)
-/// - Configurable mirroring
+/// Hardware: Pirate multicart mapper with multiple banking modes
 ///
-/// Bank select registers at $8000-$FFFF:
-/// - Address bits determine banking mode
-/// - Data bits determine bank number and mirroring
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/INES_Mapper_015>
+/// - PRG-ROM: Up to 1MB with various banking modes
+/// - PRG-RAM: None
+/// - CHR: 8KB CHR-RAM (no CHR-ROM support)
+/// - Mirroring: Programmable (horizontal, vertical, or one-screen)
 ///
-/// Banking modes (based on address written to):
-/// - $8000-$8001: 16KB PRG bank at $8000, mirror at $C000
-/// - $8002-$8003: 32KB PRG bank at $8000
-/// - $8004-$8007: 8KB PRG bank at $8000, 8KB at $C000
+/// Common boards: Various pirate multicart boards
 ///
-/// Known games: Various pirate multicarts (100-in-1, 168-in-1, etc.)
+/// Notes:
+/// - Banking mode selected by address written to ($8000-$8007)
+/// - Mode 0 ($8000-$8001): 16KB bank at $8000, mirror at $C000
+/// - Mode 1 ($8002-$8003): 32KB bank at $8000
+/// - Mode 2 ($8004-$8007): 8KB bank at $8000, separate 8KB at $C000
+/// - Bit 7 of data: mirroring control
+/// - Used in various pirate multicarts (100-in-1, 168-in-1, etc.)
 pub struct Multicart15Mapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,

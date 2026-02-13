@@ -201,10 +201,34 @@ impl Vrc6Audio {
     }
 }
 
-/// Konami VRC6 mapper (iNES Mapper 24/26).
+/// Mappers 24, 26 - Konami VRC6 (with expansion audio)
 ///
-/// This implementation supports PRG/CHR banking + mirroring control, VRC IRQ,
-/// and VRC6 expansion audio (2 pulse + 1 saw).
+/// Hardware: Konami's VRC6 mapper with three expansion audio channels
+///
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/VRC6>
+/// - Audio: <https://www.nesdev.org/wiki/VRC6_audio>
+/// - IRQ: <https://www.nesdev.org/wiki/VRC_IRQ>
+/// - PRG-ROM: Up to 512KB (two banks: 16KB + 8KB switchable, one fixed)
+/// - PRG-RAM: 8KB at $6000-$7FFF
+/// - CHR: Up to 256KB (eight 1KB switchable banks) or CHR-RAM
+/// - Mirroring: Programmable (horizontal, vertical, one-screen A/B)
+/// - Expansion audio: 2 pulse channels + 1 sawtooth channel
+///
+/// Mapper variants (different address line connections):
+/// - Mapper 24: VRC6a (Akumajou Densetsu / Castlevania III Japan)
+/// - Mapper 26: VRC6b (Madara, Esper Dream 2)
+///
+/// Notes:
+/// - CPU-cycle or scanline-driven IRQ counter (same as VRC4)
+/// - Three expansion audio channels add extra sound capability
+/// - Different mappers due to different A0/A1 pin connections
+/// - Used in Castlevania III (Japan), Madara, Akumajou Densetsu
+///
+/// Implementation:
+/// - Supports PRG/CHR banking + mirroring control
+/// - VRC IRQ fully implemented
+/// - VRC6 expansion audio (2 pulse + 1 sawtooth) fully implemented
 pub struct VRC6Mapper {
     variant: Vrc6Variant,
 

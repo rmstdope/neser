@@ -6,15 +6,25 @@ const PRG_BANK_SIZE: usize = 32 * 1024; // 32KB
 const CHR_BANK_SIZE: usize = 8 * 1024; // 8KB
 const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 
-/// ColorDreams mapper (Mapper 11)
+/// Mapper 11 - Color Dreams
 ///
-/// Simple mapper selecting both PRG and CHR banks with a single write.
+/// Hardware: Simple unlicensed mapper with combined PRG/CHR banking
 ///
-/// - PRG: 32KB banks mapped at $8000-$FFFF (bits 4-7)
-/// - CHR: 8KB banks mapped at $0000-$1FFF (bits 0-1)
-/// - Mirroring: fixed from iNES header
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/Color_Dreams>
+/// - PRG-ROM: Up to 128KB (4 32KB banks)
+/// - PRG-RAM: None
+/// - CHR-ROM: Up to 128KB (16 8KB banks)
+/// - Mirroring: Fixed horizontal or vertical
 ///
-/// Used in unlicensed games like Crystal Mines, Bible Adventures, etc.
+/// Common boards: Unlicensed Color Dreams boards
+///
+/// Notes:
+/// - Single register at any write to $8000-$FFFF
+/// - Bits 0-3: Select 8KB CHR bank
+/// - Bits 4-7: Select 32KB PRG bank
+/// - Used in unlicensed games like Crystal Mines, Bible Adventures
+/// - Some variants support different bank counts
 pub struct ColorDreamsMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,

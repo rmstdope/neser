@@ -1,14 +1,31 @@
 use crate::cartridge::{Mapper, MirroringMode};
 use crate::trace_mapper;
 
-/// MMC3 mapper (Mapper 4)
+/// Mapper 4 - MMC3 (TxROM boards)
 ///
-/// This implementation focuses on PRG/CHR banking + mirroring control.
-/// It also includes basic MMC3 scanline IRQ counter support.
+/// Hardware: Nintendo's second-most common mapper with scanline IRQ counter
 ///
-/// Two IRQ behaviors are supported:
-/// - **Normal (Sharp) behavior**: IRQ fires when counter is 0 after clock
-/// - **Alternate (NEC) behavior**: IRQ fires only on 1→0 transition
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/MMC3>
+/// - IRQ: <https://www.nesdev.org/wiki/MMC3#IRQ_Specifics>
+/// - Variants: <https://www.nesdev.org/wiki/TxROM>
+/// - PRG-ROM: Up to 512KB (64 8KB banks)
+/// - PRG-RAM: 8KB at $6000-$7FFF with enable/write-protect
+/// - CHR: Up to 256KB (256 1KB banks, ROM or RAM)
+/// - Mirroring: Programmable (horizontal or vertical)
+///
+/// Common boards: NES-TLROM, NES-TKROM, NES-TQROM, NES-TSROM
+///
+/// Notes:
+/// - Scanline IRQ counter triggered by PPU A12 rising edges
+/// - Two IRQ behaviors (Sharp vs NEC) selected per-ROM via CRC database
+/// - Register $8000 selects target bank and PRG/CHR swap mode
+/// - Used in Super Mario Bros. 3, Mega Man 3-6, Kirby's Adventure
+///
+/// Implementation:
+/// - This implementation focuses on PRG/CHR banking + mirroring control
+/// - Includes MMC3 scanline IRQ counter with both Sharp and NEC behaviors
+/// - A12 edge detection with debounce (3 PPU cycles low required)
 pub struct MMC3Mapper {
     prg_rom: Vec<u8>,
     chr_rom: Vec<u8>,

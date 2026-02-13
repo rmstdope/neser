@@ -5,22 +5,25 @@ use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRa
 // Memory size constants
 const PRG_BANK_SIZE_32K: usize = 0x8000; // 32KB (for AxROM)
 
-/// AxROM mapper (Mapper 7)
+/// Mapper 7 - AxROM (AMROM, ANROM, AN1ROM, AOROM boards)
 ///
-/// Simple PRG banking mapper with programmable one-screen mirroring.
-/// Supports:
-/// - 32KB switchable PRG ROM bank (entire $8000-$FFFF)
-/// - 8KB PRG-RAM at $6000-$7FFF
-/// - 8KB CHR-RAM (no CHR ROM banking)
-/// - Programmable one-screen mirroring (selectable between two nametables)
+/// Hardware: Simple 32KB PRG banking with programmable one-screen mirroring
+///
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/AxROM>
+/// - Variants: <https://www.nesdev.org/wiki/AxROM#Variants>
+/// - PRG-ROM: Up to 256KB (8 32KB banks)
+/// - PRG-RAM: None (some bootleg boards have 8KB)
+/// - CHR: 8KB CHR-RAM fixed (no CHR-ROM support)
+/// - Mirroring: Programmable one-screen (selectable A or B nametable)
+///
+/// Common boards: NES-AMROM, NES-ANROM, NES-AOROM
+///
+/// Notes:
 /// - Register at any write to $8000-$FFFF
-///
-/// Register format (any write to $8000-$FFFF):
-/// - Bits 0-2: Select 32KB PRG ROM bank (supports up to 8 banks = 256KB)
-/// - Bit 4: One-screen mirroring select (0 = lower/A, 1 = upper/B)
-/// - Other bits ignored
-///
-/// Used in games like Battletoads, Marble Madness, Wizards & Warriors.
+/// - Bits 0-2: Select 32KB PRG bank
+/// - Bit 4: One-screen mirroring (0 = lower/A, 1 = upper/B)
+/// - Used in Battletoads, Marble Madness, Wizards & Warriors
 pub struct AxROMMapper {
     prg_rom: BankedRom,
     prg_ram: PrgRam,

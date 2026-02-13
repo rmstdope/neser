@@ -1,16 +1,26 @@
 use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
-/// MMC2 mapper (iNES Mapper 9)
+/// Mapper 9 - MMC2 (PNROM boards)
 ///
-/// Used by (Mike Tyson's) Punch-Out!!
+/// Hardware: Nintendo's PPU-triggered CHR banking used exclusively by Punch-Out!!
 ///
-/// Key behavior:
-/// - PRG: one switchable 8KB bank at $8000-$9FFF, fixed last 24KB at $A000-$FFFF
-/// - CHR: two 4KB regions ($0000-$0FFF and $1000-$1FFF) selected via latches
-///   - Latch 0 triggers on PPU reads to $0FD8-$0FDF (select FD) and $0FE8-$0FEF (select FE)
-///   - Latch 1 triggers on PPU reads to $1FD8-$1FDF (select FD) and $1FE8-$1FEF (select FE)
-/// - Mirroring: horizontal/vertical control via register write
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/MMC2>
+/// - Latch behavior: <https://www.nesdev.org/wiki/MMC2#Latch_Behavior>
+/// - PRG-ROM: 128KB (8KB switchable + 24KB fixed)
+/// - PRG-RAM: None
+/// - CHR-ROM: 128KB with two 4KB regions controlled by PPU address latches
+/// - Mirroring: Programmable (horizontal or vertical)
+///
+/// Common boards: NES-PNROM
+///
+/// Notes:
+/// - Two independent CHR latches triggered by PPU reads:
+///   - Latch 0: $0FD8-$0FDF (FD) or $0FE8-$0FEF (FE) switches $0000-$0FFF
+///   - Latch 1: $1FD8-$1FDF (FD) or $1FE8-$1FEF (FE) switches $1000-$1FFF
+/// - Latch state determines which of two 4KB CHR banks is active per region
+/// - Used exclusively in (Mike Tyson's) Punch-Out!!
 pub struct MMC2Mapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,

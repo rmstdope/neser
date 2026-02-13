@@ -5,26 +5,30 @@ use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRa
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 
-/// Mapper 71 - Camerica/Codemasters
+/// Mapper 71 - Camerica / Codemasters
 ///
-/// Similar to UxROM (Mapper 2) but with programmable 1-screen mirroring.
-/// Supports:
-/// - 16KB switchable PRG bank at $8000-$BFFF
-/// - 16KB fixed PRG bank at $C000-$FFFF (always last bank)
-/// - 8KB PRG-RAM at $6000-$7FFF
-/// - 8KB CHR-RAM (no CHR ROM banking)
-/// - Bank select register at $8000-$BFFF (any write)
-/// - Mirroring control register at $C000-$FFFF (any write)
+/// Hardware: Unlicensed mapper similar to UxROM with programmable one-screen mirroring
 ///
-/// Register at $8000-$BFFF (PRG bank select):
-/// - Bits 0-3: Select 16KB PRG ROM bank (supports up to 16 banks = 256KB)
-/// - Other bits ignored
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/INES_Mapper_071>
+/// - Codemasters: <https://www.nesdev.org/wiki/Codemasters>
+/// - PRG-ROM: Up to 256KB (16 16KB banks)
+/// - PRG-RAM: None
+/// - CHR: 8KB CHR-RAM fixed (no CHR-ROM support)
+/// - Mirroring: Programmable one-screen (selectable A or B nametable)
 ///
-/// Register at $C000-$FFFF (mirroring control):
-/// - Bit 4: One-screen mirroring select (0 = lower/A, 1 = upper/B)
-/// - Other bits ignored
+/// Common boards: Camerica/Codemasters unlicensed boards
 ///
-/// Used in games like Micro Machines, Fire Hawk, Dizzy series.
+/// Registers:
+/// - $8000-$BFFF: PRG bank select (any write)
+///   - Bits 0-3: Select 16KB PRG bank at $8000-$BFFF
+/// - $C000-$FFFF: Mirroring control (any write)
+///   - Bit 4: One-screen mirroring (0 = lower/A, 1 = upper/B)
+///
+/// Notes:
+/// - Last 16KB PRG bank always fixed at $C000-$FFFF
+/// - Similar to UxROM but with programmable mirroring
+/// - Used in Micro Machines, Fire Hawk, Dizzy series (Codemasters games)
 pub struct CamericaMapper {
     prg_rom: BankedRom,
     prg_ram: PrgRam,

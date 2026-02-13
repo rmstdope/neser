@@ -28,26 +28,27 @@ pub enum Mmc1Revision {
     Mmc1B,
 }
 
-/// MMC1 mapper (Mapper 1)
+/// Mapper 1 - MMC1 (SxROM boards)
 ///
-/// One of the most common NES mappers with sophisticated banking capabilities.
-/// Supports:
-/// - PRG ROM: Switchable 16KB or 32KB banks
-/// - PRG RAM: 8KB at $6000-$7FFF (optional battery-backed)
-/// - CHR: Switchable 4KB or 8KB banks (or CHR-RAM if no CHR ROM)
-/// - Mirroring: Programmable (horizontal, vertical, one-screen)
-/// - Serial shift register: 5-bit values loaded via sequential writes
+/// Hardware: Nintendo's most common mapper with serial shift register interface
 ///
-/// Register loading mechanism:
-/// - Write to $8000-$FFFF with bit 0 containing the next bit
-/// - After 5 writes, the 5-bit value is loaded into the target register
-/// - Writing with bit 7 set resets the shift register and sets control to mode 3
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/MMC1>
+/// - Revisions: <https://www.nesdev.org/wiki/MMC1#ASIC_Revisions>
+/// - Board variants: <https://www.nesdev.org/wiki/SxROM>
+/// - PRG-ROM: Up to 512KB (32 16KB banks)
+/// - PRG-RAM: 8KB or 32KB (depends on board)
+/// - CHR: Up to 128KB (32 4KB banks or 16 8KB banks, ROM or RAM)
+/// - Mirroring: Programmable (horizontal, vertical, one-screen A/B)
 ///
-/// Registers (selected by address):
-/// - $8000-$9FFF: Control (mirroring, PRG mode, CHR mode)
-/// - $A000-$BFFF: CHR bank 0 (4KB at $0000 or 8KB at $0000)
-/// - $C000-$DFFF: CHR bank 1 (4KB at $1000)
-/// - $E000-$FFFF: PRG bank (16KB switchable), bit 4 controls PRG-RAM enable
+/// Common boards: NES-SLROM, NES-SNROM, NES-SGROM, NES-SKROM, NES-SUROM
+///
+/// Notes:
+/// - Shift register interface (5-bit serial loading)
+/// - Bit 7 write triggers reset, sets control to mode 3 (PRG fixed at $C000)
+/// - MMC1A revision: PRG-RAM always enabled
+/// - MMC1B/C revisions: PRG-RAM controllable via register bit
+/// - Used in The Legend of Zelda, Metroid, Mega Man 2, Final Fantasy
 ///
 /// PRG-RAM Enable (Revision-Specific):
 /// - MMC1A: PRG-RAM is always enabled, bit 4 of PRG bank register is ignored
