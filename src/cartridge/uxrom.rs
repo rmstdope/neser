@@ -1,9 +1,5 @@
-use crate::cartridge::Mapper;
+use crate::cartridge::mapper_templates::SimpleBankedPrgMapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-
-// Memory size constants
-const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 
 /// Mapper 2 - UxROM (UNROM, UOROM boards)
 ///
@@ -24,112 +20,15 @@ const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 /// - Fixed last 16KB PRG bank at $C000-$FFFF
 /// - Any write to $8000-$FFFF selects bank (value = bank number)
 /// - Used in Mega Man, Castlevania, Contra, Duck Tales, Metal Gear
-pub struct UxROMMapper {
-    prg_rom: BankedRom,
-    prg_ram: PrgRam,
-    chr_memory: ChrMemory,
-    mirroring: MirroringMode,
-    bank_select: u8,
-}
-
-impl UxROMMapper {
-    pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        // UxROM uses CHR-RAM, ignore chr_rom parameter
-        Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_memory: ChrMemory::new_ram(8192),
-            mirroring,
-            bank_select: 0,
-        }
-    }
-}
-
-impl Mapper for UxROMMapper {
-    fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
-            return value;
-        }
-
-        // PRG ROM at $8000-$FFFF
-        match addr {
-            0x8000..=0xBFFF => {
-                // Switchable 16KB bank
-                let bank = self.bank_select as usize;
-                self.prg_rom.read_with_base(bank, 0x8000, addr)
-            }
-            0xC000..=0xFFFF => {
-                // Fixed to last 16KB bank
-                let last_bank = self.prg_rom.num_banks().saturating_sub(1);
-                self.prg_rom.read_with_base(last_bank, 0xC000, addr)
-            }
-            _ => 0,
-        }
-    }
-
-    fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
-            return;
-        }
-
-        // Any write to $8000-$FFFF sets the bank register
-        if (0x8000..=0xFFFF).contains(&addr) {
-            self.bank_select = value;
-        }
-    }
-
-    fn read_chr(&self, addr: u16) -> u8 {
-        self.chr_memory.read(addr)
-    }
-
-    fn write_chr(&mut self, addr: u16, value: u8) {
-        self.chr_memory.write(addr, value);
-    }
-
-    fn get_mirroring(&self) -> MirroringMode {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        2
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
-    }
-
-    fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_memory.snapshot()
-    }
-
-    fn restore_chr_ram(&mut self, data: &[u8]) {
-        self.chr_memory.load_snapshot(data);
-    }
-
-    fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.bank_select]
-    }
-
-    fn restore_registers(&mut self, data: &[u8]) {
-        if !data.is_empty() {
-            self.bank_select = data[0];
-        }
-    }
-}
+///
+/// Implementation:
+/// - Uses `SimpleBankedPrgMapper` template with 16KB PRG banks
+pub type UxROMMapper = SimpleBankedPrgMapper<16, 2>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::Mapper;
 
     #[test]
     fn test_uxrom_128kb_prg_bank_switching() {

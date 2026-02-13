@@ -1,9 +1,5 @@
-use crate::cartridge::common::{BankSwitch, BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MirroringMode};
-
-// Memory size constants
-const PRG_BANK_SIZE: usize = 32 * 1024; // 32KB
-const CHR_BANK_SIZE: usize = 8 * 1024; // 8KB
+use crate::cartridge::mapper_templates::DualBank32Mapper;
+use crate::cartridge::MirroringMode;
 
 /// Mapper 66 - GxROM / GNROM
 ///
@@ -23,104 +19,10 @@ const CHR_BANK_SIZE: usize = 8 * 1024; // 8KB
 /// - Bits 0-1: Select 8KB CHR bank
 /// - Bits 4-5: Select 32KB PRG bank
 /// - Used in Super Mario Bros. + Duck Hunt, Doraemon, Dragon Power
-pub struct GxROMMapper {
-    prg_rom: BankedRom,
-    prg_ram: PrgRam,
-    chr_rom: BankedRom,
-    mirroring: MirroringMode,
-    prg_bank: BankSwitch,
-    chr_bank: BankSwitch,
-}
-
-impl GxROMMapper {
-    /// Create a new GxROM mapper.
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        let prg_bank = BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE);
-        let chr_bank = BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE);
-
-        Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
-            mirroring,
-            prg_bank,
-            chr_bank,
-        }
-    }
-}
-
-impl Mapper for GxROMMapper {
-    fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
-            return value;
-        }
-
-        match addr {
-            0x8000..=0xFFFF => self
-                .prg_rom
-                .read_with_base(self.prg_bank.current(), 0x8000, addr),
-            _ => 0,
-        }
-    }
-
-    fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
-            return;
-        }
-
-        if (0x8000..=0xFFFF).contains(&addr) {
-            // Register format:
-            // - Bits 0-1: CHR bank
-            // - Bits 4-5: PRG bank
-            self.chr_bank.set(value & 0b0000_0011);
-            self.prg_bank.set((value >> 4) & 0b0000_0011);
-        }
-    }
-
-    fn read_chr(&self, addr: u16) -> u8 {
-        let offset = (addr & 0x1FFF) as usize;
-        self.chr_rom.read(self.chr_bank.current(), offset)
-    }
-
-    fn write_chr(&mut self, _addr: u16, _value: u8) {
-        // GxROM uses CHR-ROM, writes are ignored.
-    }
-
-    fn get_mirroring(&self) -> MirroringMode {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        66
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
-    }
-
-    fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.prg_bank.raw(), self.chr_bank.raw()]
-    }
-
-    fn restore_registers(&mut self, data: &[u8]) {
-        if let Some(&value) = data.first() {
-            self.prg_bank.set(value);
-        }
-        if let Some(&value) = data.get(1) {
-            self.chr_bank.set(value);
-        }
-    }
-}
+///
+/// Implementation:
+/// - Uses `DualBank32Mapper` template with PRG bits 4-5, CHR bits 0-1
+pub type GxROMMapper = DualBank32Mapper<0b0011, 4, 0b0011, 0, 66>;
 
 #[cfg(test)]
 mod tests {
