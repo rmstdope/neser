@@ -338,4 +338,12 @@ mod tests {
         restored.write_prg(0x8000, 0b0000_0011); // switch to bank 3
         assert_ne!(restored.read_chr(0x0000), 0xAA);
     }
+
+    #[test]
+    fn test_cprom_open_bus() {
+        let mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        
+        assert_eq!(mapper.read_prg_open_bus(0x5000, 0x77), 0x77);
+        assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x88), 0x88);
+    }
 }

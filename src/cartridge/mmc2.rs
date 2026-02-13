@@ -399,4 +399,12 @@ mod tests {
         mapper.ppu_address_changed(0x1FE8);
         assert_eq!(mapper.read_chr(0x1000), 4);
     }
+
+    #[test]
+    fn test_mmc2_open_bus() {
+        let mapper = MMC2Mapper::new(vec![0; 128 * 1024], vec![0; 128 * 1024], MirroringMode::Horizontal);
+        
+        assert_eq!(mapper.read_prg_open_bus(0x5000, 0x11), 0x11);
+        assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x22), 0x22);
+    }
 }
