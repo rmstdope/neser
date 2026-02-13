@@ -46,6 +46,11 @@ When working on an issue, this is important:
 
 When a PR is merged, the issue should be closed and the branch deleted to keep the repository clean and organized. If the issue is a sub-issue of a larger feature, ensure that the main issue is updated with relevant information about the progress made and that it is closed when all sub-issues are completed.
 
+Issue workflow checklist:
+
+- After creating an issue, immediately run a `self-learning-skills` retrospective.
+- After merging and closing an issue, immediately run a `self-learning-skills` retrospective.
+
 ### Github CLI
 
 Use the comand line command 'gh' for interacting the github issues. Be careful with quoting when using gh. NEVER use backticks in the text with gh and use real newlines instead of \n.
