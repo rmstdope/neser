@@ -357,29 +357,28 @@ impl MMC5Mapper {
         }
     }
 
-    /// Check if split-screen mode is enabled (bit 7 of $5200).
-    ///
-    /// # Hardware behavior (partially implemented)
-    /// Real MMC5 split-screen is a **horizontal** split based on tile fetch count per
-    /// scanline (0-33), not a vertical/scanline-based split. The threshold in bits 0-4
-    /// specifies which tile column triggers the split:
-    /// - Left split (bit 6=0): Tiles 0 to T-1 use split region, T+ use normal
-    /// - Right split (bit 6=1): Tiles 0 to T-1 use normal, T+ use split region
-    ///
-    /// When in split region:
-    /// - Nametable data comes from ExRAM (regardless of $5105)
-    /// - CHR bank uses $5202 (4KB bank) for all CHR modes
-    /// - Vertical scroll uses $5201
-    ///
-    /// Split mode is disabled when ExRAM mode ($5104) is 2 or 3.
-    ///
-    /// # Games using split-screen
-    /// Only two games are documented to use this feature:
-    /// - Uchuu Keibitai SDF (during intro)
-    /// - Bandit Kings of Ancient China (during ending sequence)
-    ///
-    /// Castlevania III does NOT use split-screen.
-    ///
+    // Check if split-screen mode is enabled (bit 7 of $5200).
+    //
+    // # Hardware behavior (partially implemented)
+    // Real MMC5 split-screen is a **horizontal** split based on tile fetch count per
+    // scanline (0-33), not a vertical/scanline-based split. The threshold in bits 0-4
+    // specifies which tile column triggers the split:
+    // - Left split (bit 6=0): Tiles 0 to T-1 use split region, T+ use normal
+    // - Right split (bit 6=1): Tiles 0 to T-1 use normal, T+ use split region
+    //
+    // When in split region:
+    // - Nametable data comes from ExRAM (regardless of $5105)
+    // - CHR bank uses $5202 (4KB bank) for all CHR modes
+    // - Vertical scroll uses $5201
+    //
+    // Split mode is disabled when ExRAM mode ($5104) is 2 or 3.
+    //
+    // # Games using split-screen
+    // Only two games are documented to use this feature:
+    // - Uchuu Keibitai SDF (during intro)
+    // - Bandit Kings of Ancient China (during ending sequence)
+    //
+    // Castlevania III does NOT use split-screen.
 
     // ============================================================================
     // Split-Screen Mode Support

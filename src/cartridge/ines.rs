@@ -207,6 +207,8 @@ pub enum RomParseError {
 const HEADER_SIZE: usize = 16;
 const TRAINER_SIZE: usize = 512;
 
+type ParsedRom = (InesHeader, Vec<u8>, Vec<u8>, Option<Vec<u8>>, u32);
+
 /// Parse a full iNES/NES2 ROM blob. Returns the parsed header, owned PRG ROM
 /// bytes, owned CHR ROM bytes, optional trainer data (512 bytes if present),
 /// and the combined CRC32 of PRG+CHR.
@@ -215,9 +217,7 @@ const TRAINER_SIZE: usize = 512;
 ///
 /// Returns `RomParseError::InvalidHeader` if the magic bytes are invalid.
 /// Returns `RomParseError::FileTooSmall` if the file is smaller than expected.
-pub fn parse_rom(
-    data: &[u8],
-) -> Result<(InesHeader, Vec<u8>, Vec<u8>, Option<Vec<u8>>, u32), RomParseError> {
+pub fn parse_rom(data: &[u8]) -> Result<ParsedRom, RomParseError> {
     if data.len() < HEADER_SIZE {
         return Err(RomParseError::FileTooSmall {
             expected: HEADER_SIZE,
