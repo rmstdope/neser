@@ -207,7 +207,9 @@ pub enum RomParseError {
     FileTooSmall { expected: usize, actual: usize },
 }
 
-pub fn parse_rom(data: &[u8]) -> Result<(InesHeader, Vec<u8>, Vec<u8>, Option<Vec<u8>>, u32), RomParseError> {
+pub fn parse_rom(
+    data: &[u8],
+) -> Result<(InesHeader, Vec<u8>, Vec<u8>, Option<Vec<u8>>, u32), RomParseError> {
     if data.len() < 16 {
         return Err(RomParseError::FileTooSmall {
             expected: 16,
@@ -470,20 +472,20 @@ mod tests {
         rom.extend(vec![0xBBu8; 8 * 1024]);
 
         let (hdr, prg, chr, trainer, _crc) = parse_rom(&rom).expect("parse_rom with trainer");
-        
+
         // Verify header recognizes trainer
         assert!(hdr.has_trainer);
-        
+
         // Verify trainer data is extracted
         assert!(trainer.is_some());
         let extracted_trainer = trainer.unwrap();
         assert_eq!(extracted_trainer.len(), 512);
-        
+
         // Verify trainer data matches what we put in
-        for i in 0..512 {
-            assert_eq!(extracted_trainer[i], (i % 256) as u8);
+        for (i, &byte) in extracted_trainer.iter().enumerate() {
+            assert_eq!(byte, (i % 256) as u8);
         }
-        
+
         // Verify PRG and CHR are still correct
         assert_eq!(prg.len(), 16 * 1024);
         assert_eq!(chr.len(), 8 * 1024);
@@ -506,13 +508,13 @@ mod tests {
         rom.extend(vec![0xBBu8; 8 * 1024]);
 
         let (hdr, prg, chr, trainer, _crc) = parse_rom(&rom).expect("parse_rom without trainer");
-        
+
         // Verify header doesn't have trainer
         assert!(!hdr.has_trainer);
-        
+
         // Verify no trainer data is returned
         assert!(trainer.is_none());
-        
+
         // Verify PRG and CHR are correct
         assert_eq!(prg.len(), 16 * 1024);
         assert_eq!(chr.len(), 8 * 1024);

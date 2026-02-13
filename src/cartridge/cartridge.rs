@@ -525,22 +525,15 @@ mod tests {
     fn test_load_rom_with_trainer_stores_trainer_data() {
         // Create a ROM with trainer bit set and custom trainer data
         let mut rom = vec![
-            b'N',
-            b'E',
-            b'S',
-            0x1A,  // iNES header
-            1,     // PRG ROM size (16KB units)
-            1,     // CHR ROM size (8KB units)
-            0x04,  // Flags 6 with trainer bit set (bit 2)
-            0,     // Flags 7
-            0,     // Flags 8 (PRG RAM size)
-            0,     // Flags 9
-            0,     // Flags 10
-            0,
-            0,
-            0,
-            0,
-            0, // Reserved (unused)
+            b'N', b'E', b'S', 0x1A, // iNES header
+            1,    // PRG ROM size (16KB units)
+            1,    // CHR ROM size (8KB units)
+            0x04, // Flags 6 with trainer bit set (bit 2)
+            0,    // Flags 7
+            0,    // Flags 8 (PRG RAM size)
+            0,    // Flags 9
+            0,    // Flags 10
+            0, 0, 0, 0, 0, // Reserved (unused)
         ];
 
         // Add 512 bytes of trainer data with a pattern
@@ -560,8 +553,8 @@ mod tests {
         assert_eq!(trainer.len(), 512);
 
         // Verify trainer data matches what we put in
-        for i in 0..512 {
-            assert_eq!(trainer[i], ((i + 100) % 256) as u8);
+        for (i, &byte) in trainer.iter().enumerate() {
+            assert_eq!(byte, ((i + 100) % 256) as u8);
         }
 
         // Verify mapper can still read PRG and CHR correctly
