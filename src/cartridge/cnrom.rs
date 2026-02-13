@@ -338,8 +338,8 @@ mod tests {
 
         // Verify writes
         assert_eq!(mapper.read_prg(0x6000), 0x00);
-        assert_eq!(mapper.read_prg(0x6100), 0x00); // 0x100 & 0xFF = 0x00
-        assert_eq!(mapper.read_prg(0x7FFF), 0xFF); // 0x1FFF & 0xFF = 0xFF
+        assert_eq!(mapper.read_prg(0x6100), 0x00); // offset 0x100: (0x100 & 0xFF) = 0x00
+        assert_eq!(mapper.read_prg(0x7FFF), 0xFF); // offset 0x1FFF: (0x1FFF & 0xFF) = 0xFF
 
         // Take snapshot
         let prg_ram = mapper.wram_snapshot();

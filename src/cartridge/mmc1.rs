@@ -1265,7 +1265,7 @@ mod tests {
         restored.cpu_cycle();
         restored.write_prg(0x8000, 0x01); // 4th bit
         restored.cpu_cycle();
-        restored.write_prg(0x8000, 0x01); // 5th bit (completes: 0b11101)
+        restored.write_prg(0x8000, 0x01); // 5th bit (completes write sequence)
 
         // The control register should now be set to 0b11011 = 27
         // Bits are loaded LSB first: 1, 1, 0, 1, 1
