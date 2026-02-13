@@ -85,9 +85,13 @@ impl Mapper for AxROMMapper {
 
     fn get_mirroring(&self) -> MirroringMode {
         // Bit 4 determines one-screen mirroring mode
-        // We use SingleScreen for both modes (PPU memory will handle the actual mirroring)
-        // The distinction between upper/lower isn't needed at this level
-        MirroringMode::SingleScreen
+        // 0 = lower nametable (single-screen A)
+        // 1 = upper nametable (single-screen B)
+        if (self.bank_select & 0x10) != 0 {
+            MirroringMode::SingleScreenUpper
+        } else {
+            MirroringMode::SingleScreenLower
+        }
     }
 
     fn mapper_number(&self) -> u8 {
@@ -209,11 +213,11 @@ mod tests {
 
         // Write with bit 4 = 0 (lower nametable)
         mapper.write_prg(0x8000, 0x00); // Bits: 0000 0000
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
 
         // Write with bit 4 = 0 but other bits set
         mapper.write_prg(0x8000, 0x07); // Bits: 0000 0111
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
     }
 
     #[test]
@@ -224,7 +228,7 @@ mod tests {
 
         // Write with bit 4 = 1 (upper nametable)
         mapper.write_prg(0x8000, 0x10); // Bits: 0001 0000
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenUpper);
     }
 
     #[test]
