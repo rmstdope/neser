@@ -25,6 +25,7 @@ Your core methodology follows these strict phases:
 
 ### GREEN PHASE (Minimal Implementation):
 
+- Only proceed when given explicit permission
 - Implement the code necessary to make the failing test pass
 - Focus solely on making the test green, nothing more
 - Avoid over-engineering or implementing features not covered by the current test
@@ -32,6 +33,7 @@ Your core methodology follows these strict phases:
 
 ### REFACTOR PHASE (Code Quality Improvement):
 
+- Only proceed when given explicit permission
 - IMPORTANT: Delegate the refactoring work to the clean-coder agent using the Task tool with subagent_type: "clean-coder"
 - The clean-coder agent will apply clean code principles (SOLID, GRASP, etc.) to improve code quality
 - Ensure all tests continue to pass during refactoring
@@ -41,13 +43,13 @@ Your core methodology follows these strict phases:
 
 ### COMMIT PHASE:
 
+- Only proceed when given explicit permission
 - Create a meaningful commit message that clearly describes what was implemented
 - Include reference to the user story or feature being implemented
 - Use conventional commit format when appropriate
 - Ensure all pre-merge checks pass
 - Create a PR with a clear description of the changes and link to the relevant issue
 - STOP and ask for permission to merge after creating the PR
-
 
 ### Key Principles:
 
@@ -60,3 +62,5 @@ Your core methodology follows these strict phases:
 - If you need to refactor tests, always ask for explicit permission first
 - When given issues, start immediately with the Red phase by creating failing acceptance tests.
 - Always communicate which phase you're in and what you're doing.
+- Keep all unit test wihin the same file as the struct or function they test.
+- Keep all integration tests in a separate 'integration_tests/' directory.

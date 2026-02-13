@@ -27,6 +27,7 @@
 use crate::trace_mapper;
 
 use crate::cartridge::cartridge::MirroringMode;
+use crate::cartridge::common::BankedRom;
 use crate::cartridge::mapper::Mapper;
 
 /// Submapper variants for Bandai FCG
@@ -42,7 +43,7 @@ pub enum BandaiFcgVariant {
 }
 
 pub struct BandaiFcgMapper {
-    prg_rom: Vec<u8>,
+    prg_rom: BankedRom,
     chr_rom: Vec<u8>,
     chr_ram: Vec<u8>,
     mirroring: MirroringMode,
@@ -83,7 +84,7 @@ impl BandaiFcgMapper {
         };
 
         Self {
-            prg_rom,
+            prg_rom: BankedRom::new(prg_rom, Self::PRG_BANK_SIZE),
             chr_rom,
             chr_ram,
             mirroring,
@@ -98,11 +99,12 @@ impl BandaiFcgMapper {
     }
 
     fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
+        self.prg_rom.num_banks()
     }
 
     fn last_prg_bank(&self) -> usize {
-        self.prg_bank_count().saturating_sub(1)
+        let count = self.prg_bank_count();
+        if count == 0 { 0 } else { count - 1 }
     }
 
     fn chr_bank_count(&self) -> usize {
@@ -148,25 +150,13 @@ impl Mapper for BandaiFcgMapper {
         match addr {
             0x8000..=0xBFFF => {
                 // Switchable 16KB bank
-                let bank_count = self.prg_bank_count();
-                if bank_count == 0 {
-                    return 0;
-                }
-                let bank_index = (self.prg_bank as usize) % bank_count;
-                let offset = (addr - 0x8000) as usize;
                 self.prg_rom
-                    .get(bank_index * Self::PRG_BANK_SIZE + offset)
-                    .copied()
-                    .unwrap_or(0)
+                    .read_with_base(self.prg_bank as usize, 0x8000, addr)
             }
             0xC000..=0xFFFF => {
                 // Fixed last 16KB bank
                 let bank_index = self.last_prg_bank();
-                let offset = (addr - 0xC000) as usize;
-                self.prg_rom
-                    .get(bank_index * Self::PRG_BANK_SIZE + offset)
-                    .copied()
-                    .unwrap_or(0)
+                self.prg_rom.read_with_base(bank_index, 0xC000, addr)
             }
             _ => 0,
         }

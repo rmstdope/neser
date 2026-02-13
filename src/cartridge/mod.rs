@@ -26,6 +26,8 @@ mod sunsoft_4;
 mod sunsoft_fme7;
 #[cfg(test)]
 pub mod test_helpers;
+#[cfg(test)]
+mod tests_banked_rom_migration;
 mod uxrom;
 mod vrc2_vrc4;
 mod vrc6;

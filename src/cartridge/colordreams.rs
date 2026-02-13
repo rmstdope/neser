@@ -1,10 +1,9 @@
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 32 * 1024; // 32KB
 const CHR_BANK_SIZE: usize = 8 * 1024; // 8KB
-const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 
 /// Mapper 11 - Color Dreams
 ///
@@ -26,9 +25,9 @@ const CHR_MASK: u16 = 0x1FFF; // 8KB mask
 /// - Used in unlicensed games like Crystal Mines, Bible Adventures
 /// - Some variants support different bank counts
 pub struct ColorDreamsMapper {
-    prg_rom: Vec<u8>,
+    prg_rom: BankedRom,
     prg_ram: PrgRam,
-    chr_rom: Vec<u8>,
+    chr_rom: BankedRom,
     mirroring: MirroringMode,
     prg_bank_select: u8,
     chr_bank_select: u8,
@@ -38,25 +37,13 @@ impl ColorDreamsMapper {
     /// Create a new ColorDreams mapper.
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         Self {
-            prg_rom,
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom,
+            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
             mirroring,
             prg_bank_select: 0,
             chr_bank_select: 0,
         }
-    }
-
-    fn prg_bank_offset(&self) -> usize {
-        let num_banks = (self.prg_rom.len() / PRG_BANK_SIZE).max(1);
-        let bank = (self.prg_bank_select as usize) % num_banks;
-        bank * PRG_BANK_SIZE
-    }
-
-    fn chr_bank_offset(&self) -> usize {
-        let num_banks = (self.chr_rom.len() / CHR_BANK_SIZE).max(1);
-        let bank = (self.chr_bank_select as usize) % num_banks;
-        bank * CHR_BANK_SIZE
     }
 }
 
@@ -69,10 +56,8 @@ impl Mapper for ColorDreamsMapper {
 
         match addr {
             0x8000..=0xFFFF => {
-                let bank_offset = self.prg_bank_offset();
-                let offset = (addr - 0x8000) as usize;
-                let index = bank_offset + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
+                self.prg_rom
+                    .read_with_base(self.prg_bank_select as usize, 0x8000, addr)
             }
             _ => 0,
         }
@@ -94,9 +79,8 @@ impl Mapper for ColorDreamsMapper {
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        let bank_offset = self.chr_bank_offset();
-        let index = bank_offset + (addr & CHR_MASK) as usize;
-        self.chr_rom.get(index).copied().unwrap_or(0)
+        self.chr_rom
+            .read_with_base(self.chr_bank_select as usize, 0x0000, addr)
     }
 
     fn write_chr(&mut self, _addr: u16, _value: u8) {

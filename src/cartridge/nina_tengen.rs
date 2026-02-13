@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
@@ -32,7 +32,7 @@ const CHR_BANK_SIZE: usize = 0x2000; // 8KB
 /// - Games: Holy Diver (Irem), Uchuusen: Cosmo Carrier (Irem)
 /// - Also used by Tengen: Pac-Man, RBI Baseball, Tetris (unlicensed)
 pub struct NinaTengenMapper {
-    prg_rom: Vec<u8>,
+    prg_rom: BankedRom,
     prg_ram: PrgRam,
     chr_rom: Vec<u8>,
     prg_bank_select: u8,
@@ -43,7 +43,7 @@ pub struct NinaTengenMapper {
 impl NinaTengenMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         Self {
-            prg_rom,
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_rom,
             prg_bank_select: 0,
@@ -52,20 +52,16 @@ impl NinaTengenMapper {
         }
     }
 
-    fn get_prg_bank_offset(&self) -> usize {
-        let num_banks = (self.prg_rom.len() / PRG_BANK_SIZE).max(1);
-        let bank = (self.prg_bank_select as usize) % num_banks;
-        bank * PRG_BANK_SIZE
-    }
-
-    fn get_last_prg_bank_offset(&self) -> usize {
-        self.prg_rom.len().saturating_sub(PRG_BANK_SIZE)
-    }
-
     fn get_chr_bank_offset(&self) -> usize {
         let num_banks = (self.chr_rom.len() / CHR_BANK_SIZE).max(1);
         let bank = (self.chr_bank_select as usize) % num_banks;
         bank * CHR_BANK_SIZE
+    }
+
+    fn get_last_prg_bank(&self) -> usize {
+        // Get the last bank number (num_banks - 1)
+        let num_banks = self.prg_rom.num_banks();
+        if num_banks == 0 { 0 } else { num_banks - 1 }
     }
 }
 
@@ -80,17 +76,13 @@ impl Mapper for NinaTengenMapper {
         match addr {
             0x8000..=0xBFFF => {
                 // Switchable 16KB bank
-                let bank_offset = self.get_prg_bank_offset();
-                let offset = (addr - 0x8000) as usize;
-                let index = bank_offset + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
+                self.prg_rom
+                    .read_with_base(self.prg_bank_select as usize, 0x8000, addr)
             }
             0xC000..=0xFFFF => {
                 // Fixed to last 16KB bank
-                let bank_offset = self.get_last_prg_bank_offset();
-                let offset = (addr - 0xC000) as usize;
-                let index = bank_offset + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
+                let last_bank = self.get_last_prg_bank();
+                self.prg_rom.read_with_base(last_bank, 0xC000, addr)
             }
             _ => 0,
         }
