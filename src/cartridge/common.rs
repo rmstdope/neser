@@ -805,7 +805,7 @@ mod tests {
         // CHR-ROM should return empty snapshot
         let chr_rom_data = vec![0xAA; 8192];
         let chr = ChrMemory::new(chr_rom_data);
-        
+
         let snapshot = chr.snapshot();
         assert!(snapshot.is_empty(), "CHR-ROM snapshot should be empty");
     }
@@ -815,11 +815,11 @@ mod tests {
         // CHR-ROM should ignore restore attempts (ROM is read-only)
         let chr_rom_data = vec![0xAA; 8192];
         let mut chr = ChrMemory::new(chr_rom_data);
-        
+
         // Try to restore different data
         let restore_data = vec![0x55; 8192];
         chr.restore(&restore_data);
-        
+
         // CHR-ROM should still contain original data
         assert_eq!(chr.read(0x0000), 0xAA);
         assert_eq!(chr.read(0x1FFF), 0xAA);
@@ -829,11 +829,11 @@ mod tests {
     #[test]
     fn test_bank_switch_basic() {
         let mut bank = BankSwitch::new(4);
-        
+
         // Default bank is 0
         assert_eq!(bank.current(), 0);
         assert_eq!(bank.raw(), 0);
-        
+
         // Set to bank 2
         bank.set(2);
         assert_eq!(bank.current(), 2);
@@ -843,16 +843,16 @@ mod tests {
     #[test]
     fn test_bank_switch_wrapping() {
         let mut bank = BankSwitch::new(4);
-        
+
         // Bank 5 wraps to 1 (5 % 4 = 1)
         bank.set(5);
         assert_eq!(bank.current(), 1);
         assert_eq!(bank.raw(), 5);
-        
+
         // Bank 8 wraps to 0 (8 % 4 = 0)
         bank.set(8);
         assert_eq!(bank.current(), 0);
-        
+
         // Bank 255 wraps appropriately
         bank.set(255);
         assert_eq!(bank.current(), 255 % 4);
@@ -861,10 +861,10 @@ mod tests {
     #[test]
     fn test_bank_switch_empty_rom() {
         let mut bank = BankSwitch::new(0);
-        
+
         // With 0 banks, always returns 0 (safe default)
         assert_eq!(bank.current(), 0);
-        
+
         bank.set(5);
         assert_eq!(bank.current(), 0);
         assert_eq!(bank.raw(), 5);
@@ -874,22 +874,22 @@ mod tests {
     fn test_bank_switch_offset_calculation() {
         let mut bank = BankSwitch::new(4);
         const BANK_SIZE: usize = 0x8000; // 32KB
-        
+
         // Bank 0
         assert_eq!(bank.offset(BANK_SIZE), 0);
-        
+
         // Bank 1
         bank.set(1);
         assert_eq!(bank.offset(BANK_SIZE), 0x8000);
-        
+
         // Bank 2
         bank.set(2);
         assert_eq!(bank.offset(BANK_SIZE), 0x10000);
-        
+
         // Bank 3
         bank.set(3);
         assert_eq!(bank.offset(BANK_SIZE), 0x18000);
-        
+
         // Bank 5 wraps to 1
         bank.set(5);
         assert_eq!(bank.offset(BANK_SIZE), 0x8000);
@@ -899,11 +899,11 @@ mod tests {
     fn test_bank_switch_snapshot() {
         let mut bank = BankSwitch::new(8);
         bank.set(5);
-        
+
         // Take snapshot
         let snapshot = bank.snapshot();
         assert_eq!(snapshot, vec![5]);
-        
+
         // Restore to new instance
         let mut bank2 = BankSwitch::new(8);
         bank2.restore(&snapshot);
@@ -915,7 +915,7 @@ mod tests {
     fn test_bank_switch_snapshot_empty_data() {
         let mut bank = BankSwitch::new(4);
         bank.set(3);
-        
+
         // Restore with empty data should not panic
         bank.restore(&[]);
         assert_eq!(bank.raw(), 3); // Should remain unchanged

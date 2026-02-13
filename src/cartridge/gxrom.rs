@@ -1,4 +1,4 @@
-use crate::cartridge::common::{BankedRom, BankSwitch, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankSwitch, BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
 // Memory size constants
@@ -35,9 +35,17 @@ pub struct GxROMMapper {
 impl GxROMMapper {
     /// Create a new GxROM mapper.
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        let prg_banks = if prg_rom.is_empty() { 0 } else { prg_rom.len() / PRG_BANK_SIZE };
-        let chr_banks = if chr_rom.is_empty() { 0 } else { chr_rom.len() / CHR_BANK_SIZE };
-        
+        let prg_banks = if prg_rom.is_empty() {
+            0
+        } else {
+            prg_rom.len() / PRG_BANK_SIZE
+        };
+        let chr_banks = if chr_rom.is_empty() {
+            0
+        } else {
+            chr_rom.len() / CHR_BANK_SIZE
+        };
+
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
@@ -57,9 +65,9 @@ impl Mapper for GxROMMapper {
         }
 
         match addr {
-            0x8000..=0xFFFF => {
-                self.prg_rom.read_with_base(self.prg_bank.current(), 0x8000, addr)
-            }
+            0x8000..=0xFFFF => self
+                .prg_rom
+                .read_with_base(self.prg_bank.current(), 0x8000, addr),
             _ => 0,
         }
     }

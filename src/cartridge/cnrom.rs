@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{BankedRom, BankSwitch, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankSwitch, BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const CHR_BANK_SIZE: usize = 8192; // 8KB
@@ -33,8 +33,12 @@ pub struct CNROMMapper {
 
 impl CNROMMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        let chr_banks = if chr_rom.is_empty() { 0 } else { chr_rom.len() / CHR_BANK_SIZE };
-        
+        let chr_banks = if chr_rom.is_empty() {
+            0
+        } else {
+            chr_rom.len() / CHR_BANK_SIZE
+        };
+
         Self {
             prg_rom,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),

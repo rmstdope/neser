@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{BankedRom, BankSwitch, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const PRG_BANK_SIZE_32K: usize = 0x8000; // 32KB (for AxROM)
@@ -35,8 +35,12 @@ pub struct AxROMMapper {
 impl AxROMMapper {
     pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, _mirroring: MirroringMode) -> Self {
         // AxROM uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
-        let prg_banks = if prg_rom.is_empty() { 0 } else { prg_rom.len() / PRG_BANK_SIZE_32K };
-        
+        let prg_banks = if prg_rom.is_empty() {
+            0
+        } else {
+            prg_rom.len() / PRG_BANK_SIZE_32K
+        };
+
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_32K),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
@@ -56,9 +60,9 @@ impl Mapper for AxROMMapper {
 
         // PRG ROM at $8000-$FFFF (32KB switchable bank)
         match addr {
-            0x8000..=0xFFFF => {
-                self.prg_rom.read_with_base(self.prg_bank.current(), 0x8000, addr)
-            }
+            0x8000..=0xFFFF => self
+                .prg_rom
+                .read_with_base(self.prg_bank.current(), 0x8000, addr),
             _ => 0,
         }
     }

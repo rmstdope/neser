@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{BankedRom, BankSwitch, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x8000; // 32KB
@@ -45,14 +45,22 @@ impl BnromNinaMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         // Detect variant: NINA-001 has CHR ROM, BNROM uses CHR-RAM
         let is_nina = !chr_rom.is_empty();
-        
-        let prg_banks = if prg_rom.is_empty() { 0 } else { prg_rom.len() / PRG_BANK_SIZE };
+
+        let prg_banks = if prg_rom.is_empty() {
+            0
+        } else {
+            prg_rom.len() / PRG_BANK_SIZE
+        };
         let chr_size = if is_nina {
             chr_rom.len()
         } else {
             8192 // CHR-RAM size for BNROM
         };
-        let chr_banks = if chr_size == 0 { 0 } else { chr_size / CHR_BANK_SIZE };
+        let chr_banks = if chr_size == 0 {
+            0
+        } else {
+            chr_size / CHR_BANK_SIZE
+        };
 
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
@@ -75,10 +83,9 @@ impl Mapper for BnromNinaMapper {
 
         // PRG ROM at $8000-$FFFF (32KB switchable bank)
         match addr {
-            0x8000..=0xFFFF => {
-                self.prg_rom
-                    .read_with_base(self.prg_bank.current(), 0x8000, addr)
-            }
+            0x8000..=0xFFFF => self
+                .prg_rom
+                .read_with_base(self.prg_bank.current(), 0x8000, addr),
             _ => 0,
         }
     }
