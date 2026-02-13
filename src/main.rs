@@ -1,5 +1,6 @@
 mod app_context;
 mod apu;
+mod autorun;
 mod bus;
 mod cartridge;
 mod console;
@@ -76,9 +77,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
-    let rom_path_str = config.rom_path.as_deref().unwrap_or(default_rom_path);
-    let rom_path = rom_path_str;  // Keep a copy for later use
-    let cart = cartridge::Cartridge::load_from_file(rom_path)?;
+    let rom_path = config
+        .rom_path
+        .clone()
+        .unwrap_or_else(|| default_rom_path.to_string());
+    let cart = cartridge::Cartridge::load_from_file(&rom_path)?;
 
     let rom_tv_system = cart.rom_tv_system();
     let applied = config.apply_rom_tv_system(rom_tv_system);
@@ -100,7 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if config.autorun_mode != console::AutorunMode::None {
         event_loop.init_autorun(
             config.autorun_mode,
-            rom_path,
+            &rom_path,
             config.autorun_overwrite,
             config.autorun_extend,
         )?;
