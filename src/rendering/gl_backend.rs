@@ -486,13 +486,11 @@ impl GlBackend {
             }
         }
 
-        let visible_toasts: Vec<String> = self
+        let visible_toasts = self
             .toast_manager
             .visible_toasts(now)
             .into_iter()
-            .map(|toast| toast.text.clone())
             .collect();
-
         // Start ImGui frame
         {
             let ui = self.imgui.frame();
