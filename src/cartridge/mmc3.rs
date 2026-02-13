@@ -829,7 +829,7 @@ mod tests {
     fn test_mmc3_comprehensive_state_roundtrip() {
         // Test complete MMC3 state including banks, IRQ, and PRG-RAM
         let prg_rom = banked_data(8 * 1024, 32); // 256KB = 32 8KB banks
-        let chr_rom = banked_data(1024, 128);    // 128KB = 128 1KB banks
+        let chr_rom = banked_data(1024, 128); // 128KB = 128 1KB banks
 
         let mut mapper = MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
 
@@ -853,8 +853,8 @@ mod tests {
 
         // Configure IRQ
         mapper.write_prg(0xC000, 10); // IRQ latch = 10
-        mapper.write_prg(0xC001, 0);  // Reload IRQ counter
-        mapper.write_prg(0xE001, 0);  // Enable IRQ
+        mapper.write_prg(0xC001, 0); // Reload IRQ counter
+        mapper.write_prg(0xE001, 0); // Enable IRQ
 
         // Set mirroring (bit 0: 0 = Vertical, 1 = Horizontal)
         mapper.write_prg(0xA000, 0x00); // Vertical mirroring
@@ -865,10 +865,10 @@ mod tests {
         mapper.write_prg(0x7FFF, 0x55);
 
         // Verify state before snapshot
-        assert_eq!(mapper.read_prg(0x8000), 2);   // R6 bank
-        assert_eq!(mapper.read_prg(0xA000), 3);   // R7 bank
-        assert_eq!(mapper.read_chr(0x0000), 16);  // R0 bank (even 2KB)
-        assert_eq!(mapper.read_chr(0x0400), 17);  // R0 bank + 1 (odd 2KB)
+        assert_eq!(mapper.read_prg(0x8000), 2); // R6 bank
+        assert_eq!(mapper.read_prg(0xA000), 3); // R7 bank
+        assert_eq!(mapper.read_chr(0x0000), 16); // R0 bank (even 2KB)
+        assert_eq!(mapper.read_chr(0x0400), 17); // R0 bank + 1 (odd 2KB)
         assert_eq!(mapper.read_prg(0x6000), 0xAA); // PRG-RAM
         assert_eq!(mapper.read_prg(0x7FFF), 0x55);
         assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
@@ -898,7 +898,8 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
 
         // Configure IRQ
         mapper.write_prg(0xC000, 5); // Latch = 5

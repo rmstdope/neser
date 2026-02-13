@@ -1175,7 +1175,8 @@ mod tests {
             }
         }
 
-        let mut mapper = MMC1Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper =
+            MMC1Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
 
         // Configure complex state with all registers
         // Control register: CHR mode 1 (two 4KB banks), PRG mode 3 (switch at $8000, fixed last at $C000), horizontal mirroring
@@ -1213,9 +1214,9 @@ mod tests {
         assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
         assert_eq!(mapper.read_chr(0x0000), 105); // CHR bank 5
         assert_eq!(mapper.read_chr(0x1000), 110); // CHR bank 10
-        assert_eq!(mapper.read_prg(0x8000), 7);   // Switchable bank 7 (PRG mode 3)
-        assert_eq!(mapper.read_prg(0xC000), 31);  // Fixed last bank
-        assert_eq!(mapper.read_prg(0x6000), 0);   // PRG-RAM
+        assert_eq!(mapper.read_prg(0x8000), 7); // Switchable bank 7 (PRG mode 3)
+        assert_eq!(mapper.read_prg(0xC000), 31); // Fixed last bank
+        assert_eq!(mapper.read_prg(0x6000), 0); // PRG-RAM
 
         // Take snapshot
         let registers = mapper.registers_snapshot();
@@ -1232,9 +1233,9 @@ mod tests {
         assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
         assert_eq!(restored.read_chr(0x0000), 105); // CHR bank 5
         assert_eq!(restored.read_chr(0x1000), 110); // CHR bank 10
-        assert_eq!(restored.read_prg(0x8000), 7);   // Switchable bank 7
-        assert_eq!(restored.read_prg(0xC000), 31);  // Fixed last bank
-        assert_eq!(restored.read_prg(0x6000), 0);   // PRG-RAM restored
+        assert_eq!(restored.read_prg(0x8000), 7); // Switchable bank 7
+        assert_eq!(restored.read_prg(0xC000), 31); // Fixed last bank
+        assert_eq!(restored.read_prg(0x6000), 0); // PRG-RAM restored
         assert_eq!(restored.read_prg(0x60FF), 0xFF); // PRG-RAM restored
     }
 
@@ -1244,7 +1245,8 @@ mod tests {
         let prg_rom = vec![0; 256 * 1024];
         let chr_rom = vec![0; 128 * 1024];
 
-        let mut mapper = MMC1Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper =
+            MMC1Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
 
         // Start writing to control register but don't finish
         mapper.cpu_cycle();

@@ -304,7 +304,8 @@ mod tests {
         }
 
         // Create mapper and set it to a specific state
-        let mut mapper = CNROMMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper =
+            CNROMMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
         mapper.write_prg(0x8000, 2); // Select CHR bank 2
 
         // Verify the bank is selected
@@ -329,7 +330,8 @@ mod tests {
         let prg_rom = vec![0; 32 * 1024];
         let chr_rom = vec![0; 32 * 1024];
 
-        let mut mapper = CNROMMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+        let mut mapper =
+            CNROMMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
 
         // Write pattern to PRG-RAM
         for i in 0..0x2000 {

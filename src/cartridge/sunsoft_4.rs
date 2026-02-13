@@ -415,15 +415,16 @@ mod tests {
             }
         }
 
-        let mut mapper = Sunsoft4Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+        let mut mapper =
+            Sunsoft4Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
 
         // Configure complex state
         mapper.write_prg(0x8000, 10); // CHR bank 0 (addresses $8000-$8FFF)
         mapper.write_prg(0x9000, 20); // CHR bank 1 (addresses $9000-$9FFF)
         mapper.write_prg(0xA000, 30); // CHR bank 2 (addresses $A000-$AFFF)
         mapper.write_prg(0xB000, 40); // CHR bank 3 (addresses $B000-$BFFF)
-        mapper.write_prg(0xF000, 2);  // PRG bank at $8000 (addresses $F000-$FFFF)
-        mapper.write_prg(0xE000, 1);  // Mirroring control (addresses $E000-$EFFF): 1 = horizontal
+        mapper.write_prg(0xF000, 2); // PRG bank at $8000 (addresses $F000-$FFFF)
+        mapper.write_prg(0xE000, 1); // Mirroring control (addresses $E000-$EFFF): 1 = horizontal
         mapper.write_prg(0xC000, 50); // Nametable bank 0 (addresses $C000-$CFFF)
         mapper.write_prg(0xD000, 60); // Nametable bank 1 (addresses $D000-$DFFF)
 
