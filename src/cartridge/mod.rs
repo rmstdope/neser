@@ -24,6 +24,8 @@ mod nrom;
 mod rom_db;
 mod sunsoft_4;
 mod sunsoft_fme7;
+#[cfg(test)]
+pub mod test_helpers;
 mod uxrom;
 mod vrc2_vrc4;
 mod vrc6;

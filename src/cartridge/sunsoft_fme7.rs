@@ -400,16 +400,7 @@ impl Mapper for SunsoftFme7Mapper {
 mod tests {
     use super::*;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
-
-    fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
-        let mut data = vec![0u8; bank_size * num_banks];
-        for bank in 0..num_banks {
-            for i in 0..bank_size {
-                data[bank * bank_size + i] = bank as u8;
-            }
-        }
-        data
-    }
+    use crate::cartridge::test_helpers::banked_data;
 
     #[test]
     fn test_mapper_69_is_wired_in_factory() {
