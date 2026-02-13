@@ -84,6 +84,11 @@ If formatting or content is incorrect, update the issue:
 gh issue edit <issue-number> --body-file /tmp/corrected-body.md
 ```
 
+9. **Run self-learning retrospective automatically**:
+   - After creating an issue, always run a `self-learning-skills` retrospective without waiting for a reminder.
+   - After merging and closing an issue, always run a `self-learning-skills` retrospective without waiting for a reminder.
+   - Capture navigator feedback and update relevant skill files if improvements are identified.
+
 ## Troubleshooting
 
 ### Preflight checks (recommended)

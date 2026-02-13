@@ -58,6 +58,14 @@ When creating issues, always add the appropriate labels to the issue using gh:
 - refactoring - for anything that has to do with refactoring the codebase
 - testing - for anything that has to do with testing
 
+### Definition of Done
+
+For any completed issue workflow task, the following is mandatory:
+
+- After creating a GitHub issue, ALWAYS run a `self-learning-skills` retrospective automatically.
+- After an issue is merged and closed, ALWAYS run a `self-learning-skills` retrospective automatically.
+- In that retrospective, ALWAYS ask the navigator for feedback and update skill documentation immediately when improvements are identified.
+
 ### Committing and Merging to main
 
 Before merging or committing to main, the following checkpoint shall pass:
