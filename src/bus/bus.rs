@@ -376,6 +376,22 @@ impl Bus {
             .set_button(button, pressed);
     }
 
+    /// Get joypad button states as a u8 bitmask (for autorun recording).
+    /// Returns 0 if the controller is not a joypad.
+    pub fn get_joypad_button_states(&self, port: u8) -> u8 {
+        if !(1..=2).contains(&port) {
+            return 0;
+        }
+        
+        let controller = self.controllers[(port - 1) as usize].borrow();
+        let state = controller.capture_state();
+        
+        match state {
+            crate::input::ControllerState::Joypad(joypad_state) => joypad_state.button_states,
+            _ => 0, // Not a joypad
+        }
+    }
+
     /// Set the controller type for a specific port.
     pub fn set_controller_type(&mut self, port: u8, controller_type: ControllerType) {
         if !(1..=2).contains(&port) {

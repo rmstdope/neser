@@ -362,6 +362,11 @@ impl Nes {
             .set_button(controller, button, pressed);
     }
 
+    /// Get joypad button states as a u8 bitmask (for autorun recording).
+    pub fn get_joypad_button_states(&self, port: u8) -> u8 {
+        self.bus.borrow().get_joypad_button_states(port)
+    }
+
     /// Return the input type for a controller port.
     pub fn controller_input_type(&self, port: u8) -> Option<crate::input::ControllerInput> {
         self.bus.borrow().controller_input_type(port)

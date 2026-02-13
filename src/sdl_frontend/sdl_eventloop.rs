@@ -361,6 +361,40 @@ impl SdlEventLoop {
         Ok((controllers, controller_player_map))
     }
 
+    /// Capture current button states for both players as u8 bitmasks.
+    /// Returns (player1_state, player2_state).
+    fn capture_button_states(&self, nes: &Nes) -> (u8, u8) {
+        let player1 = nes.get_joypad_button_states(1);
+        let player2 = nes.get_joypad_button_states(2);
+        (player1, player2)
+    }
+
+    /// Apply button states from u8 bitmasks for both players.
+    fn apply_button_states(&self, nes: &mut Nes, player1: u8, player2: u8) {
+        let buttons = [
+            Button::A,
+            Button::B,
+            Button::Select,
+            Button::Start,
+            Button::Up,
+            Button::Down,
+            Button::Left,
+            Button::Right,
+        ];
+
+        // Apply player 1 state (port 1)
+        for button in &buttons {
+            let pressed = (player1 & (1 << (*button as u8))) != 0;
+            nes.set_button(1, *button, pressed);
+        }
+
+        // Apply player 2 state (port 2)
+        for button in &buttons {
+            let pressed = (player2 & (1 << (*button as u8))) != 0;
+            nes.set_button(2, *button, pressed);
+        }
+    }
+
     fn should_manual_frame_limit(vsync_enabled: bool) -> bool {
         !vsync_enabled
     }
