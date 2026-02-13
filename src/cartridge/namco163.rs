@@ -1,6 +1,6 @@
 use std::cell::Cell;
 
-use crate::cartridge::common::{DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
 /// Mapper 19 - Namco 163 (Namco 129/163 with expansion audio)
@@ -30,8 +30,7 @@ use crate::cartridge::{Mapper, MirroringMode};
 /// - Expansion audio implemented with wavetable synthesis
 pub struct Namco163Mapper {
     prg_rom: Vec<u8>,
-    chr_rom: Vec<u8>,
-    chr_ram: Vec<u8>,
+    chr_memory: ChrMemory,
     prg_ram: PrgRam,
     mirroring: MirroringMode,
     regs: [u8; 16],
@@ -54,16 +53,9 @@ impl Namco163Mapper {
     const IRQ_COUNTER_MAX: u16 = 0x7FFF;
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        let chr_ram = if chr_rom.is_empty() {
-            vec![0; DEFAULT_CHR_RAM_SIZE]
-        } else {
-            Vec::new()
-        };
-
         Self {
             prg_rom,
-            chr_rom,
-            chr_ram,
+            chr_memory: ChrMemory::new(chr_rom),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             mirroring,
             regs: [0; 16],
@@ -81,21 +73,12 @@ impl Namco163Mapper {
         }
     }
 
-    fn has_chr_ram(&self) -> bool {
-        self.chr_rom.is_empty()
-    }
-
     fn prg_bank_count_8k(&self) -> usize {
         self.prg_rom.len() / Self::PRG_BANK_SIZE_8K
     }
 
     fn chr_bank_count_1k(&self) -> usize {
-        let chr_len = if self.has_chr_ram() {
-            self.chr_ram.len()
-        } else {
-            self.chr_rom.len()
-        };
-        chr_len / Self::CHR_BANK_SIZE_1K
+        self.chr_memory.size() / Self::CHR_BANK_SIZE_1K
     }
 
     fn prg_bank_index_8k(&self, bank: u8) -> usize {
@@ -375,18 +358,10 @@ impl Mapper for Namco163Mapper {
         let bank = self.chr_bank_index_1k(bank_reg);
         let index = bank * Self::CHR_BANK_SIZE_1K + bank_offset;
 
-        if self.has_chr_ram() {
-            self.chr_ram.get(index).copied().unwrap_or(0)
-        } else {
-            self.chr_rom.get(index).copied().unwrap_or(0)
-        }
+        self.chr_memory.read_at_index(index)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        if !self.has_chr_ram() {
-            return;
-        }
-
         let chr_addr = (addr & 0x1FFF) as usize;
         let slot = (chr_addr / Self::CHR_BANK_SIZE_1K).min(7);
         let bank_offset = chr_addr & (Self::CHR_BANK_SIZE_1K - 1);
@@ -394,9 +369,7 @@ impl Mapper for Namco163Mapper {
         let bank = self.chr_bank_index_1k(bank_reg);
         let index = bank * Self::CHR_BANK_SIZE_1K + bank_offset;
 
-        if index < self.chr_ram.len() {
-            self.chr_ram[index] = value;
-        }
+        self.chr_memory.write_at_index(index, value);
     }
 
     fn cpu_cycle(&mut self) {
@@ -457,14 +430,11 @@ impl Mapper for Namco163Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_ram.clone()
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.chr_ram.len());
-        if to_copy > 0 {
-            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
-        }
+        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
