@@ -2,7 +2,7 @@ use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::app_context::AppContext;
 use super::autorun_state::AutorunState;
-use crate::console::{AutorunMode, Config, ControllerStateWrapper, Nes, SaveState};
+use crate::console::{AutorunMode, Config, ControllerStateWrapper, Nes, SaveState, TvSystem};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
@@ -903,14 +903,14 @@ impl SdlEventLoop {
                         nes,
                     );
 
-                    let overlay_text = self.help_overlay_render_text();
+                    let overlay_text = self.overlay_render_text(nes);
                     let zapper_active = !Self::zapper_ports(nes).is_empty();
                     self.update_cursor_visibility(zapper_active);
                     let crosshair = self.zapper_crosshair(nes);
                     let action = gl_backend.render(
                         nes,
                         self.debugger_open_requested,
-                        overlay_text,
+                        overlay_text.as_deref(),
                         false,
                         crosshair,
                     );
@@ -979,14 +979,14 @@ impl SdlEventLoop {
                 nes.clear_ready_to_render();
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
-                let overlay_text = self.help_overlay_render_text();
+                let overlay_text = self.overlay_render_text(nes);
                 let zapper_active = !Self::zapper_ports(nes).is_empty();
                 self.update_cursor_visibility(zapper_active);
                 let crosshair = self.zapper_crosshair(nes);
                 let _ = gl_backend.render(
                     nes,
                     self.debugger_open_requested,
-                    overlay_text,
+                    overlay_text.as_deref(),
                     false,
                     crosshair,
                 );
@@ -1489,6 +1489,73 @@ R: Select\n\
 T: Start"
     }
 
+    /// Generate overlay text for rendering.
+    /// Returns autorun overlay text if in autorun mode, otherwise help overlay text if visible.
+    fn overlay_render_text(&self, nes: &Nes) -> Option<String> {
+        // Check if autorun is active and generate overlay
+        if let Some(ref autorun_state) = self.autorun_state {
+            let tv_system = nes.config.borrow().tv_system;
+            let overlay = self.autorun_overlay_text(autorun_state, tv_system);
+            return Some(overlay);
+        }
+
+        // Fall back to help overlay if visible
+        if self.help_overlay_visible {
+            Some(Self::help_overlay_text().to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Generate autorun overlay text based on current mode and state.
+    fn autorun_overlay_text(&self, autorun_state: &AutorunState, tv_system: TvSystem) -> String {
+        use crate::console::AutorunMode;
+        
+        match autorun_state.mode() {
+            AutorunMode::Playback => {
+                let current_frames = autorun_state.current_frame_index();
+                let total_frames = autorun_state.total_frames();
+                let (elapsed, total) = Self::format_time_pair_for(current_frames, total_frames, tv_system);
+                format!("Playback\n{} / {}", elapsed, total)
+            }
+            AutorunMode::Record => {
+                if autorun_state.is_extending_playback() {
+                    // In extend mode during playback phase
+                    let current_frames = autorun_state.current_frame_index();
+                    let total_frames = autorun_state.total_frames();
+                    let (elapsed, total) = Self::format_time_pair_for(current_frames, total_frames, tv_system);
+                    format!("Playback\n{} / {}", elapsed, total)
+                } else {
+                    // In record mode (or extend mode after playback finished)
+                    let current_frames = autorun_state.total_frames();
+                    let (elapsed, _) = Self::format_time_pair_for(current_frames, current_frames, tv_system);
+                    format!("Recording\n{} / {}", elapsed, elapsed)
+                }
+            }
+            AutorunMode::None => String::new(),
+        }
+    }
+
+    /// Format frame counts as MM:SS time pairs.
+    fn format_time_pair_for(
+        current_frames: usize,
+        total_frames: usize,
+        tv_system: TvSystem,
+    ) -> (String, String) {
+        let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
+        let current_secs = current_frames / fps;
+        let total_secs = total_frames / fps;
+        (Self::format_mm_ss(current_secs), Self::format_mm_ss(total_secs))
+    }
+
+    /// Format seconds as MM:SS.
+    fn format_mm_ss(seconds: usize) -> String {
+        let minutes = seconds / 60;
+        let secs = seconds % 60;
+        format!("{:02}:{:02}", minutes, secs)
+    }
+
+    #[allow(dead_code)]
     fn help_overlay_render_text(&self) -> Option<&'static str> {
         if self.help_overlay_visible {
             Some(Self::help_overlay_text())

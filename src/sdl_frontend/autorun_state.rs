@@ -81,7 +81,6 @@ impl AutorunState {
     }
 
     /// Get the current frame index.
-    #[allow(dead_code)]
     pub fn current_frame_index(&self) -> usize {
         self.frame_index
     }
