@@ -554,10 +554,7 @@ mod tests {
     // --- MapperCapabilities tests ---
 
     fn make_mapper(id: u16) -> Box<dyn Mapper> {
-        let prg_size = match id {
-            5 => 32 * 1024, // MMC5 requires minimum 32KB PRG-ROM
-            _ => 32 * 1024,
-        };
+        let prg_size = 32 * 1024; // Use 32KB PRG-ROM for these tests (MMC5 and others)
         let prg_rom = vec![0u8; prg_size];
         let chr_rom = vec![0u8; 8 * 1024];
         let metadata = MapperContext::new(id, prg_rom, chr_rom, MirroringMode::Horizontal);
