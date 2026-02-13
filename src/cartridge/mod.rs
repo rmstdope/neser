@@ -21,6 +21,10 @@ mod namco118;
 mod namco163;
 mod nina_tengen;
 mod nrom;
+#[cfg(test)]
+mod open_bus_tests;
+#[cfg(test)]
+mod mapper_open_bus_tests;
 mod rom_db;
 mod sunsoft_4;
 mod sunsoft_fme7;
