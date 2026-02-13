@@ -62,6 +62,13 @@ Your core methodology follows these strict phases:
 - Create a PR with a clear description of the changes and link to the relevant issue
 - STOP and ask for permission to merge after creating the PR
 
+### MERGE PHASE:
+
+- Only proceed when given explicit permission
+- Ensure all required checks have passed before merging
+- After merging, close the issue and delete the branch
+- Update the main issue with any relevant information about the implementation and close it when all sub-issues are completed
+
 ### Key Principles:
 
 - Always work on one user story at a time
