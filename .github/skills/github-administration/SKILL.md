@@ -60,7 +60,7 @@ gh issue create --title "Short, specific title" --body-file /tmp/issue-body.md -
 
 7. **Quoting rules**:
    - Use double quotes around `--title` arguments with spaces.
-   - For `--body`, **always use `--body-file`** instead of inline content.
+   - For issue `--body`, **always use `--body-file`** instead of inline content (even for short bodies).
    - Create body files using IDE file creation tools (preferred) to avoid all shell quoting issues.
    - If using bash heredoc, always wrap in single quotes: `<<'EOF'` (not `<<EOF`).
    - Escape embedded double quotes in titles with a backslash: `\"`.
@@ -85,6 +85,23 @@ gh issue edit <issue-number> --body-file /tmp/corrected-body.md
 ```
 
 ## Troubleshooting
+
+### Preflight checks (recommended)
+
+Before creating issues, run a quick preflight to reduce failures and rework:
+
+```sh
+# Confirm authenticated account (assignee context)
+gh api user --jq .login
+
+# Confirm available labels in this repository
+gh label list --json name --limit 100
+
+# Optional: confirm current repo context
+gh repo view --json nameWithOwner
+```
+
+This helps avoid common errors like missing labels or assigning to the wrong account.
 
 ### PR creation prompts for where to push branch
 
@@ -247,10 +264,13 @@ This approach ensures:
 - Easy verification of which issues were created
 - Simple recovery if one phase fails
 
-### Alternative: Creating issues with inline short bodies
+### Single-issue fast path (still using body files)
 
 ```sh
-gh issue create --title "Fix save state corruption" --body "Problem: ..." --label bug --assignee @me
+# 1) Create body file with your IDE tools, e.g. /tmp/issue.md
+
+# 2) Create issue
+gh issue create --title "Fix save state corruption" --body-file /tmp/issue.md --label bug --assignee @me
 ```
 
 ### Update existing issue
@@ -261,31 +281,37 @@ gh issue comment 123 --body "Progress: tests added; implementation in progress."
 
 ## Best Practices
 
-1. **Batch issue creation**: When creating multiple related issues (e.g., Phase 1, 2, 3 recommendations):
+1. **Run preflight checks first**:
+   - Confirm account: `gh api user --jq .login`
+   - Confirm labels: `gh label list --json name --limit 100`
+   - Optional repo check: `gh repo view --json nameWithOwner`
+   - This prevents avoidable failures before writing or submitting issue content
+
+2. **Batch issue creation**: When creating multiple related issues (e.g., Phase 1, 2, 3 recommendations):
    - Create all body files first using IDE file creation
    - Then create all issues in sequence
    - Finally, verify all issues were created with `gh issue list`
 
-2. **Issue body format**:
+3. **Issue body format**:
    - Use clear section headers: `## Problem`, `## Solution`, `## Acceptance Criteria`
    - Keep paragraphs concise and scannable
    - Use bullet points for lists
    - Include relevant links to documentation or code sections
    - Include example code blocks where helpful for understanding the change
 
-3. **Labeling consistency**:
+4. **Labeling consistency**:
    - Use standard labels: `bug`, `enhancement`, `testing`, `refactoring`, `mapper`, `games`
    - Combine multiple labels for multi-aspect issues: `--label "testing,enhancement"`
    - Document label usage in your project README
    - **Verify labels exist** before creating issues - if label doesn't exist, `gh` will fail with "could not add label: 'X' not found"
    - If a label error occurs, either use a different label or create it in GitHub UI first
 
-4. **Cross-issue references**:
+5. **Cross-issue references**:
    - When creating sub-issues, document the parent issue clearly in the body
    - Use GitHub's issue linking: "Related to #123" appears as a link
    - Update parent issue with progress when sub-issues are completed
 
-5. **Verify after creation**:
+6. **Verify after creation**:
    - Always list recent issues after batch creation to confirm success
    - Check issue formatting with `gh issue view <number>`
    - Fix any formatting issues immediately with `gh issue edit`
@@ -294,7 +320,7 @@ gh issue comment 123 --body "Progress: tests added; implementation in progress."
      gh issue list --state open --limit 15 --json number,title | grep -E "530|531|532"
      ```
 
-6. **Organizing related issues as phases or groups**:
+7. **Organizing related issues as phases or groups**:
    - When creating multiple related issues as part of a larger initiative (e.g., code review recommendations), organize them logically
    - Document the group/phase structure in issue bodies: "Phase 1 (Critical)", "Phase 2 (Important)", "Phase 3 (Nice to Have)"
    - Include cross-references between phases in issue descriptions
@@ -309,7 +335,7 @@ gh issue comment 123 --body "Progress: tests added; implementation in progress."
      Phase 4 (Documentation): Issues #536-#539 (Documentation polish)
      ```
 
-7. **Complete issue → branch → PR → merge workflow**:
+8. **Complete issue → branch → PR → merge workflow**:
 
    This is the end-to-end workflow for working on an issue:
 
@@ -361,7 +387,7 @@ gh issue comment 123 --body "Progress: tests added; implementation in progress."
    # Verify it's closed: gh issue view 492
    ```
 
-8. **Complete multi-phase workflow**:
+9. **Complete multi-phase workflow**:
 
    When working from a comprehensive code review or analysis document:
 
