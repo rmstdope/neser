@@ -221,7 +221,9 @@ mod tests {
         // Upper 4KB should always be fixed to bank 3
         let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
 
-        // Fill bank 3 with a distinct pattern via writes to $1000-$1FFF
+        // Fill bank 3 with a distinct pattern via writes to $1000-$1FFF.
+        // The upper 4KB address range ($1000-$1FFF) is hardwired to bank 3,
+        // so writes to this range always go to bank 3 regardless of bank select.
         for i in 0..4096 {
             let addr = 0x1000 + i as u16;
             mapper.write_chr(addr, (100 + i % 256) as u8);
