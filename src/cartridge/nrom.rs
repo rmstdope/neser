@@ -12,7 +12,7 @@ const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 /// Specifications:
 /// - Main: <https://www.nesdev.org/wiki/NROM>
 /// - PRG-ROM: 16KB or 32KB fixed (16KB mirrored at $C000-$FFFF)
-/// - PRG-RAM: 2KB or 4KB at $6000-$7FFF (family BASIC only), or none
+/// - PRG-RAM: 2KB or 4KB at $6000-$7FFF (Family BASIC only), or none
 /// - CHR: 8KB fixed (ROM or RAM)
 /// - Mirroring: Fixed horizontal or vertical (solder pads)
 ///

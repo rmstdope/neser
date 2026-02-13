@@ -32,12 +32,6 @@ use crate::trace_mapper;
 /// - Supports all address line variants via mapper number
 /// - VRC IRQ system fully implemented for VRC4 variants
 /// - No expansion audio (see VRC6 for audio)
-///
-/// VRC2/VRC4 mapper variants (iNES Mappers 21-23, 25).
-///
-/// These mappers represent different pin configurations of Konami's VRC2 and VRC4 chips.
-/// They share the same functionality but access registers at different addresses due to
-/// different address line connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Vrc2Vrc4Variant {
     Mapper21, // VRC4a, VRC4c
@@ -58,12 +52,6 @@ impl Vrc2Vrc4Variant {
 }
 
 /// Konami VRC2/VRC4 mapper implementation struct (iNES Mapper 21, 22, 23, 25).
-///
-/// Supports PRG/CHR banking + mirroring control.
-/// VRC4 variants (21, 23, 25) also support the VRC IRQ system.
-/// VRC2 variant (22) has no IRQ support.
-///
-/// Unlike VRC6, these mappers have no expansion audio.
 pub struct Vrc2Vrc4Mapper {
     variant: Vrc2Vrc4Variant,
 

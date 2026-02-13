@@ -229,11 +229,6 @@ impl Vrc6Audio {
 /// - Supports PRG/CHR banking + mirroring control
 /// - VRC IRQ fully implemented
 /// - VRC6 expansion audio (2 pulse + 1 sawtooth) fully implemented
-///
-/// Konami VRC6 mapper implementation struct (iNES Mapper 24/26).
-///
-/// Supports PRG/CHR banking + mirroring control, VRC IRQ,
-/// and VRC6 expansion audio (2 pulse + 1 saw).
 pub struct VRC6Mapper {
     variant: Vrc6Variant,
 
