@@ -199,9 +199,13 @@ mod tests {
 
     #[test]
     fn test_gxrom_open_bus() {
-        let mapper = create_gxrom_mapper(vec![0; 128 * 1024], vec![0; 32 * 1024], MirroringMode::Horizontal)
-            .expect("GxROM (mapper 66) should be implemented");
-        
+        let mapper = create_gxrom_mapper(
+            vec![0; 128 * 1024],
+            vec![0; 32 * 1024],
+            MirroringMode::Horizontal,
+        )
+        .expect("GxROM (mapper 66) should be implemented");
+
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x99), 0x99);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0xAA), 0xAA);
     }

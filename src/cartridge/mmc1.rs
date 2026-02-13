@@ -1262,32 +1262,32 @@ mod tests {
     #[test]
     fn test_mmc1_disabled_wram_returns_open_bus() {
         let mut mapper = MMC1Mapper::new(vec![0; 256 * 1024], vec![], MirroringMode::Horizontal);
-        
+
         // First, enable WRAM and write some data
         // Write to $E000-$FFFF controls PRG banking and WRAM enable
         // We need to do 5 consecutive writes to load the shift register
-        
+
         // Reset shift register
         mapper.write_prg(0x8000, 0x80);
-        
+
         // Write pattern to enable WRAM: bit 4 = 0
         // We'll write 5 times with bit 0 = 0 each time to load 0x00 into register
         for _ in 0..5 {
             mapper.write_prg(0xE000, 0x00);
         }
-        
+
         // Write to WRAM
         mapper.write_prg(0x6000, 0xAA);
         mapper.write_prg(0x7000, 0xBB);
-        
+
         // Verify WRAM reads work when enabled
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
         assert_eq!(mapper.read_prg(0x7000), 0xBB);
-        
+
         // Now disable WRAM by setting bit 4 = 1 in PRG bank register
         // Reset shift register
         mapper.write_prg(0x8000, 0x80);
-        
+
         // Write pattern to disable WRAM: bit 4 = 1
         // We need to shift in 10000 binary = 0x10
         // Shift register is filled LSB first, so: bit0, bit1, bit2, bit3, bit4
@@ -1296,11 +1296,11 @@ mod tests {
         mapper.write_prg(0xE000, 0x00); // bit 2 = 0
         mapper.write_prg(0xE000, 0x00); // bit 3 = 0
         mapper.write_prg(0xE000, 0x01); // bit 4 = 1
-        
+
         // read_prg should return 0 for backward compatibility
         assert_eq!(mapper.read_prg(0x6000), 0x00);
         assert_eq!(mapper.read_prg(0x7000), 0x00);
-        
+
         // read_prg_open_bus should return the open-bus value
         let open_bus = 0x42;
         assert_eq!(
@@ -1324,19 +1324,19 @@ mod tests {
     #[test]
     fn test_mmc1_enabled_wram_returns_data() {
         let mut mapper = MMC1Mapper::new(vec![0; 256 * 1024], vec![], MirroringMode::Horizontal);
-        
+
         // Reset and ensure WRAM is enabled (bit 4 = 0)
         mapper.write_prg(0x8000, 0x80);
         for _ in 0..5 {
             mapper.write_prg(0xE000, 0x00);
         }
-        
+
         // Write to WRAM
         mapper.write_prg(0x6000, 0x55);
-        
+
         let open_bus = 0xFF;
         let result = mapper.read_prg_open_bus(0x6000, open_bus);
-        
+
         // Should return the written value, not open-bus
         assert_eq!(
             result, 0x55,

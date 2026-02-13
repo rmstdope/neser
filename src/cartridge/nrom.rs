@@ -254,7 +254,7 @@ mod tests {
     #[test]
     fn test_nrom_open_bus() {
         let mapper = NROMMapper::new(vec![0; 32 * 1024], vec![0; 8192], MirroringMode::Horizontal);
-        
+
         // Test various open-bus scenarios
         assert_eq!(mapper.read_prg_open_bus(0x0000, 0x12), 0x12);
         assert_eq!(mapper.read_prg_open_bus(0x1000, 0x34), 0x34);
@@ -270,16 +270,16 @@ mod tests {
         let prg_rom = vec![0xAB; 32 * 1024];
         let chr_rom = vec![0; 8 * 1024];
         let mapper = NROMMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
-        
+
         let open_bus = 0x42;
-        
+
         // PRG-ROM region ($8000-$FFFF) should return ROM data, not open-bus
         let rom_result = mapper.read_prg_open_bus(0x8000, open_bus);
         assert_eq!(
             rom_result, 0xAB,
             "PRG-ROM region should return ROM data, not open-bus"
         );
-        
+
         let rom_result2 = mapper.read_prg_open_bus(0xC000, open_bus);
         assert_eq!(
             rom_result2, 0xAB,
@@ -291,14 +291,14 @@ mod tests {
     fn test_nrom_open_bus_boundary_at_6000() {
         let mapper = NROMMapper::new(vec![0; 32 * 1024], vec![0; 8192], MirroringMode::Horizontal);
         let open_bus = 0x55;
-        
+
         // $5FFF should return open-bus
         assert_eq!(
             mapper.read_prg_open_bus(0x5FFF, open_bus),
             open_bus,
             "$5FFF should return open-bus"
         );
-        
+
         // $6000 might return different value (PRG-RAM or 0)
         // We just verify it doesn't panic
         let _ = mapper.read_prg_open_bus(0x6000, open_bus);
