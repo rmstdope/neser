@@ -537,7 +537,7 @@ mod tests {
         ];
 
         // Add 512 bytes of trainer data with a pattern
-        let trainer_pattern: Vec<u8> = (0..512).map(|i| ((i + 100) % 256) as u8).collect();
+        let trainer_pattern: Vec<u8> = (0..512).map(|i| (i + 100) as u8).collect();
         rom.extend(&trainer_pattern);
 
         // Add PRG ROM data
@@ -554,7 +554,7 @@ mod tests {
 
         // Verify trainer data matches what we put in
         for (i, &byte) in trainer.iter().enumerate() {
-            assert_eq!(byte, ((i + 100) % 256) as u8);
+            assert_eq!(byte, (i + 100) as u8);
         }
 
         // Verify mapper can still read PRG and CHR correctly

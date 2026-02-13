@@ -200,7 +200,11 @@ pub fn parse_header(header: &[u8; 16]) -> Option<InesHeader> {
 /// Parse a full iNES/NES2 ROM blob. Returns the parsed header, owned PRG ROM
 /// bytes, owned CHR ROM bytes, optional trainer data (512 bytes if present),
 /// and the combined CRC32 of PRG+CHR.
-/// Errors that can occur while parsing a full ROM blob.
+///
+/// # Errors
+///
+/// Returns `RomParseError::InvalidHeader` if the magic bytes are invalid.
+/// Returns `RomParseError::FileTooSmall` if the file is smaller than expected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RomParseError {
     InvalidHeader,
@@ -464,7 +468,7 @@ mod tests {
         rom[7] = 0; // flags7
 
         // Add 512 bytes of trainer data with a pattern
-        let trainer_data: Vec<u8> = (0..512).map(|i| (i % 256) as u8).collect();
+        let trainer_data: Vec<u8> = (0..512).map(|i| i as u8).collect();
         rom.extend(&trainer_data);
 
         // Add PRG (16KB) and CHR (8KB)
@@ -483,7 +487,7 @@ mod tests {
 
         // Verify trainer data matches what we put in
         for (i, &byte) in extracted_trainer.iter().enumerate() {
-            assert_eq!(byte, (i % 256) as u8);
+            assert_eq!(byte, i as u8);
         }
 
         // Verify PRG and CHR are still correct
