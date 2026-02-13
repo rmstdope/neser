@@ -440,4 +440,32 @@ mod tests {
         assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
         assert_eq!(restored.read_chr(0x0000), 29);
     }
+
+    #[test]
+    fn test_nina_tengen_banked_rom_replacement() {
+        use crate::cartridge::common::BankedRom;
+        use crate::cartridge::test_helpers::banked_data;
+
+        const PRG_BANK_SIZE: usize = 0x4000; // 16KB
+        const CHR_BANK_SIZE: usize = 0x2000; // 8KB
+
+        let prg_rom = banked_data(PRG_BANK_SIZE, 8);
+        let chr_rom = banked_data(CHR_BANK_SIZE, 16);
+
+        let prg_banked = BankedRom::new(prg_rom, PRG_BANK_SIZE);
+        let chr_banked = BankedRom::new(chr_rom, CHR_BANK_SIZE);
+
+        // Test PRG bank reading
+        assert_eq!(prg_banked.read(0, 0), 0);
+        assert_eq!(prg_banked.read(1, 0), 1);
+        assert_eq!(prg_banked.read(7, 0), 7);
+
+        // Test CHR bank reading
+        assert_eq!(chr_banked.read(0, 0), 0);
+        assert_eq!(chr_banked.read(15, 0), 15);
+
+        // Test last bank wrapping
+        assert_eq!(prg_banked.read(8, 0), 0); // wraps to 0
+        assert_eq!(chr_banked.read(16, 0), 0); // wraps to 0
+    }
 }

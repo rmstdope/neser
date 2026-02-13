@@ -305,6 +305,7 @@ impl BankedRom {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cartridge::test_helpers::banked_data;
 
     #[test]
     fn test_prg_ram_read_write() {
@@ -479,5 +480,54 @@ mod tests {
 
         // Read from bank 1 with base address $C000
         assert_eq!(banked.read_with_base(1, 0xC000, 0xC000), 101);
+    }
+
+    #[test]
+    fn test_banked_rom_with_cpu_addressing() {
+        const PRG_BANK_SIZE: usize = 0x4000; // 16KB
+        let rom = banked_data(PRG_BANK_SIZE, 8);
+        let banked = BankedRom::new(rom, PRG_BANK_SIZE);
+
+        // Test reading from $8000-$BFFF with bank 0
+        assert_eq!(banked.read_with_base(0, 0x8000, 0x8000), 0);
+        assert_eq!(banked.read_with_base(0, 0x8000, 0x8001), 0);
+        assert_eq!(banked.read_with_base(0, 0x8000, 0xBFFF), 0);
+
+        // Test reading from $8000-$BFFF with bank 3
+        assert_eq!(banked.read_with_base(3, 0x8000, 0x8000), 3);
+        assert_eq!(banked.read_with_base(3, 0x8000, 0x8001), 3);
+    }
+
+    #[test]
+    fn test_banked_rom_empty_rom() {
+        const PRG_BANK_SIZE: usize = 0x4000;
+        let empty_rom = vec![];
+        let banked = BankedRom::new(empty_rom, PRG_BANK_SIZE);
+
+        // Should handle gracefully
+        assert_eq!(banked.num_banks(), 0);
+        assert_eq!(banked.read(0, 0), 0);
+        assert_eq!(banked.read(1, 0), 0);
+    }
+
+    #[test]
+    fn test_banked_rom_bounds_checking() {
+        const BANK_SIZE: usize = 1024;
+        let rom = banked_data(BANK_SIZE, 4);
+        let banked = BankedRom::new(rom, BANK_SIZE);
+
+        // Should read valid data within bank
+        assert_eq!(banked.read(0, 0), 0);
+        assert_eq!(banked.read(0, BANK_SIZE - 1), 0);
+        assert_eq!(banked.read(3, BANK_SIZE - 1), 3);
+
+        // Reading with offset beyond bank size still works (just reads from later in ROM)
+        // Since we have 4 banks of 1024 bytes each = 4096 total
+        // read(0, 2048) = index 2048 = start of bank 2, value = 2
+        assert_eq!(banked.read(0, BANK_SIZE * 2), 2);
+
+        // Reading way beyond total ROM should return 0
+        assert_eq!(banked.read(0, 10000), 0);
+        assert_eq!(banked.read(99, 10000), 0);
     }
 }

@@ -728,4 +728,31 @@ mod tests {
         assert_eq!(restored.get_mirroring(), MirroringMode::SingleScreenUpper);
         assert_eq!(restored.irq_pending(), mapper.irq_pending());
     }
+
+    #[test]
+    fn test_bandai_fcg_banked_rom_replacement() {
+        use crate::cartridge::common::BankedRom;
+        use crate::cartridge::test_helpers::banked_data;
+
+        const PRG_BANK_SIZE: usize = 16 * 1024; // 16KB
+        const CHR_BANK_SIZE: usize = 1024; // 1KB
+
+        let prg_rom = banked_data(PRG_BANK_SIZE, 16);
+        let chr_rom = banked_data(CHR_BANK_SIZE, 128);
+
+        let prg_banked = BankedRom::new(prg_rom, PRG_BANK_SIZE);
+        let chr_banked = BankedRom::new(chr_rom, CHR_BANK_SIZE);
+
+        // Test PRG banks
+        assert_eq!(prg_banked.read(0, 0), 0);
+        assert_eq!(prg_banked.read(15, 0), 15);
+
+        // Test CHR banks
+        assert_eq!(chr_banked.read(0, 0), 0);
+        assert_eq!(chr_banked.read(127, 0), 127);
+
+        // Test wrapping
+        assert_eq!(prg_banked.read(16, 0), 0);
+        assert_eq!(chr_banked.read(128, 0), 0);
+    }
 }

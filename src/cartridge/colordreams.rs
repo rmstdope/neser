@@ -234,4 +234,38 @@ mod tests {
         assert_eq!(restored.read_prg(0x8000), 2);
         assert_eq!(restored.read_chr(0x0000), 3);
     }
+
+    #[test]
+    fn test_colordreams_banked_rom_replacement() {
+        use crate::cartridge::common::BankedRom;
+        use crate::cartridge::test_helpers::banked_data;
+
+        const PRG_BANK_SIZE: usize = 32 * 1024;
+        const CHR_BANK_SIZE: usize = 8 * 1024;
+
+        // Create test ROM with distinct data per bank
+        let prg_rom = banked_data(PRG_BANK_SIZE, 4);
+        let chr_rom = banked_data(CHR_BANK_SIZE, 4);
+
+        // Create BankedRom instances like the mapper would
+        let prg_banked = BankedRom::new(prg_rom.clone(), PRG_BANK_SIZE);
+        let chr_banked = BankedRom::new(chr_rom.clone(), CHR_BANK_SIZE);
+
+        // Test reading from different banks
+        assert_eq!(prg_banked.read(0, 0), 0);
+        assert_eq!(prg_banked.read(1, 0), 1);
+        assert_eq!(prg_banked.read(2, 0), 2);
+        assert_eq!(prg_banked.read(3, 0), 3);
+
+        assert_eq!(chr_banked.read(0, 0), 0);
+        assert_eq!(chr_banked.read(1, 0), 1);
+        assert_eq!(chr_banked.read(2, 0), 2);
+        assert_eq!(chr_banked.read(3, 0), 3);
+
+        // Test bank wrapping for PRG (4 banks)
+        assert_eq!(prg_banked.read(4, 0), 0); // wraps to bank 0
+        assert_eq!(prg_banked.read(5, 0), 1); // wraps to bank 1
+        assert_eq!(prg_banked.read(7, 0), 3); // wraps to bank 3
+        assert_eq!(prg_banked.read(8, 0), 0); // wraps to bank 0
+    }
 }

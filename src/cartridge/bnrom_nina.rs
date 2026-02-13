@@ -424,4 +424,25 @@ mod tests {
         );
         assert_eq!(mapper_v.get_mirroring(), MirroringMode::Vertical);
     }
+
+    #[test]
+    fn test_bnrom_banked_rom_replacement() {
+        use crate::cartridge::common::BankedRom;
+        use crate::cartridge::test_helpers::banked_data;
+
+        const PRG_BANK_SIZE: usize = 0x8000; // 32KB
+
+        let prg_rom = banked_data(PRG_BANK_SIZE, 4);
+        let prg_banked = BankedRom::new(prg_rom, PRG_BANK_SIZE);
+
+        // Test basic bank reading
+        assert_eq!(prg_banked.read(0, 0), 0);
+        assert_eq!(prg_banked.read(1, 0), 1);
+        assert_eq!(prg_banked.read(2, 0), 2);
+        assert_eq!(prg_banked.read(3, 0), 3);
+
+        // Test bank wrapping
+        assert_eq!(prg_banked.read(4, 0), 0);
+        assert_eq!(prg_banked.read(7, 0), 3);
+    }
 }
