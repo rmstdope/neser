@@ -287,4 +287,76 @@ mod tests {
         mapper.write_prg(0xFFFF, 3);
         assert_eq!(mapper.read_chr(0x0000), 103);
     }
+
+    #[test]
+    fn test_cnrom_registers_snapshot_roundtrip() {
+        // Test that register state can be saved and restored correctly
+        let prg_rom = vec![0; 32 * 1024];
+        let mut chr_rom = vec![0; 32 * 1024];
+
+        // Fill CHR ROM with bank-specific data
+        for bank in 0..4 {
+            let start = bank * 8 * 1024;
+            let end = start + 8 * 1024;
+            for byte in &mut chr_rom[start..end] {
+                *byte = (bank * 20 + 10) as u8;
+            }
+        }
+
+        // Create mapper and set it to a specific state
+        let mut mapper = CNROMMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        mapper.write_prg(0x8000, 2); // Select CHR bank 2
+
+        // Verify the bank is selected
+        assert_eq!(mapper.read_chr(0x0000), 50);
+        assert_eq!(mapper.read_chr(0x1FFF), 50);
+
+        // Take snapshot
+        let registers = mapper.registers_snapshot();
+
+        // Create a fresh mapper and restore
+        let mut restored = CNROMMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        restored.restore_registers(&registers);
+
+        // Verify the restored state matches
+        assert_eq!(restored.read_chr(0x0000), 50);
+        assert_eq!(restored.read_chr(0x1FFF), 50);
+    }
+
+    #[test]
+    fn test_cnrom_prg_ram_snapshot_roundtrip() {
+        // Test that PRG-RAM (if present) can be saved and restored
+        let prg_rom = vec![0; 32 * 1024];
+        let chr_rom = vec![0; 32 * 1024];
+
+        let mut mapper = CNROMMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+
+        // Write pattern to PRG-RAM
+        for i in 0..0x2000 {
+            mapper.write_prg(0x6000 + i, (i & 0xFF) as u8);
+        }
+
+        // Verify writes
+        assert_eq!(mapper.read_prg(0x6000), 0x00);
+        assert_eq!(mapper.read_prg(0x6100), 0x00); // 0x100 & 0xFF = 0x00
+        assert_eq!(mapper.read_prg(0x7FFF), 0xFF); // 0x1FFF & 0xFF = 0xFF
+
+        // Take snapshot
+        let prg_ram = mapper.wram_snapshot();
+
+        // Clear PRG-RAM
+        for i in 0..0x2000 {
+            mapper.write_prg(0x6000 + i, 0x00);
+        }
+
+        // Verify cleared
+        assert_eq!(mapper.read_prg(0x7FFF), 0x00);
+
+        // Restore from snapshot
+        mapper.load_wram_snapshot(&prg_ram);
+
+        // Verify restoration
+        assert_eq!(mapper.read_prg(0x6000), 0x00);
+        assert_eq!(mapper.read_prg(0x7FFF), 0xFF);
+    }
 }
