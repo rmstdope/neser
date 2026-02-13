@@ -1,7 +1,7 @@
+use super::autorun_state::AutorunState;
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::app_context::AppContext;
-use super::autorun_state::AutorunState;
 use crate::console::{AutorunMode, Config, ControllerStateWrapper, Nes, SaveState, TvSystem};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -510,7 +510,7 @@ impl SdlEventLoop {
     }
 
     /// Handle autorun logic before emulating a frame.
-    /// 
+    ///
     /// In playback or extend mode, applies button states from the recording.
     /// Returns Ok(true) if we should continue, Ok(false) for normal exit,
     /// or Err(AutorunExitCode) when playback completes with CRC verification.
@@ -520,26 +520,26 @@ impl SdlEventLoop {
         };
 
         use crate::console::AutorunMode;
-        
+
         // In playback mode or extend mode with remaining frames, apply recorded input
         if autorun_state.mode() == AutorunMode::Playback || autorun_state.is_extending_playback() {
             if let Some(frame) = autorun_state.next_playback_frame() {
                 self.apply_button_states(nes, frame.player1, frame.player2);
                 return Ok(true);
             }
-            
+
             // Playback finished
             if autorun_state.mode() == AutorunMode::Playback {
                 // Verify CRC and exit
                 return self.finish_playback(nes);
             }
         }
-        
+
         Ok(true)
     }
-    
+
     /// Handle autorun logic after processing input but before rendering.
-    /// 
+    ///
     /// In record mode, captures current button states.
     fn handle_autorun_after_input(&mut self, nes: &Nes) {
         let Some(ref mut autorun_state) = self.autorun_state else {
@@ -547,7 +547,7 @@ impl SdlEventLoop {
         };
 
         use crate::console::AutorunMode;
-        
+
         // In record mode (or extend mode after playback), capture button states
         if autorun_state.mode() == AutorunMode::Record && !autorun_state.is_extending_playback() {
             // Capture button states without borrowing self
@@ -556,21 +556,24 @@ impl SdlEventLoop {
             autorun_state.record_frame(player1, player2);
         }
     }
-    
+
     /// Finish playback by verifying CRC.
     /// Returns false with AutorunExitCode error to signal the event loop should exit.
     fn finish_playback(&mut self, nes: &Nes) -> Result<bool, AutorunExitCode> {
         let Some(ref mut autorun_state) = self.autorun_state else {
             return Ok(true);
         };
-        
+
         // Get the screen buffer snapshot for CRC verification
         let snapshot = nes.ppu.borrow().screen_buffer().snapshot();
         let crc = nes.ppu.borrow().screen_buffer().crc32();
-        
+
         match autorun_state.verify_checksum(&snapshot) {
             Ok(()) => {
-                log_info(format!("Autorun playback successful: CRC match (0x{:08X})", crc));
+                log_info(format!(
+                    "Autorun playback successful: CRC match (0x{:08X})",
+                    crc
+                ));
                 Err(AutorunExitCode::Success)
             }
             Err(e) => {
@@ -579,9 +582,9 @@ impl SdlEventLoop {
             }
         }
     }
-    
+
     /// Determine if the overlay should blink red for autorun extend mode.
-    /// 
+    ///
     /// Red blinking occurs:
     /// - Only in Record mode during extend playback
     /// - Only during the last 3 seconds before playback ends
@@ -590,47 +593,47 @@ impl SdlEventLoop {
         let Some(ref autorun_state) = self.autorun_state else {
             return false;
         };
-        
+
         // Only blink when extending and still in playback phase
         if !autorun_state.is_extending_playback() {
             return false;
         }
-        
+
         let current_frame = autorun_state.current_frame_index();
         let total_frames = autorun_state.total_frames();
         let tv_system = nes.config.borrow().tv_system;
-        
+
         // Calculate FPS and blink parameters
         let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
         let blink_window_frames = fps * 3; // Last 3 seconds
         let blink_half_period_frames = (fps / 4).max(1); // Quarter-second blinks (4Hz)
-        
+
         let frames_remaining = total_frames.saturating_sub(current_frame);
-        
+
         // Only blink in the last 3 seconds
         if frames_remaining > blink_window_frames {
             return false;
         }
-        
+
         // Toggle every quarter second
         (current_frame / blink_half_period_frames).is_multiple_of(2)
     }
-    
+
     /// Finish recording by saving the autorun file with CRC.
     fn finish_recording(&mut self, nes: &Nes) -> Result<(), String> {
         let Some(ref mut autorun_state) = self.autorun_state else {
             return Ok(());
         };
-        
+
         use crate::console::AutorunMode;
-        
+
         if autorun_state.mode() != AutorunMode::Record {
             return Ok(());
         }
-        
+
         // Calculate final screen buffer CRC
         let crc = nes.ppu.borrow().screen_buffer().crc32();
-        
+
         // Save the recording with CRC
         autorun_state.save_with_checksum(crc)?;
         log_info(format!(
@@ -638,7 +641,7 @@ impl SdlEventLoop {
             autorun_state.total_frames(),
             crc
         ));
-        
+
         Ok(())
     }
 
@@ -965,7 +968,7 @@ impl SdlEventLoop {
 
                 // Apply button states from autorun before emulation (autorun playback mode)
                 match self.handle_autorun_before_frame(nes) {
-                    Ok(true) => {}, // Continue normally
+                    Ok(true) => {} // Continue normally
                     Ok(false) => {
                         // Normal playback completion (shouldn't happen in current logic)
                         self.gl_backend = Some(gl_backend);
@@ -1077,7 +1080,7 @@ impl SdlEventLoop {
             loop {
                 // Handle autorun before frame
                 match self.handle_autorun_before_frame(nes) {
-                    Ok(true) => {}, // Continue normally
+                    Ok(true) => {} // Continue normally
                     Ok(false) => {
                         // Normal playback completion (shouldn't happen in current logic)
                         return self.finish_recording(nes);
@@ -1581,12 +1584,13 @@ T: Start"
     /// Generate autorun overlay text based on current mode and state.
     fn autorun_overlay_text(&self, autorun_state: &AutorunState, tv_system: TvSystem) -> String {
         use crate::console::AutorunMode;
-        
+
         match autorun_state.mode() {
             AutorunMode::Playback => {
                 let current_frames = autorun_state.current_frame_index();
                 let total_frames = autorun_state.total_frames();
-                let (elapsed, total) = Self::format_time_pair_for(current_frames, total_frames, tv_system);
+                let (elapsed, total) =
+                    Self::format_time_pair_for(current_frames, total_frames, tv_system);
                 format!("Playback\n{} / {}", elapsed, total)
             }
             AutorunMode::Record => {
@@ -1594,12 +1598,14 @@ T: Start"
                     // In extend mode during playback phase
                     let current_frames = autorun_state.current_frame_index();
                     let total_frames = autorun_state.total_frames();
-                    let (elapsed, total) = Self::format_time_pair_for(current_frames, total_frames, tv_system);
+                    let (elapsed, total) =
+                        Self::format_time_pair_for(current_frames, total_frames, tv_system);
                     format!("Playback\n{} / {}", elapsed, total)
                 } else {
                     // In record mode (or extend mode after playback finished)
                     let current_frames = autorun_state.total_frames();
-                    let (elapsed, _) = Self::format_time_pair_for(current_frames, current_frames, tv_system);
+                    let (elapsed, _) =
+                        Self::format_time_pair_for(current_frames, current_frames, tv_system);
                     format!("Recording\n{} / {}", elapsed, elapsed)
                 }
             }
@@ -1616,7 +1622,10 @@ T: Start"
         let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
         let current_secs = current_frames / fps;
         let total_secs = total_frames / fps;
-        (Self::format_mm_ss(current_secs), Self::format_mm_ss(total_secs))
+        (
+            Self::format_mm_ss(current_secs),
+            Self::format_mm_ss(total_secs),
+        )
     }
 
     /// Format seconds as MM:SS.

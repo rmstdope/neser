@@ -714,7 +714,7 @@ impl Config {
         self.autorun_headless = args.iter().any(|arg| arg == "--headless");
         self.autorun_extend = args.iter().any(|arg| arg == "--extend");
         self.autorun_overwrite = args.iter().any(|arg| arg == "--overwrite-recording");
-        
+
         // Validate autorun flag combinations
         if self.autorun_headless && self.autorun_mode != AutorunMode::Playback {
             return Err("--headless requires --playback".to_string());
@@ -726,7 +726,10 @@ impl Config {
             return Err("--overwrite-recording requires --record".to_string());
         }
         if self.autorun_extend && self.autorun_overwrite {
-            return Err("Cannot specify both --extend and --overwrite-recording (mutually exclusive)".to_string());
+            return Err(
+                "Cannot specify both --extend and --overwrite-recording (mutually exclusive)"
+                    .to_string(),
+            );
         }
 
         Ok(())

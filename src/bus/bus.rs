@@ -396,10 +396,10 @@ impl Bus {
         if !(1..=2).contains(&port) {
             return 0;
         }
-        
+
         let controller = self.controllers[(port - 1) as usize].borrow();
         let state = controller.capture_state();
-        
+
         match state {
             crate::input::ControllerState::Joypad(joypad_state) => joypad_state.button_states,
             _ => 0, // Not a joypad

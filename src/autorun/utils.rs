@@ -1,4 +1,4 @@
-use super::types::{AutorunFile, AUTORUN_VERSION};
+use super::types::{AUTORUN_VERSION, AutorunFile};
 use crate::cartridge::calculate_rom_crc32;
 use std::path::{Path, PathBuf};
 
@@ -39,7 +39,7 @@ pub fn load_autorun_file(path: &Path) -> Result<AutorunFile, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::autorun::{AutorunFile, AutorunFrame, AUTORUN_VERSION};
+    use crate::autorun::{AUTORUN_VERSION, AutorunFile, AutorunFrame};
     use tempfile::NamedTempFile;
 
     #[test]
