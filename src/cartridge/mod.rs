@@ -11,6 +11,7 @@ mod cprom;
 mod gxrom;
 mod ines;
 mod mapper;
+mod mapper_templates;
 mod mmc1;
 mod mmc2;
 mod mmc3;
@@ -40,6 +41,8 @@ pub use common::{
 pub use ines::{ConsoleType, InesHeader, Mirroring, TimingMode, parse_header, parse_rom};
 #[allow(unused_imports)]
 pub use mapper::{Mapper, MapperContext};
+#[allow(unused_imports)]
+pub use mapper_templates::{DualBank32Mapper, SimpleBankedPrgMapper, SimpleFixedPrgMapper};
 #[allow(unused_imports)]
 pub use rom_db::calculate_rom_crc32;
 pub(crate) use rom_db::default_arkanoid_on_port;
