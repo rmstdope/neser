@@ -35,24 +35,13 @@ pub struct GxROMMapper {
 impl GxROMMapper {
     /// Create a new GxROM mapper.
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        let prg_banks = if prg_rom.is_empty() {
-            0
-        } else {
-            prg_rom.len() / PRG_BANK_SIZE
-        };
-        let chr_banks = if chr_rom.is_empty() {
-            0
-        } else {
-            chr_rom.len() / CHR_BANK_SIZE
-        };
-
         Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
+            prg_rom: BankedRom::new(prg_rom.clone(), PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
+            chr_rom: BankedRom::new(chr_rom.clone(), CHR_BANK_SIZE),
             mirroring,
-            prg_bank: BankSwitch::new(prg_banks),
-            chr_bank: BankSwitch::new(chr_banks),
+            prg_bank: BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE),
+            chr_bank: BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE),
         }
     }
 }

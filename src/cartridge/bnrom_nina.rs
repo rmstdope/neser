@@ -1,6 +1,8 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{
+    BankSwitch, BankedRom, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam,
+};
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x8000; // 32KB
@@ -46,29 +48,20 @@ impl BnromNinaMapper {
         // Detect variant: NINA-001 has CHR ROM, BNROM uses CHR-RAM
         let is_nina = !chr_rom.is_empty();
 
-        let prg_banks = if prg_rom.is_empty() {
-            0
+        // For CHR bank calculation, use actual ROM size for NINA-001, or CHR-RAM size for BNROM
+        let chr_bank_count = if is_nina {
+            BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE)
         } else {
-            prg_rom.len() / PRG_BANK_SIZE
-        };
-        let chr_size = if is_nina {
-            chr_rom.len()
-        } else {
-            8192 // CHR-RAM size for BNROM
-        };
-        let chr_banks = if chr_size == 0 {
-            0
-        } else {
-            chr_size / CHR_BANK_SIZE
+            BankSwitch::new(DEFAULT_CHR_RAM_SIZE / CHR_BANK_SIZE)
         };
 
         Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
+            prg_rom: BankedRom::new(prg_rom.clone(), PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_memory: ChrMemory::new(chr_rom),
             mirroring,
-            prg_bank: BankSwitch::new(prg_banks),
-            chr_bank: BankSwitch::new(chr_banks),
+            prg_bank: BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE),
+            chr_bank: chr_bank_count,
             is_nina,
         }
     }

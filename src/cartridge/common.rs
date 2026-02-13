@@ -485,6 +485,23 @@ impl BankSwitch {
         Self { num_banks, bank: 0 }
     }
 
+    /// Create a new bank switch from ROM data and bank size.
+    ///
+    /// # Arguments
+    /// * `rom_data` - The ROM data
+    /// * `bank_size` - Size of each bank in bytes
+    ///
+    /// # Returns
+    /// A BankSwitch configured with the appropriate number of banks
+    pub fn from_rom(rom_data: &[u8], bank_size: usize) -> Self {
+        let num_banks = if rom_data.is_empty() || bank_size == 0 {
+            0
+        } else {
+            rom_data.len() / bank_size
+        };
+        Self::new(num_banks)
+    }
+
     /// Set the selected bank number.
     ///
     /// The bank value is stored as-is and wrapping is applied during `current()`.
@@ -919,5 +936,22 @@ mod tests {
         // Restore with empty data should not panic
         bank.restore(&[]);
         assert_eq!(bank.raw(), 3); // Should remain unchanged
+    }
+
+    #[test]
+    fn test_bank_switch_from_rom() {
+        // Normal ROM with 4 banks of 8KB
+        let rom_data = vec![0u8; 32 * 1024];
+        let bank = BankSwitch::from_rom(&rom_data, 8 * 1024);
+        assert_eq!(bank.current(), 0);
+
+        // Empty ROM
+        let empty_rom: Vec<u8> = vec![];
+        let empty_bank = BankSwitch::from_rom(&empty_rom, 8 * 1024);
+        assert_eq!(empty_bank.current(), 0);
+
+        // Zero bank size
+        let zero_bank = BankSwitch::from_rom(&rom_data, 0);
+        assert_eq!(zero_bank.current(), 0);
     }
 }
