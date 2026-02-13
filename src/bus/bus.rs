@@ -119,8 +119,22 @@ impl Bus {
     /// to access the cartridge mapper independently while maintaining proper
     /// bank switching state.
     pub fn map_cartridge(&mut self, cartridge: Cartridge) {
+        // Extract trainer data before wrapping in Rc<RefCell<>>
+        let trainer_data = cartridge.trainer().map(|t| t.to_vec());
+
         // Wrap cartridge in Rc<RefCell<>> for shared access between CPU and PPU
         let cartridge_rc = Rc::new(RefCell::new(cartridge));
+
+        // Load trainer data into cartridge PRG-RAM at $7000-$71FF if present
+        if let Some(trainer_bytes) = trainer_data {
+            let mut cart = cartridge_rc.borrow_mut();
+            let mapper = cart.mapper_mut();
+            // Write each byte of trainer data to $7000-$71FF
+            // Trainer data is always exactly 512 bytes from parsing validation
+            for (i, byte) in trainer_bytes.iter().enumerate() {
+                mapper.write_prg(0x7000 + i as u16, *byte);
+            }
+        }
 
         // Share cartridge reference with PPU for dynamic CHR access
         let mut ppu = self.ppu.borrow_mut();
@@ -1912,5 +1926,91 @@ mod tests {
         // Port 2 should have paddle data (bits 4 and 3)
         let paddle_bits = memory.read(0x4017, false) & 0x18;
         assert!(paddle_bits != 0); // Should have paddle data on port 2
+    }
+
+    #[test]
+    fn test_trainer_loaded_into_ram() {
+        // Test that trainer data from ROM is loaded into CPU memory at $7000-$71FF
+        // Use a test pattern offset to create distinctive data (arbitrary value to avoid 0x00/0xFF)
+        const TEST_OFFSET: u8 = 0x42;
+        
+        let mut memory = create_test_memory();
+
+        // Create a ROM with trainer data
+        let mut rom = vec![
+            b'N', b'E', b'S', 0x1A, // iNES header
+            1,    // PRG ROM size (16KB units)
+            1,    // CHR ROM size (8KB units)
+            0x04, // Flags 6 with trainer bit set (bit 2)
+            0,    // Flags 7
+            0,    // Flags 8 (PRG RAM size)
+            0, 0, 0, 0, 0, 0, 0, // Rest of header
+        ];
+
+        // Add 512 bytes of trainer data with a specific pattern
+        // byte value = (offset + TEST_OFFSET) with wrapping
+        for i in 0..512 {
+            rom.push((i as u8).wrapping_add(TEST_OFFSET));
+        }
+
+        // Add PRG ROM data
+        rom.extend(vec![0xAA; 16 * 1024]);
+
+        // Add CHR ROM data
+        rom.extend(vec![0xBB; 8 * 1024]);
+
+        // Create cartridge and map it
+        let cartridge = crate::cartridge::Cartridge::new(&rom).unwrap();
+        memory.map_cartridge(cartridge);
+
+        // Verify trainer data was loaded into RAM at $7000-$71FF
+        for i in 0..512 {
+            let addr = 0x7000 + i;
+            let expected = (i as u8).wrapping_add(TEST_OFFSET);
+            let actual = memory.read(addr, false);
+            assert_eq!(
+                actual, expected,
+                "Trainer data mismatch at ${:04X}: expected ${:02X}, got ${:02X}",
+                addr, expected, actual
+            );
+        }
+    }
+
+    #[test]
+    fn test_no_trainer_does_not_modify_ram() {
+        // Test that when there's no trainer, RAM at $7000-$71FF remains zeroed
+        let mut memory = create_test_memory();
+
+        // Create a ROM without trainer data
+        let mut rom = vec![
+            b'N', b'E', b'S', 0x1A, // iNES header
+            1,    // PRG ROM size (16KB units)
+            1,    // CHR ROM size (8KB units)
+            0x00, // Flags 6 without trainer bit
+            0,    // Flags 7
+            0,    // Flags 8 (PRG RAM size)
+            0, 0, 0, 0, 0, 0, 0, // Rest of header
+        ];
+
+        // Add PRG ROM data
+        rom.extend(vec![0xAA; 16 * 1024]);
+
+        // Add CHR ROM data
+        rom.extend(vec![0xBB; 8 * 1024]);
+
+        // Create cartridge and map it
+        let cartridge = crate::cartridge::Cartridge::new(&rom).unwrap();
+        memory.map_cartridge(cartridge);
+
+        // Verify RAM at $7000-$71FF remains zero (initial state)
+        for i in 0..512 {
+            let addr = 0x7000 + i;
+            let actual = memory.read(addr, false);
+            assert_eq!(
+                actual, 0,
+                "RAM at ${:04X} should be zero without trainer, got ${:02X}",
+                addr, actual
+            );
+        }
     }
 }

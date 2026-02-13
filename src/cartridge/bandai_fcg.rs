@@ -27,6 +27,7 @@
 use crate::trace_mapper;
 
 use crate::cartridge::cartridge::MirroringMode;
+use crate::cartridge::common::{BankedRom, ChrMemory};
 use crate::cartridge::mapper::Mapper;
 
 /// Submapper variants for Bandai FCG
@@ -42,9 +43,8 @@ pub enum BandaiFcgVariant {
 }
 
 pub struct BandaiFcgMapper {
-    prg_rom: Vec<u8>,
-    chr_rom: Vec<u8>,
-    chr_ram: Vec<u8>,
+    prg_rom: BankedRom,
+    chr_memory: ChrMemory,
     mirroring: MirroringMode,
     variant: BandaiFcgVariant,
 
@@ -76,16 +76,9 @@ impl BandaiFcgMapper {
         mirroring: MirroringMode,
         variant: BandaiFcgVariant,
     ) -> Self {
-        let chr_ram = if chr_rom.is_empty() {
-            vec![0u8; 8 * 1024]
-        } else {
-            Vec::new()
-        };
-
         Self {
-            prg_rom,
-            chr_rom,
-            chr_ram,
+            prg_rom: BankedRom::new(prg_rom, Self::PRG_BANK_SIZE),
+            chr_memory: ChrMemory::new(chr_rom),
             mirroring,
             variant,
             prg_bank: 0,
@@ -98,19 +91,16 @@ impl BandaiFcgMapper {
     }
 
     fn prg_bank_count(&self) -> usize {
-        self.prg_rom.len() / Self::PRG_BANK_SIZE
+        self.prg_rom.num_banks()
     }
 
     fn last_prg_bank(&self) -> usize {
-        self.prg_bank_count().saturating_sub(1)
+        let count = self.prg_bank_count();
+        if count == 0 { 0 } else { count - 1 }
     }
 
     fn chr_bank_count(&self) -> usize {
-        if !self.chr_rom.is_empty() {
-            self.chr_rom.len() / Self::CHR_BANK_SIZE
-        } else {
-            self.chr_ram.len() / Self::CHR_BANK_SIZE
-        }
+        self.chr_memory.size() / Self::CHR_BANK_SIZE
     }
 
     fn read_chr_byte(&self, bank: u8, offset: usize) -> u8 {
@@ -120,26 +110,17 @@ impl BandaiFcgMapper {
         }
         let bank_index = (bank as usize) % bank_count;
         let addr = bank_index * Self::CHR_BANK_SIZE + offset;
-
-        if !self.chr_rom.is_empty() {
-            self.chr_rom.get(addr).copied().unwrap_or(0)
-        } else {
-            self.chr_ram.get(addr).copied().unwrap_or(0)
-        }
+        self.chr_memory.read_at_index(addr)
     }
 
     fn write_chr_byte(&mut self, bank: u8, offset: usize, value: u8) {
-        if self.chr_rom.is_empty() {
-            let bank_count = self.chr_bank_count();
-            if bank_count == 0 {
-                return;
-            }
-            let bank_index = (bank as usize) % bank_count;
-            let addr = bank_index * Self::CHR_BANK_SIZE + offset;
-            if let Some(slot) = self.chr_ram.get_mut(addr) {
-                *slot = value;
-            }
+        let bank_count = self.chr_bank_count();
+        if bank_count == 0 {
+            return;
         }
+        let bank_index = (bank as usize) % bank_count;
+        let addr = bank_index * Self::CHR_BANK_SIZE + offset;
+        self.chr_memory.write_at_index(addr, value);
     }
 }
 
@@ -148,25 +129,13 @@ impl Mapper for BandaiFcgMapper {
         match addr {
             0x8000..=0xBFFF => {
                 // Switchable 16KB bank
-                let bank_count = self.prg_bank_count();
-                if bank_count == 0 {
-                    return 0;
-                }
-                let bank_index = (self.prg_bank as usize) % bank_count;
-                let offset = (addr - 0x8000) as usize;
                 self.prg_rom
-                    .get(bank_index * Self::PRG_BANK_SIZE + offset)
-                    .copied()
-                    .unwrap_or(0)
+                    .read_with_base(self.prg_bank as usize, 0x8000, addr)
             }
             0xC000..=0xFFFF => {
                 // Fixed last 16KB bank
                 let bank_index = self.last_prg_bank();
-                let offset = (addr - 0xC000) as usize;
-                self.prg_rom
-                    .get(bank_index * Self::PRG_BANK_SIZE + offset)
-                    .copied()
-                    .unwrap_or(0)
+                self.prg_rom.read_with_base(bank_index, 0xC000, addr)
             }
             _ => 0,
         }
@@ -310,14 +279,11 @@ impl Mapper for BandaiFcgMapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_ram.clone()
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.chr_ram.len());
-        if to_copy > 0 {
-            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
-        }
+        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -737,5 +703,32 @@ mod tests {
         assert_eq!(restored.read_chr(0x0000), 0xAB);
         assert_eq!(restored.get_mirroring(), MirroringMode::SingleScreenUpper);
         assert_eq!(restored.irq_pending(), mapper.irq_pending());
+    }
+
+    #[test]
+    fn test_bandai_fcg_banked_rom_replacement() {
+        use crate::cartridge::common::BankedRom;
+        use crate::cartridge::test_helpers::banked_data;
+
+        const PRG_BANK_SIZE: usize = 16 * 1024; // 16KB
+        const CHR_BANK_SIZE: usize = 1024; // 1KB
+
+        let prg_rom = banked_data(PRG_BANK_SIZE, 16);
+        let chr_rom = banked_data(CHR_BANK_SIZE, 128);
+
+        let prg_banked = BankedRom::new(prg_rom, PRG_BANK_SIZE);
+        let chr_banked = BankedRom::new(chr_rom, CHR_BANK_SIZE);
+
+        // Test PRG banks
+        assert_eq!(prg_banked.read(0, 0), 0);
+        assert_eq!(prg_banked.read(15, 0), 15);
+
+        // Test CHR banks
+        assert_eq!(chr_banked.read(0, 0), 0);
+        assert_eq!(chr_banked.read(127, 0), 127);
+
+        // Test wrapping
+        assert_eq!(prg_banked.read(16, 0), 0);
+        assert_eq!(chr_banked.read(128, 0), 0);
     }
 }

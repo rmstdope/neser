@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x8000; // 32KB
@@ -32,7 +32,7 @@ const CHR_BANK_SIZE: usize = 0x2000; // 8KB
 /// - CHR bank select at $7FFE (8KB CHR banks)
 /// - Used in Impossible Mission II, Puzzle, Rad Racket
 pub struct BnromNinaMapper {
-    prg_rom: Vec<u8>,
+    prg_rom: BankedRom,
     prg_ram: PrgRam,
     chr_memory: ChrMemory,
     mirroring: MirroringMode,
@@ -47,7 +47,7 @@ impl BnromNinaMapper {
         let is_nina = !chr_rom.is_empty();
 
         Self {
-            prg_rom,
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_memory: ChrMemory::new(chr_rom),
             mirroring,
@@ -55,12 +55,6 @@ impl BnromNinaMapper {
             chr_bank_select: 0,
             is_nina,
         }
-    }
-
-    fn get_prg_bank_offset(&self) -> usize {
-        let num_banks = (self.prg_rom.len() / PRG_BANK_SIZE).max(1);
-        let bank = (self.prg_bank_select as usize) % num_banks;
-        bank * PRG_BANK_SIZE
     }
 
     fn get_chr_bank_offset(&self) -> usize {
@@ -85,10 +79,8 @@ impl Mapper for BnromNinaMapper {
         // PRG ROM at $8000-$FFFF (32KB switchable bank)
         match addr {
             0x8000..=0xFFFF => {
-                let bank_offset = self.get_prg_bank_offset();
-                let offset = (addr - 0x8000) as usize;
-                let index = bank_offset + offset;
-                self.prg_rom.get(index).copied().unwrap_or(0)
+                self.prg_rom
+                    .read_with_base(self.prg_bank_select as usize, 0x8000, addr)
             }
             _ => 0,
         }
@@ -431,5 +423,26 @@ mod tests {
             MirroringMode::Vertical,
         );
         assert_eq!(mapper_v.get_mirroring(), MirroringMode::Vertical);
+    }
+
+    #[test]
+    fn test_bnrom_banked_rom_replacement() {
+        use crate::cartridge::common::BankedRom;
+        use crate::cartridge::test_helpers::banked_data;
+
+        const PRG_BANK_SIZE: usize = 0x8000; // 32KB
+
+        let prg_rom = banked_data(PRG_BANK_SIZE, 4);
+        let prg_banked = BankedRom::new(prg_rom, PRG_BANK_SIZE);
+
+        // Test basic bank reading
+        assert_eq!(prg_banked.read(0, 0), 0);
+        assert_eq!(prg_banked.read(1, 0), 1);
+        assert_eq!(prg_banked.read(2, 0), 2);
+        assert_eq!(prg_banked.read(3, 0), 3);
+
+        // Test bank wrapping
+        assert_eq!(prg_banked.read(4, 0), 0);
+        assert_eq!(prg_banked.read(7, 0), 3);
     }
 }

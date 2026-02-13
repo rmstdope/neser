@@ -1,4 +1,4 @@
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
 /// Mapper 9 - MMC2 (PNROM boards)
@@ -25,9 +25,7 @@ pub struct MMC2Mapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,
 
-    chr_rom: Vec<u8>,
-    chr_ram: Vec<u8>,
-    has_chr_ram: bool,
+    chr_memory: ChrMemory,
 
     mirroring: MirroringMode,
 
@@ -49,19 +47,10 @@ impl MMC2Mapper {
     const CHR_BANK_SIZE: usize = 0x1000; // 4KB
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        let has_chr_ram = chr_rom.is_empty();
-        let chr_ram = if has_chr_ram {
-            vec![0u8; 0x2000]
-        } else {
-            Vec::new()
-        };
-
         Self {
             prg_rom,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom,
-            chr_ram,
-            has_chr_ram,
+            chr_memory: ChrMemory::new(chr_rom),
             mirroring,
             prg_bank_8k: 0,
             chr_bank_0_fd: 0,
@@ -79,12 +68,7 @@ impl MMC2Mapper {
     }
 
     fn chr_bank_count_4k(&self) -> usize {
-        let chr_len = if self.has_chr_ram {
-            self.chr_ram.len()
-        } else {
-            self.chr_rom.len()
-        };
-        chr_len / Self::CHR_BANK_SIZE
+        self.chr_memory.size() / Self::CHR_BANK_SIZE
     }
 
     fn clamp_prg_bank_8k(&self, bank: u8) -> usize {
@@ -110,11 +94,7 @@ impl MMC2Mapper {
 
     fn read_chr_bank_4k(&self, bank_index: usize, bank_offset: usize) -> u8 {
         let addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
-        if self.has_chr_ram {
-            self.chr_ram.get(addr).copied().unwrap_or(0)
-        } else {
-            self.chr_rom.get(addr).copied().unwrap_or(0)
-        }
+        self.chr_memory.read_at_index(addr)
     }
 
     fn chr_bank_for_addr(&self, addr: u16) -> usize {
@@ -224,15 +204,10 @@ impl Mapper for MMC2Mapper {
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        if !self.has_chr_ram {
-            return;
-        }
         let bank = self.chr_bank_for_addr(addr);
         let offset = (addr as usize) & (Self::CHR_BANK_SIZE - 1);
         let index = bank * Self::CHR_BANK_SIZE + offset;
-        if let Some(byte) = self.chr_ram.get_mut(index) {
-            *byte = value;
-        }
+        self.chr_memory.write_at_index(index, value);
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
@@ -262,18 +237,11 @@ impl Mapper for MMC2Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        if self.has_chr_ram {
-            self.chr_ram.clone()
-        } else {
-            Vec::new()
-        }
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        if self.has_chr_ram && !data.is_empty() {
-            let to_copy = data.len().min(self.chr_ram.len());
-            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
-        }
+        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -398,5 +366,17 @@ mod tests {
         // High region latch: FE
         mapper.ppu_address_changed(0x1FE8);
         assert_eq!(mapper.read_chr(0x1000), 4);
+    }
+
+    #[test]
+    fn test_mmc2_open_bus() {
+        let mapper = MMC2Mapper::new(
+            vec![0; 128 * 1024],
+            vec![0; 128 * 1024],
+            MirroringMode::Horizontal,
+        );
+
+        assert_eq!(mapper.read_prg_open_bus(0x5000, 0x11), 0x11);
+        assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x22), 0x22);
     }
 }

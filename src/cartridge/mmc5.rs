@@ -58,14 +58,23 @@
 // ## References
 // - NESdev Wiki: <https://www.nesdev.org/wiki/MMC5>
 
+// ============================================================================
+// Imports & Dependencies
+// ============================================================================
+
 use crate::cartridge::cartridge::MirroringMode;
+use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::Mapper;
 use crate::trace_mapper;
 use std::cell::Cell;
 
+// ============================================================================
+// Mapper Structure & State
+// ============================================================================
+
 pub struct MMC5Mapper {
     prg_rom: Vec<u8>,
-    chr: Chr,
+    chr_memory: ChrMemory,
     prg_ram: Vec<u8>,
     mirroring: MirroringMode,
     ciram: Vec<u8>,
@@ -136,6 +145,26 @@ pub struct MMC5Mapper {
     pcm_enabled: bool,
     pcm_value: u8,
 }
+
+// ============================================================================
+// Expansion Audio Pulse Channel
+// ============================================================================
+//
+// MMC5 provides two additional pulse channels (similar to APU pulse channels)
+// for expansion audio. These are controlled via $5000-$5007.
+//
+// Register Layout:
+// ```text
+// $5000/$5004 (pulse control):
+// 7  bit  0
+// ---- ----
+// DDLC VVVV
+// |||| ||||
+// |||| ++++- Volume
+// |||+------ Constant volume (0 = use envelope)
+// ||+------- Length counter halt / envelope loop
+// ++-------- Duty cycle
+// ```
 
 #[derive(Clone, Copy)]
 struct Mmc5Pulse {
@@ -216,10 +245,9 @@ impl Mmc5Pulse {
     }
 }
 
-enum Chr {
-    Rom(Vec<u8>),
-    Ram(Vec<u8>),
-}
+// ============================================================================
+// Mapper Initialization & Constants
+// ============================================================================
 
 impl MMC5Mapper {
     const PRG_RAM_BANK_SIZE: usize = 8 * 1024;
@@ -244,12 +272,6 @@ impl MMC5Mapper {
     ) -> Self {
         let prg_rom_bank_count_8k = prg_rom.len() / Self::PRG_ROM_BANK_SIZE;
 
-        let chr = if chr_rom.is_empty() {
-            Chr::Ram(vec![0u8; 8 * 1024])
-        } else {
-            Chr::Rom(chr_rom)
-        };
-
         // MMC5 PRG-RAM can be up to 64KB (8 x 8KB banks), but many cartridges have less.
         // Allocate based on cartridge metadata, clamped to the hardware maximum.
         let prg_ram_bank_count =
@@ -262,7 +284,7 @@ impl MMC5Mapper {
         // last available 8KB PRG ROM bank when present.
         Self {
             prg_rom,
-            chr,
+            chr_memory: ChrMemory::new(chr_rom),
             prg_ram,
             mirroring,
             ciram,
@@ -358,6 +380,30 @@ impl MMC5Mapper {
     ///
     /// Castlevania III does NOT use split-screen.
     ///
+
+    // ============================================================================
+    // Split-Screen Mode Support
+    // ============================================================================
+    //
+    // MMC5 split-screen allows separate CHR banks and scroll for part of the screen.
+    // Controlled via $5200-$5202:
+    //
+    // $5200 (Split Mode):
+    // ```text
+    // 7  bit  0
+    // ---- ----
+    // ES-T TTTT
+    // || | ||||
+    // || +-++++- Split tile threshold (0-33)
+    // |+-------- Split side (0=left, 1=right)
+    // +--------- Split enable
+    // ```
+    //
+    // $5201 (Split Scroll): Vertical scroll for split region
+    // $5202 (Split Bank): CHR bank for split region
+    //
+    // See: https://www.nesdev.org/wiki/MMC5#Scanline_and_split_mode
+
     fn split_enabled(&self) -> bool {
         (self.split_mode & 0x80) != 0
     }
@@ -397,6 +443,24 @@ impl MMC5Mapper {
         self.split_tile_count = 0;
         self.split_active = self.split_region_for_tile(0);
     }
+
+    // ============================================================================
+    // PRG Banking Logic
+    // ============================================================================
+    //
+    // MMC5 supports 4 PRG banking modes (via $5100):
+    // - Mode 0: 32KB (one 32KB bank at $8000-$FFFF)
+    // - Mode 1: 16KB×2 (two 16KB banks at $8000-$BFFF and $C000-$FFFF)
+    // - Mode 2: 16KB + 8KB×2 (16KB at $8000-$BFFF, 8KB at $C000-$DFFF, 8KB at $E000-$FFFF)
+    // - Mode 3: 8KB×4 (four 8KB banks at $8000, $A000, $C000, $E000)
+    //
+    // Bank registers ($5113-$5117):
+    // - $5113: PRG-RAM bank at $6000-$7FFF
+    // - $5114-$5117: PRG banks (interpretation depends on mode)
+    //
+    // Bank register bit 7: 0=ROM, 1=RAM
+    //
+    // See: https://www.nesdev.org/wiki/MMC5#PRG_Bankswitching
 
     fn prg_rom_bank_count_8k(&self) -> usize {
         self.prg_rom.len() / Self::PRG_ROM_BANK_SIZE
@@ -543,6 +607,27 @@ impl MMC5Mapper {
             self.write_prg_ram_8k(reg, addr, 0x8000, value);
         }
     }
+
+    // ============================================================================
+    // CHR Banking Logic
+    // ============================================================================
+    //
+    // MMC5 supports 4 CHR banking modes (via $5101):
+    // - Mode 0: 8KB (one 8KB bank)
+    // - Mode 1: 4KB×2 (two 4KB banks)
+    // - Mode 2: 2KB×4 (four 2KB banks)
+    // - Mode 3: 1KB×8 (eight 1KB banks)
+    //
+    // In 1KB mode with 8x16 sprites, separate banks for BG vs sprites:
+    // - $5120-$5127: Background CHR banks (A registers)
+    // - $5128-$512B: Sprite CHR banks (B registers)
+    //
+    // Extended Attribute Mode:
+    // - $5130: Upper 2 bits for CHR bank extension
+    // - ExRAM bits 5-0: Additional CHR bank bits
+    // - ExRAM bits 7-6: Palette override
+    //
+    // See: https://www.nesdev.org/wiki/MMC5#CHR_Bankswitching
 
     fn get_chr_bank(&self, addr: u16) -> u16 {
         fn bank_idx_1k(addr: u16) -> u8 {
@@ -714,15 +799,11 @@ impl MMC5Mapper {
         let offset = (addr as usize) % bank_size;
         let chr_addr = (bank as usize) * bank_size + offset;
 
-        match &self.chr {
-            Chr::Rom(data) => {
-                if data.is_empty() {
-                    0
-                } else {
-                    data.get(chr_addr % data.len()).copied().unwrap_or(0)
-                }
-            }
-            Chr::Ram(data) => data.get(chr_addr % data.len()).copied().unwrap_or(0),
+        let data_len = self.chr_memory.size();
+        if data_len == 0 {
+            0
+        } else {
+            self.chr_memory.read_at_index(chr_addr % data_len)
         }
     }
 
@@ -739,13 +820,35 @@ impl MMC5Mapper {
         let offset = (addr as usize) % bank_size;
         let chr_addr = (bank as usize) * bank_size + offset;
 
-        if let Chr::Ram(data) = &mut self.chr {
-            let data_len = data.len();
-            if let Some(slot) = data.get_mut(chr_addr % data_len) {
-                *slot = value;
-            }
+        let data_len = self.chr_memory.size();
+        if data_len > 0 {
+            self.chr_memory.write_at_index(chr_addr % data_len, value);
         }
     }
+
+    // ============================================================================
+    // Nametable Mapping & Fill Mode
+    // ============================================================================
+    //
+    // MMC5 provides flexible nametable mapping via $5105:
+    //
+    // $5105 (Nametable Mapping):
+    // ```text
+    // 7  bit  0
+    // ---- ----
+    // 33 22 11 00
+    // ||  ||  ||  ||
+    // ||  ||  ||  ++- Nametable at $2000-$23FF (0=A, 1=B, 2=ExRAM, 3=Fill)
+    // ||  ||  ++---- Nametable at $2400-$27FF
+    // ||  ++------- Nametable at $2800-$2BFF
+    // ++----------- Nametable at $2C00-$2FFF
+    // ```
+    //
+    // Fill mode ($5106/$5107):
+    // - $5106: Tile number to fill with
+    // - $5107: Attribute byte (2-bit pattern replicated)
+    //
+    // See: https://www.nesdev.org/wiki/MMC5#Nametable_mapping
 
     fn nametable_mapping_for_addr(&self, addr: u16) -> u8 {
         const NAMETABLE_MASK: u16 = 0x2FFF;
@@ -770,6 +873,10 @@ impl MMC5Mapper {
         a | (a << 2) | (a << 4) | (a << 6)
     }
 }
+
+// ============================================================================
+// CPU & PPU I/O (Mapper Trait Implementation)
+// ============================================================================
 
 impl Mapper for MMC5Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
@@ -1065,6 +1172,34 @@ impl Mapper for MMC5Mapper {
                 self.split_bank = value;
             }
 
+            // ================================================================
+            // Scanline IRQ ($5203/$5204)
+            // ================================================================
+            //
+            // MMC5 provides a scanline counter IRQ that triggers when the
+            // PPU reaches a specific scanline during rendering.
+            //
+            // $5203 (IRQ Scanline Compare):
+            // - Set target scanline number (0-239)
+            // - Special case: 0 = never triggers IRQ
+            //
+            // $5204 (IRQ Enable/Status):
+            // ```text
+            // 7  bit  0
+            // ---- ----
+            // EI-- ----
+            // ||
+            // |+-------- In-frame flag (read-only, set when PPU rendering active)
+            // +--------- IRQ enable
+            // ```
+            //
+            // IRQ triggers when:
+            // 1. IRQ enabled (bit 7 of $5204)
+            // 2. Compare value non-zero
+            // 3. PPU scanline matches compare value
+            //
+            // See: https://www.nesdev.org/wiki/MMC5#IRQ
+
             // IRQ
             0x5203 => {
                 if self.irq_scanline_compare != value {
@@ -1082,6 +1217,16 @@ impl Mapper for MMC5Mapper {
                     self.irq_pending.set(false);
                 }
             }
+
+            // ================================================================
+            // Hardware Multiplier ($5205/$5206)
+            // ================================================================
+            //
+            // 8-bit × 8-bit unsigned multiplication
+            // Write multiplicand to $5205, multiplier to $5206
+            // Read result: low byte at $5205, high byte at $5206
+            //
+            // See: https://www.nesdev.org/wiki/MMC5#Registers
 
             // Hardware multiplier
             0x5205 => {
@@ -1535,20 +1680,16 @@ impl Mapper for MMC5Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        match &self.chr {
-            Chr::Ram(data) => data.clone(),
-            Chr::Rom(_) => Vec::new(),
-        }
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        let Chr::Ram(chr_ram) = &mut self.chr else {
-            return;
-        };
-
-        let to_copy = data.len().min(chr_ram.len());
-        chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.chr_memory.load_snapshot(data);
     }
+
+    // ============================================================================
+    // Save State Management
+    // ============================================================================
 
     fn registers_snapshot(&self) -> Vec<u8> {
         let mut snapshot = Vec::with_capacity(256);
@@ -1949,6 +2090,10 @@ impl Mapper for MMC5Mapper {
         self.mirroring = mirroring;
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 #[allow(clippy::identity_op)]
@@ -3809,5 +3954,106 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Test MMC5 ExRAM mode 0 returns open-bus during rendering
+    ///
+    /// In ExRAM mode 0, CPU reads from $5C00-$5FFF should return open-bus
+    /// when rendering is enabled.
+    #[test]
+    fn test_mmc5_exram_mode_0_open_bus_during_rendering() {
+        let mut mapper = create_mmc5_mapper(
+            vec![0; 256 * 1024],
+            vec![0; 8 * 1024],
+            MirroringMode::Horizontal,
+        )
+        .expect("MMC5 should be supported");
+
+        // Set ExRAM to mode 0 (extended attribute mode)
+        mapper.write_prg(0x5104, 0x00);
+
+        // Write some data to ExRAM
+        mapper.write_prg(0x5C00, 0x42);
+
+        // Enable rendering (write to PPUMASK via ppu_write_mask)
+        mapper.ppu_write_mask(0b0001_1000); // Enable rendering (bits 3-4)
+
+        let open_bus = 0xBB;
+        let result = mapper.read_prg_open_bus(0x5C00, open_bus);
+
+        // Should return open-bus when rendering is enabled
+        assert_eq!(
+            result, open_bus,
+            "ExRAM mode 0 should return open-bus during rendering"
+        );
+    }
+
+    /// Test MMC5 ExRAM mode 1 behavior is independent of rendering state
+    ///
+    /// This complements `test_mmc5_exram_cpu_reads_return_open_bus_in_modes_0_and_1`,
+    /// which verifies that mode 1 CPU reads return open-bus. Here we focus on
+    /// ensuring that changing the PPU rendering mask does not affect the value
+    /// observed by the CPU when reading from ExRAM in mode 1.
+    #[test]
+    fn test_mmc5_exram_mode_1_behavior_independent_of_rendering_state() {
+        let mut mapper = create_mmc5_mapper(
+            vec![0; 256 * 1024],
+            vec![0; 8 * 1024],
+            MirroringMode::Horizontal,
+        )
+        .expect("MMC5 should be supported");
+
+        // Set ExRAM to mode 1 (nametable mode)
+        mapper.write_prg(0x5104, 0x01);
+
+        // Write some data to ExRAM (should not affect CPU reads in mode 1)
+        mapper.write_prg(0x5C00, 0x42);
+
+        let open_bus = 0xCC;
+
+        // Read with rendering disabled
+        mapper.ppu_write_mask(0b0000_0000);
+        let result1 = mapper.read_prg_open_bus(0x5C00, open_bus);
+
+        // Read with rendering enabled
+        mapper.ppu_write_mask(0b0001_1000);
+        let result2 = mapper.read_prg_open_bus(0x5C00, open_bus);
+
+        // The CPU-visible value must be the same regardless of rendering state
+        assert_eq!(
+            result1, result2,
+            "ExRAM mode 1 CPU reads should be independent of rendering state"
+        );
+        assert_eq!(result1, open_bus, "ExRAM mode 1 should return open-bus");
+    }
+
+    /// Test that addresses below $5000 return open-bus for MMC5
+    #[test]
+    fn test_mmc5_addresses_below_5000_return_open_bus() {
+        let mapper = create_mmc5_mapper(
+            vec![0; 256 * 1024],
+            vec![0; 8 * 1024],
+            MirroringMode::Horizontal,
+        )
+        .expect("MMC5 should be supported");
+
+        let open_bus = 0x88;
+
+        // Test various addresses below $5000
+        assert_eq!(
+            mapper.read_prg_open_bus(0x0000, open_bus),
+            open_bus,
+            "MMC5 should return open-bus for $0000"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x4000, open_bus),
+            open_bus,
+            "MMC5 should return open-bus for $4000"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x4FFF, open_bus),
+            open_bus,
+            "MMC5 should return open-bus for $4FFF"
+        );
     }
 }

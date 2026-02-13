@@ -1,9 +1,9 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
+use crate::cartridge::common::ChrMemory;
 use crate::trace_mapper;
 
 // Memory size constants
-const CHR_RAM_SIZE: usize = 8192; // 8KB
 const PRG_RAM_SIZE: usize = 8192; // 8KB
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 const CHR_BANK_SIZE_4K: usize = 0x1000; // 4KB (for MMC1, MMC3)
@@ -60,8 +60,7 @@ pub enum Mmc1Revision {
 pub struct MMC1Mapper {
     prg_rom: Vec<u8>,
     prg_ram: Vec<u8>,
-    chr_memory: Vec<u8>,
-    has_chr_ram: bool,
+    chr_memory: ChrMemory,
 
     // Shift register state
     shift_register: u8, // 5-bit shift register
@@ -93,18 +92,10 @@ impl MMC1Mapper {
         _mirroring: MirroringMode,
         revision: Mmc1Revision,
     ) -> Self {
-        let has_chr_ram = chr_rom.is_empty();
-        let chr_memory = if has_chr_ram {
-            vec![0; CHR_RAM_SIZE]
-        } else {
-            chr_rom
-        };
-
         Self {
             prg_rom,
             prg_ram: vec![0; PRG_RAM_SIZE],
-            chr_memory,
-            has_chr_ram,
+            chr_memory: ChrMemory::new(chr_rom),
             shift_register: 0x10, // Power-on state: bit 4 set
             write_count: 0,
             control: MMC1_DEFAULT_CONTROL, // Default: PRG mode 3 (fix last bank), CHR mode 0
@@ -255,7 +246,7 @@ impl MMC1Mapper {
 
     fn get_chr_bank_offset(&self, addr: u16) -> usize {
         let chr_mode = self.get_chr_mode();
-        let num_4kb_banks = self.chr_memory.len() / CHR_BANK_SIZE_4K;
+        let num_4kb_banks = self.chr_memory.size() / CHR_BANK_SIZE_4K;
 
         if chr_mode == 0 {
             // 8KB mode: switch entire $0000-$1FFF, ignore low bit
@@ -351,14 +342,10 @@ impl Mapper for MMC1Mapper {
             (addr & 0x0FFF) as usize
         };
         let index = bank_offset + offset;
-        self.chr_memory.get(index).copied().unwrap_or(0)
+        self.chr_memory.read_at_index(index)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        if !self.has_chr_ram {
-            return; // CHR ROM is read-only
-        }
-
         let bank_offset = self.get_chr_bank_offset(addr);
         let offset = if self.get_chr_mode() == 0 {
             // 8KB mode
@@ -368,9 +355,7 @@ impl Mapper for MMC1Mapper {
             (addr & 0x0FFF) as usize
         };
         let index = bank_offset + offset;
-        if index < self.chr_memory.len() {
-            self.chr_memory[index] = value;
-        }
+        self.chr_memory.write_at_index(index, value);
     }
 
     fn get_mirroring(&self) -> MirroringMode {
@@ -395,18 +380,11 @@ impl Mapper for MMC1Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        if self.has_chr_ram {
-            self.chr_memory.clone()
-        } else {
-            Vec::new()
-        }
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        if self.has_chr_ram && !data.is_empty() {
-            let to_copy = data.len().min(self.chr_memory.len());
-            self.chr_memory[..to_copy].copy_from_slice(&data[..to_copy]);
-        }
+        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -1275,5 +1253,94 @@ mod tests {
         // PRG mode (bits 2-3): 01 = mode 1
         // CHR mode (bit 4): 1 = two 4KB banks
         assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+    }
+
+    /// Test MMC1 disabled WRAM returns open-bus
+    ///
+    /// MMC1B/C can disable WRAM via bit 4 of the PRG bank register ($E000-$FFFF).
+    /// When disabled, reads from $6000-$7FFF should return open-bus.
+    #[test]
+    fn test_mmc1_disabled_wram_returns_open_bus() {
+        let mut mapper = MMC1Mapper::new(vec![0; 256 * 1024], vec![], MirroringMode::Horizontal);
+
+        // First, enable WRAM and write some data
+        // Write to $E000-$FFFF controls PRG banking and WRAM enable
+        // We need to do 5 consecutive writes to load the shift register
+
+        // Reset shift register
+        mapper.write_prg(0x8000, 0x80);
+
+        // Write pattern to enable WRAM: bit 4 = 0
+        // We'll write 5 times with bit 0 = 0 each time to load 0x00 into register
+        for _ in 0..5 {
+            mapper.write_prg(0xE000, 0x00);
+        }
+
+        // Write to WRAM
+        mapper.write_prg(0x6000, 0xAA);
+        mapper.write_prg(0x7000, 0xBB);
+
+        // Verify WRAM reads work when enabled
+        assert_eq!(mapper.read_prg(0x6000), 0xAA);
+        assert_eq!(mapper.read_prg(0x7000), 0xBB);
+
+        // Now disable WRAM by setting bit 4 = 1 in PRG bank register
+        // Reset shift register
+        mapper.write_prg(0x8000, 0x80);
+
+        // Write pattern to disable WRAM: bit 4 = 1
+        // We need to shift in 10000 binary = 0x10
+        // Shift register is filled LSB first, so: bit0, bit1, bit2, bit3, bit4
+        mapper.write_prg(0xE000, 0x00); // bit 0 = 0
+        mapper.write_prg(0xE000, 0x00); // bit 1 = 0
+        mapper.write_prg(0xE000, 0x00); // bit 2 = 0
+        mapper.write_prg(0xE000, 0x00); // bit 3 = 0
+        mapper.write_prg(0xE000, 0x01); // bit 4 = 1
+
+        // read_prg should return 0 for backward compatibility
+        assert_eq!(mapper.read_prg(0x6000), 0x00);
+        assert_eq!(mapper.read_prg(0x7000), 0x00);
+
+        // read_prg_open_bus should return the open-bus value
+        let open_bus = 0x42;
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, open_bus),
+            open_bus,
+            "Disabled WRAM should return open-bus at $6000"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x7000, open_bus),
+            open_bus,
+            "Disabled WRAM should return open-bus at $7000"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x7FFF, open_bus),
+            open_bus,
+            "Disabled WRAM should return open-bus at $7FFF"
+        );
+    }
+
+    /// Test MMC1 enabled WRAM doesn't return open-bus
+    #[test]
+    fn test_mmc1_enabled_wram_returns_data() {
+        let mut mapper = MMC1Mapper::new(vec![0; 256 * 1024], vec![], MirroringMode::Horizontal);
+
+        // Reset and ensure WRAM is enabled (bit 4 = 0)
+        mapper.write_prg(0x8000, 0x80);
+        for _ in 0..5 {
+            mapper.write_prg(0xE000, 0x00);
+        }
+
+        // Write to WRAM
+        mapper.write_prg(0x6000, 0x55);
+
+        let open_bus = 0xFF;
+        let result = mapper.read_prg_open_bus(0x6000, open_bus);
+
+        // Should return the written value, not open-bus
+        assert_eq!(
+            result, 0x55,
+            "Enabled WRAM should return written data, not open-bus"
+        );
     }
 }

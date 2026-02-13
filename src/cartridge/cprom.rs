@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const CHR_BANK_SIZE: usize = 0x1000; // 4KB
@@ -27,7 +27,7 @@ const CHR_RAM_SIZE: usize = 0x4000; // 16KB
 pub struct CpromMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,
-    chr_ram: Vec<u8>,
+    chr_memory: ChrMemory,
     mirroring: MirroringMode,
     chr_bank_select: u8,
 }
@@ -38,7 +38,7 @@ impl CpromMapper {
         Self {
             prg_rom,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_ram: vec![0; CHR_RAM_SIZE],
+            chr_memory: ChrMemory::new_ram(CHR_RAM_SIZE),
             mirroring,
             chr_bank_select: 0,
         }
@@ -93,16 +93,14 @@ impl Mapper for CpromMapper {
         let bank_offset = self.get_chr_bank_offset(addr);
         let offset = (addr & 0x0FFF) as usize;
         let index = bank_offset + offset;
-        self.chr_ram.get(index).copied().unwrap_or(0)
+        self.chr_memory.read_at_index(index)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
         let bank_offset = self.get_chr_bank_offset(addr);
         let offset = (addr & 0x0FFF) as usize;
         let index = bank_offset + offset;
-        if index < self.chr_ram.len() {
-            self.chr_ram[index] = value;
-        }
+        self.chr_memory.write_at_index(index, value);
     }
 
     fn get_mirroring(&self) -> MirroringMode {
@@ -126,12 +124,11 @@ impl Mapper for CpromMapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_ram.clone()
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.chr_ram.len());
-        self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
@@ -175,11 +172,24 @@ mod tests {
 
         // Write distinct patterns to each 4KB bank in CHR-RAM
         for bank in 0..4 {
+            // Select the bank first
+            mapper.write_prg(0x8000, bank as u8);
+            // Write to the selected bank at $0000-$0FFF
             for i in 0..4096 {
-                let addr = bank * 0x1000 + i;
-                mapper.chr_ram[addr] = (bank * 10 + i % 256) as u8;
+                let addr = i as u16;
+                mapper.write_chr(addr, (bank * 10 + i % 256) as u8);
+            }
+            // Also write to the fixed bank 3 at $1000-$1FFF when bank 3 is selected
+            if bank == 3 {
+                for i in 0..4096 {
+                    let addr = 0x1000 + i as u16;
+                    mapper.write_chr(addr, (bank * 10 + i % 256) as u8);
+                }
             }
         }
+
+        // Reset to bank 0 for testing
+        mapper.write_prg(0x8000, 0);
 
         // Initially bank 0 should be at $0000-$0FFF
         assert_eq!(mapper.read_chr(0x0000), 0);
@@ -211,9 +221,12 @@ mod tests {
         // Upper 4KB should always be fixed to bank 3
         let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
 
-        // Fill bank 3 with a distinct pattern
+        // Fill bank 3 with a distinct pattern via writes to $1000-$1FFF.
+        // The upper 4KB address range ($1000-$1FFF) is hardwired to bank 3,
+        // so writes to this range always go to bank 3 regardless of bank select.
         for i in 0..4096 {
-            mapper.chr_ram[3 * 0x1000 + i] = (100 + i % 256) as u8;
+            let addr = 0x1000 + i as u16;
+            mapper.write_chr(addr, (100 + i % 256) as u8);
         }
 
         // Verify upper 4KB reads bank 3 regardless of bank select
@@ -271,8 +284,16 @@ mod tests {
 
         // Fill each bank with distinct pattern
         for bank in 0..4 {
+            mapper.write_prg(0x8000, bank as u8);
             for i in 0..4096 {
-                mapper.chr_ram[bank * 0x1000 + i] = (bank * 50) as u8;
+                let addr = i as u16;
+                mapper.write_chr(addr, (bank * 50) as u8);
+            }
+            if bank == 3 {
+                for i in 0..4096 {
+                    let addr = 0x1000 + i as u16;
+                    mapper.write_chr(addr, (bank * 50) as u8);
+                }
             }
         }
 
@@ -306,8 +327,16 @@ mod tests {
 
         // Fill banks with distinct patterns
         for bank in 0..4 {
+            mapper.write_prg(0x8000, bank as u8);
             for i in 0..4096 {
-                mapper.chr_ram[bank * 0x1000 + i] = (bank + 100) as u8;
+                let addr = i as u16;
+                mapper.write_chr(addr, (bank + 100) as u8);
+            }
+            if bank == 3 {
+                for i in 0..4096 {
+                    let addr = 0x1000 + i as u16;
+                    mapper.write_chr(addr, (bank + 100) as u8);
+                }
             }
         }
 
@@ -337,5 +366,13 @@ mod tests {
 
         restored.write_prg(0x8000, 0b0000_0011); // switch to bank 3
         assert_ne!(restored.read_chr(0x0000), 0xAA);
+    }
+
+    #[test]
+    fn test_cprom_open_bus() {
+        let mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+
+        assert_eq!(mapper.read_prg_open_bus(0x5000, 0x77), 0x77);
+        assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x88), 0x88);
     }
 }
