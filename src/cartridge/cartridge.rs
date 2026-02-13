@@ -95,7 +95,7 @@ impl Cartridge {
         // Delegate full parsing (header, PRG/CHR extraction, CRC) to centralized parser.
         // `parse_rom` will validate the header and sizes and return rich errors
         // which we map into `CartridgeError` here.
-        let (info, prg_rom, chr_rom, crc32) = match crate::cartridge::parse_rom(data) {
+        let (info, prg_rom, chr_rom, _trainer, crc32) = match crate::cartridge::parse_rom(data) {
             Ok(tuple) => tuple,
             Err(crate::cartridge::ines::RomParseError::InvalidHeader) => {
                 return Err(CartridgeError::InvalidHeader);
