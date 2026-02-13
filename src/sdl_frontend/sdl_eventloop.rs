@@ -462,6 +462,105 @@ impl SdlEventLoop {
         }
     }
 
+    /// Handle autorun logic before emulating a frame.
+    /// 
+    /// In playback or extend mode, applies button states from the recording.
+    /// Returns true if we should continue normal execution, false if we should exit.
+    fn handle_autorun_before_frame(&mut self, nes: &mut Nes) -> bool {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return true; // No autorun active
+        };
+
+        use crate::console::AutorunMode;
+        
+        // In playback mode or extend mode with remaining frames, apply recorded input
+        if autorun_state.mode() == AutorunMode::Playback || autorun_state.is_extending_playback() {
+            if let Some(frame) = autorun_state.next_playback_frame() {
+                self.apply_button_states(nes, frame.player1, frame.player2);
+                return true;
+            }
+            
+            // Playback finished
+            if autorun_state.mode() == AutorunMode::Playback {
+                // Verify CRC and exit
+                return self.finish_playback(nes);
+            }
+        }
+        
+        true
+    }
+    
+    /// Handle autorun logic after processing input but before rendering.
+    /// 
+    /// In record mode, captures current button states.
+    fn handle_autorun_after_input(&mut self, nes: &Nes) {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return; // No autorun active
+        };
+
+        use crate::console::AutorunMode;
+        
+        // In record mode (or extend mode after playback), capture button states
+        if autorun_state.mode() == AutorunMode::Record && !autorun_state.is_extending_playback() {
+            let (player1, player2) = self.capture_button_states(nes);
+            autorun_state.record_frame(player1, player2);
+        }
+    }
+    
+    /// Finish playback by verifying CRC and returning exit status.
+    /// Returns false to signal the event loop should exit.
+    fn finish_playback(&mut self, nes: &Nes) -> bool {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return true;
+        };
+        
+        // Get the screen buffer CRC
+        let screen_buffer = nes.get_screen_buffer();
+        let crc = screen_buffer.crc32();
+        drop(screen_buffer); // Release the borrow
+        
+        // Verify against stored CRC
+        let snapshot = nes.ppu.borrow().screen_buffer_snapshot();
+        match autorun_state.verify_checksum(&snapshot) {
+            Ok(()) => {
+                log_info(format!("Autorun playback successful: CRC match (0x{:08X})", crc));
+                std::process::exit(0);
+            }
+            Err(e) => {
+                log_info(format!("Autorun playback failed: {}", e));
+                std::process::exit(1);
+            }
+        }
+    }
+    
+    /// Finish recording by saving the autorun file with CRC.
+    fn finish_recording(&mut self, nes: &Nes) -> Result<(), String> {
+        let Some(ref mut autorun_state) = self.autorun_state else {
+            return Ok(());
+        };
+        
+        use crate::console::AutorunMode;
+        
+        if autorun_state.mode() != AutorunMode::Record {
+            return Ok(());
+        }
+        
+        // Calculate final screen buffer CRC
+        let screen_buffer = nes.get_screen_buffer();
+        let crc = screen_buffer.crc32();
+        drop(screen_buffer);
+        
+        // Save the recording with CRC
+        autorun_state.save_with_checksum(crc)?;
+        log_info(format!(
+            "Autorun recording saved: {} frames, CRC 0x{:08X}",
+            autorun_state.total_frames(),
+            crc
+        ));
+        
+        Ok(())
+    }
+
     fn should_manual_frame_limit(vsync_enabled: bool) -> bool {
         !vsync_enabled
     }
@@ -694,6 +793,7 @@ impl SdlEventLoop {
                     match event {
                         Event::Quit { .. } => {
                             self.gl_backend = Some(gl_backend);
+                            self.finish_recording(nes)?;
                             return Ok(());
                         }
                         Event::KeyDown {
@@ -709,6 +809,7 @@ impl SdlEventLoop {
                                 == KeyDownOutcome::Quit
                             {
                                 self.gl_backend = Some(gl_backend);
+                                self.finish_recording(nes)?;
                                 return Ok(());
                             }
                         }
@@ -756,6 +857,9 @@ impl SdlEventLoop {
                     self.handle_controller_button(nes, which, button, pressed);
                 }
 
+                // Record button states after input processing (autorun record mode)
+                self.handle_autorun_after_input(nes);
+
                 // Skip emulation and rendering if paused
                 if self.paused {
                     Self::tick_windowed_paused_for_run(
@@ -778,6 +882,13 @@ impl SdlEventLoop {
                     self.apply_debugger_ui_action(nes, action);
                     std::thread::sleep(std::time::Duration::from_millis(16));
                     continue;
+                }
+
+                // Apply button states from autorun before emulation (autorun playback mode)
+                if !self.handle_autorun_before_frame(nes) {
+                    // Autorun playback finished, exit
+                    self.gl_backend = Some(gl_backend);
+                    return self.finish_recording(nes);
                 }
 
                 // 2. Emulate until PPU completes a full frame (reaches VBlank)
@@ -869,9 +980,19 @@ impl SdlEventLoop {
         } else {
             // Headless mode - just run without rendering
             loop {
+                // Handle autorun before frame
+                if !self.handle_autorun_before_frame(nes) {
+                    // Autorun playback finished, exit
+                    return self.finish_recording(nes);
+                }
+
                 if self.tick_headless_once_for_run(nes) {
+                    self.finish_recording(nes)?;
                     return Ok(());
                 }
+
+                // After input processing, record if needed
+                self.handle_autorun_after_input(nes);
 
                 // Avoid a busy loop while paused.
                 if self.paused {
@@ -968,7 +1089,9 @@ impl SdlEventLoop {
         let events: Vec<_> = self.event_pump.poll_iter().collect();
         for event in events {
             match event {
-                Event::Quit { .. } => return true,
+                Event::Quit { .. } => {
+                    return true;
+                }
                 Event::KeyDown {
                     keycode: Some(keycode),
                     ..
