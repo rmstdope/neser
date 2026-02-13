@@ -285,7 +285,11 @@ impl SdlEventLoop {
         let gl_backend = if headless {
             None
         } else {
-            Some(SdlGlWrapper::new(&sdl_context, config, app_context.clone())?)
+            Some(SdlGlWrapper::new(
+                &sdl_context,
+                config,
+                app_context.clone(),
+            )?)
         };
 
         // Initialize gamepads if enabled

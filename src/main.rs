@@ -1,5 +1,5 @@
-mod apu;
 mod app_context;
+mod apu;
 mod bus;
 mod cartridge;
 mod console;
@@ -10,9 +10,9 @@ mod ppu;
 mod rendering;
 mod sdl_frontend;
 
+use app_context::AppContext;
 use console::{ApuChannels, Config, Nes, ParseResult, SaveState, log_rom_tv_system_selection};
 use debugging::log_info;
-use app_context::AppContext;
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::fs;
 

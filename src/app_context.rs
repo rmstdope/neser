@@ -24,7 +24,9 @@ impl AppContext {
     }
 
     pub fn add_toast(&self, text: impl Into<String>) {
-        self.toast_manager.borrow_mut().push(text.into(), Instant::now());
+        self.toast_manager
+            .borrow_mut()
+            .push(text.into(), Instant::now());
     }
 
     pub fn visible_toasts(&self, now: Instant) -> Vec<String> {
