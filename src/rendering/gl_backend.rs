@@ -85,9 +85,8 @@ impl ToastManager {
 
     fn prune_expired(&mut self, now: Instant) {
         let lifetime = Duration::from_secs(TOAST_LIFETIME_SECS);
-        self.toasts.retain(|toast| {
-            now.saturating_duration_since(toast.created_at) <= lifetime
-        });
+        self.toasts
+            .retain(|toast| now.saturating_duration_since(toast.created_at) <= lifetime);
     }
 
     fn visible_toasts(&mut self, now: Instant) -> Vec<&Toast> {
@@ -486,10 +485,11 @@ impl GlBackend {
             }
         }
 
-        let visible_toasts = self
+        let visible_toasts: Vec<String> = self
             .toast_manager
             .visible_toasts(now)
             .into_iter()
+            .map(|toast| toast.text.clone())
             .collect();
         // Start ImGui frame
         {
