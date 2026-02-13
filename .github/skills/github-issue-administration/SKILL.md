@@ -25,11 +25,11 @@ Use this skill when creating, updating, or managing GitHub issues. It covers iss
 6. **Use `gh` safely**:
    - Avoid backticks in the issue text.
    - Only create or update one issue per command to minimize quoting complexity.
-   - Prefer `--title` and `--body` with double quotes; use single quotes only for short strings without apostrophes.
-   - For multi-line bodies, use a heredoc to avoid escaping:
+   - **ALWAYS use `--body-file` for multi-line content** - Inline `--body` with multiple lines can corrupt shell state and cause parsing errors.
+   - For multi-line bodies, create a temporary file with heredoc:
 
 ```sh
-cat <<'EOF' > /tmp/issue-body.md
+cat > /tmp/issue-body.md << 'EOF'
 Problem:
 - ...
 
@@ -44,14 +44,49 @@ gh issue create --title "Short, specific title" --body-file /tmp/issue-body.md -
 ```
 
 7. **Quoting rules**:
-   - Use double quotes around arguments with spaces.
-   - Escape embedded double quotes with a backslash: `\"`.
-   - For strings with apostrophes, use double quotes (not single quotes).
-   - Prefer `--body-file` for complex text.
+   - Use double quotes around `--title` arguments with spaces.
+   - For `--body`, always use `--body-file` instead of inline content.
+   - Escape embedded double quotes in titles with a backslash: `\"`.
+   - For strings with apostrophes in titles, use double quotes (not single quotes).
+   - Avoid special characters in temporary file paths when using heredoc.
 
-8. **Verify**:
+8. **Verify and fix**:
 
-After creating or updating an issue, read it back using `gh issue view <issue-number>` to ensure formatting and content are correct. If it is not, update the issue with `gh issue edit <issue-number>` to fix any formatting issues.
+Always verify issue creation and content after running `gh issue create`:
+
+```sh
+# View newly created issue
+gh issue view <issue-number>
+
+# Or list recent issues to confirm creation
+gh issue list --state open --limit 5 --json number,title
+```
+
+If formatting or content is incorrect, update the issue:
+
+```sh
+gh issue edit <issue-number> --body-file /tmp/corrected-body.md
+```
+
+9. **Troubleshooting - Shell state corruption**:
+
+If terminal shows `dquote>` prompt or similar after `gh` commands:
+
+- The heredoc or quoting process corrupted shell state.
+- **Solution**: Run simple command like `echo "test"` to reset state, or open a new terminal.
+- **Prevention**: Always wrap heredoc content in single quotes: `<<'EOF'` (not `<<EOF`)
+- **Alternative**: Use Python subprocess for complex cases:
+
+```python
+import subprocess
+result = subprocess.run([
+    "gh", "issue", "create",
+    "--title", "My title",
+    "--body", body_content,
+    "--label", "label1,label2"
+], capture_output=True, text=True)
+print(result.stdout)
+```
 
 ## Examples
 
