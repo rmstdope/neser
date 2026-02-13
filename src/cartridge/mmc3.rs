@@ -69,6 +69,7 @@ impl MMC3Mapper {
     ///
     /// For alternate (NEC) IRQ behavior, use the builder pattern:
     /// ```ignore
+    /// // true enables alternate (NEC) IRQ behavior
     /// let mapper = MMC3Mapper::new(prg_rom, chr_rom, mirroring).with_irq_mode(true);
     /// ```
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
@@ -115,11 +116,12 @@ impl MMC3Mapper {
     /// This allows for fluent construction:
     /// ```ignore
     /// let mapper = MMC3Mapper::new(prg_rom, chr_rom, mirroring)
-    ///     .with_irq_mode(true);
+    ///     .with_irq_mode(true);  // true = NEC behavior, false = Sharp behavior
     /// ```
     ///
-    /// - `use_alternate_irq = false`: Normal (Sharp) behavior - IRQ when counter is 0
-    /// - `use_alternate_irq = true`: Alternate (NEC) behavior - IRQ only on 1→0 transition
+    /// # Arguments
+    /// * `use_alternate_irq` - Pass `true` for alternate (NEC) IRQ behavior (only fire on 1→0 transition),
+    ///   or `false` for normal (Sharp) IRQ behavior (fire when counter is 0)
     pub fn with_irq_mode(mut self, use_alternate_irq: bool) -> Self {
         self.use_alternate_irq = use_alternate_irq;
         self
