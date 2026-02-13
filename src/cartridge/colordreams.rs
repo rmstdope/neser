@@ -43,7 +43,7 @@ mod tests {
     fn test_colordreams_prg_and_chr_bank_selected_by_single_write() {
         // Mapper 11 (ColorDreams):
         // - PRG: 32KB banks selected by bits 4-7
-        // - CHR: 8KB banks selected by bits 0-1
+        // - CHR: 8KB banks selected by bits 0-3
 
         let prg_rom = banked_data(32 * 1024, 4);
         let chr_rom = banked_data(8 * 1024, 4);
@@ -55,7 +55,7 @@ mod tests {
         assert_eq!(mapper.read_prg(0x8000), 0);
         assert_eq!(mapper.read_chr(0x0000), 0);
 
-        // Select PRG bank 1 (bits 4-7) and CHR bank 2 (bits 0-1): 0b0001_0010 = 0x12
+        // Select PRG bank 1 (bits 4-7) and CHR bank 2 (bits 0-3): 0b0001_0010 = 0x12
         mapper.write_prg(0x8000, 0x12);
 
         assert_eq!(mapper.read_prg(0x8000), 1);
