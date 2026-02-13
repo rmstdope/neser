@@ -1933,7 +1933,7 @@ mod tests {
         // Test that trainer data from ROM is loaded into CPU memory at $7000-$71FF
         // Use a test pattern offset to create distinctive data (arbitrary value to avoid 0x00/0xFF)
         const TEST_OFFSET: u8 = 0x42;
-        
+
         let mut memory = create_test_memory();
 
         // Create a ROM with trainer data
