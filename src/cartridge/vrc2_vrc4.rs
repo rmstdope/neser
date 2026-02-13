@@ -1,4 +1,4 @@
-use crate::cartridge::common::{DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 use crate::trace_mapper;
 
@@ -56,8 +56,7 @@ pub struct Vrc2Vrc4Mapper {
     variant: Vrc2Vrc4Variant,
 
     prg_rom: Vec<u8>,
-    chr_rom: Vec<u8>,
-    chr_ram: Vec<u8>,
+    chr_memory: ChrMemory,
     prg_ram: PrgRam,
 
     prg_bank_16k: u8,
@@ -80,7 +79,6 @@ pub struct Vrc2Vrc4Mapper {
 impl Vrc2Vrc4Mapper {
     const PRG_BANK_SIZE_8K: usize = 0x2000;
     const CHR_BANK_SIZE_1K: usize = 0x0400;
-    const DEFAULT_CHR_RAM_SIZE: usize = 0x2000;
 
     pub fn new(
         mapper_number: u8,
@@ -96,17 +94,10 @@ impl Vrc2Vrc4Mapper {
             _ => Vrc2Vrc4Variant::Mapper21,
         };
 
-        let chr_ram = if chr_rom.is_empty() {
-            vec![0; Self::DEFAULT_CHR_RAM_SIZE]
-        } else {
-            Vec::new()
-        };
-
         Self {
             variant,
             prg_rom,
-            chr_rom,
-            chr_ram,
+            chr_memory: ChrMemory::new(chr_rom),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             prg_bank_16k: 0,
             prg_bank_8k: 0,
@@ -124,21 +115,12 @@ impl Vrc2Vrc4Mapper {
         }
     }
 
-    fn has_chr_ram(&self) -> bool {
-        self.chr_rom.is_empty()
-    }
-
     fn prg_bank_count_8k(&self) -> usize {
         self.prg_rom.len() / Self::PRG_BANK_SIZE_8K
     }
 
     fn chr_bank_count_1k(&self) -> usize {
-        let chr_len = if self.has_chr_ram() {
-            self.chr_ram.len()
-        } else {
-            self.chr_rom.len()
-        };
-        chr_len / Self::CHR_BANK_SIZE_1K
+        self.chr_memory.size() / Self::CHR_BANK_SIZE_1K
     }
 
     fn prg_bank_index_8k(&self, bank: usize) -> usize {
@@ -219,11 +201,7 @@ impl Vrc2Vrc4Mapper {
 
     fn read_chr_1k(&self, bank_index: usize, bank_offset: usize) -> u8 {
         let addr = bank_index * Self::CHR_BANK_SIZE_1K + bank_offset;
-        if self.has_chr_ram() {
-            self.chr_ram.get(addr).copied().unwrap_or(0)
-        } else {
-            self.chr_rom.get(addr).copied().unwrap_or(0)
-        }
+        self.chr_memory.read_at_index(addr)
     }
 
     fn reset_irq_prescaler(&mut self) {
@@ -374,13 +352,8 @@ impl Mapper for Vrc2Vrc4Mapper {
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        if !self.has_chr_ram() {
-            return;
-        }
         let addr = (addr & 0x1FFF) as usize;
-        if addr < self.chr_ram.len() {
-            self.chr_ram[addr] = value;
-        }
+        self.chr_memory.write_at_index(addr, value);
     }
 
     fn cpu_cycle(&mut self) {
@@ -424,14 +397,11 @@ impl Mapper for Vrc2Vrc4Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_ram.clone()
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.chr_ram.len());
-        if to_copy > 0 {
-            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
-        }
+        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {

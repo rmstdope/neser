@@ -1,9 +1,9 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
+use crate::cartridge::common::ChrMemory;
 use crate::trace_mapper;
 
 // Memory size constants
-const CHR_RAM_SIZE: usize = 8192; // 8KB
 const PRG_RAM_SIZE: usize = 8192; // 8KB
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 const CHR_BANK_SIZE_4K: usize = 0x1000; // 4KB (for MMC1, MMC3)
@@ -60,8 +60,7 @@ pub enum Mmc1Revision {
 pub struct MMC1Mapper {
     prg_rom: Vec<u8>,
     prg_ram: Vec<u8>,
-    chr_memory: Vec<u8>,
-    has_chr_ram: bool,
+    chr_memory: ChrMemory,
 
     // Shift register state
     shift_register: u8, // 5-bit shift register
@@ -93,18 +92,10 @@ impl MMC1Mapper {
         _mirroring: MirroringMode,
         revision: Mmc1Revision,
     ) -> Self {
-        let has_chr_ram = chr_rom.is_empty();
-        let chr_memory = if has_chr_ram {
-            vec![0; CHR_RAM_SIZE]
-        } else {
-            chr_rom
-        };
-
         Self {
             prg_rom,
             prg_ram: vec![0; PRG_RAM_SIZE],
-            chr_memory,
-            has_chr_ram,
+            chr_memory: ChrMemory::new(chr_rom),
             shift_register: 0x10, // Power-on state: bit 4 set
             write_count: 0,
             control: MMC1_DEFAULT_CONTROL, // Default: PRG mode 3 (fix last bank), CHR mode 0
@@ -255,7 +246,7 @@ impl MMC1Mapper {
 
     fn get_chr_bank_offset(&self, addr: u16) -> usize {
         let chr_mode = self.get_chr_mode();
-        let num_4kb_banks = self.chr_memory.len() / CHR_BANK_SIZE_4K;
+        let num_4kb_banks = self.chr_memory.size() / CHR_BANK_SIZE_4K;
 
         if chr_mode == 0 {
             // 8KB mode: switch entire $0000-$1FFF, ignore low bit
@@ -351,14 +342,10 @@ impl Mapper for MMC1Mapper {
             (addr & 0x0FFF) as usize
         };
         let index = bank_offset + offset;
-        self.chr_memory.get(index).copied().unwrap_or(0)
+        self.chr_memory.read_at_index(index)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        if !self.has_chr_ram {
-            return; // CHR ROM is read-only
-        }
-
         let bank_offset = self.get_chr_bank_offset(addr);
         let offset = if self.get_chr_mode() == 0 {
             // 8KB mode
@@ -368,9 +355,7 @@ impl Mapper for MMC1Mapper {
             (addr & 0x0FFF) as usize
         };
         let index = bank_offset + offset;
-        if index < self.chr_memory.len() {
-            self.chr_memory[index] = value;
-        }
+        self.chr_memory.write_at_index(index, value);
     }
 
     fn get_mirroring(&self) -> MirroringMode {
@@ -395,18 +380,11 @@ impl Mapper for MMC1Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        if self.has_chr_ram {
-            self.chr_memory.clone()
-        } else {
-            Vec::new()
-        }
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        if self.has_chr_ram && !data.is_empty() {
-            let to_copy = data.len().min(self.chr_memory.len());
-            self.chr_memory[..to_copy].copy_from_slice(&data[..to_copy]);
-        }
+        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {

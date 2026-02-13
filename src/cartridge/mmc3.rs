@@ -1,3 +1,4 @@
+use crate::cartridge::common::ChrMemory;
 use crate::cartridge::{Mapper, MirroringMode};
 use crate::trace_mapper;
 
@@ -28,8 +29,7 @@ use crate::trace_mapper;
 /// - A12 edge detection with debounce (3 PPU cycles low required)
 pub struct MMC3Mapper {
     prg_rom: Vec<u8>,
-    chr_rom: Vec<u8>,
-    chr_ram: Vec<u8>,
+    chr_memory: ChrMemory,
     prg_ram: Vec<u8>,
 
     prg_ram_enabled: bool,
@@ -59,7 +59,6 @@ impl MMC3Mapper {
     const PRG_BANK_SIZE: usize = 0x2000; // 8KB
     const CHR_BANK_SIZE: usize = 0x0400; // 1KB
     const PRG_RAM_SIZE: usize = 0x2000; // 8KB
-    const DEFAULT_CHR_RAM_SIZE: usize = 0x2000; // 8KB
 
     const A12_LOW_CYCLES_REQUIRED: u8 = 3;
 
@@ -81,16 +80,9 @@ impl MMC3Mapper {
         mirroring: MirroringMode,
         use_alternate_irq: bool,
     ) -> Self {
-        let chr_ram = if chr_rom.is_empty() {
-            vec![0; Self::DEFAULT_CHR_RAM_SIZE]
-        } else {
-            Vec::new()
-        };
-
         Self {
             prg_rom,
-            chr_rom,
-            chr_ram,
+            chr_memory: ChrMemory::new(chr_rom),
             prg_ram: vec![0; Self::PRG_RAM_SIZE],
             mirroring,
             prg_ram_enabled: true, // PRG-RAM enabled by default on power-on
@@ -116,12 +108,7 @@ impl MMC3Mapper {
     }
 
     fn chr_bank_count_1k(&self) -> usize {
-        let chr_len = if self.chr_rom.is_empty() {
-            self.chr_ram.len()
-        } else {
-            self.chr_rom.len()
-        };
-        chr_len / Self::CHR_BANK_SIZE
+        self.chr_memory.size() / Self::CHR_BANK_SIZE
     }
 
     fn prg_bank_index(&self, bank: u8) -> usize {
@@ -159,11 +146,7 @@ impl MMC3Mapper {
 
     fn read_chr_bank_1k(&self, bank_index: usize, bank_offset: usize) -> u8 {
         let addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
-        if self.chr_rom.is_empty() {
-            self.chr_ram.get(addr).copied().unwrap_or(0)
-        } else {
-            self.chr_rom.get(addr).copied().unwrap_or(0)
-        }
+        self.chr_memory.read_at_index(addr)
     }
 
     fn update_prg_ram_control(&mut self, value: u8) {
@@ -1139,17 +1122,11 @@ impl Mapper for MMC3Mapper {
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
-        if !self.chr_rom.is_empty() {
-            return;
-        }
-
         // CHR-RAM writes must respect the same bank mapping as reads.
         let chr_addr = (addr & 0x1FFF) as usize;
         let (bank_index, bank_offset) = self.map_chr_addr_to_bank_1k(chr_addr);
         let mapped_addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
-        if let Some(byte) = self.chr_ram.get_mut(mapped_addr) {
-            *byte = value;
-        }
+        self.chr_memory.write_at_index(mapped_addr, value);
     }
 
     fn ppu_address_changed(&mut self, addr: u16) {
@@ -1190,12 +1167,11 @@ impl Mapper for MMC3Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_ram.clone()
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.chr_ram.len());
-        self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {

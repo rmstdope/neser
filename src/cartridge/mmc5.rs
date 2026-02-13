@@ -59,13 +59,14 @@
 // - NESdev Wiki: <https://www.nesdev.org/wiki/MMC5>
 
 use crate::cartridge::cartridge::MirroringMode;
+use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::Mapper;
 use crate::trace_mapper;
 use std::cell::Cell;
 
 pub struct MMC5Mapper {
     prg_rom: Vec<u8>,
-    chr: Chr,
+    chr_memory: ChrMemory,
     prg_ram: Vec<u8>,
     mirroring: MirroringMode,
     ciram: Vec<u8>,
@@ -216,11 +217,6 @@ impl Mmc5Pulse {
     }
 }
 
-enum Chr {
-    Rom(Vec<u8>),
-    Ram(Vec<u8>),
-}
-
 impl MMC5Mapper {
     const PRG_RAM_BANK_SIZE: usize = 8 * 1024;
     const PRG_RAM_BANK_COUNT_MAX: usize = 8;
@@ -244,12 +240,6 @@ impl MMC5Mapper {
     ) -> Self {
         let prg_rom_bank_count_8k = prg_rom.len() / Self::PRG_ROM_BANK_SIZE;
 
-        let chr = if chr_rom.is_empty() {
-            Chr::Ram(vec![0u8; 8 * 1024])
-        } else {
-            Chr::Rom(chr_rom)
-        };
-
         // MMC5 PRG-RAM can be up to 64KB (8 x 8KB banks), but many cartridges have less.
         // Allocate based on cartridge metadata, clamped to the hardware maximum.
         let prg_ram_bank_count =
@@ -262,7 +252,7 @@ impl MMC5Mapper {
         // last available 8KB PRG ROM bank when present.
         Self {
             prg_rom,
-            chr,
+            chr_memory: ChrMemory::new(chr_rom),
             prg_ram,
             mirroring,
             ciram,
@@ -714,15 +704,11 @@ impl MMC5Mapper {
         let offset = (addr as usize) % bank_size;
         let chr_addr = (bank as usize) * bank_size + offset;
 
-        match &self.chr {
-            Chr::Rom(data) => {
-                if data.is_empty() {
-                    0
-                } else {
-                    data.get(chr_addr % data.len()).copied().unwrap_or(0)
-                }
-            }
-            Chr::Ram(data) => data.get(chr_addr % data.len()).copied().unwrap_or(0),
+        let data_len = self.chr_memory.size();
+        if data_len == 0 {
+            0
+        } else {
+            self.chr_memory.read_at_index(chr_addr % data_len)
         }
     }
 
@@ -739,11 +725,9 @@ impl MMC5Mapper {
         let offset = (addr as usize) % bank_size;
         let chr_addr = (bank as usize) * bank_size + offset;
 
-        if let Chr::Ram(data) = &mut self.chr {
-            let data_len = data.len();
-            if let Some(slot) = data.get_mut(chr_addr % data_len) {
-                *slot = value;
-            }
+        let data_len = self.chr_memory.size();
+        if data_len > 0 {
+            self.chr_memory.write_at_index(chr_addr % data_len, value);
         }
     }
 
@@ -1535,19 +1519,11 @@ impl Mapper for MMC5Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        match &self.chr {
-            Chr::Ram(data) => data.clone(),
-            Chr::Rom(_) => Vec::new(),
-        }
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        let Chr::Ram(chr_ram) = &mut self.chr else {
-            return;
-        };
-
-        let to_copy = data.len().min(chr_ram.len());
-        chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
+        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
