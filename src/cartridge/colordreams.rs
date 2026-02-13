@@ -139,16 +139,7 @@ impl Mapper for ColorDreamsMapper {
 mod tests {
     use crate::cartridge::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
-
-    fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
-        let mut data = vec![0u8; bank_size * num_banks];
-        for bank in 0..num_banks {
-            let start = bank * bank_size;
-            let end = start + bank_size;
-            data[start..end].fill(bank as u8);
-        }
-        data
-    }
+    use crate::cartridge::test_helpers::banked_data;
 
     fn create_colordreams_mapper(
         prg_rom: Vec<u8>,

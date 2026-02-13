@@ -1956,29 +1956,10 @@ mod tests {
     use crate::cartridge::cartridge::Cartridge;
     use crate::cartridge::cartridge::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
     use crate::debugging::*;
 
     use super::MMC5Mapper;
-
-    fn banked_data(bank_size: usize, num_banks: usize) -> Vec<u8> {
-        let mut data = vec![0u8; bank_size * num_banks];
-        for bank in 0..num_banks {
-            let start = bank * bank_size;
-            let end = start + bank_size;
-            data[start..end].fill(bank as u8);
-        }
-        data
-    }
-
-    fn banked_data_with_upper_marker(bank_size: usize, num_banks: usize) -> Vec<u8> {
-        let mut data = vec![0u8; bank_size * num_banks];
-        for bank in 0..num_banks {
-            let start = bank * bank_size;
-            let end = start + bank_size;
-            data[start..end].fill((bank >> 8) as u8);
-        }
-        data
-    }
 
     fn new_mmc5_for_irq_test() -> MMC5Mapper {
         let prg_rom = banked_data(8 * 1024, 2);
