@@ -448,6 +448,91 @@ impl BankedRom {
     // }
 }
 
+/// Helper for bank-switching logic used across mappers.
+///
+/// Encapsulates common patterns for bank selection, wrapping, and offset calculation.
+/// Eliminates manual `.max(1)` calls and reduces duplicated bank calculation code.
+///
+/// # Example
+/// ```rust
+/// use neser::cartridge::BankSwitch;
+///
+/// // PRG-ROM with 128KB (4 banks of 32KB)
+/// let prg_bank = BankSwitch::new(4);
+///
+/// // Switch to bank 2
+/// let mut bank = prg_bank;
+/// bank.set(2);
+/// assert_eq!(bank.current(), 2);
+/// assert_eq!(bank.offset(0x8000), 0x10000); // 2 * 32KB
+///
+/// // Bank wraps when exceeding available banks
+/// bank.set(5);
+/// assert_eq!(bank.current(), 1); // 5 % 4 = 1
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct BankSwitch {
+    num_banks: usize,
+    bank: u8,
+}
+
+impl BankSwitch {
+    /// Create a new bank switch helper.
+    ///
+    /// # Arguments
+    /// * `num_banks` - Total number of banks available (0 for empty ROM)
+    pub fn new(num_banks: usize) -> Self {
+        Self { num_banks, bank: 0 }
+    }
+
+    /// Set the selected bank number.
+    ///
+    /// The bank value is stored as-is and wrapping is applied during `current()`.
+    pub fn set(&mut self, value: u8) {
+        self.bank = value;
+    }
+
+    /// Get the current bank index with wrapping applied.
+    ///
+    /// Returns the bank number modulo the available banks, with special
+    /// handling for empty ROM (returns 0).
+    pub fn current(&self) -> usize {
+        if self.num_banks == 0 {
+            0
+        } else {
+            (self.bank as usize) % self.num_banks
+        }
+    }
+
+    /// Calculate the byte offset for the current bank.
+    ///
+    /// # Arguments
+    /// * `bank_size` - Size of each bank in bytes
+    ///
+    /// # Returns
+    /// The offset into ROM data for the current bank
+    pub fn offset(&self, bank_size: usize) -> usize {
+        self.current() * bank_size
+    }
+
+    /// Get the raw bank value without wrapping.
+    pub fn raw(&self) -> u8 {
+        self.bank
+    }
+}
+
+impl StateSnapshot for BankSwitch {
+    fn snapshot(&self) -> Vec<u8> {
+        vec![self.bank]
+    }
+
+    fn restore(&mut self, data: &[u8]) {
+        if let Some(&value) = data.first() {
+            self.bank = value;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -739,5 +824,100 @@ mod tests {
         assert_eq!(chr.read(0x0000), 0xAA);
         assert_eq!(chr.read(0x1FFF), 0xAA);
         assert!(!chr.is_ram(), "Should still be ROM, not RAM");
+    }
+
+    #[test]
+    fn test_bank_switch_basic() {
+        let mut bank = BankSwitch::new(4);
+        
+        // Default bank is 0
+        assert_eq!(bank.current(), 0);
+        assert_eq!(bank.raw(), 0);
+        
+        // Set to bank 2
+        bank.set(2);
+        assert_eq!(bank.current(), 2);
+        assert_eq!(bank.raw(), 2);
+    }
+
+    #[test]
+    fn test_bank_switch_wrapping() {
+        let mut bank = BankSwitch::new(4);
+        
+        // Bank 5 wraps to 1 (5 % 4 = 1)
+        bank.set(5);
+        assert_eq!(bank.current(), 1);
+        assert_eq!(bank.raw(), 5);
+        
+        // Bank 8 wraps to 0 (8 % 4 = 0)
+        bank.set(8);
+        assert_eq!(bank.current(), 0);
+        
+        // Bank 255 wraps appropriately
+        bank.set(255);
+        assert_eq!(bank.current(), 255 % 4);
+    }
+
+    #[test]
+    fn test_bank_switch_empty_rom() {
+        let mut bank = BankSwitch::new(0);
+        
+        // With 0 banks, always returns 0 (safe default)
+        assert_eq!(bank.current(), 0);
+        
+        bank.set(5);
+        assert_eq!(bank.current(), 0);
+        assert_eq!(bank.raw(), 5);
+    }
+
+    #[test]
+    fn test_bank_switch_offset_calculation() {
+        let mut bank = BankSwitch::new(4);
+        const BANK_SIZE: usize = 0x8000; // 32KB
+        
+        // Bank 0
+        assert_eq!(bank.offset(BANK_SIZE), 0);
+        
+        // Bank 1
+        bank.set(1);
+        assert_eq!(bank.offset(BANK_SIZE), 0x8000);
+        
+        // Bank 2
+        bank.set(2);
+        assert_eq!(bank.offset(BANK_SIZE), 0x10000);
+        
+        // Bank 3
+        bank.set(3);
+        assert_eq!(bank.offset(BANK_SIZE), 0x18000);
+        
+        // Bank 5 wraps to 1
+        bank.set(5);
+        assert_eq!(bank.offset(BANK_SIZE), 0x8000);
+    }
+
+    #[test]
+    fn test_bank_switch_snapshot() {
+        let mut bank = BankSwitch::new(8);
+        bank.set(5);
+        
+        // Take snapshot
+        let snapshot = bank.snapshot();
+        assert_eq!(snapshot, vec![5]);
+        
+        // Restore to new instance
+        let mut bank2 = BankSwitch::new(8);
+        bank2.restore(&snapshot);
+        assert_eq!(bank2.current(), 5);
+        assert_eq!(bank2.raw(), 5);
+    }
+
+    #[test]
+    fn test_bank_switch_snapshot_empty_data() {
+        let mut bank = BankSwitch::new(4);
+        bank.set(3);
+        
+        // Restore with empty data should not panic
+        bank.restore(&[]);
+        assert_eq!(bank.raw(), 3); // Should remain unchanged
     }
 }

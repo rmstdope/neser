@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, BankSwitch, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const PRG_BANK_SIZE: usize = 0x8000; // 32KB
@@ -36,8 +36,8 @@ pub struct BnromNinaMapper {
     prg_ram: PrgRam,
     chr_memory: ChrMemory,
     mirroring: MirroringMode,
-    prg_bank_select: u8,
-    chr_bank_select: u8,
+    prg_bank: BankSwitch,
+    chr_bank: BankSwitch,
     is_nina: bool, // true for NINA-001, false for BNROM
 }
 
@@ -45,27 +45,24 @@ impl BnromNinaMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         // Detect variant: NINA-001 has CHR ROM, BNROM uses CHR-RAM
         let is_nina = !chr_rom.is_empty();
+        
+        let prg_banks = if prg_rom.is_empty() { 0 } else { prg_rom.len() / PRG_BANK_SIZE };
+        let chr_size = if is_nina {
+            chr_rom.len()
+        } else {
+            8192 // CHR-RAM size for BNROM
+        };
+        let chr_banks = if chr_size == 0 { 0 } else { chr_size / CHR_BANK_SIZE };
 
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_memory: ChrMemory::new(chr_rom),
             mirroring,
-            prg_bank_select: 0,
-            chr_bank_select: 0,
+            prg_bank: BankSwitch::new(prg_banks),
+            chr_bank: BankSwitch::new(chr_banks),
             is_nina,
         }
-    }
-
-    fn get_chr_bank_offset(&self) -> usize {
-        let chr_size = if self.chr_memory.is_ram() {
-            8192 // CHR-RAM size
-        } else {
-            self.chr_memory.size()
-        };
-        let num_banks = (chr_size / CHR_BANK_SIZE).max(1);
-        let bank = (self.chr_bank_select as usize) % num_banks;
-        bank * CHR_BANK_SIZE
     }
 }
 
@@ -80,7 +77,7 @@ impl Mapper for BnromNinaMapper {
         match addr {
             0x8000..=0xFFFF => {
                 self.prg_rom
-                    .read_with_base(self.prg_bank_select as usize, 0x8000, addr)
+                    .read_with_base(self.prg_bank.current(), 0x8000, addr)
             }
             _ => 0,
         }
@@ -93,11 +90,11 @@ impl Mapper for BnromNinaMapper {
             match addr {
                 0x7FFD | 0x7FFF => {
                     // PRG bank select
-                    self.prg_bank_select = value;
+                    self.prg_bank.set(value);
                 }
                 0x7FFE => {
                     // CHR bank select
-                    self.chr_bank_select = value;
+                    self.chr_bank.set(value);
                 }
                 _ => {}
             }
@@ -111,14 +108,14 @@ impl Mapper for BnromNinaMapper {
         // BNROM: Any write to $8000-$FFFF sets PRG bank
         // NINA-001: Writes to $8000-$FFFF are ignored (uses $7FFD-$7FFF instead)
         if !self.is_nina && (0x8000..=0xFFFF).contains(&addr) {
-            self.prg_bank_select = value;
+            self.prg_bank.set(value);
         }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
         if self.is_nina {
             // NINA-001: banked CHR
-            let bank_offset = self.get_chr_bank_offset();
+            let bank_offset = self.chr_bank.offset(CHR_BANK_SIZE);
             let offset = (addr & 0x1FFF) as usize;
             let index = bank_offset + offset;
             self.chr_memory.read_at_index(index)
@@ -131,7 +128,7 @@ impl Mapper for BnromNinaMapper {
     fn write_chr(&mut self, addr: u16, value: u8) {
         if self.is_nina {
             // NINA-001: banked CHR
-            let bank_offset = self.get_chr_bank_offset();
+            let bank_offset = self.chr_bank.offset(CHR_BANK_SIZE);
             let offset = (addr & 0x1FFF) as usize;
             let index = bank_offset + offset;
             self.chr_memory.write_at_index(index, value);
@@ -170,15 +167,15 @@ impl Mapper for BnromNinaMapper {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.prg_bank_select, self.chr_bank_select]
+        vec![self.prg_bank.raw(), self.chr_bank.raw()]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
-            self.prg_bank_select = value;
+            self.prg_bank.set(value);
         }
         if let Some(&value) = data.get(1) {
-            self.chr_bank_select = value;
+            self.chr_bank.set(value);
         }
     }
 }

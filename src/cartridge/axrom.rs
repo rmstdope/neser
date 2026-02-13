@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, BankSwitch, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const PRG_BANK_SIZE_32K: usize = 0x8000; // 32KB (for AxROM)
@@ -28,17 +28,21 @@ pub struct AxROMMapper {
     prg_rom: BankedRom,
     prg_ram: PrgRam,
     chr_memory: ChrMemory,
-    bank_select: u8, // Stores the full register value (bits 0-2 for bank, bit 4 for mirroring)
+    prg_bank: BankSwitch,
+    mirroring_bit: bool, // Bit 4 from bank select register
 }
 
 impl AxROMMapper {
     pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, _mirroring: MirroringMode) -> Self {
         // AxROM uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
+        let prg_banks = if prg_rom.is_empty() { 0 } else { prg_rom.len() / PRG_BANK_SIZE_32K };
+        
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_32K),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_memory: ChrMemory::new_ram(8192),
-            bank_select: 0, // Default to bank 0, lower nametable
+            prg_bank: BankSwitch::new(prg_banks),
+            mirroring_bit: false, // Default to lower nametable
         }
     }
 }
@@ -53,9 +57,7 @@ impl Mapper for AxROMMapper {
         // PRG ROM at $8000-$FFFF (32KB switchable bank)
         match addr {
             0x8000..=0xFFFF => {
-                // Extract bank number from bits 0-2
-                let bank = (self.bank_select & 0x07) as usize;
-                self.prg_rom.read_with_base(bank, 0x8000, addr)
+                self.prg_rom.read_with_base(self.prg_bank.current(), 0x8000, addr)
             }
             _ => 0,
         }
@@ -71,7 +73,8 @@ impl Mapper for AxROMMapper {
         // Bits 0-2: PRG bank select
         // Bit 4: One-screen mirroring (0 = lower, 1 = upper)
         if (0x8000..=0xFFFF).contains(&addr) {
-            self.bank_select = value;
+            self.prg_bank.set(value & 0x07);
+            self.mirroring_bit = (value & 0x10) != 0;
         }
     }
 
@@ -87,7 +90,7 @@ impl Mapper for AxROMMapper {
         // Bit 4 determines one-screen mirroring mode
         // 0 = lower nametable (single-screen A)
         // 1 = upper nametable (single-screen B)
-        if (self.bank_select & 0x10) != 0 {
+        if self.mirroring_bit {
             MirroringMode::SingleScreenUpper
         } else {
             MirroringMode::SingleScreenLower
@@ -119,12 +122,15 @@ impl Mapper for AxROMMapper {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.bank_select]
+        // Store both bank and mirroring bit in a single byte
+        let value = self.prg_bank.raw() | (if self.mirroring_bit { 0x10 } else { 0 });
+        vec![value]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
-            self.bank_select = value;
+            self.prg_bank.set(value & 0x07);
+            self.mirroring_bit = (value & 0x10) != 0;
         }
     }
 }

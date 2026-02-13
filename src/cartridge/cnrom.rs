@@ -1,6 +1,6 @@
 use crate::cartridge::Mapper;
 use crate::cartridge::MirroringMode;
-use crate::cartridge::common::{BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, BankSwitch, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
 const CHR_BANK_SIZE: usize = 8192; // 8KB
@@ -28,17 +28,19 @@ pub struct CNROMMapper {
     prg_ram: PrgRam,
     chr_rom: BankedRom,
     mirroring: MirroringMode,
-    chr_bank_select: u8,
+    chr_bank: BankSwitch,
 }
 
 impl CNROMMapper {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        let chr_banks = if chr_rom.is_empty() { 0 } else { chr_rom.len() / CHR_BANK_SIZE };
+        
         Self {
             prg_rom,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
             mirroring,
-            chr_bank_select: 0,
+            chr_bank: BankSwitch::new(chr_banks),
         }
     }
 }
@@ -69,14 +71,13 @@ impl Mapper for CNROMMapper {
 
         // Any write to $8000-$FFFF sets the CHR bank select
         if (0x8000..=0xFFFF).contains(&addr) {
-            self.chr_bank_select = value;
+            self.chr_bank.set(value);
         }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        let bank = self.chr_bank_select as usize;
         let offset = (addr & 0x1FFF) as usize;
-        self.chr_rom.read(bank, offset)
+        self.chr_rom.read(self.chr_bank.current(), offset)
     }
 
     fn write_chr(&mut self, _addr: u16, _value: u8) {
@@ -104,12 +105,12 @@ impl Mapper for CNROMMapper {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.chr_bank_select]
+        vec![self.chr_bank.raw()]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
-            self.chr_bank_select = value;
+            self.chr_bank.set(value);
         }
     }
 }

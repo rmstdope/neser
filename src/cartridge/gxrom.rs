@@ -1,4 +1,4 @@
-use crate::cartridge::common::{BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, BankSwitch, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
 // Memory size constants
@@ -28,20 +28,23 @@ pub struct GxROMMapper {
     prg_ram: PrgRam,
     chr_rom: BankedRom,
     mirroring: MirroringMode,
-    prg_bank_select: u8,
-    chr_bank_select: u8,
+    prg_bank: BankSwitch,
+    chr_bank: BankSwitch,
 }
 
 impl GxROMMapper {
     /// Create a new GxROM mapper.
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        let prg_banks = if prg_rom.is_empty() { 0 } else { prg_rom.len() / PRG_BANK_SIZE };
+        let chr_banks = if chr_rom.is_empty() { 0 } else { chr_rom.len() / CHR_BANK_SIZE };
+        
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
             mirroring,
-            prg_bank_select: 0,
-            chr_bank_select: 0,
+            prg_bank: BankSwitch::new(prg_banks),
+            chr_bank: BankSwitch::new(chr_banks),
         }
     }
 }
@@ -55,8 +58,7 @@ impl Mapper for GxROMMapper {
 
         match addr {
             0x8000..=0xFFFF => {
-                let bank = self.prg_bank_select as usize;
-                self.prg_rom.read_with_base(bank, 0x8000, addr)
+                self.prg_rom.read_with_base(self.prg_bank.current(), 0x8000, addr)
             }
             _ => 0,
         }
@@ -72,15 +74,14 @@ impl Mapper for GxROMMapper {
             // Register format:
             // - Bits 0-1: CHR bank
             // - Bits 4-5: PRG bank
-            self.chr_bank_select = value & 0b0000_0011;
-            self.prg_bank_select = (value >> 4) & 0b0000_0011;
+            self.chr_bank.set(value & 0b0000_0011);
+            self.prg_bank.set((value >> 4) & 0b0000_0011);
         }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        let bank = self.chr_bank_select as usize;
         let offset = (addr & 0x1FFF) as usize;
-        self.chr_rom.read(bank, offset)
+        self.chr_rom.read(self.chr_bank.current(), offset)
     }
 
     fn write_chr(&mut self, _addr: u16, _value: u8) {
@@ -108,15 +109,15 @@ impl Mapper for GxROMMapper {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.prg_bank_select, self.chr_bank_select]
+        vec![self.prg_bank.raw(), self.chr_bank.raw()]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if let Some(&value) = data.first() {
-            self.prg_bank_select = value;
+            self.prg_bank.set(value);
         }
         if let Some(&value) = data.get(1) {
-            self.chr_bank_select = value;
+            self.chr_bank.set(value);
         }
     }
 }

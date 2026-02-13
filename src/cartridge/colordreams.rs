@@ -1,4 +1,4 @@
-use crate::cartridge::common::{BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::cartridge::common::{BankedRom, BankSwitch, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MirroringMode};
 
 // Memory size constants
@@ -29,20 +29,23 @@ pub struct ColorDreamsMapper {
     prg_ram: PrgRam,
     chr_rom: BankedRom,
     mirroring: MirroringMode,
-    prg_bank_select: u8,
-    chr_bank_select: u8,
+    prg_bank: BankSwitch,
+    chr_bank: BankSwitch,
 }
 
 impl ColorDreamsMapper {
     /// Create a new ColorDreams mapper.
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+        let prg_banks = if prg_rom.is_empty() { 0 } else { prg_rom.len() / PRG_BANK_SIZE };
+        let chr_banks = if chr_rom.is_empty() { 0 } else { chr_rom.len() / CHR_BANK_SIZE };
+        
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
             mirroring,
-            prg_bank_select: 0,
-            chr_bank_select: 0,
+            prg_bank: BankSwitch::new(prg_banks),
+            chr_bank: BankSwitch::new(chr_banks),
         }
     }
 }
@@ -57,7 +60,7 @@ impl Mapper for ColorDreamsMapper {
         match addr {
             0x8000..=0xFFFF => {
                 self.prg_rom
-                    .read_with_base(self.prg_bank_select as usize, 0x8000, addr)
+                    .read_with_base(self.prg_bank.current(), 0x8000, addr)
             }
             _ => 0,
         }
@@ -73,14 +76,14 @@ impl Mapper for ColorDreamsMapper {
             // Register format:
             // - Bits 0-1: CHR bank
             // - Bits 4-7: PRG bank
-            self.chr_bank_select = value & 0b0000_0011;
-            self.prg_bank_select = (value >> 4) & 0b0000_1111;
+            self.chr_bank.set(value & 0b0000_0011);
+            self.prg_bank.set((value >> 4) & 0b0000_1111);
         }
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
         self.chr_rom
-            .read_with_base(self.chr_bank_select as usize, 0x0000, addr)
+            .read_with_base(self.chr_bank.current(), 0x0000, addr)
     }
 
     fn write_chr(&mut self, _addr: u16, _value: u8) {
@@ -108,13 +111,13 @@ impl Mapper for ColorDreamsMapper {
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.prg_bank_select, self.chr_bank_select]
+        vec![self.prg_bank.raw(), self.chr_bank.raw()]
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 2 {
-            self.prg_bank_select = data[0];
-            self.chr_bank_select = data[1];
+            self.prg_bank.set(data[0]);
+            self.chr_bank.set(data[1]);
         }
     }
 }
