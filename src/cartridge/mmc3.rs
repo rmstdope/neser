@@ -84,7 +84,13 @@ impl MMC3Mapper {
     const PRG_RAM_ENABLE_MASK: u8 = 0b1000_0000;
     const PRG_RAM_WRITE_PROTECT_MASK: u8 = 0b0100_0000;
 
-    #[cfg(test)]
+    /// Create an MMC3 mapper with default (Sharp) IRQ behavior.
+    ///
+    /// For alternate (NEC) IRQ behavior, use the builder pattern:
+    /// ```ignore
+    /// // true enables alternate (NEC) IRQ behavior
+    /// let mapper = MMC3Mapper::new(prg_rom, chr_rom, mirroring).with_irq_mode(true);
+    /// ```
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
         Self::new_with_irq_mode(prg_rom, chr_rom, mirroring, false)
     }
@@ -93,6 +99,8 @@ impl MMC3Mapper {
     ///
     /// - `use_alternate_irq = false`: Normal (Sharp) behavior - IRQ when counter is 0
     /// - `use_alternate_irq = true`: Alternate (NEC) behavior - IRQ only on 1→0 transition
+    ///
+    /// **Prefer using the builder pattern with `with_irq_mode()` instead.**
     pub fn new_with_irq_mode(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
@@ -120,6 +128,22 @@ impl MMC3Mapper {
             a12_low_cycles: 0,
             use_alternate_irq,
         }
+    }
+
+    /// Builder method to set alternate (NEC) IRQ behavior.
+    ///
+    /// This allows for fluent construction:
+    /// ```ignore
+    /// let mapper = MMC3Mapper::new(prg_rom, chr_rom, mirroring)
+    ///     .with_irq_mode(true);  // true = NEC behavior, false = Sharp behavior
+    /// ```
+    ///
+    /// # Arguments
+    /// * `use_alternate_irq` - Pass `true` for alternate (NEC) IRQ behavior (only fire on 1→0 transition),
+    ///   or `false` for normal (Sharp) IRQ behavior (fire when counter is 0)
+    pub fn with_irq_mode(mut self, use_alternate_irq: bool) -> Self {
+        self.use_alternate_irq = use_alternate_irq;
+        self
     }
 
     // ============================================================================
@@ -1056,20 +1080,47 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_mmc3_builder_pattern_with_irq_mode() {
+        // Test builder pattern for alternate IRQ mode
+        let prg_rom = banked_data(8 * 1024, 4);
+        let chr_rom = banked_data(1024, 8);
+
+        // Create mapper with default (Sharp) IRQ behavior
+        let mapper_default =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        assert!(!mapper_default.use_alternate_irq);
+
+        // Create mapper with alternate (NEC) IRQ behavior using builder pattern
+        let mapper_alternate =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
+                .with_irq_mode(true);
+        assert!(mapper_alternate.use_alternate_irq);
+
+        // Verify new_with_irq_mode still works
+        let mapper_explicit =
+            MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, MirroringMode::Horizontal, true);
+        assert!(mapper_explicit.use_alternate_irq);
+    }
+
     /// Test MMC3 enabled PRG-RAM doesn't return open-bus
     #[test]
     fn test_mmc3_enabled_prg_ram_returns_data_not_open_bus() {
-        let mut mapper = MMC3Mapper::new(vec![0; 128 * 1024], vec![0; 128 * 1024], MirroringMode::Horizontal);
-        
+        let mut mapper = MMC3Mapper::new(
+            vec![0; 128 * 1024],
+            vec![0; 128 * 1024],
+            MirroringMode::Horizontal,
+        );
+
         // Enable PRG-RAM (bit 7 = 1)
         mapper.write_prg(0xA001, 0b1000_0000);
-        
+
         // Write to PRG-RAM
         mapper.write_prg(0x6000, 0x99);
-        
+
         let open_bus = 0xFF;
         let result = mapper.read_prg_open_bus(0x6000, open_bus);
-        
+
         // Should return the written value, not open-bus
         assert_eq!(
             result, 0x99,

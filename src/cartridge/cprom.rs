@@ -371,7 +371,7 @@ mod tests {
     #[test]
     fn test_cprom_open_bus() {
         let mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
-        
+
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x77), 0x77);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x88), 0x88);
     }

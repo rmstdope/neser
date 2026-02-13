@@ -3962,21 +3962,25 @@ mod tests {
     /// when rendering is enabled.
     #[test]
     fn test_mmc5_exram_mode_0_open_bus_during_rendering() {
-        let mut mapper = create_mmc5_mapper(vec![0; 256 * 1024], vec![0; 8 * 1024], MirroringMode::Horizontal)
-            .expect("MMC5 should be supported");
-        
+        let mut mapper = create_mmc5_mapper(
+            vec![0; 256 * 1024],
+            vec![0; 8 * 1024],
+            MirroringMode::Horizontal,
+        )
+        .expect("MMC5 should be supported");
+
         // Set ExRAM to mode 0 (extended attribute mode)
         mapper.write_prg(0x5104, 0x00);
-        
+
         // Write some data to ExRAM
         mapper.write_prg(0x5C00, 0x42);
-        
+
         // Enable rendering (write to PPUMASK via ppu_write_mask)
         mapper.ppu_write_mask(0b0001_1000); // Enable rendering (bits 3-4)
-        
+
         let open_bus = 0xBB;
         let result = mapper.read_prg_open_bus(0x5C00, open_bus);
-        
+
         // Should return open-bus when rendering is enabled
         assert_eq!(
             result, open_bus,
@@ -3992,8 +3996,12 @@ mod tests {
     /// observed by the CPU when reading from ExRAM in mode 1.
     #[test]
     fn test_mmc5_exram_mode_1_behavior_independent_of_rendering_state() {
-        let mut mapper = create_mmc5_mapper(vec![0; 256 * 1024], vec![0; 8 * 1024], MirroringMode::Horizontal)
-            .expect("MMC5 should be supported");
+        let mut mapper = create_mmc5_mapper(
+            vec![0; 256 * 1024],
+            vec![0; 8 * 1024],
+            MirroringMode::Horizontal,
+        )
+        .expect("MMC5 should be supported");
 
         // Set ExRAM to mode 1 (nametable mode)
         mapper.write_prg(0x5104, 0x01);
@@ -4016,20 +4024,21 @@ mod tests {
             result1, result2,
             "ExRAM mode 1 CPU reads should be independent of rendering state"
         );
-        assert_eq!(
-            result1, open_bus,
-            "ExRAM mode 1 should return open-bus"
-        );
+        assert_eq!(result1, open_bus, "ExRAM mode 1 should return open-bus");
     }
 
     /// Test that addresses below $5000 return open-bus for MMC5
     #[test]
     fn test_mmc5_addresses_below_5000_return_open_bus() {
-        let mapper = create_mmc5_mapper(vec![0; 256 * 1024], vec![0; 8 * 1024], MirroringMode::Horizontal)
-            .expect("MMC5 should be supported");
-        
+        let mapper = create_mmc5_mapper(
+            vec![0; 256 * 1024],
+            vec![0; 8 * 1024],
+            MirroringMode::Horizontal,
+        )
+        .expect("MMC5 should be supported");
+
         let open_bus = 0x88;
-        
+
         // Test various addresses below $5000
         assert_eq!(
             mapper.read_prg_open_bus(0x0000, open_bus),

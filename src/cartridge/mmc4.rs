@@ -350,8 +350,12 @@ mod tests {
 
     #[test]
     fn test_mmc4_open_bus() {
-        let mapper = MMC4Mapper::new(vec![0; 128 * 1024], vec![0; 128 * 1024], MirroringMode::Horizontal);
-        
+        let mapper = MMC4Mapper::new(
+            vec![0; 128 * 1024],
+            vec![0; 128 * 1024],
+            MirroringMode::Horizontal,
+        );
+
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x33), 0x33);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x44), 0x44);
     }
