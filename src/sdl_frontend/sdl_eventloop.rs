@@ -218,6 +218,26 @@ impl SdlEventLoop {
         }
     }
 
+    fn add_toast(&mut self, text: impl Into<String>) {
+        if let Some(gl_backend) = self.gl_backend.as_mut() {
+            gl_backend.add_toast(text);
+        }
+    }
+
+    fn gamepad_init_toast_message(gamepads_enabled: bool, detected_controllers: usize) -> String {
+        if !gamepads_enabled {
+            return "Gamepads disabled: using keyboard controls".to_string();
+        }
+
+        let used_controllers = detected_controllers.min(2);
+
+        match used_controllers {
+            0 => "No gamepads found: using keyboard controls".to_string(),
+            1 => "Gamepad found: using 1 gamepad".to_string(),
+            count => format!("Gamepads found: using {} gamepads", count),
+        }
+    }
+
     /// Creates a new EventLoop instance.
     ///
     /// This is the preferred way to create an EventLoop.
@@ -269,7 +289,7 @@ impl SdlEventLoop {
             (Vec::new(), HashMap::new())
         };
 
-        Ok(SdlEventLoop {
+        let mut event_loop = SdlEventLoop {
             _sdl_context: sdl_context,
             gl_backend,
             event_pump,
@@ -288,7 +308,13 @@ impl SdlEventLoop {
             controller_player_map,
             last_mouse_position: None,
             cursor_hidden: false,
-        })
+        };
+
+        let gamepad_toast =
+            Self::gamepad_init_toast_message(config.gamepads_enabled, event_loop.controllers.len());
+        event_loop.add_toast(gamepad_toast);
+
+        Ok(event_loop)
     }
 
     /// Initialize game controllers
@@ -3148,6 +3174,30 @@ mod tests {
             // No controllers should be initialized in test environment
             assert!(event_loop.controllers.len() <= 2);
         }
+    }
+
+    #[test]
+    fn test_gamepad_init_toast_message_when_disabled() {
+        let message = SdlEventLoop::gamepad_init_toast_message(false, 0);
+        assert_eq!(message, "Gamepads disabled: using keyboard controls");
+    }
+
+    #[test]
+    fn test_gamepad_init_toast_message_when_enabled_but_none_found() {
+        let message = SdlEventLoop::gamepad_init_toast_message(true, 0);
+        assert_eq!(message, "No gamepads found: using keyboard controls");
+    }
+
+    #[test]
+    fn test_gamepad_init_toast_message_when_one_found() {
+        let message = SdlEventLoop::gamepad_init_toast_message(true, 1);
+        assert_eq!(message, "Gamepad found: using 1 gamepad");
+    }
+
+    #[test]
+    fn test_gamepad_init_toast_message_when_two_found() {
+        let message = SdlEventLoop::gamepad_init_toast_message(true, 2);
+        assert_eq!(message, "Gamepads found: using 2 gamepads");
     }
 
     #[test]
