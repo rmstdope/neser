@@ -1,9 +1,4 @@
-use crate::cartridge::common::{BankSwitch, BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MirroringMode};
-
-// Memory size constants
-const PRG_BANK_SIZE: usize = 32 * 1024; // 32KB
-const CHR_BANK_SIZE: usize = 8 * 1024; // 8KB
+use crate::cartridge::mapper_templates::DualBank32Mapper;
 
 /// Mapper 11 - Color Dreams
 ///
@@ -24,102 +19,10 @@ const CHR_BANK_SIZE: usize = 8 * 1024; // 8KB
 /// - Bits 4-7: Select 32KB PRG bank
 /// - Used in unlicensed games like Crystal Mines, Bible Adventures
 /// - Some variants support different bank counts
-pub struct ColorDreamsMapper {
-    prg_rom: BankedRom,
-    prg_ram: PrgRam,
-    chr_rom: BankedRom,
-    mirroring: MirroringMode,
-    prg_bank: BankSwitch,
-    chr_bank: BankSwitch,
-}
-
-impl ColorDreamsMapper {
-    /// Create a new ColorDreams mapper.
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        let prg_bank = BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE);
-        let chr_bank = BankSwitch::from_rom(&chr_rom, CHR_BANK_SIZE);
-
-        Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
-            chr_rom: BankedRom::new(chr_rom, CHR_BANK_SIZE),
-            mirroring,
-            prg_bank,
-            chr_bank,
-        }
-    }
-}
-
-impl Mapper for ColorDreamsMapper {
-    fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
-            return value;
-        }
-
-        match addr {
-            0x8000..=0xFFFF => self
-                .prg_rom
-                .read_with_base(self.prg_bank.current(), 0x8000, addr),
-            _ => 0,
-        }
-    }
-
-    fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
-            return;
-        }
-
-        if (0x8000..=0xFFFF).contains(&addr) {
-            // Register format:
-            // - Bits 0-1: CHR bank
-            // - Bits 4-7: PRG bank
-            self.chr_bank.set(value & 0b0000_0011);
-            self.prg_bank.set((value >> 4) & 0b0000_1111);
-        }
-    }
-
-    fn read_chr(&self, addr: u16) -> u8 {
-        self.chr_rom
-            .read_with_base(self.chr_bank.current(), 0x0000, addr)
-    }
-
-    fn write_chr(&mut self, _addr: u16, _value: u8) {
-        // ColorDreams uses CHR-ROM, writes are ignored.
-    }
-
-    fn get_mirroring(&self) -> MirroringMode {
-        self.mirroring
-    }
-
-    fn mapper_number(&self) -> u8 {
-        11
-    }
-
-    fn wram_size(&self) -> usize {
-        self.prg_ram.size()
-    }
-
-    fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
-    }
-
-    fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
-    }
-
-    fn registers_snapshot(&self) -> Vec<u8> {
-        vec![self.prg_bank.raw(), self.chr_bank.raw()]
-    }
-
-    fn restore_registers(&mut self, data: &[u8]) {
-        if data.len() >= 2 {
-            self.prg_bank.set(data[0]);
-            self.chr_bank.set(data[1]);
-        }
-    }
-}
+///
+/// Implementation:
+/// - Uses `DualBank32Mapper` template with PRG bits 4-7, CHR bits 0-3
+pub type ColorDreamsMapper = DualBank32Mapper<0b1111, 4, 0b1111, 0, 11>;
 
 #[cfg(test)]
 mod tests {
@@ -140,7 +43,7 @@ mod tests {
     fn test_colordreams_prg_and_chr_bank_selected_by_single_write() {
         // Mapper 11 (ColorDreams):
         // - PRG: 32KB banks selected by bits 4-7
-        // - CHR: 8KB banks selected by bits 0-1
+        // - CHR: 8KB banks selected by bits 0-3
 
         let prg_rom = banked_data(32 * 1024, 4);
         let chr_rom = banked_data(8 * 1024, 4);
@@ -152,7 +55,7 @@ mod tests {
         assert_eq!(mapper.read_prg(0x8000), 0);
         assert_eq!(mapper.read_chr(0x0000), 0);
 
-        // Select PRG bank 1 (bits 4-7) and CHR bank 2 (bits 0-1): 0b0001_0010 = 0x12
+        // Select PRG bank 1 (bits 4-7) and CHR bank 2 (bits 0-3): 0b0001_0010 = 0x12
         mapper.write_prg(0x8000, 0x12);
 
         assert_eq!(mapper.read_prg(0x8000), 1);
