@@ -65,8 +65,28 @@ impl NesJoypad {
             return 1;
         }
 
+        // Apply SOCD (Simultaneous Opposite Cardinal Direction) cleaning
+        // If both left+right or up+down are pressed, cancel both out
+        let mut cleaned_states = self.button_states;
+
+        // Check for left+right both pressed
+        let left_mask = 1 << (Button::Left as u8);
+        let right_mask = 1 << (Button::Right as u8);
+        if (cleaned_states & left_mask) != 0 && (cleaned_states & right_mask) != 0 {
+            // Cancel both
+            cleaned_states &= !(left_mask | right_mask);
+        }
+
+        // Check for up+down both pressed
+        let up_mask = 1 << (Button::Up as u8);
+        let down_mask = 1 << (Button::Down as u8);
+        if (cleaned_states & up_mask) != 0 && (cleaned_states & down_mask) != 0 {
+            // Cancel both
+            cleaned_states &= !(up_mask | down_mask);
+        }
+
         // Return current button state (bit 0)
-        let response = (self.button_states >> self.button_index) & 0x01;
+        let response = (cleaned_states >> self.button_index) & 0x01;
 
         // Advance to next button only if not in strobe mode and not a dummy read
         if !self.strobe && !is_dummy_read {
@@ -272,10 +292,16 @@ mod tests {
         joypad.set_button(Button::Left, true);
         joypad.set_button(Button::Right, true);
 
-        // All 8 reads should return 1
-        for _ in 0..8 {
-            assert_eq!(joypad.read(false), 1);
-        }
+        // With SOCD cleaning, opposite directions cancel out
+        // Order: A, B, Select, Start, Up, Down, Left, Right
+        assert_eq!(joypad.read(false), 1); // A
+        assert_eq!(joypad.read(false), 1); // B
+        assert_eq!(joypad.read(false), 1); // Select
+        assert_eq!(joypad.read(false), 1); // Start
+        assert_eq!(joypad.read(false), 0); // Up - cancelled by Down
+        assert_eq!(joypad.read(false), 0); // Down - cancelled by Up
+        assert_eq!(joypad.read(false), 0); // Left - cancelled by Right
+        assert_eq!(joypad.read(false), 0); // Right - cancelled by Left
     }
 
     #[test]
@@ -291,5 +317,133 @@ mod tests {
 
         // Next normal read should now advance to index 2 (Select), still not pressed.
         assert_eq!(joypad.read(false), 0);
+    }
+
+    #[test]
+    fn test_left_right_simultaneous_cancels_both() {
+        let mut joypad = NesJoypad::new();
+
+        // Press both left and right
+        joypad.set_button(Button::Left, true);
+        joypad.set_button(Button::Right, true);
+
+        // Read through all buttons
+        // Order: A, B, Select, Start, Up, Down, Left, Right
+        assert_eq!(joypad.read(false), 0); // A
+        assert_eq!(joypad.read(false), 0); // B
+        assert_eq!(joypad.read(false), 0); // Select
+        assert_eq!(joypad.read(false), 0); // Start
+        assert_eq!(joypad.read(false), 0); // Up
+        assert_eq!(joypad.read(false), 0); // Down
+        assert_eq!(joypad.read(false), 0); // Left - should be cancelled
+        assert_eq!(joypad.read(false), 0); // Right - should be cancelled
+    }
+
+    #[test]
+    fn test_up_down_simultaneous_cancels_both() {
+        let mut joypad = NesJoypad::new();
+
+        // Press both up and down
+        joypad.set_button(Button::Up, true);
+        joypad.set_button(Button::Down, true);
+
+        // Read through all buttons
+        // Order: A, B, Select, Start, Up, Down, Left, Right
+        assert_eq!(joypad.read(false), 0); // A
+        assert_eq!(joypad.read(false), 0); // B
+        assert_eq!(joypad.read(false), 0); // Select
+        assert_eq!(joypad.read(false), 0); // Start
+        assert_eq!(joypad.read(false), 0); // Up - should be cancelled
+        assert_eq!(joypad.read(false), 0); // Down - should be cancelled
+        assert_eq!(joypad.read(false), 0); // Left
+        assert_eq!(joypad.read(false), 0); // Right
+    }
+
+    #[test]
+    fn test_left_only_works() {
+        let mut joypad = NesJoypad::new();
+
+        // Press only left
+        joypad.set_button(Button::Left, true);
+
+        // Skip to left button (buttons 0-5)
+        for _ in 0..6 {
+            joypad.read(false);
+        }
+
+        // Left should be pressed
+        assert_eq!(joypad.read(false), 1); // Left
+        assert_eq!(joypad.read(false), 0); // Right
+    }
+
+    #[test]
+    fn test_right_only_works() {
+        let mut joypad = NesJoypad::new();
+
+        // Press only right
+        joypad.set_button(Button::Right, true);
+
+        // Skip to left button (buttons 0-5)
+        for _ in 0..6 {
+            joypad.read(false);
+        }
+
+        // Right should be pressed
+        assert_eq!(joypad.read(false), 0); // Left
+        assert_eq!(joypad.read(false), 1); // Right
+    }
+
+    #[test]
+    fn test_up_only_works() {
+        let mut joypad = NesJoypad::new();
+
+        // Press only up
+        joypad.set_button(Button::Up, true);
+
+        // Skip to up button (buttons 0-3)
+        for _ in 0..4 {
+            joypad.read(false);
+        }
+
+        // Up should be pressed
+        assert_eq!(joypad.read(false), 1); // Up
+        assert_eq!(joypad.read(false), 0); // Down
+    }
+
+    #[test]
+    fn test_down_only_works() {
+        let mut joypad = NesJoypad::new();
+
+        // Press only down
+        joypad.set_button(Button::Down, true);
+
+        // Skip to up button (buttons 0-3)
+        for _ in 0..4 {
+            joypad.read(false);
+        }
+
+        // Down should be pressed
+        assert_eq!(joypad.read(false), 0); // Up
+        assert_eq!(joypad.read(false), 1); // Down
+    }
+
+    #[test]
+    fn test_socd_with_other_buttons() {
+        let mut joypad = NesJoypad::new();
+
+        // Press A, left, and right (opposite directions)
+        joypad.set_button(Button::A, true);
+        joypad.set_button(Button::Left, true);
+        joypad.set_button(Button::Right, true);
+
+        // Read through all buttons
+        assert_eq!(joypad.read(false), 1); // A - should work
+        assert_eq!(joypad.read(false), 0); // B
+        assert_eq!(joypad.read(false), 0); // Select
+        assert_eq!(joypad.read(false), 0); // Start
+        assert_eq!(joypad.read(false), 0); // Up
+        assert_eq!(joypad.read(false), 0); // Down
+        assert_eq!(joypad.read(false), 0); // Left - cancelled
+        assert_eq!(joypad.read(false), 0); // Right - cancelled
     }
 }
