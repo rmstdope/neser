@@ -376,13 +376,65 @@ pub struct Config {
 }
 
 /// Autorun operating mode.
+///
+/// This enum defines the primary operating mode for the emulator's autorun feature,
+/// which enables recording and playback of controller input for deterministic testing
+/// and automation.
+///
+/// The mode is typically derived from command-line flags (`--record`, `--playback`)
+/// and determines how controller input is processed:
+/// - In `None` mode, controller input is handled interactively as normal
+/// - In `Record` mode, controller input is captured and saved to an `.autorun` file
+/// - In `Playback` mode, controller input is read from an existing `.autorun` file
+///
+/// Additional behavior is configured via related fields on [`Config`]:
+///
+/// - [`Config::autorun_headless`]: Run without display during playback (for CI/testing)
+/// - [`Config::autorun_extend`]: When `Record` is active, load an existing recording,
+///   play it back to the end, then continue recording new input (effectively appending
+///   to the existing recording)
+/// - [`Config::autorun_overwrite`]: When `Record` is active, replace any existing
+///   recording file instead of failing if it already exists
+///
+/// # Example Usage
+///
+/// ```bash
+/// # Record gameplay to game.autorun
+/// neser --record game.nes
+///
+/// # Play back and verify checksum
+/// neser --playback game.nes
+///
+/// # Extend existing recording
+/// neser --record --extend game.nes
+///
+/// # Headless playback for CI
+/// neser --playback --headless game.nes
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutorunMode {
-    /// Normal operation (no autorun).
+    /// Normal interactive operation (no autorun).
+    ///
+    /// Controller input is handled interactively from keyboard, gamepad, or mouse.
+    /// No `.autorun` file is read or written.
     None,
-    /// Record controller input to file.
+    /// Record controller input to an autorun file.
+    ///
+    /// Captures controller button states every frame and saves them to a `.autorun` file
+    /// alongside the ROM. When recording completes, a CRC32 checksum of the final screen
+    /// buffer is also saved for verification during playback.
+    ///
+    /// If [`Config::autorun_extend`] is true, any existing recording is loaded first,
+    /// played back to the end, then new input is appended (extend mode).
     Record,
-    /// Play back controller input from file.
+    /// Play back controller input from an existing autorun file.
+    ///
+    /// Replays controller input from a previously recorded `.autorun` file. Live controller
+    /// input from keyboard/gamepad is ignored. When playback completes, the final screen
+    /// buffer's CRC32 checksum is verified against the stored value, and the emulator exits
+    /// with success (0) or failure (non-zero) status based on whether the checksum matches.
+    ///
+    /// Can be combined with [`Config::autorun_headless`] to run without display.
     Playback,
 }
 
@@ -647,17 +699,17 @@ impl Config {
         // Autorun mode flags
         let has_record = args.iter().any(|arg| arg == "--record");
         let has_playback = args.iter().any(|arg| arg == "--playback");
-        
+
         if has_record && has_playback {
             return Err("Cannot specify both --record and --playback".to_string());
         }
-        
+
         if has_record {
             self.autorun_mode = AutorunMode::Record;
         } else if has_playback {
             self.autorun_mode = AutorunMode::Playback;
         }
-        
+
         // Autorun option flags
         self.autorun_headless = args.iter().any(|arg| arg == "--headless");
         self.autorun_extend = args.iter().any(|arg| arg == "--extend");

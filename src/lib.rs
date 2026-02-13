@@ -2,6 +2,7 @@
 // This is not published or exposed externally
 
 pub mod apu;
+pub mod autorun;
 pub mod bus;
 pub mod cartridge;
 pub mod console;

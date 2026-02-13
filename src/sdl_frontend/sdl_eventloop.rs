@@ -295,6 +295,35 @@ impl SdlEventLoop {
     }
 
     /// Initialize autorun state if autorun mode is enabled.
+    ///
+    /// Creates and configures the autorun subsystem based on the provided mode and options.
+    /// If `mode` is [`AutorunMode::None`], this method does nothing and autorun remains disabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `mode` - The autorun mode to use (`None`, `Record`, or `Playback`). If set to
+    ///   [`AutorunMode::None`], autorun is disabled and no state is initialized.
+    /// * `rom_path` - Path to the currently loaded ROM file. The autorun file will be stored
+    ///   alongside this ROM with a `.autorun` extension (e.g., `game.nes` → `game.autorun`).
+    /// * `overwrite` - If `true` and `mode` is `Record`, any existing `.autorun` file will be
+    ///   replaced. If `false` and the file exists, an error is returned. Ignored for other modes.
+    /// * `extend` - If `true` and `mode` is `Record`, loads any existing `.autorun` file, plays
+    ///   it back to the end, then continues recording new input (appending to the recording).
+    ///   If `false` or no existing file, starts a fresh recording. Ignored for other modes.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` if autorun is successfully initialized or if `mode` is [`AutorunMode::None`].
+    /// Returns `Err(String)` if initialization fails (e.g., I/O errors, invalid autorun file format,
+    /// conflicting options).
+    ///
+    /// # Errors
+    ///
+    /// This function will return an error if:
+    /// - The `.autorun` file cannot be read or parsed (in `Playback` or `Record` with `extend`)
+    /// - The `.autorun` file already exists and `overwrite` is `false` (in `Record` mode)
+    /// - File I/O operations fail (permissions, disk full, etc.)
+    /// - The autorun file format version is incompatible
     pub fn init_autorun(
         &mut self,
         mode: AutorunMode,
@@ -362,7 +391,25 @@ impl SdlEventLoop {
     }
 
     /// Capture current button states for both players as u8 bitmasks.
-    /// Returns (player1_state, player2_state).
+    ///
+    /// Each returned `u8` is a bitmask where each bit represents the pressed state of a button.
+    /// The bit layout follows the NES joypad protocol and matches the `Button` enum values:
+    ///
+    /// - Bit 0 (LSB): `Button::A`
+    /// - Bit 1: `Button::B`
+    /// - Bit 2: `Button::Select`
+    /// - Bit 3: `Button::Start`
+    /// - Bit 4: `Button::Up`
+    /// - Bit 5: `Button::Down`
+    /// - Bit 6: `Button::Left`
+    /// - Bit 7: `Button::Right`
+    ///
+    /// A bit is set to `1` when the corresponding button is pressed, `0` when released.
+    ///
+    /// # Returns
+    ///
+    /// Returns `(player1_state, player2_state)` representing the button states for controller
+    /// ports 1 and 2 respectively.
     fn capture_button_states(&self, nes: &Nes) -> (u8, u8) {
         let player1 = nes.get_joypad_button_states(1);
         let player2 = nes.get_joypad_button_states(2);
@@ -370,6 +417,26 @@ impl SdlEventLoop {
     }
 
     /// Apply button states from u8 bitmasks for both players.
+    ///
+    /// Sets the button states for both controller ports from `u8` bitmask values.
+    /// The bit layout must match the NES joypad protocol and `Button` enum values:
+    ///
+    /// - Bit 0 (LSB): `Button::A`
+    /// - Bit 1: `Button::B`
+    /// - Bit 2: `Button::Select`
+    /// - Bit 3: `Button::Start`
+    /// - Bit 4: `Button::Up`
+    /// - Bit 5: `Button::Down`
+    /// - Bit 6: `Button::Left`
+    /// - Bit 7: `Button::Right`
+    ///
+    /// A bit set to `1` means the corresponding button is pressed, `0` means released.
+    ///
+    /// # Arguments
+    ///
+    /// * `nes` - Mutable reference to the NES instance
+    /// * `player1` - Button state bitmask for controller port 1
+    /// * `player2` - Button state bitmask for controller port 2
     fn apply_button_states(&self, nes: &mut Nes, player1: u8, player2: u8) {
         let buttons = [
             Button::A,

@@ -1,8 +1,8 @@
-use crate::console::AutorunMode;
-use crate::integration_tests::autorun::{
+use crate::autorun::{
     AutorunFile, AutorunFrame, autorun_path_for_rom, crc32, load_autorun_file, save_autorun_file,
     AUTORUN_VERSION,
 };
+use crate::console::AutorunMode;
 use std::path::PathBuf;
 
 /// Manages autorun recording and playback state.
@@ -139,5 +139,100 @@ impl AutorunState {
     /// Get the autorun mode.
     pub fn mode(&self) -> AutorunMode {
         self.mode
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_total_frames_empty() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let temp_path = temp.path().to_str().unwrap();
+        
+        let state = AutorunState::new(AutorunMode::Record, temp_path, false, false)
+            .expect("create autorun state");
+        
+        assert_eq!(state.total_frames(), 0);
+    }
+
+    #[test]
+    fn test_total_frames_with_data() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let autorun_file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![
+                AutorunFrame { player1: 1, player2: 2 },
+                AutorunFrame { player1: 3, player2: 4 },
+                AutorunFrame { player1: 5, player2: 6 },
+            ],
+            checksum: 0,
+        };
+        save_autorun_file(temp.path(), &autorun_file).expect("save file");
+        
+        let temp_path = temp.path().with_extension("").to_str().unwrap().to_string();
+        let state = AutorunState::new(AutorunMode::Playback, &temp_path, false, false)
+            .expect("create autorun state");
+        
+        assert_eq!(state.total_frames(), 3);
+    }
+
+    #[test]
+    fn test_is_extending_playback_in_extend_mode() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let autorun_file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![
+                AutorunFrame { player1: 1, player2: 2 },
+                AutorunFrame { player1: 3, player2: 4 },
+            ],
+            checksum: 0,
+        };
+        save_autorun_file(temp.path(), &autorun_file).expect("save file");
+        
+        let temp_path = temp.path().with_extension("").to_str().unwrap().to_string();
+        let mut state = AutorunState::new(AutorunMode::Record, &temp_path, false, true)
+            .expect("create autorun state");
+        
+        // Should be true while playing back existing frames
+        assert!(state.is_extending_playback());
+        
+        // Consume first frame
+        state.next_playback_frame();
+        assert!(state.is_extending_playback());
+        
+        // Consume second frame
+        state.next_playback_frame();
+        assert!(!state.is_extending_playback()); // Past existing frames
+    }
+
+    #[test]
+    fn test_is_extending_playback_in_normal_record_mode() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let temp_path = temp.path().to_str().unwrap();
+        
+        let state = AutorunState::new(AutorunMode::Record, temp_path, false, false)
+            .expect("create autorun state");
+        
+        assert!(!state.is_extending_playback());
+    }
+
+    #[test]
+    fn test_is_extending_playback_in_playback_mode() {
+        let temp = NamedTempFile::new().expect("create temp file");
+        let autorun_file = AutorunFile {
+            version: AUTORUN_VERSION,
+            frames: vec![AutorunFrame { player1: 1, player2: 2 }],
+            checksum: 0,
+        };
+        save_autorun_file(temp.path(), &autorun_file).expect("save file");
+        
+        let temp_path = temp.path().with_extension("").to_str().unwrap().to_string();
+        let state = AutorunState::new(AutorunMode::Playback, &temp_path, false, false)
+            .expect("create autorun state");
+        
+        assert!(!state.is_extending_playback());
     }
 }
