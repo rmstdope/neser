@@ -39,14 +39,14 @@
 //! Limitations:
 //! - **Expansion audio not implemented** (5B audio chip)
 
+use crate::cartridge::common::ChrMemory;
 use crate::cartridge::{Mapper, MirroringMode};
 use crate::trace_mapper;
 
 pub struct SunsoftFme7Mapper {
     prg_rom: Vec<u8>,
     prg_ram: Vec<u8>,
-    chr_rom: Vec<u8>,
-    chr_ram: Vec<u8>,
+    chr_memory: ChrMemory,
     mirroring: MirroringMode,
 
     // Register selection
@@ -73,17 +73,10 @@ impl SunsoftFme7Mapper {
     const PRG_RAM_SIZE: usize = 8 * 1024; // 8KB (can be larger, but 8KB is standard)
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
-        let chr_ram = if chr_rom.is_empty() {
-            vec![0u8; 8 * 1024]
-        } else {
-            Vec::new()
-        };
-
         Self {
             prg_rom,
             prg_ram: vec![0u8; Self::PRG_RAM_SIZE],
-            chr_rom,
-            chr_ram,
+            chr_memory: ChrMemory::new(chr_rom),
             mirroring,
             command: 0,
             prg_banks: [0, 0, 0, 0],
@@ -102,11 +95,7 @@ impl SunsoftFme7Mapper {
     }
 
     fn chr_bank_count(&self) -> usize {
-        if !self.chr_rom.is_empty() {
-            self.chr_rom.len() / Self::CHR_BANK_SIZE
-        } else {
-            self.chr_ram.len() / Self::CHR_BANK_SIZE
-        }
+        self.chr_memory.size() / Self::CHR_BANK_SIZE
     }
 
     fn read_prg_bank(&self, bank: u8, offset: usize) -> u8 {
@@ -126,26 +115,17 @@ impl SunsoftFme7Mapper {
         }
         let bank_index = (bank as usize) % bank_count;
         let addr = bank_index * Self::CHR_BANK_SIZE + offset;
-
-        if !self.chr_rom.is_empty() {
-            self.chr_rom.get(addr).copied().unwrap_or(0)
-        } else {
-            self.chr_ram.get(addr).copied().unwrap_or(0)
-        }
+        self.chr_memory.read_at_index(addr)
     }
 
     fn write_chr_byte(&mut self, bank: u8, offset: usize, value: u8) {
-        if self.chr_rom.is_empty() {
-            let bank_count = self.chr_bank_count();
-            if bank_count == 0 {
-                return;
-            }
-            let bank_index = (bank as usize) % bank_count;
-            let addr = bank_index * Self::CHR_BANK_SIZE + offset;
-            if let Some(slot) = self.chr_ram.get_mut(addr) {
-                *slot = value;
-            }
+        let bank_count = self.chr_bank_count();
+        if bank_count == 0 {
+            return;
         }
+        let bank_index = (bank as usize) % bank_count;
+        let addr = bank_index * Self::CHR_BANK_SIZE + offset;
+        self.chr_memory.write_at_index(addr, value);
     }
 
     fn write_command(&mut self, value: u8) {
@@ -330,14 +310,11 @@ impl Mapper for SunsoftFme7Mapper {
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
-        self.chr_ram.clone()
+        self.chr_memory.snapshot()
     }
 
     fn restore_chr_ram(&mut self, data: &[u8]) {
-        let to_copy = data.len().min(self.chr_ram.len());
-        if to_copy > 0 {
-            self.chr_ram[..to_copy].copy_from_slice(&data[..to_copy]);
-        }
+        self.chr_memory.load_snapshot(data);
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
