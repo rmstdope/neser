@@ -96,8 +96,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create event loop with headless mode if autorun playback is headless
     let headless = config.autorun_headless;
+    // In headless autorun/playback, force audio to None so no audio device is required
+    let audio_for_frontend = if headless { None } else { audio };
     let app_context = AppContext::new();
-    let mut event_loop = SdlEventLoop::new_with_context(headless, audio, &config, app_context)?;
+    let mut event_loop = SdlEventLoop::new_with_context(headless, audio_for_frontend, &config, app_context)?;
 
     // Initialize autorun if enabled
     if config.autorun_mode != console::AutorunMode::None {
@@ -142,6 +144,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let run_result = event_loop.run(&mut nes_instance, config.tracing);
+    
+    // Handle autorun exit codes before save-on-shutdown
+    if let Err(ref e) = run_result {
+        if e.starts_with("AUTORUN_EXIT:") {
+            let exit_code = e.strip_prefix("AUTORUN_EXIT:")
+                .and_then(|s| s.parse::<i32>().ok())
+                .unwrap_or(1);
+            std::process::exit(exit_code);
+        }
+    }
+    
     // Best-effort save on clean shutdown (Escape/Quit).
     if run_result.is_ok()
         && let Err(e) = nes_instance.bus.borrow().save_ram()

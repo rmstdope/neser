@@ -725,6 +725,9 @@ impl Config {
         if self.autorun_overwrite && self.autorun_mode != AutorunMode::Record {
             return Err("--overwrite-recording requires --record".to_string());
         }
+        if self.autorun_extend && self.autorun_overwrite {
+            return Err("Cannot specify both --extend and --overwrite-recording (mutually exclusive)".to_string());
+        }
 
         Ok(())
     }

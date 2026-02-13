@@ -14,6 +14,15 @@ use crate::debugging::{DebuggerSnapshot, Tracing, log_info, snapshot, ui};
 use crate::input::Button;
 use crate::rendering::Crosshair;
 
+/// Result type for autorun playback completion with exit code.
+#[derive(Debug)]
+pub enum AutorunExitCode {
+    /// Playback succeeded with CRC match
+    Success,
+    /// Playback failed with CRC mismatch
+    Failure,
+}
+
 /// EventLoop manages the SDL2 event loop for the application.
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
 pub struct SdlEventLoop {
@@ -503,10 +512,11 @@ impl SdlEventLoop {
     /// Handle autorun logic before emulating a frame.
     /// 
     /// In playback or extend mode, applies button states from the recording.
-    /// Returns true if we should continue normal execution, false if we should exit.
-    fn handle_autorun_before_frame(&mut self, nes: &mut Nes) -> bool {
+    /// Returns Ok(true) if we should continue, Ok(false) for normal exit,
+    /// or Err(AutorunExitCode) when playback completes with CRC verification.
+    fn handle_autorun_before_frame(&mut self, nes: &mut Nes) -> Result<bool, AutorunExitCode> {
         let Some(ref mut autorun_state) = self.autorun_state else {
-            return true; // No autorun active
+            return Ok(true); // No autorun active
         };
 
         use crate::console::AutorunMode;
@@ -515,7 +525,7 @@ impl SdlEventLoop {
         if autorun_state.mode() == AutorunMode::Playback || autorun_state.is_extending_playback() {
             if let Some(frame) = autorun_state.next_playback_frame() {
                 self.apply_button_states(nes, frame.player1, frame.player2);
-                return true;
+                return Ok(true);
             }
             
             // Playback finished
@@ -525,7 +535,7 @@ impl SdlEventLoop {
             }
         }
         
-        true
+        Ok(true)
     }
     
     /// Handle autorun logic after processing input but before rendering.
@@ -547,11 +557,11 @@ impl SdlEventLoop {
         }
     }
     
-    /// Finish playback by verifying CRC and returning exit status.
-    /// Returns false to signal the event loop should exit.
-    fn finish_playback(&mut self, nes: &Nes) -> bool {
+    /// Finish playback by verifying CRC.
+    /// Returns false with AutorunExitCode error to signal the event loop should exit.
+    fn finish_playback(&mut self, nes: &Nes) -> Result<bool, AutorunExitCode> {
         let Some(ref mut autorun_state) = self.autorun_state else {
-            return true;
+            return Ok(true);
         };
         
         // Get the screen buffer snapshot for CRC verification
@@ -561,11 +571,11 @@ impl SdlEventLoop {
         match autorun_state.verify_checksum(&snapshot) {
             Ok(()) => {
                 log_info(format!("Autorun playback successful: CRC match (0x{:08X})", crc));
-                std::process::exit(0);
+                Err(AutorunExitCode::Success)
             }
             Err(e) => {
                 log_info(format!("Autorun playback failed: {}", e));
-                std::process::exit(1);
+                Err(AutorunExitCode::Failure)
             }
         }
     }
@@ -892,9 +902,6 @@ impl SdlEventLoop {
                     self.handle_controller_button(nes, which, button, pressed);
                 }
 
-                // Record button states after input processing (autorun record mode)
-                self.handle_autorun_after_input(nes);
-
                 // Skip emulation and rendering if paused
                 if self.paused {
                     Self::tick_windowed_paused_for_run(
@@ -920,11 +927,26 @@ impl SdlEventLoop {
                 }
 
                 // Apply button states from autorun before emulation (autorun playback mode)
-                if !self.handle_autorun_before_frame(nes) {
-                    // Autorun playback finished, exit
-                    self.gl_backend = Some(gl_backend);
-                    return self.finish_recording(nes);
+                match self.handle_autorun_before_frame(nes) {
+                    Ok(true) => {}, // Continue normally
+                    Ok(false) => {
+                        // Normal playback completion (shouldn't happen in current logic)
+                        self.gl_backend = Some(gl_backend);
+                        return self.finish_recording(nes);
+                    }
+                    Err(AutorunExitCode::Success) => {
+                        // Playback succeeded - exit with code 0
+                        return Err("AUTORUN_EXIT:0".to_string());
+                    }
+                    Err(AutorunExitCode::Failure) => {
+                        // Playback failed - exit with code 1
+                        return Err("AUTORUN_EXIT:1".to_string());
+                    }
                 }
+
+                // Record button states after input processing (autorun record mode)
+                // This happens after the pause check to ensure we only record frames that are actually emulated
+                self.handle_autorun_after_input(nes);
 
                 // 2. Emulate until PPU completes a full frame (reaches VBlank)
                 // The PPU runs at 3x CPU clock (NTSC) or 3.2x (PAL), so run_cpu_tick()
@@ -1016,9 +1038,20 @@ impl SdlEventLoop {
             // Headless mode - just run without rendering
             loop {
                 // Handle autorun before frame
-                if !self.handle_autorun_before_frame(nes) {
-                    // Autorun playback finished, exit
-                    return self.finish_recording(nes);
+                match self.handle_autorun_before_frame(nes) {
+                    Ok(true) => {}, // Continue normally
+                    Ok(false) => {
+                        // Normal playback completion (shouldn't happen in current logic)
+                        return self.finish_recording(nes);
+                    }
+                    Err(AutorunExitCode::Success) => {
+                        // Playback succeeded - exit with code 0
+                        return Err("AUTORUN_EXIT:0".to_string());
+                    }
+                    Err(AutorunExitCode::Failure) => {
+                        // Playback failed - exit with code 1
+                        return Err("AUTORUN_EXIT:1".to_string());
+                    }
                 }
 
                 if self.tick_headless_once_for_run(nes) {
