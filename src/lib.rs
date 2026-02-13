@@ -2,6 +2,7 @@
 // This is not published or exposed externally
 
 pub mod apu;
+pub mod app_context;
 pub mod bus;
 pub mod cartridge;
 pub mod console;

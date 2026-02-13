@@ -1,4 +1,5 @@
 use super::sdl_render_target::SdlRenderTarget;
+use crate::app_context::AppContext;
 use crate::console::Config;
 use crate::debugging::ui::DebuggerUiAction;
 use crate::rendering::input::{InputEvent, MouseButton as RenderMouseButton};
@@ -19,7 +20,11 @@ pub struct SdlGlWrapper {
 
 impl SdlGlWrapper {
     /// Creates a new SDL-backed renderer instance.
-    pub fn new(sdl_context: &sdl2::Sdl, config: &Config) -> Result<Self, String> {
+    pub fn new(
+        sdl_context: &sdl2::Sdl,
+        config: &Config,
+        app_context: AppContext,
+    ) -> Result<Self, String> {
         let video_subsystem = sdl_context.video()?;
 
         {
@@ -75,8 +80,12 @@ impl SdlGlWrapper {
             Rc::new(move |s| video_subsystem.gl_get_proc_address(s) as *const _);
 
         let render_target = Box::new(SdlRenderTarget { window, gl_context });
-        let gl_backend =
-            GlBackend::new(render_target, proc_address, config.shader_path.as_deref())?;
+        let gl_backend = GlBackend::new(
+            render_target,
+            proc_address,
+            config.shader_path.as_deref(),
+            app_context,
+        )?;
 
         Ok(Self { gl_backend })
     }
@@ -86,11 +95,6 @@ impl SdlGlWrapper {
         if let Some(input_event) = translate_event(event) {
             self.gl_backend.handle_input(&input_event);
         }
-    }
-
-    /// Queues a transient toast notification.
-    pub fn add_toast(&mut self, text: impl Into<String>) {
-        self.gl_backend.add_toast(text);
     }
 
     /// Returns the current SDL window size as `(width, height)` in pixels.
