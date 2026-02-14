@@ -6,6 +6,7 @@ mod cartridge;
 mod console;
 mod cpu;
 mod debugging;
+mod frontend_toasts;
 mod input;
 mod ppu;
 mod rendering;
@@ -14,15 +15,9 @@ mod sdl_frontend;
 use app_context::AppContext;
 use console::{ApuChannels, Config, Nes, ParseResult, SaveState, log_rom_tv_system_selection};
 use debugging::log_info;
+use frontend_toasts::{cartridge_load_toast_message, emulator_timing_toast_message};
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::fs;
-
-fn tv_system_toast_label(tv_system: console::TvSystem) -> &'static str {
-    match tv_system {
-        console::TvSystem::Ntsc => "NTSC",
-        console::TvSystem::Pal => "PAL",
-    }
-}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
@@ -92,11 +87,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| default_rom_path.to_string());
     let cart = match cartridge::Cartridge::load_from_file(&rom_path) {
         Ok(cartridge) => {
-            app_context.add_toast(format!("Cartridge loaded: {}", rom_path));
+            app_context.add_toast(cartridge_load_toast_message(&rom_path, true));
             cartridge
         }
         Err(err) => {
-            app_context.add_toast(format!("Cartridge load failed: {}", rom_path));
+            app_context.add_toast(cartridge_load_toast_message(&rom_path, false));
             return Err(err.into());
         }
     };
@@ -107,10 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut nes_instance = Nes::new(config.clone());
     nes_instance.insert_cartridge(cart);
-    app_context.add_toast(format!(
-        "Emulator timing: {}",
-        tv_system_toast_label(config.tv_system)
-    ));
+    app_context.add_toast(emulator_timing_toast_message(config.tv_system));
 
     if let Some(actual_rate) = audio_sample_rate {
         nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
