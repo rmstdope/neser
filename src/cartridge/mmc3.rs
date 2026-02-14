@@ -1406,3 +1406,19 @@ impl Mapper for MMC3Mapper {
         }
     }
 }
+
+impl crate::cartridge::MapperIrq for MMC3Mapper {
+    fn irq_pending(&self) -> bool {
+        <Self as Mapper>::irq_pending(self)
+    }
+
+    fn clock_irq(&mut self) {
+        // NOTE: MMC3's IRQ counter is clocked exclusively on PPU A12 rising edges,
+        // via the PPU address change hook (`clock_irq_counter_on_a12_rising_edge`).
+        //
+        // Leaving this as a no-op avoids the common misinterpretation that
+        // `clock_irq` should be called every CPU cycle by a generic IRQ driver,
+        // which would break MMC3 IRQ timing. Do not drive MMC3 IRQs via this
+        // method; use the PPU A12 edge logic instead.
+    }
+}

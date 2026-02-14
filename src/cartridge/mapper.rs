@@ -138,6 +138,135 @@ impl Default for MapperCapabilities {
     }
 }
 
+/// Minimal mapper contract required by all cartridge boards.
+pub trait MapperCore {
+    fn read_prg(&self, addr: u16) -> u8;
+    fn write_prg(&mut self, addr: u16, value: u8);
+    fn read_chr(&self, addr: u16) -> u8;
+    fn write_chr(&mut self, addr: u16, value: u8);
+    fn get_mirroring(&self) -> MirroringMode;
+}
+
+/// Optional IRQ behavior for mappers that can assert CPU interrupts.
+///
+/// This trait models **CPU-visible** IRQ behavior. Implementations that use a
+/// CPU-driven counter (e.g. incremented every CPU cycle or CPU tick) should
+/// implement [`clock_irq`] and [`irq_pending`]. Mappers whose IRQs are driven
+/// purely by PPU events (A12 edges, scanlines, etc.) should prefer the
+/// callbacks in [`MapperPpuExtension`] instead of overloading [`clock_irq`].
+pub trait MapperIrq: MapperCore {
+    /// Returns whether the mapper currently has an IRQ pending for the CPU.
+    ///
+    /// When this returns `true`, the CPU core should treat the mapper as
+    /// asserting the IRQ line until the mapper-specific acknowledge/clear
+    /// mechanism has been invoked via PRG writes.
+    fn irq_pending(&self) -> bool {
+        false
+    }
+
+    /// Advance the mapper's CPU-IRQ timing by one unit.
+    ///
+    /// # Calling contract
+    ///
+    /// The emulator core is expected to call this once per **CPU cycle**
+    /// (i.e., per CPU clock tick), not per PPU cycle or scanline. This is
+    /// intended for mappers whose IRQ counters are clocked directly from the
+    /// CPU clock.
+    ///
+    /// For mappers whose IRQs are instead clocked from PPU activity (such as
+    /// rising edges on A12, or per-scanline counters), use the PPU event
+    /// hooks in [`MapperPpuExtension`] (`ppu_address_changed`, `ppu_scanline`)
+    /// to implement that behavior rather than relying on `clock_irq`.
+    ///
+    /// The default implementation is a no-op, so mappers that do not require
+    /// CPU-clocked IRQ behavior can ignore this method.
+    fn clock_irq(&mut self) {}
+}
+
+/// Optional PPU event hooks used by advanced mappers (e.g. MMC3/MMC5).
+pub trait MapperPpuExtension: MapperCore {
+    fn ppu_address_changed(&mut self, _addr: u16) {}
+
+    fn ppu_scanline(&mut self, _scanline: u16, _rendering_enabled: bool) {}
+}
+
+/// Optional expansion-audio support.
+pub trait MapperAudio: MapperCore {
+    fn expansion_audio_sample(&self) -> f32 {
+        0.0
+    }
+}
+
+/// Optional save-state and WRAM persistence support.
+pub trait MapperStateSnapshot: MapperCore {
+    /// Get the total WRAM size in bytes that should be persisted.
+    ///
+    /// Default is 8KB (the CPU-visible $6000-$7FFF window).
+    /// Mappers with banked or larger WRAM should override this to report full raw size.
+    fn wram_size(&self) -> usize {
+        0x2000
+    }
+
+    /// Create a WRAM snapshot for persistence.
+    ///
+    /// Default implementation only snapshots the CPU-visible $6000-$7FFF window (8KB max).
+    /// Mappers with >8KB WRAM, banked WRAM, or WRAM that can be disabled/protected must
+    /// override this to snapshot raw WRAM directly (independent of current mapping/protection).
+    fn wram_snapshot(&self) -> Vec<u8> {
+        debug_assert!(
+            self.wram_size() <= 0x2000,
+            "MapperStateSnapshot::wram_snapshot default only handles 8KB ($6000-$7FFF); override for larger/banked WRAM"
+        );
+        let size = self.wram_size().min(0x2000);
+        let mut snapshot = Vec::with_capacity(size);
+        for i in 0..size {
+            snapshot.push(self.read_prg(0x6000 + i as u16));
+        }
+        snapshot
+    }
+
+    /// Restore a WRAM snapshot from persistence.
+    ///
+    /// Default implementation only restores through the CPU-visible $6000-$7FFF window (8KB max).
+    /// Mappers with >8KB WRAM, banked WRAM, or WRAM that can be disabled/protected must
+    /// override this to restore raw WRAM directly (independent of current mapping/protection).
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        debug_assert!(
+            self.wram_size() <= 0x2000,
+            "MapperStateSnapshot::load_wram_snapshot default only handles 8KB ($6000-$7FFF); override for larger/banked WRAM"
+        );
+        let to_copy = data.len().min(0x2000).min(self.wram_size());
+        for (i, &byte) in data.iter().take(to_copy).enumerate() {
+            self.write_prg(0x6000 + i as u16, byte);
+        }
+    }
+
+    fn prg_ram_snapshot(&self) -> Vec<u8> {
+        self.wram_snapshot()
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn restore_prg_ram(&mut self, data: &[u8]) {
+        self.load_wram_snapshot(data);
+    }
+
+    fn restore_chr_ram(&mut self, _data: &[u8]) {}
+
+    fn restore_registers(&mut self, _data: &[u8]) {}
+}
+
+/// Convenience trait bound for core + state mappers.
+pub trait MapperComposable: MapperCore + MapperStateSnapshot {}
+
+impl<T: MapperCore + MapperStateSnapshot + ?Sized> MapperComposable for T {}
+
 pub trait Mapper {
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, battery-backed on some cartridges)
@@ -376,6 +505,124 @@ pub trait Mapper {
     }
 }
 
+impl<T: Mapper + ?Sized> MapperCore for T {
+    fn read_prg(&self, addr: u16) -> u8 {
+        Mapper::read_prg(self, addr)
+    }
+
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        Mapper::write_prg(self, addr, value);
+    }
+
+    fn read_chr(&self, addr: u16) -> u8 {
+        Mapper::read_chr(self, addr)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        Mapper::write_chr(self, addr, value);
+    }
+
+    fn get_mirroring(&self) -> MirroringMode {
+        Mapper::get_mirroring(self)
+    }
+}
+
+impl<T: Mapper + ?Sized> MapperPpuExtension for T {
+    fn ppu_address_changed(&mut self, addr: u16) {
+        Mapper::ppu_address_changed(self, addr);
+    }
+
+    fn ppu_scanline(&mut self, scanline: u16, rendering_enabled: bool) {
+        Mapper::ppu_scanline(self, scanline, rendering_enabled);
+    }
+}
+
+impl<T: Mapper + ?Sized> MapperAudio for T {
+    fn expansion_audio_sample(&self) -> f32 {
+        Mapper::expansion_audio_sample(self)
+    }
+}
+
+impl<T: Mapper + ?Sized> MapperStateSnapshot for T {
+    fn wram_size(&self) -> usize {
+        Mapper::wram_size(self)
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        Mapper::wram_snapshot(self)
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        Mapper::load_wram_snapshot(self, data);
+    }
+
+    fn prg_ram_snapshot(&self) -> Vec<u8> {
+        Mapper::prg_ram_snapshot(self)
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        Mapper::chr_ram_snapshot(self)
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        Mapper::registers_snapshot(self)
+    }
+
+    fn restore_prg_ram(&mut self, data: &[u8]) {
+        Mapper::restore_prg_ram(self, data);
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        Mapper::restore_chr_ram(self, data);
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        Mapper::restore_registers(self, data);
+    }
+}
+
+#[inline]
+fn probe_mapper_core<T: MapperCore + ?Sized>(_mapper: &T) {
+    let _ = <T as MapperCore>::read_prg as fn(&T, u16) -> u8;
+    let _ = <T as MapperCore>::write_prg as fn(&mut T, u16, u8);
+    let _ = <T as MapperCore>::read_chr as fn(&T, u16) -> u8;
+    let _ = <T as MapperCore>::write_chr as fn(&mut T, u16, u8);
+    let _ = <T as MapperCore>::get_mirroring as fn(&T) -> MirroringMode;
+}
+
+#[inline]
+fn probe_mapper_irq<T: MapperIrq + ?Sized>(_mapper: &T) {
+    let _ = <T as MapperIrq>::irq_pending as fn(&T) -> bool;
+    let _ = <T as MapperIrq>::clock_irq as fn(&mut T);
+}
+
+#[inline]
+fn probe_mapper_ppu_extension<T: MapperPpuExtension + ?Sized>(_mapper: &mut T) {
+    let _ = <T as MapperPpuExtension>::ppu_address_changed as fn(&mut T, u16);
+    let _ = <T as MapperPpuExtension>::ppu_scanline as fn(&mut T, u16, bool);
+}
+
+#[inline]
+fn probe_mapper_audio<T: MapperAudio + ?Sized>(_mapper: &T) {
+    let _ = <T as MapperAudio>::expansion_audio_sample as fn(&T) -> f32;
+}
+
+#[inline]
+fn probe_mapper_state_snapshot<T: MapperStateSnapshot + ?Sized>(_mapper: &T) {
+    let _ = <T as MapperStateSnapshot>::wram_size as fn(&T) -> usize;
+    let _ = <T as MapperStateSnapshot>::wram_snapshot as fn(&T) -> Vec<u8>;
+    let _ = <T as MapperStateSnapshot>::load_wram_snapshot as fn(&mut T, &[u8]);
+    let _ = <T as MapperStateSnapshot>::prg_ram_snapshot as fn(&T) -> Vec<u8>;
+    let _ = <T as MapperStateSnapshot>::chr_ram_snapshot as fn(&T) -> Vec<u8>;
+    let _ = <T as MapperStateSnapshot>::registers_snapshot as fn(&T) -> Vec<u8>;
+    let _ = <T as MapperStateSnapshot>::restore_prg_ram as fn(&mut T, &[u8]);
+    let _ = <T as MapperStateSnapshot>::restore_chr_ram as fn(&mut T, &[u8]);
+    let _ = <T as MapperStateSnapshot>::restore_registers as fn(&mut T, &[u8]);
+}
+
+#[inline]
+fn probe_mapper_composable<T: MapperComposable + ?Sized>(_mapper: &T) {}
+
 fn vrc2_vrc4_21(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
     Vrc2Vrc4Mapper::new(21, prg_rom, chr_rom, mirroring)
 }
@@ -393,11 +640,15 @@ fn vrc2_vrc4_25(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) ->
 }
 
 fn vrc6_24(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> VRC6Mapper {
-    VRC6Mapper::new(24, prg_rom, chr_rom, mirroring)
+    let mapper = VRC6Mapper::new(24, prg_rom, chr_rom, mirroring);
+    probe_mapper_irq(&mapper);
+    mapper
 }
 
 fn vrc6_26(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> VRC6Mapper {
-    VRC6Mapper::new(26, prg_rom, chr_rom, mirroring)
+    let mapper = VRC6Mapper::new(26, prg_rom, chr_rom, mirroring);
+    probe_mapper_irq(&mapper);
+    mapper
 }
 
 macro_rules! mapper_registry {
@@ -466,12 +717,9 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         let crc32 = metadata.crc32;
         let use_alternate_irq = rom_db::requires_mmc3_alternate_irq(crc32);
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(MMC3Mapper::new_with_irq_mode(
-            prg_rom,
-            chr_rom,
-            mirroring,
-            use_alternate_irq,
-        )));
+        let mapper = MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, use_alternate_irq);
+        probe_mapper_irq(&mapper);
+        return Ok(Box::new(mapper));
     }
 
     if mapper_number == 5 {
@@ -496,7 +744,12 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         )));
     }
 
-    if let Some(mapper) = create_registry_mapper(metadata) {
+    if let Some(mut mapper) = create_registry_mapper(metadata) {
+        probe_mapper_core(&*mapper);
+        probe_mapper_ppu_extension(&mut *mapper);
+        probe_mapper_audio(&*mapper);
+        probe_mapper_state_snapshot(&*mapper);
+        probe_mapper_composable(&*mapper);
         return Ok(mapper);
     }
 
@@ -747,5 +1000,84 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- Acceptance tests for composable mapper traits ---
+
+    fn assert_core_contract<T: MapperCore>(mapper: &mut T) {
+        let _ = mapper.read_prg(0x8000);
+        mapper.write_prg(0x8000, 0x12);
+        let _ = mapper.read_chr(0x0000);
+        mapper.write_chr(0x0000, 0x34);
+        let _ = mapper.get_mirroring();
+    }
+
+    fn assert_irq_contract<T: MapperCore + MapperIrq>(mapper: &mut T) {
+        mapper.clock_irq();
+        let _ = mapper.irq_pending();
+    }
+
+    fn assert_ppu_extension_contract<T: MapperCore + MapperPpuExtension>(mapper: &mut T) {
+        mapper.ppu_address_changed(0x1000);
+        mapper.ppu_scanline(42, true);
+    }
+
+    fn assert_audio_contract<T: MapperCore + MapperAudio>(mapper: &mut T) {
+        let _ = mapper.expansion_audio_sample();
+    }
+
+    fn assert_state_contract<T: MapperCore + MapperStateSnapshot>(mapper: &mut T) {
+        let wram = mapper.wram_snapshot();
+        mapper.load_wram_snapshot(&wram);
+        let prg = mapper.prg_ram_snapshot();
+        mapper.restore_prg_ram(&prg);
+        let chr = mapper.chr_ram_snapshot();
+        mapper.restore_chr_ram(&chr);
+        let registers = mapper.registers_snapshot();
+        mapper.restore_registers(&registers);
+    }
+
+    fn assert_composable_contract<T: MapperComposable>(mapper: &mut T) {
+        let _ = mapper.wram_size();
+        let _ = mapper.prg_ram_snapshot();
+    }
+
+    #[test]
+    fn nrom_satisfies_core_and_state_traits() {
+        let mut mapper = NROMMapper::new(
+            vec![0u8; 32 * 1024],
+            vec![0u8; 8 * 1024],
+            MirroringMode::Horizontal,
+        );
+        assert_core_contract(&mut mapper);
+        assert_state_contract(&mut mapper);
+        assert_composable_contract(&mut mapper);
+    }
+
+    #[test]
+    fn mmc3_satisfies_core_irq_ppu_and_state_traits() {
+        let mut mapper = MMC3Mapper::new(
+            vec![0u8; 32 * 1024],
+            vec![0u8; 8 * 1024],
+            MirroringMode::Horizontal,
+        );
+        assert_core_contract(&mut mapper);
+        assert_irq_contract(&mut mapper);
+        assert_ppu_extension_contract(&mut mapper);
+        assert_state_contract(&mut mapper);
+    }
+
+    #[test]
+    fn vrc6_satisfies_core_irq_audio_and_state_traits() {
+        let mut mapper = VRC6Mapper::new(
+            24,
+            vec![0u8; 32 * 1024],
+            vec![0u8; 8 * 1024],
+            MirroringMode::Horizontal,
+        );
+        assert_core_contract(&mut mapper);
+        assert_irq_contract(&mut mapper);
+        assert_audio_contract(&mut mapper);
+        assert_state_contract(&mut mapper);
     }
 }
