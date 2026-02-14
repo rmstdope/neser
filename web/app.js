@@ -19,6 +19,7 @@ import { createSineScroller } from "./sine_scroller.js";
 import { getKeyboardControllerTarget } from "./input_routing.js";
 import { createCrosshair } from "./crosshair.js";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./toast_overlay.js";
+import { createGamepadInitToastNotifier } from "./gamepad_init_toast.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -51,6 +52,26 @@ const SCROLLER_FONT_FAMILY = "'VT323', monospace";
 const toastContainer = createToastContainer(screenWrap);
 
 const toastOverlay = createToastOverlay({ container: toastContainer });
+
+const gamepadInitToastNotifier = createGamepadInitToastNotifier({
+    buildMessage: gamepad_init_toast_message,
+    showToast: (message) => toastOverlay.show(message)
+});
+
+let wasmInitPromise = null;
+
+function createWasmUrl() {
+    const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
+    wasmUrl.searchParams.set("v", "20260127");
+    return wasmUrl;
+}
+
+function ensureWasmInitialized() {
+    if (!wasmInitPromise) {
+        wasmInitPromise = init({ module_or_path: createWasmUrl() });
+    }
+    return wasmInitPromise;
+}
 
 // WebGL shader setup for filters
 const filters = {
@@ -969,9 +990,7 @@ async function start() {
     setStatus("Initializing emulator...");
     try {
         if (!nes) {
-            const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
-            wasmUrl.searchParams.set("v", "20260127");
-            await init({ module_or_path: wasmUrl });
+            await ensureWasmInitialized();
 
             // Initialize WebGL shaders before creating NES instance
             if (!initWebGL()) {
@@ -980,11 +999,6 @@ async function start() {
 
             nes = new WasmNes();
         }
-        const startupGamepadToast = gamepad_init_toast_message(
-            gamepadEnabled,
-            connectedGamepads.length
-        );
-        toastOverlay.show(startupGamepadToast);
         const romName = romMetadata?.name || "selected-rom.nes";
         nes.load_rom(romBytes, romName);
         drainNesToasts(nes, toastOverlay);
@@ -1383,8 +1397,20 @@ function updateConnectedGamepads() {
     return connectedGamepads;
 }
 
+function showPageLoadGamepadInitToast() {
+    gamepadInitToastNotifier.showOnce(gamepadEnabled, connectedGamepads.length);
+}
+
 // Initialize connectedGamepads to detect any gamepads already connected on page load
 updateConnectedGamepads();
+
+ensureWasmInitialized()
+    .then(() => {
+        showPageLoadGamepadInitToast();
+    })
+    .catch((error) => {
+        console.error("Failed to initialize WASM for gamepad init toast", error);
+    });
 
 document.addEventListener('keydown', (e) => {
     if (!nes) return;
