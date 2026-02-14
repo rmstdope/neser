@@ -92,18 +92,16 @@ impl WasmNes {
         self.rom_loaded = true;
         self.pending_toasts
             .push(cartridge_load_toast_message(rom_name, true));
-        self.pending_toasts
-            .push(emulator_timing_toast_message(self.nes.config.borrow().tv_system));
+        self.pending_toasts.push(emulator_timing_toast_message(
+            self.nes.config.borrow().tv_system,
+        ));
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
     }
 
     #[wasm_bindgen]
     pub fn drain_toasts(&mut self) -> Vec<JsValue> {
-        self.pending_toasts
-            .drain(..)
-            .map(JsValue::from)
-            .collect()
+        self.pending_toasts.drain(..).map(JsValue::from).collect()
     }
 
     /// Reset the emulator without ejecting the cartridge.
