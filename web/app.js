@@ -17,6 +17,7 @@ import { computePlaybackRate } from "./audio_resampler.js";
 import { planFrame } from "./frame_plan.js";
 import { createSineScroller } from "./sine_scroller.js";
 import { getKeyboardControllerTarget } from "./input_routing.js";
+import { dispatchWebShortcutAction } from "./shortcut_actions.js";
 import { createCrosshair } from "./crosshair.js";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./toast_overlay.js";
 import { createGamepadInitToastNotifier } from "./gamepad_init_toast.js";
@@ -1340,9 +1341,7 @@ if (!pauseBtn || !stopBtn || !resetBtn) {
 pauseBtn.addEventListener("click", pauseResume);
 stopBtn.addEventListener("click", stop);
 resetBtn.addEventListener("click", () => {
-    if (!nes) return;
-    nes.reset();
-    setStatus("Reset", false);
+    resetAction();
 });
 
 async function populateRomSelect() {
@@ -1412,45 +1411,53 @@ ensureWasmInitialized()
         console.error("Failed to initialize WASM for gamepad init toast", error);
     });
 
-document.addEventListener('keydown', (e) => {
-    if (!nes) return;
-    const key = e.key.toLowerCase();
-    const targets = getKeyboardControllerTarget(connectedGamepads.length);
-    
-    // Check controller 1 mapping
-    const mapping1 = keyToButtonController1[key];
-    if (mapping1 && targets.includes(1)) {
-        e.preventDefault();
-        applyJoypadButtonIfAllowed(nes, 1, mapping1.button, true);
-    }
-    
-    // Check controller 2 mapping
-    const mapping2 = keyToButtonController2[key];
-    if (mapping2 && targets.includes(2)) {
-        e.preventDefault();
-        applyJoypadButtonIfAllowed(nes, 2, mapping2.button, true);
-    }
-});
+const webShortcutActions = {
+    togglePause: pauseResume,
+    reset: resetAction,
+    saveState: saveStateAction,
+    loadState: loadStateAction,
+    toggleFullscreen: toggleScreenFullscreen
+};
 
-document.addEventListener('keyup', (e) => {
-    if (!nes) return;
-    const key = e.key.toLowerCase();
+function applyKeyboardMapping(event, mapping, controller, targets, pressed) {
+    if (!mapping || !targets.includes(controller)) {
+        return;
+    }
+    event.preventDefault();
+    applyJoypadButtonIfAllowed(nes, controller, mapping.button, pressed);
+}
+
+async function handleKeyDown(event) {
+    if (!nes) {
+        return;
+    }
+
+    const handledShortcut = await dispatchWebShortcutAction(event, webShortcutActions);
+    if (handledShortcut) {
+        return;
+    }
+
+    const key = event.key.toLowerCase();
     const targets = getKeyboardControllerTarget(connectedGamepads.length);
-    
-    // Check controller 1 mapping
-    const mapping1 = keyToButtonController1[key];
-    if (mapping1 && targets.includes(1)) {
-        e.preventDefault();
-        applyJoypadButtonIfAllowed(nes, 1, mapping1.button, false);
+
+    applyKeyboardMapping(event, keyToButtonController1[key], 1, targets, true);
+    applyKeyboardMapping(event, keyToButtonController2[key], 2, targets, true);
+}
+
+function handleKeyUp(event) {
+    if (!nes) {
+        return;
     }
-    
-    // Check controller 2 mapping
-    const mapping2 = keyToButtonController2[key];
-    if (mapping2 && targets.includes(2)) {
-        e.preventDefault();
-        applyJoypadButtonIfAllowed(nes, 2, mapping2.button, false);
-    }
-});
+
+    const key = event.key.toLowerCase();
+    const targets = getKeyboardControllerTarget(connectedGamepads.length);
+
+    applyKeyboardMapping(event, keyToButtonController1[key], 1, targets, false);
+    applyKeyboardMapping(event, keyToButtonController2[key], 2, targets, false);
+}
+
+document.addEventListener('keydown', handleKeyDown);
+document.addEventListener('keyup', handleKeyUp);
 
 function handleMouseMotion(event) {
     if (!nes) return;
@@ -1554,6 +1561,44 @@ function updateFullscreenButton() {
     fullscreenBtn.textContent = inScreenFullscreen ? "Exit Fullscreen" : "Fullscreen";
 }
 
+async function toggleScreenFullscreen() {
+    if (document.fullscreenElement !== screenWrap) {
+        try {
+            await screenWrap.requestFullscreen();
+        } catch (err) {
+            console.error("Failed to enter fullscreen:", err);
+            setStatus("Failed to enter fullscreen mode", true);
+        }
+    } else {
+        try {
+            await document.exitFullscreen();
+        } catch (err) {
+            console.error("Failed to exit fullscreen:", err);
+            setStatus("Failed to exit fullscreen mode", true);
+        }
+    }
+}
+
+function resetAction() {
+    if (!nes) return;
+    nes.reset();
+    setStatus("Reset", false);
+}
+
+async function saveStateAction() {
+    if (!saveStateController) return;
+    const ok = await saveStateController.save();
+    if (ok) {
+        saveStateAvailable = true;
+        updateSaveStateButtons();
+    }
+}
+
+async function loadStateAction() {
+    if (!saveStateController) return;
+    await saveStateController.load();
+}
+
 function updateSaveStateButtons() {
     const enabled = Boolean(saveStateController);
     if (saveStateBtn) saveStateBtn.disabled = !enabled;
@@ -1576,21 +1621,7 @@ screenPlusBtn.addEventListener("click", () => {
 });
 
 fullscreenBtn.addEventListener("click", async () => {
-    if (document.fullscreenElement !== screenWrap) {
-        try {
-            await screenWrap.requestFullscreen();
-        } catch (err) {
-            console.error("Failed to enter fullscreen:", err);
-            setStatus("Failed to enter fullscreen mode", true);
-        }
-    } else {
-        try {
-            await document.exitFullscreen();
-        } catch (err) {
-            console.error("Failed to exit fullscreen:", err);
-            setStatus("Failed to exit fullscreen mode", true);
-        }
-    }
+    await toggleScreenFullscreen();
 });
 
 filterToggleBtn.addEventListener("click", () => {
@@ -1599,17 +1630,11 @@ filterToggleBtn.addEventListener("click", () => {
 });
 
 saveStateBtn?.addEventListener("click", async () => {
-    if (!saveStateController) return;
-    const ok = await saveStateController.save();
-    if (ok) {
-        saveStateAvailable = true;
-        updateSaveStateButtons();
-    }
+    await saveStateAction();
 });
 
 loadStateBtn?.addEventListener("click", async () => {
-    if (!saveStateController) return;
-    await saveStateController.load();
+    await loadStateAction();
 });
 
 function pollGamepad() {
