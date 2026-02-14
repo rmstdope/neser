@@ -7,6 +7,7 @@ function makeKeyboardEvent(code) {
     let prevented = false;
     return {
         code,
+        repeat: false,
         preventDefault() {
             prevented = true;
         },
@@ -87,6 +88,18 @@ test("dispatchWebShortcutAction routes F12 to toggleFullscreen", async () => {
 
 test("dispatchWebShortcutAction ignores unknown keys", async () => {
     const event = makeKeyboardEvent("KeyQ");
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, false);
+    assert.deepEqual(calls, []);
+    assert.equal(event.defaultPrevented, false);
+});
+
+test("dispatchWebShortcutAction ignores repeated key events", async () => {
+    const event = makeKeyboardEvent("Space");
+    event.repeat = true;
     const { calls, actions } = makeActions();
 
     const handled = await dispatchWebShortcutAction(event, actions);

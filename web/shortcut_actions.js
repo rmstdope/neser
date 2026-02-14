@@ -14,6 +14,10 @@
  * @returns {Promise<boolean>}
  */
 export async function dispatchWebShortcutAction(event, actions) {
+    if (event.repeat) {
+        return false;
+    }
+
     const action = shortcutActionForCode(event.code, actions);
     if (!action) {
         return false;
