@@ -697,7 +697,6 @@ impl crate::cartridge::MapperIrq for VRC6Mapper {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;

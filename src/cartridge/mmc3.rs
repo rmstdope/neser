@@ -1422,4 +1422,3 @@ impl crate::cartridge::MapperIrq for MMC3Mapper {
         // method; use the PPU A12 edge logic instead.
     }
 }
-

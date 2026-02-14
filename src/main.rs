@@ -147,13 +147,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let run_result = event_loop.run(&mut nes_instance, config.tracing);
 
     // Handle autorun exit codes before save-on-shutdown
-    if let Err(ref e) = run_result {
-        if let Some(exit_code) = e
+    if let Err(ref e) = run_result
+        && let Some(exit_code) = e
             .strip_prefix("AUTORUN_EXIT:")
             .and_then(|s| s.parse::<i32>().ok())
-        {
-            std::process::exit(exit_code);
-        }
+    {
+        std::process::exit(exit_code);
     }
 
     // Best-effort save on clean shutdown (Escape/Quit).

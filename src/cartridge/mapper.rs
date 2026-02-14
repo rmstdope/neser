@@ -717,12 +717,7 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         let crc32 = metadata.crc32;
         let use_alternate_irq = rom_db::requires_mmc3_alternate_irq(crc32);
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        let mapper = MMC3Mapper::new_with_irq_mode(
-            prg_rom,
-            chr_rom,
-            mirroring,
-            use_alternate_irq,
-        );
+        let mapper = MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, mirroring, use_alternate_irq);
         probe_mapper_irq(&mapper);
         return Ok(Box::new(mapper));
     }
