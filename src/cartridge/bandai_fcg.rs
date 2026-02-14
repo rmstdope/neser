@@ -20,7 +20,7 @@
 //! - CPU-cycle driven IRQ counter (counts down from 16-bit value)
 //! - Used in Dragon Ball series, SD Gundam series
 //!
-//! Limitations:
+//! Known Limitations:
 //! - **EEPROM not implemented**: 24C02 EEPROM (register $800D) used for save data
 //!   in some games (Dragon Ball Z II/III, SD Gundam Gaiden) is not supported
 //! - Games requiring EEPROM cannot save progress

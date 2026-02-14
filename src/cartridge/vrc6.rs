@@ -1,3 +1,14 @@
+//! Mapper 24/26 - Konami VRC6
+//!
+//! Specifications:
+//! - Main: <https://www.nesdev.org/wiki/VRC6>
+//! - Audio: <https://www.nesdev.org/wiki/VRC6_audio>
+//!
+//! Known Limitations:
+//! - No known gameplay-blocking functional limitations are currently documented.
+//! - Cycle-accuracy edge cases and less-common board wiring variants are not yet
+//!   comprehensively validated by dedicated ROM test suites.
+
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
 use crate::trace_mapper;
