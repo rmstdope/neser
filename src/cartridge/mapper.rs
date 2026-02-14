@@ -172,11 +172,24 @@ pub trait MapperAudio: MapperCore {
 
 /// Optional save-state and WRAM persistence support.
 pub trait MapperStateSnapshot: MapperCore {
+    /// Get the total WRAM size in bytes that should be persisted.
+    ///
+    /// Default is 8KB (the CPU-visible $6000-$7FFF window).
+    /// Mappers with banked or larger WRAM should override this to report full raw size.
     fn wram_size(&self) -> usize {
         0x2000
     }
 
+    /// Create a WRAM snapshot for persistence.
+    ///
+    /// Default implementation only snapshots the CPU-visible $6000-$7FFF window (8KB max).
+    /// Mappers with >8KB WRAM, banked WRAM, or WRAM that can be disabled/protected must
+    /// override this to snapshot raw WRAM directly (independent of current mapping/protection).
     fn wram_snapshot(&self) -> Vec<u8> {
+        debug_assert!(
+            self.wram_size() <= 0x2000,
+            "MapperStateSnapshot::wram_snapshot default only handles 8KB ($6000-$7FFF); override for larger/banked WRAM"
+        );
         let size = self.wram_size().min(0x2000);
         let mut snapshot = Vec::with_capacity(size);
         for i in 0..size {
@@ -185,7 +198,16 @@ pub trait MapperStateSnapshot: MapperCore {
         snapshot
     }
 
+    /// Restore a WRAM snapshot from persistence.
+    ///
+    /// Default implementation only restores through the CPU-visible $6000-$7FFF window (8KB max).
+    /// Mappers with >8KB WRAM, banked WRAM, or WRAM that can be disabled/protected must
+    /// override this to restore raw WRAM directly (independent of current mapping/protection).
     fn load_wram_snapshot(&mut self, data: &[u8]) {
+        debug_assert!(
+            self.wram_size() <= 0x2000,
+            "MapperStateSnapshot::load_wram_snapshot default only handles 8KB ($6000-$7FFF); override for larger/banked WRAM"
+        );
         let to_copy = data.len().min(0x2000).min(self.wram_size());
         for (i, &byte) in data.iter().take(to_copy).enumerate() {
             self.write_prg(0x6000 + i as u16, byte);

@@ -9,7 +9,7 @@ This document outlines PAL (Phase Alternating Line) validation procedures for ne
 ### Clock Rates
 
 | Property | NTSC | PAL |
-|----------|------|-----|
+| ---------- | ------ | ----- |
 | Master Clock | 21.477272 MHz | 26.601712 MHz |
 | CPU Clock | 1.789773 MHz | 1.662607 MHz |
 | PPU Dots per CPU Cycle | 3 | 3.2 |
@@ -37,28 +37,32 @@ This document outlines PAL (Phase Alternating Line) validation procedures for ne
 The following test ROMs are specifically designed for PAL validation. They are available from the NESDev community and are critical for verifying PAL correctness:
 
 #### 1. **nmi_sync** (blargg)
+
 - **Location**: NESDev test ROM repository
 - **Purpose**: Tests NMI timing accuracy with PAL-specific timing
 - **Variants**: Contains both NTSC and PAL versions
-- **Download**: Available at https://github.com/christopherpow/nes-test-roms/tree/master/scanline
+- **Download**: Available at <https://github.com/christopherpow/nes-test-roms/tree/master/scanline>
 - **Test Format**: Visual output test - produces specific pattern if timing is correct
 
 #### 2. **pal_apu_tests** (blargg)
+
 - **Location**: NESDev test ROM repository
 - **Purpose**: PAL-specific APU tests (length counters, frame counter, IRQ, etc.)
 - **Variants**: PAL versions matching blargg_apu_2005.07.30
-- **Download**: Available at https://github.com/christopherpow/nes-test-roms/tree/master/apu
+- **Download**: Available at <https://github.com/christopherpow/nes-test-roms/tree/master/apu>
 - **Test Format**: Text-based output tests
 
 #### 3. **tvpassfail** (tepples)
+
 - **Location**: NESDev test ROM repository
 - **Purpose**: NTSC/PAL color and pixel aspect ratio test
-- **Download**: Available at https://github.com/christopherpow/nes-test-roms
+- **Download**: Available at <https://github.com/christopherpow/nes-test-roms>
 - **Test Format**: Visual pattern test
 
 ### Obtaining Test ROMs
 
 1. Clone or download the NESDev test ROM repository:
+
    ```bash
    git clone https://github.com/christopherpow/nes-test-roms.git
    ```
@@ -127,7 +131,7 @@ PAL games that are known to exhibit different behavior or issues when run under 
 ### Critical Issues
 
 | Game | Issue | NTSC Behavior | PAL Behavior |
-|------|-------|---------------|--------------|
+| ------ | ------- | --------------- | -------------- |
 | Kirby's Adventure | Sprite lag/timing | Can be visible | Correct |
 | Castlevania IV | Projectile timing | Incorrect shot speed | Correct |
 | Double Dragon II | NMI timing | Audio sync issues | Correct |

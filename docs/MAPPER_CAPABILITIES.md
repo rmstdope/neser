@@ -5,7 +5,7 @@ This document lists the hardware capabilities reported by each supported mapper 
 ## Capability Fields
 
 | Field | Type | Description |
-|-------|------|-------------|
+| ------- | ------ | ------------- |
 | `has_irq` | `bool` | Mapper has a scanline/cycle counter that can trigger IRQs |
 | `has_chr_banking` | `bool` | Mapper supports CHR bank switching |
 | `has_dynamic_mirroring` | `bool` | Mapper can change nametable mirroring at runtime |
@@ -36,7 +36,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 ## Capabilities by Mapper
 
 | # | Name | IRQ | CHR Bank | Dyn Mirror | Exp Audio | PRG-RAM (KB) | PRG Bank (KB) | CHR Bank (KB) |
-|--:|------|:---:|:--------:|:----------:|:---------:|:------------:|:-------------:|:-------------:|
+| --: | ------ | :---: | :--------: | :----------: | :---------: | :------------: | :-------------: | :-------------: |
 | 0 | NROM | | | | | 8 | 32 | 8 |
 | 1 | MMC1 | | x | x | | 8 | 16 | 4 |
 | 2 | UxROM | | | | | 8 | 16 | 8 |
@@ -75,7 +75,7 @@ Existing runtime behavior through `Mapper` remains unchanged.
 ## Feature Summary
 
 | Feature | Mappers |
-|---------|---------|
+| --------- | --------- |
 | IRQ | 4, 5, 16, 19, 21, 23, 24, 25, 26, 69 |
 | CHR Banking | 1, 3, 4, 5, 9, 10, 11, 13, 16, 19, 21, 22, 23, 24, 25, 26, 34*, 66, 68, 69, 78, 206 |
 | Dynamic Mirroring | 1, 4, 5, 7, 9, 10, 15, 16, 19, 21, 22, 23, 24, 25, 26, 68, 69, 71, 78 |
