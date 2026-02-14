@@ -9,7 +9,8 @@
  *   reset: Function,
  *   saveState: Function,
  *   loadState: Function,
- *   toggleFullscreen: Function
+ *   toggleFullscreen: Function,
+ *   toggleHelp: Function
  * }} actions
  * @returns {Promise<boolean>}
  */
@@ -33,7 +34,8 @@ const shortcutActionByCode = {
     F1: "reset",
     F6: "saveState",
     F7: "loadState",
-    F12: "toggleFullscreen"
+    F12: "toggleFullscreen",
+    KeyH: "toggleHelp"
 };
 
 function shortcutActionForCode(code, actions) {
