@@ -138,6 +138,86 @@ impl Default for MapperCapabilities {
     }
 }
 
+/// Minimal mapper contract required by all cartridge boards.
+pub trait MapperCore {
+    fn read_prg(&self, addr: u16) -> u8;
+    fn write_prg(&mut self, addr: u16, value: u8);
+    fn read_chr(&self, addr: u16) -> u8;
+    fn write_chr(&mut self, addr: u16, value: u8);
+    fn get_mirroring(&self) -> MirroringMode;
+}
+
+/// Optional IRQ behavior for mappers that can assert CPU interrupts.
+pub trait MapperIrq: MapperCore {
+    fn irq_pending(&self) -> bool {
+        false
+    }
+
+    fn clock_irq(&mut self) {}
+}
+
+/// Optional PPU event hooks used by advanced mappers (e.g. MMC3/MMC5).
+pub trait MapperPpuExtension: MapperCore {
+    fn ppu_address_changed(&mut self, _addr: u16) {}
+
+    fn ppu_scanline(&mut self, _scanline: u16, _rendering_enabled: bool) {}
+}
+
+/// Optional expansion-audio support.
+pub trait MapperAudio: MapperCore {
+    fn expansion_audio_sample(&self) -> f32 {
+        0.0
+    }
+}
+
+/// Optional save-state and WRAM persistence support.
+pub trait MapperStateSnapshot: MapperCore {
+    fn wram_size(&self) -> usize {
+        0x2000
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        let size = self.wram_size().min(0x2000);
+        let mut snapshot = Vec::with_capacity(size);
+        for i in 0..size {
+            snapshot.push(self.read_prg(0x6000 + i as u16));
+        }
+        snapshot
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        let to_copy = data.len().min(0x2000).min(self.wram_size());
+        for (i, &byte) in data.iter().take(to_copy).enumerate() {
+            self.write_prg(0x6000 + i as u16, byte);
+        }
+    }
+
+    fn prg_ram_snapshot(&self) -> Vec<u8> {
+        self.wram_snapshot()
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        Vec::new()
+    }
+
+    fn restore_prg_ram(&mut self, data: &[u8]) {
+        self.load_wram_snapshot(data);
+    }
+
+    fn restore_chr_ram(&mut self, _data: &[u8]) {}
+
+    fn restore_registers(&mut self, _data: &[u8]) {}
+}
+
+/// Convenience trait bound for core + state mappers.
+pub trait MapperComposable: MapperCore + MapperStateSnapshot {}
+
+impl<T: MapperCore + MapperStateSnapshot> MapperComposable for T {}
+
 pub trait Mapper {
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
     /// - $6000-$7FFF: PRG-RAM (8KB, battery-backed on some cartridges)
@@ -373,6 +453,82 @@ pub trait Mapper {
     #[allow(dead_code)]
     fn capabilities(&self) -> MapperCapabilities {
         MapperCapabilities::default()
+    }
+}
+
+impl<T: Mapper + ?Sized> MapperCore for T {
+    fn read_prg(&self, addr: u16) -> u8 {
+        Mapper::read_prg(self, addr)
+    }
+
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        Mapper::write_prg(self, addr, value);
+    }
+
+    fn read_chr(&self, addr: u16) -> u8 {
+        Mapper::read_chr(self, addr)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        Mapper::write_chr(self, addr, value);
+    }
+
+    fn get_mirroring(&self) -> MirroringMode {
+        Mapper::get_mirroring(self)
+    }
+}
+
+impl<T: Mapper + ?Sized> MapperPpuExtension for T {
+    fn ppu_address_changed(&mut self, addr: u16) {
+        Mapper::ppu_address_changed(self, addr);
+    }
+
+    fn ppu_scanline(&mut self, scanline: u16, rendering_enabled: bool) {
+        Mapper::ppu_scanline(self, scanline, rendering_enabled);
+    }
+}
+
+impl<T: Mapper + ?Sized> MapperAudio for T {
+    fn expansion_audio_sample(&self) -> f32 {
+        Mapper::expansion_audio_sample(self)
+    }
+}
+
+impl<T: Mapper + ?Sized> MapperStateSnapshot for T {
+    fn wram_size(&self) -> usize {
+        Mapper::wram_size(self)
+    }
+
+    fn wram_snapshot(&self) -> Vec<u8> {
+        Mapper::wram_snapshot(self)
+    }
+
+    fn load_wram_snapshot(&mut self, data: &[u8]) {
+        Mapper::load_wram_snapshot(self, data);
+    }
+
+    fn prg_ram_snapshot(&self) -> Vec<u8> {
+        Mapper::prg_ram_snapshot(self)
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        Mapper::chr_ram_snapshot(self)
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        Mapper::registers_snapshot(self)
+    }
+
+    fn restore_prg_ram(&mut self, data: &[u8]) {
+        Mapper::restore_prg_ram(self, data);
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        Mapper::restore_chr_ram(self, data);
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        Mapper::restore_registers(self, data);
     }
 }
 
@@ -747,5 +903,84 @@ mod tests {
                 );
             }
         }
+    }
+
+    // --- Acceptance tests for composable mapper traits ---
+
+    fn assert_core_contract<T: MapperCore>(mapper: &mut T) {
+        let _ = mapper.read_prg(0x8000);
+        mapper.write_prg(0x8000, 0x12);
+        let _ = mapper.read_chr(0x0000);
+        mapper.write_chr(0x0000, 0x34);
+        let _ = mapper.get_mirroring();
+    }
+
+    fn assert_irq_contract<T: MapperCore + MapperIrq>(mapper: &mut T) {
+        mapper.clock_irq();
+        let _ = mapper.irq_pending();
+    }
+
+    fn assert_ppu_extension_contract<T: MapperCore + MapperPpuExtension>(mapper: &mut T) {
+        mapper.ppu_address_changed(0x1000);
+        mapper.ppu_scanline(42, true);
+    }
+
+    fn assert_audio_contract<T: MapperCore + MapperAudio>(mapper: &mut T) {
+        let _ = mapper.expansion_audio_sample();
+    }
+
+    fn assert_state_contract<T: MapperCore + MapperStateSnapshot>(mapper: &mut T) {
+        let wram = mapper.wram_snapshot();
+        mapper.load_wram_snapshot(&wram);
+        let prg = mapper.prg_ram_snapshot();
+        mapper.restore_prg_ram(&prg);
+        let chr = mapper.chr_ram_snapshot();
+        mapper.restore_chr_ram(&chr);
+        let registers = mapper.registers_snapshot();
+        mapper.restore_registers(&registers);
+    }
+
+    fn assert_composable_contract<T: MapperComposable>(mapper: &mut T) {
+        let _ = mapper.wram_size();
+        let _ = mapper.prg_ram_snapshot();
+    }
+
+    #[test]
+    fn nrom_satisfies_core_and_state_traits() {
+        let mut mapper = NROMMapper::new(
+            vec![0u8; 32 * 1024],
+            vec![0u8; 8 * 1024],
+            MirroringMode::Horizontal,
+        );
+        assert_core_contract(&mut mapper);
+        assert_state_contract(&mut mapper);
+        assert_composable_contract(&mut mapper);
+    }
+
+    #[test]
+    fn mmc3_satisfies_core_irq_ppu_and_state_traits() {
+        let mut mapper = MMC3Mapper::new(
+            vec![0u8; 32 * 1024],
+            vec![0u8; 8 * 1024],
+            MirroringMode::Horizontal,
+        );
+        assert_core_contract(&mut mapper);
+        assert_irq_contract(&mut mapper);
+        assert_ppu_extension_contract(&mut mapper);
+        assert_state_contract(&mut mapper);
+    }
+
+    #[test]
+    fn vrc6_satisfies_core_irq_audio_and_state_traits() {
+        let mut mapper = VRC6Mapper::new(
+            24,
+            vec![0u8; 32 * 1024],
+            vec![0u8; 8 * 1024],
+            MirroringMode::Horizontal,
+        );
+        assert_core_contract(&mut mapper);
+        assert_irq_contract(&mut mapper);
+        assert_audio_contract(&mut mapper);
+        assert_state_contract(&mut mapper);
     }
 }

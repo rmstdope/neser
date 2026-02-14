@@ -14,6 +14,25 @@ This document lists the hardware capabilities reported by each supported mapper 
 | `prg_bank_size_kb` | `usize` | Smallest switchable PRG-ROM bank size in KB |
 | `chr_bank_size_kb` | `usize` | Smallest switchable CHR bank size in KB |
 
+## Composable Mapper Traits
+
+Mapper behavior is now also exposed through smaller trait concerns in `src/cartridge/mapper.rs`:
+
+- `MapperCore` — required PRG/CHR I/O and mirroring contract.
+- `MapperIrq` — optional IRQ signaling/clocking behavior.
+- `MapperPpuExtension` — optional PPU-driven hooks (A12/scanline style integration).
+- `MapperAudio` — optional expansion-audio sample hook.
+- `MapperStateSnapshot` — optional WRAM/save-state snapshot and restore contract.
+- `MapperComposable` — convenience bound for `MapperCore + MapperStateSnapshot`.
+
+Current explicit trait-split adoption for issue #535 proof-of-concept:
+
+- `NROM` (mapper 0): `MapperCore + MapperStateSnapshot`
+- `MMC3` (mapper 4): `MapperCore + MapperIrq + MapperPpuExtension + MapperStateSnapshot`
+- `VRC6` (mappers 24/26): `MapperCore + MapperIrq + MapperAudio + MapperStateSnapshot`
+
+Existing runtime behavior through `Mapper` remains unchanged.
+
 ## Capabilities by Mapper
 
 | # | Name | IRQ | CHR Bank | Dyn Mirror | Exp Audio | PRG-RAM (KB) | PRG Bank (KB) | CHR Bank (KB) |

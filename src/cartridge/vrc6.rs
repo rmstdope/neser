@@ -687,6 +687,17 @@ impl Mapper for VRC6Mapper {
     }
 }
 
+impl crate::cartridge::MapperIrq for VRC6Mapper {
+    fn irq_pending(&self) -> bool {
+        <Self as Mapper>::irq_pending(self)
+    }
+
+    fn clock_irq(&mut self) {
+        self.tick_vrc_irq();
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use crate::cartridge::cartridge::MirroringMode;

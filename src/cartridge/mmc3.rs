@@ -1406,3 +1406,14 @@ impl Mapper for MMC3Mapper {
         }
     }
 }
+
+impl crate::cartridge::MapperIrq for MMC3Mapper {
+    fn irq_pending(&self) -> bool {
+        <Self as Mapper>::irq_pending(self)
+    }
+
+    fn clock_irq(&mut self) {
+        self.clock_irq_counter_on_a12_rising_edge();
+    }
+}
+
