@@ -27,8 +27,9 @@ Always use `github-issue-designer` whenever an issue should be created or update
 1. One issue should target one clear, independently deliverable outcome.
 2. Scope should be explicit and minimal.
 3. Non-goals should be documented to avoid scope creep.
-4. Acceptance criteria should be objective and testable.
-5. Validation steps should be concrete.
+4. The issue should described user outcomes, not necessarily developer outputs.
+5. Acceptance criteria should be objective and testable.
+6. Validation steps should be concrete and reference back to the user outcomes.
 
 ## Recommended Issue Body Template
 

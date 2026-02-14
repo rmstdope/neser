@@ -9,6 +9,7 @@ pub mod cartridge;
 pub mod console;
 pub mod cpu;
 pub mod debugging;
+pub mod frontend_toasts;
 pub mod input;
 pub mod ppu;
 #[cfg(feature = "wasm")]

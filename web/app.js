@@ -1,4 +1,4 @@
-import init, { WasmNes } from "./pkg/neser.js?v=20260127";
+import init, { WasmNes, gamepad_init_toast_message } from "./pkg/neser.js?v=20260127";
 import { mapStandardGamepadState, selectGamepads } from "./gamepad.js";
 import {
     createRomSaveKey,
@@ -18,6 +18,8 @@ import { planFrame } from "./frame_plan.js";
 import { createSineScroller } from "./sine_scroller.js";
 import { getKeyboardControllerTarget } from "./input_routing.js";
 import { createCrosshair } from "./crosshair.js";
+import { createToastContainer, createToastOverlay, drainNesToasts } from "./toast_overlay.js";
+import { createGamepadInitToastNotifier } from "./gamepad_init_toast.js";
 
 const statusEl = document.getElementById("status");
 const startBtn = document.getElementById("start");
@@ -26,6 +28,10 @@ const romSelect = document.getElementById("rom-select");
 const canvas = document.getElementById("screen");
 if (!(canvas instanceof HTMLCanvasElement)) {
     throw new Error("Canvas element with id 'screen' not found or not a canvas");
+}
+const screenWrap = canvas.closest(".screen-wrap");
+if (!(screenWrap instanceof HTMLElement)) {
+    throw new Error("Screen wrapper with class 'screen-wrap' not found");
 }
 
 // Use WebGL for rendering with filter support
@@ -42,6 +48,30 @@ const SCROLLER_AMPLITUDE = 40;
 const SCROLLER_FREQUENCY = 0.009;
 const SCROLLER_FONT_SIZE_PX = 20;
 const SCROLLER_FONT_FAMILY = "'VT323', monospace";
+
+const toastContainer = createToastContainer(screenWrap);
+
+const toastOverlay = createToastOverlay({ container: toastContainer });
+
+const gamepadInitToastNotifier = createGamepadInitToastNotifier({
+    buildMessage: gamepad_init_toast_message,
+    showToast: (message) => toastOverlay.show(message)
+});
+
+let wasmInitPromise = null;
+
+function createWasmUrl() {
+    const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
+    wasmUrl.searchParams.set("v", "20260127");
+    return wasmUrl;
+}
+
+function ensureWasmInitialized() {
+    if (!wasmInitPromise) {
+        wasmInitPromise = init({ module_or_path: createWasmUrl() });
+    }
+    return wasmInitPromise;
+}
 
 // WebGL shader setup for filters
 const filters = {
@@ -960,9 +990,7 @@ async function start() {
     setStatus("Initializing emulator...");
     try {
         if (!nes) {
-            const wasmUrl = new URL("./pkg/neser_bg.wasm", import.meta.url);
-            wasmUrl.searchParams.set("v", "20260127");
-            await init({ module_or_path: wasmUrl });
+            await ensureWasmInitialized();
 
             // Initialize WebGL shaders before creating NES instance
             if (!initWebGL()) {
@@ -971,7 +999,9 @@ async function start() {
 
             nes = new WasmNes();
         }
-        nes.load_rom(romBytes);
+        const romName = romMetadata?.name || "selected-rom.nes";
+        nes.load_rom(romBytes, romName);
+        drainNesToasts(nes, toastOverlay);
         frameLimiter.setTargetFps(nes.frame_rate_hz());
         // Initialize audio context on user interaction (browser requirement)
         initAudioContext();
@@ -981,6 +1011,7 @@ async function start() {
         // Update Zapper cursor state after ROM is loaded
         updateZapperCursor();
     } catch (err) {
+        drainNesToasts(nes, toastOverlay);
         setStatus(`Failed to load ROM: ${err}`, true);
         startBtn.disabled = false;
         // Only reset nes if wasm/webgl initialization failed
@@ -1366,8 +1397,20 @@ function updateConnectedGamepads() {
     return connectedGamepads;
 }
 
+function showPageLoadGamepadInitToast() {
+    gamepadInitToastNotifier.showOnce(gamepadEnabled, connectedGamepads.length);
+}
+
 // Initialize connectedGamepads to detect any gamepads already connected on page load
 updateConnectedGamepads();
+
+ensureWasmInitialized()
+    .then(() => {
+        showPageLoadGamepadInitToast();
+    })
+    .catch((error) => {
+        console.error("Failed to initialize WASM for gamepad init toast", error);
+    });
 
 document.addEventListener('keydown', (e) => {
     if (!nes) return;
@@ -1485,9 +1528,30 @@ function updateCanvasSize(newHeight) {
     }
 }
 
+function updateCanvasSizeForFullscreenViewport() {
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const viewportAspect = viewportWidth / viewportHeight;
+    const dpr = window.devicePixelRatio || 1;
+
+    if (viewportAspect > NES_ASPECT_RATIO) {
+        canvas.style.height = "100vh";
+        canvas.style.width = `${viewportHeight * NES_ASPECT_RATIO}px`;
+        canvas.width = Math.round(viewportHeight * NES_ASPECT_RATIO * dpr);
+        canvas.height = Math.round(viewportHeight * dpr);
+        return;
+    }
+
+    canvas.style.width = "100vw";
+    canvas.style.height = `${viewportWidth / NES_ASPECT_RATIO}px`;
+    canvas.width = Math.round(viewportWidth * dpr);
+    canvas.height = Math.round((viewportWidth / NES_ASPECT_RATIO) * dpr);
+}
+
 // Update fullscreen button text based on state
 function updateFullscreenButton() {
-    fullscreenBtn.textContent = document.fullscreenElement ? "Exit Fullscreen" : "Fullscreen";
+    const inScreenFullscreen = document.fullscreenElement === screenWrap;
+    fullscreenBtn.textContent = inScreenFullscreen ? "Exit Fullscreen" : "Fullscreen";
 }
 
 function updateSaveStateButtons() {
@@ -1512,9 +1576,9 @@ screenPlusBtn.addEventListener("click", () => {
 });
 
 fullscreenBtn.addEventListener("click", async () => {
-    if (!document.fullscreenElement) {
+    if (document.fullscreenElement !== screenWrap) {
         try {
-            await canvas.requestFullscreen();
+            await screenWrap.requestFullscreen();
         } catch (err) {
             console.error("Failed to enter fullscreen:", err);
             setStatus("Failed to enter fullscreen mode", true);
@@ -1627,26 +1691,8 @@ window.addEventListener("gamepaddisconnected", () => {
 // Handle canvas resizing when entering/exiting fullscreen
 document.addEventListener("fullscreenchange", () => {
     updateFullscreenButton();
-    if (document.fullscreenElement) {
-        // Entered fullscreen - calculate size to maintain aspect ratio
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-        const viewportAspect = viewportWidth / viewportHeight;
-        const dpr = window.devicePixelRatio || 1;
-
-        if (viewportAspect > NES_ASPECT_RATIO) {
-            // Viewport is wider, fit to height
-            canvas.style.height = "100vh";
-            canvas.style.width = `${viewportHeight * NES_ASPECT_RATIO}px`;
-            canvas.width = Math.round(viewportHeight * NES_ASPECT_RATIO * dpr);
-            canvas.height = Math.round(viewportHeight * dpr);
-        } else {
-            // Viewport is taller, fit to width
-            canvas.style.width = "100vw";
-            canvas.style.height = `${viewportWidth / NES_ASPECT_RATIO}px`;
-            canvas.width = Math.round(viewportWidth * dpr);
-            canvas.height = Math.round((viewportWidth / NES_ASPECT_RATIO) * dpr);
-        }
+    if (document.fullscreenElement === screenWrap) {
+        updateCanvasSizeForFullscreenViewport();
     } else {
         // Exited fullscreen - restore previous size
         updateCanvasSize(currentHeight);

@@ -1,7 +1,7 @@
 #![cfg(all(test, feature = "wasm", target_arch = "wasm32"))]
 
 use crate::console::{ArkanoidState, ControllerStateWrapper, SaveState};
-use crate::wasm::WasmNes;
+use crate::wasm::{WasmNes, gamepad_init_toast_message};
 use wasm_bindgen_test::*;
 
 wasm_bindgen_test_configure!(run_in_browser);
@@ -41,7 +41,8 @@ fn wasm_nes_constructs() {
 fn load_rom_accepts_valid_data() {
     let mut nes = WasmNes::new();
     let rom = minimal_nrom();
-    nes.load_rom(&rom).expect("valid rom should load");
+    nes.load_rom(&rom, "test.nes")
+        .expect("valid rom should load");
 }
 
 #[wasm_bindgen_test]
@@ -49,7 +50,9 @@ fn load_rom_rejects_invalid_header() {
     let mut nes = WasmNes::new();
     let mut rom = minimal_nrom();
     rom[0] = 0; // break magic
-    let err = nes.load_rom(&rom).expect_err("invalid rom should error");
+    let err = nes
+        .load_rom(&rom, "broken.nes")
+        .expect_err("invalid rom should error");
     assert!(
         err.as_string()
             .unwrap_or_default()
@@ -58,13 +61,59 @@ fn load_rom_rejects_invalid_header() {
         "unexpected err: {:?}",
         err.as_string()
     );
+
+    let drained = nes.drain_toasts();
+    assert_eq!(drained.len(), 1);
+    assert_eq!(
+        drained[0].as_string().as_deref(),
+        Some("Cartridge load failed: broken.nes")
+    );
+}
+
+#[wasm_bindgen_test]
+fn load_rom_success_enqueues_loaded_and_timing_toasts() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom();
+    nes.load_rom(&rom, "mario.nes")
+        .expect("valid rom should load");
+
+    let drained = nes.drain_toasts();
+    assert_eq!(drained.len(), 2);
+    assert_eq!(
+        drained[0].as_string().as_deref(),
+        Some("Cartridge loaded: mario.nes")
+    );
+    let timing = drained[1].as_string().unwrap_or_default();
+    assert!(timing == "Emulator timing: NTSC" || timing == "Emulator timing: PAL");
+}
+
+#[wasm_bindgen_test]
+fn drain_toasts_clears_queue_after_read() {
+    let mut nes = WasmNes::new();
+    let rom = minimal_nrom();
+    nes.load_rom(&rom, "mario.nes")
+        .expect("valid rom should load");
+
+    let first = nes.drain_toasts();
+    assert!(!first.is_empty());
+    let second = nes.drain_toasts();
+    assert!(second.is_empty());
+}
+
+#[wasm_bindgen_test]
+fn gamepad_init_toast_export_uses_shared_wording() {
+    assert_eq!(
+        gamepad_init_toast_message(true, 1),
+        "Gamepad found: using 1 gamepad"
+    );
 }
 
 #[wasm_bindgen_test]
 fn render_frame_returns_expected_size() {
     let mut nes = WasmNes::new();
     let rom = minimal_nrom();
-    nes.load_rom(&rom).expect("valid rom should load");
+    nes.load_rom(&rom, "test.nes")
+        .expect("valid rom should load");
     let frame = nes.render_frame();
     assert_eq!(frame.len(), 256 * 240 * 3);
 }
@@ -73,7 +122,8 @@ fn render_frame_returns_expected_size() {
 fn render_frame_rgba_returns_expected_size() {
     let mut nes = WasmNes::new();
     let rom = minimal_nrom();
-    nes.load_rom(&rom).expect("valid rom should load");
+    nes.load_rom(&rom, "test.nes")
+        .expect("valid rom should load");
     let frame = nes.render_frame_rgba();
     assert_eq!(frame.len(), 256 * 240 * 4);
     // Alpha should be opaque for all pixels.
@@ -120,7 +170,8 @@ fn set_button_ignores_invalid_button() {
 fn get_audio_samples_returns_vec() {
     let mut nes = WasmNes::new();
     let rom = minimal_nrom();
-    nes.load_rom(&rom).expect("valid rom should load");
+    nes.load_rom(&rom, "test.nes")
+        .expect("valid rom should load");
 
     // Run a frame to generate some audio samples
     let _frame = nes.render_frame_rgba();
@@ -169,7 +220,8 @@ fn get_audio_samples_without_rom_succeeds() {
 fn save_state_roundtrip_returns_same_bytes() {
     let mut nes = WasmNes::new();
     let rom = minimal_nrom();
-    nes.load_rom(&rom).expect("valid rom should load");
+    nes.load_rom(&rom, "test.nes")
+        .expect("valid rom should load");
 
     let state1 = nes.save_state_bytes();
     assert!(!state1.is_empty());
@@ -184,7 +236,8 @@ fn save_state_roundtrip_returns_same_bytes() {
 fn reset_restores_initial_state() {
     let mut nes = WasmNes::new();
     let rom = minimal_nrom();
-    nes.load_rom(&rom).expect("valid rom should load");
+    nes.load_rom(&rom, "test.nes")
+        .expect("valid rom should load");
 
     let initial = nes.save_state_bytes();
     assert!(!initial.is_empty());

@@ -1,5 +1,9 @@
 use crate::cartridge::Cartridge;
 use crate::console::{Config, Nes, SaveState, log_rom_tv_system_selection};
+use crate::frontend_toasts::{
+    cartridge_load_toast_message, emulator_timing_toast_message,
+    gamepad_init_toast_message as shared_gamepad_init_toast_message,
+};
 use crate::input::{Button, ControllerType};
 use wasm_bindgen::prelude::*;
 
@@ -9,6 +13,7 @@ pub struct WasmNes {
     nes: Nes,
     audio_muted: bool,
     rom_loaded: bool,
+    pending_toasts: Vec<String>,
 }
 
 impl Default for WasmNes {
@@ -23,6 +28,36 @@ impl WasmNes {
         while self.nes.get_sample().is_some() {}
     }
 
+    fn run_until_frame_ready(&mut self) {
+        while !self.nes.is_ready_to_render() {
+            self.nes.run_cpu_tick();
+        }
+        self.nes.clear_ready_to_render();
+    }
+
+    fn opaque_black_rgba_frame() -> Vec<u8> {
+        let pixel_count = 256 * 240;
+        let mut rgba = vec![0u8; pixel_count * 4];
+        for alpha in rgba.iter_mut().skip(3).step_by(4) {
+            *alpha = 0xFF;
+        }
+        rgba
+    }
+
+    fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
+        let pixel_count = rgb.len() / 3;
+        let mut rgba = vec![0u8; pixel_count * 4];
+        for i in 0..pixel_count {
+            let rgb_idx = i * 3;
+            let rgba_idx = i * 4;
+            rgba[rgba_idx] = rgb[rgb_idx];
+            rgba[rgba_idx + 1] = rgb[rgb_idx + 1];
+            rgba[rgba_idx + 2] = rgb[rgb_idx + 2];
+            rgba[rgba_idx + 3] = 0xFF;
+        }
+        rgba
+    }
+
     #[wasm_bindgen(constructor)]
     pub fn new() -> WasmNes {
         console_error_panic_hook::set_once();
@@ -30,15 +65,23 @@ impl WasmNes {
             nes: Nes::new(Config::default()),
             audio_muted: false,
             rom_loaded: false,
+            pending_toasts: Vec::new(),
         }
     }
 
     /// Load a ROM from raw bytes.
     #[wasm_bindgen]
-    pub fn load_rom(&mut self, rom: &[u8]) -> Result<(), JsValue> {
+    pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
         let mut config = Config::default();
         self.rom_loaded = false;
-        let cart = Cartridge::new(rom).map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let cart = match Cartridge::new(rom) {
+            Ok(cart) => cart,
+            Err(err) => {
+                self.pending_toasts
+                    .push(cartridge_load_toast_message(rom_name, false));
+                return Err(JsValue::from_str(&err.to_string()));
+            }
+        };
         let rom_tv_system = cart.rom_tv_system();
         let applied = config.apply_rom_tv_system(rom_tv_system);
         log_rom_tv_system_selection(&config, rom_tv_system, applied);
@@ -47,8 +90,18 @@ impl WasmNes {
         self.nes.insert_cartridge(cart);
         self.nes.reset(false);
         self.rom_loaded = true;
+        self.pending_toasts
+            .push(cartridge_load_toast_message(rom_name, true));
+        self.pending_toasts.push(emulator_timing_toast_message(
+            self.nes.config.borrow().tv_system,
+        ));
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
+    }
+
+    #[wasm_bindgen]
+    pub fn drain_toasts(&mut self) -> Vec<JsValue> {
+        self.pending_toasts.drain(..).map(JsValue::from).collect()
     }
 
     /// Reset the emulator without ejecting the cartridge.
@@ -68,10 +121,7 @@ impl WasmNes {
         // For browser responsiveness, this could be broken into smaller chunks via
         // async/yield in a future enhancement. See web/README.md for notes about
         // potential main-thread blocking with heavy frames.
-        while !self.nes.is_ready_to_render() {
-            self.nes.run_cpu_tick();
-        }
-        self.nes.clear_ready_to_render();
+        self.run_until_frame_ready();
         self.nes.get_screen_buffer().snapshot()
     }
 
@@ -81,29 +131,11 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn render_frame_rgba(&mut self) -> Vec<u8> {
         if !self.rom_loaded {
-            let pixel_count = 256 * 240;
-            let mut rgba = vec![0u8; pixel_count * 4];
-            for alpha in rgba.iter_mut().skip(3).step_by(4) {
-                *alpha = 0xFF;
-            }
-            return rgba;
+            return Self::opaque_black_rgba_frame();
         }
-        while !self.nes.is_ready_to_render() {
-            self.nes.run_cpu_tick();
-        }
-        self.nes.clear_ready_to_render();
+        self.run_until_frame_ready();
         let rgb = self.nes.get_screen_buffer().snapshot();
-        let pixel_count = rgb.len() / 3;
-        let mut rgba = vec![0u8; pixel_count * 4];
-        for i in 0..pixel_count {
-            let rgb_idx = i * 3;
-            let rgba_idx = i * 4;
-            rgba[rgba_idx] = rgb[rgb_idx];
-            rgba[rgba_idx + 1] = rgb[rgb_idx + 1];
-            rgba[rgba_idx + 2] = rgb[rgb_idx + 2];
-            rgba[rgba_idx + 3] = 0xFF;
-        }
-        rgba
+        Self::rgb_to_rgba(&rgb)
     }
 
     /// Set button state for a controller.
@@ -254,4 +286,9 @@ impl WasmNes {
     pub fn push_audio_sample_for_test(&mut self, sample: f32) {
         self.nes.apu.borrow_mut().push_sample_for_test(sample);
     }
+}
+
+#[wasm_bindgen]
+pub fn gamepad_init_toast_message(gamepads_enabled: bool, detected_controllers: usize) -> String {
+    shared_gamepad_init_toast_message(gamepads_enabled, detected_controllers)
 }
