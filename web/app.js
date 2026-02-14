@@ -18,6 +18,12 @@ import { planFrame } from "./frame_plan.js";
 import { createSineScroller } from "./sine_scroller.js";
 import { getKeyboardControllerTarget } from "./input_routing.js";
 import { dispatchWebShortcutAction } from "./shortcut_actions.js";
+import {
+    buildShortcutOverlayText,
+    buildShortcutReferenceText,
+    computeShortcutHelpFontSizePx,
+    toggleShortcutHelpVisibility
+} from "./shortcut_help.js";
 import { createCrosshair } from "./crosshair.js";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./toast_overlay.js";
 import { createGamepadInitToastNotifier } from "./gamepad_init_toast.js";
@@ -34,6 +40,8 @@ const screenWrap = canvas.closest(".screen-wrap");
 if (!(screenWrap instanceof HTMLElement)) {
     throw new Error("Screen wrapper with class 'screen-wrap' not found");
 }
+const shortcutReference = document.getElementById("shortcut-reference");
+const shortcutHelpOverlay = document.getElementById("shortcut-help-overlay");
 
 // Use WebGL for rendering with filter support
 const gl = canvas.getContext("webgl");
@@ -43,7 +51,7 @@ if (!gl) {
 
 const width = 256;
 const height = 240;
-const SCROLLER_TEXT = "Newest update: Feb 14: Full PAL support! ** Feb 7: Added support for NES Zapper controller. ** Feb 5: Added support for Arkanoid controller!  **";
+const SCROLLER_TEXT = "Updates: Feb 14: Full PAL support! Keyboard shortcuts with 'H'. ** Feb 7: Added support for NES Zapper controller. ** Feb 5: Added support for Arkanoid controller!  **";
 const SCROLLER_SPEED = 2.0;
 const SCROLLER_AMPLITUDE = 40;
 const SCROLLER_FREQUENCY = 0.009;
@@ -1416,8 +1424,13 @@ const webShortcutActions = {
     reset: resetAction,
     saveState: saveStateAction,
     loadState: loadStateAction,
-    toggleFullscreen: toggleScreenFullscreen
+    toggleFullscreen: toggleScreenFullscreen,
+    toggleHelp: toggleShortcutHelp
 };
+
+function toggleShortcutHelp() {
+    toggleShortcutHelpVisibility(shortcutHelpOverlay);
+}
 
 function applyKeyboardMapping(event, mapping, controller, targets, pressed) {
     if (!mapping || !targets.includes(controller)) {
@@ -1428,12 +1441,16 @@ function applyKeyboardMapping(event, mapping, controller, targets, pressed) {
 }
 
 async function handleKeyDown(event) {
-    if (!nes) {
+    if (!nes && event.code !== "KeyH") {
         return;
     }
 
     const handledShortcut = await dispatchWebShortcutAction(event, webShortcutActions);
     if (handledShortcut) {
+        return;
+    }
+
+    if (!nes) {
         return;
     }
 
@@ -1533,6 +1550,8 @@ function updateCanvasSize(newHeight) {
     if (crosshair) {
         crosshair.updateCanvasSize();
     }
+
+    updateShortcutHelpScale();
 }
 
 function updateCanvasSizeForFullscreenViewport() {
@@ -1546,6 +1565,7 @@ function updateCanvasSizeForFullscreenViewport() {
         canvas.style.width = `${viewportHeight * NES_ASPECT_RATIO}px`;
         canvas.width = Math.round(viewportHeight * NES_ASPECT_RATIO * dpr);
         canvas.height = Math.round(viewportHeight * dpr);
+        updateShortcutHelpScale();
         return;
     }
 
@@ -1553,6 +1573,15 @@ function updateCanvasSizeForFullscreenViewport() {
     canvas.style.height = `${viewportWidth / NES_ASPECT_RATIO}px`;
     canvas.width = Math.round(viewportWidth * dpr);
     canvas.height = Math.round((viewportWidth / NES_ASPECT_RATIO) * dpr);
+    updateShortcutHelpScale();
+}
+
+function updateShortcutHelpScale() {
+    if (!shortcutHelpOverlay) {
+        return;
+    }
+    const fontSizePx = computeShortcutHelpFontSizePx(canvas.clientHeight);
+    shortcutHelpOverlay.style.fontSize = `${fontSizePx}px`;
 }
 
 // Update fullscreen button text based on state
@@ -1610,6 +1639,14 @@ updateCanvasSize(INITIAL_HEIGHT);
 updateFullscreenButton();
 filterToggleBtn.textContent = `Filter: ${filters[currentFilter].name}`;
 updateSaveStateButtons();
+const shortcutReferenceText = buildShortcutReferenceText();
+if (shortcutReference) {
+    shortcutReference.textContent = `Shortcuts: ${shortcutReferenceText}`;
+}
+if (shortcutHelpOverlay) {
+    shortcutHelpOverlay.textContent = buildShortcutOverlayText();
+}
+updateShortcutHelpScale();
 startIdleScroller();
 
 screenMinusBtn.addEventListener("click", () => {

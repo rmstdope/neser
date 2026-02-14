@@ -26,7 +26,8 @@ function makeActions() {
             reset: () => calls.push("reset"),
             saveState: async () => calls.push("saveState"),
             loadState: async () => calls.push("loadState"),
-            toggleFullscreen: async () => calls.push("toggleFullscreen")
+            toggleFullscreen: async () => calls.push("toggleFullscreen"),
+            toggleHelp: () => calls.push("toggleHelp")
         }
     };
 }
@@ -83,6 +84,17 @@ test("dispatchWebShortcutAction routes F12 to toggleFullscreen", async () => {
 
     assert.equal(handled, true);
     assert.deepEqual(calls, ["toggleFullscreen"]);
+    assert.equal(event.defaultPrevented, true);
+});
+
+test("dispatchWebShortcutAction routes H to toggleHelp", async () => {
+    const event = makeKeyboardEvent("KeyH");
+    const { calls, actions } = makeActions();
+
+    const handled = await dispatchWebShortcutAction(event, actions);
+
+    assert.equal(handled, true);
+    assert.deepEqual(calls, ["toggleHelp"]);
     assert.equal(event.defaultPrevented, true);
 });
 
