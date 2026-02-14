@@ -45,6 +45,8 @@ gh label list --json name --limit 100
 2. Always use `--body-file` for multi-line issue bodies.
 3. Use double quotes for arguments with spaces.
 4. Verify immediately after create/edit/close operations.
+5. In persistent terminals, avoid heredoc for long multi-line bodies; write a temporary file first and pass it via `--body-file`.
+6. Do not auto-assign newly created issues unless the navigator explicitly requests assignment at creation time.
 
 ## Command Recipes
 
@@ -116,6 +118,16 @@ Fix:
 Prevention:
 
 - use `--body-file` for multiline input
+
+### Heredoc gets stuck (`heredoc>`)
+
+Cause: unterminated or corrupted heredoc input in a persistent shell session.
+
+Fix:
+
+- abort and recover shell state
+- avoid reusing heredoc for long content
+- create the body in a temporary/workspace file and retry with `--body-file`
 
 ## Post-action Checklist
 
