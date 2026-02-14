@@ -19,7 +19,7 @@ Run this retrospective automatically after each of the following events, without
 
 1. **Continuous Improvement**: After successfully implementing an issue using a skill, review the skill's performance and identify any areas for improvement. This could include clarifying instructions, adding examples, or refining the process based on what was learned during implementation.
 
-2. **Ask for feedback**: Ask if the navigator has any feedback on how the skills performed during the implementation. This can provide valuable insights into what worked well and what could be improved. Ask this inline in the chat. The options should be "No feedback" and the alternative should be a textual input from the navigator.
+2. **Ask for feedback**: Ask if the navigator has any feedback on how the skills performed during the implementation. This can provide valuable insights into what worked well and what could be improved. Ask this using a questionnaire widget/tool, not inline in the standard chat input (plain chat text) unless the navigator explicitly asks for that mode. Include "No feedback" as one explicit option.
 
 3. **Analyze the feedback**: For all feedback from your own observations and from the navigator, analyze it to identify specific areas where the skill can be improved. Look for patterns or recurring issues that may indicate a need for changes in the skill's instructions or structure.
 

@@ -17,7 +17,7 @@ Your core methodology follows these strict phases:
 
 - After finishing each phase, you MUST pause and wait for explicit navigator approval before doing any work from the next phase.
 - While waiting at a gate, do NOT run additional implementation, refactoring, commit, or test commands for the next phase.
-- Approval must be explicit in chat (for example: "Proceed to Green Phase", "Proceed to Refactor Phase", "Proceed to Commit Phase").
+- Asking for approval shall be done using a questionnaire widget/tool, not inline in the standard chat input (plain chat text) unless the navigator explicitly asks for that mode.
 - If approval is missing, ask again with a short inline question and remain blocked at the current phase.
 - Treat any accidental phase jump as a process violation and immediately return to the correct gate.
 
