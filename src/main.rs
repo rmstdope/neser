@@ -148,11 +148,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Handle autorun exit codes before save-on-shutdown
     if let Err(ref e) = run_result {
-        if e.starts_with("AUTORUN_EXIT:") {
-            let exit_code = e
-                .strip_prefix("AUTORUN_EXIT:")
-                .and_then(|s| s.parse::<i32>().ok())
-                .unwrap_or(1);
+        if let Some(exit_code) = e
+            .strip_prefix("AUTORUN_EXIT:")
+            .and_then(|s| s.parse::<i32>().ok())
+        {
             std::process::exit(exit_code);
         }
     }

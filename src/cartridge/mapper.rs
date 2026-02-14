@@ -265,7 +265,7 @@ pub trait MapperStateSnapshot: MapperCore {
 /// Convenience trait bound for core + state mappers.
 pub trait MapperComposable: MapperCore + MapperStateSnapshot {}
 
-impl<T: MapperCore + MapperStateSnapshot> MapperComposable for T {}
+impl<T: MapperCore + MapperStateSnapshot + ?Sized> MapperComposable for T {}
 
 pub trait Mapper {
     /// Read a byte from PRG address space (CPU $6000-$FFFF)
@@ -581,6 +581,48 @@ impl<T: Mapper + ?Sized> MapperStateSnapshot for T {
     }
 }
 
+#[inline]
+fn probe_mapper_core<T: MapperCore + ?Sized>(_mapper: &T) {
+    let _ = <T as MapperCore>::read_prg as fn(&T, u16) -> u8;
+    let _ = <T as MapperCore>::write_prg as fn(&mut T, u16, u8);
+    let _ = <T as MapperCore>::read_chr as fn(&T, u16) -> u8;
+    let _ = <T as MapperCore>::write_chr as fn(&mut T, u16, u8);
+    let _ = <T as MapperCore>::get_mirroring as fn(&T) -> MirroringMode;
+}
+
+#[inline]
+fn probe_mapper_irq<T: MapperIrq + ?Sized>(_mapper: &T) {
+    let _ = <T as MapperIrq>::irq_pending as fn(&T) -> bool;
+    let _ = <T as MapperIrq>::clock_irq as fn(&mut T);
+}
+
+#[inline]
+fn probe_mapper_ppu_extension<T: MapperPpuExtension + ?Sized>(_mapper: &mut T) {
+    let _ = <T as MapperPpuExtension>::ppu_address_changed as fn(&mut T, u16);
+    let _ = <T as MapperPpuExtension>::ppu_scanline as fn(&mut T, u16, bool);
+}
+
+#[inline]
+fn probe_mapper_audio<T: MapperAudio + ?Sized>(_mapper: &T) {
+    let _ = <T as MapperAudio>::expansion_audio_sample as fn(&T) -> f32;
+}
+
+#[inline]
+fn probe_mapper_state_snapshot<T: MapperStateSnapshot + ?Sized>(_mapper: &T) {
+    let _ = <T as MapperStateSnapshot>::wram_size as fn(&T) -> usize;
+    let _ = <T as MapperStateSnapshot>::wram_snapshot as fn(&T) -> Vec<u8>;
+    let _ = <T as MapperStateSnapshot>::load_wram_snapshot as fn(&mut T, &[u8]);
+    let _ = <T as MapperStateSnapshot>::prg_ram_snapshot as fn(&T) -> Vec<u8>;
+    let _ = <T as MapperStateSnapshot>::chr_ram_snapshot as fn(&T) -> Vec<u8>;
+    let _ = <T as MapperStateSnapshot>::registers_snapshot as fn(&T) -> Vec<u8>;
+    let _ = <T as MapperStateSnapshot>::restore_prg_ram as fn(&mut T, &[u8]);
+    let _ = <T as MapperStateSnapshot>::restore_chr_ram as fn(&mut T, &[u8]);
+    let _ = <T as MapperStateSnapshot>::restore_registers as fn(&mut T, &[u8]);
+}
+
+#[inline]
+fn probe_mapper_composable<T: MapperComposable + ?Sized>(_mapper: &T) {}
+
 fn vrc2_vrc4_21(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
     Vrc2Vrc4Mapper::new(21, prg_rom, chr_rom, mirroring)
 }
@@ -598,11 +640,15 @@ fn vrc2_vrc4_25(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) ->
 }
 
 fn vrc6_24(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> VRC6Mapper {
-    VRC6Mapper::new(24, prg_rom, chr_rom, mirroring)
+    let mapper = VRC6Mapper::new(24, prg_rom, chr_rom, mirroring);
+    probe_mapper_irq(&mapper);
+    mapper
 }
 
 fn vrc6_26(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> VRC6Mapper {
-    VRC6Mapper::new(26, prg_rom, chr_rom, mirroring)
+    let mapper = VRC6Mapper::new(26, prg_rom, chr_rom, mirroring);
+    probe_mapper_irq(&mapper);
+    mapper
 }
 
 macro_rules! mapper_registry {
@@ -671,12 +717,14 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         let crc32 = metadata.crc32;
         let use_alternate_irq = rom_db::requires_mmc3_alternate_irq(crc32);
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(MMC3Mapper::new_with_irq_mode(
+        let mapper = MMC3Mapper::new_with_irq_mode(
             prg_rom,
             chr_rom,
             mirroring,
             use_alternate_irq,
-        )));
+        );
+        probe_mapper_irq(&mapper);
+        return Ok(Box::new(mapper));
     }
 
     if mapper_number == 5 {
@@ -701,7 +749,12 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         )));
     }
 
-    if let Some(mapper) = create_registry_mapper(metadata) {
+    if let Some(mut mapper) = create_registry_mapper(metadata) {
+        probe_mapper_core(&*mapper);
+        probe_mapper_ppu_extension(&mut *mapper);
+        probe_mapper_audio(&*mapper);
+        probe_mapper_state_snapshot(&*mapper);
+        probe_mapper_composable(&*mapper);
         return Ok(mapper);
     }
 
