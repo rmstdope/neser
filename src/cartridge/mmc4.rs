@@ -1,3 +1,10 @@
+//! Mapper 10 - MMC4
+//!
+//! Known Limitations:
+//! - No mapper-specific gameplay-blocking functional limitations are currently documented.
+//! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
+//! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
+
 use std::cell::Cell;
 
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};

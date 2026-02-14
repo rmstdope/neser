@@ -36,7 +36,7 @@
 //! - Used in Gimmick! (with 5B audio), Batman: Return of the Joker, Hebereke
 //! - 5B variant adds YM2149F-compatible expansion audio (3 square waves)
 //!
-//! Limitations:
+//! Known Limitations:
 //! - **Expansion audio not implemented** (5B audio chip)
 
 use crate::cartridge::common::ChrMemory;

@@ -42,6 +42,11 @@ use crate::trace_mapper;
 /// - This implementation focuses on PRG/CHR banking + mirroring control
 /// - Includes MMC3 scanline IRQ counter with both Sharp and NEC behaviors
 /// - A12 edge detection with debounce (3 PPU cycles low required)
+///
+/// Known Limitations:
+/// - IRQ timing is not fully PPU-cycle accurate in all edge cases.
+/// - IRQ behavior selection is currently derived from ROM metadata/CRC heuristics.
+/// - Some board-specific clone quirks are intentionally not modeled yet.
 pub struct MMC3Mapper {
     prg_rom: Vec<u8>,
     chr_memory: ChrMemory,

@@ -67,6 +67,48 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_complex_mapper_files_document_limitations() {
+        let mapper_registry = fs::read_to_string("src/cartridge/mapper.rs")
+            .expect("mapper registry source should be readable");
+
+        let mut mapper_files: Vec<String> = mapper_registry
+            .lines()
+            .filter_map(|line| {
+                let trimmed = line.trim();
+                if !trimmed.starts_with("use super::") || !trimmed.ends_with("Mapper;") {
+                    return None;
+                }
+
+                let module_path = trimmed.strip_prefix("use super::")?;
+                let module = module_path.split("::").next()?;
+                Some(format!("src/cartridge/{}.rs", module))
+            })
+            .collect();
+
+        mapper_files.sort();
+        mapper_files.dedup();
+
+        assert!(
+            !mapper_files.is_empty(),
+            "expected mapper module list to be non-empty"
+        );
+
+        for mapper_file in mapper_files {
+            let source = fs::read_to_string(&mapper_file)
+                .unwrap_or_else(|error| panic!("failed to read {}: {}", mapper_file, error));
+
+            let has_limitations_docs =
+                source.contains("Known Limitations") || source.contains("Known Issues");
+
+            assert!(
+                has_limitations_docs,
+                "{} is missing a searchable limitations section",
+                mapper_file
+            );
+        }
+    }
     // TODO mmc5test_v2
 
     // TODO Submappers
