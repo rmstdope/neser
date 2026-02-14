@@ -642,16 +642,16 @@ impl SdlEventLoop {
     }
 
     fn toggle_fullscreen(&mut self, gl_backend: Option<&mut SdlGlWrapper>) {
-        let next = !self.fullscreen;
+        let next_fullscreen_state = !self.fullscreen;
 
         if let Some(gl_backend) = gl_backend
-            && let Err(err) = gl_backend.set_fullscreen(next)
+            && let Err(err) = gl_backend.set_fullscreen(next_fullscreen_state)
         {
             log_info(format!("Failed to toggle fullscreen: {err}"));
             return;
         }
 
-        self.fullscreen = next;
+        self.fullscreen = next_fullscreen_state;
     }
 
     fn read_vector_target(nes: &Nes, vector_addr: u16) -> u16 {
