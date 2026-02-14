@@ -148,11 +148,38 @@ pub trait MapperCore {
 }
 
 /// Optional IRQ behavior for mappers that can assert CPU interrupts.
+///
+/// This trait models **CPU-visible** IRQ behavior. Implementations that use a
+/// CPU-driven counter (e.g. incremented every CPU cycle or CPU tick) should
+/// implement [`clock_irq`] and [`irq_pending`]. Mappers whose IRQs are driven
+/// purely by PPU events (A12 edges, scanlines, etc.) should prefer the
+/// callbacks in [`MapperPpuExtension`] instead of overloading [`clock_irq`].
 pub trait MapperIrq: MapperCore {
+    /// Returns whether the mapper currently has an IRQ pending for the CPU.
+    ///
+    /// When this returns `true`, the CPU core should treat the mapper as
+    /// asserting the IRQ line until the mapper-specific acknowledge/clear
+    /// mechanism has been invoked via PRG writes.
     fn irq_pending(&self) -> bool {
         false
     }
 
+    /// Advance the mapper's CPU-IRQ timing by one unit.
+    ///
+    /// # Calling contract
+    ///
+    /// The emulator core is expected to call this once per **CPU cycle**
+    /// (i.e., per CPU clock tick), not per PPU cycle or scanline. This is
+    /// intended for mappers whose IRQ counters are clocked directly from the
+    /// CPU clock.
+    ///
+    /// For mappers whose IRQs are instead clocked from PPU activity (such as
+    /// rising edges on A12, or per-scanline counters), use the PPU event
+    /// hooks in [`MapperPpuExtension`] (`ppu_address_changed`, `ppu_scanline`)
+    /// to implement that behavior rather than relying on `clock_irq`.
+    ///
+    /// The default implementation is a no-op, so mappers that do not require
+    /// CPU-clocked IRQ behavior can ignore this method.
     fn clock_irq(&mut self) {}
 }
 
