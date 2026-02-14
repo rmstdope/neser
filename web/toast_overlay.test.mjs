@@ -109,3 +109,30 @@ test("drainNesToasts forwards drained messages to overlay", () => {
 
     assert.deepEqual(seen, ["Cartridge load failed: bad.nes", "Emulator timing: PAL"]);
 });
+
+test("drainNesToasts is a no-op when nes is null", () => {
+    let called = false;
+    const overlay = {
+        showMany(_messages) {
+            called = true;
+        }
+    };
+
+    drainNesToasts(null, overlay);
+
+    assert.equal(called, false);
+});
+
+test("drainNesToasts is a no-op when nes is undefined", () => {
+    let called = false;
+    const overlay = {
+        showMany(_messages) {
+            called = true;
+        }
+    };
+
+    // Intentionally pass undefined NES instance
+    drainNesToasts(undefined, overlay);
+
+    assert.equal(called, false);
+});
