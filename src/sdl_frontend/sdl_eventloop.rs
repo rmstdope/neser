@@ -1082,7 +1082,7 @@ impl SdlEventLoop {
                     }
                 }
 
-                if self.tick_headless_once_for_run(nes) {
+                if self.process_headless_events_for_run(nes) {
                     self.finish_recording(nes)?;
                     return Ok(());
                 }
@@ -1096,34 +1096,37 @@ impl SdlEventLoop {
                     continue;
                 }
 
-                // Poll audio samples from APU and queue them
-                if let Some(ref mut audio) = self.audio {
-                    while nes.sample_ready() {
-                        if let Some(sample) = nes.get_sample() {
-                            audio.queue_sample(sample);
-                        }
-                    }
+                self.tick_headless_frame_for_run(nes, &tracing);
 
-                    if last_audio_stats_print.elapsed() >= Duration::from_secs(1) {
-                        let (received, dropped, underrun) = audio.take_and_reset_stats();
-                        let now_cycles = nes.cpu.get_total_cycles();
-                        let elapsed = last_perf_instant.elapsed().as_secs_f64();
-                        let cycles_per_sec = if elapsed > 0.0 {
-                            (now_cycles - last_cpu_cycles) as f64 / elapsed
-                        } else {
-                            0.0
-                        };
-                        if dropped != 0 || underrun != 0 {
-                            log_info(format!(
-                                "Audio stats (last ~1s): received={}, dropped={}, underrun={}, cpu_cycles_per_sec≈{:.0}",
-                                received, dropped, underrun, cycles_per_sec
-                            ));
-                        }
-                        last_cpu_cycles = now_cycles;
-                        last_perf_instant = Instant::now();
-                        last_audio_stats_print = Instant::now();
-                    }
+                // If we paused due to a breakpoint during frame emulation, let the next
+                // iteration handle paused-mode behavior.
+                if self.paused {
+                    continue;
                 }
+
+                if let Some(ref mut audio) = self.audio
+                    && last_audio_stats_print.elapsed() >= Duration::from_secs(1)
+                {
+                    let (received, dropped, underrun) = audio.take_and_reset_stats();
+                    let now_cycles = nes.cpu.get_total_cycles();
+                    let elapsed = last_perf_instant.elapsed().as_secs_f64();
+                    let cycles_per_sec = if elapsed > 0.0 {
+                        (now_cycles - last_cpu_cycles) as f64 / elapsed
+                    } else {
+                        0.0
+                    };
+                    if dropped != 0 || underrun != 0 {
+                        log_info(format!(
+                            "Audio stats (last ~1s): received={}, dropped={}, underrun={}, cpu_cycles_per_sec≈{:.0}",
+                            received, dropped, underrun, cycles_per_sec
+                        ));
+                    }
+                    last_cpu_cycles = now_cycles;
+                    last_perf_instant = Instant::now();
+                    last_audio_stats_print = Instant::now();
+                }
+
+                nes.clear_ready_to_render();
             }
         }
     }
@@ -1180,7 +1183,7 @@ impl SdlEventLoop {
         self.fullscreen
     }
 
-    fn tick_headless_once_for_run(&mut self, nes: &mut Nes) -> bool {
+    fn process_headless_events_for_run(&mut self, nes: &mut Nes) -> bool {
         // Returns `true` if the caller should quit the event loop.
         let events: Vec<_> = self.event_pump.poll_iter().collect();
         for event in events {
@@ -1212,6 +1215,38 @@ impl SdlEventLoop {
         }
 
         if self.check_breakpoint_hit(nes.cpu.pc(), nes.cpu.current_interrupt()) {
+            return false;
+        }
+
+        false
+    }
+
+    fn tick_headless_frame_for_run(&mut self, nes: &mut Nes, tracing: &Tracing) {
+        while !nes.is_ready_to_render() && !nes.cpu.is_halted() {
+            if self.check_breakpoint_hit(nes.cpu.pc(), nes.cpu.current_interrupt()) {
+                break;
+            }
+
+            nes.run(tracing);
+            self.maybe_arm_temporary_breakpoint_after_instruction(nes);
+
+            if let Some(ref mut audio) = self.audio {
+                while nes.sample_ready() {
+                    if let Some(sample) = nes.get_sample() {
+                        audio.queue_sample(sample);
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn tick_headless_once_for_run(&mut self, nes: &mut Nes) -> bool {
+        if self.process_headless_events_for_run(nes) {
+            return true;
+        }
+
+        if self.paused {
             return false;
         }
 
@@ -1928,6 +1963,21 @@ mod tests {
 
     fn tick_headless_once(event_loop: &mut SdlEventLoop, nes: &mut Nes) {
         let _should_quit = event_loop.tick_headless_once_for_run(nes);
+    }
+
+    #[test]
+    #[serial]
+    fn test_headless_run_tick_advances_to_frame_boundary() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = nes_with_nop_loop_program();
+
+        assert!(!nes.is_ready_to_render());
+        event_loop.tick_headless_frame_for_run(&mut nes, &Tracing::default());
+        assert!(
+            nes.is_ready_to_render(),
+            "headless run tick should emulate a full frame"
+        );
     }
 
     #[test]
