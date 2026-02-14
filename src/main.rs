@@ -17,6 +17,13 @@ use debugging::log_info;
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
 use std::fs;
 
+fn tv_system_toast_label(tv_system: console::TvSystem) -> &'static str {
+    match tv_system {
+        console::TvSystem::Ntsc => "NTSC",
+        console::TvSystem::Pal => "PAL",
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
     let args: Vec<String> = std::env::args().collect();
@@ -77,11 +84,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
+    let app_context = AppContext::new();
+
     let rom_path = config
         .rom_path
         .clone()
         .unwrap_or_else(|| default_rom_path.to_string());
-    let cart = cartridge::Cartridge::load_from_file(&rom_path)?;
+    let cart = match cartridge::Cartridge::load_from_file(&rom_path) {
+        Ok(cartridge) => {
+            app_context.add_toast(format!("Cartridge loaded: {}", rom_path));
+            cartridge
+        }
+        Err(err) => {
+            app_context.add_toast(format!("Cartridge load failed: {}", rom_path));
+            return Err(err.into());
+        }
+    };
 
     let rom_tv_system = cart.rom_tv_system();
     let applied = config.apply_rom_tv_system(rom_tv_system);
@@ -89,6 +107,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut nes_instance = Nes::new(config.clone());
     nes_instance.insert_cartridge(cart);
+    app_context.add_toast(format!(
+        "Emulator timing: {}",
+        tv_system_toast_label(config.tv_system)
+    ));
 
     if let Some(actual_rate) = audio_sample_rate {
         nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
@@ -98,7 +120,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let headless = config.autorun_headless;
     // In headless autorun/playback, force audio to None so no audio device is required
     let audio_for_frontend = if headless { None } else { audio };
-    let app_context = AppContext::new();
     let mut event_loop =
         SdlEventLoop::new_with_context(headless, audio_for_frontend, &config, app_context)?;
 
