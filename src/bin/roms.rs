@@ -169,6 +169,14 @@ fn timing_mode_label(timing: TimingMode) -> String {
     }
 }
 
+fn timing_mode_short_label(timing: TimingMode) -> char {
+    match timing {
+        TimingMode::Pal => 'P',
+        TimingMode::Ntsc => 'N',
+        TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => '?',
+    }
+}
+
 fn print_rom_info(path: &std::path::Path, info: Rom) {
     println!("ROM: {}", path.display());
     println!("Header version: {}", info.header_version);
@@ -260,7 +268,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match read_rom_from_file(&rom) {
                     Ok(info) => {
                         let display_path = rom.strip_prefix(root).unwrap_or(&rom);
-                        println!("{:03} {}", info.mapper, display_path.display());
+                        println!(
+                            "{:03} {} {}",
+                            info.mapper,
+                            timing_mode_short_label(info.timing_mode),
+                            display_path.display()
+                        );
                     }
                     Err(err) => {
                         let display_path = rom.strip_prefix(root).unwrap_or(&rom);

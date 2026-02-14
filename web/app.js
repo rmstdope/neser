@@ -36,7 +36,7 @@ if (!gl) {
 
 const width = 256;
 const height = 240;
-const SCROLLER_TEXT = "Newest update: ** Feb 7: Added support for NES Zapper controller. Duck Hunt is now playable! Feb 5: Added support for Arkanoid controller - Use the mouse! **";
+const SCROLLER_TEXT = "Newest update: Feb 14: Full PAL support! ** Feb 7: Added support for NES Zapper controller. ** Feb 5: Added support for Arkanoid controller!  **";
 const SCROLLER_SPEED = 2.0;
 const SCROLLER_AMPLITUDE = 40;
 const SCROLLER_FREQUENCY = 0.009;
