@@ -31,16 +31,13 @@ impl Memory {
     /// Create a new Memory instance
     pub fn new(ram_init_mode: crate::console::RamInitMode) -> Self {
         let mut ppu_ram = [0u8; 4096];
-        let mut palette_ram = DEFAULT_PALETTE_RAM;
+        let mut palette_ram = [0u8; 32];
         
         // Initialize nametable RAM based on mode
         crate::console::initialize_ram(&mut ppu_ram, ram_init_mode);
         
-        // Initialize palette RAM based on mode (note: palette RAM has a default)
-        // We'll apply the mode to palette RAM as well for consistency
-        let mut palette_buffer = palette_ram.to_vec();
-        crate::console::initialize_ram(&mut palette_buffer, ram_init_mode);
-        palette_ram.copy_from_slice(&palette_buffer);
+        // Initialize palette RAM based on mode
+        crate::console::initialize_ram(&mut palette_ram, ram_init_mode);
         
         Self {
             ppu_ram,
@@ -71,9 +68,7 @@ impl Memory {
         crate::console::initialize_ram(&mut self.ppu_ram, mode);
         
         // Initialize palette RAM
-        let mut palette_buffer = self.palette_ram.to_vec();
-        crate::console::initialize_ram(&mut palette_buffer, mode);
-        self.palette_ram.copy_from_slice(&palette_buffer);
+        crate::console::initialize_ram(&mut self.palette_ram, mode);
         
         // Clear cache
         self.last_palette_index = None;

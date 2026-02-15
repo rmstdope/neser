@@ -412,7 +412,7 @@ pub struct Config {
     /// - `random`: All RAM initialized to pseudo-random values (hardware-accurate)
     /// - `seeded-random`: All RAM initialized to pseudo-random values with a fixed seed
     ///
-    /// Default: `Random` (hardware-accurate).
+    /// Default: `Zero` (deterministic for testing; users can configure Random for hardware accuracy).
     ///
     /// Soft resets preserve RAM contents (no re-initialization).
     pub ram_init_mode: RamInitMode,
