@@ -9,6 +9,8 @@ on:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 
 jobs:
   changes:
@@ -29,7 +31,7 @@ jobs:
               - 'package-lock.json'
               - '.github/workflows/rust.yml'
 
-  rust:
+  rust-tests:
     runs-on: ubuntu-latest
 
     steps:
@@ -40,7 +42,33 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
       - name: Run tests
         run: cargo test --lib --bins --tests --examples
-      - name: Run clippy
+
+  rust-lint-pr:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Rust dependencies and build outputs
+        uses: Swatinem/rust-cache@v2
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - name: Run clippy (PR fast path)
+        run: cargo clippy --all-features
+      - name: Check formatting
+        run: cargo fmt -- --check
+
+  rust-lint-main:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache Rust dependencies and build outputs
+        uses: Swatinem/rust-cache@v2
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+      - name: Run clippy (main full coverage)
         run: cargo clippy --all-targets --all-features
       - name: Check formatting
         run: cargo fmt -- --check
