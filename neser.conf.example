@@ -185,11 +185,13 @@ load_state=false
 #
 # Soft resets preserve RAM contents (no re-initialization).
 #
-# Default: random (hardware-accurate)
+# Default: zero (deterministic for testing and debugging)
+#
+# Note: For hardware-accurate behavior, set to "random"
 #
 # Examples:
 #   ram_init_mode=zero
 #   ram_init_mode=random
 #   ram_init_mode=seeded-random:12345
 #
-ram_init_mode=random
+ram_init_mode=zero

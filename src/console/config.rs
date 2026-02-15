@@ -519,7 +519,7 @@ impl Default for Config {
             autorun_headless: false,
             autorun_extend: false,
             autorun_overwrite: false,
-            ram_init_mode: RamInitMode::Random,
+            ram_init_mode: RamInitMode::Zero,
         }
     }
 }
@@ -2850,7 +2850,7 @@ filter=invalid-shader
     #[test]
     fn test_config_ram_init_mode_default() {
         let config = Config::with_defaults();
-        assert_eq!(config.ram_init_mode, RamInitMode::Random);
+        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
     }
 
     #[test]

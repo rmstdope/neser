@@ -374,7 +374,8 @@ mod tests {
     fn test_memory_new() {
         let mut mem = Memory::default();
         assert_eq!(mem.read_chr(0, &None), 0);
-        assert_eq!(mem.read_palette(0x3F00), DEFAULT_PALETTE_RAM[0]);
+        // Default mode uses Zero initialization, so palette is all zeros
+        assert_eq!(mem.read_palette(0x3F00), 0);
     }
 
     #[test]
