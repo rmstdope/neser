@@ -255,6 +255,14 @@ impl Cartridge {
         self.mapper.reset();
     }
 
+    /// Initialize cartridge RAM (PRG-RAM and CHR-RAM) based on the given mode.
+    ///
+    /// This should be called when the cartridge is inserted or on hard reset.
+    /// Soft resets should NOT call this (RAM contents persist).
+    pub fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.mapper.initialize_ram(mode);
+    }
+
     pub fn crc32(&self) -> u32 {
         self.crc32
     }

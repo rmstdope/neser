@@ -118,6 +118,11 @@ impl Mapper for NROMMapper {
         self.chr_memory.load_snapshot(data);
     }
 
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.prg_ram.initialize(mode);
+        self.chr_memory.initialize(mode);
+    }
+
     fn capabilities(&self) -> MapperCapabilities {
         MapperCapabilities {
             has_irq: false,

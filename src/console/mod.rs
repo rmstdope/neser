@@ -1,5 +1,6 @@
 mod config;
 mod nes;
+mod ram_init;
 mod savestate;
 
 use crate::cartridge::RomTvSystem;
@@ -9,8 +10,10 @@ pub use config::ApuChannels;
 pub use config::AutorunMode;
 pub use config::Config;
 pub use config::ParseResult;
+pub use config::RamInitMode;
 pub use nes::Nes;
 pub use nes::TvSystem;
+pub use ram_init::initialize_ram;
 pub use savestate::{
     ApuState, ArkanoidState, BusState, ControllerStateWrapper, CpuState, DmcState, EnvelopeState,
     FrameCounterState, JoypadState, MapperState, NoiseState, PpuRegisterState, PpuState,

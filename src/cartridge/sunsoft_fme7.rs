@@ -317,6 +317,11 @@ impl Mapper for SunsoftFme7Mapper {
         self.chr_memory.load_snapshot(data);
     }
 
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        crate::console::initialize_ram(&mut self.prg_ram, mode);
+        self.chr_memory.initialize(mode);
+    }
+
     fn registers_snapshot(&self) -> Vec<u8> {
         // Serialize Sunsoft FME-7 internal registers:
         // [0]: command

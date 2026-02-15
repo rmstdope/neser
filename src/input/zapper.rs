@@ -184,7 +184,7 @@ mod tests {
     }
 
     fn create_zapper_with_ppu(size: u8) -> (Zapper, Rc<RefCell<Ppu>>) {
-        let ppu = Rc::new(RefCell::new(Ppu::new(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(Ppu::new_for_testing(TvSystem::Ntsc)));
         let config = test_config_with_size(size);
         let zapper = Zapper::new(ppu.clone(), config);
         (zapper, ppu)

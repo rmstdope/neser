@@ -158,7 +158,7 @@ mod tests {
         let cartridge = Rc::new(RefCell::new(cartridge));
         let cartridge_slot = Rc::new(RefCell::new(Some(cartridge)));
 
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
         let mut device = PpuDevice::new(Rc::clone(&ppu), Rc::clone(&cartridge_slot));
 
         // Write to a PPUMASK mirror ($2009) should not notify the mapper.

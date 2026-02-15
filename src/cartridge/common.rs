@@ -217,6 +217,14 @@ impl PrgRam {
         let to_copy = data.len().min(self.data.len());
         self.data[..to_copy].copy_from_slice(&data[..to_copy]);
     }
+
+    /// Re-initialize PRG-RAM contents based on the given mode.
+    ///
+    /// This should be called on cartridge insertion or hard reset.
+    /// Soft resets should NOT call this (RAM contents persist).
+    pub fn initialize(&mut self, mode: crate::console::RamInitMode) {
+        crate::console::initialize_ram(&mut self.data, mode);
+    }
 }
 
 impl StateSnapshot for PrgRam {
@@ -328,6 +336,17 @@ impl ChrMemory {
 
         let to_copy = data.len().min(self.data.len());
         self.data[..to_copy].copy_from_slice(&data[..to_copy]);
+    }
+
+    /// Re-initialize CHR-RAM contents based on the given mode.
+    ///
+    /// This should be called on cartridge insertion or hard reset.
+    /// Only applies to CHR-RAM (CHR-ROM is read-only and ignored).
+    /// Soft resets should NOT call this (RAM contents persist).
+    pub fn initialize(&mut self, mode: crate::console::RamInitMode) {
+        if self.is_ram {
+            crate::console::initialize_ram(&mut self.data, mode);
+        }
     }
 }
 

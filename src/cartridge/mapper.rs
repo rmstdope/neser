@@ -381,6 +381,14 @@ pub trait Mapper {
     /// Default implementation is a no-op for simple mappers.
     fn reset(&mut self) {}
 
+    /// Re-initialize cartridge RAM (PRG-RAM and CHR-RAM) based on the given mode.
+    ///
+    /// This is called when a cartridge is inserted or on hard reset to initialize
+    /// RAM contents. Soft resets should NOT call this method (RAM should be preserved).
+    /// Default implementation is a no-op for mappers without RAM or mappers that
+    /// don't use the helper types.
+    fn initialize_ram(&mut self, _mode: crate::console::RamInitMode) {}
+
     /// Whether the mapper is currently asserting IRQ.
     ///
     /// This is used to model mapper-generated IRQs (e.g., MMC3 scanline IRQ).

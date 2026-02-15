@@ -108,7 +108,8 @@ pub struct Nes {
 impl Nes {
     pub fn new(config: Config) -> Self {
         let tv_system = config.tv_system;
-        let ppu = Rc::new(RefCell::new(Ppu::new(tv_system)));
+        let ram_init_mode = config.ram_init_mode;
+        let ppu = Rc::new(RefCell::new(Ppu::new(tv_system, ram_init_mode)));
         let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
         let config_rc = Rc::new(RefCell::new(config));
         let memory = Rc::new(RefCell::new(Bus::new(
@@ -136,9 +137,13 @@ impl Nes {
 
     /// Insert a cartridge and map it into memory.
     /// Auto-configures Arkanoid or Zapper controllers for known ROMs if that specific port hasn't been explicitly configured.
-    pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
+    pub fn insert_cartridge(&mut self, mut cartridge: Cartridge) {
         let zapper_port = crate::cartridge::default_zapper_on_port(cartridge.crc32());
         let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge.crc32());
+
+        // Initialize cartridge RAM (PRG-RAM and CHR-RAM) based on config
+        let ram_init_mode = self.config.borrow().ram_init_mode;
+        cartridge.initialize_ram(ram_init_mode);
 
         let mut bus = self.bus.borrow_mut();
         bus.map_cartridge(cartridge);
@@ -232,11 +237,12 @@ impl Nes {
     pub fn reset(&mut self, soft_reset: bool) {
         // Get CPU cycle count before reset for coordinated APU timing
         let cpu_cycle = self.cpu.get_total_cycles();
+        let ram_init_mode = self.config.borrow().ram_init_mode;
 
-        // Reset PPU/APU first: CPU reset advances the master clock and ticks both.
-        self.ppu.borrow_mut().reset();
+        // Reset components - each handles its own RAM initialization on hard reset
+        self.ppu.borrow_mut().reset(soft_reset, ram_init_mode);
         self.apu.borrow_mut().reset(cpu_cycle, soft_reset);
-        self.bus.borrow_mut().reset_cartridge();
+        self.bus.borrow_mut().reset(soft_reset, ram_init_mode);
         self.cpu.reset(soft_reset);
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
@@ -959,7 +965,9 @@ mod tests {
         assert_eq!(nes.ppu.borrow().total_cycles(), 7); // 6 + 1 offset
 
         // Reset just the PPU to test the counter is cleared
-        nes.ppu.borrow_mut().reset();
+        nes.ppu
+            .borrow_mut()
+            .reset(false, crate::console::RamInitMode::Zero);
         assert_eq!(nes.ppu.borrow().total_cycles(), 0);
     }
 

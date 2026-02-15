@@ -2,6 +2,7 @@ use crate::cartridge::{Cartridge, MirroringMode};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[allow(dead_code)]
 const DEFAULT_PALETTE_RAM: [u8; 32] = [
     0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, 0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C,
     0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, 0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
@@ -22,27 +23,73 @@ pub struct Memory {
 
 impl Default for Memory {
     fn default() -> Self {
-        Self::new()
+        // Default to Zero mode for tests that don't specify
+        Self::new(crate::console::RamInitMode::Zero)
     }
 }
 
 impl Memory {
     /// Create a new Memory instance
-    pub fn new() -> Self {
+    pub fn new(ram_init_mode: crate::console::RamInitMode) -> Self {
+        let mut ppu_ram = [0u8; 4096];
+        let mut palette_ram = [0u8; 32];
+
+        // Initialize nametable RAM based on mode
+        crate::console::initialize_ram(&mut ppu_ram, ram_init_mode);
+
+        // Initialize palette RAM based on mode
+        // Note: For Random mode, use hardware-measured power-up pattern
+        match ram_init_mode {
+            crate::console::RamInitMode::Zero => {
+                // Palette RAM is already zero-initialized above
+            }
+            crate::console::RamInitMode::Random | crate::console::RamInitMode::SeededRandom(_) => {
+                // Use hardware-measured power-up palette pattern for hardware accuracy
+                palette_ram = DEFAULT_PALETTE_RAM;
+            }
+        }
+
         Self {
-            ppu_ram: [0; 4096],
-            palette_ram: DEFAULT_PALETTE_RAM,
+            ppu_ram,
+            palette_ram,
             last_palette_index: None,
             last_palette_value: 0,
             mirroring_mode: MirroringMode::Horizontal,
         }
     }
 
-    /// Reset memory to initial state
-    /// TODO Retain RAM if soft reset
+    /// Reset memory-related state (cache only).
+    ///
+    /// This method is called by Ppu::reset() which is invoked on both hard and soft resets.
+    /// It only clears the palette cache - RAM contents are NOT modified here.
+    /// RAM is initialized on power-on (Memory::new) and re-initialized on hard reset
+    /// only (via reinitialize()). Soft resets preserve RAM.
     pub fn reset(&mut self) {
-        self.ppu_ram = [0; 4096];
-        self.palette_ram = DEFAULT_PALETTE_RAM;
+        // Only clear the cache - do NOT clear RAM
+        self.last_palette_index = None;
+        self.last_palette_value = 0;
+    }
+
+    /// Re-initialize RAM (nametable and palette) based on the given mode.
+    ///
+    /// This should be called on hard reset only. Soft resets preserve RAM contents.
+    pub fn reinitialize(&mut self, mode: crate::console::RamInitMode) {
+        // Initialize nametable RAM
+        crate::console::initialize_ram(&mut self.ppu_ram, mode);
+
+        // Initialize palette RAM
+        // Note: For Random mode, use hardware-measured power-up pattern
+        match mode {
+            crate::console::RamInitMode::Zero => {
+                crate::console::initialize_ram(&mut self.palette_ram, mode);
+            }
+            crate::console::RamInitMode::Random | crate::console::RamInitMode::SeededRandom(_) => {
+                // Use hardware-measured power-up palette pattern for hardware accuracy
+                self.palette_ram = DEFAULT_PALETTE_RAM;
+            }
+        }
+
+        // Clear cache
         self.last_palette_index = None;
         self.last_palette_value = 0;
     }
@@ -342,14 +389,15 @@ mod tests {
 
     #[test]
     fn test_memory_new() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         assert_eq!(mem.read_chr(0, &None), 0);
-        assert_eq!(mem.read_palette(0x3F00), DEFAULT_PALETTE_RAM[0]);
+        // Default mode uses Zero initialization, so palette is all zeros
+        assert_eq!(mem.read_palette(0x3F00), 0);
     }
 
     #[test]
     fn test_mapper_can_override_nametable_reads() {
-        let mem = Memory::new();
+        let mem = Memory::default();
         let cart = Rc::new(RefCell::new(Cartridge::from_mapper_for_test(Box::new(
             TestNametableOverrideMapper,
         ))));
@@ -429,7 +477,7 @@ mod tests {
             mapper.write_prg(0xE001, 0);
         }
 
-        let mem = Memory::new();
+        let mem = Memory::default();
 
         // First valid A12 rising edge
         clock_one_valid_a12_rising_edge_via_chr_reads(&mem, &cartridge_opt);
@@ -443,22 +491,24 @@ mod tests {
 
     #[test]
     fn test_memory_reset() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         mem.write_palette(0x3F00, 0x42);
+        // Reset only clears the cache, not RAM
         mem.reset();
-        assert_eq!(mem.read_palette(0x3F00), DEFAULT_PALETTE_RAM[0]);
+        // The palette value should still be there (0x42 & 0x3F = 0x02)
+        assert_eq!(mem.read_palette(0x3F00), 0x02);
     }
 
     #[test]
     fn test_nametable_read_write() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         mem.write_nametable(0x2000, 0x42);
         assert_eq!(mem.read_nametable(0x2000), 0x42);
     }
 
     #[test]
     fn test_palette_read_write() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         mem.write_palette(0x3F00, 0x42);
         // Palette RAM only stores 6 bits (0x42 & 0x3F = 0x02)
         assert_eq!(mem.read_palette(0x3F00), 0x02);
@@ -466,7 +516,7 @@ mod tests {
 
     #[test]
     fn test_palette_mirroring_3f10_to_3f00() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         mem.write_palette(0x3F00, 0x42);
         // Palette RAM only stores 6 bits (0x42 & 0x3F = 0x02)
         assert_eq!(mem.read_palette(0x3F10), 0x02);
@@ -474,7 +524,7 @@ mod tests {
 
     #[test]
     fn test_palette_mirroring_3f14_to_3f04() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         mem.write_palette(0x3F04, 0x55);
         // Palette RAM only stores 6 bits (0x55 & 0x3F = 0x15)
         assert_eq!(mem.read_palette(0x3F14), 0x15);
@@ -482,7 +532,7 @@ mod tests {
 
     #[test]
     fn test_palette_mirroring_3f18_to_3f08() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         mem.write_palette(0x3F08, 0x66);
         // Palette RAM only stores 6 bits (0x66 & 0x3F = 0x26)
         assert_eq!(mem.read_palette(0x3F18), 0x26);
@@ -490,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_palette_mirroring_3f1c_to_3f0c() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         mem.write_palette(0x3F0C, 0x7F);
         // Palette RAM only stores 6 bits (0x7F & 0x3F = 0x3F)
         assert_eq!(mem.read_palette(0x3F1C), 0x3F);
@@ -498,7 +548,7 @@ mod tests {
 
     #[test]
     fn test_vertical_mirroring() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         mem.set_mirroring(MirroringMode::Vertical);
 
         // Write to nametable 0
@@ -509,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_horizontal_mirroring() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         mem.set_mirroring(MirroringMode::Horizontal);
 
         // Write to nametable 0
@@ -523,7 +573,7 @@ mod tests {
 
     #[test]
     fn test_single_screen_mirroring() {
-        let mut memory = Memory::new();
+        let mut memory = Memory::default();
         memory.set_mirroring(MirroringMode::SingleScreen);
 
         // In SingleScreen mode, all four nametables map to the same 1KB
@@ -546,7 +596,7 @@ mod tests {
 
     #[test]
     fn test_four_screen_mirroring() {
-        let mut memory = Memory::new();
+        let mut memory = Memory::default();
         memory.set_mirroring(MirroringMode::FourScreen);
 
         // In FourScreen mode, all four nametables are independent (no mirroring)
@@ -578,7 +628,7 @@ mod tests {
 
     #[test]
     fn test_vertical_mirroring_comprehensive() {
-        let mut memory = Memory::new();
+        let mut memory = Memory::default();
         memory.set_mirroring(MirroringMode::Vertical);
 
         // Vertical mirroring: A, A, B, B
@@ -608,7 +658,7 @@ mod tests {
 
     #[test]
     fn test_horizontal_mirroring_comprehensive() {
-        let mut memory = Memory::new();
+        let mut memory = Memory::default();
         memory.set_mirroring(MirroringMode::Horizontal);
 
         // Horizontal mirroring: A, A, B, B (left-right mirrored)
@@ -638,7 +688,7 @@ mod tests {
 
     #[test]
     fn test_dynamic_mirroring_mode_changes() {
-        let mut memory = Memory::new();
+        let mut memory = Memory::default();
 
         // Start with Vertical mirroring (A, A, B, B)
         memory.set_mirroring(MirroringMode::Vertical);
@@ -675,7 +725,7 @@ mod tests {
 
     #[test]
     fn test_mirroring_3000_to_2000() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         mem.write_nametable(0x2000, 0x33);
         // $3000-$3EFF mirrors to $2000-$2EFF
         assert_eq!(mem.read_nametable(0x3000), 0x33);
@@ -683,7 +733,7 @@ mod tests {
 
     #[test]
     fn test_chr_write_no_cartridge() {
-        let mut mem = Memory::new();
+        let mut mem = Memory::default();
         // With no cartridge, reads return 0
         assert_eq!(mem.read_chr(0x0000, &None), 0x00);
 

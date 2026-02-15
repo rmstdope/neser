@@ -169,3 +169,29 @@ load_state=false
 # Emulation speed multiplier (1.0 = normal speed).
 # Values < 1.0 slow down, > 1.0 speed up.
 # Example: 0.5 = half speed, 2.0 = double speed
+
+# -----------------------------------------------------------------------------
+# RAM Initialization Mode
+# -----------------------------------------------------------------------------
+# Controls how all emulated RAM (CPU, PRG, CHR, PPU nametable, and palette) is
+# initialized on power-on/hard reset. This affects hardware-accuracy and test
+# determinism.
+#
+# Valid values:
+#   - zero: Initialize all RAM to 0x00 (predictable, not hardware-accurate)
+#   - random: Initialize all RAM to pseudo-random values (hardware-accurate)
+#   - seeded-random:SEED: Initialize RAM with pseudo-random values using a fixed seed
+#                         (hardware-accurate and deterministic for testing)
+#
+# Soft resets preserve RAM contents (no re-initialization).
+#
+# Default: zero (deterministic for testing and debugging)
+#
+# Note: For hardware-accurate behavior, set to "random"
+#
+# Examples:
+#   ram_init_mode=zero
+#   ram_init_mode=random
+#   ram_init_mode=seeded-random:12345
+#
+ram_init_mode=zero

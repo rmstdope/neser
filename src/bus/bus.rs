@@ -49,7 +49,7 @@ impl Bus {
         }
     }
 
-    /// Create a new memory instance with 64KB of RAM initialized to 0
+    /// Create a new memory instance with 64KB address space
     pub fn new(
         ppu: Rc<RefCell<ppu::Ppu>>,
         apu: Rc<RefCell<apu::Apu>>,
@@ -68,8 +68,13 @@ impl Bus {
             ))),
         ];
 
+        // Initialize CPU RAM based on config
+        let mut cpu_ram = vec![0; 0x10000];
+        let ram_init_mode = config.borrow().ram_init_mode;
+        crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
+
         let mut controller = Self {
-            cpu_ram: Rc::new(RefCell::new(vec![0; 0x10000])),
+            cpu_ram: Rc::new(RefCell::new(cpu_ram)),
             cartridge: Rc::new(RefCell::new(None)),
             ppu,
             apu,
@@ -144,15 +149,48 @@ impl Bus {
         *self.cartridge.borrow_mut() = Some(cartridge_rc);
     }
 
+    /// Reset the bus and its components.
+    ///
+    /// This method handles CPU RAM initialization and delegates cartridge reset
+    /// to reset_cartridge(), which handles cartridge RAM initialization.
+    ///
+    /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
+    /// - `ram_init_mode`: RAM initialization mode (only used for hard reset)
+    pub fn reset(&mut self, soft_reset: bool, ram_init_mode: crate::console::RamInitMode) {
+        // On hard reset, re-initialize CPU RAM
+        if !soft_reset {
+            let mut cpu_ram = self.cpu_ram.borrow_mut();
+            crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
+        }
+
+        // Reset cartridge (and its RAM on hard reset)
+        self.reset_cartridge(soft_reset, ram_init_mode);
+    }
+
     /// Reset the cartridge (if present) to its power-on state.
     ///
-    /// This resets mapper state but typically preserves PRG-RAM contents.
-    pub fn reset_cartridge(&mut self) {
+    /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
+    /// - `ram_init_mode`: RAM initialization mode (only used for hard reset)
+    pub fn reset_cartridge(
+        &mut self,
+        soft_reset: bool,
+        ram_init_mode: crate::console::RamInitMode,
+    ) {
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             return;
         };
 
+        // On hard reset, re-initialize cartridge RAM before resetting mapper state
+        if !soft_reset {
+            cartridge.borrow_mut().initialize_ram(ram_init_mode);
+        }
+
         cartridge.borrow_mut().reset();
+    }
+
+    #[cfg(test)]
+    pub fn cpu_ram_ref(&self) -> Rc<RefCell<Vec<u8>>> {
+        self.cpu_ram.clone()
     }
 
     pub fn save_ram(&self) -> io::Result<()> {
@@ -754,7 +792,7 @@ mod tests {
 
     #[test]
     fn test_restore_mapper_state_updates_ppu_mirroring() {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let mut bus = Bus::new(ppu.clone(), apu, config);
@@ -840,7 +878,7 @@ mod tests {
     }
 
     fn create_test_memory() -> Bus {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         Bus::new(ppu, apu, config)
@@ -970,7 +1008,7 @@ mod tests {
 
     #[test]
     fn test_oam_dma_write_notifies_mapper_only_on_real_write() {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let mut memory = Bus::new(ppu, apu, config);
@@ -1093,7 +1131,7 @@ mod tests {
         // If we only set PPU mirroring once at cartridge load, scrolling across
         // a nametable boundary can show duplicated screens.
 
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let mut mem = Bus::new(ppu.clone(), apu, config);
