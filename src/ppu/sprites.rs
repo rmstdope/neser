@@ -46,7 +46,7 @@ pub struct Sprites {
 
 impl Default for Sprites {
     fn default() -> Self {
-        Self::new()
+        Self::new(crate::console::RamInitMode::Zero)
     }
 }
 
@@ -56,9 +56,12 @@ const OAM_ATTRIBUTE_MASK: u8 = 0xE3;
 
 impl Sprites {
     /// Create a new Sprites instance
-    pub fn new() -> Self {
+    pub fn new(ram_init_mode: crate::console::RamInitMode) -> Self {
+        let mut oam_data = [0u8; 256];
+        crate::console::initialize_ram(&mut oam_data, ram_init_mode);
+        
         Self {
-            oam_data: [0xFF; 256],
+            oam_data,
             secondary_oam: [0xFF; 32],
             sprites_found: 0,
             sprite_count: 0,
@@ -82,8 +85,16 @@ impl Sprites {
     }
 
     /// Reset sprite state
-    pub fn reset(&mut self) {
-        self.oam_data = [0xFF; 256];
+    ///
+    /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
+    /// - `ram_init_mode`: RAM initialization mode (only used for hard reset)
+    pub fn reset(&mut self, soft_reset: bool, ram_init_mode: crate::console::RamInitMode) {
+        // On hard reset, re-initialize OAM data based on configured mode
+        if !soft_reset {
+            crate::console::initialize_ram(&mut self.oam_data, ram_init_mode);
+        }
+        
+        // Always reset secondary OAM and evaluation state
         self.secondary_oam = [0xFF; 32];
         self.sprites_found = 0;
         self.sprite_eval_n = 0;
@@ -685,27 +696,27 @@ mod tests {
 
     #[test]
     fn test_sprites_new() {
-        let sprites = Sprites::new();
+        let sprites = Sprites::new(crate::console::RamInitMode::Zero);
         assert_eq!(sprites.sprite_count(), 0);
     }
 
     #[test]
     fn test_write_read_oam() {
-        let mut sprites = Sprites::new();
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
         sprites.write_oam(0, 0x42);
         assert_eq!(sprites.read_oam(0), 0x42);
     }
 
     #[test]
     fn test_initialize_secondary_oam() {
-        let mut sprites = Sprites::new();
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
         sprites.initialize_secondary_oam_byte(1);
         assert_eq!(sprites.secondary_oam[0], 0xFF);
     }
 
     #[test]
     fn test_reset_evaluation() {
-        let mut sprites = Sprites::new();
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
         sprites.sprites_found = 5;
         sprites.reset_evaluation();
         assert_eq!(sprites.sprites_found, 0);
@@ -713,13 +724,13 @@ mod tests {
 
     #[test]
     fn test_get_pixel_no_sprites() {
-        let sprites = Sprites::new();
+        let sprites = Sprites::new(crate::console::RamInitMode::Zero);
         assert!(sprites.get_pixel(10, true).is_none());
     }
 
     #[test]
     fn test_sprite_x_position_offset() {
-        let mut sprites = Sprites::new();
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
         // Set up a sprite at X position 10
         sprites.sprite_count = 1;
         sprites.sprite_x_positions[0] = 10;
@@ -749,7 +760,7 @@ mod tests {
 
     #[test]
     fn test_sprite_y_position_offset() {
-        let mut sprites = Sprites::new();
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
         // Set up OAM data for a sprite at Y position 10
         sprites.oam_data[0] = 10; // Y position
         sprites.oam_data[1] = 0; // Tile index
@@ -787,7 +798,7 @@ mod tests {
 
     #[test]
     fn test_sprite_pattern_fetch_with_y_offset() {
-        let mut sprites = Sprites::new();
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
         // Set up sprite in secondary OAM
         sprites.sprites_found = 1;
         sprites.secondary_oam[0] = 50; // Y position
@@ -818,7 +829,7 @@ mod tests {
 
     #[test]
     fn test_sprite_pattern_fetch_uses_dummy_tiles_on_pal_prerender() {
-        let mut sprites = Sprites::new();
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
         sprites.sprites_found = 1;
         sprites.secondary_oam[0] = 0x00; // Y position
         sprites.secondary_oam[1] = 0x01; // Tile index
@@ -839,7 +850,7 @@ mod tests {
 
     #[test]
     fn test_sprite_clipping_left_8_pixels() {
-        let mut sprites = Sprites::new();
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
         // Set up a sprite at X position 0 (maps directly to screen X 0-7)
         sprites.sprite_count = 1;
         sprites.sprite_x_positions[0] = 0;
@@ -858,7 +869,7 @@ mod tests {
 
     #[test]
     fn test_sprite_transparent_pixels() {
-        let mut sprites = Sprites::new();
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
         sprites.sprite_count = 1;
         sprites.sprite_x_positions[0] = 10;
         // Pattern with some transparent pixels (pattern = 0)
@@ -877,7 +888,7 @@ mod tests {
 
     #[test]
     fn test_sprite_overflow_evaluation_branch() {
-        let mut sprites = Sprites::new();
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
         sprites.sprites_found = 8;
         sprites.sprite_eval_n = 0;
         sprites.sprite_eval_m = 0;

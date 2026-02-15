@@ -113,7 +113,7 @@ impl Ppu {
             registers: Registers::new(),
             memory: Memory::new(ram_init_mode),
             background: Background::new(),
-            sprites: Sprites::new(),
+            sprites: Sprites::new(ram_init_mode),
             rendering: Rendering::new(),
             recent_pixels: [None, None],
             prev_a12: false,
@@ -147,7 +147,7 @@ impl Ppu {
         }
 
         self.background.reset();
-        self.sprites.reset();
+        self.sprites.reset(soft_reset, ram_init_mode);
         self.prev_a12 = false;
         self.recent_pixels = [None, None];
     }

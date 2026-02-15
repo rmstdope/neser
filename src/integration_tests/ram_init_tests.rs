@@ -344,3 +344,138 @@ fn test_ppu_palette_ram_init_zero_mode() {
         }
     }
 }
+
+#[test]
+fn test_oam_ram_initialization_zero_mode() {
+    let mut config = Config::with_defaults();
+    config.ram_init_mode = RamInitMode::Zero;
+    let nes = Nes::new(config);
+
+    // Access OAM via OAMDATA ($2004) after setting OAMADDR ($2003)
+    {
+        let mut bus = nes.bus.borrow_mut();
+
+        // Check all 256 bytes of OAM
+        for addr in 0u8..=255 {
+            bus.write(0x2003, addr, false); // OAMADDR
+            let value = bus.read(0x2004, false); // OAMDATA
+            assert_eq!(
+                value, 0x00,
+                "OAM[{:#04X}] should be initialized to 0x00 in Zero mode",
+                addr
+            );
+        }
+    }
+}
+
+#[test]
+fn test_oam_ram_initialization_seeded_random_deterministic() {
+    let mut config1 = Config::with_defaults();
+    config1.ram_init_mode = RamInitMode::SeededRandom(42);
+    let nes1 = Nes::new(config1);
+
+    let mut config2 = Config::with_defaults();
+    config2.ram_init_mode = RamInitMode::SeededRandom(42);
+    let nes2 = Nes::new(config2);
+
+    // OAM should be identical for same seed
+    {
+        let mut bus1 = nes1.bus.borrow_mut();
+        let mut bus2 = nes2.bus.borrow_mut();
+
+        // Sample OAM values at various addresses
+        for addr in [0u8, 1, 10, 50, 100, 200, 255] {
+            bus1.write(0x2003, addr, false);
+            bus2.write(0x2003, addr, false);
+
+            let value1 = bus1.read(0x2004, false);
+            let value2 = bus2.read(0x2004, false);
+
+            assert_eq!(
+                value1, value2,
+                "OAM[{:#04X}] should match with same seed",
+                addr
+            );
+        }
+    }
+}
+
+#[test]
+fn test_oam_hard_reset_reinitializes() {
+    let mut config = Config::with_defaults();
+    config.ram_init_mode = RamInitMode::Zero;
+    let mut nes = Nes::new(config);
+
+    // Insert a cartridge so reset works
+    let rom_data = create_test_rom();
+    let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+    nes.insert_cartridge(cartridge);
+
+    // Write some non-zero data to OAM
+    {
+        let mut bus = nes.bus.borrow_mut();
+        bus.write(0x2003, 5, false); // OAMADDR = 5
+        bus.write(0x2004, 0xFF, false); // OAMDATA = 0xFF (writes to addr 5, increments to 6)
+        bus.write(0x2003, 20, false); // OAMADDR = 20
+        bus.write(0x2004, 0xAA, false); // OAMDATA = 0xAA (writes to addr 20, increments to 21)
+    }
+
+    // Hard reset should re-initialize OAM to zero
+    nes.reset(false);
+
+    {
+        let mut bus = nes.bus.borrow_mut();
+        bus.write(0x2003, 5, false);
+        assert_eq!(
+            bus.read(0x2004, false),
+            0x00,
+            "Hard reset should zero OAM[5]"
+        );
+        bus.write(0x2003, 20, false);
+        assert_eq!(
+            bus.read(0x2004, false),
+            0x00,
+            "Hard reset should zero OAM[20]"
+        );
+    }
+}
+
+#[test]
+fn test_oam_soft_reset_preserves() {
+    let mut config = Config::with_defaults();
+    config.ram_init_mode = RamInitMode::Zero;
+    let mut nes = Nes::new(config);
+
+    // Insert a cartridge so reset works
+    let rom_data = create_test_rom();
+    let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+    nes.insert_cartridge(cartridge);
+
+    // Write some non-zero data to OAM
+    {
+        let mut bus = nes.bus.borrow_mut();
+        bus.write(0x2003, 5, false); // OAMADDR = 5
+        bus.write(0x2004, 0xFF, false); // OAMDATA = 0xFF (writes to addr 5, increments to 6)
+        bus.write(0x2003, 20, false); // OAMADDR = 20
+        bus.write(0x2004, 0xAA, false); // OAMDATA = 0xAA (writes to addr 20, increments to 21)
+    }
+
+    // Soft reset should preserve OAM
+    nes.reset(true);
+
+    {
+        let mut bus = nes.bus.borrow_mut();
+        bus.write(0x2003, 5, false);
+        assert_eq!(
+            bus.read(0x2004, false),
+            0xFF,
+            "Soft reset should preserve OAM[5]"
+        );
+        bus.write(0x2003, 20, false);
+        assert_eq!(
+            bus.read(0x2004, false),
+            0xAA,
+            "Soft reset should preserve OAM[20]"
+        );
+    }
+}
