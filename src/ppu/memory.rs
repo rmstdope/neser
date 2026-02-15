@@ -51,11 +51,14 @@ impl Memory {
         }
     }
 
-    /// Reset memory to initial state
-    /// TODO Retain RAM if soft reset
+    /// Reset memory-related state (cache only).
+    ///
+    /// This method is called by Ppu::reset() which is invoked on both hard and soft resets.
+    /// It only clears the palette cache - RAM contents are NOT modified here.
+    /// RAM is initialized on power-on (Memory::new) and re-initialized on hard reset 
+    /// only (via reinitialize()). Soft resets preserve RAM.
     pub fn reset(&mut self) {
-        self.ppu_ram = [0; 4096];
-        self.palette_ram = DEFAULT_PALETTE_RAM;
+        // Only clear the cache - do NOT clear RAM
         self.last_palette_index = None;
         self.last_palette_value = 0;
     }

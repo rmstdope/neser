@@ -287,7 +287,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--ram-init-mode",
-        help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: random)"),
+        help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: zero)"),
         has_value: true,
     },
 ];

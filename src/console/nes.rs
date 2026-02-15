@@ -243,24 +243,28 @@ impl Nes {
             let ram_init_mode = self.config.borrow().ram_init_mode;
             
             // Re-initialize CPU RAM
-            let bus = self.bus.borrow();
-            let cpu_ram_rc = bus.cpu_ram_ref();
-            let mut cpu_ram = cpu_ram_rc.borrow_mut();
-            crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
-            drop(cpu_ram);
+            {
+                let bus = self.bus.borrow();
+                let cpu_ram_rc = bus.cpu_ram_ref();
+                let mut cpu_ram = cpu_ram_rc.borrow_mut();
+                crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
+            }
             
             // Re-initialize cartridge RAM (PRG-RAM and CHR-RAM)
-            let cartridge_rc = bus.cartridge_ref();
-            if let Some(ref cart_rc) = *cartridge_rc.borrow() {
-                let mut cartridge = cart_rc.borrow_mut();
-                cartridge.initialize_ram(ram_init_mode);
+            {
+                let bus = self.bus.borrow();
+                let cartridge_rc = bus.cartridge_ref();
+                if let Some(ref cart_rc) = *cartridge_rc.borrow() {
+                    let mut cartridge = cart_rc.borrow_mut();
+                    cartridge.initialize_ram(ram_init_mode);
+                }
             }
-            drop(bus);
             
             // Re-initialize PPU RAM (nametable and palette)
-            let mut ppu = self.ppu.borrow_mut();
-            ppu.reinitialize_ram(ram_init_mode);
-            drop(ppu);
+            {
+                let mut ppu = self.ppu.borrow_mut();
+                ppu.reinitialize_ram(ram_init_mode);
+            }
         }
 
         // Reset PPU/APU first: CPU reset advances the master clock and ticks both.
