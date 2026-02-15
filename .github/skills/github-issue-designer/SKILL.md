@@ -30,6 +30,8 @@ Always use `github-issue-designer` whenever an issue should be created or update
 4. The issue should described user outcomes, not necessarily developer outputs.
 5. Acceptance criteria should be objective and testable.
 6. Validation steps should be concrete and reference back to the user outcomes.
+7. For test-automation issues involving visual output, include explicit test vectors (input sequences/counter values) and expected on-screen outcomes per step.
+8. When introducing CRC-based golden checks, define a baseline-approval workflow (e.g., screenshots + CRC review before finalizing expected values).
 
 ## Recommended Issue Body Template
 
@@ -58,6 +60,14 @@ Explicit exclusions.
 ## Validation
 
 How to confirm completion (tests/manual checks).
+
+## Test vectors / expected output
+
+Concrete per-step inputs (e.g., counter values, button sequence) and what should be visible after each step.
+
+## Baseline artifact plan
+
+How CRC baselines are approved, including screenshot capture/checkpoint policy before locking expected CRCs.
 
 ## Dependencies / Links
 
@@ -91,6 +101,8 @@ When updating an existing issue:
 - keep progress updates concise and factual
 - adjust acceptance criteria when requirements change
 - maintain links to related PRs/tests
+- if feedback indicates ambiguity, add explicit test vectors and expected visual outcomes to the issue
+- if CRC/golden checks are used, include an artifact review step (screenshots or equivalent) before accepting CRC values
 
 ## Label Intent Guidance
 
