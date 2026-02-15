@@ -2,6 +2,7 @@ use crate::cartridge::{Cartridge, MirroringMode};
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[allow(dead_code)]
 const DEFAULT_PALETTE_RAM: [u8; 32] = [
     0x09, 0x01, 0x00, 0x01, 0x00, 0x02, 0x02, 0x0D, 0x08, 0x10, 0x08, 0x24, 0x00, 0x00, 0x04, 0x2C,
     0x09, 0x01, 0x34, 0x03, 0x00, 0x04, 0x00, 0x14, 0x08, 0x3A, 0x00, 0x02, 0x00, 0x20, 0x2C, 0x08,
@@ -32,13 +33,13 @@ impl Memory {
     pub fn new(ram_init_mode: crate::console::RamInitMode) -> Self {
         let mut ppu_ram = [0u8; 4096];
         let mut palette_ram = [0u8; 32];
-        
+
         // Initialize nametable RAM based on mode
         crate::console::initialize_ram(&mut ppu_ram, ram_init_mode);
-        
+
         // Initialize palette RAM based on mode
         crate::console::initialize_ram(&mut palette_ram, ram_init_mode);
-        
+
         Self {
             ppu_ram,
             palette_ram,
@@ -52,7 +53,7 @@ impl Memory {
     ///
     /// This method is called by Ppu::reset() which is invoked on both hard and soft resets.
     /// It only clears the palette cache - RAM contents are NOT modified here.
-    /// RAM is initialized on power-on (Memory::new) and re-initialized on hard reset 
+    /// RAM is initialized on power-on (Memory::new) and re-initialized on hard reset
     /// only (via reinitialize()). Soft resets preserve RAM.
     pub fn reset(&mut self) {
         // Only clear the cache - do NOT clear RAM
@@ -66,10 +67,10 @@ impl Memory {
     pub fn reinitialize(&mut self, mode: crate::console::RamInitMode) {
         // Initialize nametable RAM
         crate::console::initialize_ram(&mut self.ppu_ram, mode);
-        
+
         // Initialize palette RAM
         crate::console::initialize_ram(&mut self.palette_ram, mode);
-        
+
         // Clear cache
         self.last_palette_index = None;
         self.last_palette_value = 0;

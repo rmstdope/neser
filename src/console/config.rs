@@ -1273,7 +1273,8 @@ impl Config {
                     "random" => self.ram_init_mode = RamInitMode::Random,
                     _ => {
                         // Try parsing as seeded-random with a seed value
-                        if let Some(seed_str) = value.strip_prefix("seeded-random:")
+                        if let Some(seed_str) = value
+                            .strip_prefix("seeded-random:")
                             .or_else(|| value.strip_prefix("seeded_random:"))
                         {
                             if let Ok(seed) = seed_str.parse::<u64>() {
@@ -2863,21 +2864,27 @@ filter=invalid-shader
     #[test]
     fn test_config_file_ram_init_mode_random() {
         let mut config = Config::default();
-        config.apply_config_value("ram_init_mode", "random").unwrap();
+        config
+            .apply_config_value("ram_init_mode", "random")
+            .unwrap();
         assert_eq!(config.ram_init_mode, RamInitMode::Random);
     }
 
     #[test]
     fn test_config_file_ram_init_mode_seeded_random() {
         let mut config = Config::default();
-        config.apply_config_value("ram_init_mode", "seeded-random:42").unwrap();
+        config
+            .apply_config_value("ram_init_mode", "seeded-random:42")
+            .unwrap();
         assert_eq!(config.ram_init_mode, RamInitMode::SeededRandom(42));
     }
 
     #[test]
     fn test_config_file_ram_init_mode_seeded_random_underscore() {
         let mut config = Config::default();
-        config.apply_config_value("ram_init_mode", "seeded_random:12345").unwrap();
+        config
+            .apply_config_value("ram_init_mode", "seeded_random:12345")
+            .unwrap();
         assert_eq!(config.ram_init_mode, RamInitMode::SeededRandom(12345));
     }
 

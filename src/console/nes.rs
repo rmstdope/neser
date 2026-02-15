@@ -1,11 +1,11 @@
 use crate::apu::Apu;
 use crate::bus::Bus;
 use crate::cartridge::Cartridge;
-use crate::console::{Config, SAVESTATE_VERSION, SaveState};
-use crate::cpu::Cpu;
+use crate::console::{Config, SaveState, SAVESTATE_VERSION};
 use crate::cpu::lookup;
-use crate::debugging::{Tracing, log_info};
-use crate::input::{ControllerInput, ControllerType, controller_input_type};
+use crate::cpu::Cpu;
+use crate::debugging::{log_info, Tracing};
+use crate::input::{controller_input_type, ControllerInput, ControllerType};
 use crate::ppu::Ppu;
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -965,7 +965,9 @@ mod tests {
         assert_eq!(nes.ppu.borrow().total_cycles(), 7); // 6 + 1 offset
 
         // Reset just the PPU to test the counter is cleared
-        nes.ppu.borrow_mut().reset(false, crate::console::RamInitMode::Zero);
+        nes.ppu
+            .borrow_mut()
+            .reset(false, crate::console::RamInitMode::Zero);
         assert_eq!(nes.ppu.borrow().total_cycles(), 0);
     }
 

@@ -137,15 +137,15 @@ impl Ppu {
         self.vblank_suppressed_for_frame = false;
         self.vblank_for_nmi = false;
         self.registers.reset();
-        
+
         // Reset memory cache
         self.memory.reset();
-        
+
         // On hard reset, re-initialize RAM based on configured mode
         if !soft_reset {
             self.memory.reinitialize(ram_init_mode);
         }
-        
+
         self.background.reset();
         self.sprites.reset();
         self.prev_a12 = false;

@@ -4,8 +4,8 @@
 //! based on the configured RAM initialization mode.
 
 use super::RamInitMode;
-use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 /// Initialize a RAM buffer based on the configured RAM initialization mode.
 ///
@@ -55,29 +55,35 @@ mod tests {
     fn test_seeded_random_is_deterministic() {
         let mut buffer1 = vec![0; 1024];
         let mut buffer2 = vec![0; 1024];
-        
+
         initialize_ram(&mut buffer1, RamInitMode::SeededRandom(42));
         initialize_ram(&mut buffer2, RamInitMode::SeededRandom(42));
-        
-        assert_eq!(buffer1, buffer2, "Same seed should produce identical results");
+
+        assert_eq!(
+            buffer1, buffer2,
+            "Same seed should produce identical results"
+        );
     }
 
     #[test]
     fn test_seeded_random_different_seeds_produce_different_values() {
         let mut buffer1 = vec![0; 1024];
         let mut buffer2 = vec![0; 1024];
-        
+
         initialize_ram(&mut buffer1, RamInitMode::SeededRandom(42));
         initialize_ram(&mut buffer2, RamInitMode::SeededRandom(43));
-        
-        assert_ne!(buffer1, buffer2, "Different seeds should produce different results");
+
+        assert_ne!(
+            buffer1, buffer2,
+            "Different seeds should produce different results"
+        );
     }
 
     #[test]
     fn test_seeded_random_produces_nonzero_values() {
         let mut buffer = vec![0; 1024];
         initialize_ram(&mut buffer, RamInitMode::SeededRandom(42));
-        
+
         // At least some bytes should be non-zero
         assert!(buffer.iter().any(|&b| b != 0x00));
     }
@@ -86,7 +92,7 @@ mod tests {
     fn test_random_mode_produces_nonzero_values() {
         let mut buffer = vec![0; 1024];
         initialize_ram(&mut buffer, RamInitMode::Random);
-        
+
         // At least some bytes should be non-zero with high probability
         assert!(buffer.iter().any(|&b| b != 0x00));
     }

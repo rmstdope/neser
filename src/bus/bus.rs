@@ -162,7 +162,7 @@ impl Bus {
             let mut cpu_ram = self.cpu_ram.borrow_mut();
             crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
         }
-        
+
         // Reset cartridge (and its RAM on hard reset)
         self.reset_cartridge(soft_reset, ram_init_mode);
     }
@@ -171,7 +171,11 @@ impl Bus {
     ///
     /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
     /// - `ram_init_mode`: RAM initialization mode (only used for hard reset)
-    pub fn reset_cartridge(&mut self, soft_reset: bool, ram_init_mode: crate::console::RamInitMode) {
+    pub fn reset_cartridge(
+        &mut self,
+        soft_reset: bool,
+        ram_init_mode: crate::console::RamInitMode,
+    ) {
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             return;
         };
@@ -180,7 +184,7 @@ impl Bus {
         if !soft_reset {
             cartridge.borrow_mut().initialize_ram(ram_init_mode);
         }
-        
+
         cartridge.borrow_mut().reset();
     }
 

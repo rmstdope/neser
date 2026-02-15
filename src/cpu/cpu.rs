@@ -2634,7 +2634,9 @@ mod tests {
 
     #[test]
     fn test_cpu_new_stores_provided_ppu_and_apu_instances() {
-        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(
+            TvSystem::Ntsc,
+        )));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let memory = Rc::new(RefCell::new(Bus::new(
@@ -3147,7 +3149,9 @@ mod tests {
 
     // Test helper function to create a Memory instance with a PPU/APU for testing
     fn create_test_memory() -> TestMemory {
-        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(
+            TvSystem::Ntsc,
+        )));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let memory = Rc::new(RefCell::new(Bus::new(
