@@ -151,6 +151,9 @@ impl Bus {
 
     /// Reset the bus and its components.
     ///
+    /// This method handles CPU RAM initialization and delegates cartridge reset
+    /// to reset_cartridge(), which handles cartridge RAM initialization.
+    ///
     /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
     /// - `ram_init_mode`: RAM initialization mode (only used for hard reset)
     pub fn reset(&mut self, soft_reset: bool, ram_init_mode: crate::console::RamInitMode) {
@@ -160,7 +163,7 @@ impl Bus {
             crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
         }
         
-        // Reset cartridge (and its RAM)
+        // Reset cartridge (and its RAM on hard reset)
         self.reset_cartridge(soft_reset, ram_init_mode);
     }
 
