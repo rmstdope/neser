@@ -1,9 +1,12 @@
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::io::Write;
+    use std::path::{Path, PathBuf};
 
     use crate::cartridge::Cartridge;
     use crate::console::{Config, Nes, TvSystem};
+    use crate::input::Button;
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{setup_rom_console_test, setup_rom_test};
 
@@ -190,7 +193,287 @@ mod tests {
         "roms/automated_tests/oam_stress/oam_stress.nes"
     );
 
-    // TODO oamtest3
+    fn load_oamtest3_nes() -> Nes {
+        let rom_path = "roms/automated_tests/oamtest3/oam3.nes";
+        let rom_data = fs::read(rom_path).expect("oam3 ROM should load");
+        let cartridge = Cartridge::new(&rom_data).expect("oam3 ROM should parse");
+
+        let mut nes = Nes::new(Config::default());
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        nes
+    }
+
+    fn run_frames(nes: &mut Nes, frame_counter: &mut u32, frames: u32) {
+        run_nes_for_frames(nes, frames);
+        *frame_counter += frames;
+    }
+
+    fn tap_button(nes: &mut Nes, frame_counter: &mut u32, button: Button) {
+        nes.set_button(1, button, true);
+        run_frames(nes, frame_counter, 1);
+        nes.set_button(1, button, false);
+        run_frames(nes, frame_counter, 2);
+    }
+
+    fn tap_button_many(nes: &mut Nes, frame_counter: &mut u32, button: Button, times: usize) {
+        for _ in 0..times {
+            tap_button(nes, frame_counter, button);
+        }
+    }
+
+    fn move_to_count_low_nibble(nes: &mut Nes, frame_counter: &mut u32) {
+        tap_button(nes, frame_counter, Button::Right);
+    }
+
+    fn move_to_payload_start_from_count_high(nes: &mut Nes, frame_counter: &mut u32) {
+        tap_button_many(nes, frame_counter, Button::Right, 2);
+    }
+
+    fn move_to_payload_start_from_count_low(nes: &mut Nes, frame_counter: &mut u32) {
+        tap_button(nes, frame_counter, Button::Right);
+    }
+
+    fn set_count_to_14_from_default(nes: &mut Nes, frame_counter: &mut u32) {
+        move_to_count_low_nibble(nes, frame_counter);
+        tap_button_many(nes, frame_counter, Button::Up, 7);
+    }
+
+    fn set_nibble_from_zero_and_advance(nes: &mut Nes, frame_counter: &mut u32, nibble: u8) {
+        if nibble > 0 {
+            tap_button_many(nes, frame_counter, Button::Up, nibble as usize);
+        }
+        tap_button(nes, frame_counter, Button::Right);
+    }
+
+    fn set_byte_from_zero_and_advance(nes: &mut Nes, frame_counter: &mut u32, byte: u8) {
+        set_nibble_from_zero_and_advance(nes, frame_counter, (byte >> 4) & 0x0F);
+        set_nibble_from_zero_and_advance(nes, frame_counter, byte & 0x0F);
+    }
+
+    fn set_sprite_discriminator_payload_from_zero(nes: &mut Nes, frame_counter: &mut u32) {
+        // Use 14 bytes to stay within oam3's editable/upload range and avoid cursor wrap into count.
+        // This still keeps distinct tile/attribute/X signatures for visual discrimination.
+        // 50 00 00 30 70 01 00 30 90 0E 00 A0 B0 0F
+        let payload: [u8; 14] = [
+            0x50, 0x00, 0x00, 0x30, 0x70, 0x01, 0x00, 0x30, 0x90, 0x0E, 0x00, 0xA0, 0xB0, 0x0F,
+        ];
+
+        for value in payload {
+            set_byte_from_zero_and_advance(nes, frame_counter, value);
+        }
+    }
+
+    fn write_png(path: &Path, rgb: &[u8], width: u32, height: u32) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("checkpoint artifact directory should be created");
+        }
+        let file = fs::File::create(path).expect("checkpoint image file should be created");
+        let mut writer = std::io::BufWriter::new(file);
+        let mut encoder = png::Encoder::new(&mut writer, width, height);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut png_writer = encoder
+            .write_header()
+            .expect("checkpoint PNG header should be written");
+        png_writer
+            .write_image_data(rgb)
+            .expect("checkpoint PNG image data should be written");
+        drop(png_writer);
+        writer
+            .flush()
+            .expect("checkpoint PNG buffer should be flushed");
+    }
+
+    fn collect_checkpoint(
+        nes: &Nes,
+        frame_counter: u32,
+        name: &'static str,
+        capture_baseline: bool,
+        baseline_dir: &Path,
+        checkpoints: &mut Vec<(&'static str, u32)>,
+    ) {
+        let screen = nes.get_screen_buffer();
+        let crc = screen.crc32();
+        let rgb = if capture_baseline {
+            Some(screen.snapshot())
+        } else {
+            None
+        };
+        drop(screen);
+
+        if capture_baseline {
+            println!(
+                "[oam3-checkpoint] {} frame={} crc=0x{:08X}",
+                name, frame_counter, crc
+            );
+            if let Some(rgb) = rgb {
+                let checkpoint_path =
+                    baseline_dir.join(format!("{}_f{:04}.png", name, frame_counter));
+                write_png(&checkpoint_path, &rgb, 256, 240);
+            }
+        }
+
+        checkpoints.push((name, crc));
+    }
+
+    fn run_oam3_phase_a(capture_baseline: bool, baseline_dir: &Path) -> Vec<(&'static str, u32)> {
+        let mut nes = load_oamtest3_nes();
+        let mut frame_counter = 0u32;
+        let mut checkpoints = Vec::new();
+
+        run_frames(&mut nes, &mut frame_counter, 90);
+
+        run_frames(&mut nes, &mut frame_counter, 5);
+        collect_checkpoint(
+            &nes,
+            frame_counter,
+            "A1_count_07",
+            capture_baseline,
+            baseline_dir,
+            &mut checkpoints,
+        );
+
+        move_to_payload_start_from_count_high(&mut nes, &mut frame_counter);
+        set_sprite_discriminator_payload_from_zero(&mut nes, &mut frame_counter);
+        run_frames(&mut nes, &mut frame_counter, 5);
+        collect_checkpoint(
+            &nes,
+            frame_counter,
+            "A2_payload_mutation",
+            capture_baseline,
+            baseline_dir,
+            &mut checkpoints,
+        );
+
+        checkpoints
+    }
+
+    fn run_oam3_phase_b(capture_baseline: bool, baseline_dir: &Path) -> Vec<(&'static str, u32)> {
+        let mut nes = load_oamtest3_nes();
+        let mut frame_counter = 0u32;
+        let mut checkpoints = Vec::new();
+
+        run_frames(&mut nes, &mut frame_counter, 90);
+        set_count_to_14_from_default(&mut nes, &mut frame_counter);
+
+        run_frames(&mut nes, &mut frame_counter, 5);
+        collect_checkpoint(
+            &nes,
+            frame_counter,
+            "B1_count_14",
+            capture_baseline,
+            baseline_dir,
+            &mut checkpoints,
+        );
+
+        move_to_payload_start_from_count_low(&mut nes, &mut frame_counter);
+        set_sprite_discriminator_payload_from_zero(&mut nes, &mut frame_counter);
+        run_frames(&mut nes, &mut frame_counter, 5);
+        collect_checkpoint(
+            &nes,
+            frame_counter,
+            "B2_payload_mutation",
+            capture_baseline,
+            baseline_dir,
+            &mut checkpoints,
+        );
+
+        checkpoints
+    }
+
+    fn run_oam3_transition(
+        capture_baseline: bool,
+        baseline_dir: &Path,
+    ) -> Vec<(&'static str, u32)> {
+        let mut nes = load_oamtest3_nes();
+        let mut frame_counter = 0u32;
+        let mut checkpoints = Vec::new();
+
+        run_frames(&mut nes, &mut frame_counter, 90);
+        set_count_to_14_from_default(&mut nes, &mut frame_counter);
+
+        run_frames(&mut nes, &mut frame_counter, 5);
+        collect_checkpoint(
+            &nes,
+            frame_counter,
+            "T1_before_14_to_7",
+            capture_baseline,
+            baseline_dir,
+            &mut checkpoints,
+        );
+
+        tap_button_many(&mut nes, &mut frame_counter, Button::Down, 7);
+        run_frames(&mut nes, &mut frame_counter, 5);
+        collect_checkpoint(
+            &nes,
+            frame_counter,
+            "T2_after_14_to_7",
+            capture_baseline,
+            baseline_dir,
+            &mut checkpoints,
+        );
+
+        move_to_payload_start_from_count_low(&mut nes, &mut frame_counter);
+        set_sprite_discriminator_payload_from_zero(&mut nes, &mut frame_counter);
+        run_frames(&mut nes, &mut frame_counter, 5);
+        collect_checkpoint(
+            &nes,
+            frame_counter,
+            "T3_post_transition_mutation",
+            capture_baseline,
+            baseline_dir,
+            &mut checkpoints,
+        );
+
+        checkpoints
+    }
+
+    #[test]
+    fn test_oamtest3_scripted_input_crc_checkpoints() {
+        let capture_baseline = std::env::var_os("NESER_OAM3_CAPTURE_BASELINE").is_some();
+        let baseline_dir = PathBuf::from("target/oamtest3_checkpoints");
+
+        let mut actual = Vec::<(&'static str, u32)>::new();
+        actual.extend(run_oam3_phase_a(capture_baseline, &baseline_dir));
+        actual.extend(run_oam3_phase_b(capture_baseline, &baseline_dir));
+        actual.extend(run_oam3_transition(capture_baseline, &baseline_dir));
+
+        // A1 - One sprite in upper left corner. The leftmost part of a sprite in the upper right coner
+        // A2 - The sprite from the upper left coner has moved a bit to the right and a bit down. The other sprite has moved down.
+        // B1 - One sprite in the upper left corner.
+        // B2 - The sprite has moved 75% to the right and 60% down and changed character.
+        // T1 - Same as B1.
+        // T2 - Same as A1.
+        // T3 - Same as A2, but also a third sprite in the upper left corner.
+        let expected = [
+            ("A1_count_07", 0x7184_BC66),
+            ("A2_payload_mutation", 0xE16F_41C6),
+            ("B1_count_14", 0x1A42_F1E6),
+            ("B2_payload_mutation", 0xBB0E_6B3E),
+            ("T1_before_14_to_7", 0x1A42_F1E6),
+            ("T2_after_14_to_7", 0x9318_29C2),
+            ("T3_post_transition_mutation", 0x144D_7EEB),
+        ];
+
+        if capture_baseline {
+            println!(
+                "[oam3-checkpoint] generated baseline artifacts in target/oamtest3_checkpoints"
+            );
+        }
+
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "unexpected number of oam3 checkpoints"
+        );
+
+        assert_eq!(
+            actual, expected,
+            "oam3 checkpoint CRC mismatch; actual table: {:?}",
+            actual
+        );
+    }
 
     // ppu_open_bus
     setup_rom_test!(
