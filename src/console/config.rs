@@ -2846,4 +2846,60 @@ filter=invalid-shader
         assert!(config.audio_enabled);
         assert!(config.vsync_enabled);
     }
+
+    #[test]
+    fn test_config_ram_init_mode_default() {
+        let config = Config::with_defaults();
+        assert_eq!(config.ram_init_mode, RamInitMode::Random);
+    }
+
+    #[test]
+    fn test_config_file_ram_init_mode_zero() {
+        let mut config = Config::default();
+        config.apply_config_value("ram_init_mode", "zero").unwrap();
+        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+    }
+
+    #[test]
+    fn test_config_file_ram_init_mode_random() {
+        let mut config = Config::default();
+        config.apply_config_value("ram_init_mode", "random").unwrap();
+        assert_eq!(config.ram_init_mode, RamInitMode::Random);
+    }
+
+    #[test]
+    fn test_config_file_ram_init_mode_seeded_random() {
+        let mut config = Config::default();
+        config.apply_config_value("ram_init_mode", "seeded-random:42").unwrap();
+        assert_eq!(config.ram_init_mode, RamInitMode::SeededRandom(42));
+    }
+
+    #[test]
+    fn test_config_file_ram_init_mode_seeded_random_underscore() {
+        let mut config = Config::default();
+        config.apply_config_value("ram_init_mode", "seeded_random:12345").unwrap();
+        assert_eq!(config.ram_init_mode, RamInitMode::SeededRandom(12345));
+    }
+
+    #[test]
+    fn test_config_cmdline_ram_init_mode_zero() {
+        let args = vec![
+            "neser".to_string(),
+            "--ram-init-mode".to_string(),
+            "zero".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+    }
+
+    #[test]
+    fn test_config_cmdline_ram_init_mode_seeded() {
+        let args = vec![
+            "neser".to_string(),
+            "--ram-init-mode".to_string(),
+            "seeded-random:999".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.ram_init_mode, RamInitMode::SeededRandom(999));
+    }
 }

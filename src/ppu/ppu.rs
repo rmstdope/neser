@@ -134,11 +134,20 @@ impl Ppu {
         self.vblank_suppressed_for_frame = false;
         self.vblank_for_nmi = false;
         self.registers.reset();
-        self.memory.reset();
+        // Note: memory.reset() is NOT called here - RAM should only be initialized
+        // on power-on (Memory::new) or hard reset (reinitialize).
+        // Soft resets preserve RAM contents.
         self.background.reset();
         self.sprites.reset();
         self.prev_a12 = false;
         self.recent_pixels = [None, None];
+    }
+
+    /// Re-initialize PPU RAM (nametable and palette) based on the given mode.
+    ///
+    /// This should be called on hard reset only. Soft resets preserve RAM contents.
+    pub fn reinitialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.memory.reinitialize(mode);
     }
 
     pub fn io_bus(&self) -> u8 {

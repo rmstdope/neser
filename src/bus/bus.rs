@@ -160,6 +160,20 @@ impl Bus {
         cartridge.borrow_mut().reset();
     }
 
+    /// Get a reference to the CPU RAM for RAM re-initialization.
+    ///
+    /// This is used during hard reset to re-initialize RAM contents.
+    pub(crate) fn cpu_ram_ref(&self) -> Rc<RefCell<Vec<u8>>> {
+        self.cpu_ram.clone()
+    }
+
+    /// Get a reference to the cartridge (if present) for RAM re-initialization.
+    ///
+    /// This is used during hard reset to re-initialize cartridge RAM contents.
+    pub(crate) fn cartridge_ref(&self) -> Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>> {
+        self.cartridge.clone()
+    }
+
     pub fn save_ram(&self) -> io::Result<()> {
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             return Ok(());

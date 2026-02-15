@@ -238,6 +238,31 @@ impl Nes {
         // Get CPU cycle count before reset for coordinated APU timing
         let cpu_cycle = self.cpu.get_total_cycles();
 
+        // On hard reset, re-initialize all RAM
+        if !soft_reset {
+            let ram_init_mode = self.config.borrow().ram_init_mode;
+            
+            // Re-initialize CPU RAM
+            let bus = self.bus.borrow();
+            let cpu_ram_rc = bus.cpu_ram_ref();
+            let mut cpu_ram = cpu_ram_rc.borrow_mut();
+            crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
+            drop(cpu_ram);
+            
+            // Re-initialize cartridge RAM (PRG-RAM and CHR-RAM)
+            let cartridge_rc = bus.cartridge_ref();
+            if let Some(ref cart_rc) = *cartridge_rc.borrow() {
+                let mut cartridge = cart_rc.borrow_mut();
+                cartridge.initialize_ram(ram_init_mode);
+            }
+            drop(bus);
+            
+            // Re-initialize PPU RAM (nametable and palette)
+            let mut ppu = self.ppu.borrow_mut();
+            ppu.reinitialize_ram(ram_init_mode);
+            drop(ppu);
+        }
+
         // Reset PPU/APU first: CPU reset advances the master clock and ticks both.
         self.ppu.borrow_mut().reset();
         self.apu.borrow_mut().reset(cpu_cycle, soft_reset);

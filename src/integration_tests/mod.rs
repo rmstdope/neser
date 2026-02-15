@@ -10,4 +10,5 @@ mod mapper_tests;
 mod miscellaneous_tests;
 mod obsolete_tests;
 mod ppu_tests;
+mod ram_init_tests;
 mod rom_test_runner;

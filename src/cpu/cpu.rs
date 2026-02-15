@@ -3159,7 +3159,7 @@ mod tests {
     }
 
     fn create_test_memory_for(tv_system: TvSystem) -> TestMemory {
-        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new(tv_system)));
+        let ppu = Rc::new(RefCell::new(crate::ppu::Ppu::new_for_testing(tv_system)));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let memory = Rc::new(RefCell::new(Bus::new(

@@ -60,6 +60,23 @@ impl Memory {
         self.last_palette_value = 0;
     }
 
+    /// Re-initialize RAM (nametable and palette) based on the given mode.
+    ///
+    /// This should be called on hard reset only. Soft resets preserve RAM contents.
+    pub fn reinitialize(&mut self, mode: crate::console::RamInitMode) {
+        // Initialize nametable RAM
+        crate::console::initialize_ram(&mut self.ppu_ram, mode);
+        
+        // Initialize palette RAM
+        let mut palette_buffer = self.palette_ram.to_vec();
+        crate::console::initialize_ram(&mut palette_buffer, mode);
+        self.palette_ram.copy_from_slice(&palette_buffer);
+        
+        // Clear cache
+        self.last_palette_index = None;
+        self.last_palette_value = 0;
+    }
+
     /// Set mirroring mode
     pub fn set_mirroring(&mut self, mirroring: MirroringMode) {
         self.mirroring_mode = mirroring;
