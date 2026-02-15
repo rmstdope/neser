@@ -1,11 +1,11 @@
 use crate::apu::Apu;
 use crate::bus::Bus;
 use crate::cartridge::Cartridge;
-use crate::console::{Config, SaveState, SAVESTATE_VERSION};
-use crate::cpu::lookup;
+use crate::console::{Config, SAVESTATE_VERSION, SaveState};
 use crate::cpu::Cpu;
-use crate::debugging::{log_info, Tracing};
-use crate::input::{controller_input_type, ControllerInput, ControllerType};
+use crate::cpu::lookup;
+use crate::debugging::{Tracing, log_info};
+use crate::input::{ControllerInput, ControllerType, controller_input_type};
 use crate::ppu::Ppu;
 use std::cell::RefCell;
 use std::path::PathBuf;
