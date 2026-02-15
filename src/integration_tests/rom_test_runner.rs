@@ -56,6 +56,7 @@ pub(crate) mod tests {
         wait_reset: u32,
         verification: RomTestVerification,
         tv_system_override: Option<crate::console::TvSystem>,
+        ram_init_mode_override: Option<crate::console::RamInitMode>,
     }
 
     impl RomTestRunner {
@@ -67,6 +68,7 @@ pub(crate) mod tests {
                 wait_reset: 1,
                 verification,
                 tv_system_override: None,
+                ram_init_mode_override: None,
             }
         }
 
@@ -83,6 +85,24 @@ pub(crate) mod tests {
                 wait_reset: 1,
                 verification,
                 tv_system_override: Some(tv_system),
+                ram_init_mode_override: None,
+            }
+        }
+
+        /// Create a new test runner with explicit RAM init mode override
+        pub fn new_with_ram_init_mode(
+            rom_path: &str,
+            max_frames: u32,
+            verification: RomTestVerification,
+            ram_init_mode: crate::console::RamInitMode,
+        ) -> Self {
+            Self {
+                rom_path: rom_path.to_string(),
+                max_frames,
+                wait_reset: 1,
+                verification,
+                tv_system_override: None,
+                ram_init_mode_override: Some(ram_init_mode),
             }
         }
 
@@ -136,6 +156,11 @@ pub(crate) mod tests {
                         config.tv_system = crate::console::TvSystem::Ntsc;
                     }
                 }
+            }
+
+            // Use RAM init mode override if provided
+            if let Some(ram_init_mode) = self.ram_init_mode_override {
+                config.ram_init_mode = ram_init_mode;
             }
 
             let mut nes = Nes::new(config);
@@ -520,6 +545,31 @@ pub(crate) mod tests {
                         pass_string: $pass_string.to_string(),
                     },
                     $tv_system,
+                );
+                let result = runner.run_test();
+                let rom_name = $rom_path.split('/').last().unwrap();
+                assert_eq!(
+                    result,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestResult::Pass,
+                    "{} should pass",
+                    rom_name
+                );
+            }
+        };
+    }
+
+    #[macro_export]
+    macro_rules! setup_rom_console_test_with_ram_init {
+        ($test_name:ident, $rom_path:expr, $pass_string:expr, $ram_init_mode:expr) => {
+            #[test]
+            fn $test_name() {
+                let mut runner = $crate::integration_tests::rom_test_runner::tests::RomTestRunner::new_with_ram_init_mode(
+                    $rom_path,
+                    60 * 30,
+                    $crate::integration_tests::rom_test_runner::tests::RomTestVerification::Console {
+                        pass_string: $pass_string.to_string(),
+                    },
+                    $ram_init_mode,
                 );
                 let result = runner.run_test();
                 let rom_name = $rom_path.split('/').last().unwrap();

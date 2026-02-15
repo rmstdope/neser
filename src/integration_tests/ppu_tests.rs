@@ -5,7 +5,7 @@ mod tests {
     use crate::cartridge::Cartridge;
     use crate::console::{Config, Nes, TvSystem};
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
-    use crate::{setup_rom_console_test, setup_rom_test};
+    use crate::{setup_rom_console_test, setup_rom_console_test_with_ram_init, setup_rom_test};
 
     fn capture_scanline_rgb(nes: &Nes, y: u32) -> Vec<(u8, u8, u8)> {
         let screen_buffer = nes.get_screen_buffer();
@@ -69,10 +69,11 @@ mod tests {
         "roms/automated_tests/blargg_ppu_tests_2005.09.15b/palette_ram.nes",
         "$01"
     );
-    setup_rom_console_test!(
+    setup_rom_console_test_with_ram_init!(
         test_blargg_ppu_tests_2005_09_15b_power_up_palette,
         "roms/automated_tests/blargg_ppu_tests_2005.09.15b/power_up_palette.nes",
-        "$01"
+        "$01",
+        crate::console::RamInitMode::Random
     );
     setup_rom_console_test!(
         test_blargg_ppu_tests_2005_09_15b_sprite_ram,

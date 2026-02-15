@@ -38,7 +38,16 @@ impl Memory {
         crate::console::initialize_ram(&mut ppu_ram, ram_init_mode);
 
         // Initialize palette RAM based on mode
-        crate::console::initialize_ram(&mut palette_ram, ram_init_mode);
+        // Note: For Random mode, use hardware-measured power-up pattern
+        match ram_init_mode {
+            crate::console::RamInitMode::Zero => {
+                // Palette RAM is already zero-initialized above
+            }
+            crate::console::RamInitMode::Random | crate::console::RamInitMode::SeededRandom(_) => {
+                // Use hardware-measured power-up palette pattern for hardware accuracy
+                palette_ram = DEFAULT_PALETTE_RAM;
+            }
+        }
 
         Self {
             ppu_ram,
@@ -69,7 +78,16 @@ impl Memory {
         crate::console::initialize_ram(&mut self.ppu_ram, mode);
 
         // Initialize palette RAM
-        crate::console::initialize_ram(&mut self.palette_ram, mode);
+        // Note: For Random mode, use hardware-measured power-up pattern
+        match mode {
+            crate::console::RamInitMode::Zero => {
+                crate::console::initialize_ram(&mut self.palette_ram, mode);
+            }
+            crate::console::RamInitMode::Random | crate::console::RamInitMode::SeededRandom(_) => {
+                // Use hardware-measured power-up palette pattern for hardware accuracy
+                self.palette_ram = DEFAULT_PALETTE_RAM;
+            }
+        }
 
         // Clear cache
         self.last_palette_index = None;
