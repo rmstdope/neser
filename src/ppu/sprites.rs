@@ -59,7 +59,7 @@ impl Sprites {
     pub fn new(ram_init_mode: crate::console::RamInitMode) -> Self {
         let mut oam_data = [0u8; 256];
         crate::console::initialize_ram(&mut oam_data, ram_init_mode);
-        
+
         Self {
             oam_data,
             secondary_oam: [0xFF; 32],
@@ -93,7 +93,7 @@ impl Sprites {
         if !soft_reset {
             crate::console::initialize_ram(&mut self.oam_data, ram_init_mode);
         }
-        
+
         // Always reset secondary OAM and evaluation state
         self.secondary_oam = [0xFF; 32];
         self.sprites_found = 0;
