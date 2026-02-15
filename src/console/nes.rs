@@ -237,40 +237,12 @@ impl Nes {
     pub fn reset(&mut self, soft_reset: bool) {
         // Get CPU cycle count before reset for coordinated APU timing
         let cpu_cycle = self.cpu.get_total_cycles();
+        let ram_init_mode = self.config.borrow().ram_init_mode;
 
-        // On hard reset, re-initialize all RAM
-        if !soft_reset {
-            let ram_init_mode = self.config.borrow().ram_init_mode;
-            
-            // Re-initialize CPU RAM
-            {
-                let bus = self.bus.borrow();
-                let cpu_ram_rc = bus.cpu_ram_ref();
-                let mut cpu_ram = cpu_ram_rc.borrow_mut();
-                crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
-            }
-            
-            // Re-initialize cartridge RAM (PRG-RAM and CHR-RAM)
-            {
-                let bus = self.bus.borrow();
-                let cartridge_rc = bus.cartridge_ref();
-                if let Some(ref cart_rc) = *cartridge_rc.borrow() {
-                    let mut cartridge = cart_rc.borrow_mut();
-                    cartridge.initialize_ram(ram_init_mode);
-                }
-            }
-            
-            // Re-initialize PPU RAM (nametable and palette)
-            {
-                let mut ppu = self.ppu.borrow_mut();
-                ppu.reinitialize_ram(ram_init_mode);
-            }
-        }
-
-        // Reset PPU/APU first: CPU reset advances the master clock and ticks both.
-        self.ppu.borrow_mut().reset();
+        // Reset components - each handles its own RAM initialization on hard reset
+        self.ppu.borrow_mut().reset(soft_reset, ram_init_mode);
         self.apu.borrow_mut().reset(cpu_cycle, soft_reset);
-        self.bus.borrow_mut().reset_cartridge();
+        self.bus.borrow_mut().reset(soft_reset, ram_init_mode);
         self.cpu.reset(soft_reset);
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
@@ -993,7 +965,7 @@ mod tests {
         assert_eq!(nes.ppu.borrow().total_cycles(), 7); // 6 + 1 offset
 
         // Reset just the PPU to test the counter is cleared
-        nes.ppu.borrow_mut().reset();
+        nes.ppu.borrow_mut().reset(false, crate::console::RamInitMode::Zero);
         assert_eq!(nes.ppu.borrow().total_cycles(), 0);
     }
 

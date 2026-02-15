@@ -149,29 +149,41 @@ impl Bus {
         *self.cartridge.borrow_mut() = Some(cartridge_rc);
     }
 
+    /// Reset the bus and its components.
+    ///
+    /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
+    /// - `ram_init_mode`: RAM initialization mode (only used for hard reset)
+    pub fn reset(&mut self, soft_reset: bool, ram_init_mode: crate::console::RamInitMode) {
+        // On hard reset, re-initialize CPU RAM
+        if !soft_reset {
+            let mut cpu_ram = self.cpu_ram.borrow_mut();
+            crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
+        }
+        
+        // Reset cartridge (and its RAM)
+        self.reset_cartridge(soft_reset, ram_init_mode);
+    }
+
     /// Reset the cartridge (if present) to its power-on state.
     ///
-    /// This resets mapper state but typically preserves PRG-RAM contents.
-    pub fn reset_cartridge(&mut self) {
+    /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
+    /// - `ram_init_mode`: RAM initialization mode (only used for hard reset)
+    pub fn reset_cartridge(&mut self, soft_reset: bool, ram_init_mode: crate::console::RamInitMode) {
         let Some(cartridge) = self.cartridge.borrow().as_ref().cloned() else {
             return;
         };
 
+        // On hard reset, re-initialize cartridge RAM before resetting mapper state
+        if !soft_reset {
+            cartridge.borrow_mut().initialize_ram(ram_init_mode);
+        }
+        
         cartridge.borrow_mut().reset();
     }
 
-    /// Get a reference to the CPU RAM for RAM re-initialization.
-    ///
-    /// This is used during hard reset to re-initialize RAM contents.
-    pub(crate) fn cpu_ram_ref(&self) -> Rc<RefCell<Vec<u8>>> {
+    #[cfg(test)]
+    pub fn cpu_ram_ref(&self) -> Rc<RefCell<Vec<u8>>> {
         self.cpu_ram.clone()
-    }
-
-    /// Get a reference to the cartridge (if present) for RAM re-initialization.
-    ///
-    /// This is used during hard reset to re-initialize cartridge RAM contents.
-    pub(crate) fn cartridge_ref(&self) -> Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>> {
-        self.cartridge.clone()
     }
 
     pub fn save_ram(&self) -> io::Result<()> {

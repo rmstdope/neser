@@ -128,26 +128,28 @@ impl Ppu {
     }
 
     /// Reset the PPU to its initial state
-    pub fn reset(&mut self) {
+    ///
+    /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset
+    /// - `ram_init_mode`: RAM initialization mode (only used for hard reset)
+    pub fn reset(&mut self, soft_reset: bool, ram_init_mode: crate::console::RamInitMode) {
         self.timing.reset();
         self.status.reset();
         self.vblank_suppressed_for_frame = false;
         self.vblank_for_nmi = false;
         self.registers.reset();
-        // Reset memory cache (does NOT clear RAM - RAM is only initialized on
-        // power-on via Memory::new or hard reset via reinitialize)
+        
+        // Reset memory cache
         self.memory.reset();
+        
+        // On hard reset, re-initialize RAM based on configured mode
+        if !soft_reset {
+            self.memory.reinitialize(ram_init_mode);
+        }
+        
         self.background.reset();
         self.sprites.reset();
         self.prev_a12 = false;
         self.recent_pixels = [None, None];
-    }
-
-    /// Re-initialize PPU RAM (nametable and palette) based on the given mode.
-    ///
-    /// This should be called on hard reset only. Soft resets preserve RAM contents.
-    pub fn reinitialize_ram(&mut self, mode: crate::console::RamInitMode) {
-        self.memory.reinitialize(mode);
     }
 
     pub fn io_bus(&self) -> u8 {
@@ -1300,7 +1302,7 @@ mod tests {
     fn test_ppu_reset() {
         let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
         ppu.run_ppu_cycles(100);
-        ppu.reset();
+        ppu.reset(false, crate::console::RamInitMode::Zero);
         assert_eq!(ppu.scanline(), 0);
         assert_eq!(ppu.pixel(), 0);
     }
