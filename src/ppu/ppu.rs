@@ -134,9 +134,9 @@ impl Ppu {
         self.vblank_suppressed_for_frame = false;
         self.vblank_for_nmi = false;
         self.registers.reset();
-        // Note: memory.reset() is NOT called here - RAM should only be initialized
-        // on power-on (Memory::new) or hard reset (reinitialize).
-        // Soft resets preserve RAM contents.
+        // Reset memory cache (does NOT clear RAM - RAM is only initialized on
+        // power-on via Memory::new or hard reset via reinitialize)
+        self.memory.reset();
         self.background.reset();
         self.sprites.reset();
         self.prev_a12 = false;
