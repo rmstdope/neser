@@ -127,6 +127,11 @@ impl Ppu {
         Self::new(tv_system, crate::console::RamInitMode::Zero)
     }
 
+    #[cfg(test)]
+    pub fn sprites(&mut self) -> &mut Sprites {
+        &mut self.sprites
+    }
+
     /// Reset the PPU to its initial state
     ///
     /// - `soft_reset`: true for a reset-button style reset, false for power-on/hard reset

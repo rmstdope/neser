@@ -5,7 +5,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, TvSystem};
+    use crate::console::{Config, Nes, RamInitMode, TvSystem};
     use crate::input::Button;
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{setup_rom_console_test, setup_rom_console_test_with_ram_init, setup_rom_test};
@@ -199,9 +199,17 @@ mod tests {
         let rom_data = fs::read(rom_path).expect("oam3 ROM should load");
         let cartridge = Cartridge::new(&rom_data).expect("oam3 ROM should parse");
 
-        let mut nes = Nes::new(Config::default());
+        let config = Config {
+            ram_init_mode: RamInitMode::SeededRandom(0x5760_0000_0000_0001),
+            ..Config::default()
+        };
+        let mut nes = Nes::new(config);
         nes.insert_cartridge(cartridge);
         nes.reset(false);
+        // Remove sprites 4-63 to avoid random garbage
+        for i in 16..=255 {
+            nes.ppu.borrow_mut().sprites().write_oam(i, 0xFF);
+        }
         nes
     }
 
@@ -440,21 +448,39 @@ mod tests {
         actual.extend(run_oam3_phase_b(capture_baseline, &baseline_dir));
         actual.extend(run_oam3_transition(capture_baseline, &baseline_dir));
 
-        // A1 - One sprite in upper left corner. The leftmost part of a sprite in the upper right coner
-        // A2 - The sprite from the upper left coner has moved a bit to the right and a bit down. The other sprite has moved down.
-        // B1 - One sprite in the upper left corner.
-        // B2 - The sprite has moved 75% to the right and 60% down and changed character.
-        // T1 - Same as B1.
-        // T2 - Same as A1.
-        // T3 - Same as A2, but also a third sprite in the upper left corner.
+        // A1
+        // - Sprite 0 (@) at 0,0
+        // - Sprite 1 (@) at <rand>,0
+        // - Sprite 2-3 (<rand>) at <rand>,<rand>
+        // A2
+        // - Sprite 0 (@) at 48,80
+        // - Sprite 1 (A) at <rand>,112
+        // - Sprite 2-3 as A2
+        // B1
+        // - Sprite 0,2 (@) at 0,0
+        // - Sprite 1,3 (@) at <rand>,0
+        // B2
+        // - Sprite 0,2 (N) at 160,144
+        // - Sprite 1,3 (O) at <rand>,176
+        // T1
+        // - Sprite 0,2 (@) at 0,0
+        // - Sprite 1,3 (@ upside down) at <rand>,0
+        // T2
+        // - Sprite 0,2 (@) at 0,0
+        // - Sprite 1,3 (@ where sprite 3 is upside down) at <rand>,0
+        // T3
+        // - Sprite 0 (@) at 48,80
+        // - Sprite 1 (A) at <rand>,112
+        // - Sprite 2 (@) at 0,0
+        // - Sprite 3 (@ upside down) at <rand>,0
         let expected = [
-            ("A1_count_07", 0x7184_BC66),
-            ("A2_payload_mutation", 0xE16F_41C6),
-            ("B1_count_14", 0x1A42_F1E6),
-            ("B2_payload_mutation", 0xBB0E_6B3E),
-            ("T1_before_14_to_7", 0x1A42_F1E6),
-            ("T2_after_14_to_7", 0x9318_29C2),
-            ("T3_post_transition_mutation", 0x144D_7EEB),
+            ("A1_count_07", 3900323499),
+            ("A2_payload_mutation", 3868369461),
+            ("B1_count_14", 2236336412),
+            ("B2_payload_mutation", 606926995),
+            ("T1_before_14_to_7", 2236336412),
+            ("T2_after_14_to_7", 3412695065),
+            ("T3_post_transition_mutation", 666010312),
         ];
 
         if capture_baseline {

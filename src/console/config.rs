@@ -519,7 +519,7 @@ impl Default for Config {
             autorun_headless: false,
             autorun_extend: false,
             autorun_overwrite: false,
-            ram_init_mode: RamInitMode::Zero,
+            ram_init_mode: RamInitMode::Random,
         }
     }
 }
