@@ -49,7 +49,7 @@ impl Bus {
         }
     }
 
-    /// Create a new memory instance with 64KB of RAM initialized to 0
+    /// Create a new memory instance with 64KB address space
     pub fn new(
         ppu: Rc<RefCell<ppu::Ppu>>,
         apu: Rc<RefCell<apu::Apu>>,
@@ -68,8 +68,13 @@ impl Bus {
             ))),
         ];
 
+        // Initialize CPU RAM based on config
+        let mut cpu_ram = vec![0; 0x10000];
+        let ram_init_mode = config.borrow().ram_init_mode;
+        crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
+
         let mut controller = Self {
-            cpu_ram: Rc::new(RefCell::new(vec![0; 0x10000])),
+            cpu_ram: Rc::new(RefCell::new(cpu_ram)),
             cartridge: Rc::new(RefCell::new(None)),
             ppu,
             apu,
@@ -754,7 +759,7 @@ mod tests {
 
     #[test]
     fn test_restore_mapper_state_updates_ppu_mirroring() {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let mut bus = Bus::new(ppu.clone(), apu, config);
@@ -840,7 +845,7 @@ mod tests {
     }
 
     fn create_test_memory() -> Bus {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         Bus::new(ppu, apu, config)
@@ -970,7 +975,7 @@ mod tests {
 
     #[test]
     fn test_oam_dma_write_notifies_mapper_only_on_real_write() {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let mut memory = Bus::new(ppu, apu, config);
@@ -1093,7 +1098,7 @@ mod tests {
         // If we only set PPU mirroring once at cartridge load, scrolling across
         // a nametable boundary can show duplicated screens.
 
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let mut mem = Bus::new(ppu.clone(), apu, config);

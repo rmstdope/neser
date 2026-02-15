@@ -108,7 +108,8 @@ pub struct Nes {
 impl Nes {
     pub fn new(config: Config) -> Self {
         let tv_system = config.tv_system;
-        let ppu = Rc::new(RefCell::new(Ppu::new(tv_system)));
+        let ram_init_mode = config.ram_init_mode;
+        let ppu = Rc::new(RefCell::new(Ppu::new(tv_system, ram_init_mode)));
         let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
         let config_rc = Rc::new(RefCell::new(config));
         let memory = Rc::new(RefCell::new(Bus::new(
@@ -136,9 +137,13 @@ impl Nes {
 
     /// Insert a cartridge and map it into memory.
     /// Auto-configures Arkanoid or Zapper controllers for known ROMs if that specific port hasn't been explicitly configured.
-    pub fn insert_cartridge(&mut self, cartridge: Cartridge) {
+    pub fn insert_cartridge(&mut self, mut cartridge: Cartridge) {
         let zapper_port = crate::cartridge::default_zapper_on_port(cartridge.crc32());
         let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge.crc32());
+
+        // Initialize cartridge RAM (PRG-RAM and CHR-RAM) based on config
+        let ram_init_mode = self.config.borrow().ram_init_mode;
+        cartridge.initialize_ram(ram_init_mode);
 
         let mut bus = self.bus.borrow_mut();
         bus.map_cartridge(cartridge);

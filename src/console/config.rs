@@ -285,6 +285,11 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Replace existing autorun recording (requires --record)"),
         has_value: false,
     },
+    CliFlag {
+        flag: "--ram-init-mode",
+        help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: random)"),
+        has_value: true,
+    },
 ];
 
 /// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
@@ -309,6 +314,33 @@ pub enum ParseResult {
     Help,
     /// Successfully parsed configuration.
     Config(Config),
+}
+
+/// RAM initialization mode for power-on/hard reset.
+///
+/// Controls how all emulated RAM (CPU, PRG, CHR, PPU nametable, and palette) is
+/// initialized when the emulator powers on or performs a hard reset. This affects
+/// hardware-accuracy and determinism for testing.
+///
+/// Soft resets preserve RAM contents and do not re-initialize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RamInitMode {
+    /// Initialize all RAM to 0x00.
+    ///
+    /// Provides a clean, predictable startup state. Useful for debugging and
+    /// testing, though not hardware-accurate (real NES hardware has random RAM on power-on).
+    Zero,
+    /// Initialize all RAM to pseudo-random values.
+    ///
+    /// Hardware-accurate: real NES consoles have unpredictable RAM contents on power-on.
+    /// Each run will have different initial RAM values.
+    Random,
+    /// Initialize all RAM to pseudo-random values using a fixed seed.
+    ///
+    /// Combines hardware-accuracy with determinism: RAM appears random but is
+    /// identical across runs with the same seed. Useful for reproducible testing
+    /// of RAM-sensitive code paths.
+    SeededRandom(u64),
 }
 
 /// Emulator configuration.
@@ -373,6 +405,17 @@ pub struct Config {
     pub autorun_extend: bool,
     /// Whether to overwrite an existing recording (requires record mode).
     pub autorun_overwrite: bool,
+    /// RAM initialization mode (config key: `ram_init_mode`).
+    ///
+    /// Controls how all emulated RAM is initialized on power-on/hard reset:
+    /// - `zero`: All RAM initialized to 0x00
+    /// - `random`: All RAM initialized to pseudo-random values (hardware-accurate)
+    /// - `seeded-random`: All RAM initialized to pseudo-random values with a fixed seed
+    ///
+    /// Default: `Random` (hardware-accurate).
+    ///
+    /// Soft resets preserve RAM contents (no re-initialization).
+    pub ram_init_mode: RamInitMode,
 }
 
 /// Autorun operating mode.
@@ -476,6 +519,7 @@ impl Default for Config {
             autorun_headless: false,
             autorun_extend: false,
             autorun_overwrite: false,
+            ram_init_mode: RamInitMode::Random,
         }
     }
 }
@@ -694,6 +738,11 @@ impl Config {
         // Window height
         if let Some(height) = Self::parse_u32_arg(args, "--window-height")? {
             self.window_height = height;
+        }
+
+        // RAM initialization mode
+        if let Some(value) = Self::parse_string_arg(args, "--ram-init-mode") {
+            self.apply_config_value("ram_init_mode", &value)?;
         }
 
         // Autorun mode flags
@@ -1215,6 +1264,34 @@ impl Config {
                     self.tracing.nestest = b;
                     if b {
                         self.tracing.enabled = true;
+                    }
+                }
+            }
+            "ram_init_mode" => {
+                match value.to_lowercase().as_str() {
+                    "zero" => self.ram_init_mode = RamInitMode::Zero,
+                    "random" => self.ram_init_mode = RamInitMode::Random,
+                    _ => {
+                        // Try parsing as seeded-random with a seed value
+                        if let Some(seed_str) = value.strip_prefix("seeded-random:")
+                            .or_else(|| value.strip_prefix("seeded_random:"))
+                        {
+                            if let Ok(seed) = seed_str.parse::<u64>() {
+                                self.ram_init_mode = RamInitMode::SeededRandom(seed);
+                            } else {
+                                eprintln!(
+                                    "Warning: invalid seed '{}' for 'ram_init_mode'; \
+                                     keeping current mode. Use format 'seeded-random:12345'.",
+                                    seed_str
+                                );
+                            }
+                        } else {
+                            eprintln!(
+                                "Warning: invalid value '{}' for 'ram_init_mode'; \
+                                 keeping current mode. Valid values: zero, random, seeded-random:SEED",
+                                value
+                            );
+                        }
                     }
                 }
             }
