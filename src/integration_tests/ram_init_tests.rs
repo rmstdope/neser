@@ -299,3 +299,36 @@ fn test_ppu_soft_reset_preserves_ram() {
         "Soft reset should preserve PPU nametable"
     );
 }
+
+#[test]
+fn test_ppu_palette_ram_init_zero_mode() {
+    // Verify that PPU palette RAM ($3F00-$3F1F) is initialized according to
+    // the configured RAM init mode, using the PPU register interface.
+    let mut config = Config::with_defaults();
+    config.ram_init_mode = RamInitMode::Zero;
+    let nes = Nes::new(config);
+
+    // Access palette RAM via PPUADDR ($2006) and PPUDATA ($2007).
+    // For Zero mode, all palette entries should read back as 0x00.
+    {
+        let mut bus = nes.bus.borrow_mut();
+
+        for offset in 0u16..32 {
+            let addr = 0x3F00u16 + offset;
+            let high = (addr >> 8) as u8;
+            let low = (addr & 0x00FF) as u8;
+
+            // Set PPU address to the palette entry.
+            bus.write(0x2006, high, false);
+            bus.write(0x2006, low, false);
+
+            let value = bus.read(0x2007, false);
+            assert_eq!(
+                value, 0x00,
+                "Palette RAM at ${:04X} should be initialized to 0x00 in Zero mode",
+                addr
+            );
+        }
+    }
+}
+

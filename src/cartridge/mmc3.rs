@@ -1338,6 +1338,11 @@ impl Mapper for MMC3Mapper {
         self.chr_memory.load_snapshot(data);
     }
 
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        crate::console::initialize_ram(&mut self.prg_ram, mode);
+        self.chr_memory.initialize(mode);
+    }
+
     // ============================================================================
     // Save State Management
     // ============================================================================
