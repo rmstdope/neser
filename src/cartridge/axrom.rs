@@ -42,16 +42,26 @@ pub struct AxROMMapper {
 
 impl AxROMMapper {
     pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, _mirroring: MirroringMode) -> Self {
+        let normalized_prg_rom = Self::normalize_prg_rom(prg_rom);
+
         // AxROM uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
-        let prg_bank = BankSwitch::from_rom(&prg_rom, PRG_BANK_SIZE_32K);
+        let prg_bank = BankSwitch::from_rom(&normalized_prg_rom, PRG_BANK_SIZE_32K);
 
         Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_32K),
+            prg_rom: BankedRom::new(normalized_prg_rom, PRG_BANK_SIZE_32K),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_memory: ChrMemory::new_ram(8192),
             prg_bank,
             mirroring_bit: false, // Default to lower nametable
         }
+    }
+
+    fn normalize_prg_rom(mut prg_rom: Vec<u8>) -> Vec<u8> {
+        if prg_rom.len() == 0x4000 {
+            let mirrored_half = prg_rom.clone();
+            prg_rom.extend_from_slice(&mirrored_half);
+        }
+        prg_rom
     }
 }
 
@@ -214,6 +224,21 @@ mod tests {
         // Test that upper bits are ignored (only bits 0-2 matter for bank)
         mapper.write_prg(0x8000, 0xF2); // 0b11110010 -> bank 2
         assert_eq!(mapper.read_prg(0x8000), 102);
+    }
+
+    #[test]
+    fn test_axrom_16kb_prg_is_mirrored_to_32kb_window() {
+        let mut prg_rom = vec![0; 16 * 1024];
+        for (index, byte) in prg_rom.iter_mut().enumerate() {
+            *byte = (index & 0xFF) as u8;
+        }
+
+        let mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
+
+        assert_eq!(mapper.read_prg(0x8000), 0x00);
+        assert_eq!(mapper.read_prg(0xBFFF), 0xFF);
+        assert_eq!(mapper.read_prg(0xC000), 0x00);
+        assert_eq!(mapper.read_prg(0xFFFF), 0xFF);
     }
 
     #[test]
