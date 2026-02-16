@@ -2258,4 +2258,57 @@ mod tests {
         // Access $1000 (A12=1) - no rising edge
         assert!(!ppu.check_a12_rising_edge(0x1000));
     }
+
+    /// Given background rendering is enabled but sprite rendering is disabled,
+    /// When a visible scanline is rendered with sprite data in the render buffers,
+    /// Then sprite pixels should NOT appear on screen - only background pixels should show.
+    ///
+    /// Per NES hardware: PPUMASK bit 4 (SHOW_SPRITES) controls whether sprite pixels
+    /// are composited into the final output. When disabled, sprite evaluation and
+    /// fetching still occur internally, but sprite pixels must not be visible.
+    #[test]
+    fn test_sprites_not_rendered_when_sprite_rendering_disabled() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Enable background only (bit 3), sprites disabled (bit 4 = 0)
+        // PPUMASK = 0x08: show background, hide sprites
+        ppu.write_mask(0x08);
+
+        // Set up a distinct sprite palette color so we can detect if a sprite pixel leaks.
+        // Sprite palette 0, color 1 = palette address 0x3F11
+        // Use color index 0x16 (red) for sprite, 0x0F (black) for background universal backdrop.
+        ppu.memory.write_palette(0x3F00, 0x0F); // Universal backdrop = black
+        ppu.memory.write_palette(0x3F11, 0x16); // Sprite palette 0, color 1 = red
+
+        // Place a sprite at X=10 in the current render buffers via debug state.
+        // sprite_count=1 means get_pixel will check sprite 0.
+        // Pattern lo=0xFF, hi=0x00 → pixel value 1 (opaque) for all 8 pixels.
+        // Attributes = 0x00 (palette 0, foreground, no flip).
+        let mut sprite_state = ppu.sprites().debug_state();
+        sprite_state.sprite_pattern_shift_lo[0] = 0xFF;
+        sprite_state.sprite_pattern_shift_hi[0] = 0x00;
+        sprite_state.sprite_x_positions[0] = 10;
+        sprite_state.sprite_attributes[0] = 0x00;
+        sprite_state.sprite_count = 1;
+        ppu.sprites().set_debug_state(sprite_state);
+
+        // Advance PPU to pixel 11 on scanline 0 (first visible scanline).
+        // Pixel index 1 = screen X 0, so pixel 11 = screen X 10 (where sprite starts).
+        ppu.run_ppu_cycles(11);
+
+        // After ticking pixel 11 (screen_x=10), the pixel at (10, 0) should be
+        // the universal backdrop (0x0F = black), NOT the sprite color.
+        let backdrop_color = Nes::lookup_system_palette(0x0F);
+        let sprite_color = Nes::lookup_system_palette(0x16);
+        let actual = ppu.screen_buffer().get_pixel(10, 0);
+
+        assert_ne!(
+            actual, sprite_color,
+            "Sprite pixel should NOT be rendered when sprite rendering is disabled"
+        );
+        assert_eq!(
+            actual, backdrop_color,
+            "Background/backdrop color should be rendered when sprite rendering is disabled"
+        );
+    }
 }
