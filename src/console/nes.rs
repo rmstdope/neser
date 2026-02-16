@@ -733,9 +733,9 @@ impl Nes {
                 ' ' // Treat 0x00 as space
             } else {
                 // Assume tile indices 0x10-0x1F maps to ASCII characters [0..9,A..F]
-                if tile_index >= 0x10 && tile_index <= 0x19 {
+                if (0x10..=0x19).contains(&tile_index) {
                     (tile_index + 0x20) as char
-                } else if tile_index >= 0x1A && tile_index <= 0x1F {
+                } else if (0x1A..=0x1F).contains(&tile_index) {
                     (tile_index + 0x27) as char
                 } else {
                     '?' // Unknown character

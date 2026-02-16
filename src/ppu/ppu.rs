@@ -694,6 +694,9 @@ impl Ppu {
             sprite_eval_m: sprites_state.sprite_eval_m,
             sprite_eval_cycle: sprites_state.sprite_eval_cycle,
             sprite_eval_in_range: sprites_state.sprite_eval_in_range,
+            sprite_eval_overflow_reads_remaining: sprites_state
+                .sprite_eval_overflow_reads_remaining,
+            sprite_eval_overflow_signaled: sprites_state.sprite_eval_overflow_signaled,
             sprite_pattern_shift_lo: sprites_state.sprite_pattern_shift_lo,
             sprite_pattern_shift_hi: sprites_state.sprite_pattern_shift_hi,
             sprite_x_positions: sprites_state.sprite_x_positions,
@@ -774,6 +777,8 @@ impl Ppu {
             sprite_eval_m: state.sprite_eval_m,
             sprite_eval_cycle: state.sprite_eval_cycle,
             sprite_eval_in_range: state.sprite_eval_in_range,
+            sprite_eval_overflow_reads_remaining: 0,
+            sprite_eval_overflow_signaled: false,
             sprite_pattern_shift_lo: state.sprite_pattern_shift_lo,
             sprite_pattern_shift_hi: state.sprite_pattern_shift_hi,
             sprite_x_positions: state.sprite_x_positions,
@@ -1125,6 +1130,8 @@ mod tests {
                 sprite_eval_m: 2,
                 sprite_eval_cycle: 6,
                 sprite_eval_in_range: true,
+                sprite_eval_overflow_reads_remaining: 0,
+                sprite_eval_overflow_signaled: false,
                 sprite_pattern_shift_lo: [0x11; 8],
                 sprite_pattern_shift_hi: [0x22; 8],
                 sprite_x_positions: [0x33; 8],
@@ -2480,6 +2487,78 @@ mod tests {
             value, 0x00,
             "On pre-render scanline, $2004 should return the OAM latch, not OAM[OAMADDR=0] \
              (0x00), got {:#04X}",
+            value
+        );
+    }
+
+    /// Given the PPU is on a visible scanline during overflow detection (>8 sprites found),
+    /// When $2004 is read during an even (write) cycle of overflow checking,
+    /// Then it should return secondary_oam[0], not the stale primary OAM read value.
+    ///
+    /// Per NES hardware: during overflow detection, the PPU alternates between reading
+    /// primary OAM (odd cycles) and writing to secondary OAM (even cycles). On write
+    /// cycles, the secondary OAM bus is driven — the write pointer is at 0 after
+    /// filling all 8 slots, so $2004 reads expose secondary_oam[0].
+    #[test]
+    fn test_read_2004_returns_secondary_oam_0_during_overflow_write_cycle() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Set up 9 sprites: sprites 0-7 at Y=0 (in range for scanline 0),
+        // sprite 8 with Y=0x50 (not in range for scanline 0 - will trigger overflow check).
+        for i in 0u8..8 {
+            ppu.write_oam_address(i * 4);
+            ppu.write_oam_data_dma(0x00); // Y=0 (in range for scanline 0)
+            ppu.write_oam_data_dma(i + 1); // Tile (unique per sprite)
+            ppu.write_oam_data_dma(0x00); // Attr
+            ppu.write_oam_data_dma(i * 8); // X
+        }
+        // Sprite 8: out of range
+        ppu.write_oam_address(32);
+        ppu.write_oam_data_dma(0x50); // Y=0x50 (not in range for scanline 0)
+        ppu.write_oam_data_dma(0xBB); // Tile
+        ppu.write_oam_data_dma(0x00); // Attr
+        ppu.write_oam_data_dma(0x00); // X
+
+        // Fill remaining OAM with Y>=0xF0 (off-screen)
+        for i in 36..256u16 {
+            ppu.write_oam_address(i as u8);
+            ppu.write_oam_data_dma(0xF0);
+        }
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Sprite 0 (not in range): 2 pixels (65-66)
+        // Sprites 1-8 (in range): 8 pixels each (67-130)
+        // Overflow starts at pixel 131.
+        // Pixel 131 (odd): read OAM[8*4+0]=OAM[32]=0x50 (primary OAM read, latch=0x50)
+        // Pixel 132 (even): overflow write cycle — latch should be secondary_oam[0]
+
+        // secondary_oam[0] = Y of sprite 0 = 0x00 (the first sprite found in range)
+
+        // Wait, actually: evaluation on scanline 0 checks next_scanline = 1.
+        // Sprite 0: Y=0, diff = 1 - 1 = 0 < 8, IN RANGE. So sprite 0 IS found.
+        // Sprites 1-7: same, all in range. 8 sprites found after sprite 7.
+        // So sprites_found = 8 after evaluating sprites 0-7.
+        // Overflow starts at sprite 8 (pixel 65 + 2 + 7*8 = 65 + 58 = 123? No...)
+
+        // Sprite 0 at Y=0: IN range (diff=0). Takes 8 pixels: 65-72.
+        // Sprite 1 at Y=0: IN range. Takes 8 pixels: 73-80.
+        // ...
+        // Sprite 7 at Y=0: IN range. Takes 8 pixels: 121-128. sprites_found=8.
+        // Sprite 8 at Y=0x50: overflow starts at pixel 129.
+        // Pixel 129 (odd): overflow read OAM[32]=0x50, latch=0x50
+        // Pixel 130 (even): overflow write cycle
+        // secondary_oam[0] = Y of sprite 0 = 0x00
+
+        // Advance to pixel 130 (even overflow write cycle)
+        ppu.run_ppu_cycles(130);
+
+        let value = ppu.read_oam_data();
+        assert_eq!(
+            value, 0x00,
+            "During overflow write cycle, $2004 should return secondary_oam[0] (0x00), got {:#04X}.\n\
+             On even cycles of overflow detection, the secondary OAM bus is driven at address 0.",
             value
         );
     }
