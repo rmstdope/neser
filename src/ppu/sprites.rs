@@ -1048,12 +1048,12 @@ mod tests {
     /// Given sprite overflow detection encounters a sprite in range,
     /// When the remaining bytes of that sprite are read,
     /// Then the hardware should increment only m (not n) for the remaining 3 reads,
-    /// and after all 4 bytes, increment n without resetting m.
+    /// and after all 4 bytes, increment n and force m=0 to enter post-overflow mode.
     ///
     /// This test verifies the correct in-range overflow behavior:
     /// - When found in range at (n, m): set overflow flag
     /// - Read remaining bytes: m+1, m+2, m+3 (all with same n)
-    /// - After 4 reads: increment n, keep m at its current position
+    /// - After 4 reads: increment n and force m=0 (post-overflow mode)
     ///
     /// The overflow bug causes m to NOT be 0 when checking Y, so in-range
     /// detection may trigger on non-Y bytes (tile, attr, X). The remaining
