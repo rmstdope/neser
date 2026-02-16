@@ -949,6 +949,33 @@ mod tests {
     }
 
     #[test]
+    fn test_rendering_disabled_uses_palette_color_at_vram_address() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Keep rendering disabled so pixel output path uses backdrop/ext-color behavior.
+        ppu.write_mask(0x00);
+
+        // Seed universal backdrop and a distinct palette entry.
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x00, false);
+        ppu.write_data(0x01);
+
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x11, false);
+        ppu.write_data(0x16);
+
+        // Point v into palette space before rendering output.
+        ppu.write_address(0x3F, false);
+        ppu.write_address(0x11, false);
+
+        // First visible output dot should draw pixel (0,0).
+        ppu.run_ppu_cycles(2);
+
+        let expected = Nes::lookup_system_palette(0x16);
+        assert_eq!(ppu.screen_buffer().get_pixel(0, 0), expected);
+    }
+
+    #[test]
     fn test_mapper_ppu_scanline_is_called_on_scanline_boundaries() {
         let calls: Rc<RefCell<Vec<(u16, bool)>>> = Rc::new(RefCell::new(Vec::new()));
 

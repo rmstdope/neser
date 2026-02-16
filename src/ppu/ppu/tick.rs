@@ -562,14 +562,23 @@ fn tick_pixel_output(ppu: &mut Ppu) {
                 }
             }
         } else {
-            // When rendering is disabled, output the backdrop color
-            let color_value = ppu.memory.read_palette(palette_base);
+            // When rendering is disabled, if v points into palette space ($3F00-$3FFF),
+            // output that palette entry; otherwise output universal backdrop ($3F00).
+            let v_addr = ppu.registers.v() & 0x3FFF;
+            let mut color_value = if (0x3F00..=0x3FFF).contains(&v_addr) {
+                ppu.memory.read_palette(v_addr)
+            } else {
+                ppu.memory.read_palette(palette_base)
+            };
+            color_value = apply_grayscale(color_value, ppu.registers.is_grayscale());
             let (r, g, b) = Nes::lookup_system_palette(color_value);
+            let (final_r, final_g, final_b) =
+                apply_color_emphasis(r, g, b, ppu.registers.color_emphasis());
 
             // Write backdrop color to screen buffer
             ppu.rendering
                 .screen_buffer_mut()
-                .set_pixel(screen_x, screen_y, r, g, b);
+                .set_pixel(screen_x, screen_y, final_r, final_g, final_b);
         }
     }
 }

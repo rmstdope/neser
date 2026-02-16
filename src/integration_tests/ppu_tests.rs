@@ -8,7 +8,10 @@ mod tests {
     use crate::console::{Config, Nes, RamInitMode, TvSystem};
     use crate::input::Button;
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
-    use crate::{setup_rom_console_test, setup_rom_console_test_with_ram_init, setup_rom_test};
+    use crate::{
+        setup_rom_console_test, setup_rom_console_test_with_ram_init, setup_rom_crc_test,
+        setup_rom_test,
+    };
 
     fn capture_scanline_rgb(nes: &Nes, y: u32) -> Vec<(u8, u8, u8)> {
         let screen_buffer = nes.get_screen_buffer();
@@ -94,9 +97,45 @@ mod tests {
         "$01"
     );
 
-    // TODO full_palette
+    // full_palette
+    // All test have been manually verified to produce the expected palette output,
+    // so we can just do CRC checks on the screen buffer for regression testing.
+    setup_rom_crc_test!(
+        test_full_palette,
+        "roms/automated_tests/full_palette/full_palette.nes",
+        [(20, 416290266)]
+    );
+
+    setup_rom_crc_test!(
+        test_full_palette_smooth,
+        "roms/automated_tests/full_palette/full_palette_smooth.nes",
+        [(20, 187585076)]
+    );
+
+    setup_rom_crc_test!(
+        test_flowing_palette,
+        "roms/automated_tests/full_palette/flowing_palette.nes",
+        [
+            // Capture 5s intervals during 30s of flowing palette changes
+            // to get a good variety of colors in the test coverage.
+            (60 * 5, 1372430990),
+            (60 * 10, 1684106237),
+            (60 * 15, 3565760089),
+            (60 * 20, 2344543026),
+            (60 * 25, 3472227176),
+            (60 * 30, 483238337),
+        ]
+    );
 
     // TODO misc_oam_tests
+    // setup_rom_test!(
+    //     test_oam_decay_test,
+    //     "roms/automated_tests/misc_oam_tests/oam-decay-test.nes"
+    // );
+    setup_rom_test!(
+        test_oam_read_vbl_wait,
+        "roms/automated_tests/misc_oam_tests/oam_read_vbl_wait.nes"
+    );
 
     // nmi_sync
     #[test]

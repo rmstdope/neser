@@ -485,6 +485,34 @@ pub(crate) mod tests {
         None
     }
 
+    pub(crate) fn write_checkpoint_png(
+        path: &std::path::Path,
+        rgb: &[u8],
+        width: u32,
+        height: u32,
+    ) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .expect("checkpoint artifact directory should be created");
+        }
+        let file = std::fs::File::create(path).expect("checkpoint image file should be created");
+        let mut writer = std::io::BufWriter::new(file);
+        let mut encoder = ::png::Encoder::new(&mut writer, width, height);
+        encoder.set_color(::png::ColorType::Rgb);
+        encoder.set_depth(::png::BitDepth::Eight);
+        let mut png_writer = encoder
+            .write_header()
+            .expect("checkpoint PNG header should be written");
+        png_writer
+            .write_image_data(rgb)
+            .expect("checkpoint PNG image data should be written");
+        drop(png_writer);
+        use std::io::Write as _;
+        writer
+            .flush()
+            .expect("checkpoint PNG buffer should be flushed");
+    }
+
     #[macro_export]
     macro_rules! setup_rom_test {
         ($test_name:ident, $rom_path:expr, $timeout:expr) => {
@@ -607,6 +635,89 @@ pub(crate) mod tests {
         };
         ($test_name:ident, $rom_path:expr, $expected:expr) => {
             setup_rom_console_crc_test!($test_name, $rom_path, 60 * 30, $expected); // Wait for at least 30 s
+        };
+    }
+
+    #[macro_export]
+    macro_rules! setup_rom_crc_test {
+        ($test_name:ident, $rom_path:expr, $checkpoints:expr) => {
+            #[test]
+            fn $test_name() {
+                let rom_data = std::fs::read($rom_path).expect("ROM should load");
+                let cartridge =
+                    $crate::cartridge::Cartridge::new(&rom_data).expect("ROM should parse");
+
+                let mut config = $crate::console::Config {
+                    ram_init_mode: $crate::console::RamInitMode::Zero,
+                    ..Default::default()
+                };
+                match cartridge.rom_tv_system() {
+                    $crate::cartridge::RomTvSystem::Pal => {
+                        config.tv_system = $crate::console::TvSystem::Pal;
+                    }
+                    $crate::cartridge::RomTvSystem::Ntsc => {
+                        config.tv_system = $crate::console::TvSystem::Ntsc;
+                    }
+                    $crate::cartridge::RomTvSystem::Unknown => {
+                        config.tv_system = $crate::console::TvSystem::Ntsc;
+                    }
+                }
+
+                let mut nes = $crate::console::Nes::new(config);
+                nes.insert_cartridge(cartridge);
+                nes.reset(false);
+
+                let checkpoints = $checkpoints;
+                let capture_screen = std::env::var_os("NESER_CAPTURE_SCREEN").is_some();
+                let capture_dir =
+                    std::path::PathBuf::from("target/crc_checkpoints").join(stringify!($test_name));
+
+                let mut previous_frame = 0u32;
+                let mut actual: Vec<(u32, u32)> = Vec::with_capacity(checkpoints.len());
+
+                for (frame, _expected_crc) in checkpoints.iter().copied() {
+                    assert!(
+                        frame >= previous_frame,
+                        "checkpoint frames must be in non-decreasing order"
+                    );
+
+                    let delta = frame - previous_frame;
+                    if delta > 0 {
+                        $crate::integration_tests::rom_test_runner::tests::run_nes_for_frames(
+                            &mut nes, delta,
+                        );
+                    }
+
+                    let screen = nes.get_screen_buffer();
+                    let crc = screen.crc32();
+                    actual.push((frame, crc));
+
+                    if capture_screen {
+                        let rgb = screen.snapshot();
+                        let file_name = format!("f{:05}_crc_{:08X}.png", frame, crc);
+                        let path = capture_dir.join(file_name);
+                        $crate::integration_tests::rom_test_runner::tests::write_checkpoint_png(
+                            &path, &rgb, 256, 240,
+                        );
+                    }
+
+                    previous_frame = frame;
+                }
+
+                let expected: Vec<(u32, u32)> = checkpoints.iter().copied().collect();
+                assert_eq!(
+                    actual, expected,
+                    "CRC checkpoints mismatch for {}",
+                    $rom_path
+                );
+
+                if capture_screen {
+                    println!(
+                        "[crc-checkpoint] generated checkpoint artifacts in {}",
+                        capture_dir.display()
+                    );
+                }
+            }
         };
     }
 
