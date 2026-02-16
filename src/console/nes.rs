@@ -732,9 +732,15 @@ impl Nes {
             } else if tile_index == 0x00 {
                 ' ' // Treat 0x00 as space
             } else {
-                '?' // Unknown/control character
+                // Assume tile indices 0x10-0x1F maps to ASCII characters [0..9,A..F]
+                if tile_index >= 0x10 && tile_index <= 0x19 {
+                    (tile_index + 0x20) as char
+                } else if tile_index >= 0x1A && tile_index <= 0x1F {
+                    (tile_index + 0x27) as char
+                } else {
+                    '?' // Unknown character
+                }
             };
-
             text.push(ch);
         }
 
