@@ -42,6 +42,9 @@ pub struct Sprites {
     next_sprite_x_positions: [u8; 8],
     /// Sprite attributes - NEXT scanline
     next_sprite_attributes: [u8; 8],
+    /// Internal OAM read latch - reflects the value on the internal OAM bus during rendering.
+    /// During rendering, $2004 reads return this latch instead of OAM[OAMADDR].
+    oam_read_latch: u8,
 }
 
 impl Default for Sprites {
@@ -81,6 +84,7 @@ impl Sprites {
             next_sprite_pattern_shift_hi: [0; 8],
             next_sprite_x_positions: [0; 8],
             next_sprite_attributes: [0; 8],
+            oam_read_latch: 0,
         }
     }
 
@@ -101,6 +105,7 @@ impl Sprites {
         self.sprite_eval_m = 0;
         self.sprite_eval_cycle = 0;
         self.sprite_eval_in_range = false;
+        self.oam_read_latch = 0;
     }
 
     /// Get OAM data at specified address
@@ -128,6 +133,7 @@ impl Sprites {
         if oam_index < 32 {
             self.secondary_oam[oam_index] = 0xFF;
         }
+        self.oam_read_latch = 0xFF;
     }
 
     /// Evaluate sprites for the current scanline (cycle-accurate)
@@ -153,6 +159,7 @@ impl Sprites {
 
                 if oam_index < 256 {
                     let sprite_y = self.oam_data[oam_index];
+                    self.oam_read_latch = sprite_y;
 
                     let next_scanline = scanline + 1;
                     // Adjust Y position: add 1 to sprite_y (same as normal evaluation)
@@ -195,6 +202,7 @@ impl Sprites {
             // Odd cycle 0: Read Y byte
             let oam_index = (self.sprite_eval_n as usize) * 4;
             let sprite_y = self.oam_data[oam_index];
+            self.oam_read_latch = sprite_y;
 
             // Sprites with Y >= 240 (0xF0) don't render
             if sprite_y >= 0xF0 {
@@ -245,7 +253,8 @@ impl Sprites {
             // Odd cycles: read from OAM
             // Even cycles: write to secondary OAM
             if self.sprite_eval_cycle == 2 && is_odd_cycle {
-                // Read tile byte (actual read happens in hardware, we just advance)
+                // Read tile byte
+                self.oam_read_latch = self.oam_data[oam_index + 1];
                 self.sprite_eval_cycle = 3;
             } else if self.sprite_eval_cycle == 3 && !is_odd_cycle {
                 // Write tile byte
@@ -253,6 +262,7 @@ impl Sprites {
                 self.sprite_eval_cycle = 4;
             } else if self.sprite_eval_cycle == 4 && is_odd_cycle {
                 // Read attribute byte
+                self.oam_read_latch = self.oam_data[oam_index + 2];
                 self.sprite_eval_cycle = 5;
             } else if self.sprite_eval_cycle == 5 && !is_odd_cycle {
                 // Write attribute byte
@@ -260,6 +270,7 @@ impl Sprites {
                 self.sprite_eval_cycle = 6;
             } else if self.sprite_eval_cycle == 6 && is_odd_cycle {
                 // Read X byte
+                self.oam_read_latch = self.oam_data[oam_index + 3];
                 self.sprite_eval_cycle = 7;
             } else if self.sprite_eval_cycle == 7 && !is_odd_cycle {
                 // Write X byte - last byte
@@ -346,6 +357,14 @@ impl Sprites {
             // The NES hardware reads these even though no sprite is visible
             (0xFF, 0, 0xFF)
         };
+
+        // Update the OAM read latch with the secondary OAM byte being read
+        // during this fetch step. Each 8-cycle slot reads: Y(0-1), tile(2-3), attr(4-5), X(6-7)
+        {
+            let sec_oam_offset = sprite_index * 4;
+            let byte_index = (fetch_step / 2) as usize; // 0=Y, 1=tile, 2=attr, 3=X
+            self.oam_read_latch = self.secondary_oam[sec_oam_offset + byte_index];
+        }
 
         let next_scanline = if scanline == prerender_scanline {
             0
@@ -446,6 +465,13 @@ impl Sprites {
             std::mem::swap(&mut self.sprite_count, &mut self.next_sprite_count);
             std::mem::swap(&mut self.sprite_0_index, &mut self.next_sprite_0_index);
         }
+    }
+
+    /// Update OAM read latch to secondary_oam[0] during idle sprite bus cycles.
+    /// Per NES hardware: during cycles 321-340, the PPU repeatedly reads the first
+    /// byte of secondary OAM onto the internal bus.
+    pub fn update_idle_oam_latch(&mut self) {
+        self.oam_read_latch = self.secondary_oam[0];
     }
 
     /// Reset sprite evaluation state for a new scanline
@@ -587,6 +613,7 @@ impl Sprites {
             next_sprite_pattern_shift_hi: self.next_sprite_pattern_shift_hi,
             next_sprite_x_positions: self.next_sprite_x_positions,
             next_sprite_attributes: self.next_sprite_attributes,
+            oam_read_latch: self.oam_read_latch,
         }
     }
 
@@ -611,6 +638,15 @@ impl Sprites {
         self.next_sprite_pattern_shift_hi = state.next_sprite_pattern_shift_hi;
         self.next_sprite_x_positions = state.next_sprite_x_positions;
         self.next_sprite_attributes = state.next_sprite_attributes;
+        self.oam_read_latch = state.oam_read_latch;
+    }
+}
+
+impl Sprites {
+    /// Returns the internal OAM read latch value.
+    /// During rendering, $2004 reads return this instead of OAM[OAMADDR].
+    pub fn oam_read_latch(&self) -> u8 {
+        self.oam_read_latch
     }
 }
 
@@ -637,6 +673,7 @@ pub struct SpritesDebugState {
     pub next_sprite_pattern_shift_hi: [u8; 8],
     pub next_sprite_x_positions: [u8; 8],
     pub next_sprite_attributes: [u8; 8],
+    pub oam_read_latch: u8,
 }
 
 #[cfg(test)]
@@ -663,6 +700,7 @@ impl Sprites {
             next_sprite_pattern_shift_hi: self.next_sprite_pattern_shift_hi,
             next_sprite_x_positions: self.next_sprite_x_positions,
             next_sprite_attributes: self.next_sprite_attributes,
+            oam_read_latch: self.oam_read_latch,
         }
     }
 
@@ -687,6 +725,7 @@ impl Sprites {
         self.next_sprite_pattern_shift_hi = state.next_sprite_pattern_shift_hi;
         self.next_sprite_x_positions = state.next_sprite_x_positions;
         self.next_sprite_attributes = state.next_sprite_attributes;
+        self.oam_read_latch = state.oam_read_latch;
     }
 }
 

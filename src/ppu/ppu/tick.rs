@@ -439,6 +439,13 @@ fn tick_sprites(ppu: &mut Ppu) {
             },
         );
     }
+
+    // During cycles 321-340, the PPU repeatedly reads secondary_oam[0] on the
+    // internal OAM bus. This is visible via $2004 reads during rendering.
+    if is_rendering_enabled && is_rendering_scanline && pixel > SPRITE_TILE_LOAD_END && pixel <= 340
+    {
+        ppu.sprites.update_idle_oam_latch();
+    }
 }
 
 /// Phase 5: Pixel composition and screen output.

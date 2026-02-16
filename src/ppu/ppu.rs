@@ -523,8 +523,20 @@ impl Ppu {
     }
 
     /// Read from OAM data register ($2004)
+    ///
+    /// During active rendering (visible + pre-render scanlines with rendering enabled),
+    /// this returns the internal OAM read latch instead of OAM[OAMADDR].
+    /// The latch reflects whatever the PPU's internal OAM bus is doing:
+    /// - Cycles 1-64: $FF (secondary OAM clear)
+    /// - Cycles 65-256: sprite evaluation data
+    /// - Cycles 257-320: secondary OAM data for sprite fetches
+    /// - Cycles 321-340: first byte of secondary OAM
     pub fn read_oam_data(&mut self) -> u8 {
-        let value = self.sprites.read_oam(self.registers.oam_address);
+        let value = if self.is_actively_rendering() {
+            self.sprites.oam_read_latch()
+        } else {
+            self.sprites.read_oam(self.registers.oam_address)
+        };
         self.registers.set_io_bus(value); // Update I/O bus
         value
     }
@@ -770,6 +782,7 @@ impl Ppu {
             next_sprite_pattern_shift_hi: state.next_sprite_pattern_shift_hi,
             next_sprite_x_positions: state.next_sprite_x_positions,
             next_sprite_attributes: state.next_sprite_attributes,
+            oam_read_latch: 0,
         });
 
         // Restore status flags
@@ -1120,6 +1133,7 @@ mod tests {
                 next_sprite_pattern_shift_hi: [0x66; 8],
                 next_sprite_x_positions: [0x77; 8],
                 next_sprite_attributes: [0x88; 8],
+                oam_read_latch: 0,
             },
             rendering: rendering::RenderingDebugState { screen_buffer },
             vblank_suppressed_for_frame: true,
@@ -1738,10 +1752,10 @@ mod tests {
 
         // Check that OAM[0..7] has been corrupted with data from OAM[0x10..0x17]
         // OAMADDR was 0x10, so 0x10 & 0xF8 = 0x10, meaning OAM[0x10..0x17] -> OAM[0..7]
-        ppu.write_oam_address(0x00);
-        for i in 0..8 {
-            let value = ppu.read_oam_data();
-            ppu.write_oam_address(i + 1); // Re-set address since read doesn't increment
+        // Note: We read OAM directly via sprites() because $2004 returns the internal
+        // latch during rendering, not OAM[OAMADDR].
+        for i in 0..8u8 {
+            let value = ppu.sprites().read_oam(i);
             let expected = if (i & 0x03) == 2 {
                 // Attribute byte: 0x82 with masking = 0x82 & 0xE3 = 0x82
                 (0x80 + i) & 0xE3
@@ -1779,10 +1793,10 @@ mod tests {
         ppu.run_ppu_cycles((261 - 241) * 341 + 257 - 10);
 
         // OAM[0..7] should be unchanged
-        ppu.write_oam_address(0x00);
-        for i in 0..8 {
-            let value = ppu.read_oam_data();
-            ppu.write_oam_address(i + 1);
+        // Note: We read OAM directly via sprites() because $2004 returns the internal
+        // latch during rendering, not OAM[OAMADDR].
+        for i in 0..8u8 {
+            let value = ppu.sprites().read_oam(i);
             let expected = if (i & 0x03) == 2 {
                 (0x40 + i) & 0xE3 // Attribute byte masking
             } else {
@@ -1817,9 +1831,10 @@ mod tests {
         ppu.write_oam_data(0x99); // This write should be ignored
 
         // Read back - should still be 0x42
-        ppu.write_oam_address(0x05);
+        // Note: We read OAM directly via sprites() because $2004 returns the internal
+        // latch during rendering, not OAM[OAMADDR].
         assert_eq!(
-            ppu.read_oam_data(),
+            ppu.sprites().read_oam(0x05),
             0x42,
             "OAM write during rendering should be ignored"
         );
@@ -2257,6 +2272,216 @@ mod tests {
 
         // Access $1000 (A12=1) - no rising edge
         assert!(!ppu.check_a12_rising_edge(0x1000));
+    }
+
+    /// Given the PPU is on a visible scanline during cycles 1-64 (secondary OAM clear),
+    /// When $2004 is read,
+    /// Then it should return $FF regardless of OAMADDR contents.
+    ///
+    /// Per NES hardware: during cycles 1-64 the PPU writes $FF to secondary OAM,
+    /// and $2004 reads expose this internal bus value rather than OAM[OAMADDR].
+    #[test]
+    fn test_read_2004_returns_ff_during_secondary_oam_clear() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Write a known non-$FF value to OAM at address 0 via DMA (bypasses rendering check)
+        ppu.write_oam_address(0x00);
+        ppu.write_oam_data_dma(0x42);
+
+        // Enable rendering (both BG and sprites)
+        ppu.write_mask(0x18);
+
+        // Reset OAMADDR to 0 so read_oam_data would normally return 0x42
+        ppu.write_oam_address(0x00);
+
+        // Advance to scanline 0, pixel 32 (within the 1-64 secondary OAM clear window)
+        ppu.run_ppu_cycles(32);
+
+        // Read $2004 - should return $FF during secondary OAM clear, not OAM[0]=0x42
+        let value = ppu.read_oam_data();
+        assert_eq!(
+            value, 0xFF,
+            "During secondary OAM clear (cycles 1-64), $2004 should return $FF, got {:#04X}",
+            value
+        );
+    }
+
+    /// Given the PPU is on a visible scanline during cycles 65-256 (sprite evaluation),
+    /// When $2004 is read,
+    /// Then it should return the OAM byte currently being read by the evaluation logic,
+    /// not OAM[OAMADDR].
+    ///
+    /// Per NES hardware: during cycles 65-256, the PPU evaluates sprites by reading
+    /// primary OAM and writing to secondary OAM. $2004 reads expose the byte currently
+    /// on the internal OAM data bus from this evaluation process.
+    #[test]
+    fn test_read_2004_returns_oam_eval_data_during_sprite_evaluation() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Write sprite 0: Y=0xA5 at OAM[0] via DMA
+        ppu.write_oam_address(0x00);
+        ppu.write_oam_data_dma(0xA5); // Y position
+        ppu.write_oam_data_dma(0xB6); // Tile index
+        ppu.write_oam_data_dma(0xC7); // Attributes
+        ppu.write_oam_data_dma(0xD8); // X position
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Set OAMADDR to a different address so we can distinguish latch from OAM[OAMADDR]
+        ppu.write_oam_address(0x10);
+
+        // Advance to pixel 66 (first even cycle of sprite evaluation).
+        // Pixel 65 (odd): evaluate_sprites reads OAM[0] (Y byte = 0xA5)
+        // Pixel 66 (even): evaluate_sprites writes Y to secondary OAM (or skips)
+        // The latch should hold 0xA5 (the Y byte that was read from OAM).
+        ppu.run_ppu_cycles(66);
+
+        let value = ppu.read_oam_data();
+        assert_eq!(
+            value, 0xA5,
+            "During sprite evaluation (cycles 65-256), $2004 should return the OAM byte \
+             being evaluated (0xA5), got {:#04X}",
+            value
+        );
+    }
+
+    /// Given the PPU is on a visible scanline during cycles 257-320 (sprite tile fetching),
+    /// When $2004 is read,
+    /// Then it should return the secondary OAM byte currently being accessed for the
+    /// sprite fetch, not OAM[OAMADDR] or a stale evaluation value.
+    ///
+    /// Per NES hardware: during cycles 257-320, the PPU reads secondary OAM data
+    /// for each of 8 sprite slots. Each slot takes 8 cycles: the PPU reads Y, tile,
+    /// attribute, and X from secondary OAM (2 cycles each). $2004 exposes these
+    /// secondary OAM reads on the internal bus.
+    #[test]
+    fn test_read_2004_returns_secondary_oam_during_sprite_fetch() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Set up sprite 0 at Y=0 (in range for scanline 0), tile=0x42, attr=0, X=10
+        ppu.write_oam_address(0x00);
+        ppu.write_oam_data_dma(0x00); // Y=0 (in range)
+        ppu.write_oam_data_dma(0x42); // Tile index
+        ppu.write_oam_data_dma(0x00); // Attributes
+        ppu.write_oam_data_dma(0x0A); // X=10
+
+        // Fill remaining OAM with Y=0xEE (not in range, not >= 0xF0 so still evaluated)
+        // This ensures the evaluation latch ends on 0xEE, which we can distinguish
+        // from the expected secondary OAM data.
+        for _ in 4..256 {
+            ppu.write_oam_data_dma(0xEE);
+        }
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Set OAMADDR to something different to distinguish from OAM[OAMADDR] confusion
+        ppu.write_oam_address(0x40);
+
+        // Advance to pixel 260 (within sprite 0 fetch window 257-264).
+        // fetch_step = 260 - 257 = 3 → tile index byte, secondary_oam[1] = 0x42
+        // The latch should be updated to secondary_oam[1] = 0x42.
+        ppu.run_ppu_cycles(260);
+
+        let value = ppu.read_oam_data();
+        assert_eq!(
+            value, 0x42,
+            "During sprite tile fetch (cycles 257-320), $2004 should return secondary OAM \
+             data (tile=0x42), got {:#04X}",
+            value
+        );
+    }
+
+    /// Given the PPU is on a visible scanline during cycles 321-340 (BG prefetching),
+    /// When $2004 is read,
+    /// Then it should return secondary_oam[0] (the Y coordinate of the first sprite),
+    /// not OAM[OAMADDR] or the last fetched sprite data.
+    ///
+    /// Per NES hardware: during cycles 321-340, the PPU repeatedly reads the first
+    /// byte of secondary OAM (secondary_oam[0]) on the internal bus, so $2004 exposes
+    /// this value.
+    #[test]
+    fn test_read_2004_returns_secondary_oam_0_during_bg_prefetch() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Set up sprite 0 at Y=0 (in range for scanline 0), tile=0x42, attr=0, X=10
+        ppu.write_oam_address(0x00);
+        ppu.write_oam_data_dma(0x00); // Y=0 → secondary_oam[0] will be 0x00
+        ppu.write_oam_data_dma(0x42); // Tile
+        ppu.write_oam_data_dma(0x00); // Attributes
+        ppu.write_oam_data_dma(0x0A); // X=10
+
+        // Fill remaining OAM with Y=0xEE (out of range, distinguishable)
+        for _ in 4..256 {
+            ppu.write_oam_data_dma(0xEE);
+        }
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Advance to pixel 330 (within the 321-340 BG prefetch window)
+        // After sprite fetching (257-320), the latch holds secondary_oam[31] = 0xFF
+        // (last sprite 7's X byte, no sprites found there)
+        // But the expected behavior is secondary_oam[0] = 0x00
+        ppu.run_ppu_cycles(330);
+
+        let value = ppu.read_oam_data();
+        assert_eq!(
+            value, 0x00,
+            "During BG prefetch (cycles 321-340), $2004 should return secondary_oam[0] \
+             (0x00), got {:#04X}",
+            value
+        );
+    }
+
+    /// Given the PPU is on the pre-render scanline (261 for NTSC) during sprite
+    /// tile fetching (cycles 257-320),
+    /// When $2004 is read,
+    /// Then it should return secondary OAM data (from the latch), not OAM[OAMADDR].
+    ///
+    /// Per NES hardware: the pre-render scanline performs sprite pattern fetches
+    /// (for MMC3 IRQ timing) but no sprite evaluation. $2004 reads still expose
+    /// the internal OAM bus during these fetches.
+    #[test]
+    fn test_read_2004_returns_latch_on_prerender_scanline() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Write sprite 0: Y=0, tile=0x42
+        ppu.write_oam_address(0x00);
+        ppu.write_oam_data_dma(0x00); // Y=0
+        ppu.write_oam_data_dma(0x42); // Tile
+        ppu.write_oam_data_dma(0x00); // Attr
+        ppu.write_oam_data_dma(0x0A); // X
+
+        // Fill remaining OAM with Y>=0xF0 (off-screen, immediately filtered out)
+        for _ in 4..256 {
+            ppu.write_oam_data_dma(0xF0);
+        }
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Advance to pre-render scanline (261), pixel 32
+        // 261 scanlines * 341 pixels + 32 = 89,033 cycles
+        let prerender_cycles = 261 * 341 + 32;
+        ppu.run_ppu_cycles(prerender_cycles);
+
+        // Verify we're at the expected position
+        assert_eq!(ppu.timing().scanline(), 261);
+        assert_eq!(ppu.timing().pixel(), 32);
+
+        // OAMADDR was cleared to 0 during rendering (sprite fetch phase on visible scanlines).
+        // OAM[0] = 0x00 (Y position of sprite 0).
+        // If $2004 returns 0x00, it's reading OAM[OAMADDR] directly (wrong).
+        // If $2004 returns the latch (0xFF from secondary OAM idle phase), it's correct.
+        let value = ppu.read_oam_data();
+        assert_ne!(
+            value, 0x00,
+            "On pre-render scanline, $2004 should return the OAM latch, not OAM[OAMADDR=0] \
+             (0x00), got {:#04X}",
+            value
+        );
     }
 
     /// Given background rendering is enabled but sprite rendering is disabled,

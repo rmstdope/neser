@@ -158,6 +158,7 @@ pub struct SpritesState {
     pub next_sprite_pattern_shift_hi: [u8; 8],
     pub next_sprite_x_positions: [u8; 8],
     pub next_sprite_attributes: [u8; 8],
+    pub oam_read_latch: u8,
 }
 
 /// APU channel envelope state.
