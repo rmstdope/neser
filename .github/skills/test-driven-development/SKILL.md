@@ -73,6 +73,7 @@ Your core methodology follows these strict phases:
 - Ensure all required checks have passed before merging
 - After merging, close the issue and delete the branch
 - Update the main issue with any relevant information about the implementation and close it when all sub-issues are completed
+- Use the self-learning-skills immediately after merging to reflect on the process and identify any improvements for future cycles.
 
 ### Key Principles:
 
