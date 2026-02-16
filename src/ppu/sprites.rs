@@ -26,6 +26,14 @@ pub struct Sprites {
     sprite_eval_cycle: u8,
     /// Whether current sprite being evaluated is in range
     sprite_eval_in_range: bool,
+    /// Remaining bytes to read for an in-range sprite during overflow detection.
+    /// When a sprite is found in range during overflow, the hardware reads the
+    /// remaining 3 bytes (incrementing only m, not n). This counts down from 3 to 0.
+    sprite_eval_overflow_reads_remaining: u8,
+    /// Set when the overflow flag has been signaled during this evaluation.
+    /// After the first in-range detection + remaining reads, the PPU switches to
+    /// a simpler mode: m is forced to 0, only n increments, no more remaining reads.
+    sprite_eval_overflow_signaled: bool,
     /// Sprite pattern shift registers - low bit plane (8 sprites) - CURRENT scanline
     sprite_pattern_shift_lo: [u8; 8],
     /// Sprite pattern shift registers - high bit plane (8 sprites) - CURRENT scanline
@@ -42,6 +50,9 @@ pub struct Sprites {
     next_sprite_x_positions: [u8; 8],
     /// Sprite attributes - NEXT scanline
     next_sprite_attributes: [u8; 8],
+    /// Internal OAM read latch - reflects the value on the internal OAM bus during rendering.
+    /// During rendering, $2004 reads return this latch instead of OAM[OAMADDR].
+    oam_read_latch: u8,
 }
 
 impl Default for Sprites {
@@ -73,6 +84,8 @@ impl Sprites {
             sprite_eval_m: 0,
             sprite_eval_cycle: 0,
             sprite_eval_in_range: false,
+            sprite_eval_overflow_reads_remaining: 0,
+            sprite_eval_overflow_signaled: false,
             sprite_pattern_shift_lo: [0; 8],
             sprite_pattern_shift_hi: [0; 8],
             sprite_x_positions: [0; 8],
@@ -81,6 +94,7 @@ impl Sprites {
             next_sprite_pattern_shift_hi: [0; 8],
             next_sprite_x_positions: [0; 8],
             next_sprite_attributes: [0; 8],
+            oam_read_latch: 0,
         }
     }
 
@@ -101,6 +115,9 @@ impl Sprites {
         self.sprite_eval_m = 0;
         self.sprite_eval_cycle = 0;
         self.sprite_eval_in_range = false;
+        self.sprite_eval_overflow_reads_remaining = 0;
+        self.sprite_eval_overflow_signaled = false;
+        self.oam_read_latch = 0;
     }
 
     /// Get OAM data at specified address
@@ -128,6 +145,7 @@ impl Sprites {
         if oam_index < 32 {
             self.secondary_oam[oam_index] = 0xFF;
         }
+        self.oam_read_latch = 0xFF;
     }
 
     /// Evaluate sprites for the current scanline (cycle-accurate)
@@ -135,9 +153,15 @@ impl Sprites {
     pub fn evaluate_sprites(&mut self, pixel: u16, scanline: u16, sprite_height: u8) -> bool {
         let is_odd_cycle = (pixel % 2) == 1;
 
-        // Stop if we've evaluated all 64 sprites
+        // Stop if we've evaluated all 64 sprites.
+        // In post-overflow mode, n wraps (6-bit counter) and continues
+        // reading Y bytes until the evaluation dot window ends.
         if self.sprite_eval_n >= 64 {
-            return false;
+            if self.sprite_eval_overflow_signaled {
+                self.sprite_eval_n = 0;
+            } else {
+                return false;
+            }
         }
 
         let mut overflow = false;
@@ -145,38 +169,89 @@ impl Sprites {
         // If we've already found 8 sprites, enter overflow checking mode
         if self.sprites_found >= 8 {
             // NES PPU Hardware Bug: Sprite Overflow Detection
-            // Takes 2 cycles: read Y on odd, check and set flag on even
+            //
+            // Before overflow flag is set:
+            //   Not in range: both n and m increment (THE BUG)
+            //   In range: set overflow flag, read remaining 3 bytes (m increments
+            //   with carry to n), then force m=0 and switch to post-overflow mode.
+            //
+            // After overflow flag is set (post-overflow):
+            //   Only n increments, m stays at 0. Reads Y byte of each sprite.
+            //   No more remaining reads or n+m bug.
 
             if is_odd_cycle {
-                // Odd cycle: read Y byte
+                // Odd cycle: read from primary OAM
                 let oam_index = (self.sprite_eval_n as usize) * 4 + (self.sprite_eval_m as usize);
 
                 if oam_index < 256 {
-                    let sprite_y = self.oam_data[oam_index];
+                    let value = self.oam_data[oam_index];
+                    self.oam_read_latch = value;
 
-                    let next_scanline = scanline + 1;
-                    // Adjust Y position: add 1 to sprite_y (same as normal evaluation)
-                    let diff = next_scanline.wrapping_sub((sprite_y.wrapping_add(1)) as u16);
-
-                    // Sprites with Y < 240 (0xF0) participate in overflow detection
-                    // Store result for next cycle
-                    self.sprite_eval_in_range = diff < sprite_height as u16 && sprite_y < 0xF0;
+                    if self.sprite_eval_overflow_signaled
+                        && self.sprite_eval_overflow_reads_remaining == 0
+                    {
+                        // Post-overflow: just read, no range check needed
+                        self.sprite_eval_in_range = false;
+                    } else if self.sprite_eval_overflow_reads_remaining > 0 {
+                        // Reading remaining bytes of an in-range sprite — no range check
+                        self.sprite_eval_in_range = false;
+                    } else {
+                        // Initial Y check: compare value against scanline
+                        let next_scanline = scanline + 1;
+                        let diff = next_scanline.wrapping_sub((value.wrapping_add(1)) as u16);
+                        self.sprite_eval_in_range = diff < sprite_height as u16 && value < 0xF0;
+                    }
                 } else {
                     self.sprite_eval_in_range = false;
                 }
                 return false;
             } else {
-                // Even cycle: set flag if sprite was in range, then increment indices
-                if self.sprite_eval_in_range {
-                    overflow = true;
+                // Even cycle: process the result
+                // On write cycles during overflow detection, the secondary OAM bus
+                // is driven at address 0 (write pointer wrapped after filling 8 slots).
+                self.oam_read_latch = self.secondary_oam[0];
+
+                if self.sprite_eval_overflow_reads_remaining > 0 {
+                    // Reading remaining bytes of an in-range sprite
+                    self.sprite_eval_overflow_reads_remaining -= 1;
+                    self.sprite_eval_m += 1;
+                    if self.sprite_eval_m >= 4 {
+                        self.sprite_eval_m = 0;
+                        // m wraps 3→0: carry to n (same as normal sprite copy)
+                        self.sprite_eval_n += 1;
+                    }
+
+                    if self.sprite_eval_overflow_reads_remaining == 0 {
+                        // Remaining reads done: force m=0 for post-overflow mode
+                        self.sprite_eval_m = 0;
+                        self.sprite_eval_overflow_signaled = true;
+                    }
+                    return false;
                 }
 
-                // THE BUG: Increment BOTH n and m
-                self.sprite_eval_n += 1;
-                self.sprite_eval_m += 1;
+                if self.sprite_eval_overflow_signaled {
+                    // Post-overflow: only increment n, m stays at 0
+                    self.sprite_eval_n += 1;
+                    return false;
+                }
 
-                if self.sprite_eval_m >= 4 {
-                    self.sprite_eval_m = 0;
+                if self.sprite_eval_in_range {
+                    // Found in range: set overflow flag and begin reading remaining bytes
+                    overflow = true;
+                    self.sprite_eval_overflow_reads_remaining = 3;
+                    // Increment m to read next byte (carry to n if m wraps)
+                    self.sprite_eval_m += 1;
+                    if self.sprite_eval_m >= 4 {
+                        self.sprite_eval_m = 0;
+                        self.sprite_eval_n += 1;
+                    }
+                } else {
+                    // Not in range: THE BUG — increment BOTH n and m
+                    self.sprite_eval_n += 1;
+                    self.sprite_eval_m += 1;
+                    if self.sprite_eval_m >= 4 {
+                        self.sprite_eval_m = 0;
+                    }
                 }
                 return overflow;
             }
@@ -195,6 +270,7 @@ impl Sprites {
             // Odd cycle 0: Read Y byte
             let oam_index = (self.sprite_eval_n as usize) * 4;
             let sprite_y = self.oam_data[oam_index];
+            self.oam_read_latch = sprite_y;
 
             // Sprites with Y >= 240 (0xF0) don't render
             if sprite_y >= 0xF0 {
@@ -245,7 +321,8 @@ impl Sprites {
             // Odd cycles: read from OAM
             // Even cycles: write to secondary OAM
             if self.sprite_eval_cycle == 2 && is_odd_cycle {
-                // Read tile byte (actual read happens in hardware, we just advance)
+                // Read tile byte
+                self.oam_read_latch = self.oam_data[oam_index + 1];
                 self.sprite_eval_cycle = 3;
             } else if self.sprite_eval_cycle == 3 && !is_odd_cycle {
                 // Write tile byte
@@ -253,6 +330,7 @@ impl Sprites {
                 self.sprite_eval_cycle = 4;
             } else if self.sprite_eval_cycle == 4 && is_odd_cycle {
                 // Read attribute byte
+                self.oam_read_latch = self.oam_data[oam_index + 2];
                 self.sprite_eval_cycle = 5;
             } else if self.sprite_eval_cycle == 5 && !is_odd_cycle {
                 // Write attribute byte
@@ -260,6 +338,7 @@ impl Sprites {
                 self.sprite_eval_cycle = 6;
             } else if self.sprite_eval_cycle == 6 && is_odd_cycle {
                 // Read X byte
+                self.oam_read_latch = self.oam_data[oam_index + 3];
                 self.sprite_eval_cycle = 7;
             } else if self.sprite_eval_cycle == 7 && !is_odd_cycle {
                 // Write X byte - last byte
@@ -346,6 +425,14 @@ impl Sprites {
             // The NES hardware reads these even though no sprite is visible
             (0xFF, 0, 0xFF)
         };
+
+        // Update the OAM read latch with the secondary OAM byte being read
+        // during this fetch step. Each 8-cycle slot reads: Y(0-1), tile(2-3), attr(4-5), X(6-7)
+        {
+            let sec_oam_offset = sprite_index * 4;
+            let byte_index = (fetch_step / 2) as usize; // 0=Y, 1=tile, 2=attr, 3=X
+            self.oam_read_latch = self.secondary_oam[sec_oam_offset + byte_index];
+        }
 
         let next_scanline = if scanline == prerender_scanline {
             0
@@ -448,6 +535,13 @@ impl Sprites {
         }
     }
 
+    /// Update OAM read latch to secondary_oam[0] during idle sprite bus cycles.
+    /// Per NES hardware: during cycles 321-340, the PPU repeatedly reads the first
+    /// byte of secondary OAM onto the internal bus.
+    pub fn update_idle_oam_latch(&mut self) {
+        self.oam_read_latch = self.secondary_oam[0];
+    }
+
     /// Reset sprite evaluation state for a new scanline
     pub fn reset_evaluation(&mut self) {
         self.sprites_found = 0;
@@ -455,6 +549,8 @@ impl Sprites {
         self.sprite_eval_m = 0;
         self.sprite_eval_cycle = 0;
         self.sprite_eval_in_range = false;
+        self.sprite_eval_overflow_reads_remaining = 0;
+        self.sprite_eval_overflow_signaled = false;
         self.next_sprite_0_index = None;
     }
 
@@ -579,6 +675,8 @@ impl Sprites {
             sprite_eval_m: self.sprite_eval_m,
             sprite_eval_cycle: self.sprite_eval_cycle,
             sprite_eval_in_range: self.sprite_eval_in_range,
+            sprite_eval_overflow_reads_remaining: self.sprite_eval_overflow_reads_remaining,
+            sprite_eval_overflow_signaled: self.sprite_eval_overflow_signaled,
             sprite_pattern_shift_lo: self.sprite_pattern_shift_lo,
             sprite_pattern_shift_hi: self.sprite_pattern_shift_hi,
             sprite_x_positions: self.sprite_x_positions,
@@ -587,6 +685,7 @@ impl Sprites {
             next_sprite_pattern_shift_hi: self.next_sprite_pattern_shift_hi,
             next_sprite_x_positions: self.next_sprite_x_positions,
             next_sprite_attributes: self.next_sprite_attributes,
+            oam_read_latch: self.oam_read_latch,
         }
     }
 
@@ -603,6 +702,8 @@ impl Sprites {
         self.sprite_eval_m = state.sprite_eval_m;
         self.sprite_eval_cycle = state.sprite_eval_cycle;
         self.sprite_eval_in_range = state.sprite_eval_in_range;
+        self.sprite_eval_overflow_reads_remaining = state.sprite_eval_overflow_reads_remaining;
+        self.sprite_eval_overflow_signaled = state.sprite_eval_overflow_signaled;
         self.sprite_pattern_shift_lo = state.sprite_pattern_shift_lo;
         self.sprite_pattern_shift_hi = state.sprite_pattern_shift_hi;
         self.sprite_x_positions = state.sprite_x_positions;
@@ -611,6 +712,15 @@ impl Sprites {
         self.next_sprite_pattern_shift_hi = state.next_sprite_pattern_shift_hi;
         self.next_sprite_x_positions = state.next_sprite_x_positions;
         self.next_sprite_attributes = state.next_sprite_attributes;
+        self.oam_read_latch = state.oam_read_latch;
+    }
+}
+
+impl Sprites {
+    /// Returns the internal OAM read latch value.
+    /// During rendering, $2004 reads return this instead of OAM[OAMADDR].
+    pub fn oam_read_latch(&self) -> u8 {
+        self.oam_read_latch
     }
 }
 
@@ -629,6 +739,8 @@ pub struct SpritesDebugState {
     pub sprite_eval_m: u8,
     pub sprite_eval_cycle: u8,
     pub sprite_eval_in_range: bool,
+    pub sprite_eval_overflow_reads_remaining: u8,
+    pub sprite_eval_overflow_signaled: bool,
     pub sprite_pattern_shift_lo: [u8; 8],
     pub sprite_pattern_shift_hi: [u8; 8],
     pub sprite_x_positions: [u8; 8],
@@ -637,6 +749,7 @@ pub struct SpritesDebugState {
     pub next_sprite_pattern_shift_hi: [u8; 8],
     pub next_sprite_x_positions: [u8; 8],
     pub next_sprite_attributes: [u8; 8],
+    pub oam_read_latch: u8,
 }
 
 #[cfg(test)]
@@ -655,6 +768,8 @@ impl Sprites {
             sprite_eval_m: self.sprite_eval_m,
             sprite_eval_cycle: self.sprite_eval_cycle,
             sprite_eval_in_range: self.sprite_eval_in_range,
+            sprite_eval_overflow_reads_remaining: self.sprite_eval_overflow_reads_remaining,
+            sprite_eval_overflow_signaled: self.sprite_eval_overflow_signaled,
             sprite_pattern_shift_lo: self.sprite_pattern_shift_lo,
             sprite_pattern_shift_hi: self.sprite_pattern_shift_hi,
             sprite_x_positions: self.sprite_x_positions,
@@ -663,6 +778,7 @@ impl Sprites {
             next_sprite_pattern_shift_hi: self.next_sprite_pattern_shift_hi,
             next_sprite_x_positions: self.next_sprite_x_positions,
             next_sprite_attributes: self.next_sprite_attributes,
+            oam_read_latch: self.oam_read_latch,
         }
     }
 
@@ -679,6 +795,8 @@ impl Sprites {
         self.sprite_eval_m = state.sprite_eval_m;
         self.sprite_eval_cycle = state.sprite_eval_cycle;
         self.sprite_eval_in_range = state.sprite_eval_in_range;
+        self.sprite_eval_overflow_reads_remaining = state.sprite_eval_overflow_reads_remaining;
+        self.sprite_eval_overflow_signaled = state.sprite_eval_overflow_signaled;
         self.sprite_pattern_shift_lo = state.sprite_pattern_shift_lo;
         self.sprite_pattern_shift_hi = state.sprite_pattern_shift_hi;
         self.sprite_x_positions = state.sprite_x_positions;
@@ -687,6 +805,7 @@ impl Sprites {
         self.next_sprite_pattern_shift_hi = state.next_sprite_pattern_shift_hi;
         self.next_sprite_x_positions = state.next_sprite_x_positions;
         self.next_sprite_attributes = state.next_sprite_attributes;
+        self.oam_read_latch = state.oam_read_latch;
     }
 }
 
@@ -894,12 +1013,92 @@ mod tests {
         sprites.sprite_eval_m = 0;
         sprites.oam_data[0] = 0x00; // Y position in range
 
+        // Odd cycle: read OAM[0]=0x00, find in range
         let overflow = sprites.evaluate_sprites(1, 0, 8);
         assert!(!overflow);
 
+        // Even cycle: in range → set overflow flag, begin reading remaining bytes
+        // Only m increments (to 1), n stays at 0 until remaining bytes are read
         let overflow = sprites.evaluate_sprites(2, 0, 8);
         assert!(overflow);
-        assert_eq!(sprites.sprite_eval_n, 1);
-        assert_eq!(sprites.sprite_eval_m, 1);
+        assert_eq!(
+            sprites.sprite_eval_n, 0,
+            "n should stay at 0 during in-range remaining reads"
+        );
+        assert_eq!(
+            sprites.sprite_eval_m, 1,
+            "m should advance to 1 for next byte read"
+        );
+        assert_eq!(sprites.sprite_eval_overflow_reads_remaining, 3);
+
+        // Read remaining 3 bytes (m=1, m=2, m=3), each takes 2 cycles
+        for i in 0..3 {
+            let _overflow = sprites.evaluate_sprites(3 + i * 2, 0, 8); // odd: read
+            let _overflow = sprites.evaluate_sprites(4 + i * 2, 0, 8); // even: process
+        }
+
+        // After all 4 bytes: n should have incremented to 1, m stayed at 0 (wrapped from 3+1=4→0)
+        assert_eq!(
+            sprites.sprite_eval_n, 1,
+            "n should increment after all 4 bytes"
+        );
+        assert_eq!(sprites.sprite_eval_overflow_reads_remaining, 0);
+    }
+
+    /// Given sprite overflow detection encounters a sprite in range,
+    /// When the remaining bytes of that sprite are read,
+    /// Then the hardware should increment only m (not n) for the remaining 3 reads,
+    /// and after all 4 bytes, increment n and force m=0 to enter post-overflow mode.
+    ///
+    /// This test verifies the correct in-range overflow behavior:
+    /// - When found in range at (n, m): set overflow flag
+    /// - Read remaining bytes: m+1, m+2, m+3 (all with same n)
+    /// - After 4 reads: increment n and force m=0 (post-overflow mode)
+    ///
+    /// The overflow bug causes m to NOT be 0 when checking Y, so in-range
+    /// detection may trigger on non-Y bytes (tile, attr, X). The remaining
+    /// bytes are still read sequentially from the same sprite.
+    #[test]
+    fn test_sprite_overflow_in_range_reads_remaining_bytes() {
+        let mut sprites = Sprites::new(crate::console::RamInitMode::Zero);
+        sprites.sprites_found = 8;
+
+        // Set up at n=5, m=2 (reading attribute byte due to overflow bug)
+        sprites.sprite_eval_n = 5;
+        sprites.sprite_eval_m = 2;
+
+        // Sprite 5: Y=$10, tile=$20, attr=$00, X=$30
+        sprites.oam_data[20] = 0x10; // Y
+        sprites.oam_data[21] = 0x20; // Tile
+        sprites.oam_data[22] = 0x00; // Attr (will be treated as Y for range check)
+        sprites.oam_data[23] = 0x30; // X
+
+        // OAM[5*4+2] = 0x00 (attr). For scanline 0: diff = 1 - 1 = 0 < 8 → IN RANGE
+        // Odd cycle: read OAM[22] = 0x00, find in range
+        let overflow = sprites.evaluate_sprites(1, 0, 8);
+        assert!(
+            !overflow,
+            "Overflow flag should not be set on the read cycle"
+        );
+        assert_eq!(
+            sprites.oam_read_latch, 0x00,
+            "Latch should hold the read value (OAM[22] = 0x00)"
+        );
+
+        // Even cycle: set overflow flag, begin reading remaining bytes
+        let overflow = sprites.evaluate_sprites(2, 0, 8);
+        assert!(overflow, "Overflow flag should be set on the even cycle");
+
+        // After the even cycle when in range: the hardware should now read the
+        // remaining bytes (m=3) before moving to the next sprite.
+        // Odd cycle: read m=3 → OAM[5*4+3] = OAM[23] = 0x30
+        let overflow = sprites.evaluate_sprites(3, 0, 8);
+        assert!(!overflow);
+        assert_eq!(
+            sprites.oam_read_latch, 0x30,
+            "After in-range detection at m=2, next read should be m=3 (OAM[23]=0x30), \
+             got {:#04X}. The hardware reads remaining sprite bytes without incrementing n.",
+            sprites.oam_read_latch
+        );
     }
 }

@@ -439,6 +439,13 @@ fn tick_sprites(ppu: &mut Ppu) {
             },
         );
     }
+
+    // During cycles 321-340, the PPU repeatedly reads secondary_oam[0] on the
+    // internal OAM bus. This is visible via $2004 reads during rendering.
+    if is_rendering_enabled && is_rendering_scanline && pixel > SPRITE_TILE_LOAD_END && pixel <= 340
+    {
+        ppu.sprites.update_idle_oam_latch();
+    }
 }
 
 /// Phase 5: Pixel composition and screen output.
@@ -475,8 +482,12 @@ fn tick_pixel_output(ppu: &mut Ppu) {
                 0 // Background disabled, treat as transparent
             };
 
-            // Get sprite pixel
-            let sprite_pixel = ppu.sprites.get_pixel(screen_x_i16, show_sprites_left);
+            // Get sprite pixel (only if sprite rendering is enabled)
+            let sprite_pixel = if sp_enabled {
+                ppu.sprites.get_pixel(screen_x_i16, show_sprites_left)
+            } else {
+                None
+            };
             let has_sprite_pixel = sprite_pixel.is_some();
             let (sprite_palette_idx, sprite_is_foreground) =
                 if let Some((idx, _sprite_idx, fg)) = sprite_pixel {

@@ -115,6 +115,8 @@ pub struct PpuState {
     pub sprite_eval_m: u8,
     pub sprite_eval_cycle: u8,
     pub sprite_eval_in_range: bool,
+    pub sprite_eval_overflow_reads_remaining: u8,
+    pub sprite_eval_overflow_signaled: bool,
     pub sprite_pattern_shift_lo: [u8; 8],
     pub sprite_pattern_shift_hi: [u8; 8],
     pub sprite_x_positions: [u8; 8],
@@ -150,6 +152,8 @@ pub struct SpritesState {
     pub sprite_eval_m: u8,
     pub sprite_eval_cycle: u8,
     pub sprite_eval_in_range: bool,
+    pub sprite_eval_overflow_reads_remaining: u8,
+    pub sprite_eval_overflow_signaled: bool,
     pub sprite_pattern_shift_lo: [u8; 8],
     pub sprite_pattern_shift_hi: [u8; 8],
     pub sprite_x_positions: [u8; 8],
@@ -158,6 +162,7 @@ pub struct SpritesState {
     pub next_sprite_pattern_shift_hi: [u8; 8],
     pub next_sprite_x_positions: [u8; 8],
     pub next_sprite_attributes: [u8; 8],
+    pub oam_read_latch: u8,
 }
 
 /// APU channel envelope state.
@@ -465,6 +470,8 @@ mod tests {
             sprite_eval_m: 0,
             sprite_eval_cycle: 0,
             sprite_eval_in_range: false,
+            sprite_eval_overflow_reads_remaining: 0,
+            sprite_eval_overflow_signaled: false,
             sprite_pattern_shift_lo: [0; 8],
             sprite_pattern_shift_hi: [0; 8],
             sprite_x_positions: [0; 8],

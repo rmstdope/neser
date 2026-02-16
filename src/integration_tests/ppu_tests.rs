@@ -128,6 +128,82 @@ mod tests {
     );
 
     // TODO misc_oam_tests
+
+    /// Verifies all 256 nametable values produced by read2004.nes.
+    ///
+    /// The ROM reads $2004 during rendering across 3 scanlines × 21 rounds × 12 reads,
+    /// producing 252 values that are stored in the nametable (plus 4 trailing zeros
+    /// from stack residuals). The output covers:
+    /// - Secondary OAM clear phase (pixels 1-64): latch = $FF
+    /// - Normal sprite evaluation (pixels 65-256): latch follows odd/even cycle pattern
+    /// - Overflow detection (pixels 131+): latch alternates OAM read / secondary_oam[0]
+    /// - Post-overflow wrap: latch reads Y bytes as n wraps through all 64 sprites
+    /// - Sprite fetch phase (pixels 257-320): latch reads secondary OAM bytes
+    #[test]
+    fn test_read2004() {
+        let rom_data = fs::read("roms/automated_tests/misc_oam_tests/read2004.nes").unwrap();
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let config = Config {
+            ram_init_mode: RamInitMode::Zero,
+            ..Default::default()
+        };
+        let mut nes = Nes::new(config);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        // Run for enough frames to get stable output
+        for _ in 0..300 {
+            run_nes_for_frames(&mut nes, 1);
+        }
+
+        let base_addr = nes.base_nametable_addr();
+        let text = nes.read_nametable_text(base_addr, 32 * 32);
+        let text: String = text
+            .as_bytes()
+            .chunks(32)
+            .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let upper = text.to_uppercase();
+
+        // Full expected output: 26 lines of 10 hex values each (last line has 6).
+        // This covers all 256 nametable positions from the ROM's $2004 read test.
+        let expected_full = "\
+FF FF FF FF FF FF FF FF FF FF\n\
+AA AA 01 01 10 10 01 01 00 00\n\
+00 00 20 20 01 01 01 01 00 00\n\
+30 30 01 01 02 02 00 00 40 40\n\
+02 02 03 03 00 00 50 50 02 02\n\
+04 04 00 00 60 60 02 02 05 05\n\
+00 00 70 70 03 03 06 06 00 00\n\
+80 80 03 03 07 07 05 01 A0 01\n\
+41 01 0B 01 05 01 E0 01 81 01\n\
+0F 01 05 01 F3 01 00 01 12 01\n\
+05 01 F5 01 05 01 05 01 05 01\n\
+05 01 05 01 05 01 06 01 06 01\n\
+06 01 06 01 06 01 06 01 06 01\n\
+06 01 07 01 07 01 07 01 08 01\n\
+09 01 0A 01 0A 01 0B 01 0C 01\n\
+0D 01 0E 01 0F 01 0F 01 0F 01\n\
+0F 01 0F 01 0F 01 0F 01 0F 01\n\
+0F 01 0F 01 0F 01 0F 01 0F 01\n\
+0F 01 0F 01 0F 01 0F 01 0F 01\n\
+10 01 AA 01 01 01 00 01 00 01\n\
+00 01 01 01 10 10 01 01 00 00\n\
+00 00 20 20 01 01 01 01 00 00\n\
+30 30 01 01 02 02 00 00 40 40\n\
+02 02 03 03 00 00 50 50 02 02\n\
+04 04 00 00 60 60 02 02 05 05\n\
+00 00 00 00 00 00";
+
+        assert_eq!(
+            upper, expected_full,
+            "read2004.nes full output mismatch.\nExpected:\n{}\n\nActual:\n{}",
+            expected_full, upper
+        );
+    }
+
     // setup_rom_test!(
     //     test_oam_decay_test,
     //     "roms/automated_tests/misc_oam_tests/oam-decay-test.nes"
