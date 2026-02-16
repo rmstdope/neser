@@ -519,6 +519,10 @@ impl Default for Config {
             autorun_headless: false,
             autorun_extend: false,
             autorun_overwrite: false,
+            // Use Zero for WASM to avoid issues with getrandom in test environments
+            #[cfg(target_arch = "wasm32")]
+            ram_init_mode: RamInitMode::Zero,
+            #[cfg(not(target_arch = "wasm32"))]
             ram_init_mode: RamInitMode::Random,
         }
     }
@@ -2851,6 +2855,9 @@ filter=invalid-shader
     #[test]
     fn test_config_ram_init_mode_default() {
         let config = Config::with_defaults();
+        #[cfg(target_arch = "wasm32")]
+        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+        #[cfg(not(target_arch = "wasm32"))]
         assert_eq!(config.ram_init_mode, RamInitMode::Random);
     }
 
