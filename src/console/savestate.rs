@@ -115,7 +115,9 @@ pub struct PpuState {
     pub sprite_eval_m: u8,
     pub sprite_eval_cycle: u8,
     pub sprite_eval_in_range: bool,
+    #[serde(default)]
     pub sprite_eval_overflow_reads_remaining: u8,
+    #[serde(default)]
     pub sprite_eval_overflow_signaled: bool,
     #[serde(default)]
     pub oam_read_latch: u8,
