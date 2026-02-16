@@ -722,6 +722,21 @@ impl Sprites {
     pub fn oam_read_latch(&self) -> u8 {
         self.oam_read_latch
     }
+
+    #[cfg(test)]
+    pub fn set_overflow_reads_remaining(&mut self, value: u8) {
+        self.sprite_eval_overflow_reads_remaining = value;
+    }
+
+    #[cfg(test)]
+    pub fn set_overflow_signaled(&mut self, value: bool) {
+        self.sprite_eval_overflow_signaled = value;
+    }
+
+    #[cfg(test)]
+    pub fn set_oam_read_latch(&mut self, value: u8) {
+        self.oam_read_latch = value;
+    }
 }
 
 #[cfg(test)]

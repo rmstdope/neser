@@ -17,13 +17,12 @@ Your core methodology follows these strict phases:
 
 - After finishing each phase, you MUST pause and wait for explicit navigator approval before doing any work from the next phase.
 - While waiting at a gate, do NOT run additional implementation, refactoring, commit, or test commands for the next phase.
-- Asking for approval shall be done using a questionnaire widget/tool, not inline in the standard chat input (plain chat text) unless the navigator explicitly asks for that mode.
-- If approval is missing, ask again with a short inline question and remain blocked at the current phase.
+- Asking for approval shall be done using an interactive question in the chat interface, not inline in the standard chat input (plain chat text).
 - Treat any accidental phase jump as a process violation and immediately return to the correct gate.
 
 ### Operational Guardrail (must follow every time):
 
-- Before running any command or edit for a next phase, verify that you have asked inline in the chat for explicit approval for that exact phase.
+- Before running any command or edit for a next phase, verify that you have asked interactively in the chat for explicit approval for that exact phase.
 - Include the current phase label in each implementation status update (for example: "RED phase", "GREEN phase", "REFACTOR phase", "COMMIT phase").
 - Never interpret issue kickoff (for example "start working on #123") as blanket approval for all phases.
 
@@ -31,9 +30,9 @@ Your core methodology follows these strict phases:
 
 - Create a git branch for the issue or feature you are working on.
 - Analyze each issue and its acceptance criteria carefully
-- Write acceptance tests in Given/When/Then format that directly reflect the behavior described in the user story
-- Ensure tests are comprehensive but focused only on the specified acceptance criteria
-- Write tests that will fail initially (since no implementation exists yet)
+- Write a new or update an existingacceptance tests in Given/When/Then format that directly reflect the behavior described in the user story. If it is more suitable to update an existing test, prefer that over creating a new one.
+- Ensure tests are comprehensive but focused. Avoid over-specifying implementation details in the tests.
+- Write/Update tests so that they fail initially (since no implementation exists yet)
 - Use clear, descriptive test names that communicate the expected behavior
 - STOP after writing the failing test and explicitly ask for permission to proceed to the Green phase
 - Do not start implementation until the navigator explicitly approves the Green phase
@@ -53,8 +52,7 @@ Your core methodology follows these strict phases:
 - IMPORTANT: Delegate the refactoring work to the clean-coder agent using the Task tool with subagent_type: "clean-coder"
 - The clean-coder agent will apply clean code principles (SOLID, GRASP, etc.) to improve code quality
 - Ensure all tests continue to pass during refactoring
-- Limit refactoring to the behavior specified in the user story - do not add extra features
-- IMPORTANT: Do NOT refactor the tests themselves unless you explicitly ask for and receive permission
+- If you spot other refactoring oppotunities nearby the changed code, include that in the scope as well.
 - If the refactoring caused changes in code, STOP after refactoring and ask for permission to commit changes
 - Do not create commits or PRs until the navigator explicitly approves the Commit phase
 
@@ -65,7 +63,8 @@ Your core methodology follows these strict phases:
 - Include reference to the user story or feature being implemented
 - Use conventional commit format when appropriate
 - Ensure all pre-merge checks pass
-- Create a PR with a clear description of the changes and link to the relevant issue
+- If more iterations are needed before the issue is completed, loop back to the RED phase
+- If the issue is fully implemented, create a PR with a clear description of the changes and link to the relevant issue
 - STOP and ask for permission to merge after creating the PR
 
 ### MERGE PHASE:
@@ -74,6 +73,7 @@ Your core methodology follows these strict phases:
 - Ensure all required checks have passed before merging
 - After merging, close the issue and delete the branch
 - Update the main issue with any relevant information about the implementation and close it when all sub-issues are completed
+- Use the self-learning-skills immediately after merging to reflect on the process and identify any improvements for future cycles.
 
 ### Key Principles:
 
@@ -84,22 +84,20 @@ Your core methodology follows these strict phases:
 - Keep tests focused on behavior, not implementation details
 - Ensure acceptance criteria are fully covered by tests
 - Maintain clear separation between test code and implementation code
-- If you need to refactor tests, always ask for explicit permission first
 - When given issues, start immediately with the Red phase by creating failing acceptance tests.
 - Always communicate which phase you're in and what you're doing.
 - Keep all unit test within the same file as the struct or function they test.
 - Keep all integration tests in a separate 'integration_tests/' directory.
-- When asking for approval between each phase, do that as an inline question in the chat that could be answered by selecting pre-defined answers (e.g., "Proceed to Green Phase", "Proceed to Refactor Phase", "Proceed to Commit Phase", "Proceed to Merge Phase") or by writing a custom response if needed.
-- Approval prompts must be written directly in the normal chat log as plain inline text. Do not use external question widgets or separate prompt UIs for phase-gate approvals.
+- When asking for approval between each phase, do that as an interactive question in the chat that could be answered by selecting pre-defined answers (e.g., "Proceed to Green Phase", "Proceed to Refactor Phase", "Proceed to Commit Phase", "Proceed to Merge Phase") or by writing a custom response if needed.
 
-### Quick Gate Checklist (apply every cycle):
+<!-- ### Quick Gate Checklist (apply every cycle):
 
 Before moving to the next phase, verify all items below are true:
 
 1. Current phase outcome is complete and reported.
 2. A direct approval question was asked in chat.
 3. Explicit navigator approval for that exact next phase was received.
-4. Only then continue with tools/actions for the next phase.
+4. Only then continue with tools/actions for the next phase. -->
 
 ## References
 

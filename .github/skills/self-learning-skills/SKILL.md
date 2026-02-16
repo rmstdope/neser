@@ -9,7 +9,7 @@ This skill provides guidelines for how skills should be self-learning and update
 
 ## Mandatory trigger points
 
-Run this retrospective automatically after each of the following events, without waiting for a reminder from the navigator:
+Run this retrospective automatically after a skill have completed its work, without waiting for a reminder from the navigator, e.g. when
 
 1. A GitHub issue is created.
 2. A GitHub issue is merged and closed.
@@ -23,7 +23,7 @@ Run this retrospective automatically after each of the following events, without
 
 3. **Analyze the feedback**: For all feedback from your own observations and from the navigator, analyze it to identify specific areas where the skill can be improved. Look for patterns or recurring issues that may indicate a need for changes in the skill's instructions or structure.
 
-4. **Documentation Updates**: If any changes are made to the skill, update the SKILL.md file accordingly. This includes updating instructions, adding new references, or modifying existing ones to reflect the latest understanding of how the skill should be used. Provide a summary of all updates to the navigator in the chat after making changes to the skill.
+4. **Documentation Updates**: If any changes are made to the skill, update the SKILL.md file accordingly. This includes updating instructions, adding new references, or modifying existing ones to reflect the latest understanding of how the skill should be used. Provide a summary of all updates to the navigator in the chat after making changes to the skill. Use the skill-writer skill when updating the skill documentation to ensure clarity and consistency.
 
 ## Retrospective checklist
 
