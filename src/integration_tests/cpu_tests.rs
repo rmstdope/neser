@@ -3,10 +3,17 @@ mod tests {
     use std::fs;
 
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes};
+    use crate::console::{Config, Nes, RamInitMode};
     use crate::input::Button;
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{setup_rom_console_crc_test, setup_rom_console_test, setup_rom_test};
+
+    fn deterministic_config() -> Config {
+        Config {
+            ram_init_mode: RamInitMode::Zero,
+            ..Default::default()
+        }
+    }
 
     // branch_timing_tests
     setup_rom_console_test!(
@@ -95,7 +102,7 @@ mod tests {
         let rom_path = "roms/automated_tests/dma_sync_test_v2/dma_sync_test.nes";
         let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
         let cartridge = Cartridge::new(&rom_data).expect("DMA Sync Test v2 ROM should parse");
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
         run_nes_for_frames(&mut nes, 300);
@@ -113,7 +120,7 @@ mod tests {
         let rom_path = "roms/automated_tests/dma_sync_test_v2/dma_sync_test.nes";
         let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
         let cartridge = Cartridge::new(&rom_data).expect("DMA Sync Test v2 ROM should parse");
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
         run_nes_for_frames(&mut nes, 150);
@@ -163,7 +170,7 @@ mod tests {
         let rom_data = fs::read(rom_path).expect("dpcmletterbox ROM should load");
         let cartridge = Cartridge::new(&rom_data).expect("dpcmletterbox ROM should parse");
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -369,7 +376,7 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data).expect("Failed to parse ROM");
 
         // Create NES and insert cartridge
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);
         nes.cpu.reset(false);
         // nestest automated test starts execution at $C000 (not reset vector $C004)

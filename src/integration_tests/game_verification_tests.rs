@@ -3,7 +3,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, TvSystem};
+    use crate::console::{Config, Nes, RamInitMode, TvSystem};
     use crate::integration_tests::golden_screenshots::{
         GoldenScreenshotPolicy, assert_matches_golden_screenshot_byte_exact,
         ensure_golden_screenshot, golden_screenshot_path_for_rom,
@@ -11,6 +11,13 @@ mod tests {
     use crate::integration_tests::manual_test_cartridges;
 
     const FRAMES_TO_RUN: u32 = 60 * 5;
+
+    fn deterministic_config() -> Config {
+        Config {
+            ram_init_mode: RamInitMode::Zero,
+            ..Default::default()
+        }
+    }
 
     fn snapshot_screen_buffer_rgb(nes: &Nes) -> Vec<u8> {
         let screen_buffer = nes.get_screen_buffer();
@@ -105,7 +112,7 @@ mod tests {
         let cartridge = Cartridge::new(&rom_data)
             .map_err(|e| format!("Failed to parse ROM {}: {e}", rom_path.display()))?;
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -122,7 +129,7 @@ mod tests {
         let rom_data = manual_test_cartridges::triangle_only_nrom_128();
         let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 

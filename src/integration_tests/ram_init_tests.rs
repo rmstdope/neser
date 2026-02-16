@@ -1,5 +1,7 @@
 //! Integration tests for RAM initialization modes.
 
+#![cfg(test)]
+
 use crate::cartridge::Cartridge;
 use crate::console::{Config, Nes, RamInitMode};
 

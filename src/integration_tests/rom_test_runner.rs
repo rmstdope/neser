@@ -22,7 +22,7 @@ pub(crate) mod tests {
     ///   function is called to determine pass/fail.
     ///
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes};
+    use crate::console::{Config, Nes, RamInitMode};
     use crate::debugging::{Tracing, init_tracing};
     use crate::input::Button;
     use std::fs;
@@ -47,6 +47,13 @@ pub(crate) mod tests {
         Console { pass_string: String },
         /// Verify by matching a CRC-32 printed to the console output.
         ConsoleCrc(&'static [u32]),
+    }
+
+    fn test_default_config() -> Config {
+        Config {
+            ram_init_mode: RamInitMode::Zero,
+            ..Default::default()
+        }
     }
 
     /// Runner for OAM test ROMs
@@ -138,7 +145,7 @@ pub(crate) mod tests {
             };
 
             // Create NES with configuration based on cartridge's TV system
-            let mut config = Config::default();
+            let mut config = test_default_config();
 
             // Use override if provided, otherwise auto-detect from ROM header
             if let Some(tv_system) = self.tv_system_override {
@@ -367,7 +374,7 @@ pub(crate) mod tests {
         };
 
         // Create NES with configuration based on cartridge's TV system
-        let mut config = Config::default();
+        let mut config = test_default_config();
         match cartridge.rom_tv_system() {
             crate::cartridge::RomTvSystem::Pal => {
                 config.tv_system = crate::console::TvSystem::Pal;

@@ -128,6 +128,7 @@ impl Ppu {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn sprites(&mut self) -> &mut Sprites {
         &mut self.sprites
     }

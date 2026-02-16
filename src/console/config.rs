@@ -2851,7 +2851,7 @@ filter=invalid-shader
     #[test]
     fn test_config_ram_init_mode_default() {
         let config = Config::with_defaults();
-        assert_eq!(config.ram_init_mode, RamInitMode::Zero);
+        assert_eq!(config.ram_init_mode, RamInitMode::Random);
     }
 
     #[test]

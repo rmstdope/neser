@@ -189,6 +189,7 @@ impl Bus {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub fn cpu_ram_ref(&self) -> Rc<RefCell<Vec<u8>>> {
         self.cpu_ram.clone()
     }
@@ -880,7 +881,11 @@ mod tests {
     fn create_test_memory() -> Bus {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        let config = Rc::new(RefCell::new(crate::console::Config::default()));
+        let config = crate::console::Config {
+            ram_init_mode: crate::console::RamInitMode::Zero,
+            ..Default::default()
+        };
+        let config = Rc::new(RefCell::new(config));
         Bus::new(ppu, apu, config)
     }
 
