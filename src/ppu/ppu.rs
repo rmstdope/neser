@@ -697,6 +697,7 @@ impl Ppu {
             sprite_eval_overflow_reads_remaining: sprites_state
                 .sprite_eval_overflow_reads_remaining,
             sprite_eval_overflow_signaled: sprites_state.sprite_eval_overflow_signaled,
+            oam_read_latch: sprites_state.oam_read_latch,
             sprite_pattern_shift_lo: sprites_state.sprite_pattern_shift_lo,
             sprite_pattern_shift_hi: sprites_state.sprite_pattern_shift_hi,
             sprite_x_positions: sprites_state.sprite_x_positions,
@@ -777,8 +778,8 @@ impl Ppu {
             sprite_eval_m: state.sprite_eval_m,
             sprite_eval_cycle: state.sprite_eval_cycle,
             sprite_eval_in_range: state.sprite_eval_in_range,
-            sprite_eval_overflow_reads_remaining: 0,
-            sprite_eval_overflow_signaled: false,
+            sprite_eval_overflow_reads_remaining: state.sprite_eval_overflow_reads_remaining,
+            sprite_eval_overflow_signaled: state.sprite_eval_overflow_signaled,
             sprite_pattern_shift_lo: state.sprite_pattern_shift_lo,
             sprite_pattern_shift_hi: state.sprite_pattern_shift_hi,
             sprite_x_positions: state.sprite_x_positions,
@@ -787,7 +788,7 @@ impl Ppu {
             next_sprite_pattern_shift_hi: state.next_sprite_pattern_shift_hi,
             next_sprite_x_positions: state.next_sprite_x_positions,
             next_sprite_attributes: state.next_sprite_attributes,
-            oam_read_latch: 0,
+            oam_read_latch: state.oam_read_latch,
         });
 
         // Restore status flags
@@ -2613,6 +2614,48 @@ mod tests {
         assert_eq!(
             actual, backdrop_color,
             "Background/backdrop color should be rendered when sprite rendering is disabled"
+        );
+    }
+
+    /// Verifies that save-state capture/restore round-trips all sprite evaluation fields,
+    /// including overflow_reads_remaining, overflow_signaled, and oam_read_latch.
+    /// These fields are only non-zero mid-frame during sprite overflow detection,
+    /// so a savestate taken at that point must preserve them.
+    #[test]
+    fn test_savestate_preserves_sprite_overflow_and_latch_fields() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Manually set sprite evaluation fields to non-default values
+        // to simulate a mid-frame savestate during overflow detection.
+        ppu.sprites.set_overflow_reads_remaining(3);
+        ppu.sprites.set_overflow_signaled(true);
+        ppu.sprites.set_oam_read_latch(0x42);
+
+        // Capture state
+        let state = ppu.capture_state();
+
+        // Verify the captured state has the correct values
+        assert_eq!(state.sprite_eval_overflow_reads_remaining, 3);
+        assert!(state.sprite_eval_overflow_signaled);
+        assert_eq!(state.oam_read_latch, 0x42);
+
+        // Create a fresh PPU and restore the state
+        let mut ppu2 = Ppu::new_for_testing(TvSystem::Ntsc);
+        ppu2.restore_state(&state);
+
+        // Verify the restored PPU has the correct values
+        let restored_state = ppu2.capture_state();
+        assert_eq!(
+            restored_state.sprite_eval_overflow_reads_remaining, 3,
+            "overflow_reads_remaining should be preserved across save/restore"
+        );
+        assert!(
+            restored_state.sprite_eval_overflow_signaled,
+            "overflow_signaled should be preserved across save/restore"
+        );
+        assert_eq!(
+            restored_state.oam_read_latch, 0x42,
+            "oam_read_latch should be preserved across save/restore"
         );
     }
 }
