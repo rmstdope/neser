@@ -105,6 +105,9 @@ impl Ppu {
 
     /// Create a new modular PPU instance
     pub fn new(tv_system: TvSystem, ram_init_mode: crate::console::RamInitMode) -> Self {
+        let mut sprites = Sprites::new(ram_init_mode);
+        sprites.set_oam_decay_enabled(matches!(tv_system, TvSystem::Ntsc));
+
         Self {
             timing: Timing::new(tv_system),
             status: Status::new(),
@@ -113,7 +116,7 @@ impl Ppu {
             registers: Registers::new(),
             memory: Memory::new(ram_init_mode),
             background: Background::new(),
-            sprites: Sprites::new(ram_init_mode),
+            sprites,
             rendering: Rendering::new(),
             recent_pixels: [None, None],
             prev_a12: false,
@@ -164,6 +167,12 @@ impl Ppu {
 
     pub fn set_io_bus(&mut self, value: u8) {
         self.registers.set_io_bus(value);
+    }
+
+    pub fn set_oam_dram_decay_enabled(&mut self, enabled: bool) {
+        let is_ntsc = matches!(self.timing.tv_system(), TvSystem::Ntsc);
+        let effective_enabled = enabled && is_ntsc;
+        self.sprites.set_oam_decay_enabled(effective_enabled);
     }
 
     /// Run the PPU for a specified number of cycles
@@ -768,6 +777,9 @@ impl Ppu {
         self.sprites.restore_state(&SpritesState {
             oam_data,
             secondary_oam,
+            oam_decay_enabled: matches!(self.timing.tv_system(), TvSystem::Ntsc),
+            oam_decay_cycle: 0,
+            oam_row_last_refresh_cycle: [0; 32],
             sprites_found: state.sprites_found,
             sprite_count: state.sprite_count,
             next_sprite_count: state.next_sprite_count,

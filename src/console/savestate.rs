@@ -146,6 +146,9 @@ pub struct PpuState {
 pub struct SpritesState {
     pub oam_data: [u8; 256],
     pub secondary_oam: [u8; 32],
+    pub oam_decay_enabled: bool,
+    pub oam_decay_cycle: u64,
+    pub oam_row_last_refresh_cycle: [u64; 32],
     pub sprites_found: u8,
     pub sprite_count: u8,
     pub next_sprite_count: u8,
