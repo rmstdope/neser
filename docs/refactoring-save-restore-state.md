@@ -7,16 +7,21 @@
 
 ## Executive Summary
 
-After analyzing the save/restore state functionality and exploring key questions about the architecture, this proposal recommends a **simple, pragmatic refactoring**: move state struct definitions from `savestate.rs` to live alongside their component implementations.
+**UPDATED**: Based on navigator feedback, this proposal now recommends **eliminating `savestate.rs` entirely** and handling all serialization within components and the NES struct.
 
-**Key Finding**: Separate state structs are necessary (components contain non-serializable types), but they don't need to be centralized in `savestate.rs`.
+**Key Finding**: The `savestate.rs` module adds an unnecessary layer. Each component can manage its own state serialization, and the NES struct can orchestrate the overall save/load process.
 
-**Recommendation**: **Option 1 - Move State Structs** (2-3 hours, very low risk)
-- Move each state struct definition to its component file
-- Update imports in `savestate.rs`
-- No behavioral changes, just reorganization
+**Approved Approach**: **Remove savestate.rs completely**
+- Move state struct definitions to component files
+- Have each component handle its own state capture/restore
+- NES struct orchestrates serialization to/from bytes directly
+- No centralized SaveState aggregator needed
 
-**Why Not Traits?**: The original proposal was over-engineered. Traits add complexity without enough benefit. The current pattern works well; state structs just need to be in the right place.
+**Benefits**:
+- Simpler architecture - each component owns its state completely
+- No separate module to maintain
+- Clear ownership and encapsulation
+- Each component near its state definition
 
 ---
 
@@ -237,9 +242,127 @@ pub fn capture_state(&self) -> PpuState {
 
 ---
 
-## Revised Proposed Solutions
+## Approved Approach: Remove savestate.rs Entirely
 
-### Option 1: Move State Structs to Components (⭐ RECOMMENDED - Simple & Effective)
+**Navigator Decision**: Remove the `savestate.rs` module completely and handle serialization directly in components and NES struct.
+
+### New Architecture
+
+**State Definition**: Each component defines its own state struct
+```rust
+// src/cpu/cpu.rs
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CpuState { 
+    pub a: u8, 
+    pub x: u8,
+    // ... all CPU fields
+}
+
+pub struct Cpu { /* ... */ }
+
+impl Cpu {
+    pub fn capture_state(&self) -> CpuState { /* ... */ }
+    pub fn restore_state(&mut self, state: &CpuState) { /* ... */ }
+}
+```
+
+**Serialization**: NES struct handles serialization directly
+```rust
+// src/console/nes.rs
+use crate::cpu::CpuState;
+use crate::ppu::PpuState;
+// ... imports from each component
+
+const SAVESTATE_VERSION: u32 = 8;
+
+impl Nes {
+    pub fn save_state_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
+        // Create an anonymous struct for serialization
+        let state = serde_json::json!({
+            "version": SAVESTATE_VERSION,
+            "cpu": self.cpu.capture_state(),
+            "ppu": self.ppu.borrow().capture_state(),
+            "apu": self.apu.borrow().capture_state(),
+            "bus": self.bus.borrow().capture_state(),
+            "ram": self.bus.borrow().ram_snapshot(),
+            "mapper": self.bus.borrow().capture_mapper_state(),
+        });
+        serde_json::to_vec(&state)
+    }
+    
+    pub fn load_state_bytes(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let value: serde_json::Value = serde_json::from_slice(bytes)
+            .map_err(|e| e.to_string())?;
+        
+        // Check version
+        let version = value["version"].as_u64().ok_or("Missing version")?;
+        if version != u64::from(SAVESTATE_VERSION) {
+            return Err(format!("Version mismatch: expected {}, found {}", SAVESTATE_VERSION, version));
+        }
+        
+        // Deserialize each component
+        let cpu_state: CpuState = serde_json::from_value(value["cpu"].clone())
+            .map_err(|e| e.to_string())?;
+        let ppu_state: PpuState = serde_json::from_value(value["ppu"].clone())
+            .map_err(|e| e.to_string())?;
+        // ... etc
+        
+        // Restore each component
+        self.cpu.restore_state(&cpu_state);
+        self.ppu.borrow_mut().restore_state(&ppu_state);
+        // ... etc
+        
+        Ok(())
+    }
+}
+```
+
+### Changes Required
+
+1. **Move state structs** from `savestate.rs` to component files:
+   - `CpuState` → `src/cpu/cpu.rs`
+   - `PpuState` and sub-states → `src/ppu/ppu.rs`
+   - `ApuState` and sub-states → `src/apu/apu.rs`
+   - `BusState` → `src/bus/bus.rs`
+
+2. **Remove `savestate.rs`** module entirely
+
+3. **Update NES struct** to handle serialization directly:
+   - Replace `save_state()` → `save_state_bytes()`
+   - Replace `load_state()` → `load_state_bytes()`
+   - Move `SaveStateError` to `nes.rs`
+   - Move `SAVESTATE_VERSION` to `nes.rs`
+
+4. **Update imports** in:
+   - `src/console/mod.rs` - remove savestate exports
+   - `src/web_frontend/wasm.rs` - update to use bytes directly
+   - `src/main.rs` - update to use bytes directly
+   - `src/sdl_frontend/sdl_eventloop.rs` - update to use bytes directly
+
+### Benefits of This Approach
+
+- ✅ **Simpler**: No separate savestate module to maintain
+- ✅ **Better encapsulation**: Each component fully owns its state
+- ✅ **Clearer ownership**: State lives with implementation
+- ✅ **Less indirection**: Direct serialization without intermediate structs
+- ✅ **Easier to understand**: Linear flow from NES → components → bytes
+
+### Implementation Steps
+
+1. Move `CpuState` to `cpu.rs` and update references
+2. Move `PpuState` and related to `ppu.rs` and update references  
+3. Move `ApuState` and related to `apu.rs` and update references
+4. Move `BusState` to `bus.rs` and update references
+5. Update `Nes` to serialize/deserialize directly to/from bytes
+6. Remove `savestate.rs` and update module exports
+7. Update all callers to use new bytes-based API
+8. Run tests to verify serialization compatibility
+
+---
+
+## Previous Options (Historical Reference)
+
+### Option 1: Move State Structs to Components (⭐ ORIGINALLY RECOMMENDED)
 
 **Concept**: Keep the current pattern but move state struct definitions alongside their components.
 
