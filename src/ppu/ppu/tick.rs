@@ -78,6 +78,8 @@ fn tick_timing(ppu: &mut Ppu) {
     let scanline_before_tick = ppu.timing.scanline();
     let pixel_before_tick = ppu.timing.pixel();
 
+    ppu.sprites.tick_oam_decay();
+
     // Advance timing
     let skipped = ppu.timing.tick(is_rendering_enabled);
 

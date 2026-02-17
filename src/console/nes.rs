@@ -109,7 +109,10 @@ impl Nes {
     pub fn new(config: Config) -> Self {
         let tv_system = config.tv_system;
         let ram_init_mode = config.ram_init_mode;
+        let oam_dram_decay_enabled = config.oam_dram_decay_enabled;
         let ppu = Rc::new(RefCell::new(Ppu::new(tv_system, ram_init_mode)));
+        ppu.borrow_mut()
+            .set_oam_dram_decay_enabled(oam_dram_decay_enabled);
         let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
         let config_rc = Rc::new(RefCell::new(config));
         let memory = Rc::new(RefCell::new(Bus::new(

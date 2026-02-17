@@ -53,6 +53,12 @@ pub struct Sprites {
     /// Internal OAM read latch - reflects the value on the internal OAM bus during rendering.
     /// During rendering, $2004 reads return this latch instead of OAM[OAMADDR].
     oam_read_latch: u8,
+    /// Enables OAM DRAM decay behavior (NTSC only on NES hardware).
+    oam_decay_enabled: bool,
+    /// Current OAM decay cycle counter (advanced once per PPU tick).
+    oam_decay_cycle: u64,
+    /// Last refresh cycle per 8-byte OAM row.
+    oam_row_last_refresh_cycle: [u64; 32],
 }
 
 impl Default for Sprites {
@@ -64,6 +70,16 @@ impl Default for Sprites {
 /// OAM attribute byte mask - bits 2-4 are unimplemented and always read as 0
 /// Mask: 11100011 (0xE3) - preserves bits 7-5 (priority/palette) and 1-0 (flip bits)
 const OAM_ATTRIBUTE_MASK: u8 = 0xE3;
+// Emulator-calibrated approximation for OAM DRAM decay on NTSC.
+// This matches common emulator behavior of ~3000 CPU cycles,
+// represented in this codebase's PPU-tick domain as 9000 PPU cycles.
+// Not a transistor-level physical constant.
+//
+// Accuracy improvement proposals:
+// 1) Refresh rows strictly from real primary-OAM bus activity (reads/writes),
+//    not from unrelated latch operations.
+// 2) Optional realism mode: small deterministic per-row threshold jitter.
+const NTSC_OAM_DECAY_CYCLES: u64 = 9_000;
 
 impl Sprites {
     /// Create a new Sprites instance
@@ -95,6 +111,9 @@ impl Sprites {
             next_sprite_x_positions: [0; 8],
             next_sprite_attributes: [0; 8],
             oam_read_latch: 0,
+            oam_decay_enabled: false,
+            oam_decay_cycle: 0,
+            oam_row_last_refresh_cycle: [0; 32],
         }
     }
 
@@ -118,11 +137,13 @@ impl Sprites {
         self.sprite_eval_overflow_reads_remaining = 0;
         self.sprite_eval_overflow_signaled = false;
         self.oam_read_latch = 0;
+        self.oam_decay_cycle = 0;
+        self.oam_row_last_refresh_cycle = [0; 32];
     }
 
     /// Get OAM data at specified address
-    pub fn read_oam(&self, addr: u8) -> u8 {
-        let value = self.oam_data[addr as usize];
+    pub fn read_oam(&mut self, addr: u8) -> u8 {
+        let value = self.read_oam_raw(addr);
         // Byte 2 of each sprite (attribute byte) has unimplemented bits 2-4
         // These bits should always read as 0
         if (addr & 0x03) == 2 {
@@ -136,7 +157,9 @@ impl Sprites {
     pub fn write_oam(&mut self, addr: u8, value: u8) {
         // Note: Unimplemented bits in byte 2 can be written but will read back as 0
         // We store the full value but mask it on read
-        self.oam_data[addr as usize] = value;
+        let index = addr as usize;
+        self.oam_data[index] = value;
+        self.refresh_oam_row(addr);
     }
 
     /// Initialize secondary OAM byte with 0xFF
@@ -184,7 +207,7 @@ impl Sprites {
                 let oam_index = (self.sprite_eval_n as usize) * 4 + (self.sprite_eval_m as usize);
 
                 if oam_index < 256 {
-                    let value = self.oam_data[oam_index];
+                    let value = self.read_oam_raw(oam_index as u8);
                     self.oam_read_latch = value;
 
                     if self.sprite_eval_overflow_signaled
@@ -269,7 +292,7 @@ impl Sprites {
 
             // Odd cycle 0: Read Y byte
             let oam_index = (self.sprite_eval_n as usize) * 4;
-            let sprite_y = self.oam_data[oam_index];
+            let sprite_y = self.read_oam_raw(oam_index as u8);
             self.oam_read_latch = sprite_y;
 
             // Sprites with Y >= 240 (0xF0) don't render
@@ -305,7 +328,7 @@ impl Sprites {
             // In range - write Y to secondary OAM
             let oam_index = (self.sprite_eval_n as usize) * 4;
             let sec_oam_index = (self.sprites_found as usize) * 4;
-            self.secondary_oam[sec_oam_index] = self.oam_data[oam_index];
+            self.secondary_oam[sec_oam_index] = self.read_oam_raw(oam_index as u8);
             self.sprite_eval_cycle = 2;
             return false;
         }
@@ -322,27 +345,27 @@ impl Sprites {
             // Even cycles: write to secondary OAM
             if self.sprite_eval_cycle == 2 && is_odd_cycle {
                 // Read tile byte
-                self.oam_read_latch = self.oam_data[oam_index + 1];
+                self.oam_read_latch = self.read_oam_raw((oam_index + 1) as u8);
                 self.sprite_eval_cycle = 3;
             } else if self.sprite_eval_cycle == 3 && !is_odd_cycle {
                 // Write tile byte
-                self.secondary_oam[sec_oam_index + 1] = self.oam_data[oam_index + 1];
+                self.secondary_oam[sec_oam_index + 1] = self.read_oam_raw((oam_index + 1) as u8);
                 self.sprite_eval_cycle = 4;
             } else if self.sprite_eval_cycle == 4 && is_odd_cycle {
                 // Read attribute byte
-                self.oam_read_latch = self.oam_data[oam_index + 2];
+                self.oam_read_latch = self.read_oam_raw((oam_index + 2) as u8);
                 self.sprite_eval_cycle = 5;
             } else if self.sprite_eval_cycle == 5 && !is_odd_cycle {
                 // Write attribute byte
-                self.secondary_oam[sec_oam_index + 2] = self.oam_data[oam_index + 2];
+                self.secondary_oam[sec_oam_index + 2] = self.read_oam_raw((oam_index + 2) as u8);
                 self.sprite_eval_cycle = 6;
             } else if self.sprite_eval_cycle == 6 && is_odd_cycle {
                 // Read X byte
-                self.oam_read_latch = self.oam_data[oam_index + 3];
+                self.oam_read_latch = self.read_oam_raw((oam_index + 3) as u8);
                 self.sprite_eval_cycle = 7;
             } else if self.sprite_eval_cycle == 7 && !is_odd_cycle {
                 // Write X byte - last byte
-                self.secondary_oam[sec_oam_index + 3] = self.oam_data[oam_index + 3];
+                self.secondary_oam[sec_oam_index + 3] = self.read_oam_raw((oam_index + 3) as u8);
 
                 // Track if this is sprite 0
                 if self.sprite_eval_n == 0 {
@@ -615,6 +638,14 @@ impl Sprites {
         self.oam_data[0]
     }
 
+    pub fn tick_oam_decay(&mut self) {
+        self.oam_decay_cycle = self.oam_decay_cycle.wrapping_add(1);
+    }
+
+    pub fn set_oam_decay_enabled(&mut self, enabled: bool) {
+        self.oam_decay_enabled = enabled;
+    }
+
     /// Check if sprite 0 has a non-transparent pixel at the given screen position
     /// This is used for sprite 0 hit detection and doesn't apply sprite clipping
     /// (clipping is handled separately in hit detection logic)
@@ -686,6 +717,9 @@ impl Sprites {
             next_sprite_x_positions: self.next_sprite_x_positions,
             next_sprite_attributes: self.next_sprite_attributes,
             oam_read_latch: self.oam_read_latch,
+            oam_decay_enabled: self.oam_decay_enabled,
+            oam_decay_cycle: self.oam_decay_cycle,
+            oam_row_last_refresh_cycle: self.oam_row_last_refresh_cycle,
         }
     }
 
@@ -713,6 +747,48 @@ impl Sprites {
         self.next_sprite_x_positions = state.next_sprite_x_positions;
         self.next_sprite_attributes = state.next_sprite_attributes;
         self.oam_read_latch = state.oam_read_latch;
+        self.oam_decay_enabled = state.oam_decay_enabled;
+        self.oam_decay_cycle = state.oam_decay_cycle;
+        self.oam_row_last_refresh_cycle = state.oam_row_last_refresh_cycle;
+    }
+}
+
+impl Sprites {
+    fn refresh_oam_row(&mut self, addr: u8) {
+        let row = (addr >> 3) as usize;
+        self.oam_row_last_refresh_cycle[row] = self.oam_decay_cycle;
+    }
+
+    fn apply_decay_if_needed(&mut self, addr: u8) {
+        if !self.oam_decay_enabled {
+            return;
+        }
+
+        let row = (addr >> 3) as usize;
+        let elapsed = self
+            .oam_decay_cycle
+            .wrapping_sub(self.oam_row_last_refresh_cycle[row]);
+
+        if elapsed <= NTSC_OAM_DECAY_CYCLES {
+            self.oam_row_last_refresh_cycle[row] = self.oam_decay_cycle;
+            return;
+        }
+
+        let row_base = (row << 3) as u8;
+        for offset in 0..8u8 {
+            let oam_addr = row_base.wrapping_add(offset);
+            let value = if (oam_addr & 0x03) == 0x02 {
+                oam_addr & OAM_ATTRIBUTE_MASK
+            } else {
+                oam_addr
+            };
+            self.oam_data[oam_addr as usize] = value;
+        }
+    }
+
+    fn read_oam_raw(&mut self, addr: u8) -> u8 {
+        self.apply_decay_if_needed(addr);
+        self.oam_data[addr as usize]
     }
 }
 

@@ -13,6 +13,9 @@ mod tests {
         setup_rom_test,
     };
 
+    type RgbLine = Vec<(u8, u8, u8)>;
+    type NmiSyncLines = (RgbLine, RgbLine, RgbLine, RgbLine);
+
     fn capture_scanline_rgb(nes: &Nes, y: u32) -> Vec<(u8, u8, u8)> {
         let screen_buffer = nes.get_screen_buffer();
         (0..TvSystem::Ntsc.screen_width())
@@ -67,6 +70,49 @@ mod tests {
         }
 
         line[start_x..=end_x].iter().all(|&pixel| pixel == white)
+    }
+
+    fn create_nes_from_rom(rom_path: &str, config: Config, rom_name: &str) -> Nes {
+        let rom_data =
+            fs::read(rom_path).unwrap_or_else(|e| panic!("{} ROM should load: {}", rom_name, e));
+        let cartridge = Cartridge::new(&rom_data)
+            .unwrap_or_else(|e| panic!("{} ROM should parse: {}", rom_name, e));
+
+        let mut nes = Nes::new(config);
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+        nes
+    }
+
+    fn normalize_nametable_rows(raw: &str) -> String {
+        raw.as_bytes()
+            .chunks(32)
+            .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn run_oam_decay_sequence(nes: &mut Nes) {
+        run_nes_for_frames(nes, 180);
+        nes.set_button(1, Button::A, true);
+        run_nes_for_frames(nes, 1);
+        nes.set_button(1, Button::A, false);
+        run_nes_for_frames(nes, 180);
+    }
+
+    fn capture_nmi_sync_lines(nes: &mut Nes, warmup_frames: u32) -> NmiSyncLines {
+        run_nes_for_frames(nes, warmup_frames);
+
+        run_nes_for_frames(nes, 1);
+        let line_frame_a = capture_scanline_rgb(nes, 121);
+
+        run_nes_for_frames(nes, 1);
+        let line_frame_b = capture_scanline_rgb(nes, 121);
+        let upper_line = capture_scanline_rgb(nes, 119);
+        let lower_line = capture_scanline_rgb(nes, 123);
+
+        (line_frame_a, line_frame_b, upper_line, lower_line)
     }
 
     // blargg_ppu_tests_2005.09.15b
@@ -127,7 +173,7 @@ mod tests {
         ]
     );
 
-    // TODO misc_oam_tests
+    // misc_oam_tests
 
     /// Verifies all 256 nametable values produced by read2004.nes.
     ///
@@ -141,15 +187,14 @@ mod tests {
     /// - Sprite fetch phase (pixels 257-320): latch reads secondary OAM bytes
     #[test]
     fn test_read2004() {
-        let rom_data = fs::read("roms/automated_tests/misc_oam_tests/read2004.nes").unwrap();
-        let cartridge = Cartridge::new(&rom_data).unwrap();
-        let config = Config {
-            ram_init_mode: RamInitMode::Zero,
-            ..Default::default()
-        };
-        let mut nes = Nes::new(config);
-        nes.insert_cartridge(cartridge);
-        nes.reset(false);
+        let mut nes = create_nes_from_rom(
+            "roms/automated_tests/misc_oam_tests/read2004.nes",
+            Config {
+                ram_init_mode: RamInitMode::Zero,
+                ..Default::default()
+            },
+            "read2004",
+        );
 
         // Run for enough frames to get stable output
         for _ in 0..300 {
@@ -158,14 +203,7 @@ mod tests {
 
         let base_addr = nes.base_nametable_addr();
         let text = nes.read_nametable_text(base_addr, 32 * 32);
-        let text: String = text
-            .as_bytes()
-            .chunks(32)
-            .map(|chunk| String::from_utf8_lossy(chunk).trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<_>>()
-            .join("\n");
-        let upper = text.to_uppercase();
+        let upper = normalize_nametable_rows(&text).to_uppercase();
 
         // Full expected output: 26 lines of 10 hex values each (last line has 6).
         // This covers all 256 nametable positions from the ROM's $2004 read test.
@@ -204,10 +242,59 @@ AA AA 01 01 10 10 01 01 00 00\n\
         );
     }
 
-    // setup_rom_test!(
-    //     test_oam_decay_test,
-    //     "roms/automated_tests/misc_oam_tests/oam-decay-test.nes"
-    // );
+    fn run_oam_decay_crc_test(tv_system: TvSystem, expected_crc: u32, capture_name: &str) {
+        let mut nes = create_nes_from_rom(
+            "roms/automated_tests/misc_oam_tests/oam-decay-test.nes",
+            Config {
+                tv_system,
+                oam_dram_decay_enabled: true,
+                ram_init_mode: RamInitMode::Zero,
+                ..Default::default()
+            },
+            "oam-decay-test",
+        );
+
+        run_oam_decay_sequence(&mut nes);
+
+        let screen = nes.get_screen_buffer();
+        let actual_crc = screen.crc32();
+
+        if std::env::var_os("NESER_CAPTURE_SCREEN").is_some() {
+            let rgb = screen.snapshot();
+            let path = PathBuf::from("target/crc_checkpoints").join(capture_name);
+            crate::integration_tests::rom_test_runner::tests::write_checkpoint_png(
+                &path, &rgb, 256, 240,
+            );
+            println!(
+                "[oam-decay-capture] wrote final frame to {} (crc={:08X})",
+                path.display(),
+                actual_crc
+            );
+        }
+
+        assert_eq!(
+            actual_crc, expected_crc,
+            "oam-decay-test CRC mismatch for {:?}: expected {:08X}, got {:08X}",
+            tv_system, expected_crc, actual_crc
+        );
+    }
+
+    #[test]
+    fn test_oam_decay_test_ntsc() {
+        const EXPECTED_CRC_NTSC: u32 = 0xEBD5_F576;
+        run_oam_decay_crc_test(
+            TvSystem::Ntsc,
+            EXPECTED_CRC_NTSC,
+            "oam_decay_ntsc_final.png",
+        );
+    }
+
+    #[test]
+    fn test_oam_decay_test_pal() {
+        const EXPECTED_CRC_PAL: u32 = 0xCF4E_9BB4;
+        run_oam_decay_crc_test(TvSystem::Pal, EXPECTED_CRC_PAL, "oam_decay_pal_final.png");
+    }
+
     setup_rom_test!(
         test_oam_read_vbl_wait,
         "roms/automated_tests/misc_oam_tests/oam_read_vbl_wait.nes"
@@ -216,24 +303,15 @@ AA AA 01 01 10 10 01 01 00 00\n\
     // nmi_sync
     #[test]
     fn test_nmi_sync_demo_ntsc() {
-        let rom_path = "roms/automated_tests/nmi_sync/demo_ntsc.nes";
-        let rom_data = fs::read(rom_path).expect("demo_ntsc ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("demo_ntsc ROM should parse");
-
-        let mut nes = Nes::new(Config::default());
-        nes.insert_cartridge(cartridge);
-        nes.reset(false);
+        let mut nes = create_nes_from_rom(
+            "roms/automated_tests/nmi_sync/demo_ntsc.nes",
+            Config::default(),
+            "demo_ntsc",
+        );
 
         const WARMUP_FRAMES: u32 = 25;
-        run_nes_for_frames(&mut nes, WARMUP_FRAMES);
-
-        run_nes_for_frames(&mut nes, 1);
-        let line_frame_a = capture_scanline_rgb(&nes, 121);
-
-        run_nes_for_frames(&mut nes, 1);
-        let line_frame_b = capture_scanline_rgb(&nes, 121);
-        let upper_line = capture_scanline_rgb(&nes, 119);
-        let lower_line = capture_scanline_rgb(&nes, 123);
+        let (line_frame_a, line_frame_b, upper_line, lower_line) =
+            capture_nmi_sync_lines(&mut nes, WARMUP_FRAMES);
 
         let white = Nes::lookup_system_palette(0x30);
         let black = Nes::lookup_system_palette(0x0D);
@@ -257,28 +335,18 @@ AA AA 01 01 10 10 01 01 00 00\n\
 
     #[test]
     fn test_nmi_sync_demo_pal() {
-        let rom_path = "roms/automated_tests/nmi_sync/demo_pal.nes";
-        let rom_data = fs::read(rom_path).expect("demo_pal ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("demo_pal ROM should parse");
-
-        let config = Config {
-            tv_system: crate::console::TvSystem::Pal,
-            ..Default::default()
-        };
-        let mut nes = Nes::new(config);
-        nes.insert_cartridge(cartridge);
-        nes.reset(false);
+        let mut nes = create_nes_from_rom(
+            "roms/automated_tests/nmi_sync/demo_pal.nes",
+            Config {
+                tv_system: TvSystem::Pal,
+                ..Default::default()
+            },
+            "demo_pal",
+        );
 
         const WARMUP_FRAMES: u32 = 25;
-        run_nes_for_frames(&mut nes, WARMUP_FRAMES);
-
-        run_nes_for_frames(&mut nes, 1);
-        let line_frame_a = capture_scanline_rgb(&nes, 121);
-
-        run_nes_for_frames(&mut nes, 1);
-        let line_frame_b = capture_scanline_rgb(&nes, 121);
-        let upper_line = capture_scanline_rgb(&nes, 119);
-        let lower_line = capture_scanline_rgb(&nes, 123);
+        let (line_frame_a, line_frame_b, upper_line, lower_line) =
+            capture_nmi_sync_lines(&mut nes, WARMUP_FRAMES);
 
         let white = Nes::lookup_system_palette(0x30);
 

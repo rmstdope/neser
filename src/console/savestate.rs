@@ -121,6 +121,10 @@ pub struct PpuState {
     pub sprite_eval_overflow_signaled: bool,
     #[serde(default)]
     pub oam_read_latch: u8,
+    #[serde(default)]
+    pub oam_decay_cycle: u64,
+    #[serde(default)]
+    pub oam_row_last_refresh_cycle: [u64; 32],
     pub sprite_pattern_shift_lo: [u8; 8],
     pub sprite_pattern_shift_hi: [u8; 8],
     pub sprite_x_positions: [u8; 8],
@@ -146,6 +150,9 @@ pub struct PpuState {
 pub struct SpritesState {
     pub oam_data: [u8; 256],
     pub secondary_oam: [u8; 32],
+    pub oam_decay_enabled: bool,
+    pub oam_decay_cycle: u64,
+    pub oam_row_last_refresh_cycle: [u64; 32],
     pub sprites_found: u8,
     pub sprite_count: u8,
     pub next_sprite_count: u8,
@@ -477,6 +484,8 @@ mod tests {
             sprite_eval_overflow_reads_remaining: 0,
             sprite_eval_overflow_signaled: false,
             oam_read_latch: 0,
+            oam_decay_cycle: 0,
+            oam_row_last_refresh_cycle: [0; 32],
             sprite_pattern_shift_lo: [0; 8],
             sprite_pattern_shift_hi: [0; 8],
             sprite_x_positions: [0; 8],

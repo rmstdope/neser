@@ -97,6 +97,23 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: true,
     },
     CliFlag {
+        flag: "--oam-dram-decay",
+        help: Some(
+            "Enable OAM DRAM decay emulation (use --no-oam-dram-decay or --disable-oam-dram-decay to disable)",
+        ),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--no-oam-dram-decay",
+        help: Some("Disable OAM DRAM decay emulation (equivalent to --oam-dram-decay false)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--disable-oam-dram-decay",
+        help: Some("Disable OAM DRAM decay emulation (equivalent to --oam-dram-decay false)"),
+        has_value: false,
+    },
+    CliFlag {
         flag: "--audio",
         help: Some("Enable audio output (optionally: true/false, default when flag present: true)"),
         has_value: false,
@@ -416,6 +433,13 @@ pub struct Config {
     ///
     /// Soft resets preserve RAM contents (no re-initialization).
     pub ram_init_mode: RamInitMode,
+    /// Enable dynamic OAM DRAM decay emulation.
+    ///
+    /// This models NTSC primary OAM row decay behavior; PAL behavior is handled
+    /// by the PPU implementation and this flag acts as a global on/off switch.
+    ///
+    /// Default: `false`.
+    pub oam_dram_decay_enabled: bool,
 }
 
 /// Autorun operating mode.
@@ -524,6 +548,7 @@ impl Default for Config {
             ram_init_mode: RamInitMode::Zero,
             #[cfg(not(target_arch = "wasm32"))]
             ram_init_mode: RamInitMode::Random,
+            oam_dram_decay_enabled: false,
         }
     }
 }
@@ -611,6 +636,14 @@ impl Config {
                     tv_system
                 ));
             }
+        }
+
+        // OAM DRAM decay: --oam-dram-decay true/false, --no-oam-dram-decay, --disable-oam-dram-decay
+        if let Some(oam_dram_decay) = Self::parse_bool_arg(args, "--oam-dram-decay")? {
+            self.oam_dram_decay_enabled = oam_dram_decay;
+        }
+        if Self::has_negation_flag(args, &["--no-oam-dram-decay", "--disable-oam-dram-decay"]) {
+            self.oam_dram_decay_enabled = false;
         }
 
         // Boolean flags (support both value-based and prefix negation)
@@ -1298,6 +1331,17 @@ impl Config {
                             );
                         }
                     }
+                }
+            }
+            "oam_dram_decay" | "oam_dram_decay_enabled" => {
+                if let Ok(b) = Self::parse_bool(value) {
+                    self.oam_dram_decay_enabled = b;
+                } else {
+                    eprintln!(
+                        "Warning: invalid value '{}' for 'oam_dram_decay'; keeping current value. \
+                         Valid values: true/false/yes/no/1/0",
+                        value
+                    );
                 }
             }
             _ => {} // Unknown keys are silently ignored
@@ -2915,5 +2959,29 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(config.ram_init_mode, RamInitMode::SeededRandom(999));
+    }
+
+    #[test]
+    fn test_config_oam_dram_decay_default_disabled() {
+        let config = Config::with_defaults();
+        assert!(!config.oam_dram_decay_enabled);
+    }
+
+    #[test]
+    fn test_config_file_oam_dram_decay_enabled() {
+        let mut config = Config::default();
+        config.apply_config_value("oam_dram_decay", "true").unwrap();
+        assert!(config.oam_dram_decay_enabled);
+    }
+
+    #[test]
+    fn test_config_cmdline_oam_dram_decay_enabled() {
+        let args = vec![
+            "neser".to_string(),
+            "--oam-dram-decay".to_string(),
+            "true".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(config.oam_dram_decay_enabled);
     }
 }

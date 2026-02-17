@@ -195,3 +195,17 @@ load_state=false
 #   ram_init_mode=seeded-random:12345
 #
 ram_init_mode=zero
+
+# -----------------------------------------------------------------------------
+# OAM DRAM Decay
+# -----------------------------------------------------------------------------
+# Enable or disable dynamic OAM DRAM decay emulation.
+#
+# Notes:
+# - This is an explicit emulator feature toggle and defaults to disabled.
+# - NTSC behavior is affected when enabled.
+# - PAL remains non-decaying due PAL OAM refresh behavior.
+#
+# Valid values: true, false
+#
+oam_dram_decay=false
