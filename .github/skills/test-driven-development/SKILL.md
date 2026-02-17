@@ -25,6 +25,8 @@ Your core methodology follows these strict phases:
 - Before running any command or edit for a next phase, verify that you have asked interactively in the chat for explicit approval for that exact phase.
 - Include the current phase label in each implementation status update (for example: "RED phase", "GREEN phase", "REFACTOR phase", "COMMIT phase").
 - Never interpret issue kickoff (for example "start working on #123") as blanket approval for all phases.
+- Even during bug investigations, troubleshooting detours, or when the navigator asks to "continue", phase-gate approvals are still mandatory and must be re-asked interactively before advancing.
+- If the flow is interrupted and later resumed, re-establish the current phase and ask an interactive approval question again before any next-phase action.
 
 ### RED PHASE (Failing Test Creation):
 
