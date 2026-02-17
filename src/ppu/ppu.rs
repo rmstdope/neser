@@ -1677,6 +1677,116 @@ mod tests {
     }
 
     #[test]
+    fn test_oam_attribute_byte_write_masks_unimplemented_bits() {
+        // Test that writing to OAM byte 2 (attribute byte) masks bits 2-4
+        // Hardware behavior: bits 2-4 are not connected and always read as 0
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Test writing all bits set (0xFF) to attribute byte
+        ppu.write_oam_address(0x02); // First sprite, attribute byte
+        ppu.write_oam_data(0xFF); // Try to write all bits
+        ppu.write_oam_address(0x02);
+        assert_eq!(
+            ppu.read_oam_data(),
+            0xE3,
+            "Attribute byte should mask bits 2-4 on write (0xFF -> 0xE3)"
+        );
+
+        // Test writing various patterns with unimplemented bits set
+        let test_cases = [
+            (0x1C, 0x00), // Only bits 2-4 set -> all masked
+            (0xFF, 0xE3), // All bits set -> only valid bits remain
+            (0x7F, 0x63), // Bits 0-6 set -> bits 2-4 masked
+            (0xE7, 0xE3), // Valid bits + bit 2 -> bit 2 masked
+            (0xEB, 0xE3), // Valid bits + bit 3 -> bit 3 masked
+            (0xF3, 0xE3), // Valid bits + bit 4 -> bit 4 masked
+            (0xE3, 0xE3), // Only valid bits -> unchanged
+            (0x00, 0x00), // All bits clear -> unchanged
+        ];
+
+        for (i, (write_val, expected)) in test_cases.iter().enumerate() {
+            let addr = 0x02 + (i as u8 * 4); // Attribute byte of successive sprites
+            ppu.write_oam_address(addr);
+            ppu.write_oam_data(*write_val);
+            ppu.write_oam_address(addr);
+            assert_eq!(
+                ppu.read_oam_data(),
+                *expected,
+                "OAM[{}]: write 0x{:02X} should store 0x{:02X}",
+                addr,
+                write_val,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_oam_non_attribute_bytes_unmasked() {
+        // Verify that non-attribute bytes (0, 1, 3) are NOT masked
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Test all bits can be written to non-attribute bytes
+        let test_values = [0xFF, 0x00, 0x55, 0xAA];
+
+        for &value in &test_values {
+            // Byte 0: Y position
+            ppu.write_oam_address(0x00);
+            ppu.write_oam_data(value);
+            ppu.write_oam_address(0x00);
+            assert_eq!(
+                ppu.read_oam_data(),
+                value,
+                "OAM byte 0 (Y position) should not be masked"
+            );
+
+            // Byte 1: Tile index
+            ppu.write_oam_address(0x01);
+            ppu.write_oam_data(value);
+            ppu.write_oam_address(0x01);
+            assert_eq!(
+                ppu.read_oam_data(),
+                value,
+                "OAM byte 1 (tile index) should not be masked"
+            );
+
+            // Byte 3: X position
+            ppu.write_oam_address(0x03);
+            ppu.write_oam_data(value);
+            ppu.write_oam_address(0x03);
+            assert_eq!(
+                ppu.read_oam_data(),
+                value,
+                "OAM byte 3 (X position) should not be masked"
+            );
+        }
+    }
+
+    #[test]
+    fn test_oam_attribute_byte_all_sprites_masked() {
+        // Test that ALL 64 sprites' attribute bytes are properly masked
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Write 0xFF to all attribute bytes (every 4th byte starting at 2)
+        for sprite_num in 0..64 {
+            let addr = sprite_num * 4 + 2;
+            ppu.write_oam_address(addr);
+            ppu.write_oam_data(0xFF);
+        }
+
+        // Verify all attribute bytes read back as 0xE3
+        for sprite_num in 0..64 {
+            let addr = sprite_num * 4 + 2;
+            ppu.write_oam_address(addr);
+            assert_eq!(
+                ppu.read_oam_data(),
+                0xE3,
+                "Sprite {} attribute byte should be masked (0xFF -> 0xE3)",
+                sprite_num
+            );
+        }
+    }
+
+    #[test]
     fn test_oamaddr_cleared_during_sprite_loading() {
         // OAMADDR is automatically set to 0 during pixels 257-320 of visible and pre-render scanlines
         // This is critical hardware behavior that many test ROMs rely on

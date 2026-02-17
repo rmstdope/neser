@@ -155,10 +155,15 @@ impl Sprites {
 
     /// Write OAM data at specified address
     pub fn write_oam(&mut self, addr: u8, value: u8) {
-        // Note: Unimplemented bits in byte 2 can be written but will read back as 0
-        // We store the full value but mask it on read
+        // Byte 2 of each sprite (attribute byte) has unimplemented bits 2-4
+        // These bits are not connected in hardware and should be masked on write
+        let masked_value = if (addr & 0x03) == 2 {
+            value & OAM_ATTRIBUTE_MASK
+        } else {
+            value
+        };
         let index = addr as usize;
-        self.oam_data[index] = value;
+        self.oam_data[index] = masked_value;
         self.refresh_oam_row(addr);
     }
 
