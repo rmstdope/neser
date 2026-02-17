@@ -233,11 +233,12 @@ impl Ppu {
     /// Write to mask register ($2001)
     pub fn write_mask(&mut self, value: u8) {
         let grayscale_before = self.registers.is_grayscale();
+        let rendering_enabled_before = self.registers.is_rendering_enabled();
         trace_ppu!(3; "ppumask write value={:02X} y={} x={} render_before={} bg_before={} sp_before={} t={:04X} v={:04X}",
             value,
             self.timing.scanline(),
             self.timing.pixel(),
-            self.registers.is_rendering_enabled(),
+            rendering_enabled_before,
             self.registers.is_background_enabled(),
             self.registers.is_sprite_enabled(),
             self.registers.t(),
@@ -245,6 +246,27 @@ impl Ppu {
         );
         self.registers.write_mask(value);
         let grayscale_after = self.registers.is_grayscale();
+        let rendering_enabled_after = self.registers.is_rendering_enabled();
+        
+        // OAMADDR glitch: When rendering is disabled during sprite evaluation (cycles 65-256
+        // of visible scanlines), OAMADDR is incremented by 1.
+        // This is a hardware quirk where the PPU's sprite evaluation state machine is
+        // interrupted mid-process, causing an unexpected increment.
+        if rendering_enabled_before && !rendering_enabled_after {
+            let scanline = self.timing.scanline();
+            let pixel = self.timing.pixel();
+            // Visible scanlines are 0-239, sprite evaluation happens during pixels 65-256
+            if scanline < 240 && (65..=256).contains(&pixel) {
+                trace_ppu!(2; "OAMADDR glitch: rendering disabled during sprite evaluation at y={} x={}, incrementing OAMADDR from {:02X}",
+                    scanline,
+                    pixel,
+                    self.registers.oam_address,
+                );
+                self.registers.oam_address = self.registers.oam_address.wrapping_add(1);
+                trace_ppu!(2; "OAMADDR after glitch: {:02X}", self.registers.oam_address);
+            }
+        }
+        
         // Mid-scanline grayscale toggles take effect essentially immediately on real hardware.
         // To approximate that timing without re-rendering the whole scanline, re-apply grayscale
         // to the most recently drawn pixels (see `track_recent_pixel`). This matches demo_ntsc.
@@ -255,7 +277,7 @@ impl Ppu {
             value,
             self.timing.scanline(),
             self.timing.pixel(),
-            self.registers.is_rendering_enabled(),
+            rendering_enabled_after,
             self.registers.is_background_enabled(),
             self.registers.is_sprite_enabled(),
             self.registers.t(),
@@ -2670,6 +2692,183 @@ mod tests {
         assert_eq!(
             restored_state.oam_read_latch, 0x42,
             "oam_read_latch should be preserved across save/restore"
+        );
+    }
+
+    /// Test OAMADDR glitch when disabling rendering during sprite evaluation.
+    /// When rendering is disabled during sprite evaluation (cycles 65-256 of visible scanlines),
+    /// OAMADDR should be incremented by 1.
+    #[test]
+    fn test_oamaddr_glitch_on_rendering_disable_during_sprite_evaluation() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Enable rendering first
+        ppu.write_mask(0x18); // Enable background and sprite rendering
+
+        // Advance to a visible scanline (e.g., scanline 10) during sprite evaluation (pixel 100)
+        for _ in 0..(10 * 341 + 100) {
+            ppu.tick();
+        }
+
+        // Verify we're in the correct position
+        assert_eq!(ppu.timing.scanline(), 10, "Should be on scanline 10");
+        assert_eq!(ppu.timing.pixel(), 100, "Should be on pixel 100");
+
+        // Set OAMADDR to a known value
+        ppu.registers.oam_address = 0x50;
+
+        // Disable rendering during sprite evaluation
+        ppu.write_mask(0x00); // Disable both background and sprite rendering
+
+        // OAMADDR should be incremented by 1 due to the glitch
+        assert_eq!(
+            ppu.registers.oam_address, 0x51,
+            "OAMADDR should be incremented by 1 when rendering is disabled during sprite evaluation"
+        );
+    }
+
+    /// Test OAMADDR glitch does NOT occur when disabling rendering outside sprite evaluation.
+    #[test]
+    fn test_oamaddr_glitch_not_triggered_outside_sprite_evaluation() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Enable rendering first
+        ppu.write_mask(0x18); // Enable background and sprite rendering
+
+        // Test at pixel 64 (just before sprite evaluation starts at 65)
+        for _ in 0..(10 * 341 + 64) {
+            ppu.tick();
+        }
+
+        ppu.registers.oam_address = 0x50;
+        ppu.write_mask(0x00); // Disable rendering
+
+        assert_eq!(
+            ppu.registers.oam_address, 0x50,
+            "OAMADDR should NOT be incremented before sprite evaluation starts (pixel 64)"
+        );
+
+        // Test at pixel 257 (after sprite evaluation ends at 256)
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+        ppu.write_mask(0x18);
+        for _ in 0..(10 * 341 + 257) {
+            ppu.tick();
+        }
+
+        ppu.registers.oam_address = 0x50;
+        ppu.write_mask(0x00); // Disable rendering
+
+        assert_eq!(
+            ppu.registers.oam_address, 0x50,
+            "OAMADDR should NOT be incremented after sprite evaluation ends (pixel 257)"
+        );
+    }
+
+    /// Test OAMADDR glitch does NOT occur during VBlank.
+    #[test]
+    fn test_oamaddr_glitch_not_triggered_during_vblank() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Advance to VBlank (scanline 241, pixel 100)
+        for _ in 0..(241 * 341 + 100) {
+            ppu.tick();
+        }
+
+        assert_eq!(ppu.timing.scanline(), 241, "Should be in VBlank");
+
+        ppu.registers.oam_address = 0x50;
+        ppu.write_mask(0x00); // Disable rendering
+
+        assert_eq!(
+            ppu.registers.oam_address, 0x50,
+            "OAMADDR should NOT be incremented during VBlank"
+        );
+    }
+
+    /// Test OAMADDR glitch wraps around correctly at 0xFF.
+    #[test]
+    fn test_oamaddr_glitch_wraps_at_0xff() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Advance to sprite evaluation
+        for _ in 0..(10 * 341 + 100) {
+            ppu.tick();
+        }
+
+        // Set OAMADDR to 0xFF
+        ppu.registers.oam_address = 0xFF;
+
+        // Disable rendering during sprite evaluation
+        ppu.write_mask(0x00);
+
+        // OAMADDR should wrap to 0x00
+        assert_eq!(
+            ppu.registers.oam_address, 0x00,
+            "OAMADDR should wrap from 0xFF to 0x00"
+        );
+    }
+
+    /// Test OAMADDR glitch does NOT occur when rendering remains enabled.
+    #[test]
+    fn test_oamaddr_glitch_not_triggered_when_rendering_remains_enabled() {
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+
+        // Enable rendering
+        ppu.write_mask(0x18);
+
+        // Advance to sprite evaluation
+        for _ in 0..(10 * 341 + 100) {
+            ppu.tick();
+        }
+
+        ppu.registers.oam_address = 0x50;
+
+        // Write mask again but keep rendering enabled
+        ppu.write_mask(0x18);
+
+        assert_eq!(
+            ppu.registers.oam_address, 0x50,
+            "OAMADDR should NOT be incremented when rendering remains enabled"
+        );
+    }
+
+    /// Test OAMADDR glitch occurs at boundary pixels (65 and 256).
+    #[test]
+    fn test_oamaddr_glitch_at_sprite_evaluation_boundaries() {
+        // Test at pixel 65 (start of sprite evaluation)
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+        ppu.write_mask(0x18);
+        for _ in 0..(10 * 341 + 65) {
+            ppu.tick();
+        }
+
+        ppu.registers.oam_address = 0x50;
+        ppu.write_mask(0x00);
+
+        assert_eq!(
+            ppu.registers.oam_address, 0x51,
+            "OAMADDR should be incremented at pixel 65 (start of sprite evaluation)"
+        );
+
+        // Test at pixel 256 (end of sprite evaluation)
+        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+        ppu.write_mask(0x18);
+        for _ in 0..(10 * 341 + 256) {
+            ppu.tick();
+        }
+
+        ppu.registers.oam_address = 0x50;
+        ppu.write_mask(0x00);
+
+        assert_eq!(
+            ppu.registers.oam_address, 0x51,
+            "OAMADDR should be incremented at pixel 256 (end of sprite evaluation)"
         );
     }
 }
