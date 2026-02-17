@@ -1,96 +1,105 @@
-# Save/Restore State Refactoring - Summary
+# Save/Restore State Refactoring - Summary (Revised)
 
 **Issue**: [#592](https://github.com/rmstdope/neser/issues/592)  
-**Status**: Proposal Complete - Awaiting Decision  
-**Date**: 2026-02-17
+**Status**: Proposal Revised - Awaiting Decision  
+**Date**: 2026-02-17 (Updated after navigator feedback)
 
 ## Quick Summary
 
-I've analyzed the save/restore state functionality and created a comprehensive refactoring proposal with **three evaluated options**.
+After exploring key questions from the navigator, I've revised the proposal to be **much simpler and more pragmatic**.
 
-### 📊 Current State
+### 📊 Key Questions Answered
 
-- 14 components implementing save/restore state
-- State structs in `savestate.rs`, implementations scattered
-- No enforced interface (easy to forget implementations)
-- Manual orchestration at each level
+**Q1: Do we need separate State structs?**  
+**A**: Yes - component structs contain non-serializable types (`Rc<RefCell<>>`), so we need separate state structs for serialization.
 
-### ✅ Recommended Solution: Hybrid Approach
+**Q2: Do state structs need to be centralized in savestate.rs?**  
+**A**: No! They can (and should) be defined alongside their components for better encapsulation.
 
-Introduce a `Stateful` trait to enforce implementation while keeping state structs centralized:
+**Q3: Can we avoid state structs entirely?**  
+**A**: Not really - the current pattern is actually quite good given the constraints.
 
+### ✅ Revised Recommendation: Move State Structs (Option 1)
+
+**Simple change**: Move state struct definitions from `savestate.rs` to component files.
+
+**Example**:
 ```rust
-pub trait Stateful {
-    type State: Serialize + for<'de> Deserialize<'de>;
-    fn capture_state(&self) -> Self::State;
-    fn restore_state(&mut self, state: &Self::State);
+// Before: State in savestate.rs, impl in cpu.rs (split)
+// After: Both in cpu.rs (together)
+
+// src/cpu/cpu.rs
+#[derive(Serialize, Deserialize)]
+pub struct CpuState { /* ... */ }
+
+impl Cpu {
+    pub fn capture_state(&self) -> CpuState { /* ... */ }
+}
+
+// src/console/savestate.rs (just imports and aggregates)
+use crate::cpu::CpuState;
+pub struct SaveState {
+    pub cpu: CpuState,
+    // ...
 }
 ```
 
 ### 📈 Benefits
 
-- ✅ Compile-time safety
-- ✅ Better discoverability
-- ✅ Consistent with mapper pattern
-- ✅ Minimal code disruption
-- ✅ Incremental migration
+- ✅ State struct next to implementation (single file to edit)
+- ✅ Better encapsulation
+- ✅ Minimal effort (2-3 hours)
+- ✅ Very low risk (just moving code)
+- ✅ No behavioral changes
 
 ### ⏱️ Effort Estimate
 
-**9-14 hours** total across 4 phases:
-1. Define trait (1-2h)
-2. Migrate core components (4-6h)  
-3. Migrate input controllers (2-3h)
-4. Documentation (2-3h)
+**2-3 hours** total:
+1. Move state structs one component at a time
+2. Update imports in savestate.rs
+3. Test after each move
+
+### 🤔 Why Not Traits?
+
+The original proposal was **over-engineered**. Adding a trait would:
+- Add complexity without commensurate benefit
+- Require 6-10 hours instead of 2-3
+- Introduce trait bounds and associated types
+- Not significantly improve the code
+
+The current pattern is fine - state structs just need to be in the right place.
 
 ### 📖 Full Details
 
-See the complete proposal with code examples, decision criteria, and implementation plan:
+See the complete revised proposal:
 
 **[docs/refactoring-save-restore-state.md](./refactoring-save-restore-state.md)**
 
 ## Decision Required
 
-Please choose one of these options:
+**Option 1: Move State Structs** (Recommended)
+- Simple, pragmatic improvement
+- 2-3 hours investment
+- Very low risk
 
-### Option A: Implement Hybrid Approach (Recommended)
-- Best long-term maintainability
-- 9-14 hours investment
-- Incremental, low-risk migration
-
-### Option B: Keep Current + Documentation
-- Minimal changes
-- 1-2 hours investment  
-- Good enough if no new components planned
-
-### Option C: Request Modifications
-- Let me know what adjustments you'd like to the proposal
+**Option 2: Keep Current**
+- Works fine as-is
+- Zero investment
+- Zero risk
 
 ## Response Format
 
-To proceed, please respond with one of:
+Please respond with:
 
-1. **"Approve Option 3"** - I'll implement the hybrid trait-based approach
-2. **"Approve Option 2"** - I'll add documentation improvements only
-3. **"Changes needed: [details]"** - I'll revise the proposal
-
-## Contact
-
-- **PR**: This is documented in the PR for issue #592
-- **Proposal**: `docs/refactoring-save-restore-state.md`
-- **This Summary**: `docs/REFACTORING_SUMMARY.md`
+1. **"Approve Option 1"** - I'll move the state structs to components
+2. **"Keep current"** - I'll close the issue with rationale
+3. **"Changes needed: [details]"** - I'll revise further
 
 ---
 
-**What's been done so far:**
-- ✅ Comprehensive code analysis (14 components examined)
-- ✅ Identified 4 architectural concerns
-- ✅ Evaluated 3 refactoring approaches
-- ✅ Created detailed implementation plan
-- ✅ Documented everything in proposal
-
-**What's needed next:**
-- ⏸️ Your decision on which approach to take
-- ⏸️ If approved, implementation of chosen approach
-- ⏸️ Testing and verification
-- ⏸️ Completion of issue #592
+**What changed from original proposal:**
+- ✅ Explored whether we need state structs (yes, we do)
+- ✅ Explored whether they need to be centralized (no, they don't)
+- ✅ Dropped the trait-based approach (too complex for the benefit)
+- ✅ Simplified to just moving struct definitions
+- ✅ Reduced effort from 9-14 hours to 2-3 hours

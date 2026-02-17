@@ -7,9 +7,16 @@
 
 ## Executive Summary
 
-This document proposes a **hybrid trait-based approach** to refactor the save/restore state functionality. The proposal introduces a `Stateful` trait while keeping state structs centralized, providing better compile-time safety and consistency with minimal code disruption.
+After analyzing the save/restore state functionality and exploring key questions about the architecture, this proposal recommends a **simple, pragmatic refactoring**: move state struct definitions from `savestate.rs` to live alongside their component implementations.
 
-**Recommendation**: Adopt the hybrid approach (Option 3) as it provides the best balance of maintainability, safety, and minimal risk.
+**Key Finding**: Separate state structs are necessary (components contain non-serializable types), but they don't need to be centralized in `savestate.rs`.
+
+**Recommendation**: **Option 1 - Move State Structs** (2-3 hours, very low risk)
+- Move each state struct definition to its component file
+- Update imports in `savestate.rs`
+- No behavioral changes, just reorganization
+
+**Why Not Traits?**: The original proposal was over-engineered. Traits add complexity without enough benefit. The current pattern works well; state structs just need to be in the right place.
 
 ---
 
@@ -20,6 +27,8 @@ This document proposes a **hybrid trait-based approach** to refactor the save/re
 The current save/restore state implementation follows these patterns:
 
 1. **State Structs (Centralized)**: All state structs (CpuState, PpuState, ApuState, etc.) are defined in `src/console/savestate.rs`
+   - **Why separate structs?** Component structs (like `Cpu`) contain non-serializable types (`Rc<RefCell<>>`, references) that can't be directly serialized
+   - **Why centralized?** Historical choice - could be distributed alongside components
 2. **Capture/Restore Methods (Distributed)**: Each component implements `capture_state()` and `restore_state()` methods near the component itself
 3. **Hierarchical Orchestration**: Each component manually orchestrates its sub-components' state capture/restore
 4. **Top-level Integration**: The NES struct coordinates all top-level components
@@ -79,9 +88,102 @@ impl Cpu {
 
 ---
 
-## Identified Issues
+## Key Questions & Answers
 
-### 1. Separation of Concerns
+### Q1: Why do we need separate State structs?
+
+**Answer**: The component structs contain non-serializable types that prevent direct serialization.
+
+**Example**:
+```rust
+// The Cpu struct cannot be serialized directly
+pub struct Cpu {
+    a: u8,
+    x: u8,
+    // ❌ These types don't implement Serialize
+    bus: Rc<RefCell<Bus>>,
+    ppu: Rc<RefCell<Ppu>>,
+    apu: Rc<RefCell<Apu>>,
+    master_clock: MasterClock,
+    // ... more fields
+}
+```
+
+**Alternatives explored**:
+1. **Derive Serialize on main structs** - Not feasible due to `Rc`, `RefCell`, and cross-references
+2. **Use custom Serialize impl** - Possible but complex, would need to skip non-data fields
+3. **Separate state structs** - Current approach, clean separation of data vs references
+
+**Conclusion**: Separate state structs are necessary for clean serialization.
+
+### Q2: Do state structs need to be centralized in savestate.rs?
+
+**Answer**: No! They could be defined alongside their components.
+
+**Current pattern** (centralized):
+```rust
+// src/console/savestate.rs
+pub struct CpuState { /* ... */ }
+pub struct PpuState { /* ... */ }
+
+// src/cpu/cpu.rs
+use crate::console::CpuState;
+impl Cpu {
+    pub fn capture_state(&self) -> CpuState { /* ... */ }
+}
+```
+
+**Alternative pattern** (distributed):
+```rust
+// src/cpu/cpu.rs
+#[derive(Serialize, Deserialize)]
+pub struct CpuState { /* ... */ }
+
+pub struct Cpu { /* ... */ }
+
+impl Cpu {
+    pub fn capture_state(&self) -> CpuState { /* ... */ }
+}
+
+// src/console/savestate.rs
+use crate::cpu::CpuState;
+use crate::ppu::PpuState;
+
+pub struct SaveState {
+    pub cpu: CpuState,
+    pub ppu: PpuState,
+    // ...
+}
+```
+
+**Pros of distributed approach**:
+- ✅ State struct right next to component struct
+- ✅ Less context switching when modifying
+- ✅ Better encapsulation
+- ✅ Each module owns its state definition
+
+**Cons of distributed approach**:
+- ⚠️ Serialization format more distributed
+- ⚠️ Harder to see full save-state format at once
+
+**Conclusion**: Distributing state structs alongside components is likely better! This addresses the original concern.
+
+### Q3: Can we simplify further?
+
+**Explored approaches**:
+
+1. **Directly serialize component fields** - Not feasible due to non-serializable types
+2. **Use serde's skip attribute** - Would make restore complex, need to track skipped fields
+3. **Builder pattern** - Adds complexity without clear benefit
+4. **Current approach** - Actually reasonably simple given constraints
+
+**Conclusion**: The current pattern of separate state structs with capture/restore methods is a good solution. The main improvement is to move state structs next to their components.
+
+---
+
+## Identified Issues (Revised)
+
+### 1. State Structs Separated from Components
 
 **Problem**: State structs live in `savestate.rs` while the logic to populate/restore them lives with each component.
 
@@ -89,40 +191,35 @@ impl Cpu {
 - Split context when modifying state
 - Need to edit multiple files for state changes
 - Potential for struct/implementation mismatch
-- Harder to ensure all fields are properly handled
 
-### 2. No Enforced Interface
+**Solution**: Move state structs to live alongside their components.
+
+### 2. No Enforced Interface (Low Priority)
 
 **Problem**: There's no trait requiring components to implement state management.
 
 **Impact**:
 - Easy to forget implementing state for new components
 - Hard to ensure consistency across implementations
-- No compile-time guarantee of completeness
-- Difficult to discover which components are stateful
 
-### 3. Manual Hierarchical Orchestration
+**Note**: This is less critical than initially thought. The pattern is clear and tests would catch missing implementations.
 
-**Problem**: Each parent component must manually orchestrate child state.
+### 3. Manual Hierarchical Orchestration (Not Really an Issue)
+
+**Current pattern**: Each parent component manually orchestrates child state.
 
 **Example from PPU**:
 ```rust
 pub fn capture_state(&self) -> PpuState {
-    let bg_state = self.background.capture_state();      // Manual call
-    let sprites_state = self.sprites.capture_state();    // Manual call
+    let bg_state = self.background.capture_state();
+    let sprites_state = self.sprites.capture_state();
     PpuState {
-        // ... manually map 50+ fields from bg_state and sprites_state
-        bg_pattern_shift_lo: bg_state.bg_pattern_shift_lo,
-        bg_pattern_shift_hi: bg_state.bg_pattern_shift_hi,
-        // ... many more manual mappings
+        // ... map fields from bg_state and sprites_state
     }
 }
 ```
 
-**Impact**:
-- Verbose and error-prone code
-- Easy to miss fields during updates
-- Duplication of field access logic
+**Assessment**: This is actually reasonable and explicit. It's not broken, just verbose. The hierarchical pattern makes the structure clear.
 
 ### 4. Inconsistent Patterns
 
@@ -140,184 +237,75 @@ pub fn capture_state(&self) -> PpuState {
 
 ---
 
-## Proposed Solutions
+## Revised Proposed Solutions
 
-### Option 1: Pure Trait-Based Hierarchical
+### Option 1: Move State Structs to Components (⭐ RECOMMENDED - Simple & Effective)
 
-**Concept**: Define a `Stateful` trait that all components implement:
+**Concept**: Keep the current pattern but move state struct definitions alongside their components.
 
+**Changes**:
 ```rust
-pub trait Stateful {
-    type State: Serialize + Deserialize;
-    fn capture_state(&self) -> Self::State;
-    fn restore_state(&mut self, state: &Self::State);
-}
-```
+// BEFORE: State in savestate.rs
+// src/console/savestate.rs
+pub struct CpuState { pub a: u8, /* ... */ }
 
-#### Pros:
-- ✅ Enforces implementation at compile time
-- ✅ Type-safe state associations
-- ✅ Consistent interface across all components
-- ✅ Easy to discover what components have state
-
-#### Cons:
-- ❌ Requires associated types for each component
-- ❌ May complicate generic code
-- ❌ State structs still somewhat distant from implementations
-
----
-
-### Option 2: Keep Current Pattern, Add Documentation
-
-**Concept**: Keep the current implementation but improve it with:
-- Better documentation
-- Naming conventions
-- Helper macros for common patterns
-- Integration tests
-
-#### Pros:
-- ✅ Minimal code changes
-- ✅ No learning curve
-- ✅ Working implementation
-- ✅ Zero migration risk
-
-#### Cons:
-- ❌ Doesn't solve fundamental architectural issues
-- ❌ No enforcement of consistency
-- ❌ Technical debt remains
-- ❌ Still easy to forget implementations
-
----
-
-### Option 3: Hybrid Approach (⭐ RECOMMENDED)
-
-**Concept**: Combine the best of both approaches:
-
-1. Keep state structs in `savestate.rs` (centralized serialization format)
-2. Introduce a `Stateful` trait for consistency and discoverability
-3. Keep implementation near components (but enforce via trait)
-4. Use consistent hierarchical call chains
-
-#### Structure:
-
-```rust
-// In savestate.rs - all state types and the trait
-pub trait Stateful {
-    type State: Serialize + Deserialize;
-    fn capture_state(&self) -> Self::State;
-    fn restore_state(&mut self, state: &Self::State);
+// src/cpu/cpu.rs  
+use crate::console::CpuState;
+impl Cpu {
+    pub fn capture_state(&self) -> CpuState { /* ... */ }
 }
 
-// In each component file - implement the trait
-impl Stateful for Cpu {
-    type State = CpuState;
-    
-    fn capture_state(&self) -> CpuState {
-        CpuState {
-            a: self.a,
-            x: self.x,
-            // ... existing logic
-        }
-    }
-    
-    fn restore_state(&mut self, state: &CpuState) {
-        self.a = state.a;
-        self.x = state.x;
-        // ... existing logic
-    }
-}
-```
+// AFTER: State alongside component
+// src/cpu/cpu.rs
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CpuState { pub a: u8, /* ... */ }
 
-#### Pros:
-- ✅ Enforces implementation via trait
-- ✅ State structs remain centralized for serialization
-- ✅ Implementation stays near component
-- ✅ Type-safe and discoverable
-- ✅ Minimal code changes (mostly adding trait impls)
-- ✅ Consistent with existing mapper pattern
-- ✅ Can migrate incrementally
-- ✅ Backwards compatible during migration
+pub struct Cpu { /* ... */ }
 
-#### Cons:
-- ⚠️ Still some separation between struct and implementation
-- ⚠️ Requires adding trait implementations to existing code
-- ⚠️ Small one-time migration effort
-
----
-
-## Recommendation: Adopt Option 3
-
-**Rationale**:
-
-1. **Cleaner Architecture**: Trait enforcement prevents missing implementations while maintaining clear structure
-2. **Easier Maintenance**: Clear contract for state management makes future changes safer
-3. **Minimal Disruption**: Existing code mostly stays the same, just gains trait implementations
-4. **Better Discoverability**: Easy to find all stateful components via trait implementations
-5. **Consistency**: Similar to existing mapper pattern, reducing cognitive load
-6. **Incremental Migration**: Can migrate one component at a time without breaking anything
-7. **Future-Proof**: New components must implement the trait, preventing oversight
-
----
-
-## Implementation Plan
-
-### Phase 1: Define Trait (Low Risk) ⏱️ 1-2 hours
-
-**Tasks**:
-1. Add `Stateful` trait to `src/console/savestate.rs`
-2. Add comprehensive documentation with examples
-3. Add unit tests for trait behavior
-4. No breaking changes yet - purely additive
-
-**Deliverables**:
-```rust
-/// Trait for components that support save-state capture and restoration.
-///
-/// Implement this trait for any component that needs to be included in
-/// save-state snapshots. The trait ensures consistent state management
-/// across all emulator components.
-pub trait Stateful {
-    /// The state type for this component.
-    type State: Serialize + for<'de> Deserialize<'de>;
-    
-    /// Capture the current state of this component.
-    fn capture_state(&self) -> Self::State;
-    
-    /// Restore this component's state from a snapshot.
-    fn restore_state(&mut self, state: &Self::State);
-}
-```
-
-**Risk**: None - purely additive change
-
----
-
-### Phase 2: Migrate Core Components (Medium Risk) ⏱️ 4-6 hours
-
-**Order of Migration**:
-1. CPU (simplest, no sub-components)
-2. Bus (moderate complexity)
-3. APU channels (Pulse, Triangle, Noise, DMC, Envelope)
-4. APU (aggregates channels)
-5. PPU sub-components (Background, Sprites)
-6. PPU (aggregates sub-components)
-
-**For each component**:
-1. Add `impl Stateful for Component`
-2. Move existing `capture_state()` and `restore_state()` into trait impl
-3. Run component-specific tests
-4. Verify state serialization/deserialization works
-5. Commit
-
-**Example Migration**:
-```rust
-// Before
 impl Cpu {
     pub fn capture_state(&self) -> CpuState { /* ... */ }
     pub fn restore_state(&mut self, state: &CpuState) { /* ... */ }
 }
 
-// After
+// src/console/savestate.rs (just aggregates)
+use crate::cpu::CpuState;
+use crate::ppu::PpuState;
+// ...
+
+pub struct SaveState {
+    pub version: u32,
+    pub cpu: CpuState,
+    pub ppu: PpuState,
+    // ...
+}
+```
+
+#### Pros:
+- ✅ State struct right next to component - single file to edit
+- ✅ Better encapsulation - each module owns its state
+- ✅ Minimal code changes - just move struct definitions
+- ✅ No breaking changes to serialization format
+- ✅ Addresses the main concern from the issue
+- ✅ Simple to implement (few hours)
+
+#### Cons:
+- ⚠️ SaveState format slightly more distributed (but still aggregated in one place)
+- ⚠️ Need to update imports
+
+**Effort**: 2-3 hours  
+**Risk**: Very Low
+
+---
+
+### Option 2: Add Trait + Move State Structs
+
+**Concept**: Move state structs AND add a trait for consistency.
+
+```rust
+// src/cpu/cpu.rs
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CpuState { /* ... */ }
+
 impl Stateful for Cpu {
     type State = CpuState;
     fn capture_state(&self) -> CpuState { /* ... */ }
@@ -325,63 +313,106 @@ impl Stateful for Cpu {
 }
 ```
 
-**Risk**: Medium
-- Could break compilation if trait bounds are incorrect
-- Need to verify all tests still pass
-- Mitigated by: incremental migration with tests after each component
+#### Pros:
+- ✅ All benefits of Option 1
+- ✅ Compile-time enforcement via trait
+- ✅ Better discoverability
+
+#### Cons:
+- ⚠️ More work to implement
+- ⚠️ Adds complexity (trait bounds, associated types)
+- ⚠️ Benefit over Option 1 is marginal
+
+**Effort**: 6-10 hours  
+**Risk**: Low-Medium
 
 ---
 
-### Phase 3: Migrate Input Controllers (Low Risk) ⏱️ 2-3 hours
+### Option 3: Keep Current (Minimal Changes)
 
-**Components**:
-1. Joypad
-2. Arkanoid
-3. Zapper
+**Concept**: Keep everything as-is, just add documentation.
 
-**Special Consideration**: These already implement `ControllerDevice` trait. May need to:
-- Keep both trait implementations
-- Or refactor `ControllerDevice` to use `Stateful`
+#### Pros:
+- ✅ Zero effort
+- ✅ Zero risk
+- ✅ Already works
 
-**Risk**: Low
-- Well-isolated components
-- Good test coverage
-- Can fall back if issues arise
+#### Cons:
+- ❌ Doesn't address the original concern about separation
 
----
-
-### Phase 4: Documentation & Cleanup ⏱️ 2-3 hours
-
-**Tasks**:
-1. Update module documentation to explain the pattern
-2. Add examples for future components
-3. Document migration path for contributors
-4. Add integration test that verifies all components implement `Stateful`
-5. Update CONTRIBUTING.md if it exists
-
-**Deliverables**:
-- Updated documentation
-- Pattern examples
-- Checklist for adding new stateful components
-
+**Effort**: 1 hour (documentation only)  
 **Risk**: None
 
 ---
 
-## Total Effort Estimate
+## Recommendation: Option 1
 
-- **Phase 1**: 1-2 hours
-- **Phase 2**: 4-6 hours
-- **Phase 3**: 2-3 hours
-- **Phase 4**: 2-3 hours
+After exploring the questions raised, **Option 1 (Move State Structs)** is the clear winner:
 
-**Total**: 9-14 hours of development time
+1. **Directly addresses the concern**: State structs next to their components
+2. **Simple**: Just move struct definitions, update imports
+3. **Low risk**: No behavioral changes, just reorganization
+4. **Minimal effort**: 2-3 hours
+5. **No complexity added**: No traits, no new patterns
+
+The original proposal (Option 3 from old version) was over-engineered. The trait adds complexity without enough benefit. Simply moving the state structs alongside their components solves the main problem elegantly.
+
+---
+
+## Implementation Plan (Option 1)
+
+### Phase 1: Move State Structs (2-3 hours)
+
+For each component:
+
+1. **Move state struct definition** from `src/console/savestate.rs` to component file
+2. **Update imports** in `savestate.rs` to use component's exported state
+3. **Run tests** to ensure serialization still works
+4. **Commit** each component separately
+
+**Example for CPU**:
+
+```rust
+// STEP 1: Move definition to src/cpu/cpu.rs
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CpuState {
+    pub a: u8,
+    pub x: u8,
+    // ... all fields
+}
+
+// STEP 2: Update src/console/savestate.rs
+use crate::cpu::CpuState;  // Import instead of define
+
+pub struct SaveState {
+    pub cpu: CpuState,  // Use imported type
+    // ...
+}
+```
+
+**Order of migration** (one at a time):
+1. CPU (simplest)
+2. Bus
+3. APU sub-components (Envelope, Pulse, Triangle, Noise, DMC)
+4. APU
+5. PPU sub-components (Background, Sprites)  
+6. PPU
+
+**After each move**: Run tests, commit with message like "Move CpuState to cpu.rs"
+
+### Phase 2: Documentation (30 minutes)
+
+1. Update module docs to explain the pattern
+2. Add comment in savestate.rs explaining it aggregates component states
+
+**Total Effort**: 2-3 hours  
+**Risk**: Very Low
 
 ---
 
 ## Alternative: Keep Current Implementation
 
-If the proposed refactoring seems too invasive or the effort isn't justified, the current implementation is actually **reasonably well-structured**:
+If even this simple reorganization isn't worth the effort, the current implementation works fine!
 
 ### What's Good About Current Implementation:
 - ✅ Clear separation: state definitions vs. behavior
@@ -389,20 +420,16 @@ If the proposed refactoring seems too invasive or the effort isn't justified, th
 - ✅ Tests prove it works reliably
 - ✅ Localized implementation logic
 
-### Minimal Improvements (1-2 hours):
-If choosing not to refactor, consider these low-effort improvements:
-
-1. **Documentation**: Add comprehensive module docs explaining the pattern
-2. **Checklist**: Create a checklist for adding new stateful components
+### Minimal Improvements (if keeping current):
+1. **Documentation**: Add comments linking state structs to their implementations
+2. **Checklist**: Create a checklist for adding new stateful components  
 3. **Integration Test**: Add test that serializes/deserializes full state
-4. **Comments**: Add comments in `savestate.rs` linking to implementations
 
-Example:
+Example documentation improvement:
 ```rust
 /// CPU register and internal state.
 ///
-/// Captured and restored by: `src/cpu/cpu.rs::Cpu::capture_state()`
-/// and `src/cpu/cpu.rs::Cpu::restore_state()`
+/// Implementation: `src/cpu/cpu.rs::Cpu::capture_state()` and `restore_state()`
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CpuState {
     // ...
@@ -413,61 +440,56 @@ pub struct CpuState {
 
 ## Decision Criteria
 
-### Choose Option 3 (Hybrid) if:
-- ✅ You plan to add more stateful components in the future
-- ✅ You want compile-time safety and enforcement
-- ✅ The 9-14 hour investment is acceptable
-- ✅ You value consistency and maintainability
-- ✅ You want better discoverability
+### Choose Option 1 (Move State Structs) if:
+- ✅ You value having state definitions close to implementations
+- ✅ The 2-3 hour investment is acceptable
+- ✅ You want simpler, more maintainable code organization
+- ✅ You agree the current split is a bit awkward
 
-### Choose Option 2 (Keep Current) if:
+### Choose Option 2 (Add Trait) if:
+- ✅ All of the above, AND
+- ✅ You want compile-time enforcement
+- ✅ The 6-10 hour investment is acceptable
+- ✅ You value consistency and discoverability
+
+### Keep Current if:
 - ✅ The current implementation works well enough
-- ✅ Development resources are very limited
-- ✅ The codebase is relatively stable (few new components planned)
-- ✅ The team prefers minimal changes
-- ✅ Risk avoidance is the priority
+- ✅ Even a few hours isn't worth it right now
+- ✅ You prefer stability over improvement
+- ✅ Other priorities are more important
 
 ---
 
-## Questions for Decision
+## My Revised Assessment
 
-Before proceeding, please consider:
+After exploring the navigator's questions, my assessment has changed:
 
-1. **Migration Risk**: Is the 9-14 hour investment worth the architectural improvement?
-2. **Team Capacity**: Is this the right time to do this refactoring?
-3. **Future Plans**: Are many new stateful components planned?
-4. **Current Pain**: Is the current pattern causing actual maintenance problems?
-5. **Priority**: How does this compare to other technical debt items?
+**Original Proposal**: Over-engineered. Trait-based approach adds complexity without commensurate benefit.
 
----
+**Revised Recommendation**: **Option 1 (Move State Structs)** - Simple, addresses the concern, low effort.
 
-## My Assessment
+**Key Insight**: The current pattern isn't broken, it's just that state structs are in the wrong place. Moving them alongside their components is a simple, effective improvement.
 
-As the analyzing agent, my assessment is:
-
-**Current Implementation**: Functional but improvable  
-**Proposed Refactoring**: Would provide meaningful benefits  
-**Risk**: Low to Medium (mitigated by incremental approach)  
-**Recommendation**: **Adopt Option 3** - the benefits outweigh the migration cost
-
-However, **only proceed if you agree** that the improved maintainability, safety, and consistency are worth the development time investment.
+**Why Not Traits?**: 
+- The current pattern is clear and explicit
+- Tests would catch missing implementations
+- Traits add complexity (bounds, associated types) for marginal benefit
+- Keep it simple
 
 ---
 
 ## Next Steps
 
-### If Approved (Option 3):
-1. ✅ Review and approve this proposal
-2. 📋 Create sub-issues for each phase (optional)
-3. 🚀 Begin Phase 1: Define trait
-4. 🧪 Migrate components incrementally with testing
-5. 📚 Complete documentation
+### If Approved (Option 1):
+1. ✅ Review and approve this revised proposal
+2. 🚀 Move state structs one component at a time
+3. 🧪 Test after each move
+4. 📚 Update documentation
 
-### If Declined (Option 2):
-1. ✅ Review and approve keeping current implementation
-2. 📝 Add documentation improvements
+### If Declined:
+1. ✅ Keep current implementation
+2. 📝 Optionally add documentation improvements
 3. ✅ Close issue with rationale
-4. 📋 Create follow-up issue if circumstances change
 
 ---
 
@@ -481,84 +503,92 @@ However, **only proceed if you agree** that the improved maintainability, safety
 
 ## Appendix: Code Examples
 
-### Current Pattern
+### Current Pattern (Before)
 
 ```rust
-// savestate.rs
+// src/console/savestate.rs
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CpuState {
     pub a: u8,
     pub x: u8,
-    pub y: u8,
-    // ...
+    // ... many fields
 }
 
-// cpu.rs
+// src/cpu/cpu.rs
+use crate::console::CpuState;
+
+pub struct Cpu { /* ... */ }
+
 impl Cpu {
     pub fn capture_state(&self) -> CpuState {
         CpuState {
             a: self.a,
             x: self.x,
-            y: self.y,
-            // ...
-        }
-    }
-}
-```
-
-### Proposed Pattern (Option 3)
-
-```rust
-// savestate.rs
-pub trait Stateful {
-    type State: Serialize + for<'de> Deserialize<'de>;
-    fn capture_state(&self) -> Self::State;
-    fn restore_state(&mut self, state: &Self::State);
-}
-
-pub struct CpuState {
-    pub a: u8,
-    pub x: u8,
-    pub y: u8,
-    // ...
-}
-
-// cpu.rs
-impl Stateful for Cpu {
-    type State = CpuState;
-    
-    fn capture_state(&self) -> CpuState {
-        CpuState {
-            a: self.a,
-            x: self.x,
-            y: self.y,
             // ...
         }
     }
     
-    fn restore_state(&mut self, state: &CpuState) {
+    pub fn restore_state(&mut self, state: &CpuState) {
         self.a = state.a;
         self.x = state.x;
-        self.y = state.y;
         // ...
     }
 }
 ```
 
-### Using the Trait
+### Proposed Pattern (Option 1 - After)
 
 ```rust
-// Generic function that works with any Stateful component
-fn test_state_roundtrip<T: Stateful>(component: &mut T) {
-    let state = component.capture_state();
-    component.restore_state(&state);
-    let restored = component.capture_state();
-    assert_eq!(
-        serde_json::to_string(&state).unwrap(),
-        serde_json::to_string(&restored).unwrap()
-    );
+// src/cpu/cpu.rs
+use serde::{Serialize, Deserialize};
+
+/// CPU state for save/restore
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CpuState {
+    pub a: u8,
+    pub x: u8,
+    // ... many fields
+}
+
+/// NES 6502 CPU
+pub struct Cpu { /* ... */ }
+
+impl Cpu {
+    pub fn capture_state(&self) -> CpuState {
+        CpuState {
+            a: self.a,
+            x: self.x,
+            // ...
+        }
+    }
+    
+    pub fn restore_state(&mut self, state: &CpuState) {
+        self.a = state.a;
+        self.x = state.x;
+        // ...
+    }
+}
+
+// src/console/savestate.rs
+use crate::cpu::CpuState;  // Import from component
+use crate::ppu::PpuState;
+// ...
+
+/// Complete emulator save state
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SaveState {
+    pub version: u32,
+    pub cpu: CpuState,
+    pub ppu: PpuState,
+    // ...
 }
 ```
 
+**Key Change**: State struct moved from `savestate.rs` to `cpu.rs`, `savestate.rs` just imports and aggregates.
+
+---
+
+**End of Proposal (Revised)**
 ---
 
 **End of Proposal**
