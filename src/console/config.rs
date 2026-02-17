@@ -99,7 +99,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--oam-dram-decay",
         help: Some(
-            "Enable OAM DRAM decay emulation (optionally: true/false, default when flag present: true)",
+            "Enable OAM DRAM decay emulation (use --no-oam-dram-decay or --disable-oam-dram-decay to disable)",
         ),
         has_value: false,
     },
