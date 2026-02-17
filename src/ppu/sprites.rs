@@ -111,7 +111,7 @@ impl Sprites {
             next_sprite_x_positions: [0; 8],
             next_sprite_attributes: [0; 8],
             oam_read_latch: 0,
-            oam_decay_enabled: true,
+            oam_decay_enabled: false,
             oam_decay_cycle: 0,
             oam_row_last_refresh_cycle: [0; 32],
         }
