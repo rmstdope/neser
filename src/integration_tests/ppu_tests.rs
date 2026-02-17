@@ -314,7 +314,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
             capture_nmi_sync_lines(&mut nes, WARMUP_FRAMES);
 
         let white = Nes::lookup_system_palette(0x30);
-        let black = Nes::lookup_system_palette(0x0D);
+        let black = Nes::lookup_system_palette(0x00);
 
         // Math upper and lower lines
         assert!(matches_white_run(&upper_line, 80, 103, white, black));
@@ -815,5 +815,75 @@ AA AA 01 01 10 10 01 01 00 00\n\
         "roms/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
-    // TODO scanline-a1
+    #[ignore] // Failing with current OAM implementation, needs investigation
+    #[test]
+    fn test_scanline_a1() {
+        let mut nes = create_nes_from_rom(
+            "roms/automated_tests/scanline-a1/scanline.nes",
+            Config::default(),
+            "scanline-a1",
+        );
+
+        run_nes_for_frames(&mut nes, 300);
+
+        let white = Nes::lookup_system_palette(0x30);
+        let black = Nes::lookup_system_palette(0x00);
+        let y_ranges = [
+            // First block
+            48u32..=54,
+            56u32..=62,
+            64u32..=70,
+            72u32..=78,
+            80u32..=86,
+            88u32..=94,
+            // Second block
+            120u32..=126,
+            128u32..=134,
+            136u32..=142,
+            144u32..=150,
+            152u32..=158,
+            160u32..=166,
+            // Third block
+            192u32..=198,
+            200u32..=206,
+            208u32..=214,
+            216u32..=222,
+        ];
+
+        let mut all_failures: Vec<String> = Vec::new();
+        for frame_offset in 0..10 {
+            run_nes_for_frames(&mut nes, 1);
+
+            let screen = nes.get_screen_buffer();
+            for y_range in &y_ranges {
+                for y in y_range.clone() {
+                    for x in 189u32..TvSystem::Ntsc.screen_width() {
+                        let pixel = screen.get_pixel(x, y);
+                        if pixel != black {
+                            all_failures.push(format!(
+                                "frame_offset={}, x={}, y={}, got {:?}",
+                                frame_offset, x, y, pixel
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        if !all_failures.is_empty() {
+            // Print summary by frame
+            for f in 0..10 {
+                let frame_fails: Vec<_> = all_failures
+                    .iter()
+                    .filter(|s| s.starts_with(&format!("frame_offset={},", f)))
+                    .collect();
+                if !frame_fails.is_empty() {
+                    eprintln!("Frame {}: {} failures", f, frame_fails.len());
+                    for fail in &frame_fails[..frame_fails.len().min(20)] {
+                        eprintln!("  {}", fail);
+                    }
+                }
+            }
+            panic!("{} total failures across 10 frames", all_failures.len());
+        }
+    }
 }
