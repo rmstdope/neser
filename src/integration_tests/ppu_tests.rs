@@ -815,7 +815,6 @@ AA AA 01 01 10 10 01 01 00 00\n\
         "roms/automated_tests/ppu_vbl_nmi/rom_singles/10-even_odd_timing.nes"
     );
 
-    #[ignore] // Failing with current OAM implementation, needs investigation
     #[test]
     fn test_scanline_a1() {
         let mut nes = create_nes_from_rom(
