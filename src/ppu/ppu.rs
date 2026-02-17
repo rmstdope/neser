@@ -707,6 +707,8 @@ impl Ppu {
                 .sprite_eval_overflow_reads_remaining,
             sprite_eval_overflow_signaled: sprites_state.sprite_eval_overflow_signaled,
             oam_read_latch: sprites_state.oam_read_latch,
+            oam_decay_cycle: sprites_state.oam_decay_cycle,
+            oam_row_last_refresh_cycle: sprites_state.oam_row_last_refresh_cycle,
             sprite_pattern_shift_lo: sprites_state.sprite_pattern_shift_lo,
             sprite_pattern_shift_hi: sprites_state.sprite_pattern_shift_hi,
             sprite_x_positions: sprites_state.sprite_x_positions,

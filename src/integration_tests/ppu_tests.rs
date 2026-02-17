@@ -13,6 +13,9 @@ mod tests {
         setup_rom_test,
     };
 
+    type RgbLine = Vec<(u8, u8, u8)>;
+    type NmiSyncLines = (RgbLine, RgbLine, RgbLine, RgbLine);
+
     fn capture_scanline_rgb(nes: &Nes, y: u32) -> Vec<(u8, u8, u8)> {
         let screen_buffer = nes.get_screen_buffer();
         (0..TvSystem::Ntsc.screen_width())
@@ -70,8 +73,8 @@ mod tests {
     }
 
     fn create_nes_from_rom(rom_path: &str, config: Config, rom_name: &str) -> Nes {
-        let rom_data = fs::read(rom_path)
-            .unwrap_or_else(|e| panic!("{} ROM should load: {}", rom_name, e));
+        let rom_data =
+            fs::read(rom_path).unwrap_or_else(|e| panic!("{} ROM should load: {}", rom_name, e));
         let cartridge = Cartridge::new(&rom_data)
             .unwrap_or_else(|e| panic!("{} ROM should parse: {}", rom_name, e));
 
@@ -98,15 +101,7 @@ mod tests {
         run_nes_for_frames(nes, 180);
     }
 
-    fn capture_nmi_sync_lines(
-        nes: &mut Nes,
-        warmup_frames: u32,
-    ) -> (
-        Vec<(u8, u8, u8)>,
-        Vec<(u8, u8, u8)>,
-        Vec<(u8, u8, u8)>,
-        Vec<(u8, u8, u8)>,
-    ) {
+    fn capture_nmi_sync_lines(nes: &mut Nes, warmup_frames: u32) -> NmiSyncLines {
         run_nes_for_frames(nes, warmup_frames);
 
         run_nes_for_frames(nes, 1);
