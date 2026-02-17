@@ -6,8 +6,9 @@ pub(crate) const PIXELS_PER_SCANLINE: u16 = 341;
 // Scanline constants
 /// First scanline where VBlank begins (scanlines 241-260 for NTSC, 241-310 for PAL)
 pub(crate) const VBLANK_START_SCANLINE: u16 = 241;
-/// VBlank NMI edge latching occurs at pixel 2 of the VBlank start scanline
-pub(crate) const VBLANK_NMI_LATCH_PIXEL: u16 = 2;
+/// VBlank NMI edge latching occurs at pixel 1 of the VBlank start scanline
+/// (same dot as the VBlank flag set, matching Mesen2 and NESdev docs)
+pub(crate) const VBLANK_NMI_LATCH_PIXEL: u16 = 1;
 /// First visible scanline (0-239 are visible scanlines)
 pub(crate) const FIRST_VISIBLE_SCANLINE: u16 = 0;
 /// Last visible scanline + 1 (scanlines 0-239 are visible)

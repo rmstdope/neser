@@ -128,29 +128,24 @@ fn tick_vblank_and_nmi(ppu: &mut Ppu) {
         );
     }
 
-    if scanline == VBLANK_START_SCANLINE
-        && pixel == FIRST_VISIBLE_PIXEL
-        && !ppu.vblank_suppressed_for_frame
-    {
-        // Hardware quirk/timing: VBlank flag is set at dot 1, but the NMI edge is observed
-        // slightly later. We latch the NMI edge at dot 2 (see below).
-        ppu.status.enter_vblank();
-        ppu.set_vblank_for_nmi();
-    }
-
-    // Latch the VBlank-start NMI edge one dot after the VBlank flag is set.
+    // VBlank flag set AND NMI edge latch both happen at scanline 241, dot 1.
+    // Per NESdev wiki and Mesen2, VBlank status flag and NMI output are asserted
+    // on the same PPU cycle.
     if scanline == VBLANK_START_SCANLINE
         && pixel == VBLANK_NMI_LATCH_PIXEL
         && !ppu.vblank_suppressed_for_frame
-        && ppu.status.is_in_vblank()
-        && ppu.registers.should_generate_nmi()
     {
-        trace_ppu!(2; "vblank nmi edge y={} x={} status={:02X}",
-            scanline,
-            pixel,
-            ppu.status.peek_status(),
-        );
-        ppu.status.trigger_nmi();
+        ppu.status.enter_vblank();
+        ppu.set_vblank_for_nmi();
+
+        if ppu.status.is_in_vblank() && ppu.registers.should_generate_nmi() {
+            trace_ppu!(2; "vblank nmi edge y={} x={} status={:02X}",
+                scanline,
+                pixel,
+                ppu.status.peek_status(),
+            );
+            ppu.status.trigger_nmi();
+        }
     }
 
     // Exit VBlank at the pre-render scanline, pixel 1.

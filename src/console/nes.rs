@@ -122,10 +122,10 @@ impl Nes {
         )));
         let cpu = Cpu::new(tv_system, memory.clone(), ppu.clone(), apu.clone());
 
-        // Initialize PPU 1 cycle ahead for proper sprite 0 hit timing
-        // This creates a one-cycle offset where PPU state changes become
-        // visible to the CPU one cycle later, matching hardware behavior
-        ppu.borrow_mut().run_ppu_cycles(1);
+        // PPU timing offset is now modeled inside MasterClock via ppu_offset=1
+        // (matching Mesen2's _ppuOffset). The master_clock starting at cpu_divider
+        // produces the correct startup PPU alignment without needing an explicit
+        // run_ppu_cycles() call.
 
         Self {
             ppu,
@@ -250,8 +250,8 @@ impl Nes {
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
 
-        // Re-establish 1-cycle PPU offset after reset
-        self.ppu.borrow_mut().run_ppu_cycles(1);
+        // PPU timing offset is handled by MasterClock's ppu_offset model.
+        // No explicit run_ppu_cycles() needed after reset.
     }
 
     /// Run one CPU "tick", executing one opcode and the corresponding PPU cycles
