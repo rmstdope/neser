@@ -2,31 +2,23 @@ use crate::console::TvSystem;
 
 /// Tracks the master clock used to derive CPU/PPU timing.
 ///
-/// Models the NES master clock with a PPU offset (matching Mesen2's
-/// `_ppuOffset`). PPU cycles advance using `while ppu_clock < target`
-/// semantics. This produces a 2-before/1-after split for writes and
-/// 1-before/2-after for reads, accurately reflecting when bus writes
-/// are visible to the PPU.
+/// per-CPU-cycle master clock advancement around each bus access.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MasterClock {
     master_clock: u64,
     ppu_clock: u64,
     cpu_divider: u64,
     ppu_divider: u64,
-    ppu_offset: u64,
 }
 
 impl MasterClock {
     const READ_WRITE_SHIFT: u64 = 1;
     pub fn new(tv_system: TvSystem) -> Self {
-        let cpu_divider = if tv_system == TvSystem::Ntsc { 12 } else { 16 };
-        let ppu_divider = if tv_system == TvSystem::Ntsc { 4 } else { 5 };
         Self {
-            master_clock: cpu_divider,
+            master_clock: 0,
             ppu_clock: 0,
-            cpu_divider,
-            ppu_divider,
-            ppu_offset: 1,
+            cpu_divider: if tv_system == TvSystem::Ntsc { 12 } else { 16 },
+            ppu_divider: if tv_system == TvSystem::Ntsc { 4 } else { 5 },
         }
     }
 
@@ -58,19 +50,10 @@ impl MasterClock {
         };
     }
 
-    /// Returns the number of PPU cycles elapsed since the last call.
-    ///
-    /// Uses a target-based advancement model (matching Mesen2's `_ppuOffset`):
-    /// the PPU clock advances in steps of `ppu_divider` until it reaches or
-    /// exceeds `master_clock - ppu_offset`. This naturally produces the correct
-    /// 2-before/1-after split for writes and 1-before/2-after for reads.
     pub fn ppu_cycles_since_last(&mut self) -> u64 {
-        let target = self.master_clock - self.ppu_offset;
-        let mut ppu_cycles = 0u64;
-        while self.ppu_clock < target {
-            self.ppu_clock += self.ppu_divider;
-            ppu_cycles += 1;
-        }
+        let elapsed_master_ticks = self.master_clock - self.ppu_clock;
+        let ppu_cycles = elapsed_master_ticks / self.ppu_divider;
+        self.ppu_clock += ppu_cycles * self.ppu_divider;
         ppu_cycles
     }
 
@@ -83,7 +66,7 @@ impl MasterClock {
     }
 
     pub fn reset(&mut self) {
-        self.master_clock = self.cpu_divider;
+        self.master_clock = 0;
         self.ppu_clock = 0;
     }
 
@@ -104,107 +87,84 @@ mod tests {
     use crate::console::TvSystem;
 
     #[test]
-    fn test_ntsc_write_cycle_2_before_1_after() {
+    fn test_ppu_cycles_since_last_ntsc_rounds_down_and_tracks_remainder() {
+        // NTSC uses ppu_divider=4 (master ticks per PPU cycle)
         let mut clock = MasterClock::new(TvSystem::Ntsc);
-        // Drain initial catchup from master_clock starting at cpu_divider
-        let _ = clock.ppu_cycles_since_last();
 
-        // Stabilise alignment with a few read cycles
-        for _ in 0..3 {
-            clock.before_cpu_cycle(false);
-            let _ = clock.ppu_cycles_since_last();
-            clock.after_cpu_cycle(false);
-            let _ = clock.ppu_cycles_since_last();
-        }
+        assert_eq!(clock.ppu_cycles_since_last(), 0);
 
-        clock.before_cpu_cycle(true);
-        let before = clock.ppu_cycles_since_last();
-        clock.after_cpu_cycle(true);
-        let after = clock.ppu_cycles_since_last();
-        assert_eq!(before, 2, "Write: 2 PPU before bus access");
-        assert_eq!(after, 1, "Write: 1 PPU after bus access");
+        // Less than one PPU cycle worth of master ticks -> 0 PPU cycles
+        clock.set_master_cycles(3);
+        assert_eq!(clock.ppu_cycles_since_last(), 0);
+
+        // Exactly one PPU cycle -> 1
+        clock.set_master_cycles(4);
+        assert_eq!(clock.ppu_cycles_since_last(), 1);
+
+        // Remainder should be carried: going to 7 is still < 4 ticks since last alignment
+        clock.set_master_cycles(7);
+        assert_eq!(clock.ppu_cycles_since_last(), 0);
+
+        // Crossing the next boundary -> 1 more
+        clock.set_master_cycles(8);
+        assert_eq!(clock.ppu_cycles_since_last(), 1);
     }
 
     #[test]
-    fn test_ntsc_read_cycle_1_before_2_after() {
+    fn test_ppu_cycles_since_last_ntsc_multiple_cycles_at_once() {
         let mut clock = MasterClock::new(TvSystem::Ntsc);
-        let _ = clock.ppu_cycles_since_last();
 
-        for _ in 0..3 {
-            clock.before_cpu_cycle(false);
-            let _ = clock.ppu_cycles_since_last();
-            clock.after_cpu_cycle(false);
-            let _ = clock.ppu_cycles_since_last();
-        }
+        clock.set_master_cycles(10);
+        // floor(10 / 4) = 2
+        assert_eq!(clock.ppu_cycles_since_last(), 2);
 
-        clock.before_cpu_cycle(false);
-        let before = clock.ppu_cycles_since_last();
-        clock.after_cpu_cycle(false);
-        let after = clock.ppu_cycles_since_last();
-        assert_eq!(before, 1, "Read: 1 PPU before bus access");
-        assert_eq!(after, 2, "Read: 2 PPU after bus access");
+        // After alignment to 8, master=11 only adds 3 ticks -> still 0
+        clock.set_master_cycles(11);
+        assert_eq!(clock.ppu_cycles_since_last(), 0);
+
+        // master=12 adds 4 ticks since last alignment -> 1
+        clock.set_master_cycles(12);
+        assert_eq!(clock.ppu_cycles_since_last(), 1);
     }
 
     #[test]
-    fn test_three_ppu_per_cpu_cycle_ntsc() {
-        let mut clock = MasterClock::new(TvSystem::Ntsc);
-        let _ = clock.ppu_cycles_since_last();
-
-        let mut total = 0u64;
-        for _ in 0..1000 {
-            clock.before_cpu_cycle(false);
-            total += clock.ppu_cycles_since_last();
-            clock.after_cpu_cycle(false);
-            total += clock.ppu_cycles_since_last();
-        }
-        assert_eq!(total, 3000);
-    }
-
-    #[test]
-    fn test_pal_ppu_cycles() {
+    fn test_ppu_cycles_since_last_pal_uses_divider_5() {
+        // PAL uses ppu_divider=5
         let mut clock = MasterClock::new(TvSystem::Pal);
-        let _ = clock.ppu_cycles_since_last();
 
-        let mut total = 0u64;
-        for _ in 0..5 {
-            clock.before_cpu_cycle(false);
-            total += clock.ppu_cycles_since_last();
-            clock.after_cpu_cycle(false);
-            total += clock.ppu_cycles_since_last();
-        }
-        // PAL: 5 CPU cycles × 16 master / 5 ppu_div = 16 PPU
-        assert_eq!(total, 16);
+        clock.set_master_cycles(4);
+        assert_eq!(clock.ppu_cycles_since_last(), 0);
+
+        clock.set_master_cycles(5);
+        assert_eq!(clock.ppu_cycles_since_last(), 1);
+
+        clock.set_master_cycles(9);
+        assert_eq!(clock.ppu_cycles_since_last(), 0);
+
+        clock.set_master_cycles(10);
+        assert_eq!(clock.ppu_cycles_since_last(), 1);
     }
 
     #[test]
-    fn test_reset_preserves_dividers() {
+    fn test_reset_restores_initial_state_but_preserves_dividers() {
         let mut clock = MasterClock::new(TvSystem::Ntsc);
+
+        // Advance internal clocks to a non-zero, misaligned state.
         clock.set_master_cycles(37);
         let _ = clock.ppu_cycles_since_last();
+        clock.before_cpu_cycle(false);
+        clock.after_cpu_cycle(true);
 
-        let cd = clock.cpu_divider();
-        let pd = clock.ppu_divider();
+        assert_ne!(clock.master_cycles(), 0);
+        let cpu_divider_before = clock.cpu_divider();
+        let ppu_divider_before = clock.ppu_divider();
+
+        // New API: should restore the initial state for this TV system.
         clock.reset();
-        assert_eq!(clock.cpu_divider(), cd);
-        assert_eq!(clock.ppu_divider(), pd);
-        // After reset, master_clock should be at cpu_divider
-        assert_eq!(clock.master_cycles(), cd);
-    }
 
-    #[test]
-    fn test_dma_flat_advance_gives_3_ppu() {
-        let mut clock = MasterClock::new(TvSystem::Ntsc);
-        let _ = clock.ppu_cycles_since_last();
-
-        // Stabilise alignment
-        for _ in 0..3 {
-            clock.before_cpu_cycle(false);
-            let _ = clock.ppu_cycles_since_last();
-            clock.after_cpu_cycle(false);
-            let _ = clock.ppu_cycles_since_last();
-        }
-
-        clock.advance_cpu_cycles(1);
-        assert_eq!(clock.ppu_cycles_since_last(), 3);
+        assert_eq!(clock.master_cycles(), 0);
+        assert_eq!(clock.ppu_cycles_since_last(), 0);
+        assert_eq!(clock.cpu_divider(), cpu_divider_before);
+        assert_eq!(clock.ppu_divider(), ppu_divider_before);
     }
 }

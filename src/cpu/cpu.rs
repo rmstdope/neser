@@ -7225,28 +7225,32 @@ mod tests {
     fn test_master_clock_ntsc_read_cycle_ticks_master_clock() {
         let mut clock = crate::cpu::MasterClock::new(TvSystem::Ntsc);
 
-        // ppuOffset model: master_clock starts at cpu_divider (12)
-        assert_eq!(clock.master_cycles(), 12);
+        assert_eq!(clock.master_cycles(), 0);
 
-        // One full CPU cycle (read): before + after = 5 + 7 = 12
+        // Updated timing model:
+        // before_cpu_cycle: read uses (before - 1)
+        // after_cpu_cycle:  read uses (after + 1)
+        // For NTSC: (6-1) + (6+1) = 12
         clock.before_cpu_cycle(false);
         clock.after_cpu_cycle(false);
 
-        assert_eq!(clock.master_cycles(), 24);
+        assert_eq!(clock.master_cycles(), 12);
     }
 
     #[test]
     fn test_master_clock_ntsc_write_cycle_ticks_master_clock() {
         let mut clock = crate::cpu::MasterClock::new(TvSystem::Ntsc);
 
-        // ppuOffset model: master_clock starts at cpu_divider (12)
-        assert_eq!(clock.master_cycles(), 12);
+        assert_eq!(clock.master_cycles(), 0);
 
-        // One full CPU cycle (write): before + after = 7 + 5 = 12
+        // Updated timing model:
+        // before_cpu_cycle: write uses (before + 1)
+        // after_cpu_cycle:  write uses (after - 1)
+        // For NTSC: (6+1) + (6-1) = 12
         clock.before_cpu_cycle(true);
         clock.after_cpu_cycle(true);
 
-        assert_eq!(clock.master_cycles(), 24);
+        assert_eq!(clock.master_cycles(), 12);
     }
 
     #[test]
