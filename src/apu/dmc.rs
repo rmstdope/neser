@@ -8,7 +8,8 @@
 //! - Output unit (shift register + 7-bit output level 0-127)
 //! - IRQ flag
 //! - Loop flag for sample restart
-use crate::console::{DmcState, TvSystem};
+use crate::apu::DmcState;
+use crate::console::TvSystem;
 use crate::trace_apu;
 
 // NTSC rate periods (in CPU cycles)
