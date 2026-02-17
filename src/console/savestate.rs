@@ -246,34 +246,6 @@ pub struct FrameCounterState {
     pub pending_immediate_half: bool,
 }
 
-/// Bus joypad state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JoypadState {
-    pub strobe: bool,
-    pub button_index: u8,
-    pub button_states: u8,
-}
-
-/// Bus Arkanoid controller state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ArkanoidState {
-    pub strobe: bool,
-    pub shift_index: u8,
-    pub position: u8,
-    pub latched_position: u8,
-    pub trigger: bool,
-    pub enabled: bool,
-}
-
-/// Bus Zapper controller state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ZapperState {
-    pub x: u8,
-    pub y: u8,
-    pub trigger: bool,
-    pub light: bool,
-}
-
 /// Bus state for save-state support.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BusState {
@@ -286,9 +258,9 @@ pub struct BusState {
 /// Wrapper for controller state to support serialization.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ControllerStateWrapper {
-    Joypad(JoypadState),
-    Arkanoid(ArkanoidState),
-    Zapper(ZapperState),
+    Joypad(crate::input::JoypadState),
+    Arkanoid(crate::input::ArkanoidState),
+    Zapper(crate::input::ZapperState),
 }
 
 /// APU complete state.

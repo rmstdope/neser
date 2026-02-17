@@ -1,4 +1,4 @@
-use crate::console::{ArkanoidState, JoypadState, ZapperState};
+use super::{ArkanoidState, JoypadState, ZapperState};
 use crate::input::Button;
 
 /// Unified controller state for save-state support.
