@@ -112,12 +112,13 @@ impl ScreenBuffer {
         dest[..self.buffer.len()].copy_from_slice(&self.buffer);
 
         // // Display debug pixels to help count and pinpoint positions
-        // for x in 11usize..=12 {
-        //     const Y_LINE: usize = 1;
-        //     let offset = ((Y_LINE * Self::WIDTH as usize) + x) * Self::BYTES_PER_PIXEL;
-        //     dest[offset] = if x.is_multiple_of(2) { 0xFF } else { 0x00 };
-        //     dest[offset + 1] = 0xFF;
-        //     dest[offset + 2] = if x.is_multiple_of(2) { 0x00 } else { 0xFF };
+        // for x in 187usize..=188 {
+        //     for y in 48usize..=54 {
+        //         let offset = ((y * Self::WIDTH as usize) + x) * Self::BYTES_PER_PIXEL;
+        //         dest[offset] = if x.is_multiple_of(2) { 0xFF } else { 0x00 };
+        //         dest[offset + 1] = 0xFF;
+        //         dest[offset + 2] = if x.is_multiple_of(2) { 0x00 } else { 0xFF };
+        //     }
         // }
     }
 
