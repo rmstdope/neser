@@ -314,7 +314,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
             capture_nmi_sync_lines(&mut nes, WARMUP_FRAMES);
 
         let white = Nes::lookup_system_palette(0x30);
-        let black = Nes::lookup_system_palette(0x00);
+        let black = Nes::lookup_system_palette(0x0D);
 
         // Math upper and lower lines
         assert!(matches_white_run(&upper_line, 80, 103, white, black));
@@ -826,7 +826,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
 
         run_nes_for_frames(&mut nes, 300);
 
-        let white = Nes::lookup_system_palette(0x30);
+        let _white = Nes::lookup_system_palette(0x30);
         let black = Nes::lookup_system_palette(0x00);
         let y_ranges = [
             // First block
