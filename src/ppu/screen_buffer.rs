@@ -112,8 +112,8 @@ impl ScreenBuffer {
         dest[..self.buffer.len()].copy_from_slice(&self.buffer);
 
         // // Display debug pixels to help count and pinpoint positions
-        // for x in 187usize..=188 {
-        //     for y in 48usize..=54 {
+        // for x in 189usize..=190 {
+        //     for y in 192usize..=198 {
         //         let offset = ((y * Self::WIDTH as usize) + x) * Self::BYTES_PER_PIXEL;
         //         dest[offset] = if x.is_multiple_of(2) { 0xFF } else { 0x00 };
         //         dest[offset + 1] = 0xFF;
