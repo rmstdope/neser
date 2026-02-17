@@ -132,25 +132,20 @@ fn tick_vblank_and_nmi(ppu: &mut Ppu) {
         && pixel == FIRST_VISIBLE_PIXEL
         && !ppu.vblank_suppressed_for_frame
     {
-        // Hardware quirk/timing: VBlank flag is set at dot 1, but the NMI edge is observed
-        // slightly later. We latch the NMI edge at dot 2 (see below).
+        // VBlank flag is set at dot 1 of scanline 241.
         ppu.status.enter_vblank();
         ppu.set_vblank_for_nmi();
-    }
 
-    // Latch the VBlank-start NMI edge one dot after the VBlank flag is set.
-    if scanline == VBLANK_START_SCANLINE
-        && pixel == VBLANK_NMI_LATCH_PIXEL
-        && !ppu.vblank_suppressed_for_frame
-        && ppu.status.is_in_vblank()
-        && ppu.registers.should_generate_nmi()
-    {
-        trace_ppu!(2; "vblank nmi edge y={} x={} status={:02X}",
-            scanline,
-            pixel,
-            ppu.status.peek_status(),
-        );
-        ppu.status.trigger_nmi();
+        // NMI edge is latched on the same dot as the VBlank flag set.
+        // This matches Mesen2 behavior where both occur at dot 1.
+        if ppu.status.is_in_vblank() && ppu.registers.should_generate_nmi() {
+            trace_ppu!(2; "vblank nmi edge y={} x={} status={:02X}",
+                scanline,
+                pixel,
+                ppu.status.peek_status(),
+            );
+            ppu.status.trigger_nmi();
+        }
     }
 
     // Exit VBlank at the pre-render scanline, pixel 1.
