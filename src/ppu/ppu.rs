@@ -247,7 +247,7 @@ impl Ppu {
         self.registers.write_mask(value);
         let grayscale_after = self.registers.is_grayscale();
         let rendering_enabled_after = self.registers.is_rendering_enabled();
-        
+
         // OAMADDR glitch: When rendering is disabled during sprite evaluation (cycles 65-256
         // of visible scanlines), OAMADDR is incremented by 1.
         // This is a hardware quirk where the PPU's sprite evaluation state machine is
@@ -266,7 +266,7 @@ impl Ppu {
                 trace_ppu!(2; "OAMADDR after glitch: {:02X}", self.registers.oam_address);
             }
         }
-        
+
         // Mid-scanline grayscale toggles take effect essentially immediately on real hardware.
         // To approximate that timing without re-rendering the whole scanline, re-apply grayscale
         // to the most recently drawn pixels (see `track_recent_pixel`). This matches demo_ntsc.
