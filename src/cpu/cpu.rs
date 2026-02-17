@@ -2,12 +2,40 @@ use super::master_clock::MasterClock;
 use super::opcode::*;
 use crate::apu::Apu;
 use crate::bus::Bus;
-use crate::console::CpuState;
 use crate::console::TvSystem;
 use crate::ppu::Ppu;
 use crate::trace_cpu;
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
+
+/// CPU register and internal state for save/restore.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CpuState {
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub sp: u8,
+    pub pc: u16,
+    pub p: u8,
+    pub total_cycles: u64,
+    pub halted: bool,
+    pub nmi_pending: bool,
+    pub irq_pending: bool,
+    pub prev_need_nmi: bool,
+    pub prev_run_irq: bool,
+    pub run_irq: bool,
+    pub delayed_i_flag: Option<bool>,
+    pub forced_irq_pending: bool,
+    pub skip_interrupt_latch_this_cycle: bool,
+    pub master_clock: u64,
+    pub master_clock_ppu: u64,
+    pub dmc_dma_running: bool,
+    pub dmc_dma_need_halt: bool,
+    pub dmc_dma_need_dummy_read: bool,
+    pub interrupt_stack: Vec<crate::cpu::InterruptKind>,
+    pub current_tick_info: Option<(u8, u8)>,
+}
 
 /// NES 6502 CPU
 pub struct Cpu {

@@ -15,7 +15,7 @@ pub struct SaveState {
     /// Version of the save-state format
     pub version: u32,
     /// CPU state
-    pub cpu: CpuState,
+    pub cpu: crate::cpu::CpuState,
     /// PPU state
     pub ppu: PpuState,
     /// APU state
@@ -26,34 +26,6 @@ pub struct SaveState {
     pub ram: Vec<u8>,
     /// Mapper state (serialized as opaque bytes)
     pub mapper: MapperState,
-}
-
-/// CPU register and internal state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct CpuState {
-    pub a: u8,
-    pub x: u8,
-    pub y: u8,
-    pub sp: u8,
-    pub pc: u16,
-    pub p: u8,
-    pub total_cycles: u64,
-    pub halted: bool,
-    pub nmi_pending: bool,
-    pub irq_pending: bool,
-    pub prev_need_nmi: bool,
-    pub prev_run_irq: bool,
-    pub run_irq: bool,
-    pub delayed_i_flag: Option<bool>,
-    pub forced_irq_pending: bool,
-    pub skip_interrupt_latch_this_cycle: bool,
-    pub master_clock: u64,
-    pub master_clock_ppu: u64,
-    pub dmc_dma_running: bool,
-    pub dmc_dma_need_halt: bool,
-    pub dmc_dma_need_dummy_read: bool,
-    pub interrupt_stack: Vec<crate::cpu::InterruptKind>,
-    pub current_tick_info: Option<(u8, u8)>,
 }
 
 /// PPU timing state.
@@ -353,7 +325,7 @@ pub struct MapperState {
 impl SaveState {
     /// Create a new save state with the current version.
     pub fn new(
-        cpu: CpuState,
+        cpu: crate::cpu::CpuState,
         ppu: PpuState,
         apu: ApuState,
         bus: BusState,
@@ -398,8 +370,8 @@ impl SaveState {
 mod tests {
     use super::*;
 
-    fn create_test_cpu_state() -> CpuState {
-        CpuState {
+    fn create_test_cpu_state() -> crate::cpu::CpuState {
+        crate::cpu::CpuState {
             a: 0x42,
             x: 0x10,
             y: 0x20,
