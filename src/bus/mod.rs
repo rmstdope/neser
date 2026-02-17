@@ -8,5 +8,8 @@ pub mod ppu_device;
 pub mod ram_device;
 
 pub use bus::Bus;
+pub use bus::BusState;
+pub use bus::ControllerStateWrapper;
+pub use bus::MapperState;
 #[cfg(test)]
 pub(crate) use bus::BusDevice;

@@ -21,11 +21,11 @@ pub struct SaveState {
     /// APU state
     pub apu: ApuState,
     /// Bus state
-    pub bus: BusState,
+    pub bus: crate::bus::BusState,
     /// CPU RAM (2KB, mirrored to 8KB)
     pub ram: Vec<u8>,
     /// Mapper state (serialized as opaque bytes)
-    pub mapper: MapperState,
+    pub mapper: crate::bus::MapperState,
 }
 
 /// PPU timing state.
@@ -246,23 +246,6 @@ pub struct FrameCounterState {
     pub pending_immediate_half: bool,
 }
 
-/// Bus state for save-state support.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct BusState {
-    pub open_bus: u8,
-    pub oam_dma_page: Option<u8>,
-    pub port1_controller: ControllerStateWrapper,
-    pub port2_controller: ControllerStateWrapper,
-}
-
-/// Wrapper for controller state to support serialization.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum ControllerStateWrapper {
-    Joypad(crate::input::JoypadState),
-    Arkanoid(crate::input::ArkanoidState),
-    Zapper(crate::input::ZapperState),
-}
-
 /// APU complete state.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ApuState {
@@ -285,14 +268,6 @@ pub struct ApuState {
     pub last_4017_write: u8,
 }
 
-/// Mapper state (opaque serialization).
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MapperState {
-    pub mapper_number: u8,
-    pub prg_ram: Vec<u8>,
-    pub chr_ram: Vec<u8>,
-    pub registers: Vec<u8>,
-}
 
 impl SaveState {
     /// Create a new save state with the current version.
@@ -300,9 +275,9 @@ impl SaveState {
         cpu: crate::cpu::CpuState,
         ppu: PpuState,
         apu: ApuState,
-        bus: BusState,
+        bus: crate::bus::BusState,
         ram: Vec<u8>,
-        mapper: MapperState,
+        mapper: crate::bus::MapperState,
     ) -> Self {
         Self {
             version: SAVESTATE_VERSION,

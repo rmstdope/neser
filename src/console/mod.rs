@@ -15,11 +15,12 @@ pub use nes::Nes;
 pub use nes::TvSystem;
 pub use ram_init::initialize_ram;
 pub use savestate::{
-    ApuState, BusState, ControllerStateWrapper, DmcState, EnvelopeState,
-    FrameCounterState, MapperState, NoiseState, PpuRegisterState, PpuState,
+    ApuState, DmcState, EnvelopeState,
+    FrameCounterState, NoiseState, PpuRegisterState, PpuState,
     PpuTimingState, PulseState, SAVESTATE_VERSION, SaveState, SpritesState, TriangleState,
 };
 // Re-export state types from their respective modules
+pub use crate::bus::{BusState, ControllerStateWrapper, MapperState};
 pub use crate::cpu::CpuState;
 pub use crate::input::{ArkanoidState, JoypadState, ZapperState};
 
