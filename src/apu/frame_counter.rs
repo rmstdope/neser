@@ -1,10 +1,10 @@
 /// Frame Counter for the NES APU
 /// Sequences envelope, sweep, and length counter clocks
 /// Operates in two modes: 4-step and 5-step
-use crate::console::TvSystem;
+use crate::console::TimingMode;
 use crate::trace_apu;
 pub struct FrameCounter {
-    tv_system: TvSystem,
+    tv_system: TimingMode,
     mode: Mode,
     irq_inhibit: bool,
     cycle_counter: u32,
@@ -49,10 +49,10 @@ impl Default for FrameCounter {
 impl FrameCounter {
     /// Create a new frame counter
     pub fn new() -> Self {
-        Self::new_with_tv_system(TvSystem::Ntsc)
+        Self::new_with_tv_system(TimingMode::Ntsc)
     }
 
-    pub fn new_with_tv_system(tv_system: TvSystem) -> Self {
+    pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
         Self {
             tv_system,
             mode: Mode::FourStep,
@@ -416,8 +416,11 @@ impl FrameCounter {
         const IRQ_ASSERT_CYCLES: u8 = 3; // How long the internal IRQ signal keeps asserting
 
         let (step_1, step_2, step_3, step_4, irq_cycle, frame_cycles) = match self.tv_system {
-            TvSystem::Ntsc => (7457, 14913, 22371, 29829, 29828, 29830),
-            TvSystem::Pal => (8313, 16627, 24939, 33253, 33252, 33254),
+            TimingMode::Ntsc => (7457, 14913, 22371, 29829, 29828, 29830),
+            TimingMode::Pal => (8313, 16627, 24939, 33253, 33252, 33254),
+            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+                (7457, 14913, 22371, 29829, 29828, 29830)
+            }
         };
 
         let quarter_frame = self.cycle_counter == step_1
@@ -460,8 +463,11 @@ impl FrameCounter {
     /// - 37281: HalfFrame (envelope + length)
     fn clock_five_step(&mut self) -> (bool, bool) {
         let (step_1_base, step_2_base, step_3_base, step_5_base) = match self.tv_system {
-            TvSystem::Ntsc => (7457, 14913, 22371, 37281),
-            TvSystem::Pal => (8313, 16627, 24939, 41565),
+            TimingMode::Ntsc => (7457, 14913, 22371, 37281),
+            TimingMode::Pal => (8313, 16627, 24939, 41565),
+            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+                (7457, 14913, 22371, 37281)
+            }
         };
 
         // The 5-step sequence length is odd for both PAL and NTSC , which causes the relative phase to
@@ -495,7 +501,7 @@ impl FrameCounter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::console::TvSystem;
+    use crate::console::TimingMode;
 
     #[test]
     fn test_frame_counter_new() {
@@ -698,7 +704,7 @@ mod tests {
 
     #[test]
     fn test_pal_four_step_step_1_signals() {
-        let mut fc = FrameCounter::new_with_tv_system(TvSystem::Pal);
+        let mut fc = FrameCounter::new_with_tv_system(TimingMode::Pal);
         fc.write_register(0b0000_0000); // 4-step mode
 
         // Clock up to PAL step 1 (8313 cycles)
@@ -781,7 +787,7 @@ mod tests {
 
     #[test]
     fn test_pal_four_step_wraparound() {
-        let mut fc = FrameCounter::new_with_tv_system(TvSystem::Pal);
+        let mut fc = FrameCounter::new_with_tv_system(TimingMode::Pal);
         fc.write_register(0b0000_0000); // 4-step mode
 
         // Clock through full PAL sequence (33254 cycles)

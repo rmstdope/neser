@@ -62,7 +62,7 @@
 // Imports & Dependencies
 // ============================================================================
 
-use crate::cartridge::cartridge::MirroringMode;
+use crate::cartridge::MirroringMode;
 use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 use crate::trace_mapper;
@@ -1770,7 +1770,13 @@ impl Mapper for MMC5Mapper {
         snapshot.push(self.pcm_enabled as u8);
         snapshot.push(self.pcm_value);
 
-        snapshot.push(self.mirroring as u8);
+        snapshot.push(match self.mirroring {
+            MirroringMode::Horizontal => 0,
+            MirroringMode::Vertical => 1,
+            MirroringMode::SingleScreen => 2,
+            MirroringMode::FourScreen => 3,
+            _ => 0,
+        });
 
         snapshot
     }
@@ -2114,8 +2120,8 @@ impl Mapper for MMC5Mapper {
 #[cfg(test)]
 #[allow(clippy::identity_op)]
 mod tests {
+    use crate::cartridge::MirroringMode;
     use crate::cartridge::cartridge::Cartridge;
-    use crate::cartridge::cartridge::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
     use crate::debugging::*;
@@ -2228,7 +2234,8 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = MMC5Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+        let mut mapper =
+            MMC5Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
 
         mapper.write_prg(0x5100, 3);
         mapper.write_prg(0x5114, 0x80 | 1);
@@ -2245,8 +2252,6 @@ mod tests {
         mapper.write_prg(0x5104, 0);
         mapper.write_prg(0x5105, 0b0000_0010); // $2000 quadrant -> ExRAM
         assert!(mapper.write_nametable(0x2000, 0x77));
-
-        mapper.write_prg(0xF000, 0x01); // horizontal mirroring
 
         mapper.write_prg(0x5203, 3);
         mapper.write_prg(0x5204, 0x80);

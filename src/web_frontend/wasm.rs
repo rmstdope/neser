@@ -1,5 +1,5 @@
 use crate::cartridge::Cartridge;
-use crate::console::{Config, Nes, SaveState, log_rom_tv_system_selection};
+use crate::console::{Config, Nes, SaveState, log_rom_timing_mode_selection};
 use crate::frontend_toasts::{
     cartridge_load_toast_message, emulator_timing_toast_message,
     gamepad_init_toast_message as shared_gamepad_init_toast_message,
@@ -82,9 +82,9 @@ impl WasmNes {
                 return Err(JsValue::from_str(&err.to_string()));
             }
         };
-        let rom_tv_system = cart.rom_tv_system();
-        let applied = config.apply_rom_tv_system(rom_tv_system);
-        log_rom_tv_system_selection(&config, rom_tv_system, applied);
+        let rom_timing_mode = cart.rom_timing_mode();
+        let applied = config.apply_rom_timing_mode(rom_timing_mode);
+        log_rom_timing_mode_selection(&config, rom_timing_mode, applied);
 
         self.nes = Nes::new(config);
         self.nes.insert_cartridge(cart);

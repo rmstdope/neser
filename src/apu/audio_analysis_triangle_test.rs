@@ -3,7 +3,7 @@ mod tests {
     use crate::apu::Apu;
     use crate::bus::BusDevice;
     use crate::bus::apu_device::ApuDevice;
-    use crate::console::TvSystem;
+    use crate::console::TimingMode;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -23,7 +23,7 @@ mod tests {
     }
 
     fn create_triangle_only_apu() -> (Rc<RefCell<Apu>>, ApuDevice) {
-        create_apu_with_sample_rate(TvSystem::Ntsc.cpu_clock_hz())
+        create_apu_with_sample_rate(TimingMode::Ntsc.cpu_clock_hz())
     }
 
     fn write_register(device: &mut ApuDevice, addr: u16, value: u8) {
@@ -505,7 +505,7 @@ mod tests {
 
     #[test]
     fn test_triangle_mixer_level_varies_with_dmc_level() {
-        let (apu, mut device) = create_apu_with_sample_rate(TvSystem::Ntsc.cpu_clock_hz());
+        let (apu, mut device) = create_apu_with_sample_rate(TimingMode::Ntsc.cpu_clock_hz());
 
         {
             let mut apu_mut = apu.borrow_mut();

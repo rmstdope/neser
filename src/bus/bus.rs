@@ -652,7 +652,7 @@ impl Bus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::console::TvSystem;
+    use crate::console::TimingMode;
     use std::rc::Rc;
 
     struct TestBusDevice {
@@ -793,7 +793,7 @@ mod tests {
 
     #[test]
     fn test_restore_mapper_state_updates_ppu_mirroring() {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let mut bus = Bus::new(ppu.clone(), apu, config);
@@ -879,7 +879,7 @@ mod tests {
     }
 
     fn create_test_memory() -> Bus {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = crate::console::Config {
             ram_init_mode: crate::console::RamInitMode::Zero,
@@ -1013,7 +1013,7 @@ mod tests {
 
     #[test]
     fn test_oam_dma_write_notifies_mapper_only_on_real_write() {
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let mut memory = Bus::new(ppu, apu, config);
@@ -1136,7 +1136,7 @@ mod tests {
         // If we only set PPU mirroring once at cartridge load, scrolling across
         // a nametable boundary can show duplicated screens.
 
-        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let mut mem = Bus::new(ppu.clone(), apu, config);

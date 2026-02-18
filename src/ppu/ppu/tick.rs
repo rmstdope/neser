@@ -1,5 +1,5 @@
 use super::Ppu;
-use crate::console::{Nes, TvSystem};
+use crate::console::{Nes, TimingMode};
 use crate::debugging::ppu_trace_level;
 use crate::ppu::color_effects::{apply_color_emphasis, apply_grayscale};
 use crate::ppu::timing::{
@@ -15,10 +15,13 @@ use crate::ppu::timing::{
 use crate::ppu::timing::FIRST_VISIBLE_SCANLINE;
 use crate::trace_ppu;
 
-pub(super) fn prerender_scanline(tv_system: TvSystem) -> u16 {
+pub(super) fn prerender_scanline(tv_system: TimingMode) -> u16 {
     match tv_system {
-        TvSystem::Ntsc => NTSC_PRERENDER_SCANLINE,
-        TvSystem::Pal => PAL_PRERENDER_SCANLINE,
+        TimingMode::Ntsc => NTSC_PRERENDER_SCANLINE,
+        TimingMode::Pal => PAL_PRERENDER_SCANLINE,
+        TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+            NTSC_PRERENDER_SCANLINE
+        }
     }
 }
 
@@ -646,7 +649,7 @@ mod tests {
 
     #[test]
     fn test_should_trace_vblank_exit() {
-        let prerender = prerender_scanline(TvSystem::Ntsc);
+        let prerender = prerender_scanline(TimingMode::Ntsc);
         assert!(should_trace_vblank_exit(
             prerender,
             prerender,

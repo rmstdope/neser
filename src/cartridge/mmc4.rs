@@ -242,7 +242,11 @@ impl Mapper for MMC4Mapper {
             self.chr_bank_1_fd,
             self.chr_bank_1_fe,
             (self.latch0_is_fd.get() as u8) | ((self.latch1_is_fd.get() as u8) << 1),
-            self.mirroring as u8,
+            match self.mirroring {
+                MirroringMode::Vertical => 0,
+                MirroringMode::Horizontal => 1,
+                _ => 1,
+            },
         ]
     }
 

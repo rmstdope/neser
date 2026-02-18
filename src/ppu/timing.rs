@@ -1,4 +1,4 @@
-use crate::console::TvSystem;
+use crate::console::TimingMode;
 
 /// Number of PPU cycles (pixels) per scanline
 pub(crate) const PIXELS_PER_SCANLINE: u16 = 341;
@@ -62,7 +62,7 @@ pub struct Timing {
     /// Total number of PPU ticks since reset
     total_cycles: u64,
     /// TV system (NTSC or PAL)
-    tv_system: TvSystem,
+    tv_system: TimingMode,
     /// Current scanline (0-261 for NTSC, 0-311 for PAL)
     pub scanline: u16,
     /// Current pixel within scanline (0-340, i.e., 0 to LAST_DOT)
@@ -78,7 +78,7 @@ pub struct Timing {
 
 impl Timing {
     /// Create a new Timing instance
-    pub fn new(tv_system: TvSystem) -> Self {
+    pub fn new(tv_system: TimingMode) -> Self {
         Self {
             total_cycles: 0,
             tv_system,
@@ -120,7 +120,7 @@ impl Timing {
 
         // NTSC odd frame skip: On odd frames with rendering enabled,
         // skip from pre-render scanline dot 339 directly to scanline 0 dot 0
-        let should_skip_odd_frame = self.tv_system == TvSystem::Ntsc
+        let should_skip_odd_frame = self.tv_system == TimingMode::Ntsc
             && (self.frame_count & 1) == 1 // Odd frame
             && rendering_enabled_for_odd_skip
             && self.scanline == NTSC_PRERENDER_SCANLINE
@@ -197,7 +197,7 @@ impl Timing {
     }
 
     /// Get the TV system
-    pub fn tv_system(&self) -> TvSystem {
+    pub fn tv_system(&self) -> TimingMode {
         self.tv_system
     }
 
@@ -208,8 +208,11 @@ impl Timing {
     pub fn is_rendering_cycle(&self) -> bool {
         let is_visible_scanline = self.scanline < LAST_VISIBLE_SCANLINE_PLUS_ONE;
         let is_prerender_scanline = match self.tv_system {
-            TvSystem::Ntsc => self.scanline == NTSC_PRERENDER_SCANLINE,
-            TvSystem::Pal => self.scanline == PAL_PRERENDER_SCANLINE,
+            TimingMode::Ntsc => self.scanline == NTSC_PRERENDER_SCANLINE,
+            TimingMode::Pal => self.scanline == PAL_PRERENDER_SCANLINE,
+            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+                self.scanline == NTSC_PRERENDER_SCANLINE
+            }
         };
 
         if is_visible_scanline || is_prerender_scanline {
@@ -238,7 +241,7 @@ impl Timing {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimingDebugState {
     pub total_cycles: u64,
-    pub tv_system: TvSystem,
+    pub tv_system: TimingMode,
     pub scanline: u16,
     pub pixel: u16,
     pub frame_count: u64,
@@ -277,7 +280,7 @@ mod tests {
 
     #[test]
     fn test_timing_new() {
-        let timing = Timing::new(TvSystem::Ntsc);
+        let timing = Timing::new(TimingMode::Ntsc);
         assert_eq!(timing.scanline(), 0);
         assert_eq!(timing.pixel(), 0);
         assert_eq!(timing.total_cycles(), 0);
@@ -286,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_timing_reset() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
         timing.tick(false);
         timing.reset();
         assert_eq!(timing.scanline(), 0);
@@ -296,7 +299,7 @@ mod tests {
 
     #[test]
     fn test_timing_tick_increments_pixel() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
         timing.tick(false);
         assert_eq!(timing.pixel(), 1);
         assert_eq!(timing.total_cycles(), 1);
@@ -304,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_timing_scanline_wraps() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
         // Advance to end of scanline
         for _ in 0..PIXELS_PER_SCANLINE {
             timing.tick(false);
@@ -315,7 +318,7 @@ mod tests {
 
     #[test]
     fn test_timing_frame_wraps() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
         // Advance to end of frame (262 scanlines * 341 pixels)
         for _ in 0..(262 * (PIXELS_PER_SCANLINE as usize)) {
             timing.tick(false);
@@ -327,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_timing_odd_frame_skip() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
         // Advance to frame 1 (odd frame)
         for _ in 0..(262 * (PIXELS_PER_SCANLINE as usize)) {
             timing.tick(false);
@@ -351,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_is_rendering_cycle() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
 
         // Visible scanline, pixel 100
         timing.scanline = FIRST_VISIBLE_SCANLINE;
@@ -371,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_is_rendering_cycle_pal_prerender_scanline() {
-        let mut timing = Timing::new(TvSystem::Pal);
+        let mut timing = Timing::new(TimingMode::Pal);
 
         // PAL pre-render scanline is 311
         timing.scanline = PAL_PRERENDER_SCANLINE;
@@ -386,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_is_visible_pixel() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
 
         // Visible pixel
         timing.scanline = 100;
@@ -405,7 +408,7 @@ mod tests {
 
     #[test]
     fn test_ntsc_scanline_count() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
 
         // NTSC should have exactly 262 scanlines (0-261)
         // Run through an entire frame and verify we hit scanline 0 after scanline 261
@@ -423,7 +426,7 @@ mod tests {
 
     #[test]
     fn test_pal_scanline_count() {
-        let mut timing = Timing::new(TvSystem::Pal);
+        let mut timing = Timing::new(TimingMode::Pal);
 
         // PAL should have exactly 312 scanlines (0-311)
         // Run through an entire frame and verify we hit scanline 0 after scanline 311
@@ -441,7 +444,7 @@ mod tests {
 
     #[test]
     fn test_dots_per_scanline() {
-        let _timing = Timing::new(TvSystem::Ntsc);
+        let _timing = Timing::new(TimingMode::Ntsc);
 
         // Both NTSC and PAL use 341 dots per scanline (0-340)
         // This is already verified by PIXELS_PER_SCANLINE constant
@@ -453,7 +456,7 @@ mod tests {
 
     #[test]
     fn test_ntsc_odd_frame_skip() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
 
         // Odd frame with rendering enabled: skip dot 340 on pre-render scanline
         // Set up: odd frame (frame_count = 1), pre-render scanline 261, dot 339
@@ -480,7 +483,7 @@ mod tests {
 
     #[test]
     fn test_ntsc_even_frame_no_skip() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
 
         // Even frame: no skip, normal 341 dots
         timing.frame_count = 0; // Even frame
@@ -496,7 +499,7 @@ mod tests {
 
     #[test]
     fn test_pal_no_frame_skip() {
-        let mut timing = Timing::new(TvSystem::Pal);
+        let mut timing = Timing::new(TimingMode::Pal);
 
         // PAL never skips frames
         timing.frame_count = 1; // Odd frame
@@ -510,7 +513,7 @@ mod tests {
 
     #[test]
     fn test_ntsc_cycles_per_frame() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
 
         // NTSC even frame: 262 scanlines * 341 dots = 89342 cycles
         // Run through an entire even frame
@@ -535,7 +538,7 @@ mod tests {
 
     #[test]
     fn test_ntsc_odd_frame_cycles() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
         timing.frame_count = 1; // Start on odd frame
 
         // NTSC odd frame with rendering: 262 scanlines * 341 dots - 1 (skip) = 89341 cycles
@@ -571,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_pal_cycles_per_frame() {
-        let mut timing = Timing::new(TvSystem::Pal);
+        let mut timing = Timing::new(TimingMode::Pal);
 
         // PAL: 312 scanlines * 341 dots = 106392 cycles per frame
         let start_cycles = timing.total_cycles();
@@ -595,7 +598,7 @@ mod tests {
 
     #[test]
     fn test_frame_counter_wraparound() {
-        let mut timing = Timing::new(TvSystem::Ntsc);
+        let mut timing = Timing::new(TimingMode::Ntsc);
 
         // Verify frame counter increments properly
         assert_eq!(timing.frame_count(), 0);

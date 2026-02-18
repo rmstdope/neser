@@ -2,7 +2,7 @@ use super::autorun_state::AutorunState;
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::app_context::AppContext;
-use crate::console::{AutorunMode, Config, ControllerStateWrapper, Nes, SaveState, TvSystem};
+use crate::console::{AutorunMode, Config, ControllerStateWrapper, Nes, SaveState, TimingMode};
 use crate::frontend_toasts::gamepad_init_toast_message;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -1604,7 +1604,7 @@ T: Start"
     }
 
     /// Generate autorun overlay text based on current mode and state.
-    fn autorun_overlay_text(&self, autorun_state: &AutorunState, tv_system: TvSystem) -> String {
+    fn autorun_overlay_text(&self, autorun_state: &AutorunState, tv_system: TimingMode) -> String {
         use crate::console::AutorunMode;
 
         match autorun_state.mode() {
@@ -1639,7 +1639,7 @@ T: Start"
     fn format_time_pair_for(
         current_frames: usize,
         total_frames: usize,
-        tv_system: TvSystem,
+        tv_system: TimingMode,
     ) -> (String, String) {
         let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
         let current_secs = current_frames / fps;

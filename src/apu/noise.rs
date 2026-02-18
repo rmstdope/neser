@@ -9,7 +9,7 @@
 /// - Length counter
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
-use crate::console::{NoiseState, TvSystem};
+use crate::console::{NoiseState, TimingMode};
 use crate::trace_apu;
 
 // Period lookup table for NTSC (in CPU cycles)
@@ -23,7 +23,7 @@ const NOISE_PERIOD_TABLE_PAL: [u16; 16] = [
 ];
 
 pub struct Noise {
-    tv_system: TvSystem,
+    tv_system: TimingMode,
     // Linear Feedback Shift Register (15-bit)
     shift_register: u16,
 
@@ -49,13 +49,16 @@ impl Default for Noise {
 
 impl Noise {
     pub fn new() -> Self {
-        Self::new_with_tv_system(TvSystem::Ntsc)
+        Self::new_with_tv_system(TimingMode::Ntsc)
     }
 
-    pub fn new_with_tv_system(tv_system: TvSystem) -> Self {
+    pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
         let timer_period = match tv_system {
-            TvSystem::Ntsc => NOISE_PERIOD_TABLE_NTSC[0],
-            TvSystem::Pal => NOISE_PERIOD_TABLE_PAL[0],
+            TimingMode::Ntsc => NOISE_PERIOD_TABLE_NTSC[0],
+            TimingMode::Pal => NOISE_PERIOD_TABLE_PAL[0],
+            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+                NOISE_PERIOD_TABLE_NTSC[0]
+            }
         };
 
         Noise {
@@ -144,8 +147,11 @@ impl Noise {
         self.mode = (value >> 7) & 1 == 1;
         let period_index = (value & 0x0F) as usize;
         self.timer_period = match self.tv_system {
-            TvSystem::Ntsc => NOISE_PERIOD_TABLE_NTSC[period_index],
-            TvSystem::Pal => NOISE_PERIOD_TABLE_PAL[period_index],
+            TimingMode::Ntsc => NOISE_PERIOD_TABLE_NTSC[period_index],
+            TimingMode::Pal => NOISE_PERIOD_TABLE_PAL[period_index],
+            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+                NOISE_PERIOD_TABLE_NTSC[period_index]
+            }
         };
         trace_apu!(3; "noise write_period value=0x{:02X} mode={} period_index={} period={}", value, self.mode, period_index, self.timer_period);
     }
@@ -241,7 +247,7 @@ impl Noise {
 #[allow(clippy::unusual_byte_groupings)]
 mod tests {
     use super::*;
-    use crate::console::TvSystem;
+    use crate::console::TimingMode;
 
     fn write_length(noise: &mut Noise, value: u8) {
         noise.write_length(value);
@@ -258,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_noise_pal_period_table() {
-        let mut noise = Noise::new_with_tv_system(TvSystem::Pal);
+        let mut noise = Noise::new_with_tv_system(TimingMode::Pal);
 
         // PAL rate 0
         assert_eq!(noise.timer_period, 4);

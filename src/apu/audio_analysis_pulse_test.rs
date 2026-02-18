@@ -3,7 +3,7 @@ mod tests {
     use crate::apu::Apu;
     use crate::bus::BusDevice;
     use crate::bus::apu_device::ApuDevice;
-    use crate::console::TvSystem;
+    use crate::console::TimingMode;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -18,7 +18,7 @@ mod tests {
     /// We set the sample rate to the CPU clock so every `clock()` yields
     /// one mixed sample, and disable non-pulse channels for isolation.
     fn create_apu() -> (Rc<RefCell<Apu>>, ApuDevice) {
-        create_apu_with_sample_rate(TvSystem::Ntsc.cpu_clock_hz())
+        create_apu_with_sample_rate(TimingMode::Ntsc.cpu_clock_hz())
     }
 
     fn create_apu_with_sample_rate(sample_rate: f32) -> (Rc<RefCell<Apu>>, ApuDevice) {

@@ -170,7 +170,7 @@ impl Zapper {
 #[cfg(test)]
 mod tests {
     use super::Zapper;
-    use crate::console::TvSystem;
+    use crate::console::TimingMode;
     use crate::input::Controller;
     use crate::ppu::Ppu;
     use std::cell::RefCell;
@@ -184,7 +184,7 @@ mod tests {
     }
 
     fn create_zapper_with_ppu(size: u8) -> (Zapper, Rc<RefCell<Ppu>>) {
-        let ppu = Rc::new(RefCell::new(Ppu::new_for_testing(TvSystem::Ntsc)));
+        let ppu = Rc::new(RefCell::new(Ppu::new_for_testing(TimingMode::Ntsc)));
         let config = test_config_with_size(size);
         let zapper = Zapper::new(ppu.clone(), config);
         (zapper, ppu)

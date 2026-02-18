@@ -3,7 +3,7 @@ use super::frame_counter::FrameCounter;
 use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
-use crate::console::{ApuState, FrameCounterState, TvSystem};
+use crate::console::{ApuState, FrameCounterState, TimingMode};
 use crate::trace_apu;
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, RingBuffer};
@@ -77,7 +77,7 @@ const TND_TABLE: [f32; 203] = [
 
 /// Main APU module integrating frame counter and sound channels
 pub struct Apu {
-    tv_system: TvSystem,
+    tv_system: TimingMode,
     frame_counter: FrameCounter,
     pulse1: Pulse,
     pulse2: Pulse,
@@ -105,10 +105,10 @@ pub struct Apu {
 impl Apu {
     /// Create a new APU
     pub fn new() -> Self {
-        Self::new_with_tv_system(TvSystem::Ntsc)
+        Self::new_with_tv_system(TimingMode::Ntsc)
     }
 
-    pub fn new_with_tv_system(tv_system: TvSystem) -> Self {
+    pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
         const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
 
         let pending_samples = HeapRb::<f32>::new(MAX_PENDING_SAMPLES);
@@ -151,10 +151,10 @@ impl Apu {
         const DEFAULT_SAMPLE_RATE: f32 = 44100.0;
 
         let pending_samples = HeapRb::<f32>::new(MAX_PENDING_SAMPLES);
-        let cpu_clock = TvSystem::Ntsc.cpu_clock_hz();
+        let cpu_clock = TimingMode::Ntsc.cpu_clock_hz();
 
         let mut apu = Self {
-            tv_system: TvSystem::Ntsc,
+            tv_system: TimingMode::Ntsc,
             frame_counter: FrameCounter::new(),
             pulse1: Pulse::new(true),
             pulse2: Pulse::new(false),

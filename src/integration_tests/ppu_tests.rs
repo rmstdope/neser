@@ -5,7 +5,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, RamInitMode, TvSystem};
+    use crate::console::{Config, Nes, RamInitMode, TimingMode};
     use crate::input::Button;
     use crate::integration_tests::rom_test_runner::tests::run_nes_for_frames;
     use crate::{
@@ -18,7 +18,7 @@ mod tests {
 
     fn capture_scanline_rgb(nes: &Nes, y: u32) -> Vec<(u8, u8, u8)> {
         let screen_buffer = nes.get_screen_buffer();
-        (0..TvSystem::Ntsc.screen_width())
+        (0..TimingMode::Ntsc.screen_width())
             .map(|x| screen_buffer.get_pixel(x, y))
             .collect()
     }
@@ -242,7 +242,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
         );
     }
 
-    fn run_oam_decay_crc_test(tv_system: TvSystem, expected_crc: u32, capture_name: &str) {
+    fn run_oam_decay_crc_test(tv_system: TimingMode, expected_crc: u32, capture_name: &str) {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/misc_oam_tests/oam-decay-test.nes",
             Config {
@@ -283,7 +283,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
     fn test_oam_decay_test_ntsc() {
         const EXPECTED_CRC_NTSC: u32 = 0xEBD5_F576;
         run_oam_decay_crc_test(
-            TvSystem::Ntsc,
+            TimingMode::Ntsc,
             EXPECTED_CRC_NTSC,
             "oam_decay_ntsc_final.png",
         );
@@ -292,7 +292,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
     #[test]
     fn test_oam_decay_test_pal() {
         const EXPECTED_CRC_PAL: u32 = 0xCF4E_9BB4;
-        run_oam_decay_crc_test(TvSystem::Pal, EXPECTED_CRC_PAL, "oam_decay_pal_final.png");
+        run_oam_decay_crc_test(TimingMode::Pal, EXPECTED_CRC_PAL, "oam_decay_pal_final.png");
     }
 
     setup_rom_test!(
@@ -338,7 +338,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/nmi_sync/demo_pal.nes",
             Config {
-                tv_system: TvSystem::Pal,
+                tv_system: TimingMode::Pal,
                 ..Default::default()
             },
             "demo_pal",
@@ -857,7 +857,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
             let screen = nes.get_screen_buffer();
             for y_range in &y_ranges {
                 for y in y_range.clone() {
-                    for x in 189u32..TvSystem::Ntsc.screen_width() {
+                    for x in 189u32..TimingMode::Ntsc.screen_width() {
                         let pixel = screen.get_pixel(x, y);
                         if pixel != black {
                             all_failures.push(format!(

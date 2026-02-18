@@ -1,4 +1,4 @@
-use crate::console::TvSystem;
+use crate::console::TimingMode;
 
 pub fn gamepad_init_toast_message(gamepads_enabled: bool, detected_controllers: usize) -> String {
     if !gamepads_enabled {
@@ -21,14 +21,15 @@ pub fn cartridge_load_toast_message(rom_path: &str, success: bool) -> String {
     format!("Cartridge load failed: {}", rom_path)
 }
 
-pub fn emulator_timing_toast_message(tv_system: TvSystem) -> String {
+pub fn emulator_timing_toast_message(tv_system: TimingMode) -> String {
     format!("Emulator timing: {}", tv_system_toast_label(tv_system))
 }
 
-fn tv_system_toast_label(tv_system: TvSystem) -> &'static str {
+fn tv_system_toast_label(tv_system: TimingMode) -> &'static str {
     match tv_system {
-        TvSystem::Ntsc => "NTSC",
-        TvSystem::Pal => "PAL",
+        TimingMode::Ntsc => "NTSC",
+        TimingMode::Pal => "PAL",
+        TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => "NTSC",
     }
 }
 
@@ -74,13 +75,13 @@ mod tests {
 
     #[test]
     fn emulator_timing_toast_uses_ntsc_label() {
-        let message = emulator_timing_toast_message(TvSystem::Ntsc);
+        let message = emulator_timing_toast_message(TimingMode::Ntsc);
         assert_eq!(message, "Emulator timing: NTSC");
     }
 
     #[test]
     fn emulator_timing_toast_uses_pal_label() {
-        let message = emulator_timing_toast_message(TvSystem::Pal);
+        let message = emulator_timing_toast_message(TimingMode::Pal);
         assert_eq!(message, "Emulator timing: PAL");
     }
 }

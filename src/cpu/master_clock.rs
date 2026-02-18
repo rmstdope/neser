@@ -1,4 +1,4 @@
-use crate::console::TvSystem;
+use crate::console::TimingMode;
 
 /// Tracks the master clock used to derive CPU/PPU timing.
 ///
@@ -13,12 +13,16 @@ pub struct MasterClock {
 
 impl MasterClock {
     const READ_WRITE_SHIFT: u64 = 1;
-    pub fn new(tv_system: TvSystem) -> Self {
+    pub fn new(tv_system: TimingMode) -> Self {
         Self {
             master_clock: 0,
             ppu_clock: 0,
-            cpu_divider: if tv_system == TvSystem::Ntsc { 12 } else { 16 },
-            ppu_divider: if tv_system == TvSystem::Ntsc { 4 } else { 5 },
+            cpu_divider: if tv_system == TimingMode::Ntsc {
+                12
+            } else {
+                16
+            },
+            ppu_divider: if tv_system == TimingMode::Ntsc { 4 } else { 5 },
         }
     }
 
@@ -84,12 +88,12 @@ impl MasterClock {
 #[cfg(test)]
 mod tests {
     use super::MasterClock;
-    use crate::console::TvSystem;
+    use crate::console::TimingMode;
 
     #[test]
     fn test_ppu_cycles_since_last_ntsc_rounds_down_and_tracks_remainder() {
         // NTSC uses ppu_divider=4 (master ticks per PPU cycle)
-        let mut clock = MasterClock::new(TvSystem::Ntsc);
+        let mut clock = MasterClock::new(TimingMode::Ntsc);
 
         assert_eq!(clock.ppu_cycles_since_last(), 0);
 
@@ -112,7 +116,7 @@ mod tests {
 
     #[test]
     fn test_ppu_cycles_since_last_ntsc_multiple_cycles_at_once() {
-        let mut clock = MasterClock::new(TvSystem::Ntsc);
+        let mut clock = MasterClock::new(TimingMode::Ntsc);
 
         clock.set_master_cycles(10);
         // floor(10 / 4) = 2
@@ -130,7 +134,7 @@ mod tests {
     #[test]
     fn test_ppu_cycles_since_last_pal_uses_divider_5() {
         // PAL uses ppu_divider=5
-        let mut clock = MasterClock::new(TvSystem::Pal);
+        let mut clock = MasterClock::new(TimingMode::Pal);
 
         clock.set_master_cycles(4);
         assert_eq!(clock.ppu_cycles_since_last(), 0);
@@ -147,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_reset_restores_initial_state_but_preserves_dividers() {
-        let mut clock = MasterClock::new(TvSystem::Ntsc);
+        let mut clock = MasterClock::new(TimingMode::Ntsc);
 
         // Advance internal clocks to a non-zero, misaligned state.
         clock.set_master_cycles(37);

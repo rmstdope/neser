@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::console::{Nes, TvSystem};
+    use crate::console::{Nes, TimingMode};
     use crate::ppu::ppu::Ppu;
     use crate::ppu::test_utils::InesRomBuilder;
     use std::cell::RefCell;
@@ -10,7 +10,7 @@ mod tests {
 
     #[test]
     fn test_background_rendering_alignment() {
-        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
 
         // Create CHR ROM with known tiles
         let mut chr_rom = vec![0u8; 0x2000];
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn test_sprite_rendering_alignment() {
-        let mut ppu = Ppu::new_for_testing(TvSystem::Ntsc);
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
 
         // Create CHR ROM with known sprite tiles
         let mut chr_rom = vec![0u8; 0x2000];

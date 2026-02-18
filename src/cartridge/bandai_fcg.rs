@@ -26,7 +26,7 @@
 //! - Games requiring EEPROM cannot save progress
 use crate::trace_mapper;
 
-use crate::cartridge::cartridge::MirroringMode;
+use crate::cartridge::MirroringMode;
 use crate::cartridge::common::{BankedRom, ChrMemory};
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 

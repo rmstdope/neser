@@ -1,12 +1,7 @@
 // iNES / NES 2.0 header parsing helpers
 // Purpose: centralize header parsing so multiple callers can reuse the logic.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Mirroring {
-    Horizontal,
-    Vertical,
-    FourScreen,
-}
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConsoleType {
@@ -15,6 +10,72 @@ pub enum ConsoleType {
     Playchoice10,
     Extended(u8),
 }
+
+impl ConsoleType {
+    pub fn from_header(flags7: u8, nes2: bool, extended_value: u8) -> Self {
+        if nes2 {
+            return match flags7 & 0x03 {
+                0x00 => Self::NesFamicom,
+                0x01 => Self::VsSystem,
+                0x02 => Self::Playchoice10,
+                _ => Self::Extended(extended_value),
+            };
+        }
+
+        if (flags7 & 0x01) != 0 {
+            Self::VsSystem
+        } else if (flags7 & 0x02) != 0 {
+            Self::Playchoice10
+        } else {
+            Self::NesFamicom
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn header_value(self) -> u8 {
+        match self {
+            Self::NesFamicom => 0x00,
+            Self::VsSystem => 0x01,
+            Self::Playchoice10 => 0x02,
+            Self::Extended(value) => value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MirroringMode {
+    Horizontal,
+    Vertical,
+    FourScreen,
+    SingleScreen,
+    SingleScreenLower,
+    SingleScreenUpper,
+}
+
+impl MirroringMode {
+    pub fn from_flags6(flags6: u8) -> Self {
+        if (flags6 & 0x08) != 0 {
+            Self::FourScreen
+        } else if (flags6 & 0x01) != 0 {
+            Self::Vertical
+        } else {
+            Self::Horizontal
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn header_value(self) -> Option<u8> {
+        match self {
+            Self::Horizontal => Some(0x00),
+            Self::Vertical => Some(0x01),
+            Self::FourScreen => Some(0x08),
+            Self::SingleScreen | Self::SingleScreenLower | Self::SingleScreenUpper => None,
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub type Mirroring = MirroringMode;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimingMode {
@@ -25,13 +86,116 @@ pub enum TimingMode {
     Unknown(u8),
 }
 
+impl TimingMode {
+    const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
+    const CPU_CLOCK_PAL: f32 = 1_662_607.0;
+    const NTSC_SCANLINES: u16 = 262;
+    const PAL_SCANLINES: u16 = 312;
+    const DOTS_PER_SCANLINE: u16 = 341;
+
+    pub fn from_header(header: &[u8; 16], nes2: bool) -> Self {
+        if nes2 {
+            return match header[12] & 0x03 {
+                0x00 => Self::Ntsc,
+                0x01 => Self::Pal,
+                0x02 => Self::MultiRegion,
+                0x03 => Self::Dendy,
+                value => Self::Unknown(value),
+            };
+        }
+
+        if (header[9] & 0x01) != 0 {
+            Self::Pal
+        } else {
+            Self::Ntsc
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn header_value(self) -> u8 {
+        match self {
+            Self::Ntsc => 0x00,
+            Self::Pal => 0x01,
+            Self::MultiRegion => 0x02,
+            Self::Dendy => 0x03,
+            Self::Unknown(value) => value,
+        }
+    }
+
+    pub fn normalize_rom_timing_mode(self) -> Self {
+        match self {
+            Self::Ntsc => Self::Ntsc,
+            Self::Pal => Self::Pal,
+            Self::MultiRegion | Self::Dendy | Self::Unknown(_) => Self::Unknown(0),
+        }
+    }
+
+    pub fn is_ntsc_or_pal(self) -> bool {
+        matches!(self, Self::Ntsc | Self::Pal)
+    }
+
+    pub fn cpu_clock_hz(self) -> f32 {
+        if matches!(self, Self::Pal) {
+            Self::CPU_CLOCK_PAL
+        } else {
+            Self::CPU_CLOCK_NTSC
+        }
+    }
+
+    pub fn frame_rate_hz(self) -> f64 {
+        let cpu_clock = f64::from(self.cpu_clock_hz());
+        let ppu_cycles_per_frame = if matches!(self, Self::Pal) {
+            f64::from(Self::PAL_SCANLINES) * f64::from(Self::DOTS_PER_SCANLINE)
+        } else {
+            let even_ppu_cycles =
+                f64::from(Self::NTSC_SCANLINES) * f64::from(Self::DOTS_PER_SCANLINE);
+            let odd_ppu_cycles = even_ppu_cycles - 1.0;
+            (even_ppu_cycles + odd_ppu_cycles) / 2.0
+        };
+        let cpu_cycles_per_frame = ppu_cycles_per_frame / self.ppu_cycles_per_cpu_cycle();
+        cpu_clock / cpu_cycles_per_frame
+    }
+
+    pub fn ppu_cycles_per_cpu_cycle(self) -> f64 {
+        if matches!(self, Self::Pal) { 3.2 } else { 3.0 }
+    }
+
+    pub fn scanlines_per_frame(self) -> u16 {
+        if matches!(self, Self::Pal) {
+            Self::PAL_SCANLINES
+        } else {
+            Self::NTSC_SCANLINES
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn screen_width(self) -> u32 {
+        256
+    }
+
+    #[allow(dead_code)]
+    pub fn screen_height(self) -> u32 {
+        240
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Ntsc => "ntsc",
+            Self::Pal => "pal",
+            Self::MultiRegion => "multi-region",
+            Self::Dendy => "dendy",
+            Self::Unknown(_) => "unknown",
+        }
+    }
+}
+
 /// Parsed iNES / NES 2.0 header information.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InesHeader {
     pub mapper: u16,
     pub submapper: u8,
     pub console_type: ConsoleType,
-    pub mirroring: Mirroring,
+    pub mirroring: MirroringMode,
     pub has_trainer: bool,
     pub header_version: &'static str,
     pub battery_backed_prg_ram: bool,
@@ -84,13 +248,7 @@ pub fn parse_header(header: &[u8; 16]) -> Option<InesHeader> {
     let header_version = if nes2 { "2.0" } else { "1.0" };
     let has_trainer = (flags6 & 0x04) != 0;
     let battery_backed_prg_ram = (flags6 & 0x02) != 0;
-    let mirroring = if (flags6 & 0x08) != 0 {
-        Mirroring::FourScreen
-    } else if (flags6 & 0x01) != 0 {
-        Mirroring::Vertical
-    } else {
-        Mirroring::Horizontal
-    };
+    let mirroring = MirroringMode::from_flags6(flags6);
 
     let (mapper, submapper) = if nes2 {
         let mapper =
@@ -102,20 +260,7 @@ pub fn parse_header(header: &[u8; 16]) -> Option<InesHeader> {
         (mapper as u16, 0)
     };
 
-    let console_type = if nes2 {
-        match flags7 & 0x03 {
-            0x00 => ConsoleType::NesFamicom,
-            0x01 => ConsoleType::VsSystem,
-            0x02 => ConsoleType::Playchoice10,
-            _ => ConsoleType::Extended(header[13]),
-        }
-    } else if (flags7 & 0x01) != 0 {
-        ConsoleType::VsSystem
-    } else if (flags7 & 0x02) != 0 {
-        ConsoleType::Playchoice10
-    } else {
-        ConsoleType::NesFamicom
-    };
+    let console_type = ConsoleType::from_header(flags7, nes2, header[13]);
 
     let (prg_rom_size_bytes, chr_rom_size_bytes) = if nes2 {
         let prg_msb = header[9] & 0x0F;
@@ -152,19 +297,7 @@ pub fn parse_header(header: &[u8; 16]) -> Option<InesHeader> {
             (prg_ram, None, chr_ram, None)
         };
 
-    let timing_mode = if nes2 {
-        match header[12] & 0x03 {
-            0x00 => TimingMode::Ntsc,
-            0x01 => TimingMode::Pal,
-            0x02 => TimingMode::MultiRegion,
-            0x03 => TimingMode::Dendy,
-            value => TimingMode::Unknown(value),
-        }
-    } else if (header[9] & 0x01) != 0 {
-        TimingMode::Pal
-    } else {
-        TimingMode::Ntsc
-    };
+    let timing_mode = TimingMode::from_header(header, nes2);
 
     let (vs_ppu_type, vs_hardware_type) = if matches!(console_type, ConsoleType::VsSystem) && nes2 {
         (Some(header[13] & 0x0F), Some(header[13] >> 4))
@@ -550,5 +683,30 @@ mod tests {
             }
             _ => panic!("expected FileTooSmall error"),
         }
+    }
+
+    #[test]
+    fn mirroring_mode_header_values_match_ines_flags6() {
+        assert_eq!(MirroringMode::Horizontal.header_value(), Some(0x00));
+        assert_eq!(MirroringMode::Vertical.header_value(), Some(0x01));
+        assert_eq!(MirroringMode::FourScreen.header_value(), Some(0x08));
+        assert_eq!(MirroringMode::SingleScreen.header_value(), None);
+    }
+
+    #[test]
+    fn timing_mode_header_values_match_nes2() {
+        assert_eq!(TimingMode::Ntsc.header_value(), 0x00);
+        assert_eq!(TimingMode::Pal.header_value(), 0x01);
+        assert_eq!(TimingMode::MultiRegion.header_value(), 0x02);
+        assert_eq!(TimingMode::Dendy.header_value(), 0x03);
+        assert_eq!(TimingMode::Unknown(0x0A).header_value(), 0x0A);
+    }
+
+    #[test]
+    fn console_type_header_values_match_spec() {
+        assert_eq!(ConsoleType::NesFamicom.header_value(), 0x00);
+        assert_eq!(ConsoleType::VsSystem.header_value(), 0x01);
+        assert_eq!(ConsoleType::Playchoice10.header_value(), 0x02);
+        assert_eq!(ConsoleType::Extended(0x09).header_value(), 0x09);
     }
 }

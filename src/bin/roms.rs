@@ -2,29 +2,14 @@
 // in `src/cartridge/ines.rs`. The local copies were removed to avoid
 // dead-code warnings.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConsoleType {
-    NesFamicom,
-    VsSystem,
-    Playchoice10,
-    Extended(u8),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TimingMode {
-    Ntsc,
-    Pal,
-    MultiRegion,
-    Dendy,
-    Unknown(u8),
-}
+use neser::cartridge::{ConsoleType, MirroringMode, TimingMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Rom {
     mapper: u16,
     submapper: u8,
     console_type: ConsoleType,
-    mirroring: Mirroring,
+    mirroring: MirroringMode,
     has_trainer: bool,
     header_version: &'static str,
     battery_backed_prg_ram: bool,
@@ -46,32 +31,11 @@ fn parse_rom_header(header: &[u8; 16]) -> Option<Rom> {
     // Delegate parsing to centralized parser and convert to local `Rom` struct.
     let parsed = neser::cartridge::parse_header(header)?;
 
-    let console_type = match parsed.console_type {
-        neser::cartridge::ConsoleType::NesFamicom => ConsoleType::NesFamicom,
-        neser::cartridge::ConsoleType::VsSystem => ConsoleType::VsSystem,
-        neser::cartridge::ConsoleType::Playchoice10 => ConsoleType::Playchoice10,
-        neser::cartridge::ConsoleType::Extended(v) => ConsoleType::Extended(v),
-    };
-
-    let mirroring = match parsed.mirroring {
-        neser::cartridge::Mirroring::Horizontal => Mirroring::Horizontal,
-        neser::cartridge::Mirroring::Vertical => Mirroring::Vertical,
-        neser::cartridge::Mirroring::FourScreen => Mirroring::FourScreen,
-    };
-
-    let timing_mode = match parsed.timing_mode {
-        neser::cartridge::TimingMode::Ntsc => TimingMode::Ntsc,
-        neser::cartridge::TimingMode::Pal => TimingMode::Pal,
-        neser::cartridge::TimingMode::MultiRegion => TimingMode::MultiRegion,
-        neser::cartridge::TimingMode::Dendy => TimingMode::Dendy,
-        neser::cartridge::TimingMode::Unknown(v) => TimingMode::Unknown(v),
-    };
-
     Some(Rom {
         mapper: parsed.mapper,
         submapper: parsed.submapper,
-        console_type,
-        mirroring,
+        console_type: parsed.console_type,
+        mirroring: parsed.mirroring,
         has_trainer: parsed.has_trainer,
         header_version: parsed.header_version,
         battery_backed_prg_ram: parsed.battery_backed_prg_ram,
@@ -81,20 +45,13 @@ fn parse_rom_header(header: &[u8; 16]) -> Option<Rom> {
         prg_nvram_size_bytes: parsed.prg_nvram_size_bytes,
         chr_ram_size_bytes: parsed.chr_ram_size_bytes,
         chr_nvram_size_bytes: parsed.chr_nvram_size_bytes,
-        timing_mode,
+        timing_mode: parsed.timing_mode,
         vs_ppu_type: parsed.vs_ppu_type,
         vs_hardware_type: parsed.vs_hardware_type,
         misc_roms: parsed.misc_roms,
         default_expansion_device: parsed.default_expansion_device,
         rom_crc32: None,
     })
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mirroring {
-    Horizontal,
-    Vertical,
-    FourScreen,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -375,7 +332,7 @@ mod tests {
         assert_eq!(info.chr_rom_size_bytes, 8 * 1024);
         assert_eq!(info.prg_ram_size_bytes, Some(2 * 8 * 1024));
         assert_eq!(info.mapper, 0x50);
-        assert_eq!(info.mirroring, Mirroring::Vertical);
+        assert_eq!(info.mirroring, MirroringMode::Vertical);
         assert!(info.battery_backed_prg_ram);
         assert!(!info.has_trainer);
     }
@@ -417,7 +374,7 @@ mod tests {
         assert_eq!(info.mapper, 0x4A2);
         assert_eq!(info.submapper, 0x3);
         assert_eq!(info.console_type, ConsoleType::VsSystem);
-        assert_eq!(info.mirroring, Mirroring::Vertical);
+        assert_eq!(info.mirroring, MirroringMode::Vertical);
         assert!(info.battery_backed_prg_ram);
         assert!(!info.has_trainer);
         assert_eq!(info.prg_rom_size_bytes, 4_227_072);

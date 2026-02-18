@@ -6,7 +6,7 @@
 //! 2. Config file (neser.conf)
 //! 3. Default values
 
-use crate::console::TvSystem;
+use crate::console::TimingMode;
 use crate::debugging::Tracing;
 use crate::input::ControllerType;
 use bitflags::bitflags;
@@ -364,7 +364,7 @@ pub enum RamInitMode {
 #[derive(Debug, Clone)]
 pub struct Config {
     /// TV system (NTSC or PAL).
-    pub tv_system: TvSystem,
+    pub tv_system: TimingMode,
     /// Whether the TV system was explicitly configured.
     pub tv_system_explicit: bool,
     /// Whether audio is enabled.
@@ -520,7 +520,7 @@ bitflags! {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            tv_system: TvSystem::Ntsc,
+            tv_system: TimingMode::Ntsc,
             tv_system_explicit: false,
             audio_enabled: true,
             vsync_enabled: true,
@@ -625,10 +625,10 @@ impl Config {
         // TV system (value-based, aligned with config file)
         if let Some(tv_system) = Self::parse_string_arg(args, "--tv-system") {
             if tv_system.eq_ignore_ascii_case("pal") {
-                self.tv_system = TvSystem::Pal;
+                self.tv_system = TimingMode::Pal;
                 self.tv_system_explicit = true;
             } else if tv_system.eq_ignore_ascii_case("ntsc") {
-                self.tv_system = TvSystem::Ntsc;
+                self.tv_system = TimingMode::Ntsc;
                 self.tv_system_explicit = true;
             } else {
                 return Err(format!(
@@ -1120,10 +1120,10 @@ impl Config {
         match key {
             "tv_system" => {
                 if value.eq_ignore_ascii_case("pal") {
-                    self.tv_system = TvSystem::Pal;
+                    self.tv_system = TimingMode::Pal;
                     self.tv_system_explicit = true;
                 } else if value.eq_ignore_ascii_case("ntsc") {
-                    self.tv_system = TvSystem::Ntsc;
+                    self.tv_system = TimingMode::Ntsc;
                     self.tv_system_explicit = true;
                 }
             }
@@ -1349,21 +1349,23 @@ impl Config {
         Ok(())
     }
 
-    pub fn apply_rom_tv_system(&mut self, rom_tv_system: crate::cartridge::RomTvSystem) -> bool {
+    pub fn apply_rom_timing_mode(&mut self, rom_timing_mode: crate::cartridge::TimingMode) -> bool {
         if self.tv_system_explicit {
             return false;
         }
 
-        match rom_tv_system {
-            crate::cartridge::RomTvSystem::Ntsc => {
-                self.tv_system = TvSystem::Ntsc;
+        match rom_timing_mode {
+            crate::cartridge::TimingMode::Ntsc => {
+                self.tv_system = TimingMode::Ntsc;
                 true
             }
-            crate::cartridge::RomTvSystem::Pal => {
-                self.tv_system = TvSystem::Pal;
+            crate::cartridge::TimingMode::Pal => {
+                self.tv_system = TimingMode::Pal;
                 true
             }
-            crate::cartridge::RomTvSystem::Unknown => false,
+            crate::cartridge::TimingMode::MultiRegion
+            | crate::cartridge::TimingMode::Dendy
+            | crate::cartridge::TimingMode::Unknown(_) => false,
         }
     }
 
@@ -1481,7 +1483,7 @@ mod tests {
     #[test]
     fn test_config_default_values() {
         let config = Config::with_defaults();
-        assert_eq!(config.tv_system, TvSystem::Ntsc);
+        assert_eq!(config.tv_system, TimingMode::Ntsc);
         assert!(config.audio_enabled);
         assert!(config.vsync_enabled);
         assert!(config.gamepads_enabled);
@@ -1515,7 +1517,7 @@ mod tests {
             file.path().to_string_lossy().to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TvSystem::Ntsc);
+        assert_eq!(config.tv_system, TimingMode::Ntsc);
         assert!(config.audio_enabled);
         assert!(config.vsync_enabled);
         assert!(config.gamepads_enabled);
@@ -1551,36 +1553,36 @@ mod tests {
             "pal".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
         assert!(config.tv_system_explicit);
     }
 
     #[test]
-    fn test_config_apply_rom_tv_system_when_not_explicit() {
+    fn test_config_apply_rom_timing_mode_when_not_explicit() {
         let mut config = Config::default();
-        let applied = config.apply_rom_tv_system(crate::cartridge::RomTvSystem::Pal);
+        let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Pal);
         assert!(applied);
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
     }
 
     #[test]
-    fn test_config_apply_rom_tv_system_does_not_override_explicit() {
+    fn test_config_apply_rom_timing_mode_does_not_override_explicit() {
         let mut config = Config {
-            tv_system: TvSystem::Pal,
+            tv_system: TimingMode::Pal,
             tv_system_explicit: true,
             ..Default::default()
         };
-        let applied = config.apply_rom_tv_system(crate::cartridge::RomTvSystem::Ntsc);
+        let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Ntsc);
         assert!(!applied);
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
     }
 
     #[test]
-    fn test_config_apply_rom_tv_system_unknown_keeps_default() {
+    fn test_config_apply_rom_timing_mode_unknown_keeps_default() {
         let mut config = Config::default();
-        let applied = config.apply_rom_tv_system(crate::cartridge::RomTvSystem::Unknown);
+        let applied = config.apply_rom_timing_mode(crate::cartridge::TimingMode::Unknown(0));
         assert!(!applied);
-        assert_eq!(config.tv_system, TvSystem::Ntsc);
+        assert_eq!(config.tv_system, TimingMode::Ntsc);
     }
 
     #[test]
@@ -1930,7 +1932,7 @@ mod tests {
             "false".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
         assert!(!config.audio_enabled);
         assert!(config.fullscreen);
         assert_eq!(config.fullscreen_display, Some(2));
@@ -1978,18 +1980,18 @@ mod tests {
     fn test_config_file_tv_system_pal() {
         let mut config = Config::default();
         config.apply_config_value("tv_system", "pal").unwrap();
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
         assert!(config.tv_system_explicit);
     }
 
     #[test]
     fn test_config_file_tv_system_ntsc() {
         let mut config = Config {
-            tv_system: TvSystem::Pal,
+            tv_system: TimingMode::Pal,
             ..Default::default()
         };
         config.apply_config_value("tv_system", "ntsc").unwrap();
-        assert_eq!(config.tv_system, TvSystem::Ntsc);
+        assert_eq!(config.tv_system, TimingMode::Ntsc);
         assert!(config.tv_system_explicit);
     }
 
@@ -1997,10 +1999,10 @@ mod tests {
     fn test_config_file_tv_system_case_insensitive() {
         let mut config = Config::default();
         config.apply_config_value("tv_system", "PAL").unwrap();
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
 
         config.apply_config_value("tv_system", "NTSC").unwrap();
-        assert_eq!(config.tv_system, TvSystem::Ntsc);
+        assert_eq!(config.tv_system, TimingMode::Ntsc);
     }
 
     #[test]
@@ -2319,7 +2321,7 @@ mod tests {
             .apply_config_value("unknown_key", "some_value")
             .unwrap();
         // Config should remain unchanged
-        assert_eq!(config.tv_system, TvSystem::Ntsc);
+        assert_eq!(config.tv_system, TimingMode::Ntsc);
     }
 
     #[test]
@@ -2344,7 +2346,7 @@ pulse1=false
         let mut config = Config::default();
         config.load_from_file(file.path()).unwrap();
 
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
         assert!(!config.audio_enabled);
         assert!(config.fullscreen);
         assert_eq!(config.fullscreen_display, Some(2));
@@ -2376,7 +2378,7 @@ audio=false
 
         // Load from config file
         config.load_from_file(file.path()).unwrap();
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
         assert!(!config.audio_enabled);
 
         // Apply args - no args means config file values should remain
@@ -2384,7 +2386,7 @@ audio=false
         config.apply_args(&args).unwrap();
 
         // Config file values should persist since args don't override them
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
         assert!(!config.audio_enabled);
     }
 
@@ -2417,7 +2419,7 @@ controller_port2=arkanoid
             .load_from_file(Path::new("/nonexistent/path/neser.conf"))
             .unwrap();
         // Should not panic, config should remain default
-        assert_eq!(config.tv_system, TvSystem::Ntsc);
+        assert_eq!(config.tv_system, TimingMode::Ntsc);
         assert!(config.audio_enabled);
     }
 
@@ -2436,7 +2438,7 @@ controller_port2=arkanoid
             file.path().to_str().unwrap().to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
         assert!(!config.audio_enabled);
     }
 
@@ -2502,7 +2504,7 @@ filter=invalid-shader
             explicit_file.path().to_str().unwrap().to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
     }
 
     #[test]
@@ -2639,7 +2641,7 @@ filter=invalid-shader
             "pal".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TvSystem::Pal);
+        assert_eq!(config.tv_system, TimingMode::Pal);
     }
 
     #[test]
@@ -2650,7 +2652,7 @@ filter=invalid-shader
             "ntsc".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.tv_system, TvSystem::Ntsc);
+        assert_eq!(config.tv_system, TimingMode::Ntsc);
     }
 
     #[test]

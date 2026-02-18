@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod tests {
     use crate::cartridge::Cartridge;
-    use crate::console::{Config, Nes, TvSystem};
+    use crate::console::{Config, Nes, TimingMode};
     use crate::integration_tests::rom_test_runner::tests::init_tracing_from_env;
     use crate::{setup_rom_address_test, setup_rom_test};
     use std::fs;
@@ -26,7 +26,7 @@ mod tests {
 
     const NTSC_CPU_CYCLES_PER_FRAME: u32 = 29_780;
     fn cpu_clock_ntsc() -> f32 {
-        TvSystem::Ntsc.cpu_clock_hz()
+        TimingMode::Ntsc.cpu_clock_hz()
     }
     const SAMPLE_RATE_HZ: f32 = 44_100.0;
     const WARMUP_SAMPLES: usize = 2_000;

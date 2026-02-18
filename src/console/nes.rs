@@ -1,6 +1,8 @@
 use crate::apu::Apu;
 use crate::bus::Bus;
 use crate::cartridge::Cartridge;
+#[cfg(test)]
+use crate::cartridge::TimingMode;
 use crate::console::{Config, SAVESTATE_VERSION, SaveState};
 use crate::cpu::Cpu;
 use crate::cpu::lookup;
@@ -10,90 +12,6 @@ use crate::ppu::Ppu;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TvSystem {
-    Ntsc,
-    Pal,
-}
-
-impl TvSystem {
-    const CPU_CLOCK_NTSC: f32 = 1_789_773.0;
-    const CPU_CLOCK_PAL: f32 = 1_662_607.0;
-    const NTSC_SCANLINES: u16 = 262;
-    const PAL_SCANLINES: u16 = 312;
-    const DOTS_PER_SCANLINE: u16 = 341;
-
-    /// Returns the CPU clock frequency in Hz for this TV system.
-    pub fn cpu_clock_hz(&self) -> f32 {
-        match self {
-            TvSystem::Ntsc => Self::CPU_CLOCK_NTSC,
-            TvSystem::Pal => Self::CPU_CLOCK_PAL,
-        }
-    }
-
-    /// Returns the computed refresh rate for this TV system in Hz.
-    pub fn frame_rate_hz(&self) -> f64 {
-        let cpu_clock = f64::from(self.cpu_clock_hz());
-        let ppu_cycles_per_frame = match self {
-            TvSystem::Ntsc => {
-                let even_ppu_cycles =
-                    f64::from(Self::NTSC_SCANLINES) * f64::from(Self::DOTS_PER_SCANLINE);
-                let odd_ppu_cycles = even_ppu_cycles - 1.0;
-                (even_ppu_cycles + odd_ppu_cycles) / 2.0
-            }
-            TvSystem::Pal => f64::from(Self::PAL_SCANLINES) * f64::from(Self::DOTS_PER_SCANLINE),
-        };
-        let cpu_cycles_per_frame = ppu_cycles_per_frame / self.ppu_cycles_per_cpu_cycle();
-        cpu_clock / cpu_cycles_per_frame
-    }
-
-    /// Returns the PPU cycles per CPU cycle ratio for this TV system
-    ///
-    /// NTSC: 3.0 PPU cycles per CPU cycle (exact)
-    /// PAL: 3.2 PPU cycles per CPU cycle (requires fractional tracking)
-    pub fn ppu_cycles_per_cpu_cycle(&self) -> f64 {
-        match self {
-            TvSystem::Ntsc => 3.0,
-            TvSystem::Pal => 3.2,
-        }
-    }
-
-    /// Returns the number of scanlines per frame for this TV system
-    ///
-    /// NTSC: 262 scanlines per frame
-    /// PAL: 312 scanlines per frame
-    pub fn scanlines_per_frame(&self) -> u16 {
-        match self {
-            TvSystem::Ntsc => Self::NTSC_SCANLINES,
-            TvSystem::Pal => Self::PAL_SCANLINES,
-        }
-    }
-
-    /// Returns the screen width for this TV system
-    ///
-    /// Both NTSC and PAL use 256 pixels width
-    #[allow(dead_code)]
-    pub fn screen_width(&self) -> u32 {
-        256
-    }
-
-    /// Returns the screen height for this TV system
-    ///
-    /// NTSC: 240 pixels
-    /// PAL: 240 pixels (visible area, though PAL has more scanlines)
-    #[allow(dead_code)]
-    pub fn screen_height(&self) -> u32 {
-        240
-    }
-
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TvSystem::Ntsc => "ntsc",
-            TvSystem::Pal => "pal",
-        }
-    }
-}
 
 pub struct Nes {
     pub ppu: Rc<RefCell<Ppu>>,
@@ -850,35 +768,35 @@ mod tests {
 
     #[test]
     fn test_ntsc_ppu_cycles_per_cpu_cycle() {
-        let ntsc = TvSystem::Ntsc;
+        let ntsc = TimingMode::Ntsc;
         // NTSC: 3 PPU cycles per CPU cycle
         assert_eq!(ntsc.ppu_cycles_per_cpu_cycle(), 3.0);
     }
 
     #[test]
     fn test_pal_ppu_cycles_per_cpu_cycle() {
-        let pal = TvSystem::Pal;
+        let pal = TimingMode::Pal;
         // PAL: 3.2 PPU cycles per CPU cycle
         assert_eq!(pal.ppu_cycles_per_cpu_cycle(), 3.2);
     }
 
     #[test]
     fn test_ntsc_scanlines_per_frame() {
-        let ntsc = TvSystem::Ntsc;
+        let ntsc = TimingMode::Ntsc;
         // NTSC: 262 scanlines per frame
         assert_eq!(ntsc.scanlines_per_frame(), 262);
     }
 
     #[test]
     fn test_pal_scanlines_per_frame() {
-        let pal = TvSystem::Pal;
+        let pal = TimingMode::Pal;
         // PAL: 312 scanlines per frame
         assert_eq!(pal.scanlines_per_frame(), 312);
     }
 
     #[test]
     fn test_ntsc_frame_rate_hz() {
-        let ntsc = TvSystem::Ntsc;
+        let ntsc = TimingMode::Ntsc;
         let fps = ntsc.frame_rate_hz();
         assert!(
             (fps - 60.0988).abs() < 0.01,
@@ -888,7 +806,7 @@ mod tests {
 
     #[test]
     fn test_pal_frame_rate_hz() {
-        let pal = TvSystem::Pal;
+        let pal = TimingMode::Pal;
         let fps = pal.frame_rate_hz();
         assert!(
             (fps - 50.00698).abs() < 0.01,
@@ -912,7 +830,7 @@ mod tests {
     #[test]
     fn test_pal_ppu_runs_3_2x_cpu_cycles() {
         let config = Config {
-            tv_system: TvSystem::Pal,
+            tv_system: TimingMode::Pal,
             ..Default::default()
         };
         let mut nes = Nes::new(config);
@@ -930,7 +848,7 @@ mod tests {
     #[test]
     fn test_pal_ppu_accumulates_fractional_cycles() {
         let config = Config {
-            tv_system: TvSystem::Pal,
+            tv_system: TimingMode::Pal,
             ..Default::default()
         };
         let mut nes = Nes::new(config);
@@ -1281,7 +1199,7 @@ mod tests {
         // Average: ~29780.5 CPU cycles per frame
         // Refresh rate: 1789773 / 29780.5 ≈ 60.10 Hz
 
-        let tv_system = TvSystem::Ntsc;
+        let tv_system = TimingMode::Ntsc;
         let even_frame_ppu_cycles = 262 * 341; // 89342
         let odd_frame_ppu_cycles = 262 * 341 - 1; // 89341 (with odd frame skip)
         let avg_ppu_cycles = (even_frame_ppu_cycles + odd_frame_ppu_cycles) as f64 / 2.0;
@@ -1302,7 +1220,7 @@ mod tests {
         // 106392 PPU cycles / 3.2 = 33247.5 CPU cycles per frame
         // Refresh rate: 1662607 / 33247.5 ≈ 50.00 Hz
 
-        let tv_system = TvSystem::Pal;
+        let tv_system = TimingMode::Pal;
         let frame_ppu_cycles = 312 * 341; // 106392
         let cpu_cycles_per_frame = frame_ppu_cycles as f64 / tv_system.ppu_cycles_per_cpu_cycle();
 

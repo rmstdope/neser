@@ -125,61 +125,61 @@ mod tests {
         test_pal_apu_tests_1,
         "roms/automated_tests/pal_apu_tests/01.len_ctr.nes",
         "PASSED",
-        crate::console::TvSystem::Pal
+        crate::console::TimingMode::Pal
     );
     setup_rom_console_test!(
         test_pal_apu_tests_2,
         "roms/automated_tests/pal_apu_tests/02.len_table.nes",
         "PASSED",
-        crate::console::TvSystem::Pal
+        crate::console::TimingMode::Pal
     );
     setup_rom_console_test!(
         test_pal_apu_tests_3,
         "roms/automated_tests/pal_apu_tests/03.irq_flag.nes",
         "PASSED",
-        crate::console::TvSystem::Pal
+        crate::console::TimingMode::Pal
     );
     setup_rom_console_test!(
         test_pal_apu_tests_4,
         "roms/automated_tests/pal_apu_tests/04.clock_jitter.nes",
         "PASSED",
-        crate::console::TvSystem::Pal
+        crate::console::TimingMode::Pal
     );
     setup_rom_console_test!(
         test_pal_apu_tests_5,
         "roms/automated_tests/pal_apu_tests/05.len_timing_mode0.nes",
         "PASSED",
-        crate::console::TvSystem::Pal
+        crate::console::TimingMode::Pal
     );
     setup_rom_console_test!(
         test_pal_apu_tests_6,
         "roms/automated_tests/pal_apu_tests/06.len_timing_mode1.nes",
         "PASSED",
-        crate::console::TvSystem::Pal
+        crate::console::TimingMode::Pal
     );
     setup_rom_console_test!(
         test_pal_apu_tests_7,
         "roms/automated_tests/pal_apu_tests/07.irq_flag_timing.nes",
         "PASSED",
-        crate::console::TvSystem::Pal
+        crate::console::TimingMode::Pal
     );
     setup_rom_console_test!(
         test_pal_apu_tests_8,
         "roms/automated_tests/pal_apu_tests/08.irq_timing.nes",
         "PASSED",
-        crate::console::TvSystem::Pal
+        crate::console::TimingMode::Pal
     );
     setup_rom_console_test!(
         test_pal_apu_tests_10,
         "roms/automated_tests/pal_apu_tests/10.len_halt_timing.nes",
         "PASSED",
-        crate::console::TvSystem::Pal
+        crate::console::TimingMode::Pal
     );
     setup_rom_console_test!(
         test_pal_apu_tests_11,
         "roms/automated_tests/pal_apu_tests/11.len_reload_timing.nes",
         "PASSED",
-        crate::console::TvSystem::Pal
+        crate::console::TimingMode::Pal
     );
 
     setup_rom_console_test!(

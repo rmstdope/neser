@@ -62,7 +62,7 @@ pub(crate) mod tests {
         max_frames: u32,
         wait_reset: u32,
         verification: RomTestVerification,
-        tv_system_override: Option<crate::console::TvSystem>,
+        tv_system_override: Option<crate::console::TimingMode>,
         ram_init_mode_override: Option<crate::console::RamInitMode>,
     }
 
@@ -84,7 +84,7 @@ pub(crate) mod tests {
             rom_path: &str,
             max_frames: u32,
             verification: RomTestVerification,
-            tv_system: crate::console::TvSystem,
+            tv_system: crate::console::TimingMode,
         ) -> Self {
             Self {
                 rom_path: rom_path.to_string(),
@@ -151,16 +151,18 @@ pub(crate) mod tests {
             if let Some(tv_system) = self.tv_system_override {
                 config.tv_system = tv_system;
             } else {
-                match cartridge.rom_tv_system() {
-                    crate::cartridge::RomTvSystem::Pal => {
-                        config.tv_system = crate::console::TvSystem::Pal;
+                match cartridge.rom_timing_mode() {
+                    crate::cartridge::TimingMode::Pal => {
+                        config.tv_system = crate::console::TimingMode::Pal;
                     }
-                    crate::cartridge::RomTvSystem::Ntsc => {
-                        config.tv_system = crate::console::TvSystem::Ntsc;
+                    crate::cartridge::TimingMode::Ntsc => {
+                        config.tv_system = crate::console::TimingMode::Ntsc;
                     }
-                    crate::cartridge::RomTvSystem::Unknown => {
+                    crate::cartridge::TimingMode::MultiRegion
+                    | crate::cartridge::TimingMode::Dendy
+                    | crate::cartridge::TimingMode::Unknown(_) => {
                         // Default to NTSC for unknown region
-                        config.tv_system = crate::console::TvSystem::Ntsc;
+                        config.tv_system = crate::console::TimingMode::Ntsc;
                     }
                 }
             }
@@ -177,8 +179,11 @@ pub(crate) mod tests {
 
             // CPU cycles per frame depends on TV system
             let cpu_cycles_per_frame = match nes.config.borrow().tv_system {
-                crate::console::TvSystem::Ntsc => 29_780u32,
-                crate::console::TvSystem::Pal => 33_247u32,
+                crate::console::TimingMode::Ntsc => 29_780u32,
+                crate::console::TimingMode::Pal => 33_247u32,
+                crate::console::TimingMode::MultiRegion
+                | crate::console::TimingMode::Dendy
+                | crate::console::TimingMode::Unknown(_) => 29_780u32,
             };
 
             let mut running = false;
@@ -375,16 +380,18 @@ pub(crate) mod tests {
 
         // Create NES with configuration based on cartridge's TV system
         let mut config = test_default_config();
-        match cartridge.rom_tv_system() {
-            crate::cartridge::RomTvSystem::Pal => {
-                config.tv_system = crate::console::TvSystem::Pal;
+        match cartridge.rom_timing_mode() {
+            crate::cartridge::TimingMode::Pal => {
+                config.tv_system = crate::console::TimingMode::Pal;
             }
-            crate::cartridge::RomTvSystem::Ntsc => {
-                config.tv_system = crate::console::TvSystem::Ntsc;
+            crate::cartridge::TimingMode::Ntsc => {
+                config.tv_system = crate::console::TimingMode::Ntsc;
             }
-            crate::cartridge::RomTvSystem::Unknown => {
+            crate::cartridge::TimingMode::MultiRegion
+            | crate::cartridge::TimingMode::Dendy
+            | crate::cartridge::TimingMode::Unknown(_) => {
                 // Default to NTSC for unknown region
-                config.tv_system = crate::console::TvSystem::Ntsc;
+                config.tv_system = crate::console::TimingMode::Ntsc;
             }
         }
 
@@ -394,8 +401,11 @@ pub(crate) mod tests {
 
         // CPU cycles per frame depends on TV system
         let cpu_cycles_per_frame = match nes.config.borrow().tv_system {
-            crate::console::TvSystem::Ntsc => 29_780u32,
-            crate::console::TvSystem::Pal => 33_247u32,
+            crate::console::TimingMode::Ntsc => 29_780u32,
+            crate::console::TimingMode::Pal => 33_247u32,
+            crate::console::TimingMode::MultiRegion
+            | crate::console::TimingMode::Dendy
+            | crate::console::TimingMode::Unknown(_) => 29_780u32,
         };
 
         for _frame in 1..=max_frames {
@@ -658,15 +668,17 @@ pub(crate) mod tests {
                     ram_init_mode: $crate::console::RamInitMode::Zero,
                     ..Default::default()
                 };
-                match cartridge.rom_tv_system() {
-                    $crate::cartridge::RomTvSystem::Pal => {
-                        config.tv_system = $crate::console::TvSystem::Pal;
+                match cartridge.rom_timing_mode() {
+                    $crate::cartridge::TimingMode::Pal => {
+                        config.tv_system = $crate::console::TimingMode::Pal;
                     }
-                    $crate::cartridge::RomTvSystem::Ntsc => {
-                        config.tv_system = $crate::console::TvSystem::Ntsc;
+                    $crate::cartridge::TimingMode::Ntsc => {
+                        config.tv_system = $crate::console::TimingMode::Ntsc;
                     }
-                    $crate::cartridge::RomTvSystem::Unknown => {
-                        config.tv_system = $crate::console::TvSystem::Ntsc;
+                    $crate::cartridge::TimingMode::MultiRegion
+                    | $crate::cartridge::TimingMode::Dendy
+                    | $crate::cartridge::TimingMode::Unknown(_) => {
+                        config.tv_system = $crate::console::TimingMode::Ntsc;
                     }
                 }
 

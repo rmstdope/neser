@@ -8,7 +8,7 @@
 //! - Output unit (shift register + 7-bit output level 0-127)
 //! - IRQ flag
 //! - Loop flag for sample restart
-use crate::console::{DmcState, TvSystem};
+use crate::console::{DmcState, TimingMode};
 use crate::trace_apu;
 
 // NTSC rate periods (in CPU cycles)
@@ -22,7 +22,7 @@ const DMC_RATE_TABLE_PAL: [u16; 16] = [
 ];
 
 pub struct Dmc {
-    tv_system: TvSystem,
+    tv_system: TimingMode,
     // Timer
     timer: u16,
     timer_period: u16,
@@ -68,13 +68,16 @@ impl Default for Dmc {
 
 impl Dmc {
     pub fn new() -> Self {
-        Self::new_with_tv_system(TvSystem::Ntsc)
+        Self::new_with_tv_system(TimingMode::Ntsc)
     }
 
-    pub fn new_with_tv_system(tv_system: TvSystem) -> Self {
+    pub fn new_with_tv_system(tv_system: TimingMode) -> Self {
         let timer_period = match tv_system {
-            TvSystem::Ntsc => DMC_RATE_TABLE_NTSC[0],
-            TvSystem::Pal => DMC_RATE_TABLE_PAL[0],
+            TimingMode::Ntsc => DMC_RATE_TABLE_NTSC[0],
+            TimingMode::Pal => DMC_RATE_TABLE_PAL[0],
+            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+                DMC_RATE_TABLE_NTSC[0]
+            }
         };
 
         Dmc {
@@ -158,8 +161,11 @@ impl Dmc {
         self.loop_flag = (value >> 6) & 1 == 1;
         let rate_index = (value & 0x0F) as usize;
         self.timer_period = match self.tv_system {
-            TvSystem::Ntsc => DMC_RATE_TABLE_NTSC[rate_index],
-            TvSystem::Pal => DMC_RATE_TABLE_PAL[rate_index],
+            TimingMode::Ntsc => DMC_RATE_TABLE_NTSC[rate_index],
+            TimingMode::Pal => DMC_RATE_TABLE_PAL[rate_index],
+            TimingMode::MultiRegion | TimingMode::Dendy | TimingMode::Unknown(_) => {
+                DMC_RATE_TABLE_NTSC[rate_index]
+            }
         };
         trace_apu!(2; "dmc write_flags_and_rate value=0x{:02X} irq_enabled={} loop={} rate_index={} period={}", value, self.irq_enabled, self.loop_flag, rate_index, self.timer_period);
 
@@ -461,7 +467,7 @@ impl Dmc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::console::TvSystem;
+    use crate::console::TimingMode;
 
     #[test]
     fn test_dmc_new() {
@@ -474,7 +480,7 @@ mod tests {
 
     #[test]
     fn test_dmc_pal_rate_table() {
-        let mut dmc = Dmc::new_with_tv_system(TvSystem::Pal);
+        let mut dmc = Dmc::new_with_tv_system(TimingMode::Pal);
 
         // PAL rate 0
         assert_eq!(dmc.timer_period, 398);

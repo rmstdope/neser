@@ -3,7 +3,7 @@ mod tests {
     use crate::apu::Apu;
     use crate::bus::BusDevice;
     use crate::bus::apu_device::ApuDevice;
-    use crate::console::TvSystem;
+    use crate::console::TimingMode;
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -15,7 +15,7 @@ mod tests {
         let apu = Rc::new(RefCell::new(Apu::new()));
         {
             let mut apu_mut = apu.borrow_mut();
-            apu_mut.set_sample_rate(TvSystem::Ntsc.cpu_clock_hz());
+            apu_mut.set_sample_rate(TimingMode::Ntsc.cpu_clock_hz());
             apu_mut.set_pulse1_enabled(false);
             apu_mut.set_pulse2_enabled(false);
             apu_mut.set_triangle_enabled(false);

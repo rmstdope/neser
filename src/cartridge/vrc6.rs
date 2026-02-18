@@ -600,7 +600,13 @@ impl Mapper for VRC6Mapper {
         snapshot.push(flags);
         let prescaler_bytes = self.irq_prescaler.to_le_bytes();
         snapshot.extend_from_slice(&prescaler_bytes);
-        snapshot.push(self.mirroring as u8);
+        snapshot.push(match self.mirroring {
+            MirroringMode::Horizontal => 0,
+            MirroringMode::Vertical => 1,
+            MirroringMode::SingleScreen => 2,
+            MirroringMode::FourScreen => 3,
+            _ => 0,
+        });
         snapshot.push(self.audio.global_halt as u8);
         snapshot.push(self.audio.global_shift);
 
@@ -710,7 +716,7 @@ impl crate::cartridge::MapperIrq for VRC6Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::cartridge::MirroringMode;
+    use crate::cartridge::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 

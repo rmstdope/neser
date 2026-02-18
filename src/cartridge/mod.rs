@@ -31,14 +31,16 @@ mod uxrom;
 mod vrc2_vrc4;
 mod vrc6;
 
-pub use cartridge::{Cartridge, MirroringMode, RomTvSystem};
+pub use cartridge::Cartridge;
 #[allow(unused_imports)]
 pub use common::{
     BankSwitch, BankedRom, ChrMemory, DEFAULT_CHR_RAM_SIZE, DEFAULT_PRG_RAM_SIZE, PrgRam,
     StateSnapshot,
 };
 #[allow(unused_imports)]
-pub use ines::{ConsoleType, InesHeader, Mirroring, TimingMode, parse_header, parse_rom};
+pub use ines::{
+    ConsoleType, InesHeader, Mirroring, MirroringMode, TimingMode, parse_header, parse_rom,
+};
 #[allow(unused_imports)]
 pub use mapper::{
     Mapper, MapperAudio, MapperCapabilities, MapperComposable, MapperContext, MapperCore,

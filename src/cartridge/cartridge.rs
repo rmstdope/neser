@@ -4,20 +4,8 @@ use std::path::{Path, PathBuf};
 use std::{error, fmt};
 
 use crate::app_context::AppContext;
-use crate::cartridge::Mapper;
 use crate::cartridge::mapper::MapperContext;
-use serde::{Deserialize, Serialize};
-
-// Mirroring types for nametables
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MirroringMode {
-    Vertical,
-    Horizontal,
-    FourScreen,
-    SingleScreen,
-    SingleScreenLower,
-    SingleScreenUpper,
-}
+use crate::cartridge::{Mapper, MirroringMode, TimingMode};
 
 #[derive(Debug)]
 pub enum CartridgeError {
@@ -27,32 +15,10 @@ pub enum CartridgeError {
     Io(io::Error),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RomTvSystem {
-    Ntsc,
-    Pal,
-    Unknown,
-}
-
-impl RomTvSystem {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            RomTvSystem::Ntsc => "ntsc",
-            RomTvSystem::Pal => "pal",
-            RomTvSystem::Unknown => "unknown",
-        }
-    }
-}
-
-fn timing_mode_to_rom_tv_system(timing_mode: crate::cartridge::TimingMode) -> RomTvSystem {
-    match timing_mode {
-        crate::cartridge::TimingMode::Ntsc => RomTvSystem::Ntsc,
-        crate::cartridge::TimingMode::Pal => RomTvSystem::Pal,
-        crate::cartridge::TimingMode::MultiRegion
-        | crate::cartridge::TimingMode::Dendy
-        | crate::cartridge::TimingMode::Unknown(_) => RomTvSystem::Unknown,
-    }
-}
+const PRG_RAM_BANK_SIZE: usize = 8 * 1024;
+const DEFAULT_PRG_RAM_BANKS_8K: u8 = 1;
+const SAVE_FILE_EXTENSION: &str = "sav";
+const STATE_FILE_EXTENSION: &str = "state";
 
 impl fmt::Display for CartridgeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -93,7 +59,7 @@ pub struct Cartridge {
 
     crc32: u32,
 
-    rom_tv_system: RomTvSystem,
+    rom_timing_mode: TimingMode,
 
     rom_path: Option<PathBuf>,
     save_path: Option<PathBuf>,
@@ -105,70 +71,119 @@ pub struct Cartridge {
 }
 
 impl Cartridge {
-    /// Create a new cartridge by parsing iNES v1 file data
-    pub fn new(data: &[u8]) -> Result<Self, CartridgeError> {
-        // Delegate full parsing (header, PRG/CHR extraction, CRC) to centralized parser.
-        // `parse_rom` will validate the header and sizes and return rich errors
-        // which we map into `CartridgeError` here.
-        let (info, prg_rom, chr_rom, trainer, crc32) = match crate::cartridge::parse_rom(data) {
-            Ok(tuple) => tuple,
-            Err(crate::cartridge::ines::RomParseError::InvalidHeader) => {
-                return Err(CartridgeError::InvalidHeader);
+    fn map_parse_error(err: crate::cartridge::ines::RomParseError) -> CartridgeError {
+        match err {
+            crate::cartridge::ines::RomParseError::InvalidHeader => CartridgeError::InvalidHeader,
+            crate::cartridge::ines::RomParseError::FileTooSmall { expected, actual } => {
+                CartridgeError::FileTooSmall { expected, actual }
             }
-            Err(crate::cartridge::ines::RomParseError::FileTooSmall { expected, actual }) => {
-                return Err(CartridgeError::FileTooSmall { expected, actual });
-            }
-        };
+        }
+    }
 
-        // Determine PRG-RAM banks (8KB units)
-        #[allow(clippy::manual_div_ceil)]
-        let prg_ram_banks_8k: u8 = info
-            .prg_ram_size_bytes
-            .map(|sz| {
-                if sz == 0 {
+    fn prg_ram_banks_8k(prg_ram_size_bytes: Option<usize>) -> u8 {
+        prg_ram_size_bytes
+            .map(|size| {
+                if size == 0 {
                     return 0;
                 }
-                let banks = (sz + 8191) / 8192;
-                let clamped = banks.max(1).min(u8::MAX as usize);
-                clamped as u8
+
+                size.div_ceil(PRG_RAM_BANK_SIZE).clamp(1, u8::MAX as usize) as u8
             })
-            .unwrap_or(1);
+            .unwrap_or(DEFAULT_PRG_RAM_BANKS_8K)
+    }
 
-        // Map battery flag
-        let battery_backed_prg_ram = info.battery_backed_prg_ram;
+    fn map_mirroring(mirroring: MirroringMode) -> MirroringMode {
+        mirroring
+    }
 
-        // Map TV system from header timing mode (for both iNES and NES2).
-        // `load_from_file` may override from DB when a matching CRC entry exists.
-        let rom_tv_system = timing_mode_to_rom_tv_system(info.timing_mode);
+    fn create_mapper(
+        info: &crate::cartridge::ines::InesHeader,
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+    ) -> Result<Box<dyn Mapper>, CartridgeError> {
+        let mut context = MapperContext::new(
+            info.mapper,
+            prg_rom,
+            chr_rom,
+            Self::map_mirroring(info.mirroring),
+        )
+        .with_prg_ram_banks(Self::prg_ram_banks_8k(info.prg_ram_size_bytes))
+        .with_battery_backed_prg_ram(info.battery_backed_prg_ram);
 
-        // Map mirroring
-        let mirroring = match info.mirroring {
-            crate::cartridge::Mirroring::FourScreen => MirroringMode::FourScreen,
-            crate::cartridge::Mirroring::Vertical => MirroringMode::Vertical,
-            crate::cartridge::Mirroring::Horizontal => MirroringMode::Horizontal,
-        };
-
-        // Create mapper metadata and instance
-        let mut ctx = MapperContext::new(info.mapper, prg_rom, chr_rom, mirroring);
-        ctx = ctx
-            .with_prg_ram_banks(prg_ram_banks_8k)
-            .with_battery_backed_prg_ram(battery_backed_prg_ram);
         if info.submapper != 0 {
-            ctx = ctx.with_submapper(info.submapper);
+            context = context.with_submapper(info.submapper);
         }
 
-        let mapper = crate::cartridge::mapper::create_mapper(ctx).map_err(|err| {
+        crate::cartridge::mapper::create_mapper(context).map_err(|err| {
             if err.kind() == io::ErrorKind::Unsupported {
                 CartridgeError::UnsupportedMapper(info.mapper)
             } else {
                 CartridgeError::Io(err)
             }
-        })?;
+        })
+    }
+
+    fn configure_paths_from_rom(&mut self, rom_path: PathBuf) {
+        self.rom_path = Some(rom_path.clone());
+        self.save_path = Some(rom_path.with_extension(SAVE_FILE_EXTENSION));
+    }
+
+    fn apply_db_tv_system_override(&mut self, app_context: &AppContext) {
+        if let Some(db_entry) = app_context.get_db_entry_by_crc(self.crc32)
+            && let Some(db_timing_mode) = db_entry.console_region
+        {
+            self.rom_timing_mode = db_timing_mode.normalize_rom_timing_mode();
+        }
+    }
+
+    fn can_persist_save_ram(&self) -> bool {
+        self.battery_backed_prg_ram && self.save_path.is_some()
+    }
+
+    fn save_temp_path(save_path: &Path) -> PathBuf {
+        let mut temp_path = save_path.to_path_buf();
+        temp_path.set_extension(format!("sav.tmp.{}", std::process::id()));
+        temp_path
+    }
+
+    fn write_save_data(save_path: &Path, data: &[u8]) -> io::Result<()> {
+        if let Some(parent) = save_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let temp_path = Self::save_temp_path(save_path);
+        fs::write(&temp_path, data)?;
+
+        if save_path.exists() {
+            let _ = fs::remove_file(save_path);
+        }
+
+        fs::rename(temp_path, save_path)
+    }
+
+    fn load_save_data(&mut self, save_path: &Path) -> io::Result<()> {
+        if !save_path.exists() {
+            return Ok(());
+        }
+
+        let save_data = fs::read(save_path)?;
+        self.mapper_mut().load_wram_snapshot(&save_data);
+        Ok(())
+    }
+
+    /// Create a new cartridge by parsing iNES v1 file data
+    pub fn new(data: &[u8]) -> Result<Self, CartridgeError> {
+        let (info, prg_rom, chr_rom, trainer, crc32) =
+            crate::cartridge::parse_rom(data).map_err(Self::map_parse_error)?;
+
+        let battery_backed_prg_ram = info.battery_backed_prg_ram;
+        let rom_timing_mode = info.timing_mode.normalize_rom_timing_mode();
+        let mapper = Self::create_mapper(&info, prg_rom, chr_rom)?;
 
         Ok(Self {
             mapper,
             crc32,
-            rom_tv_system,
+            rom_timing_mode,
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram,
@@ -185,14 +200,8 @@ impl Cartridge {
         let data = fs::read(&rom_path)?;
         let mut cart = Self::new(&data)?;
 
-        if let Some(db_entry) = app_context.get_db_entry_by_crc(cart.crc32)
-            && let Some(db_timing_mode) = db_entry.console_region
-        {
-            cart.rom_tv_system = timing_mode_to_rom_tv_system(db_timing_mode);
-        }
-
-        cart.rom_path = Some(rom_path.clone());
-        cart.save_path = Some(rom_path.with_extension("sav"));
+        cart.apply_db_tv_system_override(app_context);
+        cart.configure_paths_from_rom(rom_path);
         cart.load_save_ram_from_disk()?;
 
         Ok(cart)
@@ -201,11 +210,11 @@ impl Cartridge {
     pub fn state_path(&self) -> Option<PathBuf> {
         self.rom_path
             .as_ref()
-            .map(|path| path.with_extension("state"))
+            .map(|path| path.with_extension(STATE_FILE_EXTENSION))
     }
 
     pub fn save_ram(&self) -> io::Result<()> {
-        if !self.battery_backed_prg_ram {
+        if !self.can_persist_save_ram() {
             return Ok(());
         }
 
@@ -213,30 +222,13 @@ impl Cartridge {
             return Ok(());
         };
 
-        if let Some(parent) = save_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        // Use mapper's wram_snapshot to capture all WRAM, bypassing enable/protect and banking
+        // Use mapper's wram_snapshot to capture all WRAM, bypassing enable/protect and banking.
         let prg_ram = self.mapper().wram_snapshot();
-
-        let mut tmp_path = save_path.to_path_buf();
-        tmp_path.set_extension(format!("sav.tmp.{}", std::process::id()));
-
-        fs::write(&tmp_path, prg_ram)?;
-
-        // Best-effort: on Unix this replaces atomically; on other platforms it may fail if exists.
-        // Keep the behavior simple; callers can surface the error.
-        if save_path.exists() {
-            let _ = fs::remove_file(save_path);
-        }
-        fs::rename(tmp_path, save_path)?;
-
-        Ok(())
+        Self::write_save_data(save_path, &prg_ram)
     }
 
     fn load_save_ram_from_disk(&mut self) -> io::Result<()> {
-        if !self.battery_backed_prg_ram {
+        if !self.can_persist_save_ram() {
             return Ok(());
         }
 
@@ -244,15 +236,8 @@ impl Cartridge {
             return Ok(());
         };
 
-        if !save_path.exists() {
-            return Ok(());
-        }
-
-        let sav = fs::read(save_path)?;
-        // Use mapper's load_wram_snapshot to restore all WRAM, bypassing enable/protect and banking
-        self.mapper_mut().load_wram_snapshot(&sav);
-
-        Ok(())
+        let save_path = save_path.clone();
+        self.load_save_data(&save_path)
     }
 
     /// Get a reference to the mapper
@@ -285,8 +270,8 @@ impl Cartridge {
         self.crc32
     }
 
-    pub fn rom_tv_system(&self) -> RomTvSystem {
-        self.rom_tv_system
+    pub fn rom_timing_mode(&self) -> TimingMode {
+        self.rom_timing_mode
     }
 
     /// Returns a reference to the trainer data if present.
@@ -304,7 +289,7 @@ impl Cartridge {
         Self {
             mapper,
             crc32,
-            rom_tv_system: RomTvSystem::Ntsc,
+            rom_timing_mode: TimingMode::Ntsc,
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram: false,
@@ -317,7 +302,7 @@ impl Cartridge {
         Self {
             mapper,
             crc32: 0,
-            rom_tv_system: RomTvSystem::Ntsc,
+            rom_timing_mode: TimingMode::Ntsc,
             rom_path: None,
             save_path: None,
             battery_backed_prg_ram: false,
@@ -334,7 +319,58 @@ impl Cartridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
+
+    const INES_HEADER_SIZE: usize = 16;
+    const TRAINER_SIZE: usize = 512;
+    const PRG_ROM_BANK_SIZE: usize = 16 * 1024;
+    const CHR_ROM_BANK_SIZE: usize = 8 * 1024;
+    const PRG_FILL_BYTE: u8 = 0xAA;
+    const CHR_FILL_BYTE: u8 = 0xBB;
+
+    fn build_ines_header(
+        prg_rom_banks: u8,
+        chr_rom_banks: u8,
+        flags6: u8,
+        flags7: u8,
+        flags8: u8,
+        flags9: u8,
+        flags10: u8,
+    ) -> Vec<u8> {
+        let mut header = vec![
+            b'N',
+            b'E',
+            b'S',
+            0x1A,
+            prg_rom_banks,
+            chr_rom_banks,
+            flags6,
+            flags7,
+            flags8,
+            flags9,
+            flags10,
+        ];
+        header.resize(INES_HEADER_SIZE, 0);
+        header
+    }
+
+    fn append_prg_and_chr_pattern(rom: &mut Vec<u8>, prg_rom_banks: u8, chr_rom_banks: u8) {
+        let prg_size = prg_rom_banks as usize * PRG_ROM_BANK_SIZE;
+        rom.extend(vec![PRG_FILL_BYTE; prg_size]);
+
+        let chr_size = chr_rom_banks as usize * CHR_ROM_BANK_SIZE;
+        rom.extend(vec![CHR_FILL_BYTE; chr_size]);
+    }
+
+    fn remove_file_if_exists(path: &Path) {
+        let _ = std::fs::remove_file(path);
+    }
+
+    fn remove_files_if_exist(paths: &[&Path]) {
+        for path in paths {
+            remove_file_if_exists(path);
+        }
+    }
 
     fn create_test_rom(
         prg_rom_banks: u8,
@@ -342,38 +378,14 @@ mod tests {
         flags6: u8,
         include_trainer: bool,
     ) -> Vec<u8> {
-        let mut rom = vec![
-            b'N',
-            b'E',
-            b'S',
-            0x1A,          // iNES header
-            prg_rom_banks, // PRG ROM size (16KB units)
-            chr_rom_banks, // CHR ROM size (8KB units)
-            flags6,        // Flags 6
-            0,             // Flags 7
-            0,             // Flags 8 (PRG RAM size)
-            0,             // Flags 9
-            0,             // Flags 10
-            0,
-            0,
-            0,
-            0,
-            0, // Reserved (unused)
-        ];
+        let mut rom = build_ines_header(prg_rom_banks, chr_rom_banks, flags6, 0, 0, 0, 0);
 
         // Add trainer if requested
         if include_trainer {
-            rom.extend(vec![0x00; 512]);
+            rom.extend(vec![0x00; TRAINER_SIZE]);
         }
 
-        // Add PRG ROM data
-        let prg_size = prg_rom_banks as usize * 16384;
-        rom.extend(vec![0xAA; prg_size]);
-
-        // Add CHR ROM data
-        let chr_size = chr_rom_banks as usize * 8192;
-        rom.extend(vec![0xBB; chr_size]);
-
+        append_prg_and_chr_pattern(&mut rom, prg_rom_banks, chr_rom_banks);
         rom
     }
 
@@ -385,34 +397,13 @@ mod tests {
         flags9: u8,
         include_trainer: bool,
     ) -> Vec<u8> {
-        let mut rom = vec![
-            b'N',
-            b'E',
-            b'S',
-            0x1A,          // iNES header
-            prg_rom_banks, // PRG ROM size (16KB units)
-            chr_rom_banks, // CHR ROM size (8KB units)
-            flags6,        // Flags 6
-            flags7,        // Flags 7
-            0,             // Flags 8 (PRG RAM size)
-            flags9,        // Flags 9 (TV system)
-            0,             // Flags 10
-            0,
-            0,
-            0,
-            0,
-            0, // Reserved (unused)
-        ];
+        let mut rom = build_ines_header(prg_rom_banks, chr_rom_banks, flags6, flags7, 0, flags9, 0);
 
         if include_trainer {
-            rom.extend(vec![0x00; 512]);
+            rom.extend(vec![0x00; TRAINER_SIZE]);
         }
 
-        let prg_size = prg_rom_banks as usize * 16384;
-        rom.extend(vec![0xAA; prg_size]);
-
-        let chr_size = chr_rom_banks as usize * 8192;
-        rom.extend(vec![0xBB; chr_size]);
+        append_prg_and_chr_pattern(&mut rom, prg_rom_banks, chr_rom_banks);
 
         rom
     }
@@ -431,32 +422,17 @@ mod tests {
         }
         let flags7 = mapper_number & 0xF0;
 
-        let mut rom = vec![
-            b'N',
-            b'E',
-            b'S',
-            0x1A,             // iNES header
-            prg_rom_banks,    // PRG ROM size (16KB units)
-            chr_rom_banks,    // CHR ROM size (8KB units)
-            flags6,           // Flags 6
-            flags7,           // Flags 7
-            prg_ram_banks_8k, // Flags 8 (PRG RAM size in 8KB units)
-            0,                // Flags 9
-            0,                // Flags 10
+        let mut rom = build_ines_header(
+            prg_rom_banks,
+            chr_rom_banks,
+            flags6,
+            flags7,
+            prg_ram_banks_8k,
             0,
             0,
-            0,
-            0,
-            0, // Reserved (unused)
-        ];
+        );
 
-        // Add PRG ROM data
-        let prg_size = prg_rom_banks as usize * 16384;
-        rom.extend(vec![0xAA; prg_size]);
-
-        // Add CHR ROM data
-        let chr_size = chr_rom_banks as usize * 8192;
-        rom.extend(vec![0xBB; chr_size]);
+        append_prg_and_chr_pattern(&mut rom, prg_rom_banks, chr_rom_banks);
 
         rom
     }
@@ -483,7 +459,7 @@ mod tests {
             Cartridge::load_from_file(&path, &app_context).expect("load_from_file should succeed");
         assert_eq!(cart.mapper().get_mirroring(), MirroringMode::Vertical);
 
-        let _ = std::fs::remove_file(&path);
+        remove_file_if_exists(&path);
     }
 
     #[test]
@@ -509,8 +485,7 @@ mod tests {
         assert_eq!(cart.mapper().read_prg(0x6000), 0x42);
         assert_eq!(cart.mapper().read_prg(0x7FFF), 0x99);
 
-        let _ = std::fs::remove_file(&rom_path);
-        let _ = std::fs::remove_file(&sav_path);
+        remove_files_if_exist(&[&rom_path, &sav_path]);
     }
 
     #[test]
@@ -536,8 +511,7 @@ mod tests {
         assert_eq!(sav[0], 0xAB);
         assert_eq!(sav[0x1FFF], 0xCD);
 
-        let _ = std::fs::remove_file(&rom_path);
-        let _ = std::fs::remove_file(&sav_path);
+        remove_files_if_exist(&[&rom_path, &sav_path]);
     }
 
     #[test]
@@ -626,38 +600,38 @@ mod tests {
     }
 
     #[test]
-    fn test_rom_tv_system_defaults_to_ntsc() {
+    fn test_rom_timing_mode_defaults_to_ntsc() {
         let rom_data = create_test_rom_with_flags9(1, 1, 0, 0, 0, false);
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert_eq!(cartridge.rom_tv_system(), RomTvSystem::Ntsc);
+        assert_eq!(cartridge.rom_timing_mode(), TimingMode::Ntsc);
     }
 
     #[test]
-    fn test_rom_tv_system_parses_pal_flag() {
+    fn test_rom_timing_mode_parses_pal_flag() {
         let rom_data = create_test_rom_with_flags9(1, 1, 0, 0, 0x01, false);
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert_eq!(cartridge.rom_tv_system(), RomTvSystem::Pal);
+        assert_eq!(cartridge.rom_timing_mode(), TimingMode::Pal);
     }
 
     #[test]
-    fn test_rom_tv_system_unknown_for_nes2_header() {
+    fn test_rom_timing_mode_nes2_timing_mode_zero_is_ntsc() {
         let rom_data = create_test_rom_with_flags9(1, 1, 0, 0x08, 0x01, false);
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert_eq!(cartridge.rom_tv_system(), RomTvSystem::Ntsc);
+        assert_eq!(cartridge.rom_timing_mode(), TimingMode::Ntsc);
     }
 
     #[test]
-    fn test_rom_tv_system_nes2_uses_header_timing_mode() {
+    fn test_rom_timing_mode_nes2_uses_header_timing_mode() {
         let mut rom_data = create_test_rom_with_flags9(1, 1, 0, 0x08, 0x00, false);
         rom_data[12] = 0x01; // NES2 timing mode PAL
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert_eq!(cartridge.rom_tv_system(), RomTvSystem::Pal);
+        assert_eq!(cartridge.rom_timing_mode(), TimingMode::Pal);
     }
 
     #[test]
-    fn test_timing_mode_to_rom_tv_system_maps_non_ntsc_pal_to_unknown() {
-        let tv = timing_mode_to_rom_tv_system(crate::cartridge::TimingMode::MultiRegion);
-        assert_eq!(tv, RomTvSystem::Unknown);
+    fn test_timing_mode_to_rom_timing_mode_maps_non_ntsc_pal_to_unknown() {
+        let tv = crate::cartridge::TimingMode::MultiRegion.normalize_rom_timing_mode();
+        assert!(matches!(tv, TimingMode::Unknown(_)));
     }
 
     #[test]
@@ -861,8 +835,7 @@ mod tests {
         assert_eq!(snapshot[0], 0x42);
         assert_eq!(snapshot[0x1FFF], 0x99);
 
-        let _ = std::fs::remove_file(&rom_path);
-        let _ = std::fs::remove_file(&sav_path);
+        remove_files_if_exist(&[&rom_path, &sav_path]);
     }
 
     #[test]
@@ -899,8 +872,7 @@ mod tests {
         assert_eq!(sav[0], 0xAB);
         assert_eq!(sav[0x1FFF], 0xCD);
 
-        let _ = std::fs::remove_file(&rom_path);
-        let _ = std::fs::remove_file(&sav_path);
+        remove_files_if_exist(&[&rom_path, &sav_path]);
     }
 
     #[test]
@@ -933,8 +905,7 @@ mod tests {
         let sav = std::fs::read(&sav_path).expect("SAV should be written");
         assert_eq!(sav[0], 0xAB);
 
-        let _ = std::fs::remove_file(&rom_path);
-        let _ = std::fs::remove_file(&sav_path);
+        remove_files_if_exist(&[&rom_path, &sav_path]);
     }
 
     #[test]
@@ -979,8 +950,7 @@ mod tests {
         assert_eq!(sav[0x2000], 0xCC);
         assert_eq!(sav[0x3FFF], 0xDD);
 
-        let _ = std::fs::remove_file(&rom_path);
-        let _ = std::fs::remove_file(&sav_path);
+        remove_files_if_exist(&[&rom_path, &sav_path]);
     }
 
     #[test]
@@ -1015,7 +985,6 @@ mod tests {
         assert_eq!(cart.mapper().read_prg(0x6000), 0xCC);
         assert_eq!(cart.mapper().read_prg(0x7FFF), 0xDD);
 
-        let _ = std::fs::remove_file(&rom_path);
-        let _ = std::fs::remove_file(&sav_path);
+        remove_files_if_exist(&[&rom_path, &sav_path]);
     }
 }

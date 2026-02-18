@@ -387,7 +387,7 @@ impl MMC3Mapper {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use crate::cartridge::cartridge::MirroringMode;
+    use crate::cartridge::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::mmc3::MMC3Mapper;
     use crate::cartridge::test_helpers::banked_data;
@@ -1369,7 +1369,13 @@ impl Mapper for MMC3Mapper {
             | ((self.prg_ram_enabled as u8) << 3)
             | ((self.prg_ram_write_protected as u8) << 4);
         snapshot.push(flags);
-        snapshot.push(self.mirroring as u8);
+        snapshot.push(match self.mirroring {
+            MirroringMode::Vertical => 0,
+            MirroringMode::Horizontal => 1,
+            MirroringMode::FourScreen => 2,
+            MirroringMode::SingleScreen => 3,
+            _ => 1,
+        });
         snapshot.push(self.prev_a12 as u8);
         snapshot.push(self.current_a12 as u8);
         snapshot.push(self.a12_low_cycles);

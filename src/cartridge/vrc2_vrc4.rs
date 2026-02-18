@@ -487,7 +487,7 @@ impl Mapper for Vrc2Vrc4Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::cartridge::MirroringMode;
+    use crate::cartridge::MirroringMode;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 

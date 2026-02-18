@@ -13,7 +13,7 @@ mod rendering;
 mod sdl_frontend;
 
 use app_context::AppContext;
-use console::{ApuChannels, Config, Nes, ParseResult, SaveState, log_rom_tv_system_selection};
+use console::{ApuChannels, Config, Nes, ParseResult, SaveState, log_rom_timing_mode_selection};
 use debugging::log_info;
 use frontend_toasts::{cartridge_load_toast_message, emulator_timing_toast_message};
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
@@ -96,9 +96,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let rom_tv_system = cart.rom_tv_system();
-    let applied = config.apply_rom_tv_system(rom_tv_system);
-    log_rom_tv_system_selection(&config, rom_tv_system, applied);
+    let rom_timing_mode = cart.rom_timing_mode();
+    let applied = config.apply_rom_timing_mode(rom_timing_mode);
+    log_rom_timing_mode_selection(&config, rom_timing_mode, applied);
 
     let mut nes_instance = Nes::new(config.clone());
     nes_instance.insert_cartridge(cart);
