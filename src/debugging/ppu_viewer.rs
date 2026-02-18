@@ -69,8 +69,7 @@ pub fn render_pattern_tables_rgba(chr: &[u8; CHR_SIZE], palette: &[u8; PALETTE_S
                     tile_addr,
                     0,
                     &mut pixels,
-                    table_x_offset + tx * TILE_SIZE,
-                    ty * TILE_SIZE,
+                    (table_x_offset + tx * TILE_SIZE, ty * TILE_SIZE),
                     PATTERN_TABLE_OUTPUT_WIDTH,
                 );
             }
@@ -93,17 +92,17 @@ pub fn render_nametables_rgba(
 ) -> Vec<u8> {
     let mut pixels = vec![0u8; NAMETABLE_OUTPUT_WIDTH * NAMETABLE_OUTPUT_HEIGHT * 4];
 
-    for nt in 0..NUM_NAMETABLES {
+    for (nt, nt_data) in nametables.iter().enumerate().take(NUM_NAMETABLES) {
         let nt_x = (nt % 2) * NAMETABLE_WIDTH;
         let nt_y = (nt / 2) * NAMETABLE_HEIGHT;
-        let nt_data = &nametables[nt];
 
         for ty in 0..NAMETABLE_TILE_ROWS {
             for tx in 0..NAMETABLE_TILE_COLS {
                 let tile_index = nt_data[ty * NAMETABLE_TILE_COLS + tx] as u16;
                 let tile_addr = bg_pattern_table + tile_index * CHR_BYTES_PER_TILE as u16;
 
-                let attr_byte = nt_data[ATTRIBUTE_TABLE_OFFSET + (ty / 4) * ATTRIBUTE_TABLE_COLS + (tx / 4)];
+                let attr_byte =
+                    nt_data[ATTRIBUTE_TABLE_OFFSET + (ty / 4) * ATTRIBUTE_TABLE_COLS + (tx / 4)];
                 let pal_shift = ((ty / 2) % 2) * 4 + ((tx / 2) % 2) * 2;
                 let palette_num = ((attr_byte >> pal_shift) & 0x03) as usize;
 
@@ -113,8 +112,7 @@ pub fn render_nametables_rgba(
                     tile_addr,
                     palette_num,
                     &mut pixels,
-                    nt_x + tx * TILE_SIZE,
-                    nt_y + ty * TILE_SIZE,
+                    (nt_x + tx * TILE_SIZE, nt_y + ty * TILE_SIZE),
                     NAMETABLE_OUTPUT_WIDTH,
                 );
             }
@@ -130,11 +128,11 @@ fn render_tile_into(
     palette: &[u8; PALETTE_SIZE],
     tile_addr: u16,
     palette_num: usize,
-    pixels: &mut Vec<u8>,
-    px: usize,
-    py: usize,
+    pixels: &mut [u8],
+    position: (usize, usize),
     stride: usize,
 ) {
+    let (px, py) = position;
     for row in 0..TILE_SIZE {
         let base = tile_addr as usize + row;
         let lo = chr[base];
@@ -219,7 +217,7 @@ mod tests {
         let pixels = render_pattern_tables_rgba(&chr, &palette);
 
         // Table 1 starts at x=128. Pixel at (128, 0):
-        let offset = (0 * 256 + 128) * 4;
+        let offset = 128 * 4;
         let (r, g, b) = Nes::lookup_system_palette(0x11);
         assert_eq!(pixels[offset], r);
         assert_eq!(pixels[offset + 1], g);
@@ -231,8 +229,8 @@ mod tests {
         // NT0 position (0,0) = tile index 1. Tile 1 has all pixels color 3.
         let mut chr = [0u8; 8192];
         for row in 0..8 {
-            chr[1 * 16 + row] = 0xFF; // lo bits
-            chr[1 * 16 + row + 8] = 0xFF; // hi bits → color 3
+            chr[16 + row] = 0xFF; // lo bits
+            chr[16 + row + 8] = 0xFF; // hi bits → color 3
         }
         let mut nametables = [[0u8; 1024]; 4];
         nametables[0][0] = 1; // tile index 1 at (0,0) of NT0
@@ -267,7 +265,7 @@ mod tests {
         let pixels = render_nametables_rgba(&chr, &nametables, &palette, 0x0000);
 
         // NT1 top-left is at pixel (256, 0):
-        let offset = (0 * 512 + 256) * 4;
+        let offset = 256 * 4;
         let (r, g, b) = Nes::lookup_system_palette(0x15);
         assert_eq!(pixels[offset], r);
         assert_eq!(pixels[offset + 1], g);
@@ -291,7 +289,7 @@ mod tests {
         let pixels = render_nametables_rgba(&chr, &nametables, &palette, 0x0000);
 
         // NT2 top-left is at pixel (0, 240):
-        let offset = (240 * 512 + 0) * 4;
+        let offset = (240 * 512) * 4;
         let (r, g, b) = Nes::lookup_system_palette(0x1A);
         assert_eq!(pixels[offset], r);
         assert_eq!(pixels[offset + 1], g);
@@ -350,7 +348,7 @@ mod tests {
 
     #[test]
     fn test_scroll_for_debugger_reflects_x_scroll_write() {
-        let mut nes = Nes::new(Config::default());
+        let nes = Nes::new(Config::default());
         // Write $80 (128) to PPUSCROLL twice: X=128, Y=0.
         // This sets coarse_x=16, fine_x=0 → scroll_x = 128.
         nes.ppu.borrow_mut().write_scroll(0x80, false);
@@ -362,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_scroll_for_debugger_reflects_y_scroll_write() {
-        let mut nes = Nes::new(Config::default());
+        let nes = Nes::new(Config::default());
         // X=0, Y=120 → scroll_y = 120.
         nes.ppu.borrow_mut().write_scroll(0x00, false);
         nes.ppu.borrow_mut().write_scroll(0x78, false);

@@ -26,6 +26,7 @@ pub struct DebuggerUiAction {
     pub step_into: bool,
     pub continue_run: bool,
     pub run_to_next_frame: bool,
+    pub run_to_next_scanline: bool,
     pub run_to_nmi: bool,
     pub run_to_irq: bool,
     pub toggle_ppu_viewer: bool,
@@ -301,6 +302,10 @@ fn render_cpu_controls(ui: &imgui::Ui, action: &mut DebuggerUiAction) {
         action.run_to_next_frame = true;
     }
     ui.same_line();
+    if ui.button("Run to next scanline") {
+        action.run_to_next_scanline = true;
+    }
+    ui.same_line();
     if ui.button("Run to NMI") {
         action.run_to_nmi = true;
     }
@@ -485,20 +490,19 @@ fn cpu_register_lines(snapshot: &DebuggerSnapshot) -> Vec<String> {
         Some(crate::cpu::InterruptKind::Irq) => "IRQ",
     };
 
-    let mut lines = vec![
+    let lines = vec![
         format!("PC: {:04X}  SP: {:02X}", r.pc, r.sp),
         format!("A:  {:02X}  X:  {:02X}  Y:  {:02X}", r.a, r.x, r.y),
         format!("P:  {:02X}  {}", r.p, format_status_flags(r.p)),
         format!("INT: {interrupt}"),
         format!("VEC: NMI {:04X}  IRQ {:04X}", r.nmi_vector, r.irq_vector),
         format!("CYC: {}", r.cycles),
+        format!(
+            "Frame: {} Scanline: {} Pixel: {}",
+            r.frame_count, r.scanline, r.pixel
+        ),
         "---".to_string(),
     ];
-
-    // Append PPU info (skip the "PPU" header line)
-    for line in snapshot.ppu.lines().skip(1) {
-        lines.push(line.to_string());
-    }
 
     lines
 }
@@ -634,8 +638,11 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("N-U--I-C")));
         // PPU info integrated after separator
         assert!(lines.iter().any(|l| l == "---"));
-        assert!(lines.iter().any(|l| l.contains("scanline")));
-        assert!(lines.iter().any(|l| l.contains("pixel")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("Frame:") && l.contains("Scanline:") && l.contains("Pixel:"))
+        );
     }
 
     #[test]
@@ -672,6 +679,15 @@ mod tests {
         assert!(
             !action.toggle_ppu_viewer,
             "toggle_ppu_viewer should default to false"
+        );
+    }
+
+    #[test]
+    fn test_debugger_ui_action_has_run_to_next_scanline_field() {
+        let action = DebuggerUiAction::default();
+        assert!(
+            !action.run_to_next_scanline,
+            "run_to_next_scanline should default to false"
         );
     }
 

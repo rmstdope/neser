@@ -1218,7 +1218,11 @@ impl SdlEventLoop {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn breakpoint_count(&self) -> usize {
-        self.breakpoints.len()
+        if self.breakpoints.is_empty() {
+            0
+        } else {
+            self.breakpoints.len()
+        }
     }
 
     pub(crate) fn load_breakpoints_from_debug_file(&mut self, nes: &Nes) {
@@ -1406,23 +1410,16 @@ impl SdlEventLoop {
         if action.run_to_next_frame {
             Self::debugger_run_to_next_frame(nes);
         }
+        if action.run_to_next_scanline {
+            Self::debugger_run_to_next_scanline(nes);
+        }
         if action.run_to_nmi {
-            let target = Self::read_vector_target(nes, 0xFFFA);
-            self.set_temporary_breakpoint_for_interrupt(
-                nes,
-                target,
-                crate::cpu::InterruptKind::Nmi,
-            );
-            should_continue = true;
+            should_continue |=
+                self.arm_run_to_interrupt(nes, 0xFFFA, crate::cpu::InterruptKind::Nmi);
         }
         if action.run_to_irq {
-            let target = Self::read_vector_target(nes, 0xFFFE);
-            self.set_temporary_breakpoint_for_interrupt(
-                nes,
-                target,
-                crate::cpu::InterruptKind::Irq,
-            );
-            should_continue = true;
+            should_continue |=
+                self.arm_run_to_interrupt(nes, 0xFFFE, crate::cpu::InterruptKind::Irq);
         }
 
         if should_continue {
@@ -1510,6 +1507,43 @@ impl SdlEventLoop {
             }
 
             previous_scanline = scanline;
+        }
+    }
+
+    fn arm_run_to_interrupt(
+        &mut self,
+        nes: &Nes,
+        vector_addr: u16,
+        kind: crate::cpu::InterruptKind,
+    ) -> bool {
+        let target = Self::read_vector_target(nes, vector_addr);
+        self.set_temporary_breakpoint_for_interrupt(nes, target, kind);
+        true
+    }
+
+    fn debugger_run_to_next_scanline(nes: &mut Nes) {
+        const MAX_STEPS: usize = 100_000;
+
+        let start_scanline = {
+            let ppu = nes.ppu.borrow();
+            ppu.scanline()
+        };
+
+        for _step in 0..MAX_STEPS {
+            if nes.cpu.is_halted() {
+                break;
+            }
+
+            nes.run_cpu_tick();
+
+            let scanline = {
+                let ppu = nes.ppu.borrow();
+                ppu.scanline()
+            };
+
+            if scanline != start_scanline {
+                break;
+            }
         }
     }
 
@@ -2106,7 +2140,10 @@ mod tests {
 
         event_loop.tick_headless_frame_for_run(&mut nes, &Tracing::default());
 
-        assert!(event_loop.is_paused(), "should be paused after CYC breakpoint fires");
+        assert!(
+            event_loop.is_paused(),
+            "should be paused after CYC breakpoint fires"
+        );
         assert!(
             !nes.is_ready_to_render(),
             "frame should NOT have completed — emulation must stop at the breakpoint, not at frame end"
@@ -2845,6 +2882,51 @@ mod tests {
             cpu_cycles_after - cpu_cycles_before < 1000,
             "should stop soon after the frame wrap, not spin until an exact (0,0) boundary"
         );
+    }
+
+    #[test]
+    fn test_run_to_next_scanline_stops_after_first_scanline_advance() {
+        let mut nes_expected = nes_with_nop_loop_program();
+        let config = Config::default();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        event_loop.debugger_open_requested = true;
+
+        {
+            let mut ppu = nes_expected.ppu.borrow_mut();
+            while ppu.scanline() != 100 || ppu.pixel() != 338 {
+                ppu.run_ppu_cycles(1);
+            }
+        }
+
+        let save_state = nes_expected.save_state();
+        let expected_scanline = {
+            nes_expected.run_cpu_tick();
+            let ppu = nes_expected.ppu.borrow();
+            ppu.scanline()
+        };
+        let expected_pixel = {
+            let ppu = nes_expected.ppu.borrow();
+            ppu.pixel()
+        };
+
+        let mut nes_actual = nes_with_nop_loop_program();
+        nes_actual.load_state(&save_state).unwrap();
+
+        event_loop.apply_debugger_ui_action(
+            &mut nes_actual,
+            ui::DebuggerUiAction {
+                run_to_next_scanline: true,
+                ..Default::default()
+            },
+        );
+
+        let (actual_scanline, actual_pixel) = {
+            let ppu = nes_actual.ppu.borrow();
+            (ppu.scanline(), ppu.pixel())
+        };
+
+        assert_eq!(actual_scanline, expected_scanline);
+        assert_eq!(actual_pixel, expected_pixel);
     }
 
     #[test]

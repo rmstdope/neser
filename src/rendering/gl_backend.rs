@@ -743,7 +743,12 @@ fn draw_ppu_viewer_window(
             let sy = img_h / NT_TEX_H;
 
             draw_scroll_rect(
-                ui, img_origin, scroll, sx, sy, VISIBLE_W, VISIBLE_H, NT_TEX_W, NT_TEX_H,
+                ui,
+                img_origin,
+                scroll,
+                (sx, sy),
+                (VISIBLE_W, VISIBLE_H),
+                (NT_TEX_W, NT_TEX_H),
             );
         });
 }
@@ -756,17 +761,17 @@ fn draw_scroll_rect(
     ui: &imgui::Ui,
     img_origin: [f32; 2],
     scroll: (u16, u16),
-    sx: f32,
-    sy: f32,
-    visible_w: f32,
-    visible_h: f32,
-    nt_w: f32,
-    nt_h: f32,
+    scale: (f32, f32),
+    visible_size: (f32, f32),
+    nametable_size: (f32, f32),
 ) {
     let ox = img_origin[0];
     let oy = img_origin[1];
     let scroll_x = scroll.0 as f32;
     let scroll_y = scroll.1 as f32;
+    let (sx, sy) = scale;
+    let (visible_w, visible_h) = visible_size;
+    let (nt_w, nt_h) = nametable_size;
 
     // Each x-segment carries (x_start, width, draw_left_edge, draw_right_edge).
     // At a wrap seam the "inside" edge is omitted: the right segment loses its right edge

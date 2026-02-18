@@ -7,8 +7,8 @@
 //! 3. Default values
 
 use crate::console::TimingMode;
-use crate::debugging::breakpoints::BreakpointKind;
 use crate::debugging::Tracing;
+use crate::debugging::breakpoints::BreakpointKind;
 use crate::input::ControllerType;
 use bitflags::bitflags;
 use std::fs;
@@ -842,7 +842,8 @@ impl Config {
 
         // Breakpoints from --breakpoint flag (comma-separated list)
         if let Some(value) = Self::parse_string_arg(args, "--breakpoint") {
-            self.breakpoints = parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
+            self.breakpoints =
+                parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
         }
 
         Ok(())
@@ -3109,21 +3110,26 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert!(
-            config.breakpoints.contains(&BreakpointKind::WriteAddress(0x2006)),
+            config
+                .breakpoints
+                .contains(&BreakpointKind::WriteAddress(0x2006)),
             "expected WriteAddress breakpoint at 0x2006"
         );
     }
 
     #[test]
     fn test_cli_multiple_breakpoints_are_all_added() {
-        use crate::debugging::breakpoints::BreakpointKind;
         let args = vec![
             "neser".to_string(),
             "--breakpoint".to_string(),
             "pc=C000,write=2006".to_string(),
         ];
         let config = parse_config(args);
-        assert_eq!(config.breakpoints.len(), 2, "expected 2 breakpoints from comma-separated list");
+        assert_eq!(
+            config.breakpoints.len(),
+            2,
+            "expected 2 breakpoints from comma-separated list"
+        );
     }
 
     #[test]
@@ -3134,8 +3140,14 @@ filter=invalid-shader
             "cycfdsfd".to_string(),
         ];
         let result = config_new(args);
-        assert!(result.is_err(), "expected error for invalid breakpoint spec");
-        assert!(result.unwrap_err().contains("breakpoint"), "error message should mention 'breakpoint'");
+        assert!(
+            result.is_err(),
+            "expected error for invalid breakpoint spec"
+        );
+        assert!(
+            result.unwrap_err().contains("breakpoint"),
+            "error message should mention 'breakpoint'"
+        );
     }
 
     #[test]
@@ -3146,7 +3158,10 @@ filter=invalid-shader
             "pc=ZZZZ".to_string(),
         ];
         let result = config_new(args);
-        assert!(result.is_err(), "expected error for invalid PC address in breakpoint");
+        assert!(
+            result.is_err(),
+            "expected error for invalid PC address in breakpoint"
+        );
     }
 
     #[test]
@@ -3157,6 +3172,9 @@ filter=invalid-shader
             "cycle=notanumber".to_string(),
         ];
         let result = config_new(args);
-        assert!(result.is_err(), "expected error for invalid cycle value in breakpoint");
+        assert!(
+            result.is_err(),
+            "expected error for invalid cycle value in breakpoint"
+        );
     }
 }

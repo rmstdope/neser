@@ -34,7 +34,10 @@ pub struct Breakpoint {
 
 impl Breakpoint {
     pub fn new(kind: BreakpointKind) -> Self {
-        Self { kind, enabled: true }
+        Self {
+            kind,
+            enabled: true,
+        }
     }
 
     /// Returns true if this breakpoint is enabled and its condition matches `ctx`.
@@ -44,7 +47,9 @@ impl Breakpoint {
         }
         match self.kind {
             BreakpointKind::Pc(addr) => ctx.pc == addr,
-            BreakpointKind::Cycle(target) => ctx.prev_cpu_cycles < target && ctx.cpu_cycles >= target,
+            BreakpointKind::Cycle(target) => {
+                ctx.prev_cpu_cycles < target && ctx.cpu_cycles >= target
+            }
             BreakpointKind::WriteAddress(addr) => ctx.write_addr == Some(addr),
         }
     }
@@ -162,35 +167,33 @@ impl BreakpointList {
         }
     }
 
-    /// Get a reference to the breakpoint at the given index.
-    pub fn get(&self, index: usize) -> Option<&Breakpoint> {
-        self.items.get(index)
-    }
-
     /// Returns an iterator over all breakpoints.
     pub fn iter(&self) -> std::slice::Iter<'_, Breakpoint> {
         self.items.iter()
     }
 
-    /// Returns `true` if any enabled breakpoint matches the given context.
-    pub fn check_hit(&self, ctx: &EvalContext) -> bool {
-        self.items.iter().any(|bp| bp.is_hit(ctx))
-    }
-
     /// Returns `true` if there is any PC breakpoint at `addr`, regardless of enabled state.
     /// Useful for checking pre-existence before conditionally adding a temporary breakpoint.
     pub fn has_pc_breakpoint_at(&self, addr: u16) -> bool {
-        self.items.iter().any(|b| b.kind == BreakpointKind::Pc(addr))
+        self.items
+            .iter()
+            .any(|b| b.kind == BreakpointKind::Pc(addr))
     }
 
     /// Returns `true` if there is an enabled PC breakpoint at `addr`.
     pub fn has_enabled_pc_breakpoint_at(&self, addr: u16) -> bool {
-        self.items.iter().any(|b| b.kind == BreakpointKind::Pc(addr) && b.enabled)
+        self.items
+            .iter()
+            .any(|b| b.kind == BreakpointKind::Pc(addr) && b.enabled)
     }
 
     /// Serialize all breakpoints to a multi-line string for `.debug` file storage.
     pub fn save_to_string(&self) -> String {
-        self.items.iter().map(|bp| bp.serialize()).collect::<Vec<_>>().join("\n")
+        self.items
+            .iter()
+            .map(|bp| bp.serialize())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Parse breakpoints from a `.debug` file string, skipping blank/comment lines.
@@ -218,7 +221,10 @@ mod tests {
 
     #[test]
     fn test_breakpoint_kind_write_address_displays_as_hex() {
-        assert_eq!(format!("{}", BreakpointKind::WriteAddress(0x2006)), "WR=2006");
+        assert_eq!(
+            format!("{}", BreakpointKind::WriteAddress(0x2006)),
+            "WR=2006"
+        );
     }
 
     // --- PC breakpoint evaluation ---
@@ -226,14 +232,24 @@ mod tests {
     #[test]
     fn test_pc_breakpoint_hits_when_pc_matches() {
         let bp = Breakpoint::new(BreakpointKind::Pc(0xC000));
-        let ctx = EvalContext { pc: 0xC000, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: None };
+        let ctx = EvalContext {
+            pc: 0xC000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: None,
+        };
         assert!(bp.is_hit(&ctx));
     }
 
     #[test]
     fn test_pc_breakpoint_does_not_hit_when_pc_differs() {
         let bp = Breakpoint::new(BreakpointKind::Pc(0xC000));
-        let ctx = EvalContext { pc: 0xC001, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: None };
+        let ctx = EvalContext {
+            pc: 0xC001,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: None,
+        };
         assert!(!bp.is_hit(&ctx));
     }
 
@@ -241,7 +257,12 @@ mod tests {
     fn test_pc_breakpoint_does_not_hit_when_disabled() {
         let mut bp = Breakpoint::new(BreakpointKind::Pc(0xC000));
         bp.enabled = false;
-        let ctx = EvalContext { pc: 0xC000, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: None };
+        let ctx = EvalContext {
+            pc: 0xC000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: None,
+        };
         assert!(!bp.is_hit(&ctx));
     }
 
@@ -250,21 +271,36 @@ mod tests {
     #[test]
     fn test_cycle_breakpoint_hits_when_cycle_crosses_threshold() {
         let bp = Breakpoint::new(BreakpointKind::Cycle(1000));
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 998, cpu_cycles: 1002, write_addr: None };
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 998,
+            cpu_cycles: 1002,
+            write_addr: None,
+        };
         assert!(bp.is_hit(&ctx));
     }
 
     #[test]
     fn test_cycle_breakpoint_hits_when_cycle_matches_exactly() {
         let bp = Breakpoint::new(BreakpointKind::Cycle(1000));
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 999, cpu_cycles: 1000, write_addr: None };
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 999,
+            cpu_cycles: 1000,
+            write_addr: None,
+        };
         assert!(bp.is_hit(&ctx));
     }
 
     #[test]
     fn test_cycle_breakpoint_does_not_hit_before_target_cycle() {
         let bp = Breakpoint::new(BreakpointKind::Cycle(1000));
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 0, cpu_cycles: 999, write_addr: None };
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 999,
+            write_addr: None,
+        };
         assert!(!bp.is_hit(&ctx));
     }
 
@@ -272,7 +308,12 @@ mod tests {
     fn test_cycle_breakpoint_does_not_fire_again_after_threshold_crossed() {
         let bp = Breakpoint::new(BreakpointKind::Cycle(1000));
         // Both prev and current are past the target — threshold already crossed, should not re-fire.
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 1001, cpu_cycles: 1003, write_addr: None };
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 1001,
+            cpu_cycles: 1003,
+            write_addr: None,
+        };
         assert!(!bp.is_hit(&ctx));
     }
 
@@ -280,7 +321,12 @@ mod tests {
     fn test_cycle_breakpoint_does_not_hit_when_disabled() {
         let mut bp = Breakpoint::new(BreakpointKind::Cycle(1000));
         bp.enabled = false;
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 999, cpu_cycles: 1002, write_addr: None };
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 999,
+            cpu_cycles: 1002,
+            write_addr: None,
+        };
         assert!(!bp.is_hit(&ctx));
     }
 
@@ -289,21 +335,36 @@ mod tests {
     #[test]
     fn test_write_address_breakpoint_hits_when_write_matches() {
         let bp = Breakpoint::new(BreakpointKind::WriteAddress(0x2006));
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: Some(0x2006) };
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: Some(0x2006),
+        };
         assert!(bp.is_hit(&ctx));
     }
 
     #[test]
     fn test_write_address_breakpoint_does_not_hit_on_read() {
         let bp = Breakpoint::new(BreakpointKind::WriteAddress(0x2006));
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: None };
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: None,
+        };
         assert!(!bp.is_hit(&ctx));
     }
 
     #[test]
     fn test_write_address_breakpoint_does_not_hit_on_different_address_write() {
         let bp = Breakpoint::new(BreakpointKind::WriteAddress(0x2006));
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: Some(0x2007) };
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: Some(0x2007),
+        };
         assert!(!bp.is_hit(&ctx));
     }
 
@@ -311,7 +372,12 @@ mod tests {
     fn test_write_address_breakpoint_does_not_hit_when_disabled() {
         let mut bp = Breakpoint::new(BreakpointKind::WriteAddress(0x2006));
         bp.enabled = false;
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: Some(0x2006) };
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: Some(0x2006),
+        };
         assert!(!bp.is_hit(&ctx));
     }
 
@@ -361,7 +427,10 @@ mod tests {
         list.add(BreakpointKind::Cycle(500));
         list.remove(0);
         assert_eq!(list.len(), 1);
-        assert!(matches!(list.get(0).map(|b| &b.kind), Some(BreakpointKind::Cycle(500))));
+        assert!(matches!(
+            list.iter().next().map(|b| &b.kind),
+            Some(BreakpointKind::Cycle(500))
+        ));
     }
 
     #[test]
@@ -378,7 +447,7 @@ mod tests {
         list.add(BreakpointKind::Pc(0xC000));
         list.disable(0);
         list.enable(0);
-        assert!(list.get(0).map(|b| b.enabled).unwrap_or(false));
+        assert!(list.iter().next().map(|b| b.enabled).unwrap_or(false));
     }
 
     #[test]
@@ -386,39 +455,59 @@ mod tests {
         let mut list = BreakpointList::new();
         list.add(BreakpointKind::Pc(0xC000));
         list.disable(0);
-        assert!(!list.get(0).map(|b| b.enabled).unwrap_or(true));
+        assert!(!list.iter().next().map(|b| b.enabled).unwrap_or(true));
     }
 
     #[test]
     fn test_breakpoint_list_check_hit_returns_true_on_matching_pc() {
         let mut list = BreakpointList::new();
         list.add(BreakpointKind::Pc(0xC000));
-        let ctx = EvalContext { pc: 0xC000, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: None };
-        assert!(list.check_hit(&ctx));
+        let ctx = EvalContext {
+            pc: 0xC000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: None,
+        };
+        assert!(list.iter().any(|bp| bp.is_hit(&ctx)));
     }
 
     #[test]
     fn test_breakpoint_list_check_hit_returns_true_on_matching_cycle() {
         let mut list = BreakpointList::new();
         list.add(BreakpointKind::Cycle(500));
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 498, cpu_cycles: 501, write_addr: None };
-        assert!(list.check_hit(&ctx));
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 498,
+            cpu_cycles: 501,
+            write_addr: None,
+        };
+        assert!(list.iter().any(|bp| bp.is_hit(&ctx)));
     }
 
     #[test]
     fn test_breakpoint_list_check_hit_returns_true_on_matching_write_address() {
         let mut list = BreakpointList::new();
         list.add(BreakpointKind::WriteAddress(0x2006));
-        let ctx = EvalContext { pc: 0x0000, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: Some(0x2006) };
-        assert!(list.check_hit(&ctx));
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: Some(0x2006),
+        };
+        assert!(list.iter().any(|bp| bp.is_hit(&ctx)));
     }
 
     #[test]
     fn test_breakpoint_list_check_hit_returns_false_when_no_match() {
         let mut list = BreakpointList::new();
         list.add(BreakpointKind::Pc(0xC000));
-        let ctx = EvalContext { pc: 0xD000, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: None };
-        assert!(!list.check_hit(&ctx));
+        let ctx = EvalContext {
+            pc: 0xD000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: None,
+        };
+        assert!(!list.iter().any(|bp| bp.is_hit(&ctx)));
     }
 
     #[test]
@@ -426,15 +515,25 @@ mod tests {
         let mut list = BreakpointList::new();
         list.add(BreakpointKind::Pc(0xC000));
         list.disable(0);
-        let ctx = EvalContext { pc: 0xC000, prev_cpu_cycles: 0, cpu_cycles: 0, write_addr: None };
-        assert!(!list.check_hit(&ctx));
+        let ctx = EvalContext {
+            pc: 0xC000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: None,
+        };
+        assert!(!list.iter().any(|bp| bp.is_hit(&ctx)));
     }
 
     #[test]
     fn test_breakpoint_list_check_hit_returns_false_when_empty() {
         let list = BreakpointList::new();
-        let ctx = EvalContext { pc: 0xC000, prev_cpu_cycles: 498, cpu_cycles: 501, write_addr: Some(0x2006) };
-        assert!(!list.check_hit(&ctx));
+        let ctx = EvalContext {
+            pc: 0xC000,
+            prev_cpu_cycles: 498,
+            cpu_cycles: 501,
+            write_addr: Some(0x2006),
+        };
+        assert!(!list.iter().any(|bp| bp.is_hit(&ctx)));
     }
 
     // --- Serialization (plain text .debug format) ---
@@ -516,10 +615,19 @@ mod tests {
         let loaded = BreakpointList::load_from_str(&text);
 
         assert_eq!(loaded.len(), 3);
-        assert!(matches!(loaded.get(0).map(|b| &b.kind), Some(BreakpointKind::Pc(0xC000))));
-        assert!(loaded.get(0).map(|b| b.enabled).unwrap_or(false));
-        assert!(matches!(loaded.get(1).map(|b| &b.kind), Some(BreakpointKind::Cycle(500))));
-        assert!(!loaded.get(1).map(|b| b.enabled).unwrap_or(true));
-        assert!(matches!(loaded.get(2).map(|b| &b.kind), Some(BreakpointKind::WriteAddress(0x2006))));
+        assert!(matches!(
+            loaded.iter().next().map(|b| &b.kind),
+            Some(BreakpointKind::Pc(0xC000))
+        ));
+        assert!(loaded.iter().next().map(|b| b.enabled).unwrap_or(false));
+        assert!(matches!(
+            loaded.iter().nth(1).map(|b| &b.kind),
+            Some(BreakpointKind::Cycle(500))
+        ));
+        assert!(!loaded.iter().nth(1).map(|b| b.enabled).unwrap_or(true));
+        assert!(matches!(
+            loaded.iter().nth(2).map(|b| &b.kind),
+            Some(BreakpointKind::WriteAddress(0x2006))
+        ));
     }
 }

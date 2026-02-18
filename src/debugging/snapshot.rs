@@ -38,10 +38,6 @@ impl DebuggerViewState {
         self.prg_hexdump_base = Some(normalize_prg_hexdump_base(base));
     }
 
-    pub fn nudge_prg_hexdump_base_by_bytes(&mut self, delta: i16) {
-        self.nudge_prg_hexdump_base_by_bytes_from(0x8000, delta);
-    }
-
     pub fn nudge_prg_hexdump_base_by_bytes_from(&mut self, visible_base: u16, delta: i16) {
         let current = self.prg_hexdump_base.unwrap_or(visible_base);
         let nudged = if delta >= 0 {
@@ -120,6 +116,11 @@ fn build_snapshot(
 
     let (nmi_vector, irq_vector) = read_vectors_for_snapshot(nes);
 
+    let (frame_count, scanline, pixel) = {
+        let ppu = nes.ppu.borrow();
+        (ppu.frame_count(), ppu.scanline(), ppu.pixel())
+    };
+
     let cpu_regs = CpuRegsSnapshot {
         pc,
         a: nes.cpu.a(),
@@ -128,6 +129,9 @@ fn build_snapshot(
         sp: nes.cpu.sp(),
         p: nes.cpu.p(),
         cycles: cpu_cycles,
+        frame_count,
+        scanline,
+        pixel,
         interrupt: nes.cpu.current_interrupt(),
         nmi_vector,
         irq_vector,
@@ -145,11 +149,6 @@ CYC: {cycles}",
         p = nes.cpu.p(),
         cycles = cpu_cycles,
     );
-
-    let (scanline, pixel) = {
-        let ppu = nes.ppu.borrow();
-        (ppu.scanline(), ppu.pixel())
-    };
 
     let ppu = format!(
         "PPU\n\
@@ -320,10 +319,10 @@ mod tests {
         state.set_prg_hexdump_base(0xC120);
         assert_eq!(state.prg_hexdump_base(), Some(0xC120));
 
-        state.nudge_prg_hexdump_base_by_bytes(16);
+        state.nudge_prg_hexdump_base_by_bytes_from(0x8000, 16);
         assert_eq!(state.prg_hexdump_base(), Some(0xC130));
 
-        state.nudge_prg_hexdump_base_by_bytes(-16);
+        state.nudge_prg_hexdump_base_by_bytes_from(0x8000, -16);
         assert_eq!(state.prg_hexdump_base(), Some(0xC120));
     }
 

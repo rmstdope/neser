@@ -528,6 +528,11 @@ impl Ppu {
         self.timing.pixel()
     }
 
+    /// Get current frame count
+    pub fn frame_count(&self) -> u64 {
+        self.timing.frame_count()
+    }
+
     /// Write to OAM address register ($2003)
     pub fn write_oam_address(&mut self, value: u8) {
         self.registers.oam_address = value;
@@ -637,7 +642,9 @@ impl Ppu {
     pub fn chr_snapshot_for_debugger(&self) -> [u8; CHR_SIZE] {
         let mut chr = [0u8; CHR_SIZE];
         for (addr, byte) in chr.iter_mut().enumerate() {
-            *byte = self.memory.read_chr_for_debugger(addr as u16, &self.cartridge);
+            *byte = self
+                .memory
+                .read_chr_for_debugger(addr as u16, &self.cartridge);
         }
         chr
     }
@@ -645,10 +652,10 @@ impl Ppu {
     /// Capture all four nametable regions (1KB each) for debugger rendering.
     pub fn nametable_snapshot_for_debugger(&self) -> [[u8; NAMETABLE_SIZE]; NUM_NAMETABLES] {
         let mut result = [[0u8; NAMETABLE_SIZE]; NUM_NAMETABLES];
-        for nt in 0..NUM_NAMETABLES {
+        for (nt, table) in result.iter_mut().enumerate().take(NUM_NAMETABLES) {
             let base = NAMETABLE_BASE_ADDR + nt as u16 * NAMETABLE_STRIDE;
             for offset in 0..NAMETABLE_SIZE as u16 {
-                result[nt][offset as usize] = self.memory.read_nametable(base + offset);
+                table[offset as usize] = self.memory.read_nametable(base + offset);
             }
         }
         result
@@ -685,7 +692,6 @@ impl Ppu {
         let scroll_y = nt_y * 240 + coarse_y * 8 + fine_y;
         (scroll_x, scroll_y)
     }
-
 
     #[cfg(test)]
     pub fn total_cycles(&self) -> u64 {
@@ -741,8 +747,8 @@ impl Ppu {
         let sprites_state = self.sprites.capture_state();
         PpuState {
             timing: PpuTimingState {
-                scanline: self.timing.scanline,
-                pixel: self.timing.pixel,
+                scanline: self.timing.scanline(),
+                pixel: self.timing.pixel(),
                 total_cycles: self.timing.total_cycles(),
                 frame_count: self.timing.frame_count(),
                 rendering_enabled_d1,

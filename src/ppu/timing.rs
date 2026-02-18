@@ -64,9 +64,9 @@ pub struct Timing {
     /// TV system (NTSC or PAL)
     tv_system: TimingMode,
     /// Current scanline (0-261 for NTSC, 0-311 for PAL)
-    pub scanline: u16,
+    scanline: u16,
     /// Current pixel within scanline (0-340, i.e., 0 to LAST_DOT)
-    pub pixel: u16,
+    pixel: u16,
     /// Frame counter for odd/even frame tracking (used for NTSC odd frame skip)
     frame_count: u64,
 
