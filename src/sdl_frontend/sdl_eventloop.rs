@@ -734,6 +734,13 @@ impl SdlEventLoop {
             self.breakpoint_ignore_once_at_pc = Some(nes.cpu.pc());
         }
 
+        // Sync the cycle tracker so threshold breakpoints don't fire spuriously.
+        // Debugger actions (e.g. run-to-next-frame, step) may advance CPU cycles
+        // without going through check_post_instruction_breakpoints, leaving
+        // last_post_instruction_cycles stale. Syncing here means cycle breakpoints
+        // can only fire when the threshold is crossed going forward from this point.
+        self.last_post_instruction_cycles = nes.cpu.get_total_cycles();
+
         self.paused = false;
         self.debugger_open_requested = false;
     }
@@ -3862,6 +3869,35 @@ mod tests {
         );
 
         assert_eq!(*calls.borrow(), 1);
+    }
+
+    #[test]
+    #[serial]
+    fn test_cycle_breakpoint_does_not_fire_spuriously_after_debugger_advances_cycles() {
+        // Regression test: if the debugger runs instructions without going through
+        // check_post_instruction_breakpoints (e.g. run-to-next-frame), last_post_instruction_cycles
+        // stays stale. On continue, the first check sees prev=0, current=27395 and fires the
+        // CYC=100 breakpoint even though that threshold was already passed while paused.
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(Config::default());
+
+        insert_nop_cartridge(&mut nes, 0x8000);
+        nes.reset(false);
+
+        event_loop.add_cycle_breakpoint(100);
+
+        // Simulate: debugger runs many cycles (e.g. run-to-next-frame) without updating tracker.
+        // last_post_instruction_cycles stays at 0. We jump the NES cycles to 27395.
+        nes.cpu.set_total_cycles(27395);
+
+        // User presses Continue — this should sync the cycle tracker.
+        event_loop.continue_from_debugger(&nes);
+
+        // Running one more instruction should NOT trigger the CYC=100 breakpoint
+        // because 27395 > 100 and the threshold has already been passed.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert!(!event_loop.is_paused(), "CYC=100 should not fire when already past cycle 100");
     }
 
     #[test]
