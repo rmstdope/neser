@@ -18,9 +18,19 @@ impl Default for AppContext {
     fn default() -> Self {
         Self {
             toast_manager: Rc::new(RefCell::new(ToastManager::new())),
-            rom_db: Arc::new(RomDb::new().unwrap()),
+            rom_db: Arc::new(load_rom_db()),
         }
     }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_rom_db() -> RomDb {
+    RomDb::new().unwrap()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn load_rom_db() -> RomDb {
+    RomDb::from_csv_content(include_str!("cartridge/rom_db.csv"))
 }
 
 impl AppContext {

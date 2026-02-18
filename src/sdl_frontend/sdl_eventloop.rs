@@ -2391,7 +2391,9 @@ mod tests {
         let rom_path = copy_test_rom(&temp_dir);
 
         let app_context = AppContext::new();
-        let cart = Cartridge::load_from_file(&rom_path, &app_context).expect("Failed to load ROM");
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &app_context)
+            .expect("Failed to load ROM");
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cart);
         nes.reset(false);
@@ -2416,7 +2418,9 @@ mod tests {
         let rom_path = copy_test_rom(&temp_dir);
 
         let app_context = AppContext::new();
-        let cart = Cartridge::load_from_file(&rom_path, &app_context).expect("Failed to load ROM");
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &app_context)
+            .expect("Failed to load ROM");
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cart);
         nes.reset(false);

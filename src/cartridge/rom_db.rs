@@ -141,7 +141,7 @@ impl RomDb {
         self.entries.get(&crc)
     }
 
-    fn from_csv_content(content: &str) -> Self {
+    pub(crate) fn from_csv_content(content: &str) -> Self {
         let mut entries = HashMap::new();
 
         for line in content.lines() {

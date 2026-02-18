@@ -1,3 +1,4 @@
+use crate::app_context::AppContext;
 use crate::cartridge::Cartridge;
 use crate::console::{Config, Nes, SaveState, log_rom_timing_mode_selection};
 use crate::frontend_toasts::{
@@ -14,6 +15,7 @@ pub struct WasmNes {
     audio_muted: bool,
     rom_loaded: bool,
     pending_toasts: Vec<String>,
+    app_context: AppContext,
 }
 
 impl Default for WasmNes {
@@ -66,15 +68,17 @@ impl WasmNes {
             audio_muted: false,
             rom_loaded: false,
             pending_toasts: Vec::new(),
+            app_context: AppContext::new(),
         }
     }
 
     /// Load a ROM from raw bytes.
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
+        let app_context = self.app_context.clone();
         let mut config = Config::default();
         self.rom_loaded = false;
-        let cart = match Cartridge::new(rom) {
+        let cart = match Cartridge::load_from_file(rom, rom_name, &app_context) {
             Ok(cart) => cart,
             Err(err) => {
                 self.pending_toasts
@@ -82,6 +86,7 @@ impl WasmNes {
                 return Err(JsValue::from_str(&err.to_string()));
             }
         };
+
         let rom_timing_mode = cart.rom_timing_mode();
         let applied = config.apply_rom_timing_mode(rom_timing_mode);
         log_rom_timing_mode_selection(&config, rom_timing_mode, applied);

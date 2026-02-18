@@ -128,12 +128,16 @@ impl Cartridge {
         self.save_path = Some(rom_path.with_extension(SAVE_FILE_EXTENSION));
     }
 
-    fn apply_db_tv_system_override(&mut self, app_context: &AppContext) {
+    pub fn apply_db_timing_mode_override(&mut self, app_context: &AppContext) {
         if let Some(db_entry) = app_context.get_db_entry_by_crc(self.crc32)
             && let Some(db_timing_mode) = db_entry.console_region
         {
-            self.rom_timing_mode = db_timing_mode.normalize_rom_timing_mode();
+            self.override_rom_timing_mode(db_timing_mode);
         }
+    }
+
+    pub fn override_rom_timing_mode(&mut self, timing_mode: TimingMode) {
+        self.rom_timing_mode = timing_mode.normalize_rom_timing_mode();
     }
 
     fn can_persist_save_ram(&self) -> bool {
@@ -191,16 +195,16 @@ impl Cartridge {
         })
     }
 
-    /// Create a new cartridge by loading an iNES ROM from disk.
+    /// Create a new cartridge from an iNES ROM byte stream and its source path.
     pub fn load_from_file<P: AsRef<Path>>(
+        data: &[u8],
         path: P,
         app_context: &AppContext,
     ) -> Result<Self, CartridgeError> {
         let rom_path = path.as_ref().to_path_buf();
-        let data = fs::read(&rom_path)?;
-        let mut cart = Self::new(&data)?;
+        let mut cart = Self::new(data)?;
 
-        cart.apply_db_tv_system_override(app_context);
+        cart.apply_db_timing_mode_override(app_context);
         cart.configure_paths_from_rom(rom_path);
         cart.load_save_ram_from_disk()?;
 
@@ -447,6 +451,11 @@ mod tests {
         path
     }
 
+    fn load_cartridge_from_disk(path: &Path, app_context: &AppContext) -> Cartridge {
+        let data = std::fs::read(path).expect("reading ROM from disk should succeed");
+        Cartridge::load_from_file(&data, path, app_context).expect("load_from_file should succeed")
+    }
+
     #[test]
     fn test_load_from_file_parses_ines_rom() {
         // iNES Flags 6 bit 0 set => vertical mirroring.
@@ -455,8 +464,7 @@ mod tests {
         std::fs::write(&path, &rom_data).expect("writing temp ROM should succeed");
 
         let app_context = AppContext::new();
-        let cart =
-            Cartridge::load_from_file(&path, &app_context).expect("load_from_file should succeed");
+        let cart = load_cartridge_from_disk(&path, &app_context);
         assert_eq!(cart.mapper().get_mirroring(), MirroringMode::Vertical);
 
         remove_file_if_exists(&path);
@@ -478,8 +486,7 @@ mod tests {
 
         // Act
         let app_context = AppContext::new();
-        let cart = Cartridge::load_from_file(&rom_path, &app_context)
-            .expect("load_from_file should succeed");
+        let cart = load_cartridge_from_disk(&rom_path, &app_context);
 
         // Assert: PRG-RAM reads reflect loaded save.
         assert_eq!(cart.mapper().read_prg(0x6000), 0x42);
@@ -496,8 +503,7 @@ mod tests {
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
         let app_context = AppContext::new();
-        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
-            .expect("load_from_file should succeed");
+        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
         cart.mapper_mut().write_prg(0x6000, 0xAB);
         cart.mapper_mut().write_prg(0x7FFF, 0xCD);
 
@@ -626,6 +632,30 @@ mod tests {
         rom_data[12] = 0x01; // NES2 timing mode PAL
         let cartridge = Cartridge::new(&rom_data).unwrap();
         assert_eq!(cartridge.rom_timing_mode(), TimingMode::Pal);
+    }
+
+    #[test]
+    fn test_db_timing_mode_override_applies_known_crc_entry() {
+        let rom_data = create_test_rom_with_flags9(1, 1, 0, 0, 0, false);
+        let mut cartridge = Cartridge::new(&rom_data).unwrap();
+        assert_eq!(cartridge.rom_timing_mode(), TimingMode::Ntsc);
+
+        let rom_db = crate::cartridge::RomDb::new().expect("rom db should load");
+        let (crc, expected_timing_mode) = rom_db
+            .entries()
+            .iter()
+            .find_map(|(crc, entry)| {
+                entry
+                    .console_region
+                    .map(|timing_mode| (*crc, timing_mode.normalize_rom_timing_mode()))
+            })
+            .expect("rom db should contain at least one entry with console region");
+
+        cartridge.set_crc32_for_test(crc);
+        let app_context = AppContext::new();
+        cartridge.apply_db_timing_mode_override(&app_context);
+
+        assert_eq!(cartridge.rom_timing_mode(), expected_timing_mode);
     }
 
     #[test]
@@ -820,8 +850,7 @@ mod tests {
 
         // Load the cartridge
         let app_context = AppContext::new();
-        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
-            .expect("load_from_file should succeed");
+        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
 
         // Disable PRG-RAM via MMC3 control register
         cart.mapper_mut().write_prg(0xA001, 0b0000_0000); // bit 7 = 0 disables PRG-RAM
@@ -850,8 +879,7 @@ mod tests {
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
         let app_context = AppContext::new();
-        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
-            .expect("load_from_file should succeed");
+        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
 
         // Write some data while PRG-RAM is enabled
         cart.mapper_mut().write_prg(0x6000, 0xAB);
@@ -885,8 +913,7 @@ mod tests {
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
         let app_context = AppContext::new();
-        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
-            .expect("load_from_file should succeed");
+        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
 
         // Write some data while PRG-RAM is writable
         cart.mapper_mut().write_prg(0x6000, 0xAB);
@@ -920,8 +947,7 @@ mod tests {
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
         let app_context = AppContext::new();
-        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
-            .expect("load_from_file should succeed");
+        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
 
         // Write to bank 0 at $6000-$7FFF
         cart.mapper_mut().write_prg(0x5113, 0); // Select bank 0
@@ -972,8 +998,7 @@ mod tests {
         std::fs::write(&sav_path, &sav).expect("writing temp SAV should succeed");
 
         let app_context = AppContext::new();
-        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
-            .expect("load_from_file should succeed");
+        let mut cart = load_cartridge_from_disk(&rom_path, &app_context);
 
         // Verify bank 0 data
         cart.mapper_mut().write_prg(0x5113, 0); // Select bank 0
