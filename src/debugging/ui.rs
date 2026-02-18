@@ -2,7 +2,6 @@
 use super::DebuggerSnapshot;
 
 const DEBUGGER_OUTER_MARGIN: f32 = 10.0;
-const DEBUGGER_OUTER_GAP: f32 = 10.0;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DebuggerUiAction {
@@ -12,69 +11,32 @@ pub struct DebuggerUiAction {
     pub run_to_next_frame: bool,
     pub run_to_nmi: bool,
     pub run_to_irq: bool,
+    pub toggle_ppu_viewer: bool,
+    pub increase_opacity: bool,
+    pub decrease_opacity: bool,
 }
 
-pub fn layout_models(display_size: [f32; 2]) -> [(&'static str, [f32; 2], [f32; 2]); 3] {
+pub fn layout_model(display_size: [f32; 2]) -> (&'static str, [f32; 2], [f32; 2]) {
     let [display_w, display_h] = display_size;
-
     let margin = DEBUGGER_OUTER_MARGIN;
-    let gap = DEBUGGER_OUTER_GAP;
-
-    let available_h = (display_h - 2.0 * margin - gap).max(0.0);
-    let bottom_h = available_h * 0.20;
-    let cpu_h = (available_h - bottom_h).max(0.0);
-
-    let cpu_w = (display_w - 2.0 * margin).max(0.0);
-    let bottom_w = (display_w - 2.0 * margin - gap).max(0.0);
-    let column_w = bottom_w / 2.0;
-
-    let left_x = margin;
-    let right_x = margin + column_w + gap;
-    let top_y = margin;
-    let bottom_y = top_y + cpu_h + gap;
-
-    [
-        ("CPU", [left_x, top_y], [cpu_w, cpu_h]),
-        ("PPU", [left_x, bottom_y], [column_w, bottom_h]),
-        ("APU", [right_x, bottom_y], [column_w, bottom_h]),
-    ]
+    let available_w = (display_w - 2.0 * margin).max(0.0);
+    let available_h = (display_h - 2.0 * margin).max(0.0);
+    ("CPU/PPU Data", [margin, margin], [available_w, available_h])
 }
 
 #[cfg(feature = "sdl")]
-pub fn window_models(snapshot: &DebuggerSnapshot) -> [(&'static str, &str); 3] {
-    [
-        ("CPU", snapshot.cpu.as_str()),
-        ("PPU", snapshot.ppu.as_str()),
-        ("APU", snapshot.apu.as_str()),
-    ]
-}
-
-#[cfg(feature = "sdl")]
-pub fn render(ui: &imgui::Ui, snapshot: &DebuggerSnapshot) -> DebuggerUiAction {
+pub fn render(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, alpha: f32) -> DebuggerUiAction {
     let mut action = DebuggerUiAction::default();
-    let models = window_models(snapshot);
-    let layouts = layout_models(ui.io().display_size);
+    let (title, pos, size) = layout_model(ui.io().display_size);
 
-    for (title, text) in models {
-        let (_, pos, size) = layouts
-            .iter()
-            .copied()
-            .find(|(t, _, _)| *t == title)
-            .expect("layout entry must exist for each window");
-
-        ui.window(title)
-            .position(pos, imgui::Condition::Always)
-            .size(size, imgui::Condition::Always)
-            .build(|| {
-                if title == "CPU" {
-                    render_cpu_window(ui, snapshot, &mut action);
-                } else {
-                    for line in text.lines() {
-                        ui.text(line);
-                    }
-                }
-            });
-    }
+    ui.window(title)
+        .position(pos, imgui::Condition::Always)
+        .size(size, imgui::Condition::Always)
+        .bring_to_front_on_focus(false)
+        .bg_alpha(alpha)
+        .build(|| {
+            render_cpu_window(ui, snapshot, &mut action);
+        });
 
     action
 }
@@ -147,6 +109,18 @@ fn render_cpu_controls(ui: &imgui::Ui, action: &mut DebuggerUiAction) {
     if ui.button("Run to IRQ") {
         action.run_to_irq = true;
     }
+    ui.same_line();
+    if ui.button("PPU Viewer") {
+        action.toggle_ppu_viewer = true;
+    }
+    ui.same_line();
+    if ui.button("α-") {
+        action.decrease_opacity = true;
+    }
+    ui.same_line();
+    if ui.button("α+") {
+        action.increase_opacity = true;
+    }
 }
 
 fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32; 2]) {
@@ -176,6 +150,7 @@ fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32
 
                     let _text = ui.push_style_color(imgui::StyleColor::Text, [0.0, 0.0, 0.0, 1.0]);
                     ui.text(text);
+                    ui.set_scroll_here_y_with_ratio(0.5);
                 } else {
                     ui.text(text);
                 }
@@ -248,14 +223,22 @@ fn cpu_register_lines(snapshot: &DebuggerSnapshot) -> Vec<String> {
         Some(crate::cpu::InterruptKind::Irq) => "IRQ",
     };
 
-    vec![
+    let mut lines = vec![
         format!("PC: {:04X}  SP: {:02X}", r.pc, r.sp),
         format!("A:  {:02X}  X:  {:02X}  Y:  {:02X}", r.a, r.x, r.y),
         format!("P:  {:02X}  {}", r.p, format_status_flags(r.p)),
         format!("INT: {interrupt}"),
         format!("VEC: NMI {:04X}  IRQ {:04X}", r.nmi_vector, r.irq_vector),
         format!("CYC: {}", r.cycles),
-    ]
+        "---".to_string(),
+    ];
+
+    // Append PPU info (skip the "PPU" header line)
+    for line in snapshot.ppu.lines().skip(1) {
+        lines.push(line.to_string());
+    }
+
+    lines
 }
 
 fn format_status_flags(p: u8) -> String {
@@ -328,59 +311,16 @@ mod tests {
     }
 
     #[test]
-    fn test_window_models_have_three_debug_windows_with_text() {
-        let nes = Nes::new(Config::default());
-        let snapshot = snapshot(&nes);
-
-        let windows = window_models(&snapshot);
-        assert_eq!(windows.len(), 3);
-
-        assert_eq!(windows[0].0, "CPU");
-        assert!(windows[0].1.contains("PC"));
-
-        assert_eq!(windows[1].0, "PPU");
-        assert!(windows[1].1.contains("scanline"));
-
-        assert_eq!(windows[2].0, "APU");
-        assert!(windows[2].1.contains("apu_cycle"));
-    }
-
-    #[test]
-    fn test_layout_puts_cpu_full_width_and_places_ppu_apu_below_side_by_side() {
+    fn test_layout_model_spans_full_available_area() {
         let display_size = [800.0, 600.0];
-        let layouts = layout_models(display_size);
-
-        let cpu = layouts.iter().find(|l| l.0 == "CPU").unwrap();
-        let ppu = layouts.iter().find(|l| l.0 == "PPU").unwrap();
-        let apu = layouts.iter().find(|l| l.0 == "APU").unwrap();
+        let (title, pos, size) = layout_model(display_size);
 
         let margin = 10.0;
-        let gap = 10.0;
-        let available_h = (display_size[1] - 2.0 * margin - gap).max(0.0);
-        let expected_bottom_h = available_h * 0.20;
-        let expected_cpu_h = (available_h - expected_bottom_h).max(0.0);
-        let expected_cpu_w = (display_size[0] - 2.0 * margin).max(0.0);
-        let expected_bottom_w = (display_size[0] - 2.0 * margin - gap).max(0.0);
-        let expected_col_w = expected_bottom_w / 2.0;
-
-        // CPU spans full width (minus margins).
-        assert_close(cpu.1[0], margin);
-        assert_close(cpu.2[0], expected_cpu_w);
-
-        // Heights: bottom row is 20% of available height.
-        assert_close(ppu.2[1], expected_bottom_h);
-        assert_close(apu.2[1], expected_bottom_h);
-        assert_close(cpu.2[1], expected_cpu_h);
-
-        // PPU/APU are below CPU.
-        assert!(ppu.1[1] > cpu.1[1]);
-        assert!(apu.1[1] > cpu.1[1]);
-        assert_close(ppu.1[1], apu.1[1]);
-
-        // PPU left, APU right, side-by-side with 50% width each (minus gap).
-        assert_close(ppu.2[0], expected_col_w);
-        assert_close(apu.2[0], expected_col_w);
-        assert!(ppu.1[0] < apu.1[0]);
+        assert_eq!(title, "CPU/PPU Data");
+        assert_close(pos[0], margin);
+        assert_close(pos[1], margin);
+        assert_close(size[0], display_size[0] - 2.0 * margin);
+        assert_close(size[1], display_size[1] - 2.0 * margin);
     }
 
     #[test]
@@ -404,6 +344,10 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("P:  A5")));
         // N(7)=1, V(6)=0, U(5)=1, B(4)=0, D(3)=0, I(2)=1, Z(1)=0, C(0)=1
         assert!(lines.iter().any(|l| l.contains("N-U--I-C")));
+        // PPU info integrated after separator
+        assert!(lines.iter().any(|l| l == "---"));
+        assert!(lines.iter().any(|l| l.contains("scanline")));
+        assert!(lines.iter().any(|l| l.contains("pixel")));
     }
 
     #[test]
@@ -432,5 +376,11 @@ mod tests {
         assert_close(layout.left_pos[1], 7.0);
         assert_close(layout.right_pos[0], 5.0 + 40.0 + 8.0);
         assert_close(layout.right_pos[1], 7.0);
+    }
+
+    #[test]
+    fn test_debugger_ui_action_has_toggle_ppu_viewer_field() {
+        let action = DebuggerUiAction::default();
+        assert!(!action.toggle_ppu_viewer, "toggle_ppu_viewer should default to false");
     }
 }

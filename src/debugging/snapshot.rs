@@ -8,11 +8,20 @@ use super::types::{
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DebuggerViewState {
     cpu_disasm: CpuDisasmWindowState,
+    show_ppu_viewer: bool,
 }
 
 impl DebuggerViewState {
     pub fn snapshot(&mut self, nes: &Nes) -> DebuggerSnapshot {
         snapshot_with_disasm_state(nes, &mut self.cpu_disasm)
+    }
+
+    pub fn toggle_ppu_viewer(&mut self) {
+        self.show_ppu_viewer = !self.show_ppu_viewer;
+    }
+
+    pub fn is_ppu_viewer_visible(&self) -> bool {
+        self.show_ppu_viewer
     }
 }
 

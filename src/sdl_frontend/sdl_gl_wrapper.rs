@@ -80,12 +80,13 @@ impl SdlGlWrapper {
             Rc::new(move |s| video_subsystem.gl_get_proc_address(s) as *const _);
 
         let render_target = Box::new(SdlRenderTarget { window, gl_context });
-        let gl_backend = GlBackend::new(
+        let mut gl_backend = GlBackend::new(
             render_target,
             proc_address,
             config.shader_path.as_deref(),
             app_context,
         )?;
+        gl_backend.set_debugger_alpha(config.debugger_alpha);
 
         Ok(Self { gl_backend })
     }

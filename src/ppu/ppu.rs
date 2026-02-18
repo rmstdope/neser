@@ -6,6 +6,13 @@ use crate::trace_ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+const CHR_SIZE: usize = 8192;
+const NAMETABLE_SIZE: usize = 1024;
+const NUM_NAMETABLES: usize = 4;
+const PALETTE_SIZE: usize = 32;
+const NAMETABLE_BASE_ADDR: u16 = 0x2000;
+const NAMETABLE_STRIDE: u16 = 0x400;
+
 mod tick;
 
 /// Refactored PPU using modular components
@@ -626,7 +633,60 @@ impl Ppu {
         self.registers.is_rendering_enabled() && self.is_on_rendering_scanline()
     }
 
-    /// Get total cycles (for testing)
+    /// Capture 8KB CHR data for debugger rendering (no PPU side effects).
+    pub fn chr_snapshot_for_debugger(&self) -> [u8; CHR_SIZE] {
+        let mut chr = [0u8; CHR_SIZE];
+        for (addr, byte) in chr.iter_mut().enumerate() {
+            *byte = self.memory.read_chr_for_debugger(addr as u16, &self.cartridge);
+        }
+        chr
+    }
+
+    /// Capture all four nametable regions (1KB each) for debugger rendering.
+    pub fn nametable_snapshot_for_debugger(&self) -> [[u8; NAMETABLE_SIZE]; NUM_NAMETABLES] {
+        let mut result = [[0u8; NAMETABLE_SIZE]; NUM_NAMETABLES];
+        for nt in 0..NUM_NAMETABLES {
+            let base = NAMETABLE_BASE_ADDR + nt as u16 * NAMETABLE_STRIDE;
+            for offset in 0..NAMETABLE_SIZE as u16 {
+                result[nt][offset as usize] = self.memory.read_nametable(base + offset);
+            }
+        }
+        result
+    }
+
+    /// Capture the background palette for debugger rendering.
+    pub fn palette_for_debugger(&self) -> [u8; PALETTE_SIZE] {
+        let snap = self.memory.palette_snapshot();
+        let mut result = [0u8; PALETTE_SIZE];
+        let len = snap.len().min(PALETTE_SIZE);
+        result[..len].copy_from_slice(&snap[..len]);
+        result
+    }
+
+    /// Return the current background pattern table base address (0x0000 or 0x1000).
+    pub fn bg_pattern_table_for_debugger(&self) -> u16 {
+        self.registers.bg_pattern_table_addr()
+    }
+
+    /// Return the current scroll position as (scroll_x, scroll_y) pixel offsets
+    /// into the 512×480 nametable space.
+    ///
+    /// Derived from the Loopy `t` register and fine-X scroll, which represent
+    /// the programmed scroll position (stable outside of active rendering).
+    pub fn scroll_for_debugger(&self) -> (u16, u16) {
+        let t = self.registers.t();
+        let fine_x = self.registers.x() as u16;
+        let coarse_x = t & 0x001F;
+        let coarse_y = (t >> 5) & 0x001F;
+        let nt_x = (t >> 10) & 0x01;
+        let nt_y = (t >> 11) & 0x01;
+        let fine_y = (t >> 12) & 0x07;
+        let scroll_x = nt_x * 256 + coarse_x * 8 + fine_x;
+        let scroll_y = nt_y * 240 + coarse_y * 8 + fine_y;
+        (scroll_x, scroll_y)
+    }
+
+
     #[cfg(test)]
     pub fn total_cycles(&self) -> u64 {
         self.timing.total_cycles()

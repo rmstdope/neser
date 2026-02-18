@@ -1343,6 +1343,9 @@ impl SdlEventLoop {
                     run_to_next_frame: false,
                     run_to_nmi: false,
                     run_to_irq: false,
+                    toggle_ppu_viewer: false,
+                    increase_opacity: false,
+                    decrease_opacity: false,
                 },
             );
             return KeyDownOutcome::Continue;
@@ -2793,6 +2796,9 @@ mod tests {
                 run_to_next_frame: false,
                 run_to_nmi: false,
                 run_to_irq: false,
+                toggle_ppu_viewer: false,
+                increase_opacity: false,
+                decrease_opacity: false,
             },
         );
 
@@ -2832,6 +2838,9 @@ mod tests {
                 run_to_next_frame: false,
                 run_to_nmi: false,
                 run_to_irq: false,
+                toggle_ppu_viewer: false,
+                increase_opacity: false,
+                decrease_opacity: false,
             },
         );
         assert!(!event_loop.is_paused());
@@ -2913,6 +2922,9 @@ mod tests {
                 run_to_next_frame: false,
                 run_to_nmi: true,
                 run_to_irq: false,
+                toggle_ppu_viewer: false,
+                increase_opacity: false,
+                decrease_opacity: false,
             },
         );
 
@@ -2985,6 +2997,9 @@ mod tests {
                 run_to_next_frame: false,
                 run_to_nmi: false,
                 run_to_irq: true,
+                toggle_ppu_viewer: false,
+                increase_opacity: false,
+                decrease_opacity: false,
             },
         );
 
@@ -3057,6 +3072,9 @@ mod tests {
                 run_to_next_frame: false,
                 run_to_nmi: false,
                 run_to_irq: true,
+                toggle_ppu_viewer: false,
+                increase_opacity: false,
+                decrease_opacity: false,
             },
         );
 
@@ -3153,6 +3171,9 @@ mod tests {
                 run_to_next_frame: false,
                 run_to_nmi: true,
                 run_to_irq: false,
+                toggle_ppu_viewer: false,
+                increase_opacity: false,
+                decrease_opacity: false,
             },
         );
 
@@ -3256,6 +3277,9 @@ mod tests {
                 run_to_next_frame: false,
                 run_to_nmi: true,
                 run_to_irq: false,
+                toggle_ppu_viewer: false,
+                increase_opacity: false,
+                decrease_opacity: false,
             },
         );
 
@@ -3315,6 +3339,9 @@ mod tests {
                 run_to_next_frame: false,
                 run_to_nmi: false,
                 run_to_irq: false,
+                toggle_ppu_viewer: false,
+                increase_opacity: false,
+                decrease_opacity: false,
             },
         );
 
@@ -3361,6 +3388,9 @@ mod tests {
                 run_to_next_frame: false,
                 run_to_nmi: false,
                 run_to_irq: false,
+                toggle_ppu_viewer: false,
+                increase_opacity: false,
+                decrease_opacity: false,
             },
         );
 

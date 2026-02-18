@@ -1,5 +1,6 @@
 mod disasm;
 mod logging;
+pub mod ppu_viewer;
 mod snapshot;
 mod tracing;
 mod types;
