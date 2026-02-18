@@ -122,6 +122,24 @@ impl Memory {
         }
     }
 
+    /// Read CHR for debugger purposes — no `ppu_address_changed` side effect.
+    ///
+    /// Uses a shared borrow so it won't interfere with other active borrows.
+    /// Returns 0 if no cartridge is loaded.
+    pub fn read_chr_for_debugger(
+        &self,
+        addr: u16,
+        cartridge: &Option<Rc<RefCell<Cartridge>>>,
+    ) -> u8 {
+        let masked_addr = addr & 0x1FFF;
+        if let Some(cart) = cartridge {
+            let cart = cart.borrow();
+            cart.mapper().read_chr(masked_addr)
+        } else {
+            0
+        }
+    }
+
     /// Write to CHR memory at the specified address through the mapper
     ///
     /// This method routes the write through the cartridge mapper.

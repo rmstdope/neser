@@ -6,6 +6,13 @@ use crate::trace_ppu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+const CHR_SIZE: usize = 8192;
+const NAMETABLE_SIZE: usize = 1024;
+const NUM_NAMETABLES: usize = 4;
+const PALETTE_SIZE: usize = 32;
+const NAMETABLE_BASE_ADDR: u16 = 0x2000;
+const NAMETABLE_STRIDE: u16 = 0x400;
+
 mod tick;
 
 /// Refactored PPU using modular components
@@ -624,6 +631,41 @@ impl Ppu {
     /// Check if PPU is actively rendering (rendering enabled + on rendering scanline)
     fn is_actively_rendering(&self) -> bool {
         self.registers.is_rendering_enabled() && self.is_on_rendering_scanline()
+    }
+
+    /// Capture 8KB CHR data for debugger rendering (no PPU side effects).
+    pub fn chr_snapshot_for_debugger(&self) -> [u8; CHR_SIZE] {
+        let mut chr = [0u8; CHR_SIZE];
+        for (addr, byte) in chr.iter_mut().enumerate() {
+            *byte = self.memory.read_chr_for_debugger(addr as u16, &self.cartridge);
+        }
+        chr
+    }
+
+    /// Capture all four nametable regions (1KB each) for debugger rendering.
+    pub fn nametable_snapshot_for_debugger(&self) -> [[u8; NAMETABLE_SIZE]; NUM_NAMETABLES] {
+        let mut result = [[0u8; NAMETABLE_SIZE]; NUM_NAMETABLES];
+        for nt in 0..NUM_NAMETABLES {
+            let base = NAMETABLE_BASE_ADDR + nt as u16 * NAMETABLE_STRIDE;
+            for offset in 0..NAMETABLE_SIZE as u16 {
+                result[nt][offset as usize] = self.memory.read_nametable(base + offset);
+            }
+        }
+        result
+    }
+
+    /// Capture the background palette for debugger rendering.
+    pub fn palette_for_debugger(&self) -> [u8; PALETTE_SIZE] {
+        let snap = self.memory.palette_snapshot();
+        let mut result = [0u8; PALETTE_SIZE];
+        let len = snap.len().min(PALETTE_SIZE);
+        result[..len].copy_from_slice(&snap[..len]);
+        result
+    }
+
+    /// Return the current background pattern table base address (0x0000 or 0x1000).
+    pub fn bg_pattern_table_for_debugger(&self) -> u16 {
+        self.registers.bg_pattern_table_addr()
     }
 
     /// Get total cycles (for testing)
