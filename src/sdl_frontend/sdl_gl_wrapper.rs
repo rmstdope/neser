@@ -1,6 +1,7 @@
 use super::sdl_render_target::SdlRenderTarget;
 use crate::app_context::AppContext;
 use crate::console::Config;
+use crate::debugging::breakpoints::BreakpointList;
 use crate::debugging::ui::DebuggerUiAction;
 use crate::rendering::input::{InputEvent, MouseButton as RenderMouseButton};
 use crate::rendering::{GlBackend, ProcAddressLoader};
@@ -124,6 +125,11 @@ impl SdlGlWrapper {
     /// Cycles through available shader presets.
     pub fn cycle_shader(&mut self) {
         self.gl_backend.cycle_shader();
+    }
+
+    /// Updates the breakpoint list used by the debugger UI.
+    pub fn update_breakpoints(&mut self, breakpoints: &BreakpointList) {
+        self.gl_backend.update_breakpoints(breakpoints);
     }
 
     /// Enables or disables fullscreen mode for the SDL window.

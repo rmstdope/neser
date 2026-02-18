@@ -5,7 +5,7 @@
 use std::fmt;
 
 /// The condition that triggers a breakpoint.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BreakpointKind {
     /// Break when the program counter reaches the given address.
     Pc(u16),
@@ -110,7 +110,7 @@ pub struct EvalContext {
 }
 
 /// An ordered list of persistent breakpoints.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct BreakpointList {
     items: Vec<Breakpoint>,
 }

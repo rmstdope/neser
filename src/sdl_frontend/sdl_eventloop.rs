@@ -966,6 +966,7 @@ impl SdlEventLoop {
                     self.update_cursor_visibility(zapper_active);
                     let crosshair = self.zapper_crosshair(nes);
                     let overlay_blink_red = self.should_overlay_blink_red(nes);
+                    gl_backend.update_breakpoints(&self.breakpoints);
                     let action = gl_backend.render(
                         nes,
                         self.debugger_open_requested,
@@ -1059,6 +1060,7 @@ impl SdlEventLoop {
                 self.update_cursor_visibility(zapper_active);
                 let crosshair = self.zapper_crosshair(nes);
                 let overlay_blink_red = self.should_overlay_blink_red(nes);
+                gl_backend.update_breakpoints(&self.breakpoints);
                 let _ = gl_backend.render(
                     nes,
                     self.debugger_open_requested,
@@ -1365,6 +1367,20 @@ impl SdlEventLoop {
         if should_continue {
             self.continue_from_debugger(nes);
         }
+
+        // Breakpoint management actions from the UI panel.
+        if let Some(kind) = action.add_breakpoint {
+            self.breakpoints.add(kind);
+        }
+        if let Some(index) = action.remove_breakpoint {
+            self.breakpoints.remove(index);
+        }
+        if let Some(index) = action.enable_breakpoint {
+            self.breakpoints.enable(index);
+        }
+        if let Some(index) = action.disable_breakpoint {
+            self.breakpoints.disable(index);
+        }
     }
 
     fn handle_key_down_for_run(&mut self, nes: &mut Nes, keycode: Keycode) -> KeyDownOutcome {
@@ -1375,14 +1391,7 @@ impl SdlEventLoop {
                 nes,
                 ui::DebuggerUiAction {
                     continue_run: true,
-                    step_over: false,
-                    step_into: false,
-                    run_to_next_frame: false,
-                    run_to_nmi: false,
-                    run_to_irq: false,
-                    toggle_ppu_viewer: false,
-                    increase_opacity: false,
-                    decrease_opacity: false,
+                    ..Default::default()
                 },
             );
             return KeyDownOutcome::Continue;
@@ -2828,14 +2837,7 @@ mod tests {
             &mut nes,
             crate::debugging::ui::DebuggerUiAction {
                 continue_run: true,
-                step_over: false,
-                step_into: false,
-                run_to_next_frame: false,
-                run_to_nmi: false,
-                run_to_irq: false,
-                toggle_ppu_viewer: false,
-                increase_opacity: false,
-                decrease_opacity: false,
+                ..Default::default()
             },
         );
 
@@ -2870,14 +2872,7 @@ mod tests {
             &mut nes,
             crate::debugging::ui::DebuggerUiAction {
                 continue_run: true,
-                step_over: false,
-                step_into: false,
-                run_to_next_frame: false,
-                run_to_nmi: false,
-                run_to_irq: false,
-                toggle_ppu_viewer: false,
-                increase_opacity: false,
-                decrease_opacity: false,
+                ..Default::default()
             },
         );
         assert!(!event_loop.is_paused());
@@ -2953,15 +2948,8 @@ mod tests {
         event_loop.apply_debugger_ui_action(
             &mut nes,
             crate::debugging::ui::DebuggerUiAction {
-                continue_run: false,
-                step_over: false,
-                step_into: false,
-                run_to_next_frame: false,
                 run_to_nmi: true,
-                run_to_irq: false,
-                toggle_ppu_viewer: false,
-                increase_opacity: false,
-                decrease_opacity: false,
+                ..Default::default()
             },
         );
 
@@ -3028,15 +3016,8 @@ mod tests {
         event_loop.apply_debugger_ui_action(
             &mut nes,
             crate::debugging::ui::DebuggerUiAction {
-                continue_run: false,
-                step_over: false,
-                step_into: false,
-                run_to_next_frame: false,
-                run_to_nmi: false,
                 run_to_irq: true,
-                toggle_ppu_viewer: false,
-                increase_opacity: false,
-                decrease_opacity: false,
+                ..Default::default()
             },
         );
 
@@ -3103,15 +3084,8 @@ mod tests {
         event_loop.apply_debugger_ui_action(
             &mut nes,
             crate::debugging::ui::DebuggerUiAction {
-                continue_run: false,
-                step_over: false,
-                step_into: false,
-                run_to_next_frame: false,
-                run_to_nmi: false,
                 run_to_irq: true,
-                toggle_ppu_viewer: false,
-                increase_opacity: false,
-                decrease_opacity: false,
+                ..Default::default()
             },
         );
 
@@ -3202,15 +3176,8 @@ mod tests {
         event_loop.apply_debugger_ui_action(
             &mut nes,
             crate::debugging::ui::DebuggerUiAction {
-                continue_run: false,
-                step_over: false,
-                step_into: false,
-                run_to_next_frame: false,
                 run_to_nmi: true,
-                run_to_irq: false,
-                toggle_ppu_viewer: false,
-                increase_opacity: false,
-                decrease_opacity: false,
+                ..Default::default()
             },
         );
 
@@ -3308,15 +3275,8 @@ mod tests {
         event_loop.apply_debugger_ui_action(
             &mut nes,
             crate::debugging::ui::DebuggerUiAction {
-                continue_run: false,
-                step_over: false,
-                step_into: false,
-                run_to_next_frame: false,
                 run_to_nmi: true,
-                run_to_irq: false,
-                toggle_ppu_viewer: false,
-                increase_opacity: false,
-                decrease_opacity: false,
+                ..Default::default()
             },
         );
 
@@ -3371,14 +3331,7 @@ mod tests {
             &mut nes,
             crate::debugging::ui::DebuggerUiAction {
                 step_into: true,
-                step_over: false,
-                continue_run: false,
-                run_to_next_frame: false,
-                run_to_nmi: false,
-                run_to_irq: false,
-                toggle_ppu_viewer: false,
-                increase_opacity: false,
-                decrease_opacity: false,
+                ..Default::default()
             },
         );
 
@@ -3420,14 +3373,7 @@ mod tests {
             &mut nes,
             crate::debugging::ui::DebuggerUiAction {
                 step_over: true,
-                step_into: false,
-                continue_run: false,
-                run_to_next_frame: false,
-                run_to_nmi: false,
-                run_to_irq: false,
-                toggle_ppu_viewer: false,
-                increase_opacity: false,
-                decrease_opacity: false,
+                ..Default::default()
             },
         );
 
