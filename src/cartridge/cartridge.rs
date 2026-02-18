@@ -3,6 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::{error, fmt};
 
+use crate::app_context::AppContext;
 use crate::cartridge::Mapper;
 use crate::cartridge::mapper::MapperContext;
 use serde::{Deserialize, Serialize};
@@ -40,6 +41,16 @@ impl RomTvSystem {
             RomTvSystem::Pal => "pal",
             RomTvSystem::Unknown => "unknown",
         }
+    }
+}
+
+fn timing_mode_to_rom_tv_system(timing_mode: crate::cartridge::TimingMode) -> RomTvSystem {
+    match timing_mode {
+        crate::cartridge::TimingMode::Ntsc => RomTvSystem::Ntsc,
+        crate::cartridge::TimingMode::Pal => RomTvSystem::Pal,
+        crate::cartridge::TimingMode::MultiRegion
+        | crate::cartridge::TimingMode::Dendy
+        | crate::cartridge::TimingMode::Unknown(_) => RomTvSystem::Unknown,
     }
 }
 
@@ -114,6 +125,9 @@ impl Cartridge {
         let prg_ram_banks_8k: u8 = info
             .prg_ram_size_bytes
             .map(|sz| {
+                if sz == 0 {
+                    return 0;
+                }
                 let banks = (sz + 8191) / 8192;
                 let clamped = banks.max(1).min(u8::MAX as usize);
                 clamped as u8
@@ -123,14 +137,9 @@ impl Cartridge {
         // Map battery flag
         let battery_backed_prg_ram = info.battery_backed_prg_ram;
 
-        // Map TV system: keep Unknown for NES2 headers to preserve previous behavior
-        let rom_tv_system = if info.header_version == "2.0" {
-            RomTvSystem::Unknown
-        } else if matches!(info.timing_mode, crate::cartridge::TimingMode::Pal) {
-            RomTvSystem::Pal
-        } else {
-            RomTvSystem::Ntsc
-        };
+        // Map TV system from header timing mode (for both iNES and NES2).
+        // `load_from_file` may override from DB when a matching CRC entry exists.
+        let rom_tv_system = timing_mode_to_rom_tv_system(info.timing_mode);
 
         // Map mirroring
         let mirroring = match info.mirroring {
@@ -168,10 +177,19 @@ impl Cartridge {
     }
 
     /// Create a new cartridge by loading an iNES ROM from disk.
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, CartridgeError> {
+    pub fn load_from_file<P: AsRef<Path>>(
+        path: P,
+        app_context: &AppContext,
+    ) -> Result<Self, CartridgeError> {
         let rom_path = path.as_ref().to_path_buf();
         let data = fs::read(&rom_path)?;
         let mut cart = Self::new(&data)?;
+
+        if let Some(db_entry) = app_context.get_db_entry_by_crc(cart.crc32)
+            && let Some(db_timing_mode) = db_entry.console_region
+        {
+            cart.rom_tv_system = timing_mode_to_rom_tv_system(db_timing_mode);
+        }
 
         cart.rom_path = Some(rom_path.clone());
         cart.save_path = Some(rom_path.with_extension("sav"));
@@ -460,7 +478,9 @@ mod tests {
         let path = unique_temp_path("test_load_from_file.nes");
         std::fs::write(&path, &rom_data).expect("writing temp ROM should succeed");
 
-        let cart = Cartridge::load_from_file(&path).expect("load_from_file should succeed");
+        let app_context = AppContext::new();
+        let cart =
+            Cartridge::load_from_file(&path, &app_context).expect("load_from_file should succeed");
         assert_eq!(cart.mapper().get_mirroring(), MirroringMode::Vertical);
 
         let _ = std::fs::remove_file(&path);
@@ -481,7 +501,9 @@ mod tests {
         std::fs::write(&sav_path, &sav).expect("writing temp SAV should succeed");
 
         // Act
-        let cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+        let app_context = AppContext::new();
+        let cart = Cartridge::load_from_file(&rom_path, &app_context)
+            .expect("load_from_file should succeed");
 
         // Assert: PRG-RAM reads reflect loaded save.
         assert_eq!(cart.mapper().read_prg(0x6000), 0x42);
@@ -498,7 +520,9 @@ mod tests {
         let rom_path = unique_temp_path("save_ram_save_test.nes");
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
-        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+        let app_context = AppContext::new();
+        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
+            .expect("load_from_file should succeed");
         cart.mapper_mut().write_prg(0x6000, 0xAB);
         cart.mapper_mut().write_prg(0x7FFF, 0xCD);
 
@@ -619,7 +643,21 @@ mod tests {
     fn test_rom_tv_system_unknown_for_nes2_header() {
         let rom_data = create_test_rom_with_flags9(1, 1, 0, 0x08, 0x01, false);
         let cartridge = Cartridge::new(&rom_data).unwrap();
-        assert_eq!(cartridge.rom_tv_system(), RomTvSystem::Unknown);
+        assert_eq!(cartridge.rom_tv_system(), RomTvSystem::Ntsc);
+    }
+
+    #[test]
+    fn test_rom_tv_system_nes2_uses_header_timing_mode() {
+        let mut rom_data = create_test_rom_with_flags9(1, 1, 0, 0x08, 0x00, false);
+        rom_data[12] = 0x01; // NES2 timing mode PAL
+        let cartridge = Cartridge::new(&rom_data).unwrap();
+        assert_eq!(cartridge.rom_tv_system(), RomTvSystem::Pal);
+    }
+
+    #[test]
+    fn test_timing_mode_to_rom_tv_system_maps_non_ntsc_pal_to_unknown() {
+        let tv = timing_mode_to_rom_tv_system(crate::cartridge::TimingMode::MultiRegion);
+        assert_eq!(tv, RomTvSystem::Unknown);
     }
 
     #[test]
@@ -807,7 +845,9 @@ mod tests {
         std::fs::write(&sav_path, &sav).expect("writing temp SAV should succeed");
 
         // Load the cartridge
-        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+        let app_context = AppContext::new();
+        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
+            .expect("load_from_file should succeed");
 
         // Disable PRG-RAM via MMC3 control register
         cart.mapper_mut().write_prg(0xA001, 0b0000_0000); // bit 7 = 0 disables PRG-RAM
@@ -836,7 +876,9 @@ mod tests {
         let rom_path = unique_temp_path("mmc3_disabled_save_test.nes");
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
-        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+        let app_context = AppContext::new();
+        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
+            .expect("load_from_file should succeed");
 
         // Write some data while PRG-RAM is enabled
         cart.mapper_mut().write_prg(0x6000, 0xAB);
@@ -870,7 +912,9 @@ mod tests {
         let rom_path = unique_temp_path("mmc3_write_protect_test.nes");
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
-        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+        let app_context = AppContext::new();
+        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
+            .expect("load_from_file should succeed");
 
         // Write some data while PRG-RAM is writable
         cart.mapper_mut().write_prg(0x6000, 0xAB);
@@ -904,7 +948,9 @@ mod tests {
         let rom_path = unique_temp_path("mmc5_banked_wram_test.nes");
         std::fs::write(&rom_path, &rom_data).expect("writing temp ROM should succeed");
 
-        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+        let app_context = AppContext::new();
+        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
+            .expect("load_from_file should succeed");
 
         // Write to bank 0 at $6000-$7FFF
         cart.mapper_mut().write_prg(0x5113, 0); // Select bank 0
@@ -955,7 +1001,9 @@ mod tests {
         sav[0x3FFF] = 0xDD; // Bank 1 end
         std::fs::write(&sav_path, &sav).expect("writing temp SAV should succeed");
 
-        let mut cart = Cartridge::load_from_file(&rom_path).expect("load_from_file should succeed");
+        let app_context = AppContext::new();
+        let mut cart = Cartridge::load_from_file(&rom_path, &app_context)
+            .expect("load_from_file should succeed");
 
         // Verify bank 0 data
         cart.mapper_mut().write_prg(0x5113, 0); // Select bank 0

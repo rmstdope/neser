@@ -62,6 +62,7 @@ mod tests {
     #[test]
     fn apply_input_sets_mouse_position() {
         let mut imgui = imgui::Context::create();
+        imgui.set_ini_filename(None);
         let io = imgui.io_mut();
         apply_input(io, &InputEvent::MouseMotion { x: 10.0, y: 20.0 });
         assert_eq!(io.mouse_pos, [10.0, 20.0]);
@@ -71,6 +72,7 @@ mod tests {
     #[test]
     fn apply_input_sets_mouse_button_down() {
         let mut imgui = imgui::Context::create();
+        imgui.set_ini_filename(None);
         let io = imgui.io_mut();
         apply_input(
             io,
@@ -86,6 +88,7 @@ mod tests {
     #[test]
     fn apply_input_updates_mouse_wheel() {
         let mut imgui = imgui::Context::create();
+        imgui.set_ini_filename(None);
         let io = imgui.io_mut();
         apply_input(io, &InputEvent::MouseWheel { x: 1.0, y: -2.0 });
         assert_eq!(io.mouse_wheel_h, 1.0);
@@ -96,6 +99,7 @@ mod tests {
     #[test]
     fn apply_input_sets_key_state() {
         let mut imgui = imgui::Context::create();
+        imgui.set_ini_filename(None);
         let io = imgui.io_mut();
         apply_input(
             io,

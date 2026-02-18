@@ -74,7 +74,7 @@ impl MapperContext {
 
     /// Override PRG-RAM size in 8KB units (clamped to at least one bank).
     pub fn with_prg_ram_banks(mut self, prg_ram_banks_8k: u8) -> Self {
-        self.prg_ram_banks_8k = prg_ram_banks_8k.max(1);
+        self.prg_ram_banks_8k = prg_ram_banks_8k;
         self
     }
 
@@ -748,6 +748,21 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
             prg_rom,
             chr_rom,
             mirroring,
+            prg_ram_banks_8k,
+        )));
+    }
+
+    if mapper_number == 7 {
+        let submapper = if metadata.submapper == 0 && metadata.crc32 == 0x41D3_2FD7 {
+            2
+        } else {
+            metadata.submapper
+        };
+        let prg_ram_banks_8k = metadata.prg_ram_banks_8k;
+        let prg_rom = metadata.prg_rom;
+        return Ok(Box::new(AxROMMapper::new_with_submapper_and_prg_ram_banks(
+            prg_rom,
+            submapper,
             prg_ram_banks_8k,
         )));
     }
