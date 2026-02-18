@@ -37,6 +37,7 @@ pub struct SdlEventLoop {
     help_overlay_visible: bool,
     debugger_open_requested: bool,
     breakpoints: BreakpointList,
+    last_post_instruction_cycles: u64,
     temporary_breakpoint: Option<TemporaryBreakpoint>,
     arm_temporary_breakpoint_after_next_instruction: bool,
     breakpoint_ignore_once_at_pc: Option<u16>,
@@ -308,6 +309,7 @@ impl SdlEventLoop {
             help_overlay_visible: false,
             debugger_open_requested: false,
             breakpoints: BreakpointList::new(),
+            last_post_instruction_cycles: 0,
             temporary_breakpoint: None,
             arm_temporary_breakpoint_after_next_instruction: false,
             breakpoint_ignore_once_at_pc: None,
@@ -812,11 +814,15 @@ impl SdlEventLoop {
         if self.paused {
             return;
         }
+        let prev = self.last_post_instruction_cycles;
+        let current = nes.cpu.get_total_cycles();
         let ctx = EvalContext {
             pc: nes.cpu.pc(),
-            cpu_cycles: nes.cpu.get_total_cycles(),
+            prev_cpu_cycles: prev,
+            cpu_cycles: current,
             write_addr: nes.cpu.last_cpu_write_addr(),
         };
+        self.last_post_instruction_cycles = current;
         // Only check cycle and write-address conditions here; PC breakpoints are
         // checked before each instruction in check_breakpoint_hit.
         let hit = self.breakpoints.iter().any(|bp| {
