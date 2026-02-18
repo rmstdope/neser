@@ -860,6 +860,8 @@ impl SdlEventLoop {
     /// Currently returns Ok(()) in all cases, but the Result type is kept for future error handling.
     pub fn run(&mut self, nes: &mut Nes, tracing: Tracing) -> Result<(), String> {
         self.load_breakpoints_from_debug_file(nes);
+        let config = nes.config.borrow().clone();
+        self.load_breakpoints_from_config(&config);
 
         let mut last_audio_stats_print = Instant::now();
         let mut last_cpu_cycles = nes.cpu.get_total_cycles();
@@ -1190,10 +1192,7 @@ impl SdlEventLoop {
         self.breakpoints.add(BreakpointKind::WriteAddress(addr));
     }
 
-    pub(crate) fn add_pc_breakpoint(&mut self, addr: u16) {
-        self.add_breakpoint(addr);
-    }
-
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn breakpoint_count(&self) -> usize {
         self.breakpoints.len()
     }
@@ -1209,6 +1208,12 @@ impl SdlEventLoop {
         let content = self.breakpoints.save_to_string();
         if let Err(err) = std::fs::write(&path, content) {
             log_info(format!("Failed to save breakpoints: {err}"));
+        }
+    }
+
+    pub(crate) fn load_breakpoints_from_config(&mut self, config: &Config) {
+        for &kind in &config.breakpoints {
+            self.breakpoints.add(kind);
         }
     }
 
@@ -3976,7 +3981,7 @@ mod tests {
 
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        event_loop.add_pc_breakpoint(0xC000);
+        event_loop.add_breakpoint(0xC000);
         event_loop.save_breakpoints_to_debug_file(&nes);
 
         let debug_path = rom_path.with_extension("debug");
@@ -3990,8 +3995,28 @@ mod tests {
         let config = default_config();
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         let nes = Nes::new(Config::default()); // no cartridge inserted
-        event_loop.add_pc_breakpoint(0xC000);
+        event_loop.add_breakpoint(0xC000);
         // Should not panic
         event_loop.save_breakpoints_to_debug_file(&nes);
     }
+
+    #[test]
+    #[serial]
+    fn test_config_breakpoints_are_loaded_at_run_start() {
+        use crate::debugging::breakpoints::BreakpointKind;
+
+        let mut config = default_config();
+        config.breakpoints = vec![BreakpointKind::Pc(0xC000)];
+
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+
+        event_loop.load_breakpoints_from_config(&config);
+
+        assert_eq!(
+            event_loop.breakpoint_count(),
+            1,
+            "expected config breakpoints to be loaded"
+        );
+    }
 }
+
