@@ -89,6 +89,11 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Window height in pixels (windowed mode only, e.g., --window-height 720)"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--debugger-alpha",
+        help: Some("Debugger window opacity: 0.1 (transparent) to 1.0 (opaque, default: 0.7)"),
+        has_value: true,
+    },
     // Aligned flags matching config file keys with same value ranges
     // Support both value-based (--audio true) and prefix negation (--no-audio, --disable-audio)
     CliFlag {
@@ -389,6 +394,8 @@ pub struct Config {
     pub apu_channels: ApuChannels,
     /// Window height in pixels (windowed mode only).
     pub window_height: u32,
+    /// Debugger window background opacity (0.1 = nearly transparent, 0.7 = opaque).
+    pub debugger_alpha: f32,
     /// Optional ROM path from CLI positional argument.
     pub rom_path: Option<String>,
     /// Controller type connected to port 1.
@@ -533,6 +540,7 @@ impl Default for Config {
             tracing: Tracing::default(),
             apu_channels: ApuChannels::ALL,
             window_height: 960,
+            debugger_alpha: 0.7,
             rom_path: None,
             controller_port1: ControllerType::Joypad,
             controller_port2: ControllerType::Joypad,
@@ -777,6 +785,11 @@ impl Config {
             self.window_height = height;
         }
 
+        // Debugger alpha
+        if let Some(alpha) = Self::parse_f32_arg(args, "--debugger-alpha")? {
+            self.debugger_alpha = alpha.clamp(0.1, 1.0);
+        }
+
         // RAM initialization mode
         if let Some(value) = Self::parse_string_arg(args, "--ram-init-mode") {
             self.apply_config_value("ram_init_mode", &value)?;
@@ -1016,6 +1029,20 @@ impl Config {
         Ok(None)
     }
 
+    /// Parse an f32 argument from command-line args.
+    fn parse_f32_arg(args: &[String], flag: &str) -> Result<Option<f32>, String> {
+        for i in 0..args.len() {
+            if args[i] == flag && i + 1 < args.len() {
+                let value = &args[i + 1];
+                let parsed: f32 = value
+                    .parse()
+                    .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
+                return Ok(Some(parsed));
+            }
+        }
+        Ok(None)
+    }
+
     /// Parse a string argument from command-line args.
     ///
     /// Supports both `--flag value` and `--flag=value` forms.
@@ -1217,6 +1244,11 @@ impl Config {
             "window_height" => {
                 if let Ok(s) = value.parse::<u32>() {
                     self.window_height = s;
+                }
+            }
+            "debugger_alpha" => {
+                if let Ok(v) = value.parse::<f32>() {
+                    self.debugger_alpha = v.clamp(0.1, 1.0);
                 }
             }
             "controller_port1" => {

@@ -31,6 +31,8 @@ pub struct PpuViewerSnapshot {
     pub palette: [u8; PALETTE_SIZE],
     /// Background pattern table base address (0x0000 or 0x1000)
     pub bg_pattern_table: u16,
+    /// Current scroll position as (scroll_x, scroll_y) into the 512×480 nametable space
+    pub scroll: (u16, u16),
 }
 
 impl PpuViewerSnapshot {
@@ -41,6 +43,7 @@ impl PpuViewerSnapshot {
             nametables: ppu.nametable_snapshot_for_debugger(),
             palette: ppu.palette_for_debugger(),
             bg_pattern_table: ppu.bg_pattern_table_for_debugger(),
+            scroll: ppu.scroll_for_debugger(),
         }
     }
 }
@@ -330,5 +333,41 @@ mod tests {
         assert_eq!(snap.nametables[0].len(), 1024);
         assert_eq!(snap.palette.len(), 32);
         assert!(snap.bg_pattern_table == 0x0000 || snap.bg_pattern_table == 0x1000);
+        let (sx, sy) = snap.scroll;
+        assert!(sx < 512, "scroll_x {sx} out of range");
+        assert!(sy < 480, "scroll_y {sy} out of range");
+    }
+
+    #[test]
+    fn test_scroll_for_debugger_default_is_origin() {
+        let nes = Nes::new(Config::default());
+        let ppu = nes.ppu.borrow();
+        let (sx, sy) = ppu.scroll_for_debugger();
+        // After reset, t=0 and fine_x=0, so scroll is at (0, 0).
+        assert_eq!(sx, 0);
+        assert_eq!(sy, 0);
+    }
+
+    #[test]
+    fn test_scroll_for_debugger_reflects_x_scroll_write() {
+        let mut nes = Nes::new(Config::default());
+        // Write $80 (128) to PPUSCROLL twice: X=128, Y=0.
+        // This sets coarse_x=16, fine_x=0 → scroll_x = 128.
+        nes.ppu.borrow_mut().write_scroll(0x80, false);
+        nes.ppu.borrow_mut().write_scroll(0x00, false);
+        let (sx, sy) = nes.ppu.borrow().scroll_for_debugger();
+        assert_eq!(sx, 128, "scroll_x should be 128");
+        assert_eq!(sy, 0, "scroll_y should be 0");
+    }
+
+    #[test]
+    fn test_scroll_for_debugger_reflects_y_scroll_write() {
+        let mut nes = Nes::new(Config::default());
+        // X=0, Y=120 → scroll_y = 120.
+        nes.ppu.borrow_mut().write_scroll(0x00, false);
+        nes.ppu.borrow_mut().write_scroll(0x78, false);
+        let (sx, sy) = nes.ppu.borrow().scroll_for_debugger();
+        assert_eq!(sx, 0, "scroll_x should be 0");
+        assert_eq!(sy, 120, "scroll_y should be 120");
     }
 }

@@ -668,7 +668,25 @@ impl Ppu {
         self.registers.bg_pattern_table_addr()
     }
 
-    /// Get total cycles (for testing)
+    /// Return the current scroll position as (scroll_x, scroll_y) pixel offsets
+    /// into the 512×480 nametable space.
+    ///
+    /// Derived from the Loopy `t` register and fine-X scroll, which represent
+    /// the programmed scroll position (stable outside of active rendering).
+    pub fn scroll_for_debugger(&self) -> (u16, u16) {
+        let t = self.registers.t();
+        let fine_x = self.registers.x() as u16;
+        let coarse_x = t & 0x001F;
+        let coarse_y = (t >> 5) & 0x001F;
+        let nt_x = (t >> 10) & 0x01;
+        let nt_y = (t >> 11) & 0x01;
+        let fine_y = (t >> 12) & 0x07;
+        let scroll_x = nt_x * 256 + coarse_x * 8 + fine_x;
+        let scroll_y = nt_y * 240 + coarse_y * 8 + fine_y;
+        (scroll_x, scroll_y)
+    }
+
+
     #[cfg(test)]
     pub fn total_cycles(&self) -> u64 {
         self.timing.total_cycles()

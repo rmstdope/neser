@@ -2,12 +2,21 @@ use crate::app_context::AppContext;
 use crate::console::Nes;
 use crate::debugging::DebuggerViewState;
 use crate::debugging::log_info;
+use crate::debugging::ppu_viewer::{PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba};
 use crate::debugging::ui as debugger_ui;
 use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::time::Instant;
+
+const PPU_VIEWER_NT_TEXTURE_WIDTH: i32 = 512;
+const PPU_VIEWER_NT_TEXTURE_HEIGHT: i32 = 480;
+const PPU_VIEWER_TILES_TEXTURE_WIDTH: i32 = 256;
+const PPU_VIEWER_TILES_TEXTURE_HEIGHT: i32 = 128;
+
+const PPU_VIEWER_WINDOW_INITIAL_WIDTH: f32 = 560.0;
+const PPU_VIEWER_WINDOW_INITIAL_HEIGHT: f32 = 854.0;
 
 /// Backend-agnostic surface for presenting rendered frames.
 ///
@@ -37,12 +46,17 @@ pub struct GlBackend {
     renderer: imgui_opengl_renderer::Renderer,
     nes_texture: gl::types::GLuint,
     nes_texture_id: imgui::TextureId,
+    ppu_viewer_nt_texture: gl::types::GLuint,
+    ppu_viewer_nt_texture_id: imgui::TextureId,
+    ppu_viewer_tiles_texture: gl::types::GLuint,
+    ppu_viewer_tiles_texture_id: imgui::TextureId,
     overlay_font: imgui::FontId,
     overlay_text_color: OverlayTextColor,
     app_context: AppContext,
     framebuffer: Vec<u8>,
     last_frame: Instant,
     debugger_view_state: DebuggerViewState,
+    debugger_alpha: f32,
     shader_manager: ShaderManager,
 }
 
@@ -295,6 +309,11 @@ impl GlBackend {
             (tex, id)
         };
 
+        let (ppu_viewer_nt_texture, ppu_viewer_nt_texture_id) =
+            unsafe { create_rgba_texture(PPU_VIEWER_NT_TEXTURE_WIDTH, PPU_VIEWER_NT_TEXTURE_HEIGHT) };
+        let (ppu_viewer_tiles_texture, ppu_viewer_tiles_texture_id) =
+            unsafe { create_rgba_texture(PPU_VIEWER_TILES_TEXTURE_WIDTH, PPU_VIEWER_TILES_TEXTURE_HEIGHT) };
+
         // Create glow context for librashader
         let glow_context = unsafe {
             let proc_address = proc_address.clone();
@@ -323,12 +342,17 @@ impl GlBackend {
             renderer,
             nes_texture,
             nes_texture_id,
+            ppu_viewer_nt_texture,
+            ppu_viewer_nt_texture_id,
+            ppu_viewer_tiles_texture,
+            ppu_viewer_tiles_texture_id,
             overlay_font,
             overlay_text_color: OverlayTextColor::White,
             app_context,
             framebuffer: vec![0u8; 256 * 240 * 3],
             last_frame: Instant::now(),
             debugger_view_state: DebuggerViewState::default(),
+            debugger_alpha: 1.0,
             shader_manager,
         })
     }
@@ -344,6 +368,11 @@ impl GlBackend {
         }
 
         apply_input(self.imgui.io_mut(), event);
+    }
+
+    /// Sets the debugger window background opacity (clamped to 0.1–1.0).
+    pub fn set_debugger_alpha(&mut self, alpha: f32) {
+        self.debugger_alpha = alpha.clamp(0.1, 1.0);
     }
 
     /// Renders the current NES frame and optional debugger overlay.
@@ -496,7 +525,29 @@ impl GlBackend {
 
             if show_debugger {
                 let snapshot = self.debugger_view_state.snapshot(nes);
-                action = debugger_ui::render(ui, &snapshot);
+                action = debugger_ui::render(ui, &snapshot, self.debugger_alpha);
+                if action.toggle_ppu_viewer {
+                    self.debugger_view_state.toggle_ppu_viewer();
+                }
+                if action.increase_opacity {
+                    self.debugger_alpha = (self.debugger_alpha + 0.1).min(1.0);
+                }
+                if action.decrease_opacity {
+                    self.debugger_alpha = (self.debugger_alpha - 0.1).max(0.1);
+                }
+                if self.debugger_view_state.is_ppu_viewer_visible() {
+                    let scroll = update_ppu_viewer_textures(
+                        nes,
+                        self.ppu_viewer_nt_texture,
+                        self.ppu_viewer_tiles_texture,
+                    );
+                    draw_ppu_viewer_window(
+                        ui,
+                        self.ppu_viewer_nt_texture_id,
+                        self.ppu_viewer_tiles_texture_id,
+                        scroll,
+                    );
+                }
             }
         }
 
@@ -562,12 +613,222 @@ mod tests_windowed_dimensions {
     }
 }
 
+/// Create a RGBA GL texture of the given dimensions with NEAREST filtering.
+///
+/// # Safety
+/// Must be called with an active GL context.
+unsafe fn create_rgba_texture(
+    width: i32,
+    height: i32,
+) -> (gl::types::GLuint, imgui::TextureId) {
+    unsafe {
+        let mut tex: gl::types::GLuint = 0;
+        gl::GenTextures(1, &mut tex);
+        gl::BindTexture(gl::TEXTURE_2D, tex);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MIN_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_MAG_FILTER, gl::NEAREST as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_S, gl::CLAMP_TO_EDGE as i32);
+        gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
+        gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+        gl::TexImage2D(
+            gl::TEXTURE_2D,
+            0,
+            gl::RGBA8 as i32,
+            width,
+            height,
+            0,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            std::ptr::null(),
+        );
+        let id: imgui::TextureId = (tex as usize).into();
+        (tex, id)
+    }
+}
+
+/// Upload RGBA pixel data to an existing GL texture.
+///
+/// # Safety
+/// Must be called with an active GL context.
+unsafe fn upload_rgba_texture(
+    texture: gl::types::GLuint,
+    width: i32,
+    height: i32,
+    pixels: &[u8],
+) {
+    unsafe {
+        gl::BindTexture(gl::TEXTURE_2D, texture);
+        gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
+        gl::TexSubImage2D(
+            gl::TEXTURE_2D,
+            0,
+            0,
+            0,
+            width,
+            height,
+            gl::RGBA,
+            gl::UNSIGNED_BYTE,
+            pixels.as_ptr() as *const c_void,
+        );
+    }
+}
+
+/// Render the PPU viewer ImGui window showing pattern tables and nametables.
+fn draw_ppu_viewer_window(
+    ui: &imgui::Ui,
+    nt_texture_id: imgui::TextureId,
+    tiles_texture_id: imgui::TextureId,
+    scroll: (u16, u16),
+) {
+    // Aspect ratios of the underlying textures.
+    const TILES_ASPECT: f32 =
+        PPU_VIEWER_TILES_TEXTURE_HEIGHT as f32 / PPU_VIEWER_TILES_TEXTURE_WIDTH as f32;
+    const NT_ASPECT: f32 =
+        PPU_VIEWER_NT_TEXTURE_HEIGHT as f32 / PPU_VIEWER_NT_TEXTURE_WIDTH as f32;
+
+    // NES visible area in nametable-texture pixels.
+    const VISIBLE_W: f32 = 256.0;
+    const VISIBLE_H: f32 = 240.0;
+    const NT_TEX_W: f32 = PPU_VIEWER_NT_TEXTURE_WIDTH as f32;
+    const NT_TEX_H: f32 = PPU_VIEWER_NT_TEXTURE_HEIGHT as f32;
+
+    ui.window("PPU Viewer")
+        .size(
+            [PPU_VIEWER_WINDOW_INITIAL_WIDTH, PPU_VIEWER_WINDOW_INITIAL_HEIGHT],
+            imgui::Condition::FirstUseEver,
+        )
+        .build(|| {
+            ui.text("Pattern Tables");
+            ui.separator();
+            let avail_w = ui.content_region_avail()[0];
+            imgui::Image::new(tiles_texture_id, [avail_w, avail_w * TILES_ASPECT]).build(ui);
+
+            ui.dummy([0.0, 6.0]);
+            ui.text("Nametables (2\u{00D7}2)");
+            ui.separator();
+            let avail_w = ui.content_region_avail()[0];
+            let img_h = avail_w * NT_ASPECT;
+            let img_origin = ui.cursor_screen_pos();
+            imgui::Image::new(nt_texture_id, [avail_w, img_h]).build(ui);
+
+            // Scale factors from nametable-texture pixels to screen pixels.
+            let sx = avail_w / NT_TEX_W;
+            let sy = img_h / NT_TEX_H;
+
+            draw_scroll_rect(
+                ui,
+                img_origin,
+                scroll,
+                sx,
+                sy,
+                VISIBLE_W,
+                VISIBLE_H,
+                NT_TEX_W,
+                NT_TEX_H,
+            );
+        });
+}
+
+/// Draw a scroll-position rectangle (with wrapping) over the nametable image.
+///
+/// Handles cases where the 256×240 view window wraps past the 512×480 boundary by
+/// splitting into up to four partial rectangles.
+fn draw_scroll_rect(
+    ui: &imgui::Ui,
+    img_origin: [f32; 2],
+    scroll: (u16, u16),
+    sx: f32,
+    sy: f32,
+    visible_w: f32,
+    visible_h: f32,
+    nt_w: f32,
+    nt_h: f32,
+) {
+    let ox = img_origin[0];
+    let oy = img_origin[1];
+    let scroll_x = scroll.0 as f32;
+    let scroll_y = scroll.1 as f32;
+
+    // Each x-segment carries (x_start, width, draw_left_edge, draw_right_edge).
+    // At a wrap seam the "inside" edge is omitted: the right segment loses its right edge
+    // and the left (wrapped) segment loses its left edge.
+    let x_wraps = scroll_x + visible_w > nt_w;
+    let x_segs: &[(f32, f32, bool, bool)] = if x_wraps {
+        let left_w = nt_w - scroll_x;
+        let right_w = visible_w - left_w;
+        &[(scroll_x, left_w, true, false), (0.0, right_w, false, true)]
+    } else {
+        &[(scroll_x, visible_w, true, true)]
+    };
+
+    // Each y-segment carries (y_start, height, draw_top_edge, draw_bottom_edge).
+    let y_wraps = scroll_y + visible_h > nt_h;
+    let y_segs: &[(f32, f32, bool, bool)] = if y_wraps {
+        let top_h = nt_h - scroll_y;
+        let bot_h = visible_h - top_h;
+        &[(scroll_y, top_h, true, false), (0.0, bot_h, false, true)]
+    } else {
+        &[(scroll_y, visible_h, true, true)]
+    };
+
+    let draw_list = ui.get_window_draw_list();
+    let color = [1.0f32, 1.0, 0.0, 1.0]; // yellow
+    let thickness = 1.5;
+
+    for &(xs, xw, draw_left, draw_right) in x_segs {
+        for &(ys, yh, draw_top, draw_bottom) in y_segs {
+            let x0 = ox + xs * sx;
+            let y0 = oy + ys * sy;
+            let x1 = x0 + xw * sx;
+            let y1 = y0 + yh * sy;
+
+            if draw_top    { draw_list.add_line([x0, y0], [x1, y0], color).thickness(thickness).build(); }
+            if draw_bottom { draw_list.add_line([x0, y1], [x1, y1], color).thickness(thickness).build(); }
+            if draw_left   { draw_list.add_line([x0, y0], [x0, y1], color).thickness(thickness).build(); }
+            if draw_right  { draw_list.add_line([x1, y0], [x1, y1], color).thickness(thickness).build(); }
+        }
+    }
+}
+
+/// Upload pixel data for the PPU nametable and pattern table textures from the current NES state.
+fn update_ppu_viewer_textures(
+    nes: &Nes,
+    nt_texture: gl::types::GLuint,
+    tiles_texture: gl::types::GLuint,
+) -> (u16, u16) {
+    let ppu_snap = PpuViewerSnapshot::from_nes(nes);
+    let nt_pixels = render_nametables_rgba(
+        &ppu_snap.chr,
+        &ppu_snap.nametables,
+        &ppu_snap.palette,
+        ppu_snap.bg_pattern_table,
+    );
+    let tiles_pixels = render_pattern_tables_rgba(&ppu_snap.chr, &ppu_snap.palette);
+    unsafe {
+        upload_rgba_texture(
+            nt_texture,
+            PPU_VIEWER_NT_TEXTURE_WIDTH,
+            PPU_VIEWER_NT_TEXTURE_HEIGHT,
+            &nt_pixels,
+        );
+        upload_rgba_texture(
+            tiles_texture,
+            PPU_VIEWER_TILES_TEXTURE_WIDTH,
+            PPU_VIEWER_TILES_TEXTURE_HEIGHT,
+            &tiles_pixels,
+        );
+    }
+    ppu_snap.scroll
+}
+
 impl Drop for GlBackend {
     fn drop(&mut self) {
-        // Best-effort: make current and delete texture.
+        // Best-effort: make current and delete textures.
         let _ = self.render_target.make_current();
         unsafe {
             gl::DeleteTextures(1, &self.nes_texture);
+            gl::DeleteTextures(1, &self.ppu_viewer_nt_texture);
+            gl::DeleteTextures(1, &self.ppu_viewer_tiles_texture);
         }
     }
 }
