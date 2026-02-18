@@ -175,6 +175,17 @@ impl BreakpointList {
         self.items.iter().any(|bp| bp.is_hit(ctx))
     }
 
+    /// Returns `true` if there is any PC breakpoint at `addr`, regardless of enabled state.
+    /// Useful for checking pre-existence before conditionally adding a temporary breakpoint.
+    pub fn has_pc_breakpoint_at(&self, addr: u16) -> bool {
+        self.items.iter().any(|b| b.kind == BreakpointKind::Pc(addr))
+    }
+
+    /// Returns `true` if there is an enabled PC breakpoint at `addr`.
+    pub fn has_enabled_pc_breakpoint_at(&self, addr: u16) -> bool {
+        self.items.iter().any(|b| b.kind == BreakpointKind::Pc(addr) && b.enabled)
+    }
+
     /// Serialize all breakpoints to a multi-line string for `.debug` file storage.
     pub fn save_to_string(&self) -> String {
         self.items.iter().map(|bp| bp.serialize()).collect::<Vec<_>>().join("\n")

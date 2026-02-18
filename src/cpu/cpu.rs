@@ -82,6 +82,8 @@ pub struct Cpu {
     interrupt_stack: Vec<InterruptKind>,
     /// Tracks the current tick number and total ticks for tracing
     current_tick_info: Option<(u8, u8)>,
+    /// The most recent non-dummy write address during the current instruction, if any.
+    last_cpu_write_addr: Option<u16>,
 }
 
 // Status register flags
@@ -173,6 +175,7 @@ impl Cpu {
 
             interrupt_stack: Vec::with_capacity(2),
             current_tick_info: None,
+            last_cpu_write_addr: None,
         }
     }
 
@@ -207,6 +210,12 @@ impl Cpu {
     /// Get the total number of cycles executed since last reset
     pub fn get_total_cycles(&self) -> u64 {
         self.total_cycles
+    }
+
+    /// Returns the address of the most recent non-dummy CPU write during the last instruction,
+    /// or `None` if no write occurred.
+    pub fn last_cpu_write_addr(&self) -> Option<u16> {
+        self.last_cpu_write_addr
     }
 
     #[cfg(test)]
@@ -894,7 +903,9 @@ impl Cpu {
         }
         self.before_cpu_cycle(true);
         self.bus.borrow_mut().write(addr, value, dummy);
-
+        if !dummy {
+            self.last_cpu_write_addr = Some(addr);
+        }
         self.after_cpu_cycle(true);
     }
 
@@ -1468,6 +1479,8 @@ impl Cpu {
         if self.halted {
             return;
         }
+
+        self.last_cpu_write_addr = None;
 
         // The CPU's IRQ inhibit flag (I) has a one-instruction delay behavior for
         // CLI/SEI and (conditionally) PLP. We model that using `delayed_i_flag`:
@@ -16342,5 +16355,58 @@ mod tests {
             initial_cycles + 7,
             "DEC ABSXW takes 7 cycles"
         );
+    }
+
+    // --- CPU write-address tracking ---
+
+    #[test]
+    fn test_last_cpu_write_addr_is_none_initially() {
+        let (ppu, apu, memory) = create_test_memory();
+        let cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+        assert_eq!(cpu.last_cpu_write_addr(), None);
+    }
+
+    #[test]
+    fn test_last_cpu_write_addr_is_set_after_sta_absolute() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+        let program = vec![STA_ABS, 0x34, 0x12]; // STA $1234
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset(true);
+        cpu.a = 0xAB;
+
+        cpu.execute();
+
+        assert_eq!(cpu.last_cpu_write_addr(), Some(0x1234));
+    }
+
+    #[test]
+    fn test_last_cpu_write_addr_is_none_after_lda_immediate() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+        let program = vec![opcode::LDA_IMM, 0x42]; // LDA #$42 (read only)
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset(true);
+
+        cpu.execute();
+
+        assert_eq!(cpu.last_cpu_write_addr(), None);
+    }
+
+    #[test]
+    fn test_last_cpu_write_addr_is_cleared_before_next_instruction() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(TimingMode::Ntsc, memory, ppu, apu);
+        // STA $1234 followed by LDA #$42 (read only)
+        let program = vec![STA_ABS, 0x34, 0x12, opcode::LDA_IMM, 0x42];
+        fake_cartridge(&mut cpu, &program);
+        cpu.reset(true);
+        cpu.a = 0xAB;
+
+        cpu.execute(); // STA — sets last_cpu_write_addr to $1234
+        assert_eq!(cpu.last_cpu_write_addr(), Some(0x1234));
+
+        cpu.execute(); // LDA — read only, should clear last_cpu_write_addr
+        assert_eq!(cpu.last_cpu_write_addr(), None);
     }
 }

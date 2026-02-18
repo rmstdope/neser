@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::time::{Duration, Instant};
 
-use crate::debugging::{DebuggerSnapshot, Tracing, log_info, snapshot, ui};
+use crate::debugging::{DebuggerSnapshot, Tracing, breakpoints::{BreakpointKind, BreakpointList}, log_info, snapshot, ui};
 use crate::input::Button;
 use crate::rendering::Crosshair;
 
@@ -36,7 +36,7 @@ pub struct SdlEventLoop {
     paused: bool,
     help_overlay_visible: bool,
     debugger_open_requested: bool,
-    breakpoints: Vec<u16>,
+    breakpoints: BreakpointList,
     temporary_breakpoint: Option<TemporaryBreakpoint>,
     arm_temporary_breakpoint_after_next_instruction: bool,
     breakpoint_ignore_once_at_pc: Option<u16>,
@@ -307,7 +307,7 @@ impl SdlEventLoop {
             paused: false,
             help_overlay_visible: false,
             debugger_open_requested: false,
-            breakpoints: Vec::new(),
+            breakpoints: BreakpointList::new(),
             temporary_breakpoint: None,
             arm_temporary_breakpoint_after_next_instruction: false,
             breakpoint_ignore_once_at_pc: None,
@@ -672,7 +672,7 @@ impl SdlEventLoop {
     fn set_temporary_breakpoint(&mut self, pc: u16) {
         self.clear_temporary_breakpoint();
 
-        let already_present = self.breakpoints.contains(&pc);
+        let already_present = self.breakpoints.has_pc_breakpoint_at(pc);
         if !already_present {
             self.add_breakpoint(pc);
         }
@@ -694,7 +694,7 @@ impl SdlEventLoop {
     ) {
         self.clear_temporary_breakpoint();
 
-        let already_present = self.breakpoints.contains(&pc);
+        let already_present = self.breakpoints.has_pc_breakpoint_at(pc);
         if !already_present {
             self.add_breakpoint(pc);
         }
@@ -727,7 +727,7 @@ impl SdlEventLoop {
 
     fn continue_from_debugger(&mut self, nes: &Nes) {
         // Prevent immediately re-breaking on the same instruction.
-        if self.breakpoints.contains(&nes.cpu.pc()) {
+        if self.breakpoints.has_enabled_pc_breakpoint_at(nes.cpu.pc()) {
             self.breakpoint_ignore_once_at_pc = Some(nes.cpu.pc());
         }
 
@@ -754,18 +754,20 @@ impl SdlEventLoop {
             return false;
         }
 
+        let has_pc_bp = |addr: u16| self.breakpoints.has_enabled_pc_breakpoint_at(addr);
+
         // While a temporary "run to" breakpoint is active, ignore all other breakpoint hits.
         // This matches the expected debugger UX: run-to should run until the target, not stop
         // early due to unrelated breakpoints (including ones inside the current interrupt).
         if let Some(tb) = self.temporary_breakpoint
             && tb.ignore_other_breakpoints
-            && self.breakpoints.contains(&pc)
+            && has_pc_bp(pc)
             && pc != tb.pc
         {
             return false;
         }
 
-        if self.breakpoints.contains(&pc) {
+        if has_pc_bp(pc) {
             if let Some(tb) = self.temporary_breakpoint {
                 if tb.pc == pc {
                     // This is our one-shot temp breakpoint. Only break when the CPU has actually
@@ -800,6 +802,29 @@ impl SdlEventLoop {
             true
         } else {
             false
+        }
+    }
+
+    /// Check cycle and write-address breakpoints after an instruction has executed.
+    fn check_post_instruction_breakpoints(&mut self, nes: &Nes) {
+        use crate::debugging::breakpoints::EvalContext;
+        if self.paused {
+            return;
+        }
+        let ctx = EvalContext {
+            pc: nes.cpu.pc(),
+            cpu_cycles: nes.cpu.get_total_cycles(),
+            write_addr: nes.cpu.last_cpu_write_addr(),
+        };
+        // Only check cycle and write-address conditions here; PC breakpoints are
+        // checked before each instruction in check_breakpoint_hit.
+        let hit = self.breakpoints.iter().any(|bp| {
+            bp.enabled
+                && !matches!(bp.kind, BreakpointKind::Pc(_))
+                && bp.is_hit(&ctx)
+        });
+        if hit {
+            self.enter_debugger();
         }
     }
 
@@ -986,6 +1011,7 @@ impl SdlEventLoop {
 
                     nes.run(&tracing);
                     self.maybe_arm_temporary_breakpoint_after_instruction(nes);
+                    self.check_post_instruction_breakpoints(nes);
 
                     // Poll audio samples from APU and queue them
                     if let Some(ref mut audio) = self.audio {
@@ -1139,14 +1165,24 @@ impl SdlEventLoop {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn add_breakpoint(&mut self, addr: u16) {
-        if !self.breakpoints.contains(&addr) {
-            self.breakpoints.push(addr);
-        }
+        self.breakpoints.add(BreakpointKind::Pc(addr));
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn remove_breakpoint(&mut self, addr: u16) {
-        self.breakpoints.retain(|&bp| bp != addr);
+        if let Some(idx) = self.breakpoints.iter().position(|b| b.kind == BreakpointKind::Pc(addr)) {
+            self.breakpoints.remove(idx);
+        }
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn add_cycle_breakpoint(&mut self, cycle: u64) {
+        self.breakpoints.add(BreakpointKind::Cycle(cycle));
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn add_write_address_breakpoint(&mut self, addr: u16) {
+        self.breakpoints.add(BreakpointKind::WriteAddress(addr));
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -1252,6 +1288,7 @@ impl SdlEventLoop {
 
         nes.run_cpu_tick();
         self.maybe_arm_temporary_breakpoint_after_instruction(nes);
+        self.check_post_instruction_breakpoints(nes);
         false
     }
 
@@ -2950,7 +2987,7 @@ mod tests {
             "temporary breakpoint should clear after being hit"
         );
         assert!(
-            !event_loop.breakpoints.contains(&nmi_vector),
+            !event_loop.breakpoints.iter().any(|b| b.kind == BreakpointKind::Pc(nmi_vector)),
             "temporary breakpoint should be removed after being hit"
         );
     }
@@ -3025,7 +3062,7 @@ mod tests {
             "temporary breakpoint should clear after being hit"
         );
         assert!(
-            !event_loop.breakpoints.contains(&irq_vector),
+            !event_loop.breakpoints.iter().any(|b| b.kind == BreakpointKind::Pc(irq_vector)),
             "temporary breakpoint should be removed after being hit"
         );
     }
@@ -3843,5 +3880,63 @@ mod tests {
         );
 
         assert_eq!(*calls.borrow(), 1);
+    }
+
+    #[test]
+    #[serial]
+    fn test_cycle_breakpoint_pauses_at_configured_cycle() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(Config::default());
+
+        insert_nop_cartridge(&mut nes, 0x8000);
+        nes.reset(false);
+
+        // Each NOP takes 2 cycles; target exactly after 2 NOPs.
+        let target_cycle = nes.cpu.get_total_cycles() + 4;
+        event_loop.add_cycle_breakpoint(target_cycle);
+
+        // First NOP ($8000): total_cycles += 2, not at target yet.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert!(!event_loop.is_paused(), "should not pause after first NOP");
+
+        // Second NOP ($8001): total_cycles reaches target, should pause.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert!(event_loop.is_paused(), "should pause when cycle target is reached");
+    }
+
+    #[test]
+    #[serial]
+    fn test_write_address_breakpoint_pauses_on_store_to_address() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = Nes::new(Config::default());
+
+        // Program: NOP at $8000, STA $1234 at $8001.
+        let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP fill
+        prg_rom[0x0000] = 0xEA; // NOP at $8000
+        prg_rom[0x0001] = 0x8D; // STA abs at $8001
+        prg_rom[0x0002] = 0x34; // low byte of $1234
+        prg_rom[0x0003] = 0x12; // high byte of $1234
+        prg_rom[0x7FFC] = 0x00; // Reset vector low = $8000
+        prg_rom[0x7FFD] = 0x80; // Reset vector high
+
+        let cartridge = crate::cartridge::Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::MirroringMode::Horizontal,
+        );
+        nes.insert_cartridge(cartridge);
+        nes.reset(false);
+
+        event_loop.add_write_address_breakpoint(0x1234);
+
+        // NOP at $8000: no write, should not pause.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert!(!event_loop.is_paused(), "NOP should not trigger write breakpoint");
+
+        // STA $1234 at $8001: writes to $1234, should pause.
+        tick_headless_once(&mut event_loop, &mut nes);
+        assert!(event_loop.is_paused(), "should pause when watched address is written");
     }
 }
