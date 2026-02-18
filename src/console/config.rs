@@ -315,7 +315,14 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--breakpoint",
-        help: Some("Add breakpoints on startup: pc=ADDR, cycle=N, write=ADDR (comma-separated)"),
+        help: Some(
+            "Add breakpoints on startup: pc=ADDR, cycle=N, frame=N, write=ADDR (comma-separated)",
+        ),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--frame",
+        help: Some("Add a frame breakpoint on startup (break at first instruction of frame N)"),
         has_value: true,
     },
 ];
@@ -453,7 +460,7 @@ pub struct Config {
     ///
     /// Default: `false`.
     pub oam_dram_decay_enabled: bool,
-    /// Breakpoints to set on startup (from --breakpoint CLI flag).
+    /// Breakpoints to set on startup (from --breakpoint / --frame CLI flags).
     pub breakpoints: Vec<BreakpointKind>,
 }
 
@@ -846,6 +853,15 @@ impl Config {
                 parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
         }
 
+        // Frame breakpoint from --frame flag
+        if let Some(value) = Self::parse_string_arg(args, "--frame") {
+            let frame = value
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| format!("Invalid --frame value: {value}"))?;
+            self.breakpoints.push(BreakpointKind::Frame(frame));
+        }
+
         Ok(())
     }
     pub fn print_help() {
@@ -865,6 +881,7 @@ impl Config {
         println!(
             "  neser --debugger game.nes                    # Enable debugger (no value = true)"
         );
+        println!("  neser --frame=120 game.nes                   # Break on frame 120");
         println!("  neser --audio game.nes                       # Enable audio (no value = true)");
         println!("  neser --audio=1 game.nes                     # Enable audio (equals syntax)");
         println!("  neser --audio false game.nes                 # Disable audio (value-based)");
@@ -1502,6 +1519,7 @@ impl Config {
 /// Each entry is in the format `type=value`:
 /// - `pc=ADDR` — PC breakpoint (hex address, e.g. `C000` or `0xC000`)
 /// - `cycle=N` — Cycle breakpoint (decimal number)
+/// - `frame=N` — Frame breakpoint (decimal number)
 /// - `write=ADDR` — Write-address breakpoint (hex address)
 ///
 /// Returns an error string if any entry is unrecognised or malformed.
@@ -1511,7 +1529,7 @@ fn parse_breakpoint_list(spec: &str) -> Result<Vec<BreakpointKind>, String> {
             let entry = entry.trim();
             let (kind, value) = entry
                 .split_once('=')
-                .ok_or_else(|| format!("invalid breakpoint '{entry}': expected format type=value (e.g. pc=C000, cycle=100, write=2006)"))?;
+                .ok_or_else(|| format!("invalid breakpoint '{entry}': expected format type=value (e.g. pc=C000, cycle=100, frame=60, write=2006)"))?;
             match kind.trim() {
                 "pc" => parse_hex_addr(value)
                     .map(BreakpointKind::Pc)
@@ -1521,10 +1539,17 @@ fn parse_breakpoint_list(spec: &str) -> Result<Vec<BreakpointKind>, String> {
                     .parse::<u64>()
                     .map(BreakpointKind::Cycle)
                     .map_err(|_| format!("invalid breakpoint cycle '{value}': expected a decimal number")),
+                "frame" => value
+                    .trim()
+                    .parse::<u64>()
+                    .map(BreakpointKind::Frame)
+                    .map_err(|_| format!("invalid breakpoint frame '{value}': expected a decimal number")),
                 "write" => parse_hex_addr(value)
                     .map(BreakpointKind::WriteAddress)
                     .ok_or_else(|| format!("invalid breakpoint address '{value}': expected a hex address (e.g. 2006)")),
-                other => Err(format!("invalid breakpoint type '{other}': expected pc, cycle, or write")),
+                other => Err(format!(
+                    "invalid breakpoint type '{other}': expected pc, cycle, frame, or write"
+                )),
             }
         })
         .collect()
@@ -3097,6 +3122,32 @@ filter=invalid-shader
         assert!(
             config.breakpoints.contains(&BreakpointKind::Cycle(12345)),
             "expected Cycle breakpoint at 12345"
+        );
+    }
+
+    #[test]
+    fn test_cli_frame_flag_adds_frame_breakpoint() {
+        use crate::debugging::breakpoints::BreakpointKind;
+        let args = vec!["neser".to_string(), "--frame".to_string(), "42".to_string()];
+        let config = parse_config(args);
+        assert!(
+            config.breakpoints.contains(&BreakpointKind::Frame(42)),
+            "expected Frame breakpoint at frame 42"
+        );
+    }
+
+    #[test]
+    fn test_cli_breakpoint_frame_flag_adds_frame_breakpoint() {
+        use crate::debugging::breakpoints::BreakpointKind;
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "frame=42".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(
+            config.breakpoints.contains(&BreakpointKind::Frame(42)),
+            "expected Frame breakpoint at frame 42"
         );
     }
 

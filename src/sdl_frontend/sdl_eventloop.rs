@@ -42,6 +42,7 @@ pub struct SdlEventLoop {
     debugger_open_requested: bool,
     breakpoints: BreakpointList,
     last_post_instruction_cycles: u64,
+    last_post_instruction_frame: u64,
     temporary_breakpoint: Option<TemporaryBreakpoint>,
     arm_temporary_breakpoint_after_next_instruction: bool,
     breakpoint_ignore_once_at_pc: Option<u16>,
@@ -314,6 +315,7 @@ impl SdlEventLoop {
             debugger_open_requested: false,
             breakpoints: BreakpointList::new(),
             last_post_instruction_cycles: 0,
+            last_post_instruction_frame: 0,
             temporary_breakpoint: None,
             arm_temporary_breakpoint_after_next_instruction: false,
             breakpoint_ignore_once_at_pc: None,
@@ -740,10 +742,11 @@ impl SdlEventLoop {
 
         // Sync the cycle tracker so threshold breakpoints don't fire spuriously.
         // Debugger actions (e.g. run-to-next-frame, step) may advance CPU cycles
-        // without going through check_post_instruction_breakpoints, leaving
-        // last_post_instruction_cycles stale. Syncing here means cycle breakpoints
-        // can only fire when the threshold is crossed going forward from this point.
+        // and frame counts without going through check_post_instruction_breakpoints,
+        // leaving trackers stale. Syncing here means threshold breakpoints can only
+        // fire when crossed going forward from this point.
         self.last_post_instruction_cycles = nes.cpu.get_total_cycles();
+        self.last_post_instruction_frame = nes.ppu.borrow().frame_count();
 
         self.paused = false;
         self.debugger_open_requested = false;
@@ -819,22 +822,27 @@ impl SdlEventLoop {
         }
     }
 
-    /// Check cycle and write-address breakpoints after an instruction has executed.
+    /// Check cycle, frame, and write-address breakpoints after an instruction has executed.
     fn check_post_instruction_breakpoints(&mut self, nes: &Nes) {
         use crate::debugging::breakpoints::EvalContext;
         if self.paused {
             return;
         }
-        let prev = self.last_post_instruction_cycles;
-        let current = nes.cpu.get_total_cycles();
+        let prev_cycles = self.last_post_instruction_cycles;
+        let current_cycles = nes.cpu.get_total_cycles();
+        let prev_frame = self.last_post_instruction_frame;
+        let current_frame = nes.ppu.borrow().frame_count();
         let ctx = EvalContext {
             pc: nes.cpu.pc(),
-            prev_cpu_cycles: prev,
-            cpu_cycles: current,
+            prev_cpu_cycles: prev_cycles,
+            cpu_cycles: current_cycles,
+            prev_frame,
+            frame: current_frame,
             write_addr: nes.cpu.last_cpu_write_addr(),
         };
-        self.last_post_instruction_cycles = current;
-        // Only check cycle and write-address conditions here; PC breakpoints are
+        self.last_post_instruction_cycles = current_cycles;
+        self.last_post_instruction_frame = current_frame;
+        // Only check non-PC conditions here; PC breakpoints are
         // checked before each instruction in check_breakpoint_hit.
         let hit = self
             .breakpoints
@@ -1209,6 +1217,11 @@ impl SdlEventLoop {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn add_cycle_breakpoint(&mut self, cycle: u64) {
         self.breakpoints.add(BreakpointKind::Cycle(cycle));
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn add_frame_breakpoint(&mut self, frame: u64) {
+        self.breakpoints.add(BreakpointKind::Frame(frame));
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -2152,6 +2165,55 @@ mod tests {
         assert!(
             cycles_after < cycles_before + 200,
             "cycle count should be near the target ({target}), not at frame end; got {cycles_after}"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_frame_breakpoint_pauses_on_first_instruction_of_target_frame() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = nes_with_nop_loop_program();
+
+        let target_frame = {
+            let ppu = nes.ppu.borrow();
+            ppu.frame_count() + 1
+        };
+        event_loop.add_frame_breakpoint(target_frame);
+
+        let mut crossed_target_when_paused = false;
+        for _ in 0..2_000_000 {
+            let frame_before = {
+                let ppu = nes.ppu.borrow();
+                ppu.frame_count()
+            };
+
+            tick_headless_once(&mut event_loop, &mut nes);
+
+            let frame_after = {
+                let ppu = nes.ppu.borrow();
+                ppu.frame_count()
+            };
+
+            if event_loop.is_paused() {
+                crossed_target_when_paused =
+                    frame_before < target_frame && frame_after >= target_frame;
+                break;
+            }
+
+            assert!(
+                frame_after < target_frame,
+                "should pause at first instruction boundary after entering frame {target_frame}, but frame already reached {frame_after}"
+            );
+        }
+
+        assert!(
+            event_loop.is_paused(),
+            "frame breakpoint should pause execution when target frame is reached"
+        );
+        assert!(
+            crossed_target_when_paused,
+            "frame breakpoint should trigger on the first instruction boundary after frame crossing"
         );
     }
 

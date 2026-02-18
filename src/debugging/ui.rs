@@ -49,7 +49,7 @@ pub struct DebuggerUiAction {
 /// Persistent state for the "add breakpoint" row in the breakpoint panel.
 #[derive(Debug, Default)]
 pub struct BreakpointAddUiState {
-    /// Index into the kind combo: 0=PC, 1=Cycle, 2=Write
+    /// Index into the kind combo: 0=PC, 1=Cycle, 2=Write, 3=Frame
     pub kind_idx: usize,
     /// Text input buffer for the breakpoint value.
     pub value: String,
@@ -216,7 +216,7 @@ fn render_add_breakpoint_row(
     add_state: &mut BreakpointAddUiState,
     action: &mut DebuggerUiAction,
 ) {
-    let kinds = ["PC", "Cycle", "Write"];
+    let kinds = ["PC", "Cycle", "Write", "Frame"];
     let _width = ui.push_item_width(60.0);
     ui.combo_simple_string("##bp_kind", &mut add_state.kind_idx, &kinds);
     drop(_width);
@@ -256,6 +256,7 @@ fn parse_breakpoint_kind_from_input(kind_idx: usize, value: &str) -> Option<Brea
         0 => parse_hex_u16(value).map(BreakpointKind::Pc),
         1 => value.trim().parse::<u64>().ok().map(BreakpointKind::Cycle),
         2 => parse_hex_u16(value).map(BreakpointKind::WriteAddress),
+        3 => value.trim().parse::<u64>().ok().map(BreakpointKind::Frame),
         _ => None,
     }
 }
@@ -566,6 +567,7 @@ pub(crate) fn format_breakpoint_label(bp: &Breakpoint) -> String {
     match bp.kind {
         BreakpointKind::Pc(addr) => format!("PC  ${:04X}", addr),
         BreakpointKind::Cycle(n) => format!("CYC {}", n),
+        BreakpointKind::Frame(n) => format!("FRM {}", n),
         BreakpointKind::WriteAddress(addr) => format!("WR  ${:04X}", addr),
     }
 }
@@ -744,6 +746,13 @@ mod tests {
     }
 
     #[test]
+    fn test_format_breakpoint_label_frame() {
+        use crate::debugging::breakpoints::{Breakpoint, BreakpointKind};
+        let bp = Breakpoint::new(BreakpointKind::Frame(42));
+        assert_eq!(format_breakpoint_label(&bp), "FRM 42");
+    }
+
+    #[test]
     fn test_format_breakpoint_label_write_address() {
         use crate::debugging::breakpoints::{Breakpoint, BreakpointKind};
         let bp = Breakpoint::new(BreakpointKind::WriteAddress(0x2006));
@@ -778,6 +787,14 @@ mod tests {
         assert_eq!(
             validate_breakpoint_input(0, "XYZ"),
             Err("Invalid breakpoint value")
+        );
+    }
+
+    #[test]
+    fn test_validate_breakpoint_input_parses_frame_kind() {
+        assert_eq!(
+            validate_breakpoint_input(3, "42"),
+            Ok(BreakpointKind::Frame(42))
         );
     }
 

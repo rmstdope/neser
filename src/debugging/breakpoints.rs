@@ -1,6 +1,6 @@
 //! Breakpoint engine for the NES debugger.
 //!
-//! Supports three condition types: PC match, CPU cycle count, and CPU write-address.
+//! Supports four condition types: PC match, CPU cycle count, CPU frame count, and CPU write-address.
 
 use std::fmt;
 
@@ -11,6 +11,8 @@ pub enum BreakpointKind {
     Pc(u16),
     /// Break when the CPU cycle count equals the given value.
     Cycle(u64),
+    /// Break when execution reaches the first instruction boundary on the given frame.
+    Frame(u64),
     /// Break when the CPU writes to the given address (non-dummy write).
     WriteAddress(u16),
 }
@@ -20,6 +22,7 @@ impl fmt::Display for BreakpointKind {
         match self {
             BreakpointKind::Pc(addr) => write!(f, "PC={:04X}", addr),
             BreakpointKind::Cycle(n) => write!(f, "CYC={}", n),
+            BreakpointKind::Frame(n) => write!(f, "FRM={}", n),
             BreakpointKind::WriteAddress(addr) => write!(f, "WR={:04X}", addr),
         }
     }
@@ -50,6 +53,7 @@ impl Breakpoint {
             BreakpointKind::Cycle(target) => {
                 ctx.prev_cpu_cycles < target && ctx.cpu_cycles >= target
             }
+            BreakpointKind::Frame(target) => ctx.prev_frame < target && ctx.frame >= target,
             BreakpointKind::WriteAddress(addr) => ctx.write_addr == Some(addr),
         }
     }
@@ -60,6 +64,7 @@ impl Breakpoint {
         match self.kind {
             BreakpointKind::Pc(addr) => format!("pc {:#06X} {}", addr, state),
             BreakpointKind::Cycle(n) => format!("cycle {} {}", n, state),
+            BreakpointKind::Frame(n) => format!("frame {} {}", n, state),
             BreakpointKind::WriteAddress(addr) => format!("write {:#06X} {}", addr, state),
         }
     }
@@ -83,6 +88,10 @@ impl Breakpoint {
             "cycle" => {
                 let n: u64 = parts[1].parse().ok()?;
                 BreakpointKind::Cycle(n)
+            }
+            "frame" => {
+                let n: u64 = parts[1].parse().ok()?;
+                BreakpointKind::Frame(n)
             }
             "write" => {
                 let addr = parse_u16(parts[1])?;
@@ -112,6 +121,10 @@ pub struct EvalContext {
     pub prev_cpu_cycles: u64,
     /// Total CPU cycles after this instruction executed.
     pub cpu_cycles: u64,
+    /// PPU frame counter value before this instruction executed.
+    pub prev_frame: u64,
+    /// PPU frame counter value after this instruction executed.
+    pub frame: u64,
     /// Address written during this instruction (non-dummy write), if any.
     pub write_addr: Option<u16>,
 }
@@ -220,6 +233,11 @@ mod tests {
     }
 
     #[test]
+    fn test_breakpoint_kind_frame_displays_with_count() {
+        assert_eq!(format!("{}", BreakpointKind::Frame(42)), "FRM=42");
+    }
+
+    #[test]
     fn test_breakpoint_kind_write_address_displays_as_hex() {
         assert_eq!(
             format!("{}", BreakpointKind::WriteAddress(0x2006)),
@@ -237,6 +255,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(bp.is_hit(&ctx));
     }
@@ -249,6 +269,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(!bp.is_hit(&ctx));
     }
@@ -262,6 +284,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(!bp.is_hit(&ctx));
     }
@@ -276,6 +300,8 @@ mod tests {
             prev_cpu_cycles: 998,
             cpu_cycles: 1002,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(bp.is_hit(&ctx));
     }
@@ -288,6 +314,8 @@ mod tests {
             prev_cpu_cycles: 999,
             cpu_cycles: 1000,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(bp.is_hit(&ctx));
     }
@@ -300,6 +328,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 999,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(!bp.is_hit(&ctx));
     }
@@ -313,6 +343,8 @@ mod tests {
             prev_cpu_cycles: 1001,
             cpu_cycles: 1003,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(!bp.is_hit(&ctx));
     }
@@ -326,6 +358,38 @@ mod tests {
             prev_cpu_cycles: 999,
             cpu_cycles: 1002,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
+        };
+        assert!(!bp.is_hit(&ctx));
+    }
+
+    // --- Frame breakpoint evaluation ---
+
+    #[test]
+    fn test_frame_breakpoint_hits_when_frame_crosses_threshold() {
+        let bp = Breakpoint::new(BreakpointKind::Frame(5));
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: None,
+            prev_frame: 4,
+            frame: 5,
+        };
+        assert!(bp.is_hit(&ctx));
+    }
+
+    #[test]
+    fn test_frame_breakpoint_does_not_hit_before_target_frame() {
+        let bp = Breakpoint::new(BreakpointKind::Frame(5));
+        let ctx = EvalContext {
+            pc: 0x0000,
+            prev_cpu_cycles: 0,
+            cpu_cycles: 0,
+            write_addr: None,
+            prev_frame: 4,
+            frame: 4,
         };
         assert!(!bp.is_hit(&ctx));
     }
@@ -340,6 +404,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: Some(0x2006),
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(bp.is_hit(&ctx));
     }
@@ -352,6 +418,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(!bp.is_hit(&ctx));
     }
@@ -364,6 +432,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: Some(0x2007),
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(!bp.is_hit(&ctx));
     }
@@ -377,6 +447,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: Some(0x2006),
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(!bp.is_hit(&ctx));
     }
@@ -409,6 +481,14 @@ mod tests {
         let mut list = BreakpointList::new();
         list.add(BreakpointKind::Cycle(1000));
         list.add(BreakpointKind::Cycle(1000));
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn test_breakpoint_list_add_does_not_duplicate_frame() {
+        let mut list = BreakpointList::new();
+        list.add(BreakpointKind::Frame(60));
+        list.add(BreakpointKind::Frame(60));
         assert_eq!(list.len(), 1);
     }
 
@@ -467,6 +547,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(list.iter().any(|bp| bp.is_hit(&ctx)));
     }
@@ -480,6 +562,8 @@ mod tests {
             prev_cpu_cycles: 498,
             cpu_cycles: 501,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(list.iter().any(|bp| bp.is_hit(&ctx)));
     }
@@ -493,6 +577,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: Some(0x2006),
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(list.iter().any(|bp| bp.is_hit(&ctx)));
     }
@@ -506,6 +592,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(!list.iter().any(|bp| bp.is_hit(&ctx)));
     }
@@ -520,6 +608,8 @@ mod tests {
             prev_cpu_cycles: 0,
             cpu_cycles: 0,
             write_addr: None,
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(!list.iter().any(|bp| bp.is_hit(&ctx)));
     }
@@ -532,6 +622,8 @@ mod tests {
             prev_cpu_cycles: 498,
             cpu_cycles: 501,
             write_addr: Some(0x2006),
+            prev_frame: 0,
+            frame: 0,
         };
         assert!(!list.iter().any(|bp| bp.is_hit(&ctx)));
     }
@@ -548,6 +640,12 @@ mod tests {
     fn test_breakpoint_kind_serialize_cycle() {
         let bp = Breakpoint::new(BreakpointKind::Cycle(12345));
         assert_eq!(bp.serialize(), "cycle 12345 enabled");
+    }
+
+    #[test]
+    fn test_breakpoint_kind_serialize_frame() {
+        let bp = Breakpoint::new(BreakpointKind::Frame(42));
+        assert_eq!(bp.serialize(), "frame 42 enabled");
     }
 
     #[test]
@@ -575,6 +673,13 @@ mod tests {
         let bp = Breakpoint::parse("cycle 12345 disabled").unwrap();
         assert!(matches!(bp.kind, BreakpointKind::Cycle(12345)));
         assert!(!bp.enabled);
+    }
+
+    #[test]
+    fn test_breakpoint_list_parse_frame_line() {
+        let bp = Breakpoint::parse("frame 42 enabled").unwrap();
+        assert!(matches!(bp.kind, BreakpointKind::Frame(42)));
+        assert!(bp.enabled);
     }
 
     #[test]
