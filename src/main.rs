@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .rom_path
         .clone()
         .unwrap_or_else(|| default_rom_path.to_string());
-    let cart = match cartridge::Cartridge::load_from_file(&rom_path) {
+    let cart = match cartridge::Cartridge::load_from_file(&rom_path, &app_context) {
         Ok(cartridge) => {
             app_context.add_toast(cartridge_load_toast_message(&rom_path, true));
             cartridge

@@ -2390,7 +2390,8 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let rom_path = copy_test_rom(&temp_dir);
 
-        let cart = Cartridge::load_from_file(&rom_path).expect("Failed to load ROM");
+        let app_context = AppContext::new();
+        let cart = Cartridge::load_from_file(&rom_path, &app_context).expect("Failed to load ROM");
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cart);
         nes.reset(false);
@@ -2414,7 +2415,8 @@ mod tests {
         let temp_dir = TempDir::new().expect("Failed to create temp dir");
         let rom_path = copy_test_rom(&temp_dir);
 
-        let cart = Cartridge::load_from_file(&rom_path).expect("Failed to load ROM");
+        let app_context = AppContext::new();
+        let cart = Cartridge::load_from_file(&rom_path, &app_context).expect("Failed to load ROM");
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cart);
         nes.reset(false);

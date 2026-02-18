@@ -75,7 +75,6 @@ For any completed issue workflow task, the following is mandatory:
 
 Before merging or committing to main, the following checkpoint shall pass:
 
-- Run `cargo check --all-targets --all-features` and fix all warnings
 - Run `cargo clippy --all-targets --all-features -- -D warnings` and fix all warnings
 - Run `cargo fmt`
 - Run `cargo test --all-features` and fix all warnings and ensure all tests pass

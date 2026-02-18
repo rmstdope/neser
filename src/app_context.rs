@@ -1,6 +1,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use crate::cartridge::{RomDb, RomDbEntry};
 
 pub const TOAST_LIFETIME_SECS: u64 = 4;
 pub const MAX_VISIBLE_TOASTS: usize = 3;
@@ -8,12 +11,14 @@ pub const MAX_VISIBLE_TOASTS: usize = 3;
 #[derive(Debug, Clone)]
 pub struct AppContext {
     toast_manager: Rc<RefCell<ToastManager>>,
+    rom_db: Arc<RomDb>,
 }
 
 impl Default for AppContext {
     fn default() -> Self {
         Self {
             toast_manager: Rc::new(RefCell::new(ToastManager::new())),
+            rom_db: Arc::new(RomDb::new().unwrap()),
         }
     }
 }
@@ -36,6 +41,10 @@ impl AppContext {
             .into_iter()
             .map(|toast| toast.text.clone())
             .collect()
+    }
+
+    pub fn get_db_entry_by_crc(&self, crc: u32) -> Option<RomDbEntry> {
+        self.rom_db.get_by_crc(crc).cloned()
     }
 }
 
@@ -147,5 +156,15 @@ mod tests {
 
         let visible = context.visible_toasts(Instant::now());
         assert_eq!(visible, vec!["Saved state".to_string()]);
+    }
+
+    #[test]
+    fn test_app_context_get_db_entry_by_crc() {
+        let context = AppContext::new();
+        let entry = context
+            .get_db_entry_by_crc(0x836C4FA7)
+            .expect("known CRC should exist in rom_db.csv");
+
+        assert_eq!(entry.crc, Some(0x836C4FA7));
     }
 }

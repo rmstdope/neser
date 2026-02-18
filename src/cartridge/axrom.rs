@@ -9,6 +9,7 @@ use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
 use crate::cartridge::MirroringMode;
 use crate::cartridge::common::{BankSwitch, BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
+use crate::trace_mapper;
 
 // Memory size constants
 const PRG_BANK_SIZE_32K: usize = 0x8000; // 32KB (for AxROM)
@@ -34,25 +35,43 @@ const PRG_BANK_SIZE_32K: usize = 0x8000; // 32KB (for AxROM)
 /// - Used in Battletoads, Marble Madness, Wizards & Warriors
 pub struct AxROMMapper {
     prg_rom: BankedRom,
-    prg_ram: PrgRam,
     chr_memory: ChrMemory,
+    prg_ram: Option<PrgRam>,
     prg_bank: BankSwitch,
     mirroring_bit: bool, // Bit 4 from bank select register
+    bus_conflicts: bool,
 }
 
 impl AxROMMapper {
     pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, _mirroring: MirroringMode) -> Self {
+        Self::new_with_submapper_and_prg_ram_banks(prg_rom, 0, 1)
+    }
+
+    pub fn new_with_submapper_and_prg_ram_banks(
+        prg_rom: Vec<u8>,
+        submapper: u8,
+        prg_ram_banks_8k: u8,
+    ) -> Self {
         let normalized_prg_rom = Self::normalize_prg_rom(prg_rom);
 
         // AxROM uses CHR-RAM, ignores chr_rom and initial mirroring (controlled by register)
         let prg_bank = BankSwitch::from_rom(&normalized_prg_rom, PRG_BANK_SIZE_32K);
+        let bus_conflicts = submapper == 2;
+        let prg_ram = if prg_ram_banks_8k == 0 {
+            None
+        } else {
+            Some(PrgRam::new(
+                prg_ram_banks_8k as usize * DEFAULT_PRG_RAM_SIZE,
+            ))
+        };
 
         Self {
             prg_rom: BankedRom::new(normalized_prg_rom, PRG_BANK_SIZE_32K),
-            prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
             chr_memory: ChrMemory::new_ram(8192),
+            prg_ram,
             prg_bank,
             mirroring_bit: false, // Default to lower nametable
+            bus_conflicts,
         }
     }
 
@@ -67,12 +86,13 @@ impl AxROMMapper {
 
 impl Mapper for AxROMMapper {
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
+        // PRG ROM at $8000-$FFFF (32KB switchable bank)
+        if let Some(prg_ram) = &self.prg_ram
+            && let Some(value) = prg_ram.try_read(addr)
+        {
             return value;
         }
 
-        // PRG ROM at $8000-$FFFF (32KB switchable bank)
         match addr {
             0x8000..=0xFFFF => self
                 .prg_rom
@@ -81,9 +101,18 @@ impl Mapper for AxROMMapper {
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        match addr {
+            0x0000..=0x5FFF => open_bus,
+            0x6000..=0x7FFF if self.prg_ram.is_none() => open_bus,
+            _ => self.read_prg(addr),
+        }
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
+        if let Some(prg_ram) = &mut self.prg_ram
+            && prg_ram.try_write(addr, value)
+        {
             return;
         }
 
@@ -91,8 +120,24 @@ impl Mapper for AxROMMapper {
         // Bits 0-2: PRG bank select
         // Bit 4: One-screen mirroring (0 = lower, 1 = upper)
         if (0x8000..=0xFFFF).contains(&addr) {
-            self.prg_bank.set(value & 0x07);
-            self.mirroring_bit = (value & 0x10) != 0;
+            let register_value = if self.bus_conflicts {
+                value & self.read_prg(addr)
+            } else {
+                value
+            };
+
+            self.prg_bank.set(register_value & 0x07);
+            self.mirroring_bit = (register_value & 0x10) != 0;
+
+            trace_mapper!(1;
+                "AxROM write ${:04X}: raw=${:02X} effective=${:02X} bank={} mirroring={} conflicts={}",
+                addr,
+                value,
+                register_value,
+                register_value & 0x07,
+                if self.mirroring_bit { "upper" } else { "lower" },
+                self.bus_conflicts
+            );
         }
     }
 
@@ -120,15 +165,19 @@ impl Mapper for AxROMMapper {
     }
 
     fn wram_size(&self) -> usize {
-        self.prg_ram.size()
+        self.prg_ram.as_ref().map_or(0, PrgRam::size)
     }
 
     fn wram_snapshot(&self) -> Vec<u8> {
-        self.prg_ram.snapshot()
+        self.prg_ram
+            .as_ref()
+            .map_or_else(Vec::new, PrgRam::snapshot)
     }
 
     fn load_wram_snapshot(&mut self, data: &[u8]) {
-        self.prg_ram.load_snapshot(data);
+        if let Some(prg_ram) = &mut self.prg_ram {
+            prg_ram.load_snapshot(data);
+        }
     }
 
     fn chr_ram_snapshot(&self) -> Vec<u8> {
@@ -158,7 +207,7 @@ impl Mapper for AxROMMapper {
             has_chr_banking: false,
             has_dynamic_mirroring: true,
             has_expansion_audio: false,
-            max_prg_ram_kb: 8,
+            max_prg_ram_kb: if self.prg_ram.is_some() { 8 } else { 0 },
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
         }
@@ -365,18 +414,43 @@ mod tests {
     }
 
     #[test]
-    fn test_axrom_prg_ram_support() {
-        // AxROM should support PRG-RAM at $6000-$7FFF
+    fn test_axrom_has_no_prg_ram_when_disabled() {
         let prg_rom = vec![0; 128 * 1024];
-        let mut mapper = create_axrom_mapper(prg_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mapper(
+            MapperContext::new(7, prg_rom, vec![], MirroringMode::Horizontal).with_prg_ram_banks(0),
+        )
+        .expect("Failed to create AxROM mapper without PRG-RAM");
 
-        // Write to PRG-RAM
         mapper.write_prg(0x6000, 0xAA);
         mapper.write_prg(0x7FFF, 0xBB);
 
-        // Read back
+        assert_eq!(
+            mapper.read_prg_open_bus(0x6000, 0x5A),
+            0x5A,
+            "AxROM should return open bus in $6000-$7FFF"
+        );
+        assert_eq!(
+            mapper.read_prg_open_bus(0x7FFF, 0xC3),
+            0xC3,
+            "AxROM should return open bus in $6000-$7FFF"
+        );
+        assert_eq!(mapper.wram_size(), 0, "AxROM should report no WRAM");
+    }
+
+    #[test]
+    fn test_axrom_uses_prg_ram_when_present() {
+        let prg_rom = vec![0; 128 * 1024];
+        let mut mapper = create_mapper(
+            MapperContext::new(7, prg_rom, vec![], MirroringMode::Horizontal).with_prg_ram_banks(1),
+        )
+        .expect("Failed to create AxROM mapper with PRG-RAM");
+
+        mapper.write_prg(0x6000, 0xAA);
+        mapper.write_prg(0x7FFF, 0xBB);
+
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
         assert_eq!(mapper.read_prg(0x7FFF), 0xBB);
+        assert_eq!(mapper.wram_size(), 8 * 1024);
     }
 
     #[test]
@@ -386,5 +460,55 @@ mod tests {
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0xEE), 0xEE);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0xFF), 0xFF);
+    }
+
+    #[test]
+    fn test_axrom_submapper_2_applies_bus_conflicts_to_bank_select() {
+        let mut prg_rom = vec![0; 64 * 1024];
+
+        for byte in &mut prg_rom[0..32 * 1024] {
+            *byte = 0x00;
+        }
+        for byte in &mut prg_rom[32 * 1024..64 * 1024] {
+            *byte = 0x01;
+        }
+
+        let mut mapper = create_mapper(
+            MapperContext::new(7, prg_rom, vec![], MirroringMode::Horizontal).with_submapper(2),
+        )
+        .expect("Failed to create AxROM mapper with submapper 2");
+
+        mapper.write_prg(0x8000, 0x01);
+
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0x00,
+            "submapper 2 should apply bus conflicts and keep bank 0 selected"
+        );
+    }
+
+    #[test]
+    fn test_axrom_submapper_1_disables_bus_conflicts() {
+        let mut prg_rom = vec![0; 64 * 1024];
+
+        for byte in &mut prg_rom[0..32 * 1024] {
+            *byte = 0x00;
+        }
+        for byte in &mut prg_rom[32 * 1024..64 * 1024] {
+            *byte = 0x01;
+        }
+
+        let mut mapper = create_mapper(
+            MapperContext::new(7, prg_rom, vec![], MirroringMode::Horizontal).with_submapper(1),
+        )
+        .expect("Failed to create AxROM mapper with submapper 1");
+
+        mapper.write_prg(0x8000, 0x01);
+
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0x01,
+            "submapper 1 should not apply bus conflicts and should select bank 1"
+        );
     }
 }
