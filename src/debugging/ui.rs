@@ -441,7 +441,8 @@ fn render_hexdump_controls(
         match validate_hexdump_input(&hexdump_state.address_input) {
             Ok(addr) => {
                 action.set_prg_hexdump_base = Some(addr);
-                hexdump_state.address_input = format!("{:04X}", normalize_hexdump_base_for_ui(addr));
+                hexdump_state.address_input =
+                    format!("{:04X}", normalize_hexdump_base_for_ui(addr));
                 hexdump_state.error = None;
             }
             Err(message) => {

@@ -3,7 +3,9 @@ use crate::console::Nes;
 use crate::debugging::DebuggerViewState;
 use crate::debugging::breakpoints::BreakpointList;
 use crate::debugging::log_info;
-use crate::debugging::ppu_viewer::{PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba};
+use crate::debugging::ppu_viewer::{
+    PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba,
+};
 use crate::debugging::ui::{self as debugger_ui, BreakpointAddUiState, HexdumpUiState};
 use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
@@ -313,10 +315,15 @@ impl GlBackend {
             (tex, id)
         };
 
-        let (ppu_viewer_nt_texture, ppu_viewer_nt_texture_id) =
-            unsafe { create_rgba_texture(PPU_VIEWER_NT_TEXTURE_WIDTH, PPU_VIEWER_NT_TEXTURE_HEIGHT) };
-        let (ppu_viewer_tiles_texture, ppu_viewer_tiles_texture_id) =
-            unsafe { create_rgba_texture(PPU_VIEWER_TILES_TEXTURE_WIDTH, PPU_VIEWER_TILES_TEXTURE_HEIGHT) };
+        let (ppu_viewer_nt_texture, ppu_viewer_nt_texture_id) = unsafe {
+            create_rgba_texture(PPU_VIEWER_NT_TEXTURE_WIDTH, PPU_VIEWER_NT_TEXTURE_HEIGHT)
+        };
+        let (ppu_viewer_tiles_texture, ppu_viewer_tiles_texture_id) = unsafe {
+            create_rgba_texture(
+                PPU_VIEWER_TILES_TEXTURE_WIDTH,
+                PPU_VIEWER_TILES_TEXTURE_HEIGHT,
+            )
+        };
 
         // Create glow context for librashader
         let glow_context = unsafe {
@@ -643,10 +650,7 @@ mod tests_windowed_dimensions {
 ///
 /// # Safety
 /// Must be called with an active GL context.
-unsafe fn create_rgba_texture(
-    width: i32,
-    height: i32,
-) -> (gl::types::GLuint, imgui::TextureId) {
+unsafe fn create_rgba_texture(width: i32, height: i32) -> (gl::types::GLuint, imgui::TextureId) {
     unsafe {
         let mut tex: gl::types::GLuint = 0;
         gl::GenTextures(1, &mut tex);
@@ -676,12 +680,7 @@ unsafe fn create_rgba_texture(
 ///
 /// # Safety
 /// Must be called with an active GL context.
-unsafe fn upload_rgba_texture(
-    texture: gl::types::GLuint,
-    width: i32,
-    height: i32,
-    pixels: &[u8],
-) {
+unsafe fn upload_rgba_texture(texture: gl::types::GLuint, width: i32, height: i32, pixels: &[u8]) {
     unsafe {
         gl::BindTexture(gl::TEXTURE_2D, texture);
         gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
@@ -709,8 +708,7 @@ fn draw_ppu_viewer_window(
     // Aspect ratios of the underlying textures.
     const TILES_ASPECT: f32 =
         PPU_VIEWER_TILES_TEXTURE_HEIGHT as f32 / PPU_VIEWER_TILES_TEXTURE_WIDTH as f32;
-    const NT_ASPECT: f32 =
-        PPU_VIEWER_NT_TEXTURE_HEIGHT as f32 / PPU_VIEWER_NT_TEXTURE_WIDTH as f32;
+    const NT_ASPECT: f32 = PPU_VIEWER_NT_TEXTURE_HEIGHT as f32 / PPU_VIEWER_NT_TEXTURE_WIDTH as f32;
 
     // NES visible area in nametable-texture pixels.
     const VISIBLE_W: f32 = 256.0;
@@ -720,7 +718,10 @@ fn draw_ppu_viewer_window(
 
     ui.window("PPU Viewer")
         .size(
-            [PPU_VIEWER_WINDOW_INITIAL_WIDTH, PPU_VIEWER_WINDOW_INITIAL_HEIGHT],
+            [
+                PPU_VIEWER_WINDOW_INITIAL_WIDTH,
+                PPU_VIEWER_WINDOW_INITIAL_HEIGHT,
+            ],
             imgui::Condition::FirstUseEver,
         )
         .build(|| {
@@ -742,15 +743,7 @@ fn draw_ppu_viewer_window(
             let sy = img_h / NT_TEX_H;
 
             draw_scroll_rect(
-                ui,
-                img_origin,
-                scroll,
-                sx,
-                sy,
-                VISIBLE_W,
-                VISIBLE_H,
-                NT_TEX_W,
-                NT_TEX_H,
+                ui, img_origin, scroll, sx, sy, VISIBLE_W, VISIBLE_H, NT_TEX_W, NT_TEX_H,
             );
         });
 }
@@ -808,10 +801,30 @@ fn draw_scroll_rect(
             let x1 = x0 + xw * sx;
             let y1 = y0 + yh * sy;
 
-            if draw_top    { draw_list.add_line([x0, y0], [x1, y0], color).thickness(thickness).build(); }
-            if draw_bottom { draw_list.add_line([x0, y1], [x1, y1], color).thickness(thickness).build(); }
-            if draw_left   { draw_list.add_line([x0, y0], [x0, y1], color).thickness(thickness).build(); }
-            if draw_right  { draw_list.add_line([x1, y0], [x1, y1], color).thickness(thickness).build(); }
+            if draw_top {
+                draw_list
+                    .add_line([x0, y0], [x1, y0], color)
+                    .thickness(thickness)
+                    .build();
+            }
+            if draw_bottom {
+                draw_list
+                    .add_line([x0, y1], [x1, y1], color)
+                    .thickness(thickness)
+                    .build();
+            }
+            if draw_left {
+                draw_list
+                    .add_line([x0, y0], [x0, y1], color)
+                    .thickness(thickness)
+                    .build();
+            }
+            if draw_right {
+                draw_list
+                    .add_line([x1, y0], [x1, y1], color)
+                    .thickness(thickness)
+                    .build();
+            }
         }
     }
 }
