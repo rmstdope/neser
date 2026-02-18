@@ -11,7 +11,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::time::{Duration, Instant};
 
-use crate::debugging::{DebuggerSnapshot, Tracing, breakpoints::{BreakpointKind, BreakpointList}, log_info, snapshot, ui};
+use crate::debugging::{
+    DebuggerSnapshot, Tracing,
+    breakpoints::{BreakpointKind, BreakpointList},
+    log_info, snapshot, ui,
+};
 use crate::input::Button;
 use crate::rendering::Crosshair;
 
@@ -832,11 +836,10 @@ impl SdlEventLoop {
         self.last_post_instruction_cycles = current;
         // Only check cycle and write-address conditions here; PC breakpoints are
         // checked before each instruction in check_breakpoint_hit.
-        let hit = self.breakpoints.iter().any(|bp| {
-            bp.enabled
-                && !matches!(bp.kind, BreakpointKind::Pc(_))
-                && bp.is_hit(&ctx)
-        });
+        let hit = self
+            .breakpoints
+            .iter()
+            .any(|bp| bp.enabled && !matches!(bp.kind, BreakpointKind::Pc(_)) && bp.is_hit(&ctx));
         if hit {
             self.enter_debugger();
         }
@@ -1032,6 +1035,10 @@ impl SdlEventLoop {
                     self.maybe_arm_temporary_breakpoint_after_instruction(nes);
                     self.check_post_instruction_breakpoints(nes);
 
+                    if self.paused {
+                        break;
+                    }
+
                     // Poll audio samples from APU and queue them
                     if let Some(ref mut audio) = self.audio {
                         while nes.sample_ready() {
@@ -1190,7 +1197,11 @@ impl SdlEventLoop {
 
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn remove_breakpoint(&mut self, addr: u16) {
-        if let Some(idx) = self.breakpoints.iter().position(|b| b.kind == BreakpointKind::Pc(addr)) {
+        if let Some(idx) = self
+            .breakpoints
+            .iter()
+            .position(|b| b.kind == BreakpointKind::Pc(addr))
+        {
             self.breakpoints.remove(idx);
         }
     }
@@ -1212,7 +1223,9 @@ impl SdlEventLoop {
 
     pub(crate) fn load_breakpoints_from_debug_file(&mut self, nes: &Nes) {
         let Some(path) = nes.debug_path() else { return };
-        let Ok(text) = std::fs::read_to_string(&path) else { return };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return;
+        };
         self.breakpoints = BreakpointList::load_from_str(&text);
     }
 
@@ -1310,6 +1323,11 @@ impl SdlEventLoop {
 
             nes.run(tracing);
             self.maybe_arm_temporary_breakpoint_after_instruction(nes);
+            self.check_post_instruction_breakpoints(nes);
+
+            if self.paused {
+                break;
+            }
 
             if let Some(ref mut audio) = self.audio {
                 while nes.sample_ready() {
@@ -2069,6 +2087,34 @@ mod tests {
         assert!(
             nes.is_ready_to_render(),
             "headless run tick should emulate a full frame"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_cycle_breakpoint_stops_emulation_immediately_not_at_frame_end() {
+        // Regression: after a CYC breakpoint fires (setting paused=true), the inner emulation loop
+        // must break immediately. Previously it kept running until the end of the frame, causing the
+        // debugger to display the frame-end cycle count (~27000+) instead of the target (~100).
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut nes = nes_with_nop_loop_program();
+
+        let cycles_before = nes.cpu.get_total_cycles();
+        let target = cycles_before + 100;
+        event_loop.add_cycle_breakpoint(target);
+
+        event_loop.tick_headless_frame_for_run(&mut nes, &Tracing::default());
+
+        assert!(event_loop.is_paused(), "should be paused after CYC breakpoint fires");
+        assert!(
+            !nes.is_ready_to_render(),
+            "frame should NOT have completed — emulation must stop at the breakpoint, not at frame end"
+        );
+        let cycles_after = nes.cpu.get_total_cycles();
+        assert!(
+            cycles_after < cycles_before + 200,
+            "cycle count should be near the target ({target}), not at frame end; got {cycles_after}"
         );
     }
 
@@ -3018,7 +3064,10 @@ mod tests {
             "temporary breakpoint should clear after being hit"
         );
         assert!(
-            !event_loop.breakpoints.iter().any(|b| b.kind == BreakpointKind::Pc(nmi_vector)),
+            !event_loop
+                .breakpoints
+                .iter()
+                .any(|b| b.kind == BreakpointKind::Pc(nmi_vector)),
             "temporary breakpoint should be removed after being hit"
         );
     }
@@ -3086,7 +3135,10 @@ mod tests {
             "temporary breakpoint should clear after being hit"
         );
         assert!(
-            !event_loop.breakpoints.iter().any(|b| b.kind == BreakpointKind::Pc(irq_vector)),
+            !event_loop
+                .breakpoints
+                .iter()
+                .any(|b| b.kind == BreakpointKind::Pc(irq_vector)),
             "temporary breakpoint should be removed after being hit"
         );
     }
@@ -3897,7 +3949,10 @@ mod tests {
         // Running one more instruction should NOT trigger the CYC=100 breakpoint
         // because 27395 > 100 and the threshold has already been passed.
         tick_headless_once(&mut event_loop, &mut nes);
-        assert!(!event_loop.is_paused(), "CYC=100 should not fire when already past cycle 100");
+        assert!(
+            !event_loop.is_paused(),
+            "CYC=100 should not fire when already past cycle 100"
+        );
     }
 
     #[test]
@@ -3920,7 +3975,10 @@ mod tests {
 
         // Second NOP ($8001): total_cycles reaches target, should pause.
         tick_headless_once(&mut event_loop, &mut nes);
-        assert!(event_loop.is_paused(), "should pause when cycle target is reached");
+        assert!(
+            event_loop.is_paused(),
+            "should pause when cycle target is reached"
+        );
     }
 
     #[test]
@@ -3951,11 +4009,17 @@ mod tests {
 
         // NOP at $8000: no write, should not pause.
         tick_headless_once(&mut event_loop, &mut nes);
-        assert!(!event_loop.is_paused(), "NOP should not trigger write breakpoint");
+        assert!(
+            !event_loop.is_paused(),
+            "NOP should not trigger write breakpoint"
+        );
 
         // STA $1234 at $8001: writes to $1234, should pause.
         tick_headless_once(&mut event_loop, &mut nes);
-        assert!(event_loop.is_paused(), "should pause when watched address is written");
+        assert!(
+            event_loop.is_paused(),
+            "should pause when watched address is written"
+        );
     }
 
     #[test]
@@ -3981,7 +4045,11 @@ mod tests {
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         event_loop.load_breakpoints_from_debug_file(&nes);
 
-        assert_eq!(event_loop.breakpoint_count(), 2, "expected 2 breakpoints loaded");
+        assert_eq!(
+            event_loop.breakpoint_count(),
+            2,
+            "expected 2 breakpoints loaded"
+        );
     }
 
     #[test]
@@ -4003,7 +4071,11 @@ mod tests {
         let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
         event_loop.load_breakpoints_from_debug_file(&nes);
 
-        assert_eq!(event_loop.breakpoint_count(), 0, "expected no breakpoints when file absent");
+        assert_eq!(
+            event_loop.breakpoint_count(),
+            0,
+            "expected no breakpoints when file absent"
+        );
     }
 
     #[test]
@@ -4028,7 +4100,10 @@ mod tests {
 
         let debug_path = rom_path.with_extension("debug");
         let content = fs::read_to_string(&debug_path).expect("Expected .debug file to be written");
-        assert!(content.contains("pc 0xC000 enabled"), "unexpected content: {content}");
+        assert!(
+            content.contains("pc 0xC000 enabled"),
+            "unexpected content: {content}"
+        );
     }
 
     #[test]
@@ -4061,4 +4136,3 @@ mod tests {
         );
     }
 }
-
