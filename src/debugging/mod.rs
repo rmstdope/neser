@@ -1,3 +1,4 @@
+pub mod breakpoints;
 mod disasm;
 mod logging;
 pub mod ppu_viewer;

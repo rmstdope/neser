@@ -1,9 +1,10 @@
 use crate::app_context::AppContext;
 use crate::console::Nes;
 use crate::debugging::DebuggerViewState;
+use crate::debugging::breakpoints::BreakpointList;
 use crate::debugging::log_info;
 use crate::debugging::ppu_viewer::{PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba};
-use crate::debugging::ui as debugger_ui;
+use crate::debugging::ui::{self as debugger_ui, BreakpointAddUiState};
 use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;
@@ -57,6 +58,8 @@ pub struct GlBackend {
     last_frame: Instant,
     debugger_view_state: DebuggerViewState,
     debugger_alpha: f32,
+    breakpoints: BreakpointList,
+    bp_add_state: BreakpointAddUiState,
     shader_manager: ShaderManager,
 }
 
@@ -353,6 +356,8 @@ impl GlBackend {
             last_frame: Instant::now(),
             debugger_view_state: DebuggerViewState::default(),
             debugger_alpha: 1.0,
+            breakpoints: BreakpointList::default(),
+            bp_add_state: BreakpointAddUiState::default(),
             shader_manager,
         })
     }
@@ -373,6 +378,11 @@ impl GlBackend {
     /// Sets the debugger window background opacity (clamped to 0.1–1.0).
     pub fn set_debugger_alpha(&mut self, alpha: f32) {
         self.debugger_alpha = alpha.clamp(0.1, 1.0);
+    }
+
+    /// Updates the breakpoint list used by the debugger UI.
+    pub fn update_breakpoints(&mut self, breakpoints: &BreakpointList) {
+        self.breakpoints = breakpoints.clone();
     }
 
     /// Renders the current NES frame and optional debugger overlay.
@@ -525,7 +535,7 @@ impl GlBackend {
 
             if show_debugger {
                 let snapshot = self.debugger_view_state.snapshot(nes);
-                action = debugger_ui::render(ui, &snapshot, self.debugger_alpha);
+                action = debugger_ui::render(ui, &snapshot, self.debugger_alpha, &self.breakpoints, &mut self.bp_add_state);
                 if action.toggle_ppu_viewer {
                     self.debugger_view_state.toggle_ppu_viewer();
                 }

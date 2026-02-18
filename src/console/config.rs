@@ -7,6 +7,7 @@
 //! 3. Default values
 
 use crate::console::TimingMode;
+use crate::debugging::breakpoints::BreakpointKind;
 use crate::debugging::Tracing;
 use crate::input::ControllerType;
 use bitflags::bitflags;
@@ -312,6 +313,11 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: zero)"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--breakpoint",
+        help: Some("Add breakpoints on startup: pc=ADDR, cycle=N, write=ADDR (comma-separated)"),
+        has_value: true,
+    },
 ];
 
 /// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
@@ -447,6 +453,8 @@ pub struct Config {
     ///
     /// Default: `false`.
     pub oam_dram_decay_enabled: bool,
+    /// Breakpoints to set on startup (from --breakpoint CLI flag).
+    pub breakpoints: Vec<BreakpointKind>,
 }
 
 /// Autorun operating mode.
@@ -557,6 +565,7 @@ impl Default for Config {
             #[cfg(not(target_arch = "wasm32"))]
             ram_init_mode: RamInitMode::Random,
             oam_dram_decay_enabled: false,
+            breakpoints: Vec::new(),
         }
     }
 }
@@ -831,10 +840,13 @@ impl Config {
             );
         }
 
+        // Breakpoints from --breakpoint flag (comma-separated list)
+        if let Some(value) = Self::parse_string_arg(args, "--breakpoint") {
+            self.breakpoints = parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
+        }
+
         Ok(())
     }
-
-    /// Print help text to stdout.
     pub fn print_help() {
         println!("NES Emulator");
         println!("\nUsage: neser [OPTIONS] [ROM]");
@@ -1482,6 +1494,44 @@ impl Config {
 
         Ok(())
     }
+}
+
+/// Parse a comma-separated breakpoint specification string into a list of `BreakpointKind`.
+///
+/// Each entry is in the format `type=value`:
+/// - `pc=ADDR` — PC breakpoint (hex address, e.g. `C000` or `0xC000`)
+/// - `cycle=N` — Cycle breakpoint (decimal number)
+/// - `write=ADDR` — Write-address breakpoint (hex address)
+///
+/// Returns an error string if any entry is unrecognised or malformed.
+fn parse_breakpoint_list(spec: &str) -> Result<Vec<BreakpointKind>, String> {
+    spec.split(',')
+        .map(|entry| {
+            let entry = entry.trim();
+            let (kind, value) = entry
+                .split_once('=')
+                .ok_or_else(|| format!("invalid breakpoint '{entry}': expected format type=value (e.g. pc=C000, cycle=100, write=2006)"))?;
+            match kind.trim() {
+                "pc" => parse_hex_addr(value)
+                    .map(BreakpointKind::Pc)
+                    .ok_or_else(|| format!("invalid breakpoint address '{value}': expected a hex address (e.g. C000)")),
+                "cycle" => value
+                    .trim()
+                    .parse::<u64>()
+                    .map(BreakpointKind::Cycle)
+                    .map_err(|_| format!("invalid breakpoint cycle '{value}': expected a decimal number")),
+                "write" => parse_hex_addr(value)
+                    .map(BreakpointKind::WriteAddress)
+                    .ok_or_else(|| format!("invalid breakpoint address '{value}': expected a hex address (e.g. 2006)")),
+                other => Err(format!("invalid breakpoint type '{other}': expected pc, cycle, or write")),
+            }
+        })
+        .collect()
+}
+
+fn parse_hex_addr(s: &str) -> Option<u16> {
+    let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
+    u16::from_str_radix(s, 16).ok()
 }
 
 #[cfg(test)]
@@ -3017,5 +3067,96 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert!(config.oam_dram_decay_enabled);
+    }
+
+    #[test]
+    fn test_cli_breakpoint_pc_flag_adds_pc_breakpoint() {
+        use crate::debugging::breakpoints::BreakpointKind;
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "pc=C000".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(
+            config.breakpoints.contains(&BreakpointKind::Pc(0xC000)),
+            "expected PC breakpoint at 0xC000"
+        );
+    }
+
+    #[test]
+    fn test_cli_breakpoint_cycle_flag_adds_cycle_breakpoint() {
+        use crate::debugging::breakpoints::BreakpointKind;
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "cycle=12345".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(
+            config.breakpoints.contains(&BreakpointKind::Cycle(12345)),
+            "expected Cycle breakpoint at 12345"
+        );
+    }
+
+    #[test]
+    fn test_cli_breakpoint_write_flag_adds_write_breakpoint() {
+        use crate::debugging::breakpoints::BreakpointKind;
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "write=2006".to_string(),
+        ];
+        let config = parse_config(args);
+        assert!(
+            config.breakpoints.contains(&BreakpointKind::WriteAddress(0x2006)),
+            "expected WriteAddress breakpoint at 0x2006"
+        );
+    }
+
+    #[test]
+    fn test_cli_multiple_breakpoints_are_all_added() {
+        use crate::debugging::breakpoints::BreakpointKind;
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "pc=C000,write=2006".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.breakpoints.len(), 2, "expected 2 breakpoints from comma-separated list");
+    }
+
+    #[test]
+    fn test_cli_invalid_breakpoint_kind_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "cycfdsfd".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err(), "expected error for invalid breakpoint spec");
+        assert!(result.unwrap_err().contains("breakpoint"), "error message should mention 'breakpoint'");
+    }
+
+    #[test]
+    fn test_cli_invalid_breakpoint_pc_address_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "pc=ZZZZ".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err(), "expected error for invalid PC address in breakpoint");
+    }
+
+    #[test]
+    fn test_cli_invalid_breakpoint_cycle_value_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "cycle=notanumber".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err(), "expected error for invalid cycle value in breakpoint");
     }
 }

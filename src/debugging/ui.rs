@@ -1,5 +1,6 @@
 #[cfg(feature = "sdl")]
 use super::DebuggerSnapshot;
+use crate::debugging::breakpoints::{Breakpoint, BreakpointKind, BreakpointList};
 
 const DEBUGGER_OUTER_MARGIN: f32 = 10.0;
 
@@ -14,6 +15,23 @@ pub struct DebuggerUiAction {
     pub toggle_ppu_viewer: bool,
     pub increase_opacity: bool,
     pub decrease_opacity: bool,
+    /// Add a new breakpoint of this kind.
+    pub add_breakpoint: Option<BreakpointKind>,
+    /// Remove the breakpoint at this list index.
+    pub remove_breakpoint: Option<usize>,
+    /// Enable the breakpoint at this list index.
+    pub enable_breakpoint: Option<usize>,
+    /// Disable the breakpoint at this list index.
+    pub disable_breakpoint: Option<usize>,
+}
+
+/// Persistent state for the "add breakpoint" row in the breakpoint panel.
+#[derive(Debug, Default)]
+pub struct BreakpointAddUiState {
+    /// Index into the kind combo: 0=PC, 1=Cycle, 2=Write
+    pub kind_idx: usize,
+    /// Text input buffer for the breakpoint value.
+    pub value: String,
 }
 
 pub fn layout_model(display_size: [f32; 2]) -> (&'static str, [f32; 2], [f32; 2]) {
@@ -25,7 +43,13 @@ pub fn layout_model(display_size: [f32; 2]) -> (&'static str, [f32; 2], [f32; 2]
 }
 
 #[cfg(feature = "sdl")]
-pub fn render(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, alpha: f32) -> DebuggerUiAction {
+pub fn render(
+    ui: &imgui::Ui,
+    snapshot: &DebuggerSnapshot,
+    alpha: f32,
+    breakpoints: &BreakpointList,
+    add_state: &mut BreakpointAddUiState,
+) -> DebuggerUiAction {
     let mut action = DebuggerUiAction::default();
     let (title, pos, size) = layout_model(ui.io().display_size);
 
@@ -35,7 +59,7 @@ pub fn render(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, alpha: f32) -> Debugg
         .bring_to_front_on_focus(false)
         .bg_alpha(alpha)
         .build(|| {
-            render_cpu_window(ui, snapshot, &mut action);
+            render_cpu_window(ui, snapshot, breakpoints, add_state, &mut action);
         });
 
     action
@@ -71,8 +95,15 @@ fn cpu_window_layout(avail: [f32; 2], cursor: [f32; 2]) -> CpuWindowLayout {
 }
 
 #[cfg(feature = "sdl")]
-fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, action: &mut DebuggerUiAction) {
+fn render_cpu_window(
+    ui: &imgui::Ui,
+    snapshot: &DebuggerSnapshot,
+    breakpoints: &BreakpointList,
+    add_state: &mut BreakpointAddUiState,
+    action: &mut DebuggerUiAction,
+) {
     render_cpu_controls(ui, action);
+    render_breakpoint_panel(ui, breakpoints, add_state, action);
     ui.separator();
 
     let avail = ui.content_region_avail();
@@ -83,6 +114,84 @@ fn render_cpu_window(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, action: &mut D
 
     ui.set_cursor_pos(layout.right_pos);
     render_cpu_right_panel(ui, snapshot, [layout.right_w, avail[1]], layout.gap);
+}
+
+#[cfg(feature = "sdl")]
+fn render_breakpoint_panel(
+    ui: &imgui::Ui,
+    breakpoints: &BreakpointList,
+    add_state: &mut BreakpointAddUiState,
+    action: &mut DebuggerUiAction,
+) {
+    if !ui.collapsing_header("Breakpoints##bp_header", imgui::TreeNodeFlags::empty()) {
+        return;
+    }
+
+    render_existing_breakpoints(ui, breakpoints, action);
+    ui.separator();
+    render_add_breakpoint_row(ui, add_state, action);
+}
+
+#[cfg(feature = "sdl")]
+fn render_existing_breakpoints(
+    ui: &imgui::Ui,
+    breakpoints: &BreakpointList,
+    action: &mut DebuggerUiAction,
+) {
+    for (i, bp) in breakpoints.iter().enumerate() {
+        let mut enabled = bp.enabled;
+        if ui.checkbox(format!("##bp_en_{}", i), &mut enabled) {
+            if enabled {
+                action.enable_breakpoint = Some(i);
+            } else {
+                action.disable_breakpoint = Some(i);
+            }
+        }
+        ui.same_line();
+        ui.text(format_breakpoint_label(bp));
+        ui.same_line();
+        if ui.small_button(format!("X##bp_rm_{}", i)) {
+            action.remove_breakpoint = Some(i);
+        }
+    }
+}
+
+#[cfg(feature = "sdl")]
+fn render_add_breakpoint_row(
+    ui: &imgui::Ui,
+    add_state: &mut BreakpointAddUiState,
+    action: &mut DebuggerUiAction,
+) {
+    let kinds = ["PC", "Cycle", "Write"];
+    let _width = ui.push_item_width(60.0);
+    ui.combo_simple_string("##bp_kind", &mut add_state.kind_idx, &kinds);
+    drop(_width);
+    ui.same_line();
+    let _width = ui.push_item_width(120.0);
+    ui.input_text("##bp_val", &mut add_state.value).build();
+    drop(_width);
+    ui.same_line();
+    if ui.button("Add##bp_add") {
+        if let Some(kind) = parse_breakpoint_kind_from_input(add_state.kind_idx, &add_state.value)
+        {
+            action.add_breakpoint = Some(kind);
+            add_state.value.clear();
+        }
+    }
+}
+
+fn parse_breakpoint_kind_from_input(kind_idx: usize, value: &str) -> Option<BreakpointKind> {
+    match kind_idx {
+        0 => parse_hex_u16(value).map(BreakpointKind::Pc),
+        1 => value.trim().parse::<u64>().ok().map(BreakpointKind::Cycle),
+        2 => parse_hex_u16(value).map(BreakpointKind::WriteAddress),
+        _ => None,
+    }
+}
+
+fn parse_hex_u16(s: &str) -> Option<u16> {
+    let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
+    u16::from_str_radix(s, 16).ok()
 }
 
 fn render_cpu_controls(ui: &imgui::Ui, action: &mut DebuggerUiAction) {
@@ -294,6 +403,16 @@ fn format_hexdump_lines(base_addr: u16, bytes: &[u8]) -> Vec<String> {
     lines
 }
 
+/// Format a breakpoint as a short human-readable label for display in the UI.
+/// Returns a fixed-width string with type tag and value, e.g. `"PC  $C000"`.
+pub(crate) fn format_breakpoint_label(bp: &Breakpoint) -> String {
+    match bp.kind {
+        BreakpointKind::Pc(addr) => format!("PC  ${:04X}", addr),
+        BreakpointKind::Cycle(n) => format!("CYC {}", n),
+        BreakpointKind::WriteAddress(addr) => format!("WR  ${:04X}", addr),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -382,5 +501,52 @@ mod tests {
     fn test_debugger_ui_action_has_toggle_ppu_viewer_field() {
         let action = DebuggerUiAction::default();
         assert!(!action.toggle_ppu_viewer, "toggle_ppu_viewer should default to false");
+    }
+
+    // --- Breakpoint panel ---
+
+    #[test]
+    fn test_debugger_ui_action_has_add_breakpoint_field() {
+        let action = DebuggerUiAction::default();
+        assert!(action.add_breakpoint.is_none(), "add_breakpoint should default to None");
+    }
+
+    #[test]
+    fn test_debugger_ui_action_has_remove_breakpoint_field() {
+        let action = DebuggerUiAction::default();
+        assert!(action.remove_breakpoint.is_none(), "remove_breakpoint should default to None");
+    }
+
+    #[test]
+    fn test_debugger_ui_action_has_enable_breakpoint_field() {
+        let action = DebuggerUiAction::default();
+        assert!(action.enable_breakpoint.is_none(), "enable_breakpoint should default to None");
+    }
+
+    #[test]
+    fn test_debugger_ui_action_has_disable_breakpoint_field() {
+        let action = DebuggerUiAction::default();
+        assert!(action.disable_breakpoint.is_none(), "disable_breakpoint should default to None");
+    }
+
+    #[test]
+    fn test_format_breakpoint_label_pc() {
+        use crate::debugging::breakpoints::{Breakpoint, BreakpointKind};
+        let bp = Breakpoint::new(BreakpointKind::Pc(0xC000));
+        assert_eq!(format_breakpoint_label(&bp), "PC  $C000");
+    }
+
+    #[test]
+    fn test_format_breakpoint_label_cycle() {
+        use crate::debugging::breakpoints::{Breakpoint, BreakpointKind};
+        let bp = Breakpoint::new(BreakpointKind::Cycle(12345));
+        assert_eq!(format_breakpoint_label(&bp), "CYC 12345");
+    }
+
+    #[test]
+    fn test_format_breakpoint_label_write_address() {
+        use crate::debugging::breakpoints::{Breakpoint, BreakpointKind};
+        let bp = Breakpoint::new(BreakpointKind::WriteAddress(0x2006));
+        assert_eq!(format_breakpoint_label(&bp), "WR  $2006");
     }
 }

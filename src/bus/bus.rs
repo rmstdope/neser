@@ -209,6 +209,13 @@ impl Bus {
             .and_then(|cart| cart.borrow().state_path())
     }
 
+    pub fn cartridge_debug_path(&self) -> Option<PathBuf> {
+        self.cartridge
+            .borrow()
+            .as_ref()
+            .and_then(|cart| cart.borrow().debug_path())
+    }
+
     /// Debug-only-ish helper: read PRG ROM without affecting open bus or joypads.
     ///
     /// This is intended for debugger visualization (e.g., PRG ROM hexdumps).

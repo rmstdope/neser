@@ -152,6 +152,10 @@ impl Nes {
         self.bus.borrow().cartridge_state_path()
     }
 
+    pub fn debug_path(&self) -> Option<PathBuf> {
+        self.bus.borrow().cartridge_debug_path()
+    }
+
     /// Reset the NES system.
     ///
     /// - `soft_reset`: true for a reset-button style reset, false for power-on
