@@ -3,6 +3,22 @@ use super::DebuggerSnapshot;
 use crate::debugging::breakpoints::{Breakpoint, BreakpointKind, BreakpointList};
 
 const DEBUGGER_OUTER_MARGIN: f32 = 10.0;
+pub(crate) const DEBUGGER_UI_FONT_SCALE: f32 = 0.85;
+const CODE_VIEW_LONGEST_LINE_CHARS: f32 = 28.0;
+const CODE_VIEW_PREFIX_CHARS: f32 = 15.0;
+const CODE_VIEW_CHAR_WIDTH_AT_SCALE_ONE: f32 = 8.0;
+const CODE_VIEW_CHILD_WINDOW_HORIZONTAL_PADDING: f32 = 16.0;
+const CODE_VIEW_SCROLLBAR_GUTTER: f32 = 16.0;
+const CODE_VIEW_HIGHLIGHT_OVERDRAW_MARGIN: f32 = 4.0;
+const CPU_RIGHT_PANEL_MIN_WIDTH: f32 = 320.0;
+
+fn debugger_ui_font_scale() -> f32 {
+    DEBUGGER_UI_FONT_SCALE
+}
+
+fn apply_debugger_ui_font_scale(ui: &imgui::Ui) {
+    ui.set_window_font_scale(debugger_ui_font_scale());
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct DebuggerUiAction {
@@ -23,6 +39,10 @@ pub struct DebuggerUiAction {
     pub enable_breakpoint: Option<usize>,
     /// Disable the breakpoint at this list index.
     pub disable_breakpoint: Option<usize>,
+    /// Set PRG hexdump base address (normalized in snapshot/view state layer).
+    pub set_prg_hexdump_base: Option<u16>,
+    /// Move PRG hexdump base by byte delta (e.g. -16 or +16).
+    pub nudge_prg_hexdump_base_by_bytes: Option<i16>,
 }
 
 /// Persistent state for the "add breakpoint" row in the breakpoint panel.
@@ -32,8 +52,15 @@ pub struct BreakpointAddUiState {
     pub kind_idx: usize,
     /// Text input buffer for the breakpoint value.
     pub value: String,
+    /// Validation error shown inline when Add/Enter input is invalid.
+    pub error: Option<String>,
 }
 
+#[derive(Debug, Default)]
+pub struct HexdumpUiState {
+    pub address_input: String,
+    pub error: Option<String>,
+}
 pub fn layout_model(display_size: [f32; 2]) -> (&'static str, [f32; 2], [f32; 2]) {
     let [display_w, display_h] = display_size;
     let margin = DEBUGGER_OUTER_MARGIN;
@@ -49,6 +76,7 @@ pub fn render(
     alpha: f32,
     breakpoints: &BreakpointList,
     add_state: &mut BreakpointAddUiState,
+    hexdump_state: &mut HexdumpUiState,
 ) -> DebuggerUiAction {
     let mut action = DebuggerUiAction::default();
     let (title, pos, size) = layout_model(ui.io().display_size);
@@ -59,7 +87,15 @@ pub fn render(
         .bring_to_front_on_focus(false)
         .bg_alpha(alpha)
         .build(|| {
-            render_cpu_window(ui, snapshot, breakpoints, add_state, &mut action);
+            apply_debugger_ui_font_scale(ui);
+            render_cpu_window(
+                ui,
+                snapshot,
+                breakpoints,
+                add_state,
+                hexdump_state,
+                &mut action,
+            );
         });
 
     action
@@ -78,8 +114,9 @@ struct CpuWindowLayout {
 fn cpu_window_layout(avail: [f32; 2], cursor: [f32; 2]) -> CpuWindowLayout {
     // Layout: left code view, right column split into registers (top) + PRG hexdump (bottom)
     let gap = 8.0;
-    // Prefer more space for the right column so the hexdump can fit.
-    let left_w = (avail[0] * 0.40).max(0.0);
+    let target_left_w = code_view_target_width_for_font_scale(debugger_ui_font_scale());
+    let max_left_w = (avail[0] - gap - CPU_RIGHT_PANEL_MIN_WIDTH).max(0.0);
+    let left_w = target_left_w.min(max_left_w);
     let right_w = (avail[0] - left_w - gap).max(0.0);
 
     let left_pos = cursor;
@@ -94,12 +131,21 @@ fn cpu_window_layout(avail: [f32; 2], cursor: [f32; 2]) -> CpuWindowLayout {
     }
 }
 
+fn code_view_target_width_for_font_scale(font_scale: f32) -> f32 {
+    let total_line_chars = CODE_VIEW_PREFIX_CHARS + CODE_VIEW_LONGEST_LINE_CHARS;
+    (total_line_chars * CODE_VIEW_CHAR_WIDTH_AT_SCALE_ONE * font_scale)
+        + CODE_VIEW_CHILD_WINDOW_HORIZONTAL_PADDING
+        + CODE_VIEW_SCROLLBAR_GUTTER
+        + CODE_VIEW_HIGHLIGHT_OVERDRAW_MARGIN
+}
+
 #[cfg(feature = "sdl")]
 fn render_cpu_window(
     ui: &imgui::Ui,
     snapshot: &DebuggerSnapshot,
     breakpoints: &BreakpointList,
     add_state: &mut BreakpointAddUiState,
+    hexdump_state: &mut HexdumpUiState,
     action: &mut DebuggerUiAction,
 ) {
     render_cpu_controls(ui, action);
@@ -113,7 +159,14 @@ fn render_cpu_window(
     render_cpu_code_panel(ui, snapshot, [layout.left_w, avail[1]]);
 
     ui.set_cursor_pos(layout.right_pos);
-    render_cpu_right_panel(ui, snapshot, [layout.right_w, avail[1]], layout.gap);
+    render_cpu_right_panel(
+        ui,
+        snapshot,
+        [layout.right_w, avail[1]],
+        layout.gap,
+        hexdump_state,
+        action,
+    );
 }
 
 #[cfg(feature = "sdl")]
@@ -168,16 +221,33 @@ fn render_add_breakpoint_row(
     drop(_width);
     ui.same_line();
     let _width = ui.push_item_width(120.0);
-    ui.input_text("##bp_val", &mut add_state.value).build();
+    let enter_pressed = ui
+        .input_text("##bp_val", &mut add_state.value)
+        .flags(imgui::InputTextFlags::ENTER_RETURNS_TRUE)
+        .build();
     drop(_width);
     ui.same_line();
-    if ui.button("Add##bp_add") {
-        if let Some(kind) = parse_breakpoint_kind_from_input(add_state.kind_idx, &add_state.value)
-        {
-            action.add_breakpoint = Some(kind);
-            add_state.value.clear();
+    let add_clicked = ui.button("Add##bp_add");
+    if breakpoint_add_submit_requested(add_clicked, enter_pressed) {
+        match validate_breakpoint_input(add_state.kind_idx, &add_state.value) {
+            Ok(kind) => {
+                action.add_breakpoint = Some(kind);
+                add_state.value.clear();
+                add_state.error = None;
+            }
+            Err(message) => {
+                add_state.error = Some(message.to_string());
+            }
         }
     }
+
+    if let Some(message) = add_state.error.as_deref() {
+        ui.text_colored([1.0, 0.4, 0.4, 1.0], message);
+    }
+}
+
+fn breakpoint_add_submit_requested(add_clicked: bool, enter_pressed: bool) -> bool {
+    add_clicked || enter_pressed
 }
 
 fn parse_breakpoint_kind_from_input(kind_idx: usize, value: &str) -> Option<BreakpointKind> {
@@ -189,9 +259,29 @@ fn parse_breakpoint_kind_from_input(kind_idx: usize, value: &str) -> Option<Brea
     }
 }
 
+fn validate_breakpoint_input(kind_idx: usize, value: &str) -> Result<BreakpointKind, &'static str> {
+    parse_breakpoint_kind_from_input(kind_idx, value).ok_or("Invalid breakpoint value")
+}
+
 fn parse_hex_u16(s: &str) -> Option<u16> {
     let s = s.trim().trim_start_matches("0x").trim_start_matches("0X");
     u16::from_str_radix(s, 16).ok()
+}
+
+fn parse_hexdump_base_input(value: &str) -> Option<u16> {
+    parse_hex_u16(value).filter(|addr| *addr >= 0x8000)
+}
+
+fn validate_hexdump_input(value: &str) -> Result<u16, &'static str> {
+    parse_hexdump_base_input(value).ok_or("Invalid hexdump address")
+}
+
+fn normalize_hexdump_base_for_ui(addr: u16) -> u16 {
+    (addr & 0xFFF0).clamp(0x8000, 0xFF00)
+}
+
+fn hexdump_go_submit_requested(go_clicked: bool, enter_pressed: bool) -> bool {
+    go_clicked || enter_pressed
 }
 
 fn render_cpu_controls(ui: &imgui::Ui, action: &mut DebuggerUiAction) {
@@ -237,6 +327,7 @@ fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32
         .size(size)
         .border(true)
         .build(|| {
+            apply_debugger_ui_font_scale(ui);
             ui.text("Code");
             ui.separator();
 
@@ -267,11 +358,19 @@ fn render_cpu_code_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32
         });
 }
 
-fn render_cpu_right_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f32; 2], gap: f32) {
+fn render_cpu_right_panel(
+    ui: &imgui::Ui,
+    snapshot: &DebuggerSnapshot,
+    size: [f32; 2],
+    gap: f32,
+    hexdump_state: &mut HexdumpUiState,
+    action: &mut DebuggerUiAction,
+) {
     ui.child_window("cpu_right")
         .size(size)
         .border(false)
         .build(|| {
+            apply_debugger_ui_font_scale(ui);
             let right_avail = ui.content_region_avail();
             let (regs_h, hex_h) = cpu_right_panel_split(right_avail, gap);
 
@@ -279,6 +378,7 @@ fn render_cpu_right_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f3
                 .size([right_avail[0], regs_h])
                 .border(true)
                 .build(|| {
+                    apply_debugger_ui_font_scale(ui);
                     render_cpu_registers(ui, snapshot);
                 });
 
@@ -288,6 +388,8 @@ fn render_cpu_right_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f3
                 .size([right_avail[0], hex_h])
                 .border(true)
                 .build(|| {
+                    apply_debugger_ui_font_scale(ui);
+                    render_hexdump_controls(ui, snapshot.prg_hexdump_base, hexdump_state, action);
                     ui.text(format!(
                         "PRG-ROM hexdump @ {:04X}",
                         snapshot.prg_hexdump_base
@@ -301,6 +403,56 @@ fn render_cpu_right_panel(ui: &imgui::Ui, snapshot: &DebuggerSnapshot, size: [f3
                     }
                 });
         });
+}
+
+fn render_hexdump_controls(
+    ui: &imgui::Ui,
+    current_base: u16,
+    hexdump_state: &mut HexdumpUiState,
+    action: &mut DebuggerUiAction,
+) {
+    if hexdump_state.address_input.is_empty() {
+        hexdump_state.address_input = format!("{:04X}", current_base);
+    }
+
+    if ui.small_button("-##hex_step") {
+        action.nudge_prg_hexdump_base_by_bytes = Some(-16);
+        let next = normalize_hexdump_base_for_ui(current_base.saturating_sub(16));
+        hexdump_state.address_input = format!("{:04X}", next);
+    }
+    ui.same_line();
+    if ui.small_button("+##hex_step") {
+        action.nudge_prg_hexdump_base_by_bytes = Some(16);
+        let next = normalize_hexdump_base_for_ui(current_base.saturating_add(16));
+        hexdump_state.address_input = format!("{:04X}", next);
+    }
+    ui.same_line();
+
+    let _width = ui.push_item_width(90.0);
+    let enter_pressed = ui
+        .input_text("##hex_base", &mut hexdump_state.address_input)
+        .flags(imgui::InputTextFlags::ENTER_RETURNS_TRUE)
+        .build();
+    drop(_width);
+    ui.same_line();
+
+    let go_clicked = ui.small_button("Go##hex_base");
+    if hexdump_go_submit_requested(go_clicked, enter_pressed) {
+        match validate_hexdump_input(&hexdump_state.address_input) {
+            Ok(addr) => {
+                action.set_prg_hexdump_base = Some(addr);
+                hexdump_state.address_input = format!("{:04X}", normalize_hexdump_base_for_ui(addr));
+                hexdump_state.error = None;
+            }
+            Err(message) => {
+                hexdump_state.error = Some(message.to_string());
+            }
+        }
+    }
+
+    if let Some(message) = hexdump_state.error.as_deref() {
+        ui.text_colored([1.0, 0.4, 0.4, 1.0], message);
+    }
 }
 
 fn cpu_right_panel_split(avail: [f32; 2], gap: f32) -> (f32, f32) {
@@ -443,6 +595,22 @@ mod tests {
     }
 
     #[test]
+    fn test_debugger_ui_font_scale_uses_single_shared_constant() {
+        assert_close(debugger_ui_font_scale(), DEBUGGER_UI_FONT_SCALE);
+        assert!(debugger_ui_font_scale() > 0.0);
+    }
+
+    #[test]
+    fn test_code_view_target_width_scales_with_font_size() {
+        let width_small = code_view_target_width_for_font_scale(0.8);
+        let width_large = code_view_target_width_for_font_scale(1.2);
+
+        assert!(width_large > width_small);
+        assert_close(width_small, 311.2);
+        assert_close(width_large, 448.8);
+    }
+
+    #[test]
     fn test_cpu_register_lines_render_expected_values() {
         let mut nes = Nes::new(Config::default());
         nes.cpu.set_pc(0xC000);
@@ -486,21 +654,24 @@ mod tests {
         let avail = [100.0, 50.0];
         let layout = cpu_window_layout(avail, cursor);
 
-        // 40% left column width and a fixed gap of 8.0.
-        assert_close(layout.left_w, 40.0);
+        // With constrained width, keep space for right panel and collapse left panel.
+        assert_close(layout.left_w, 0.0);
         assert_close(layout.gap, 8.0);
-        assert_close(layout.right_w, 52.0);
+        assert_close(layout.right_w, 92.0);
 
         assert_close(layout.left_pos[0], 5.0);
         assert_close(layout.left_pos[1], 7.0);
-        assert_close(layout.right_pos[0], 5.0 + 40.0 + 8.0);
+        assert_close(layout.right_pos[0], 5.0 + 0.0 + 8.0);
         assert_close(layout.right_pos[1], 7.0);
     }
 
     #[test]
     fn test_debugger_ui_action_has_toggle_ppu_viewer_field() {
         let action = DebuggerUiAction::default();
-        assert!(!action.toggle_ppu_viewer, "toggle_ppu_viewer should default to false");
+        assert!(
+            !action.toggle_ppu_viewer,
+            "toggle_ppu_viewer should default to false"
+        );
     }
 
     // --- Breakpoint panel ---
@@ -508,25 +679,37 @@ mod tests {
     #[test]
     fn test_debugger_ui_action_has_add_breakpoint_field() {
         let action = DebuggerUiAction::default();
-        assert!(action.add_breakpoint.is_none(), "add_breakpoint should default to None");
+        assert!(
+            action.add_breakpoint.is_none(),
+            "add_breakpoint should default to None"
+        );
     }
 
     #[test]
     fn test_debugger_ui_action_has_remove_breakpoint_field() {
         let action = DebuggerUiAction::default();
-        assert!(action.remove_breakpoint.is_none(), "remove_breakpoint should default to None");
+        assert!(
+            action.remove_breakpoint.is_none(),
+            "remove_breakpoint should default to None"
+        );
     }
 
     #[test]
     fn test_debugger_ui_action_has_enable_breakpoint_field() {
         let action = DebuggerUiAction::default();
-        assert!(action.enable_breakpoint.is_none(), "enable_breakpoint should default to None");
+        assert!(
+            action.enable_breakpoint.is_none(),
+            "enable_breakpoint should default to None"
+        );
     }
 
     #[test]
     fn test_debugger_ui_action_has_disable_breakpoint_field() {
         let action = DebuggerUiAction::default();
-        assert!(action.disable_breakpoint.is_none(), "disable_breakpoint should default to None");
+        assert!(
+            action.disable_breakpoint.is_none(),
+            "disable_breakpoint should default to None"
+        );
     }
 
     #[test]
@@ -548,5 +731,44 @@ mod tests {
         use crate::debugging::breakpoints::{Breakpoint, BreakpointKind};
         let bp = Breakpoint::new(BreakpointKind::WriteAddress(0x2006));
         assert_eq!(format_breakpoint_label(&bp), "WR  $2006");
+    }
+
+    #[test]
+    fn test_parse_hexdump_base_input_hex_in_prg_range() {
+        assert_eq!(parse_hexdump_base_input("8000"), Some(0x8000));
+        assert_eq!(parse_hexdump_base_input("0xC123"), Some(0xC123));
+        assert_eq!(parse_hexdump_base_input("7FFF"), None);
+    }
+
+    #[test]
+    fn test_hexdump_go_submit_accepts_button_or_enter() {
+        assert!(hexdump_go_submit_requested(true, false));
+        assert!(hexdump_go_submit_requested(false, true));
+        assert!(hexdump_go_submit_requested(true, true));
+        assert!(!hexdump_go_submit_requested(false, false));
+    }
+
+    #[test]
+    fn test_breakpoint_add_submit_accepts_button_or_enter() {
+        assert!(breakpoint_add_submit_requested(true, false));
+        assert!(breakpoint_add_submit_requested(false, true));
+        assert!(breakpoint_add_submit_requested(true, true));
+        assert!(!breakpoint_add_submit_requested(false, false));
+    }
+
+    #[test]
+    fn test_validate_breakpoint_input_returns_error_for_invalid_value() {
+        assert_eq!(
+            validate_breakpoint_input(0, "XYZ"),
+            Err("Invalid breakpoint value")
+        );
+    }
+
+    #[test]
+    fn test_validate_hexdump_input_returns_error_for_invalid_address() {
+        assert_eq!(
+            validate_hexdump_input("7FFF"),
+            Err("Invalid hexdump address")
+        );
     }
 }

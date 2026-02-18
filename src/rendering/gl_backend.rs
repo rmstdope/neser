@@ -4,7 +4,7 @@ use crate::debugging::DebuggerViewState;
 use crate::debugging::breakpoints::BreakpointList;
 use crate::debugging::log_info;
 use crate::debugging::ppu_viewer::{PpuViewerSnapshot, render_nametables_rgba, render_pattern_tables_rgba};
-use crate::debugging::ui::{self as debugger_ui, BreakpointAddUiState};
+use crate::debugging::ui::{self as debugger_ui, BreakpointAddUiState, HexdumpUiState};
 use crate::rendering::input::{InputEvent, apply_input};
 use crate::rendering::shader_manager::ShaderManager;
 use std::ffi::c_void;
@@ -60,6 +60,7 @@ pub struct GlBackend {
     debugger_alpha: f32,
     breakpoints: BreakpointList,
     bp_add_state: BreakpointAddUiState,
+    hexdump_ui_state: HexdumpUiState,
     shader_manager: ShaderManager,
 }
 
@@ -358,6 +359,7 @@ impl GlBackend {
             debugger_alpha: 1.0,
             breakpoints: BreakpointList::default(),
             bp_add_state: BreakpointAddUiState::default(),
+            hexdump_ui_state: HexdumpUiState::default(),
             shader_manager,
         })
     }
@@ -535,9 +537,23 @@ impl GlBackend {
 
             if show_debugger {
                 let snapshot = self.debugger_view_state.snapshot(nes);
-                action = debugger_ui::render(ui, &snapshot, self.debugger_alpha, &self.breakpoints, &mut self.bp_add_state);
+                action = debugger_ui::render(
+                    ui,
+                    &snapshot,
+                    self.debugger_alpha,
+                    &self.breakpoints,
+                    &mut self.bp_add_state,
+                    &mut self.hexdump_ui_state,
+                );
                 if action.toggle_ppu_viewer {
                     self.debugger_view_state.toggle_ppu_viewer();
+                }
+                if let Some(base) = action.set_prg_hexdump_base {
+                    self.debugger_view_state.set_prg_hexdump_base(base);
+                }
+                if let Some(delta) = action.nudge_prg_hexdump_base_by_bytes {
+                    self.debugger_view_state
+                        .nudge_prg_hexdump_base_by_bytes_from(snapshot.prg_hexdump_base, delta);
                 }
                 if action.increase_opacity {
                     self.debugger_alpha = (self.debugger_alpha + 0.1).min(1.0);

@@ -9,11 +9,21 @@ use super::types::{
 pub struct DebuggerViewState {
     cpu_disasm: CpuDisasmWindowState,
     show_ppu_viewer: bool,
+    prg_hexdump_base: Option<u16>,
 }
 
 impl DebuggerViewState {
     pub fn snapshot(&mut self, nes: &Nes) -> DebuggerSnapshot {
-        snapshot_with_disasm_state(nes, &mut self.cpu_disasm)
+        if let Some(base) = self.prg_hexdump_base {
+            snapshot_impl(
+                nes,
+                Some(&mut self.cpu_disasm),
+                DisasmWindowConfig::default(),
+                Some(base),
+            )
+        } else {
+            snapshot_with_disasm_state(nes, &mut self.cpu_disasm)
+        }
     }
 
     pub fn toggle_ppu_viewer(&mut self) {
@@ -22,6 +32,29 @@ impl DebuggerViewState {
 
     pub fn is_ppu_viewer_visible(&self) -> bool {
         self.show_ppu_viewer
+    }
+
+    pub fn set_prg_hexdump_base(&mut self, base: u16) {
+        self.prg_hexdump_base = Some(normalize_prg_hexdump_base(base));
+    }
+
+    pub fn nudge_prg_hexdump_base_by_bytes(&mut self, delta: i16) {
+        self.nudge_prg_hexdump_base_by_bytes_from(0x8000, delta);
+    }
+
+    pub fn nudge_prg_hexdump_base_by_bytes_from(&mut self, visible_base: u16, delta: i16) {
+        let current = self.prg_hexdump_base.unwrap_or(visible_base);
+        let nudged = if delta >= 0 {
+            current.saturating_add(delta as u16)
+        } else {
+            current.saturating_sub((-delta) as u16)
+        };
+        self.prg_hexdump_base = Some(normalize_prg_hexdump_base(nudged));
+    }
+
+    #[cfg(test)]
+    pub fn prg_hexdump_base(&self) -> Option<u16> {
+        self.prg_hexdump_base
     }
 }
 
@@ -32,7 +65,7 @@ pub struct Debugger {
 
 impl Debugger {
     pub fn snapshot(&self, nes: &Nes) -> DebuggerSnapshot {
-        snapshot_impl(nes, None, self.disasm)
+        snapshot_impl(nes, None, self.disasm, None)
     }
 
     pub fn snapshot_with_disasm_state(
@@ -40,7 +73,7 @@ impl Debugger {
         nes: &Nes,
         state: &mut CpuDisasmWindowState,
     ) -> DebuggerSnapshot {
-        snapshot_impl(nes, Some(state), self.disasm)
+        snapshot_impl(nes, Some(state), self.disasm, None)
     }
 }
 
@@ -52,6 +85,11 @@ fn prg_hexdump_base_from_pc(pc: u16) -> u16 {
     prg_hexdump_base
 }
 
+fn normalize_prg_hexdump_base(base: u16) -> u16 {
+    let aligned = base & 0xFFF0;
+    aligned.clamp(0x8000, 0xFF00)
+}
+
 fn read_vectors_for_snapshot(nes: &Nes) -> (u16, u16) {
     let memory = nes.bus.borrow();
     let nmi_lo = memory.read_cpu_for_debugger(0xFFFA) as u16;
@@ -61,11 +99,17 @@ fn read_vectors_for_snapshot(nes: &Nes) -> (u16, u16) {
     ((nmi_hi << 8) | nmi_lo, (irq_hi << 8) | irq_lo)
 }
 
-fn build_snapshot(nes: &Nes, cpu_disasm: Vec<CpuDisasmLineSnapshot>) -> DebuggerSnapshot {
+fn build_snapshot(
+    nes: &Nes,
+    cpu_disasm: Vec<CpuDisasmLineSnapshot>,
+    prg_hexdump_base_override: Option<u16>,
+) -> DebuggerSnapshot {
     let cpu_cycles = nes.cpu.get_total_cycles();
     let pc = nes.cpu.pc();
 
-    let prg_hexdump_base = prg_hexdump_base_from_pc(pc);
+    let prg_hexdump_base = prg_hexdump_base_override
+        .map(normalize_prg_hexdump_base)
+        .unwrap_or_else(|| prg_hexdump_base_from_pc(pc));
 
     let prg_hexdump_bytes = {
         let memory = nes.bus.borrow();
@@ -141,6 +185,7 @@ fn snapshot_impl(
     nes: &Nes,
     state: Option<&mut CpuDisasmWindowState>,
     disasm_config: DisasmWindowConfig,
+    prg_hexdump_base_override: Option<u16>,
 ) -> DebuggerSnapshot {
     let cpu_disasm = {
         let memory = nes.bus.borrow();
@@ -159,7 +204,7 @@ fn snapshot_impl(
         }
     };
 
-    build_snapshot(nes, cpu_disasm)
+    build_snapshot(nes, cpu_disasm, prg_hexdump_base_override)
 }
 
 pub fn snapshot(nes: &Nes) -> DebuggerSnapshot {
@@ -252,7 +297,6 @@ mod tests {
         prg_rom[0x0004] = 0x00;
         let cartridge = Cartridge::from_parts(prg_rom, vec![], MirroringMode::Horizontal);
         nes.insert_cartridge(cartridge);
-
         nes.cpu.set_pc(0x8000);
 
         let snap = snapshot(&nes);
@@ -267,5 +311,27 @@ mod tests {
         assert!(snap.cpu_disasm.iter().any(|l| l.text.contains("TAX")));
         assert!(snap.cpu_disasm.iter().any(|l| l.text.contains("INX")));
         assert!(snap.cpu_disasm.iter().any(|l| l.text.contains("BRK")));
+    }
+
+    #[test]
+    fn test_debugger_view_state_prg_hexdump_base_set_and_step_by_16() {
+        let mut state = DebuggerViewState::default();
+
+        state.set_prg_hexdump_base(0xC120);
+        assert_eq!(state.prg_hexdump_base(), Some(0xC120));
+
+        state.nudge_prg_hexdump_base_by_bytes(16);
+        assert_eq!(state.prg_hexdump_base(), Some(0xC130));
+
+        state.nudge_prg_hexdump_base_by_bytes(-16);
+        assert_eq!(state.prg_hexdump_base(), Some(0xC120));
+    }
+
+    #[test]
+    fn test_first_hexdump_nudge_uses_visible_base_not_default_8000() {
+        let mut state = DebuggerViewState::default();
+
+        state.nudge_prg_hexdump_base_by_bytes_from(0xC000, 16);
+        assert_eq!(state.prg_hexdump_base(), Some(0xC010));
     }
 }
