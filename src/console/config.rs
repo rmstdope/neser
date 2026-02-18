@@ -842,7 +842,7 @@ impl Config {
 
         // Breakpoints from --breakpoint flag (comma-separated list)
         if let Some(value) = Self::parse_string_arg(args, "--breakpoint") {
-            self.breakpoints = parse_breakpoint_list(&value);
+            self.breakpoints = parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
         }
 
         Ok(())
@@ -1503,17 +1503,27 @@ impl Config {
 /// - `cycle=N` — Cycle breakpoint (decimal number)
 /// - `write=ADDR` — Write-address breakpoint (hex address)
 ///
-/// Unrecognised or malformed entries are silently ignored.
-fn parse_breakpoint_list(spec: &str) -> Vec<BreakpointKind> {
+/// Returns an error string if any entry is unrecognised or malformed.
+fn parse_breakpoint_list(spec: &str) -> Result<Vec<BreakpointKind>, String> {
     spec.split(',')
-        .filter_map(|entry| {
+        .map(|entry| {
             let entry = entry.trim();
-            let (kind, value) = entry.split_once('=')?;
+            let (kind, value) = entry
+                .split_once('=')
+                .ok_or_else(|| format!("invalid breakpoint '{entry}': expected format type=value (e.g. pc=C000, cycle=100, write=2006)"))?;
             match kind.trim() {
-                "pc" => parse_hex_addr(value).map(BreakpointKind::Pc),
-                "cycle" => value.trim().parse::<u64>().ok().map(BreakpointKind::Cycle),
-                "write" => parse_hex_addr(value).map(BreakpointKind::WriteAddress),
-                _ => None,
+                "pc" => parse_hex_addr(value)
+                    .map(BreakpointKind::Pc)
+                    .ok_or_else(|| format!("invalid breakpoint address '{value}': expected a hex address (e.g. C000)")),
+                "cycle" => value
+                    .trim()
+                    .parse::<u64>()
+                    .map(BreakpointKind::Cycle)
+                    .map_err(|_| format!("invalid breakpoint cycle '{value}': expected a decimal number")),
+                "write" => parse_hex_addr(value)
+                    .map(BreakpointKind::WriteAddress)
+                    .ok_or_else(|| format!("invalid breakpoint address '{value}': expected a hex address (e.g. 2006)")),
+                other => Err(format!("invalid breakpoint type '{other}': expected pc, cycle, or write")),
             }
         })
         .collect()
@@ -3114,5 +3124,39 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(config.breakpoints.len(), 2, "expected 2 breakpoints from comma-separated list");
+    }
+
+    #[test]
+    fn test_cli_invalid_breakpoint_kind_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "cycfdsfd".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err(), "expected error for invalid breakpoint spec");
+        assert!(result.unwrap_err().contains("breakpoint"), "error message should mention 'breakpoint'");
+    }
+
+    #[test]
+    fn test_cli_invalid_breakpoint_pc_address_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "pc=ZZZZ".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err(), "expected error for invalid PC address in breakpoint");
+    }
+
+    #[test]
+    fn test_cli_invalid_breakpoint_cycle_value_errors() {
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "cycle=notanumber".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(result.is_err(), "expected error for invalid cycle value in breakpoint");
     }
 }
