@@ -608,6 +608,7 @@ impl SdlEventLoop {
 
     /// Finish recording by saving the autorun file with CRC.
     fn finish_recording(&mut self, nes: &Nes) -> Result<(), String> {
+        self.save_breakpoints_to_debug_file(nes);
         let Some(ref mut autorun_state) = self.autorun_state else {
             return Ok(());
         };
@@ -858,6 +859,8 @@ impl SdlEventLoop {
     ///
     /// Currently returns Ok(()) in all cases, but the Result type is kept for future error handling.
     pub fn run(&mut self, nes: &mut Nes, tracing: Tracing) -> Result<(), String> {
+        self.load_breakpoints_from_debug_file(nes);
+
         let mut last_audio_stats_print = Instant::now();
         let mut last_cpu_cycles = nes.cpu.get_total_cycles();
         let mut last_perf_instant = Instant::now();
@@ -1185,6 +1188,28 @@ impl SdlEventLoop {
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn add_write_address_breakpoint(&mut self, addr: u16) {
         self.breakpoints.add(BreakpointKind::WriteAddress(addr));
+    }
+
+    pub(crate) fn add_pc_breakpoint(&mut self, addr: u16) {
+        self.add_breakpoint(addr);
+    }
+
+    pub(crate) fn breakpoint_count(&self) -> usize {
+        self.breakpoints.len()
+    }
+
+    pub(crate) fn load_breakpoints_from_debug_file(&mut self, nes: &Nes) {
+        let Some(path) = nes.debug_path() else { return };
+        let Ok(text) = std::fs::read_to_string(&path) else { return };
+        self.breakpoints = BreakpointList::load_from_str(&text);
+    }
+
+    pub(crate) fn save_breakpoints_to_debug_file(&self, nes: &Nes) {
+        let Some(path) = nes.debug_path() else { return };
+        let content = self.breakpoints.save_to_string();
+        if let Err(err) = std::fs::write(&path, content) {
+            log_info(format!("Failed to save breakpoints: {err}"));
+        }
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -3884,5 +3909,89 @@ mod tests {
         // STA $1234 at $8001: writes to $1234, should pause.
         tick_headless_once(&mut event_loop, &mut nes);
         assert!(event_loop.is_paused(), "should pause when watched address is written");
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_breakpoints_from_debug_file_populates_breakpoints() {
+        use crate::app_context::AppContext;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+
+        let debug_path = rom_path.with_extension("debug");
+        fs::write(&debug_path, "pc 0xC000 enabled\nwrite 0x2006 disabled\n")
+            .expect("Failed to write .debug file");
+
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &AppContext::new())
+            .expect("Failed to load ROM");
+        let mut nes = Nes::new(Config::default());
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        event_loop.load_breakpoints_from_debug_file(&nes);
+
+        assert_eq!(event_loop.breakpoint_count(), 2, "expected 2 breakpoints loaded");
+    }
+
+    #[test]
+    #[serial]
+    fn test_load_breakpoints_from_debug_file_does_nothing_when_no_file() {
+        use crate::app_context::AppContext;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &AppContext::new())
+            .expect("Failed to load ROM");
+        let mut nes = Nes::new(Config::default());
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        event_loop.load_breakpoints_from_debug_file(&nes);
+
+        assert_eq!(event_loop.breakpoint_count(), 0, "expected no breakpoints when file absent");
+    }
+
+    #[test]
+    #[serial]
+    fn test_save_breakpoints_to_debug_file_writes_correct_content() {
+        use crate::app_context::AppContext;
+
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let rom_path = copy_test_rom(&temp_dir);
+
+        let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &AppContext::new())
+            .expect("Failed to load ROM");
+        let mut nes = Nes::new(Config::default());
+        nes.insert_cartridge(cart);
+        nes.reset(false);
+
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        event_loop.add_pc_breakpoint(0xC000);
+        event_loop.save_breakpoints_to_debug_file(&nes);
+
+        let debug_path = rom_path.with_extension("debug");
+        let content = fs::read_to_string(&debug_path).expect("Expected .debug file to be written");
+        assert!(content.contains("pc 0xC000 enabled"), "unexpected content: {content}");
+    }
+
+    #[test]
+    #[serial]
+    fn test_save_breakpoints_to_debug_file_is_noop_without_rom_path() {
+        let config = default_config();
+        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let nes = Nes::new(Config::default()); // no cartridge inserted
+        event_loop.add_pc_breakpoint(0xC000);
+        // Should not panic
+        event_loop.save_breakpoints_to_debug_file(&nes);
     }
 }

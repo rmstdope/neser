@@ -217,6 +217,12 @@ impl Cartridge {
             .map(|path| path.with_extension(STATE_FILE_EXTENSION))
     }
 
+    pub fn debug_path(&self) -> Option<PathBuf> {
+        self.rom_path
+            .as_ref()
+            .map(|path| path.with_extension("debug"))
+    }
+
     pub fn save_ram(&self) -> io::Result<()> {
         if !self.can_persist_save_ram() {
             return Ok(());
