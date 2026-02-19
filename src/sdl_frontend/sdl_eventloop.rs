@@ -56,6 +56,7 @@ pub struct SdlEventLoop {
     debugger_renderer: Option<Box<dyn DebuggerRenderer>>,
     audio: Option<SdlNesAudio>,
     controllers: Vec<sdl2::controller::GameController>,
+    game_controller_subsystem: Option<sdl2::GameControllerSubsystem>,
     controller_player_map: HashMap<u32, u8>, // Maps controller instance_id to player number (1 or 2)
     last_mouse_position: Option<(i32, i32)>,
     cursor_hidden: bool,
@@ -316,10 +317,11 @@ impl SdlEventLoop {
         };
 
         // Initialize gamepads if enabled
-        let (controllers, controller_player_map) = if gamepads_enabled {
-            Self::init_gamepads(&sdl_context)?
+        let (game_controller_subsystem, controllers, controller_player_map) = if gamepads_enabled {
+            let (subsystem, controllers, map) = Self::init_gamepads(&sdl_context)?;
+            (Some(subsystem), controllers, map)
         } else {
-            (Vec::new(), HashMap::new())
+            (None, Vec::new(), HashMap::new())
         };
 
         let event_loop = SdlEventLoop {
@@ -341,6 +343,7 @@ impl SdlEventLoop {
             debugger_renderer: None,
             audio,
             controllers,
+            game_controller_subsystem,
             controller_player_map,
             last_mouse_position: None,
             cursor_hidden: false,
@@ -402,10 +405,17 @@ impl SdlEventLoop {
     /// Attempts to open up to 2 game controllers. The first controller found
     /// is assigned to player 1, the second to player 2.
     ///
-    /// Returns a tuple of (controllers vector, player mapping HashMap)
+    /// Returns a tuple of (subsystem, controllers vector, player mapping HashMap)
     fn init_gamepads(
         sdl_context: &sdl2::Sdl,
-    ) -> Result<(Vec<sdl2::controller::GameController>, HashMap<u32, u8>), String> {
+    ) -> Result<
+        (
+            sdl2::GameControllerSubsystem,
+            Vec<sdl2::controller::GameController>,
+            HashMap<u32, u8>,
+        ),
+        String,
+    > {
         let game_controller_subsystem = sdl_context.game_controller()?;
         let _num = game_controller_subsystem
             .load_mappings("gamecontrollerdb.txt")
@@ -447,7 +457,11 @@ impl SdlEventLoop {
             }
         }
 
-        Ok((controllers, controller_player_map))
+        Ok((
+            game_controller_subsystem,
+            controllers,
+            controller_player_map,
+        ))
     }
 
     /// Capture current button states for both players as u8 bitmasks.
@@ -1973,12 +1987,12 @@ F12: Fullscreen\n\
             return;
         }
 
-        let game_controller_subsystem = match self._sdl_context.game_controller() {
-            Ok(subsystem) => subsystem,
-            Err(e) => {
-                log_info(format!("Failed to get game controller subsystem: {}", e));
-                return;
-            }
+        let Some(ref game_controller_subsystem) = self.game_controller_subsystem else {
+            log_info(format!(
+                "Controller {} added but gamepad support is disabled",
+                which
+            ));
+            return;
         };
 
         if !game_controller_subsystem.is_game_controller(which) {
@@ -2600,6 +2614,23 @@ mod tests {
 
         assert_eq!(read_joypad_buttons(&mut nes, 2), [1, 0, 0, 0, 0, 0, 0, 0]);
         assert_eq!(read_joypad_buttons(&mut nes, 1), [0; 8]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_gamepad_subsystem_retained_when_gamepads_enabled() {
+        // When gamepads are enabled and no controllers are connected at startup,
+        // the GameControllerSubsystem must be retained so that SDL continues to
+        // fire ControllerDeviceAdded events for hot-plugged controllers.
+        let mut config = Config::with_defaults();
+        config.gamepads_enabled = true;
+        let event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+
+        assert!(
+            event_loop.game_controller_subsystem.is_some(),
+            "GameControllerSubsystem must be stored when gamepads are enabled"
+        );
     }
 
     #[test]
