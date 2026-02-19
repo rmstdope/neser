@@ -9,6 +9,7 @@ use super::cnrom::CNROMMapper;
 use super::colordreams::ColorDreamsMapper;
 use super::cprom::CpromMapper;
 use super::gxrom::GxROMMapper;
+use super::mapper6::Mapper6Mapper;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
@@ -712,7 +713,7 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     4, // MMC3 is constructed with CRC-specific behavior.
-    0, 1, 2, 3, 5, 7, 9, 10, 11, 13, 15, 16, 19, 21, 22, 23, 24, 25, 26, 34, 66, 68, 69, 71, 78,
+    0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 15, 16, 19, 21, 22, 23, 24, 25, 26, 34, 66, 68, 69, 71, 78,
     206,
 ];
 
@@ -754,6 +755,18 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
             chr_rom,
             mirroring,
             prg_ram_banks_8k,
+        )));
+    }
+
+    if mapper_number == 6 {
+        let submapper = if metadata.submapper == 0 {
+            1
+        } else {
+            metadata.submapper
+        };
+        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
+        return Ok(Box::new(Mapper6Mapper::new(
+            prg_rom, chr_rom, mirroring, submapper,
         )));
     }
 
