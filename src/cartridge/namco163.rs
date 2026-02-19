@@ -218,6 +218,18 @@ impl Namco163Mapper {
         self.chr_nt_regs[8 + quadrant]
     }
 
+    fn normalize_nametable_addr(addr: u16) -> Option<u16> {
+        let addr = addr & 0x2FFF;
+        (0x2000..=0x2FFF).contains(&addr).then_some(addr)
+    }
+
+    fn nametable_bank_and_offset(&self, addr: u16) -> Option<(u8, usize)> {
+        let addr = Self::normalize_nametable_addr(addr)?;
+        let bank = self.nametable_bank_for_addr(addr);
+        let offset = (addr & 0x03FF) as usize;
+        Some((bank, offset))
+    }
+
     fn wram_write_enabled(&self, addr: u16) -> bool {
         let has_valid_wram_protect_prefix = (0x40..=0x4E).contains(&self.wram_protect);
         if !has_valid_wram_protect_prefix {
@@ -230,18 +242,22 @@ impl Namco163Mapper {
     }
 
     fn nametable_ciram_index(&self, addr: u16) -> Option<usize> {
-        let addr = addr & 0x2FFF;
-        if !(0x2000..=0x2FFF).contains(&addr) {
-            return None;
-        }
-
-        let bank = self.nametable_bank_for_addr(addr);
+        let (bank, offset) = self.nametable_bank_and_offset(addr)?;
         if bank < Self::CIRAM_BANK_THRESHOLD {
             return None;
         }
 
-        let offset = (addr & 0x03FF) as usize;
         Some(Self::ciram_index(bank, offset))
+    }
+
+    fn nametable_chr_index(&self, addr: u16) -> Option<usize> {
+        let (bank, offset) = self.nametable_bank_and_offset(addr)?;
+        if bank >= Self::CIRAM_BANK_THRESHOLD {
+            return None;
+        }
+
+        let bank = self.chr_bank_index_1k(bank);
+        Some(bank * Self::CHR_BANK_SIZE_1K + offset)
     }
 
     #[cfg(test)]
@@ -517,15 +533,23 @@ impl Mapper for Namco163Mapper {
     }
 
     fn read_nametable(&mut self, addr: u16) -> Option<u8> {
-        self.nametable_ciram_index(addr).map(|index| self.ciram[index])
+        if let Some(index) = self.nametable_ciram_index(addr) {
+            return Some(self.ciram[index]);
+        }
+        self.nametable_chr_index(addr)
+            .map(|index| self.chr_memory.read_at_index(index))
     }
 
     fn write_nametable(&mut self, addr: u16, value: u8) -> bool {
-        let Some(index) = self.nametable_ciram_index(addr) else {
-            return false;
-        };
-        self.ciram[index] = value;
-        true
+        if let Some(index) = self.nametable_ciram_index(addr) {
+            self.ciram[index] = value;
+            return true;
+        }
+        if let Some(index) = self.nametable_chr_index(addr) {
+            self.chr_memory.write_at_index(index, value);
+            return true;
+        }
+        false
     }
 
     fn cpu_cycle(&mut self) {
@@ -890,6 +914,33 @@ mod tests {
 
         // Then $A000 PRG bank should use only low 6 bits for bank selection
         assert_eq!(mapper.read_prg(0xA000), 3);
+    }
+
+    #[test]
+    fn namco163_c000_nt_bank_below_e0_reads_from_chr_memory() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 16);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Given nametable page register points to CHR bank 2
+        mapper.write_prg(0xC000, 0x02);
+
+        // Then nametable read should be provided by mapper from CHR memory
+        assert_eq!(mapper.read_nametable(0x2000), Some(2));
+    }
+
+    #[test]
+    fn namco163_c000_nt_bank_below_e0_writes_chr_ram_when_present() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_ram = Vec::new(); // CHR-RAM configuration
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_ram, NametableLayout::Vertical);
+
+        // Given nametable page register points to CHR bank 1
+        mapper.write_prg(0xC000, 0x01);
+
+        // When writing through nametable path, mapper should handle it in CHR-RAM
+        assert!(mapper.write_nametable(0x2000, 0x7B));
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x7B));
     }
 
     #[test]
