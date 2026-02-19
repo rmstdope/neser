@@ -7,7 +7,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::cartridge::{ConsoleType, TimingMode};
+use crate::cartridge::{ConsoleType, MirroringMode, TimingMode};
 
 const ROM_DB_COLUMN_COUNT: usize = 22;
 
@@ -22,7 +22,7 @@ pub struct RomDbEntry {
     pub rom_class: Option<String>,
     pub mapper: Option<u16>,
     pub submapper: Option<u8>,
-    pub nametable_layout: Option<NametableLayout>,
+    pub nametable_layout: Option<MirroringMode>,
     pub prg_rom_size: Option<u32>,
     pub prg_rom_crc: Option<u32>,
     pub prg_nvram_size: Option<u32>,
@@ -35,17 +35,6 @@ pub struct RomDbEntry {
     pub vs_hardware_type: Option<VsHardwareType>,
     pub vs_ppu_type: Option<VsPpuType>,
     pub expansion_type: Option<ExpansionType>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum NametableLayout {
-    Horizontal,
-    Vertical,
-    OneScreenLower,
-    OneScreenUpper,
-    FourScreen,
-    MapperControlled,
-    Unknown(u8),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -212,22 +201,19 @@ fn parse_optional_timing_mode(raw: &str) -> Option<TimingMode> {
     })
 }
 
-fn parse_optional_nametable_layout(raw: &str) -> Option<NametableLayout> {
+fn parse_optional_nametable_layout(raw: &str) -> Option<MirroringMode> {
     let value = parse_optional_field(raw)?;
-    Some(match value.as_str() {
-        "H" | "h" => NametableLayout::Horizontal,
-        "V" | "v" => NametableLayout::Vertical,
-        "0" => NametableLayout::Horizontal,
-        "1" => NametableLayout::Vertical,
-        "2" => NametableLayout::OneScreenLower,
-        "3" => NametableLayout::OneScreenUpper,
-        "4" => NametableLayout::FourScreen,
-        "5" => NametableLayout::MapperControlled,
-        _ => value
-            .parse::<u8>()
-            .map(NametableLayout::Unknown)
-            .unwrap_or(NametableLayout::Unknown(0xFF)),
-    })
+    match value.as_str() {
+        "H" | "h" => Some(MirroringMode::Horizontal),
+        "V" | "v" => Some(MirroringMode::Vertical),
+        "0" => Some(MirroringMode::Horizontal),
+        "1" => Some(MirroringMode::Vertical),
+        "2" => Some(MirroringMode::SingleScreenLower),
+        "3" => Some(MirroringMode::SingleScreenUpper),
+        "4" => Some(MirroringMode::FourScreen),
+        "5" => None,
+        _ => None,
+    }
 }
 
 fn parse_optional_vs_hardware_type(raw: &str) -> Option<VsHardwareType> {
@@ -343,6 +329,19 @@ const MMC3_ALTERNATE_IRQ_CRCS: &[u32] = &[
     0xA512BDF6, // 6-MMC6.nes
 ];
 
+/// CRC32 values for mapper 11 ROMs that should disable bus conflict emulation.
+const MAPPER11_NO_BUS_CONFLICT_CRCS: &[u32] = &[];
+
+/// CRC32 values for mapper 11 ROMs that latch register writes from $6000-$FFFF.
+const MAPPER11_LOW_REGISTER_DECODE_CRCS: &[u32] = &[
+    0x231BC76E, // Chiller (HES) [!]
+];
+
+/// CRC32 values for mapper 11 ROMs that require suppressing NTSC odd-frame skip.
+const MAPPER11_SUPPRESS_NTSC_ODD_FRAME_SKIP_CRCS: &[u32] = &[
+    0x231BC76E, // Chiller (HES) [!]
+];
+
 /// CRC32 values for ROMs that default to Arkanoid controller input on port 2.
 const ARKANOID_PADDLE_PORT2_CRCS: &[u32] = &[
     0x32FB0583, // Arkanoid (NES, 1987)
@@ -362,6 +361,21 @@ const ZAPPER_PORT2_CRCS: &[u32] = &[
 /// Check if a ROM CRC requires alternate MMC3 IRQ behavior.
 pub fn requires_mmc3_alternate_irq(crc: u32) -> bool {
     MMC3_ALTERNATE_IRQ_CRCS.contains(&crc)
+}
+
+/// Check if a mapper 11 ROM should disable bus conflict emulation.
+pub fn mapper11_disables_bus_conflicts(crc: u32) -> bool {
+    MAPPER11_NO_BUS_CONFLICT_CRCS.contains(&crc)
+}
+
+/// Check if a mapper 11 ROM should decode register writes from $6000-$FFFF.
+pub fn mapper11_uses_low_register_decode(crc: u32) -> bool {
+    MAPPER11_LOW_REGISTER_DECODE_CRCS.contains(&crc)
+}
+
+/// Check if a mapper 11 ROM should suppress NTSC odd-frame skip.
+pub fn mapper11_suppresses_ntsc_odd_frame_skip(crc: u32) -> bool {
+    MAPPER11_SUPPRESS_NTSC_ODD_FRAME_SKIP_CRCS.contains(&crc)
 }
 
 /// Return the default Arkanoid controller port for a ROM CRC.
@@ -419,6 +433,36 @@ mod tests {
     fn test_mmc3_alternate_irq_unknown_crc() {
         // Random CRC should not require alternate IRQ
         assert!(!requires_mmc3_alternate_irq(0x12345678));
+    }
+
+    #[test]
+    fn test_mapper11_no_bus_conflicts_known_crc() {
+        assert!(!mapper11_disables_bus_conflicts(0x231BC76E));
+    }
+
+    #[test]
+    fn test_mapper11_no_bus_conflicts_unknown_crc() {
+        assert!(!mapper11_disables_bus_conflicts(0x12345678));
+    }
+
+    #[test]
+    fn test_mapper11_low_register_decode_known_crc() {
+        assert!(mapper11_uses_low_register_decode(0x231BC76E));
+    }
+
+    #[test]
+    fn test_mapper11_low_register_decode_unknown_crc() {
+        assert!(!mapper11_uses_low_register_decode(0x12345678));
+    }
+
+    #[test]
+    fn test_mapper11_suppress_odd_frame_skip_known_crc() {
+        assert!(mapper11_suppresses_ntsc_odd_frame_skip(0x231BC76E));
+    }
+
+    #[test]
+    fn test_mapper11_suppress_odd_frame_skip_unknown_crc() {
+        assert!(!mapper11_suppresses_ntsc_odd_frame_skip(0x12345678));
     }
 
     #[test]
@@ -495,7 +539,7 @@ mod tests {
         assert_eq!(entry.console_type, Some(ConsoleType::NesFamicom));
         assert_eq!(entry.console_region, Some(TimingMode::Pal));
         assert_eq!(entry.submapper, Some(2));
-        assert_eq!(entry.nametable_layout, Some(NametableLayout::Horizontal));
+        assert_eq!(entry.nametable_layout, Some(MirroringMode::Horizontal));
         assert_eq!(entry.prg_rom_size, Some(262144));
         assert_eq!(entry.prg_ram_size, Some(8192));
         assert_eq!(entry.chr_ram_size, Some(8192));
@@ -518,5 +562,30 @@ mod tests {
         let db = RomDb::from_csv_content(csv);
         let entry = db.get_by_crc(0xABCDEF01).expect("entry should be found");
         assert_eq!(entry.rom_id, Some(1));
+    }
+
+    #[test]
+    fn test_rom_db_nametable_layout_uses_mirroring_mode_enum() {
+        let csv = "63,Battletoads,,9806CB84,0,1,Licensed Japan,7,2,H,262144,9806CB84,,8192,, , ,8192,1,5,10,2\n";
+        let db = RomDb::from_csv_content(csv);
+        let entry = db
+            .get_by_crc(0x9806CB84)
+            .expect("entry should be found by CRC");
+
+        assert_eq!(
+            entry.nametable_layout,
+            Some(crate::cartridge::MirroringMode::Horizontal)
+        );
+    }
+
+    #[test]
+    fn test_rom_db_nametable_layout_mapper_controlled_is_none() {
+        let csv = "1,Demo,,ABCDEF01,0,0,Class,0,0,5,16384,ABCDEF01,0,0,0,0,0,0,0,0,0,0\n";
+        let db = RomDb::from_csv_content(csv);
+        let entry = db
+            .get_by_crc(0xABCDEF01)
+            .expect("entry should be found by CRC");
+
+        assert_eq!(entry.nametable_layout, None);
     }
 }

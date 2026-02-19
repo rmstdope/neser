@@ -92,23 +92,15 @@ impl Cartridge {
             .unwrap_or(DEFAULT_PRG_RAM_BANKS_8K)
     }
 
-    fn map_mirroring(mirroring: MirroringMode) -> MirroringMode {
-        mirroring
-    }
-
     fn create_mapper(
         info: &crate::cartridge::ines::InesHeader,
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
+        mirroring: MirroringMode,
     ) -> Result<Box<dyn Mapper>, CartridgeError> {
-        let mut context = MapperContext::new(
-            info.mapper,
-            prg_rom,
-            chr_rom,
-            Self::map_mirroring(info.mirroring),
-        )
-        .with_prg_ram_banks(Self::prg_ram_banks_8k(info.prg_ram_size_bytes))
-        .with_battery_backed_prg_ram(info.battery_backed_prg_ram);
+        let mut context = MapperContext::new(info.mapper, prg_rom, chr_rom, mirroring)
+            .with_prg_ram_banks(Self::prg_ram_banks_8k(info.prg_ram_size_bytes))
+            .with_battery_backed_prg_ram(info.battery_backed_prg_ram);
 
         if info.submapper != 0 {
             context = context.with_submapper(info.submapper);
@@ -123,15 +115,30 @@ impl Cartridge {
         })
     }
 
+    fn resolve_mirroring_mode_with_db_override(
+        header_mirroring: MirroringMode,
+        db_entry: Option<&crate::cartridge::RomDbEntry>,
+    ) -> MirroringMode {
+        db_entry
+            .and_then(|entry| entry.nametable_layout)
+            .unwrap_or(header_mirroring)
+    }
+
     fn configure_paths_from_rom(&mut self, rom_path: PathBuf) {
         self.rom_path = Some(rom_path.clone());
         self.save_path = Some(rom_path.with_extension(SAVE_FILE_EXTENSION));
     }
 
     pub fn apply_db_timing_mode_override(&mut self, app_context: &AppContext) {
-        if let Some(db_entry) = app_context.get_db_entry_by_crc(self.crc32)
-            && let Some(db_timing_mode) = db_entry.console_region
-        {
+        let db_entry = app_context.get_db_entry_by_crc(self.crc32);
+        self.apply_db_timing_mode_override_from_entry(db_entry.as_ref());
+    }
+
+    fn apply_db_timing_mode_override_from_entry(
+        &mut self,
+        db_entry: Option<&crate::cartridge::RomDbEntry>,
+    ) {
+        if let Some(db_timing_mode) = db_entry.and_then(|entry| entry.console_region) {
             self.override_rom_timing_mode(db_timing_mode);
         }
     }
@@ -182,7 +189,7 @@ impl Cartridge {
 
         let battery_backed_prg_ram = info.battery_backed_prg_ram;
         let rom_timing_mode = info.timing_mode.normalize_rom_timing_mode();
-        let mapper = Self::create_mapper(&info, prg_rom, chr_rom)?;
+        let mapper = Self::create_mapper(&info, prg_rom, chr_rom, info.mirroring)?;
 
         Ok(Self {
             mapper,
@@ -202,9 +209,23 @@ impl Cartridge {
         app_context: &AppContext,
     ) -> Result<Self, CartridgeError> {
         let rom_path = path.as_ref().to_path_buf();
-        let mut cart = Self::new(data)?;
+        let (info, prg_rom, chr_rom, trainer, crc32) =
+            crate::cartridge::parse_rom(data).map_err(Self::map_parse_error)?;
 
-        cart.apply_db_timing_mode_override(app_context);
+        let db_entry = app_context.get_db_entry_by_crc(crc32);
+        let mirroring = Self::resolve_mirroring_mode_with_db_override(info.mirroring, db_entry.as_ref());
+
+        let mut cart = Self {
+            mapper: Self::create_mapper(&info, prg_rom, chr_rom, mirroring)?,
+            crc32,
+            rom_timing_mode: info.timing_mode.normalize_rom_timing_mode(),
+            rom_path: None,
+            save_path: None,
+            battery_backed_prg_ram: info.battery_backed_prg_ram,
+            trainer,
+        };
+
+        cart.apply_db_timing_mode_override_from_entry(db_entry.as_ref());
         cart.configure_paths_from_rom(rom_path);
         cart.load_save_ram_from_disk()?;
 
@@ -662,6 +683,39 @@ mod tests {
         cartridge.apply_db_timing_mode_override(&app_context);
 
         assert_eq!(cartridge.rom_timing_mode(), expected_timing_mode);
+    }
+
+    #[test]
+    fn test_db_nametable_layout_overrides_header_mirroring_mode() {
+        let db_entry = crate::cartridge::RomDbEntry {
+            rom_id: None,
+            name: None,
+            country: None,
+            crc: None,
+            console_type: None,
+            console_region: None,
+            rom_class: None,
+            mapper: None,
+            submapper: None,
+            nametable_layout: Some(MirroringMode::Vertical),
+            prg_rom_size: None,
+            prg_rom_crc: None,
+            prg_nvram_size: None,
+            prg_ram_size: None,
+            chr_rom_size: None,
+            chr_rom_crc: None,
+            chr_nvram_size: None,
+            chr_ram_size: None,
+            battery: None,
+            vs_hardware_type: None,
+            vs_ppu_type: None,
+            expansion_type: None,
+        };
+
+        let resolved =
+            Cartridge::resolve_mirroring_mode_with_db_override(MirroringMode::Horizontal, Some(&db_entry));
+
+        assert_eq!(resolved, MirroringMode::Vertical);
     }
 
     #[test]
