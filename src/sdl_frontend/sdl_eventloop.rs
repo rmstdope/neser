@@ -25,6 +25,13 @@ use crate::debugging::{
 use crate::input::Button;
 use crate::rendering::Crosshair;
 
+// Type alias to simplify the complex return type used when initializing gamepads.
+type InitGamepadsResult = Result<(
+    sdl2::GameControllerSubsystem,
+    Vec<sdl2::controller::GameController>,
+    HashMap<u32, u8>,
+), String>;
+
 /// Result type for autorun playback completion with exit code.
 #[derive(Debug)]
 pub enum AutorunExitCode {
@@ -406,16 +413,7 @@ impl SdlEventLoop {
     /// is assigned to player 1, the second to player 2.
     ///
     /// Returns a tuple of (subsystem, controllers vector, player mapping HashMap)
-    fn init_gamepads(
-        sdl_context: &sdl2::Sdl,
-    ) -> Result<
-        (
-            sdl2::GameControllerSubsystem,
-            Vec<sdl2::controller::GameController>,
-            HashMap<u32, u8>,
-        ),
-        String,
-    > {
+    fn init_gamepads(sdl_context: &sdl2::Sdl) -> InitGamepadsResult {
         let game_controller_subsystem = sdl_context.game_controller()?;
         let _num = game_controller_subsystem
             .load_mappings("gamecontrollerdb.txt")
@@ -3070,10 +3068,10 @@ mod tests {
         let config = default_config();
         let event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
-        let text = event_loop.help_overlay_text(&mut nes);
+        let text = event_loop.help_overlay_text(&nes);
         assert!(text.contains("Esc"));
         assert!(text.contains("Space"));
         assert!(text.contains("F1"));
@@ -3100,11 +3098,11 @@ mod tests {
         let config = default_config();
         let event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
 
-        let text = event_loop.help_overlay_text(&mut nes);
+        let text = event_loop.help_overlay_text(&nes);
 
         assert!(text.contains("W/A/S/D"), "Player 1 D-pad should be shown");
         assert!(text.contains("I/J/K/L"), "Player 2 D-pad should be shown");
@@ -3118,12 +3116,12 @@ mod tests {
         let config = default_config();
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
         event_loop.controller_player_map.insert(42, 1);
 
-        let text = event_loop.help_overlay_text(&mut nes);
+        let text = event_loop.help_overlay_text(&nes);
 
         assert!(text.contains("Gamepad"), "Player 1 should show Gamepad");
         assert!(
@@ -3143,13 +3141,13 @@ mod tests {
         let config = default_config();
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
         event_loop.controller_player_map.insert(42, 1);
         event_loop.controller_player_map.insert(43, 2);
 
-        let text = event_loop.help_overlay_text(&mut nes);
+        let text = event_loop.help_overlay_text(&nes);
 
         assert!(
             !text.contains("W/A/S/D"),
@@ -3173,14 +3171,14 @@ mod tests {
         let config = default_config();
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
 
-        assert_eq!(event_loop.help_overlay_render_text(&mut nes), None);
+        assert_eq!(event_loop.help_overlay_render_text(&nes), None);
 
         event_loop.help_overlay_visible = true;
-        assert!(event_loop.help_overlay_render_text(&mut nes).is_some());
+        assert!(event_loop.help_overlay_render_text(&nes).is_some());
     }
 
     fn nes_with_jsr_program() -> Nes {
