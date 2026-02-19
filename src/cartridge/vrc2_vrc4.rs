@@ -561,12 +561,25 @@ impl Mapper for Vrc2Vrc4Mapper {
         snapshot.push(self.mirroring_reg);
         snapshot.push(self.irq_latch);
         snapshot.push(self.irq_counter);
-        let flags = (self.irq_enabled as u8 * Self::FLAG_IRQ_ENABLED)
-            | (self.irq_mode_cycle as u8 * Self::FLAG_IRQ_MODE_CYCLE)
-            | (self.irq_enable_after_ack as u8 * Self::FLAG_IRQ_ENABLE_AFTER_ACK)
-            | (self.irq_asserted as u8 * Self::FLAG_IRQ_ASSERTED)
-            | (self.prg_swap_mode as u8 * Self::FLAG_PRG_SWAP_MODE)
-            | (self.prg_ram_enabled as u8 * Self::FLAG_PRG_RAM_ENABLED);
+        let mut flags = 0u8;
+        if self.irq_enabled {
+            flags |= Self::FLAG_IRQ_ENABLED;
+        }
+        if self.irq_mode_cycle {
+            flags |= Self::FLAG_IRQ_MODE_CYCLE;
+        }
+        if self.irq_enable_after_ack {
+            flags |= Self::FLAG_IRQ_ENABLE_AFTER_ACK;
+        }
+        if self.irq_asserted {
+            flags |= Self::FLAG_IRQ_ASSERTED;
+        }
+        if self.prg_swap_mode {
+            flags |= Self::FLAG_PRG_SWAP_MODE;
+        }
+        if self.prg_ram_enabled {
+            flags |= Self::FLAG_PRG_RAM_ENABLED;
+        }
         snapshot.push(flags);
         snapshot.extend_from_slice(&self.irq_prescaler.to_le_bytes());
         let mirroring = match self.mirroring {
