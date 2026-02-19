@@ -1599,7 +1599,7 @@ impl Cpu {
             "HLT" | "KIL" => {
                 self.halted = true;
                 // Halt on instruction, not after
-                self.pc -= 1;   
+                self.pc -= 1;
             }
             "*SLO" => {
                 self.slo(operand);

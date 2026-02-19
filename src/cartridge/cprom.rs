@@ -1,8 +1,11 @@
 //! Mapper 13 - CPROM
 //!
+//! PPU CHR address space layout:
+//! - `$0000-$0FFF`: 4 KiB CHR RAM fixed to bank 0 (never changes)
+//! - `$1000-$1FFF`: 4 KiB CHR RAM swappable via register bits 0-1 (banks 0-3)
+//!
 //! Known Limitations:
-//! - No mapper-specific gameplay-blocking functional limitations are currently documented.
-//! - Edge-case behavior may still differ from hardware in untested timing and board-variant scenarios.
+//! - Bus conflicts: writes to `$8000-$FFFF` are subject to bus conflicts with PRG-ROM data.
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
 use crate::cartridge::Mapper;
@@ -10,28 +13,18 @@ use crate::cartridge::MapperCapabilities;
 use crate::cartridge::NametableLayout;
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
-// Memory size constants
-const CHR_BANK_SIZE: usize = 0x1000; // 4KB
-const CHR_RAM_SIZE: usize = 0x4000; // 16KB
+const CHR_BANK_SIZE: usize = 0x1000; // 4 KiB
+const CHR_RAM_SIZE: usize = 0x4000; // 16 KiB total (4 banks)
 
 /// Mapper 13 - CPROM
 ///
-/// Hardware: Simple CHR-RAM banking mapper used by a single game
+/// Simple CHR-RAM banking mapper, used exclusively by Videomation.
 ///
-/// Specifications:
-/// - Main: <https://www.nesdev.org/wiki/CPROM>
-/// - PRG-ROM: 32KB fixed (no banking)
-/// - PRG-RAM: None
-/// - CHR-RAM: 16KB with 4KB banking at $0000-$0FFF
-/// - Mirroring: Fixed vertical
-///
-/// Common boards: NES-CPROM
-///
-/// Notes:
-/// - Any write to $8000-$FFFF selects 4KB CHR-RAM bank (bits 0-1)
-/// - CHR bank mapped at $0000-$0FFF (4KB)
-/// - $1000-$1FFF mirrors $0000-$0FFF
-/// - Used exclusively in Videomation (only commercial game with this mapper)
+/// Specifications: <https://www.nesdev.org/wiki/CPROM>
+/// - PRG-ROM: 32 KiB fixed (no banking)
+/// - CHR-RAM: 16 KiB; lower 4 KiB fixed to bank 0, upper 4 KiB selected by bits 0-1 of the bank register
+/// - Bank select register: any write to `$8000-$FFFF`, bits 0-1 choose which bank maps to `$1000-$1FFF`
+/// - Mirroring: fixed (set by iNES header)
 pub struct CpromMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,
@@ -53,28 +46,23 @@ impl CpromMapper {
     }
 
     fn get_chr_bank_offset(&self, addr: u16) -> usize {
-        // CHR address space is $0000-$1FFF (8KB)
-        // Lower 4KB ($0000-$0FFF) uses selected bank
-        // Upper 4KB ($1000-$1FFF) is fixed to bank 3
         if addr < 0x1000 {
-            // Lower 4KB: switchable bank (0-3)
+            // $0000-$0FFF is always bank 0 — fixed by hardware design
+            0
+        } else {
+            // $1000-$1FFF maps to whichever bank is selected by register bits 0-1
             let bank = (self.chr_bank_select & 0x03) as usize;
             bank * CHR_BANK_SIZE
-        } else {
-            // Upper 4KB: fixed to bank 3
-            3 * CHR_BANK_SIZE
         }
     }
 }
 
 impl Mapper for CpromMapper {
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
         if let Some(value) = self.prg_ram.try_read(addr) {
             return value;
         }
 
-        // PRG ROM is fixed at $8000-$FFFF (32KB)
         match addr {
             0x8000..=0xFFFF => {
                 let offset = (addr - 0x8000) as usize;
@@ -86,12 +74,12 @@ impl Mapper for CpromMapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
         if self.prg_ram.try_write(addr, value) {
             return;
         }
 
-        // Any write to $8000-$FFFF sets the CHR bank select (lower 2 bits)
+        // Writes anywhere in $8000-$FFFF update the CHR bank select register (bits 0-1 only).
+        // Note: subject to bus conflicts with PRG-ROM data on real hardware.
         if (0x8000..=0xFFFF).contains(&addr) {
             self.chr_bank_select = value & 0x03;
         }
@@ -186,149 +174,124 @@ mod tests {
     }
 
     #[test]
-    fn test_cprom_chr_ram_lower_bank_switching() {
-        // CPROM has 16KB CHR-RAM with 4KB bank switching in lower half
+    fn test_cprom_chr_ram_lower_bank_fixed() {
+        // Per NesDev spec: PPU $0000-$0FFF is FIXED to bank 0 (first page).
+        // The bank select register does NOT affect $0000-$0FFF.
         let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
-        // Write distinct patterns to each 4KB bank in CHR-RAM
-        for bank in 0..4 {
-            // Select the bank first
-            mapper.write_prg(0x8000, bank as u8);
-            // Write to the selected bank at $0000-$0FFF
-            for i in 0..4096 {
-                let addr = i as u16;
-                mapper.write_chr(addr, (bank * 10 + i % 256) as u8);
-            }
-            // Also write to the fixed bank 3 at $1000-$1FFF when bank 3 is selected
-            if bank == 3 {
-                for i in 0..4096 {
-                    let addr = 0x1000 + i as u16;
-                    mapper.write_chr(addr, (bank * 10 + i % 256) as u8);
-                }
-            }
+        // Write a distinct pattern to bank 0 via the lower window
+        for i in 0..4096u16 {
+            mapper.write_chr(i, (10 + (i % 256)) as u8);
         }
 
-        // Reset to bank 0 for testing
-        mapper.write_prg(0x8000, 0);
-
-        // Initially bank 0 should be at $0000-$0FFF
-        assert_eq!(mapper.read_chr(0x0000), 0);
-        assert_eq!(mapper.read_chr(0x0001), 1);
-
-        // Switch to bank 1
-        mapper.write_prg(0x8000, 0b0000_0001);
-        assert_eq!(mapper.read_chr(0x0000), 10);
-        assert_eq!(mapper.read_chr(0x0001), 11);
-
-        // Switch to bank 2
-        mapper.write_prg(0x8000, 0b0000_0010);
-        assert_eq!(mapper.read_chr(0x0000), 20);
-        assert_eq!(mapper.read_chr(0x0001), 21);
-
-        // Switch to bank 3
-        mapper.write_prg(0x8000, 0b0000_0011);
-        assert_eq!(mapper.read_chr(0x0000), 30);
-        assert_eq!(mapper.read_chr(0x0001), 31);
-
-        // Switch back to bank 0
-        mapper.write_prg(0x8000, 0b0000_0000);
-        assert_eq!(mapper.read_chr(0x0000), 0);
-        assert_eq!(mapper.read_chr(0x0001), 1);
+        // Regardless of bank select, $0000-$0FFF must always read bank 0
+        for bank in 0u8..4 {
+            mapper.write_prg(0x8000, bank);
+            assert_eq!(
+                mapper.read_chr(0x0000),
+                10,
+                "bank select {bank}: $0000 should always read bank 0"
+            );
+            assert_eq!(
+                mapper.read_chr(0x0001),
+                11,
+                "bank select {bank}: $0001 should always read bank 0"
+            );
+        }
     }
 
     #[test]
-    fn test_cprom_chr_ram_upper_bank_fixed() {
-        // Upper 4KB should always be fixed to bank 3
+    fn test_cprom_chr_ram_upper_bank_switching() {
+        // Per NesDev spec: PPU $1000-$1FFF is swappable via the bank select register.
         let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
-        // Fill bank 3 with a distinct pattern via writes to $1000-$1FFF.
-        // The upper 4KB address range ($1000-$1FFF) is hardwired to bank 3,
-        // so writes to this range always go to bank 3 regardless of bank select.
-        for i in 0..4096 {
-            let addr = 0x1000 + i as u16;
-            mapper.write_chr(addr, (100 + i % 256) as u8);
+        // Write distinct patterns to each 4KB bank via the upper window ($1000-$1FFF)
+        for bank in 0u8..4 {
+            mapper.write_prg(0x8000, bank);
+            for i in 0..4096u16 {
+                mapper.write_chr(0x1000 + i, (bank as u16 * 10 + i % 256) as u8);
+            }
         }
 
-        // Verify upper 4KB reads bank 3 regardless of bank select
-        assert_eq!(mapper.read_chr(0x1000), 100);
-        assert_eq!(mapper.read_chr(0x1001), 101);
-
-        // Switch lower bank to 0
+        // Verify each bank is readable via $1000-$1FFF after selecting it
         mapper.write_prg(0x8000, 0);
-        assert_eq!(mapper.read_chr(0x1000), 100);
-        assert_eq!(mapper.read_chr(0x1001), 101);
+        assert_eq!(mapper.read_chr(0x1000), 0);
+        assert_eq!(mapper.read_chr(0x1001), 1);
 
-        // Switch lower bank to 1
         mapper.write_prg(0x8000, 1);
-        assert_eq!(mapper.read_chr(0x1000), 100);
-        assert_eq!(mapper.read_chr(0x1001), 101);
+        assert_eq!(mapper.read_chr(0x1000), 10);
+        assert_eq!(mapper.read_chr(0x1001), 11);
 
-        // Switch lower bank to 2
         mapper.write_prg(0x8000, 2);
-        assert_eq!(mapper.read_chr(0x1000), 100);
-        assert_eq!(mapper.read_chr(0x1001), 101);
+        assert_eq!(mapper.read_chr(0x1000), 20);
+        assert_eq!(mapper.read_chr(0x1001), 21);
+
+        mapper.write_prg(0x8000, 3);
+        assert_eq!(mapper.read_chr(0x1000), 30);
+        assert_eq!(mapper.read_chr(0x1001), 31);
+
+        // Switch back to bank 0
+        mapper.write_prg(0x8000, 0);
+        assert_eq!(mapper.read_chr(0x1000), 0);
+        assert_eq!(mapper.read_chr(0x1001), 1);
     }
 
     #[test]
     fn test_cprom_chr_ram_writable() {
-        // CHR-RAM should be writable
+        // CHR-RAM should be writable in both windows.
+        // Per spec: $0000-$0FFF is fixed to bank 0; $1000-$1FFF is swappable.
         let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
-        // Write to lower bank (initially bank 0)
+        // Write to fixed lower window (always bank 0)
         mapper.write_chr(0x0000, 0xAA);
         mapper.write_chr(0x0FFF, 0xBB);
         assert_eq!(mapper.read_chr(0x0000), 0xAA);
         assert_eq!(mapper.read_chr(0x0FFF), 0xBB);
 
-        // Switch to bank 1 and write
+        // Bank switching does NOT affect $0000-$0FFF
         mapper.write_prg(0x8000, 1);
-        mapper.write_chr(0x0000, 0xCC);
-        assert_eq!(mapper.read_chr(0x0000), 0xCC);
-
-        // Switch back to bank 0 - should still have old values
-        mapper.write_prg(0x8000, 0);
         assert_eq!(mapper.read_chr(0x0000), 0xAA);
         assert_eq!(mapper.read_chr(0x0FFF), 0xBB);
 
-        // Write to upper bank (fixed to bank 3)
-        mapper.write_chr(0x1000, 0xDD);
-        mapper.write_chr(0x1FFF, 0xEE);
-        assert_eq!(mapper.read_chr(0x1000), 0xDD);
-        assert_eq!(mapper.read_chr(0x1FFF), 0xEE);
+        // Write to upper swappable window (bank 1 selected)
+        mapper.write_chr(0x1000, 0xCC);
+        assert_eq!(mapper.read_chr(0x1000), 0xCC);
+
+        // Switch upper bank to 2 — should not see bank 1 data
+        mapper.write_prg(0x8000, 2);
+        assert_ne!(mapper.read_chr(0x1000), 0xCC);
+
+        // Switch back to bank 1 — should restore bank 1 data
+        mapper.write_prg(0x8000, 1);
+        assert_eq!(mapper.read_chr(0x1000), 0xCC);
     }
 
     #[test]
     fn test_cprom_bank_select_mask() {
-        // Only lower 2 bits should be used for bank select (4 banks total)
+        // Only lower 2 bits should be used for bank select (4 banks total).
+        // The selected bank maps to PPU $1000-$1FFF.
         let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
-        // Fill each bank with distinct pattern
-        for bank in 0..4 {
-            mapper.write_prg(0x8000, bank as u8);
-            for i in 0..4096 {
-                let addr = i as u16;
-                mapper.write_chr(addr, (bank * 50) as u8);
-            }
-            if bank == 3 {
-                for i in 0..4096 {
-                    let addr = 0x1000 + i as u16;
-                    mapper.write_chr(addr, (bank * 50) as u8);
-                }
+        // Fill each bank with distinct pattern via the upper window
+        for bank in 0u8..4 {
+            mapper.write_prg(0x8000, bank);
+            for i in 0..4096u16 {
+                mapper.write_chr(0x1000 + i, bank * 50);
             }
         }
 
-        // Writing higher bits should be masked
+        // Writing higher bits should be masked; only bits 0-1 count
         mapper.write_prg(0x8000, 0b1111_1100); // Should select bank 0
-        assert_eq!(mapper.read_chr(0x0000), 0);
+        assert_eq!(mapper.read_chr(0x1000), 0);
 
         mapper.write_prg(0x8000, 0b1111_1101); // Should select bank 1
-        assert_eq!(mapper.read_chr(0x0000), 50);
+        assert_eq!(mapper.read_chr(0x1000), 50);
 
         mapper.write_prg(0x8000, 0b1111_1110); // Should select bank 2
-        assert_eq!(mapper.read_chr(0x0000), 100);
+        assert_eq!(mapper.read_chr(0x1000), 100);
 
         mapper.write_prg(0x8000, 0b1111_1111); // Should select bank 3
-        assert_eq!(mapper.read_chr(0x0000), 150);
+        assert_eq!(mapper.read_chr(0x1000), 150);
     }
 
     #[test]
@@ -342,33 +305,27 @@ mod tests {
 
     #[test]
     fn test_cprom_bank_select_any_address() {
-        // CPROM responds to writes anywhere in $8000-$FFFF
+        // CPROM responds to writes anywhere in $8000-$FFFF.
+        // The selected bank maps to PPU $1000-$1FFF.
         let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
-        // Fill banks with distinct patterns
-        for bank in 0..4 {
-            mapper.write_prg(0x8000, bank as u8);
-            for i in 0..4096 {
-                let addr = i as u16;
-                mapper.write_chr(addr, (bank + 100) as u8);
-            }
-            if bank == 3 {
-                for i in 0..4096 {
-                    let addr = 0x1000 + i as u16;
-                    mapper.write_chr(addr, (bank + 100) as u8);
-                }
+        // Fill banks with distinct patterns via the upper window
+        for bank in 0u8..4 {
+            mapper.write_prg(0x8000, bank);
+            for i in 0..4096u16 {
+                mapper.write_chr(0x1000 + i, bank + 100);
             }
         }
 
-        // Write to different addresses in PRG space
+        // Write to different addresses in PRG space — all should update the bank select
         mapper.write_prg(0x8000, 1);
-        assert_eq!(mapper.read_chr(0x0000), 101);
+        assert_eq!(mapper.read_chr(0x1000), 101);
 
         mapper.write_prg(0xA000, 2);
-        assert_eq!(mapper.read_chr(0x0000), 102);
+        assert_eq!(mapper.read_chr(0x1000), 102);
 
         mapper.write_prg(0xFFFF, 3);
-        assert_eq!(mapper.read_chr(0x0000), 103);
+        assert_eq!(mapper.read_chr(0x1000), 103);
     }
 
     #[test]
@@ -376,17 +333,20 @@ mod tests {
         let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
         mapper.write_prg(0x8000, 0b0000_0010); // select bank 2
+        mapper.write_chr(0x1000, 0xAA); // write to bank 2 via upper window
         let regs = mapper.registers_snapshot();
 
         let mut restored =
             CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
         restored.restore_registers(&regs);
 
-        restored.write_chr(0x0000, 0xAA);
-        assert_eq!(restored.read_chr(0x0000), 0xAA);
+        // After restoring registers, upper window should still map to bank 2
+        restored.write_chr(0x1000, 0xAA);
+        assert_eq!(restored.read_chr(0x1000), 0xAA);
 
-        restored.write_prg(0x8000, 0b0000_0011); // switch to bank 3
-        assert_ne!(restored.read_chr(0x0000), 0xAA);
+        // Switching to bank 3 should make $1000 point to a different bank (not 0xAA)
+        restored.write_prg(0x8000, 0b0000_0011);
+        assert_ne!(restored.read_chr(0x1000), 0xAA);
     }
 
     #[test]
