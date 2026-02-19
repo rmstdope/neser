@@ -3029,6 +3029,7 @@ mod tests {
         );
     }
 
+    #[serial]
     #[test]
     fn test_run_to_next_scanline_stops_after_first_scanline_advance() {
         let mut nes_expected = nes_with_nop_loop_program();
