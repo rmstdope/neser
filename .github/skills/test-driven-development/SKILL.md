@@ -32,10 +32,12 @@ Your core methodology follows these strict phases:
 
 - Create a git branch for the issue or feature you are working on.
 - Analyze each issue and its acceptance criteria carefully
-- Write a new or update an existingacceptance tests in Given/When/Then format that directly reflect the behavior described in the user story. If it is more suitable to update an existing test, prefer that over creating a new one.
+- **For bug fixes involving an external specification** (hardware specs, protocols, standards): consult the authoritative spec first (e.g., NesDev wiki for NES mappers) and compare it against the current implementation before writing tests. Tests must reflect the *spec*, not the existing (potentially wrong) behavior.
+- Write a new or update an existing acceptance tests in Given/When/Then format that directly reflect the behavior described in the user story. If it is more suitable to update an existing test, prefer that over creating a new one.
 - Ensure tests are comprehensive but focused. Avoid over-specifying implementation details in the tests.
 - Write/Update tests so that they fail initially (since no implementation exists yet)
-- Use clear, descriptive test names that communicate the expected behavior
+- Use clear, descriptive test names that describe the **spec contract** (e.g., `test_lower_window_fixed_to_bank_0`), not the mechanism.
+- **Verify tests compile and actually fail** (not panic/error in test setup code) before declaring RED complete. Fix any test setup bugs before proceeding.
 - STOP after writing the failing test and explicitly ask for permission to proceed to the Green phase
 - Do not start implementation until the navigator explicitly approves the Green phase
 
