@@ -695,7 +695,7 @@ pub(crate) mod tests {
                 }
 
                 let mut nes = $crate::console::Nes::new(
-                    crate::app_context::AppContext::new_with_config(config),
+                    $crate::app_context::AppContext::new_with_config(config),
                 );
                 nes.insert_cartridge(cartridge);
                 nes.reset(false);

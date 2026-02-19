@@ -31,11 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ParseResult::Config(c) => c,
     };
 
-    let app_context = AppContext::new();
-    {
-        let config = app_context.config();
-        *config.borrow_mut() = parsed_config;
-    }
+    let app_context = AppContext::new_with_config(parsed_config);
 
     // Initialize global tracing state (only active in debug builds)
     let tracing_config = {

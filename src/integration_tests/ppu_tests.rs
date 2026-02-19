@@ -194,10 +194,10 @@ mod tests {
     fn test_read2004() {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/misc_oam_tests/read2004.nes",
-            Config {
+            crate::app_context::AppContext::new_with_config(Config {
                 ram_init_mode: RamInitMode::Zero,
                 ..Default::default()
-            },
+            }),
             "read2004",
         );
 
@@ -250,12 +250,12 @@ AA AA 01 01 10 10 01 01 00 00\n\
     fn run_oam_decay_crc_test(tv_system: TimingMode, expected_crc: u32, capture_name: &str) {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/misc_oam_tests/oam-decay-test.nes",
-            Config {
+            crate::app_context::AppContext::new_with_config(Config {
                 tv_system,
                 oam_dram_decay_enabled: true,
                 ram_init_mode: RamInitMode::Zero,
                 ..Default::default()
-            },
+            }),
             "oam-decay-test",
         );
 
@@ -310,7 +310,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
     fn test_nmi_sync_demo_ntsc() {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/nmi_sync/demo_ntsc.nes",
-            Config::default(),
+            crate::app_context::AppContext::new_with_config(Config::default()),
             "demo_ntsc",
         );
 
@@ -342,10 +342,10 @@ AA AA 01 01 10 10 01 01 00 00\n\
     fn test_nmi_sync_demo_pal() {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/nmi_sync/demo_pal.nes",
-            Config {
+            crate::app_context::AppContext::new_with_config(Config {
                 tv_system: TimingMode::Pal,
                 ..Default::default()
-            },
+            }),
             "demo_pal",
         );
 
@@ -827,7 +827,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
     fn test_scanline_a1() {
         let mut nes = create_nes_from_rom(
             "roms/automated_tests/scanline-a1/scanline.nes",
-            Config::default(),
+            crate::app_context::AppContext::new_with_config(Config::default()),
             "scanline-a1",
         );
 

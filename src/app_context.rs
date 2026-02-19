@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::cartridge::{RomDb, RomDbEntry};
@@ -11,7 +11,7 @@ pub const MAX_VISIBLE_TOASTS: usize = 3;
 
 #[derive(Debug, Clone)]
 pub struct AppContext {
-    toast_manager: Rc<RefCell<ToastManager>>,
+    toast_manager: Arc<Mutex<ToastManager>>,
     rom_db: Arc<RomDb>,
     config: Rc<RefCell<Config>>,
 }
@@ -19,7 +19,7 @@ pub struct AppContext {
 impl Default for AppContext {
     fn default() -> Self {
         Self {
-            toast_manager: Rc::new(RefCell::new(ToastManager::new())),
+            toast_manager: Arc::new(Mutex::new(ToastManager::new())),
             rom_db: Arc::new(load_rom_db()),
             config: Rc::new(RefCell::new(Config::default())),
         }
@@ -37,6 +37,7 @@ fn load_rom_db() -> RomDb {
 }
 
 impl AppContext {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         Self::default()
     }
@@ -54,13 +55,15 @@ impl AppContext {
 
     pub fn add_toast(&self, text: impl Into<String>) {
         self.toast_manager
-            .borrow_mut()
+            .lock()
+            .expect("toast manager lock poisoned")
             .push(text.into(), Instant::now());
     }
 
     pub fn visible_toasts(&self, now: Instant) -> Vec<String> {
         self.toast_manager
-            .borrow_mut()
+            .lock()
+            .expect("toast manager lock poisoned")
             .visible_toasts(now)
             .into_iter()
             .map(|toast| toast.text.clone())
