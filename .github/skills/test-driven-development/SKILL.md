@@ -33,6 +33,7 @@ Your core methodology follows these strict phases:
 - Create a git branch for the issue or feature you are working on.
 - Analyze each issue and its acceptance criteria carefully
 - **For bug fixes involving an external specification** (hardware specs, protocols, standards): consult the authoritative spec first (e.g., NesDev wiki for NES mappers) and compare it against the current implementation before writing tests. Tests must reflect the *spec*, not the existing (potentially wrong) behavior.
+- **If the code to test is not easily unit-testable** (e.g., a monolithic JS file with no exports, a tightly coupled class): extract the relevant logic into a small, pure, exported function/module first, then write tests against that module. This is preferable to writing no tests or writing fragile integration tests.
 - Write a new or update an existing acceptance tests in Given/When/Then format that directly reflect the behavior described in the user story. If it is more suitable to update an existing test, prefer that over creating a new one.
 - Ensure tests are comprehensive but focused. Avoid over-specifying implementation details in the tests.
 - Write/Update tests so that they fail initially (since no implementation exists yet)
@@ -47,6 +48,7 @@ Your core methodology follows these strict phases:
 - Implement the code necessary to make the failing test pass
 - Focus solely on making the test green, nothing more
 - Avoid over-engineering or implementing features not covered by the current test
+- **If the navigator reports a new related bug while verifying GREEN**: treat it as a mini RED→GREEN sub-cycle within the current phase — write a new failing test first, confirm it fails, then implement the fix. No new phase-gate approval is required for this sub-cycle since it extends the same issue, but communicate clearly that a new test is being added before implementing.
 - STOP after making the test pass and explicitly ask for permission to proceed to the Refactor phase
 - Do not begin refactoring until the navigator explicitly approves the Refactor phase
 
@@ -66,7 +68,11 @@ Your core methodology follows these strict phases:
 - Create a meaningful commit message that clearly describes what was implemented
 - Include reference to the user story or feature being implemented
 - Use conventional commit format when appropriate
-- Run all pre-merge checks locally before creating a PR: `cargo fmt -- --check`, `cargo clippy --all-features`, and the full test suite (`cargo test --lib --bins --tests --examples`). Fix any failures before proceeding.
+- Run all pre-merge checks locally before creating a PR:
+  - **Rust**: `cargo fmt -- --check`, `cargo clippy --all-features`, `cargo test --lib --bins --tests --examples`
+  - **Web/JS** (if web/ was changed): `npm test` from the `web/` directory
+  - If a check fails due to a **pre-existing issue unrelated to your changes**, verify on the base branch (e.g., `git stash && cargo fmt -- --check`) and document the finding rather than fixing it
+- When creating a PR with a complex body (e.g., containing markdown backticks or multi-line text), use `gh pr create --body-file <file>` or a shell heredoc to avoid quoting issues
 - If more iterations are needed before the issue is completed, loop back to the RED phase
 - If the issue is fully implemented, create a PR with a clear description of the changes and link to the relevant issue
 - STOP and ask for permission to merge after creating the PR
