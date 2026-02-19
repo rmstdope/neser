@@ -1734,7 +1734,7 @@ impl SdlEventLoop {
             Keycode::T => Self::apply_keyboard_button(nes, p1, Button::B, pressed),
             Keycode::Num4 => Self::apply_keyboard_button(nes, p1, Button::Select, pressed),
             Keycode::Num5 => Self::apply_keyboard_button(nes, p1, Button::Start, pressed),
-            // Player 2: I/J/K/L + P/O (A/B) + 8/9 (Select/Start)
+            // Player 2: I/J/K/L + O/P (A/B) + 9/0 (Select/Start)
             Keycode::I => Self::apply_keyboard_button(nes, p2, Button::Up, pressed),
             Keycode::K => Self::apply_keyboard_button(nes, p2, Button::Down, pressed),
             Keycode::J => Self::apply_keyboard_button(nes, p2, Button::Left, pressed),
@@ -3088,8 +3088,8 @@ mod tests {
         assert!(text.contains("W/A/S/D"));
         assert!(text.contains("R"));
         assert!(text.contains("T"));
-        assert!(text.contains("4"));
-        assert!(text.contains("5"));
+        assert!(text.contains("4: Select"));
+        assert!(text.contains("5: Start"));
         assert!(text.contains("H"));
     }
 
