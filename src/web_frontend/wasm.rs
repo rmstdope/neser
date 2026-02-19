@@ -106,7 +106,7 @@ impl WasmNes {
         self.pending_toasts
             .push(cartridge_load_toast_message(rom_name, true));
         self.pending_toasts.push(emulator_timing_toast_message(
-            self.nes.config.borrow().tv_system,
+            self.nes.app_context.borrow().config().tv_system,
         ));
         web_sys::console::log_1(&JsValue::from_str("ROM loaded successfully"));
         Ok(())
@@ -240,7 +240,12 @@ impl WasmNes {
     /// Get the nominal TV-system refresh rate in Hz for the loaded ROM or system default (if not ROM loaded).
     #[wasm_bindgen]
     pub fn frame_rate_hz(&self) -> f64 {
-        self.nes.config.borrow().tv_system.frame_rate_hz()
+        self.nes
+            .app_context
+            .borrow()
+            .config()
+            .tv_system
+            .frame_rate_hz()
     }
 
     /// Get all available audio samples from the emulator.

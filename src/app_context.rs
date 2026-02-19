@@ -49,6 +49,7 @@ impl IntoSharedAppContext for SharedAppContext {
     }
 }
 
+// TODO ???
 #[cfg(not(target_arch = "wasm32"))]
 fn load_rom_db() -> RomDb {
     RomDb::new().unwrap()
@@ -74,6 +75,10 @@ impl AppContext {
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    pub fn rom_db(&self) -> &RomDb {
+        &self.rom_db
     }
 
     pub fn config_mut(&mut self) -> &mut Config {

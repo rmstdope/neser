@@ -606,7 +606,7 @@ impl SdlEventLoop {
 
         let current_frame = autorun_state.current_frame_index();
         let total_frames = autorun_state.total_frames();
-        let tv_system = nes.config.borrow().tv_system;
+        let tv_system = nes.app_context.borrow().config().tv_system;
 
         // Calculate FPS and blink parameters
         let fps = tv_system.frame_rate_hz().round().max(1.0) as usize;
@@ -1116,7 +1116,7 @@ impl SdlEventLoop {
                 let current_time = timer.performance_counter();
                 let elapsed_ticks = (current_time - last_frame_time) as f64;
                 let elapsed_seconds = elapsed_ticks / performance_frequency;
-                let tv_system = nes.config.borrow().tv_system;
+                let tv_system = nes.app_context.borrow().config().tv_system;
                 let target_frame_time = 1.0 / tv_system.frame_rate_hz();
 
                 // Calculate FPS before sleeping
@@ -1759,7 +1759,7 @@ T: Start"
     fn overlay_render_text(&self, nes: &Nes) -> Option<String> {
         // Check if autorun is active and generate overlay
         if let Some(ref autorun_state) = self.autorun_state {
-            let tv_system = nes.config.borrow().tv_system;
+            let tv_system = nes.app_context.borrow().config().tv_system;
             let overlay = self.autorun_overlay_text(autorun_state, tv_system);
             return Some(overlay);
         }

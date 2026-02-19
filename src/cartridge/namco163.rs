@@ -39,7 +39,10 @@ pub struct Namco163Mapper {
     prg_rom: Vec<u8>,
     chr_memory: ChrMemory,
     prg_ram: PrgRam,
+    ciram: [u8; 0x800],
     mirroring: NametableLayout,
+    chr_nt_regs: [u8; 12],
+    prg_select: [u8; 3],
     regs: [u8; 16],
     namco_ram: [u8; 128],
     audio_addr: Cell<u8>,
@@ -49,6 +52,8 @@ pub struct Namco163Mapper {
     audio_update_counter: u8,
     audio_current_channel: i8,
     audio_last_output: i16,
+    e800_control: u8,
+    wram_protect: u8,
     irq_counter: u16, // 15-bit counter
     irq_enabled: bool,
     irq_pending: bool,
@@ -57,14 +62,23 @@ pub struct Namco163Mapper {
 impl Namco163Mapper {
     const PRG_BANK_SIZE_8K: usize = 0x2000;
     const CHR_BANK_SIZE_1K: usize = 0x0400;
+    const CIRAM_BANK_THRESHOLD: u8 = 0xE0;
+    const CIRAM_INDEX_MASK: usize = 0x07FF;
     const IRQ_COUNTER_MAX: u16 = 0x7FFF;
+    const PRG_SELECT_MASK: u8 = 0x3F;
+    const MIRRORING_REG: usize = 11;
+    const IRQ_LOW_REG: usize = 12;
+    const IRQ_HIGH_ENABLE_REG: usize = 13;
 
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
+            ciram: [0; 0x800],
             mirroring,
+            chr_nt_regs: [0; 12],
+            prg_select: [0; 3],
             regs: [0; 16],
             namco_ram: [0; 128],
             audio_addr: Cell::new(0),
@@ -74,6 +88,8 @@ impl Namco163Mapper {
             audio_update_counter: 0,
             audio_current_channel: 7,
             audio_last_output: 0,
+            e800_control: 0,
+            wram_protect: 0,
             irq_counter: 0,
             irq_enabled: false,
             irq_pending: false,
@@ -88,12 +104,24 @@ impl Namco163Mapper {
         self.chr_memory.size() / Self::CHR_BANK_SIZE_1K
     }
 
+    fn ciram_page_index(bank: u8, bank_offset: usize) -> usize {
+        (((bank & 1) as usize) * Self::CHR_BANK_SIZE_1K) + bank_offset
+    }
+
+    fn ciram_index(bank: u8, bank_offset: usize) -> usize {
+        Self::ciram_page_index(bank, bank_offset) & Self::CIRAM_INDEX_MASK
+    }
+
     fn prg_bank_index_8k(&self, bank: u8) -> usize {
         let count = self.prg_bank_count_8k();
         if count == 0 {
             return 0;
         }
         (bank as usize) % count
+    }
+
+    fn set_prg_select_bank(&mut self, slot: usize, value: u8) {
+        self.prg_select[slot] = value & Self::PRG_SELECT_MASK;
     }
 
     fn chr_bank_index_1k(&self, bank: u8) -> usize {
@@ -115,27 +143,121 @@ impl Namco163Mapper {
     }
 
     fn load_irq_counter_from_regs(&mut self) {
-        let high = (self.regs[13] as u16) & 0x7F;
-        let low = self.regs[12] as u16;
+        let high = (self.regs[Self::IRQ_HIGH_ENABLE_REG] as u16) & 0x7F;
+        let low = self.regs[Self::IRQ_LOW_REG] as u16;
         self.irq_counter = (high << 8) | low;
         self.irq_pending = false;
+    }
+
+    fn irq_status_register_value(&self) -> u8 {
+        ((self.irq_counter >> 8) as u8 & 0x7F) | ((self.irq_enabled as u8) << 7)
     }
 
     fn handle_register_write(&mut self, reg: usize, value: u8) {
         self.regs[reg] = value;
         match reg {
-            11 => self.map_mirroring(value),
-            12 => {
+            Self::MIRRORING_REG => self.map_mirroring(value),
+            Self::IRQ_LOW_REG => {
                 // IRQ counter low bits
                 self.load_irq_counter_from_regs();
             }
-            13 => {
+            Self::IRQ_HIGH_ENABLE_REG => {
                 // IRQ counter high bits + enable flag (bit 7)
                 self.irq_enabled = (value & 0x80) != 0;
                 self.load_irq_counter_from_regs();
             }
             _ => {}
         }
+    }
+
+    fn chr_nt_register_index(addr: u16) -> Option<usize> {
+        if (0x8000..=0xDFFF).contains(&addr) {
+            Some(((addr - 0x8000) / 0x0800) as usize)
+        } else {
+            None
+        }
+    }
+
+    fn chr_uses_ciram(&self, slot: usize, bank: u8) -> bool {
+        if bank < Self::CIRAM_BANK_THRESHOLD {
+            return false;
+        }
+        let disable = if slot < 4 {
+            (self.e800_control & 0x40) != 0
+        } else {
+            (self.e800_control & 0x80) != 0
+        };
+        !disable
+    }
+
+    fn read_chr_slot(&self, slot: usize, bank_offset: usize) -> u8 {
+        let bank = self.chr_nt_regs.get(slot).copied().unwrap_or(0);
+        if self.chr_uses_ciram(slot, bank) {
+            return self.ciram[Self::ciram_index(bank, bank_offset)];
+        }
+
+        let bank = self.chr_bank_index_1k(bank);
+        let index = bank * Self::CHR_BANK_SIZE_1K + bank_offset;
+        self.chr_memory.read_at_index(index)
+    }
+
+    fn write_chr_slot(&mut self, slot: usize, bank_offset: usize, value: u8) {
+        let bank = self.chr_nt_regs.get(slot).copied().unwrap_or(0);
+        if self.chr_uses_ciram(slot, bank) {
+            self.ciram[Self::ciram_index(bank, bank_offset)] = value;
+            return;
+        }
+
+        let bank = self.chr_bank_index_1k(bank);
+        let index = bank * Self::CHR_BANK_SIZE_1K + bank_offset;
+        self.chr_memory.write_at_index(index, value);
+    }
+
+    fn nametable_bank_for_addr(&self, addr: u16) -> u8 {
+        let quadrant = ((addr & 0x0FFF) >> 10) as usize;
+        self.chr_nt_regs[8 + quadrant]
+    }
+
+    fn normalize_nametable_addr(addr: u16) -> Option<u16> {
+        let addr = addr & 0x2FFF;
+        (0x2000..=0x2FFF).contains(&addr).then_some(addr)
+    }
+
+    fn nametable_bank_and_offset(&self, addr: u16) -> Option<(u8, usize)> {
+        let addr = Self::normalize_nametable_addr(addr)?;
+        let bank = self.nametable_bank_for_addr(addr);
+        let offset = (addr & 0x03FF) as usize;
+        Some((bank, offset))
+    }
+
+    fn wram_write_enabled(&self, addr: u16) -> bool {
+        let has_valid_wram_protect_prefix = (0x40..=0x4E).contains(&self.wram_protect);
+        if !has_valid_wram_protect_prefix {
+            return false;
+        }
+
+        let window = ((addr - 0x6000) / 0x0800) as u8;
+        let window_write_protect_bit = 1u8 << window;
+        (self.wram_protect & window_write_protect_bit) == 0
+    }
+
+    fn nametable_ciram_index(&self, addr: u16) -> Option<usize> {
+        let (bank, offset) = self.nametable_bank_and_offset(addr)?;
+        if bank < Self::CIRAM_BANK_THRESHOLD {
+            return None;
+        }
+
+        Some(Self::ciram_index(bank, offset))
+    }
+
+    fn nametable_chr_index(&self, addr: u16) -> Option<usize> {
+        let (bank, offset) = self.nametable_bank_and_offset(addr)?;
+        if bank >= Self::CIRAM_BANK_THRESHOLD {
+            return None;
+        }
+
+        let bank = self.chr_bank_index_1k(bank);
+        Some(bank * Self::CHR_BANK_SIZE_1K + offset)
     }
 
     #[cfg(test)]
@@ -283,6 +405,18 @@ impl Namco163Mapper {
         }
     }
 
+    fn clock_irq_counter(&mut self) {
+        if self.irq_counter < Self::IRQ_COUNTER_MAX {
+            self.irq_counter += 1;
+            if self.irq_counter == Self::IRQ_COUNTER_MAX {
+                self.irq_pending = true;
+            }
+            return;
+        }
+
+        self.irq_pending = true;
+    }
+
     #[cfg(test)]
     fn debug_audio_last_output(&self) -> i16 {
         self.audio_last_output
@@ -293,6 +427,8 @@ impl Mapper for Namco163Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr & 0xF800 {
             0x4800 => self.audio_read_data(),
+            0x5000 => (self.irq_counter & 0x00FF) as u8,
+            0x5800 => self.irq_status_register_value(),
             _ => {
                 if let Some(value) = self.prg_ram.try_read(addr) {
                     return value;
@@ -304,19 +440,19 @@ impl Mapper for Namco163Mapper {
 
                 match addr {
                     0x8000..=0x9FFF => {
-                        let bank = self.prg_bank_index_8k(self.regs[8]);
+                        let bank = self.prg_bank_index_8k(self.prg_select[0]);
                         let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
                         let index = bank * Self::PRG_BANK_SIZE_8K + offset;
                         self.prg_rom.get(index).copied().unwrap_or(0)
                     }
                     0xA000..=0xBFFF => {
-                        let bank = self.prg_bank_index_8k(self.regs[9]);
+                        let bank = self.prg_bank_index_8k(self.prg_select[1]);
                         let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
                         let index = bank * Self::PRG_BANK_SIZE_8K + offset;
                         self.prg_rom.get(index).copied().unwrap_or(0)
                     }
                     0xC000..=0xDFFF => {
-                        let bank = self.prg_bank_index_8k(self.regs[10]);
+                        let bank = self.prg_bank_index_8k(self.prg_select[2]);
                         let offset = (addr as usize) & (Self::PRG_BANK_SIZE_8K - 1);
                         let index = bank * Self::PRG_BANK_SIZE_8K + offset;
                         self.prg_rom.get(index).copied().unwrap_or(0)
@@ -338,20 +474,45 @@ impl Mapper for Namco163Mapper {
             0x4800 => {
                 self.audio_write_data(value);
             }
+            0x5000 => {
+                self.handle_register_write(Self::IRQ_LOW_REG, value);
+            }
+            0x5800 => {
+                self.handle_register_write(Self::IRQ_HIGH_ENABLE_REG, value);
+            }
             0xF800 => {
                 self.audio_set_address(value);
+                self.wram_protect = value;
             }
             0xE000 => {
                 self.audio_disabled = (value & 0x40) != 0;
+                self.set_prg_select_bank(0, value);
+            }
+            0xE800 => {
+                self.e800_control = value;
+                self.set_prg_select_bank(1, value);
+            }
+            0xF000 => {
+                self.set_prg_select_bank(2, value);
             }
             _ => {
+                if (0x6000..=0x7FFF).contains(&addr) {
+                    if self.wram_write_enabled(addr) {
+                        let _ = self.prg_ram.try_write(addr, value);
+                    }
+                    return;
+                }
+
                 if self.prg_ram.try_write(addr, value) {
                     return;
                 }
 
-                if (0x8000..=0xFFFF).contains(&addr) {
-                    let reg = (addr & 0x000F) as usize;
-                    self.handle_register_write(reg, value);
+                if let Some(reg) = Self::chr_nt_register_index(addr) {
+                    self.chr_nt_regs[reg] = value;
+                    self.regs[reg] = value;
+                    if reg == Self::MIRRORING_REG {
+                        self.map_mirroring(value);
+                    }
                 }
             }
         }
@@ -361,22 +522,34 @@ impl Mapper for Namco163Mapper {
         let chr_addr = (addr & 0x1FFF) as usize;
         let slot = (chr_addr / Self::CHR_BANK_SIZE_1K).min(7);
         let bank_offset = chr_addr & (Self::CHR_BANK_SIZE_1K - 1);
-        let bank_reg = self.regs.get(slot).copied().unwrap_or(0);
-        let bank = self.chr_bank_index_1k(bank_reg);
-        let index = bank * Self::CHR_BANK_SIZE_1K + bank_offset;
-
-        self.chr_memory.read_at_index(index)
+        self.read_chr_slot(slot, bank_offset)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
         let chr_addr = (addr & 0x1FFF) as usize;
         let slot = (chr_addr / Self::CHR_BANK_SIZE_1K).min(7);
         let bank_offset = chr_addr & (Self::CHR_BANK_SIZE_1K - 1);
-        let bank_reg = self.regs.get(slot).copied().unwrap_or(0);
-        let bank = self.chr_bank_index_1k(bank_reg);
-        let index = bank * Self::CHR_BANK_SIZE_1K + bank_offset;
+        self.write_chr_slot(slot, bank_offset, value);
+    }
 
-        self.chr_memory.write_at_index(index, value);
+    fn read_nametable(&mut self, addr: u16) -> Option<u8> {
+        if let Some(index) = self.nametable_ciram_index(addr) {
+            return Some(self.ciram[index]);
+        }
+        self.nametable_chr_index(addr)
+            .map(|index| self.chr_memory.read_at_index(index))
+    }
+
+    fn write_nametable(&mut self, addr: u16, value: u8) -> bool {
+        if let Some(index) = self.nametable_ciram_index(addr) {
+            self.ciram[index] = value;
+            return true;
+        }
+        if let Some(index) = self.nametable_chr_index(addr) {
+            self.chr_memory.write_at_index(index, value);
+            return true;
+        }
+        false
     }
 
     fn cpu_cycle(&mut self) {
@@ -386,12 +559,7 @@ impl Mapper for Namco163Mapper {
             return;
         }
 
-        if self.irq_counter == Self::IRQ_COUNTER_MAX {
-            self.irq_counter = 0;
-            self.irq_pending = true;
-        } else {
-            self.irq_counter = (self.irq_counter + 1) & Self::IRQ_COUNTER_MAX;
-        }
+        self.clock_irq_counter();
     }
 
     fn irq_pending(&self) -> bool {
@@ -412,6 +580,8 @@ impl Mapper for Namco163Mapper {
 
     fn reset(&mut self) {
         self.regs = [0; 16];
+        self.chr_nt_regs = [0; 12];
+        self.prg_select = [0; 3];
         self.irq_counter = 0;
         self.irq_enabled = false;
         self.irq_pending = false;
@@ -422,6 +592,8 @@ impl Mapper for Namco163Mapper {
         self.audio_update_counter = 0;
         self.audio_current_channel = 7;
         self.audio_last_output = 0;
+        self.e800_control = 0;
+        self.wram_protect = 0;
     }
 
     fn wram_size(&self) -> usize {
@@ -478,7 +650,8 @@ impl Mapper for Namco163Mapper {
     fn restore_registers(&mut self, data: &[u8]) {
         if data.len() >= 147 {
             self.regs.copy_from_slice(&data[0..16]);
-            self.map_mirroring(self.regs[11]);
+            self.chr_nt_regs.copy_from_slice(&self.regs[0..12]);
+            self.map_mirroring(self.regs[Self::MIRRORING_REG]);
             self.namco_ram.copy_from_slice(&data[16..144]);
             self.irq_counter = (data[144] as u16) | (((data[145] & 0x7F) as u16) << 8);
             self.irq_enabled = (data[145] & 0x80) != 0;
@@ -540,9 +713,9 @@ mod tests {
             Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
 
         // Select PRG banks for $8000/$A000/$C000.
-        mapper.write_prg(0x8008, 1);
-        mapper.write_prg(0x8009, 2);
-        mapper.write_prg(0x800A, 3);
+        mapper.write_prg(0xE000, 1);
+        mapper.write_prg(0xE800, 2);
+        mapper.write_prg(0xF000, 3);
 
         assert_eq!(mapper.read_prg(0x8000), 1);
         assert_eq!(mapper.read_prg(0xA000), 2);
@@ -551,13 +724,13 @@ mod tests {
 
         // CHR banking: 1KB banks across the 8 slots.
         mapper.write_prg(0x8000, 4);
-        mapper.write_prg(0x8001, 5);
-        mapper.write_prg(0x8002, 6);
-        mapper.write_prg(0x8003, 7);
-        mapper.write_prg(0x8004, 8);
-        mapper.write_prg(0x8005, 9);
-        mapper.write_prg(0x8006, 10);
-        mapper.write_prg(0x8007, 11);
+        mapper.write_prg(0x8800, 5);
+        mapper.write_prg(0x9000, 6);
+        mapper.write_prg(0x9800, 7);
+        mapper.write_prg(0xA000, 8);
+        mapper.write_prg(0xA800, 9);
+        mapper.write_prg(0xB000, 10);
+        mapper.write_prg(0xB800, 11);
 
         assert_eq!(mapper.read_chr(0x0000), 4);
         assert_eq!(mapper.read_chr(0x0400), 5);
@@ -569,7 +742,7 @@ mod tests {
         assert_eq!(mapper.read_chr(0x1C00), 11);
 
         // Mirroring register (reg 11).
-        mapper.write_prg(0x800B, 1);
+        mapper.write_prg(0xD800, 1);
         assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
@@ -582,18 +755,192 @@ mod tests {
             .expect("Mapper 19 should be implemented");
 
         // Load counter to 0x7FFF and enable (bit 7 of reg 13).
-        mapper.write_prg(0x800C, 0xFF);
-        mapper.write_prg(0x800D, 0xFF);
+        mapper.write_prg(0x5000, 0xFF);
+        mapper.write_prg(0x5800, 0xFF);
 
         assert!(!mapper.irq_pending());
         mapper.cpu_cycle();
         assert!(mapper.irq_pending());
 
         // Writing to reg 13 should clear the pending IRQ and disable when bit7 is 0.
-        mapper.write_prg(0x800D, 0x00);
+        mapper.write_prg(0x5800, 0x00);
         assert!(!mapper.irq_pending());
         mapper.cpu_cycle();
         assert!(!mapper.irq_pending());
+    }
+
+    #[test]
+    fn namco163_register_windows_use_0x800_ranges() {
+        let prg_rom = banked_data(8 * 1024, 4);
+        let chr_rom = banked_data(1024, 16);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+
+        // Given CHR bank writes to distinct 0x800-sized register windows
+        mapper.write_prg(0x8000, 3);
+        mapper.write_prg(0x8800, 5);
+
+        // When reading from slot 0 and slot 1
+        let slot0 = mapper.read_chr(0x0000);
+        let slot1 = mapper.read_chr(0x0400);
+
+        // Then each slot should reflect its own window write
+        assert_eq!(slot0, 3);
+        assert_eq!(slot1, 5);
+    }
+
+    #[test]
+    fn namco163_irq_registers_are_directly_readable_at_5000_and_5800() {
+        let prg_rom = banked_data(8 * 1024, 4);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Given direct writes to IRQ low/high registers
+        mapper.write_prg(0x5000, 0x34);
+        mapper.write_prg(0x5800, 0x80 | 0x12);
+
+        // Then reads expose current counter low and high+enable
+        assert_eq!(mapper.read_prg(0x5000), 0x34);
+        assert_eq!(mapper.read_prg(0x5800), 0x80 | 0x12);
+
+        // Given a pending IRQ from counter overflow
+        mapper.write_prg(0x5000, 0xFF);
+        mapper.write_prg(0x5800, 0x80 | 0x7F);
+        mapper.cpu_cycle();
+        assert!(mapper.irq_pending());
+
+        // When writing either IRQ register again
+        mapper.write_prg(0x5000, 0x00);
+
+        // Then pending IRQ should be acknowledged (cleared)
+        assert!(!mapper.irq_pending());
+    }
+
+    #[test]
+    fn namco163_chr_e0_bank_uses_ciram_when_enabled_by_e800() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 256);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+
+        // Given bank $E0 in $0000-$03FF and E800.6 = 0 (CIRAM enabled for $0000-$0FFF)
+        mapper.write_prg(0x8000, 0xE0);
+        mapper.write_prg(0xE800, 0x00);
+
+        // When writing through CHR port, it should target CIRAM (writable) instead of CHR-ROM
+        mapper.write_chr(0x0000, 0x5A);
+        assert_eq!(mapper.read_chr(0x0000), 0x5A);
+
+        // And when E800.6 is set, $E0-$FF should resolve to CHR-ROM again
+        mapper.write_prg(0xE800, 0x40);
+        assert_eq!(mapper.read_chr(0x0000), 0xE0);
+    }
+
+    #[test]
+    fn namco163_c000_dfff_registers_bank_nametable_pages() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 16);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Given $C000/$C800 select nametable pages (E0 -> CIRAM A, E1 -> CIRAM B)
+        mapper.write_prg(0xC000, 0xE0);
+        mapper.write_prg(0xC800, 0xE1);
+
+        // When writing two different nametable quadrants
+        assert!(mapper.write_nametable(0x2000, 0x11));
+        assert!(mapper.write_nametable(0x2400, 0x22));
+
+        // Then reads should come from independently banked CIRAM pages
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x11));
+        assert_eq!(mapper.read_nametable(0x2400), Some(0x22));
+    }
+
+    #[test]
+    fn namco163_f800_controls_wram_write_protect_windows() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Given invalid high nibble, all WRAM writes should be blocked
+        mapper.write_prg(0xF800, 0x00);
+        mapper.write_prg(0x6000, 0xAA);
+        assert_ne!(mapper.read_prg(0x6000), 0xAA);
+
+        // Given 0x40 (valid high nibble + all windows writable), writes are allowed
+        mapper.write_prg(0xF800, 0x40);
+        mapper.write_prg(0x6000, 0x11);
+        mapper.write_prg(0x6800, 0x22);
+        assert_eq!(mapper.read_prg(0x6000), 0x11);
+        assert_eq!(mapper.read_prg(0x6800), 0x22);
+
+        // Given bit A set, only $6000-$67FF is write-protected
+        mapper.write_prg(0xF800, 0x41);
+        mapper.write_prg(0x6000, 0x33);
+        mapper.write_prg(0x6800, 0x44);
+
+        // Then protected window remains unchanged while unprotected window updates
+        assert_eq!(mapper.read_prg(0x6000), 0x11);
+        assert_eq!(mapper.read_prg(0x6800), 0x44);
+    }
+
+    #[test]
+    fn namco163_irq_counter_saturates_at_7fff() {
+        let prg_rom = banked_data(8 * 1024, 4);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+
+        // Given IRQ counter at $7FFF and enabled
+        mapper.write_prg(0x5000, 0xFF);
+        mapper.write_prg(0x5800, 0xFF);
+
+        // When clocked, IRQ should assert and counter should remain saturated at $7FFF
+        mapper.cpu_cycle();
+        assert!(mapper.irq_pending());
+        assert_eq!(mapper.read_prg(0x5000), 0xFF);
+        assert_eq!(mapper.read_prg(0x5800), 0xFF);
+
+        // Additional clocks should keep it saturated
+        mapper.cpu_cycle();
+        assert_eq!(mapper.read_prg(0x5000), 0xFF);
+        assert_eq!(mapper.read_prg(0x5800), 0xFF);
+    }
+
+    #[test]
+    fn namco163_e800_prg_bank_uses_low_6_bits_only() {
+        let prg_rom = banked_data(8 * 1024, 128);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Given E800 with upper control bits set and low bank bits = 3
+        mapper.write_prg(0xE800, 0xC3);
+
+        // Then $A000 PRG bank should use only low 6 bits for bank selection
+        assert_eq!(mapper.read_prg(0xA000), 3);
+    }
+
+    #[test]
+    fn namco163_c000_nt_bank_below_e0_reads_from_chr_memory() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 16);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Given nametable page register points to CHR bank 2
+        mapper.write_prg(0xC000, 0x02);
+
+        // Then nametable read should be provided by mapper from CHR memory
+        assert_eq!(mapper.read_nametable(0x2000), Some(2));
+    }
+
+    #[test]
+    fn namco163_c000_nt_bank_below_e0_writes_chr_ram_when_present() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_ram = Vec::new(); // CHR-RAM configuration
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_ram, NametableLayout::Vertical);
+
+        // Given nametable page register points to CHR bank 1
+        mapper.write_prg(0xC000, 0x01);
+
+        // When writing through nametable path, mapper should handle it in CHR-RAM
+        assert!(mapper.write_nametable(0x2000, 0x7B));
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x7B));
     }
 
     #[test]
@@ -617,6 +964,7 @@ mod tests {
         assert_eq!(mapper.read_namco_ram(0x4800), 0xCC);
 
         // PRG-RAM snapshot/restore.
+        mapper.write_prg(0xF800, 0x40);
         mapper.write_prg(0x6000, 0x11);
         assert_eq!(mapper.read_prg(0x6000), 0x11);
 
@@ -741,7 +1089,7 @@ mod tests {
         mapper.write_prg(0xF800, 0x80 | 0x05);
 
         // Set mirroring to SingleScreenLower.
-        mapper.write_prg(0x800B, 2);
+        mapper.write_prg(0xD800, 2);
         assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
 
         let snapshot = mapper.registers_snapshot();
