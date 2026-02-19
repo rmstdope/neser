@@ -8,6 +8,7 @@ use std::io;
 use std::path::Path;
 
 use crate::cartridge::{ConsoleType, NametableLayout, TimingMode};
+use num_enum::TryFromPrimitive;
 
 const ROM_DB_COLUMN_COUNT: usize = 22;
 
@@ -67,10 +68,93 @@ pub enum VsPpuType {
     Unknown(u8),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// iNES 2.0 Controller types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[repr(u8)]
 pub enum ExpansionType {
-    None,
-    Device(u8),
+    Unspecified = 0x00,
+    StandardControllers = 0x01,
+    NesFourScore = 0x02,
+    FamicomFourPlayersSimple = 0x03,
+    VsSystem4016 = 0x04,
+    VsSystem4017 = 0x05,
+    Reserved = 0x06,
+    VsZapper = 0x07,
+    Zapper4017 = 0x08,
+    TwoZappers = 0x09,
+    BandaiHyperShot = 0x0A,
+    PowerPadSideA = 0x0B,
+    PowerPadSideB = 0x0C,
+    FamilyTrainerSideA = 0x0D,
+    FamilyTrainerSideB = 0x0E,
+    ArkanoidVausNes = 0x0F,
+    ArkanoidVausFamicom = 0x10,
+    TwoVausDataRecorder = 0x11,
+    KonamiHyperShot = 0x12,
+    CoconutsPachinko = 0x13,
+    ExcitingBoxingBag = 0x14,
+    JissenMahjong = 0x15,
+    YonezawaPartyTap = 0x16,
+    OekaKidsTablet = 0x17,
+    SunsoftBarcodeBattler = 0x18,
+    MiraclePiano = 0x19,
+    PokkunMoguraaTapMat = 0x1A,
+    TopRider = 0x1B,
+    DoubleFisted = 0x1C,
+    Famicom3dSystem = 0x1D,
+    DoremikkoKeyboard = 0x1E,
+    RobGyromite = 0x1F,
+    FamicomDataRecorder = 0x20,
+    AsciiTurboFile = 0x21,
+    IgsStorageBattleBox = 0x22,
+    FamilyBasicKeyboardRecorder = 0x23,
+    DongdaPecKeyboard = 0x24,
+    PuzeBit79Keyboard = 0x25,
+    SuborKeyboard = 0x26,
+    SuborKeyboardMacroMouse = 0x27,
+    SuborKeyboardSuborMouse4016 = 0x28,
+    SnesMouse4016 = 0x29,
+    Multicart = 0x2A,
+    TwoSnesControllers = 0x2B,
+    RacermateBicycle = 0x2C,
+    UForce = 0x2D,
+    RobStackUp = 0x2E,
+    CityPatrolmanLightgun = 0x2F,
+    SharpC1Cassette = 0x30,
+    StandardSwapDpadBa = 0x31,
+    ExcaliburSudokuPad = 0x32,
+    AblPinball = 0x33,
+    GoldenNuggetButtons = 0x34,
+    KedaKeyboard = 0x35,
+    SuborKeyboardSuborMouse4017 = 0x36,
+    PortTestController = 0x37,
+    BandaiMultiGamePlayer = 0x38,
+    VenomTvDanceMat = 0x39,
+    LgTvRemote = 0x3A,
+    FamicomNetworkController = 0x3B,
+    KingFishingController = 0x3C,
+    CroakyKaraoke = 0x3D,
+    KewangKingwonKeyboard = 0x3E,
+    ZechengKeyboard = 0x3F,
+    SuborKeyboardPs2Mouse4017L90 = 0x40,
+    Um6578Ps2KeyboardMouse4017 = 0x41,
+    Um6578Ps2Mouse = 0x42,
+    YuxingMouse4016 = 0x43,
+    SuborKeyboardYuxingMouse4016 = 0x44,
+    GigggleTvPump = 0x45,
+    BbkKeyboardPs2Mouse4017R90 = 0x46,
+    MagicalCooking = 0x47,
+    SnesMouse4017 = 0x48,
+    Zapper4016 = 0x49,
+    ArkanoidVausProto = 0x4A,
+    TvMahjongGame = 0x4B,
+    MahjongGekitouDensetu = 0x4C,
+    SuborKeyboardPs2Mouse4017Xinv = 0x4D,
+    IbmPcXtKeyboard = 0x4E,
+    SuborKeyboardMegaBookMouse = 0x4F,
+    // Values not in iNES 2.0 spec:
+    PowerGlove = 0x51,
+    AladdinDeckEnhancer = 0x52,
 }
 
 impl RomDbEntry {
@@ -128,6 +212,22 @@ impl RomDb {
 
     pub fn get_by_crc(&self, crc: u32) -> Option<&RomDbEntry> {
         self.entries.get(&crc)
+    }
+
+    /// Return the default Zapper controller port for a ROM CRC.
+    ///
+    /// Returns 2 when the ROM DB entry exists and expansion type is ZAPPER_4017,
+    /// otherwise returns 0.
+    pub fn default_zapper_on_port(&self, crc32: u32) -> u8 {
+        match self
+            .get_by_crc(crc32)
+            .and_then(|entry| entry.expansion_type)
+        {
+            Some(ExpansionType::Zapper4017) => 2,
+            Some(ExpansionType::VsZapper | ExpansionType::TwoZappers) => 2,
+            Some(ExpansionType::Zapper4016) => 1,
+            _ => 0,
+        }
     }
 
     pub(crate) fn from_csv_content(content: &str) -> Self {
@@ -252,11 +352,7 @@ fn parse_optional_vs_ppu_type(raw: &str) -> Option<VsPpuType> {
 
 fn parse_optional_expansion_type(raw: &str) -> Option<ExpansionType> {
     let value = parse_optional_u8_decimal(raw)?;
-    Some(if value == 0 {
-        ExpansionType::None
-    } else {
-        ExpansionType::Device(value)
-    })
+    ExpansionType::try_from(value).ok()
 }
 
 fn parse_row(line: &str) -> Option<RomDbEntry> {
@@ -339,12 +435,6 @@ const ARKANOID_PADDLE_PORT1_CRCS: &[u32] = &[
     0x47F9F410, // PaddleTest3
 ];
 
-/// CRC32 values for ROMs that default to Zapper input on port 2.
-const ZAPPER_PORT2_CRCS: &[u32] = &[
-    0x24598791, // Duck Hunt (World)
-    0xFF24D794, // Hogan's Alley (World)
-];
-
 /// Check if a ROM CRC requires alternate MMC3 IRQ behavior.
 pub fn requires_mmc3_alternate_irq(crc: u32) -> bool {
     MMC3_ALTERNATE_IRQ_CRCS.contains(&crc)
@@ -357,17 +447,6 @@ pub fn default_arkanoid_on_port(crc: u32) -> u8 {
     if ARKANOID_PADDLE_PORT1_CRCS.contains(&crc) {
         1
     } else if ARKANOID_PADDLE_PORT2_CRCS.contains(&crc) {
-        2
-    } else {
-        0
-    }
-}
-
-/// Return the default Zapper controller port for a ROM CRC.
-///
-/// Returns 0 for none, 2 for port 2.
-pub fn default_zapper_on_port(crc: u32) -> u8 {
-    if ZAPPER_PORT2_CRCS.contains(&crc) {
         2
     } else {
         0
@@ -419,13 +498,51 @@ mod tests {
     }
 
     #[test]
-    fn test_zapper_known_crc() {
-        assert_eq!(default_zapper_on_port(0x24598791), 2);
+    fn test_rom_db_default_zapper_on_port_when_expansion_is_zapper_4017() {
+        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,,8\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert_eq!(db.default_zapper_on_port(0x24598791), 2);
     }
 
     #[test]
-    fn test_zapper_unknown_crc() {
-        assert_eq!(default_zapper_on_port(0xDEADBEEF), 0);
+    fn test_rom_db_default_zapper_on_port_when_expansion_is_zapper_4016() {
+        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,,73\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert_eq!(db.default_zapper_on_port(0x24598791), 1);
+    }
+
+    #[test]
+    fn test_rom_db_default_zapper_on_port_when_expansion_is_two_zappers() {
+        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,,9\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert_eq!(db.default_zapper_on_port(0x24598791), 2);
+    }
+
+    #[test]
+    fn test_rom_db_default_zapper_on_port_when_expansion_is_vs_zapper() {
+        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,,7\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert_eq!(db.default_zapper_on_port(0x24598791), 2);
+    }
+
+    #[test]
+    fn test_rom_db_default_zapper_on_port_when_expansion_is_not_zapper_4017() {
+        let csv = "1,No Zapper,,24598791,,,,,,,,,,,,,,,,,,1\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert_eq!(db.default_zapper_on_port(0x24598791), 0);
+    }
+
+    #[test]
+    fn test_rom_db_default_zapper_on_port_when_crc_is_missing() {
+        let csv = "1,Zapper Demo,,24598791,,,,,,,,,,,,,,,,,,8\n";
+        let db = RomDb::from_csv_content(csv);
+
+        assert_eq!(db.default_zapper_on_port(0xDEADBEEF), 0);
     }
 
     #[test]
@@ -488,7 +605,7 @@ mod tests {
         assert_eq!(entry.battery, Some(true));
         assert_eq!(entry.vs_hardware_type, Some(VsHardwareType::VsDualSystem));
         assert_eq!(entry.vs_ppu_type, Some(VsPpuType::Rc2c05_03));
-        assert_eq!(entry.expansion_type, Some(ExpansionType::Device(2)));
+        assert_eq!(entry.expansion_type, Some(ExpansionType::NesFourScore));
     }
 
     #[test]

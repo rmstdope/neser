@@ -1,10 +1,12 @@
-use crate::app_context::IntoSharedAppContext;
+use crate::app_context::{IntoSharedAppContext, SharedAppContext};
 use crate::apu::Apu;
 use crate::bus::Bus;
 use crate::cartridge::Cartridge;
 #[cfg(test)]
 use crate::cartridge::TimingMode;
-use crate::console::{Config, SAVESTATE_VERSION, SaveState};
+#[cfg(test)]
+use crate::console::Config;
+use crate::console::{SAVESTATE_VERSION, SaveState};
 use crate::cpu::Cpu;
 use crate::cpu::lookup;
 use crate::debugging::{Tracing, log_info};
@@ -15,13 +17,14 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 pub struct Nes {
+    // TODO pub fields smell
+    pub app_context: SharedAppContext,
     pub ppu: Rc<RefCell<Ppu>>,
     pub apu: Rc<RefCell<Apu>>,
     pub bus: Rc<RefCell<Bus>>,
     pub cpu: Cpu,
     fractional_ppu_cycles: f64,
     ready_to_render: bool,
-    pub config: Rc<RefCell<Config>>,
 }
 
 impl Nes {
@@ -38,7 +41,7 @@ impl Nes {
         let memory = Rc::new(RefCell::new(Bus::new(
             ppu.clone(),
             apu.clone(),
-            app_context,
+            app_context.clone(),
         )));
         let cpu = Cpu::new(tv_system, memory.clone(), ppu.clone(), apu.clone());
 
@@ -48,36 +51,41 @@ impl Nes {
         ppu.borrow_mut().run_ppu_cycles(1);
 
         Self {
+            app_context,
             ppu,
             apu,
             bus: memory,
             cpu,
             fractional_ppu_cycles: 0.0,
             ready_to_render: false,
-            config: Rc::new(RefCell::new(config)),
         }
     }
 
     /// Insert a cartridge and map it into memory.
     /// Auto-configures Arkanoid or Zapper controllers for known ROMs if that specific port hasn't been explicitly configured.
     pub fn insert_cartridge(&mut self, mut cartridge: Cartridge) {
-        let zapper_port = crate::cartridge::default_zapper_on_port(cartridge.crc32());
+        let zapper_port = self
+            .app_context
+            .borrow()
+            .rom_db()
+            .default_zapper_on_port(cartridge.crc32());
         let arkanoid_port = crate::cartridge::default_arkanoid_on_port(cartridge.crc32());
 
         // Initialize cartridge RAM (PRG-RAM and CHR-RAM) based on config
-        let ram_init_mode = self.config.borrow().ram_init_mode;
+        let ram_init_mode = self.app_context.borrow().config().ram_init_mode;
         cartridge.initialize_ram(ram_init_mode);
 
         let mut bus = self.bus.borrow_mut();
         bus.map_cartridge(cartridge);
 
         // Get controller config and explicit flags from stored config
-        let config = self.config.borrow();
+        let app_context = self.app_context.borrow();
+        let config = app_context.config();
         let port1_type = config.controller_port1;
         let port2_type = config.controller_port2;
         let port1_explicit = config.controller_port1_explicit;
         let port2_explicit = config.controller_port2_explicit;
-        drop(config); // Release borrow early
+        drop(app_context); // Release borrow early
 
         let auto_controller = if zapper_port != 0 {
             Some((zapper_port, ControllerType::Zapper))
@@ -164,7 +172,7 @@ impl Nes {
     pub fn reset(&mut self, soft_reset: bool) {
         // Get CPU cycle count before reset for coordinated APU timing
         let cpu_cycle = self.cpu.get_total_cycles();
-        let ram_init_mode = self.config.borrow().ram_init_mode;
+        let ram_init_mode = self.app_context.borrow().config().ram_init_mode;
 
         // Reset components - each handles its own RAM initialization on hard reset
         self.ppu.borrow_mut().reset(soft_reset, ram_init_mode);

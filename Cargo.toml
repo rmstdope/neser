@@ -29,6 +29,7 @@ js-sys = { version = "0.3", optional = true }
 web-sys = { version = "0.3", optional = true, features = ["Window", "console"] }
 wasm-bindgen-test = { version = "0.3.45", optional = true }
 imgui = { version = "0.11", optional = true }
+num_enum = "0.7"
 
 [features]
 default = []
