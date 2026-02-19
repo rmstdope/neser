@@ -235,7 +235,10 @@ impl SdlEventLoop {
         }
 
         let assigned_count = controller_player_map.len().min(gamepad_ports.len());
-        gamepad_ports[assigned_count..].to_vec()
+        // Only target the first unassigned port so that WASD never controls multiple
+        // controllers simultaneously (matching web behavior where each key set is
+        // hardcoded to a single controller).
+        gamepad_ports[assigned_count..].iter().take(1).copied().collect()
     }
 
     fn apply_keyboard_button(nes: &mut Nes, ports: &[u8], button: Button, pressed: bool) {
@@ -1681,8 +1684,8 @@ impl SdlEventLoop {
             Keycode::S => Self::apply_keyboard_button(nes, keyboard_ports, Button::Down, true),
             Keycode::A => Self::apply_keyboard_button(nes, keyboard_ports, Button::Left, true),
             Keycode::D => Self::apply_keyboard_button(nes, keyboard_ports, Button::Right, true),
-            Keycode::G => Self::apply_keyboard_button(nes, keyboard_ports, Button::B, true),
-            Keycode::F => Self::apply_keyboard_button(nes, keyboard_ports, Button::A, true),
+            Keycode::F => Self::apply_keyboard_button(nes, keyboard_ports, Button::B, true),
+            Keycode::G => Self::apply_keyboard_button(nes, keyboard_ports, Button::A, true),
             Keycode::R => Self::apply_keyboard_button(nes, keyboard_ports, Button::Select, true),
             Keycode::T => Self::apply_keyboard_button(nes, keyboard_ports, Button::Start, true),
             _ => {}
@@ -2346,7 +2349,7 @@ mod tests {
 
     #[test]
     #[serial]
-    fn test_keyboard_targets_all_gamepad_ports_when_no_gamepads() {
+    fn test_keyboard_targets_first_gamepad_port_when_no_gamepads() {
         let config = default_config();
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
@@ -2357,7 +2360,7 @@ mod tests {
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::W);
 
         assert_eq!(read_joypad_buttons(&mut nes, 1), [0, 0, 0, 0, 1, 0, 0, 0]);
-        assert_eq!(read_joypad_buttons(&mut nes, 2), [0, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(read_joypad_buttons(&mut nes, 2), [0; 8]);
     }
 
     #[test]
@@ -3815,8 +3818,8 @@ mod tests {
         // - D-pad: W/A/S/D
         // - Select: R
         // - Start:  T
-        // - A:      F
-        // - B:      G
+        // - A:      G
+        // - B:      F
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -3898,26 +3901,26 @@ mod tests {
         );
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 1, 0, 0, 0, 0]);
 
-        // F => A
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
-            Config::default(),
-        ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
-        assert_eq!(read_joypad1_buttons(&mut nes), [1, 0, 0, 0, 0, 0, 0, 0]);
-
-        // G => B
+        // G => A
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::G,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+        assert_eq!(read_joypad1_buttons(&mut nes), [1, 0, 0, 0, 0, 0, 0, 0]);
+
+        // F => B
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        let _ = SdlEventLoop::handle_key_down(
+            &mut nes,
+            Keycode::F,
             None,
             &mut paused,
             &mut debugger_open_requested,
