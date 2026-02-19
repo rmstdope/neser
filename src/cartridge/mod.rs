@@ -11,6 +11,7 @@ mod cprom;
 mod gxrom;
 mod ines;
 mod mapper;
+mod mapper6;
 mod mapper_templates;
 mod mmc1;
 mod mmc2;
