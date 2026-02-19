@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::cartridge::{RomDb, RomDbEntry};
+use crate::console::Config;
 
 pub const TOAST_LIFETIME_SECS: u64 = 4;
 pub const MAX_VISIBLE_TOASTS: usize = 3;
@@ -12,6 +13,7 @@ pub const MAX_VISIBLE_TOASTS: usize = 3;
 pub struct AppContext {
     toast_manager: Rc<RefCell<ToastManager>>,
     rom_db: Arc<RomDb>,
+    config: Rc<RefCell<Config>>,
 }
 
 impl Default for AppContext {
@@ -19,6 +21,7 @@ impl Default for AppContext {
         Self {
             toast_manager: Rc::new(RefCell::new(ToastManager::new())),
             rom_db: Arc::new(load_rom_db()),
+            config: Rc::new(RefCell::new(Config::default())),
         }
     }
 }
@@ -36,6 +39,17 @@ fn load_rom_db() -> RomDb {
 impl AppContext {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn new_with_config(config: Config) -> Self {
+        Self {
+            config: Rc::new(RefCell::new(config)),
+            ..Self::default()
+        }
+    }
+
+    pub fn config(&self) -> Rc<RefCell<Config>> {
+        self.config.clone()
     }
 
     pub fn add_toast(&self, text: impl Into<String>) {

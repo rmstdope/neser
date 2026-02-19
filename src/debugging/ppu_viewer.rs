@@ -318,7 +318,9 @@ mod tests {
 
     #[test]
     fn test_ppu_viewer_snapshot_from_nes_has_correct_field_sizes() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let prg_rom = vec![0u8; 32 * 1024];
         let chr_rom = vec![0u8; 8 * 1024];
         let cart = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
@@ -338,7 +340,9 @@ mod tests {
 
     #[test]
     fn test_scroll_for_debugger_default_is_origin() {
-        let nes = Nes::new(Config::default());
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let ppu = nes.ppu.borrow();
         let (sx, sy) = ppu.scroll_for_debugger();
         // After reset, t=0 and fine_x=0, so scroll is at (0, 0).
@@ -348,7 +352,9 @@ mod tests {
 
     #[test]
     fn test_scroll_for_debugger_reflects_x_scroll_write() {
-        let nes = Nes::new(Config::default());
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         // Write $80 (128) to PPUSCROLL twice: X=128, Y=0.
         // This sets coarse_x=16, fine_x=0 → scroll_x = 128.
         nes.ppu.borrow_mut().write_scroll(0x80, false);
@@ -360,7 +366,9 @@ mod tests {
 
     #[test]
     fn test_scroll_for_debugger_reflects_y_scroll_write() {
-        let nes = Nes::new(Config::default());
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         // X=0, Y=120 → scroll_y = 120.
         nes.ppu.borrow_mut().write_scroll(0x00, false);
         nes.ppu.borrow_mut().write_scroll(0x78, false);

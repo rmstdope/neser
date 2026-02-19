@@ -176,7 +176,7 @@ pub(crate) mod tests {
                 config.ram_init_mode = ram_init_mode;
             }
 
-            let mut nes = Nes::new(config);
+            let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
             nes.insert_cartridge(cartridge);
             // Initial reset is treated as power-on.
             nes.reset(false);
@@ -403,7 +403,7 @@ pub(crate) mod tests {
             }
         }
 
-        let mut nes = Nes::new(config);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -694,7 +694,9 @@ pub(crate) mod tests {
                     }
                 }
 
-                let mut nes = $crate::console::Nes::new(config);
+                let mut nes = $crate::console::Nes::new(
+                    crate::app_context::AppContext::new_with_config(config),
+                );
                 nes.insert_cartridge(cartridge);
                 nes.reset(false);
 

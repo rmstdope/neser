@@ -116,7 +116,9 @@ mod tests {
             .map_err(|e| format!("Failed to load ROM {}: {e}", rom_path.display()))?;
         let cartridge = load_test_cartridge(&rom_data, rom_path)?;
 
-        let mut nes = Nes::new(deterministic_config());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            deterministic_config(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -138,7 +140,9 @@ mod tests {
         )
         .expect("ROM should parse");
 
-        let mut nes = Nes::new(deterministic_config());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            deterministic_config(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 

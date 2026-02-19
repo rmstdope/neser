@@ -1,6 +1,5 @@
 use super::sdl_render_target::SdlRenderTarget;
 use crate::app_context::AppContext;
-use crate::console::Config;
 use crate::debugging::breakpoints::BreakpointList;
 use crate::debugging::ui::DebuggerUiAction;
 use crate::rendering::input::{InputEvent, MouseButton as RenderMouseButton};
@@ -21,12 +20,18 @@ pub struct SdlGlWrapper {
 
 impl SdlGlWrapper {
     /// Creates a new SDL-backed renderer instance.
-    pub fn new(
-        sdl_context: &sdl2::Sdl,
-        config: &Config,
-        app_context: AppContext,
-    ) -> Result<Self, String> {
+    pub fn new(sdl_context: &sdl2::Sdl, app_context: AppContext) -> Result<Self, String> {
         let video_subsystem = sdl_context.video()?;
+        let (fullscreen, vsync_enabled, shader_path, debugger_alpha) = {
+            let config_handle = app_context.config();
+            let config = config_handle.borrow();
+            (
+                config.fullscreen,
+                config.vsync_enabled,
+                config.shader_path.clone(),
+                config.debugger_alpha,
+            )
+        };
 
         {
             let gl_attr = video_subsystem.gl_attr();
@@ -38,16 +43,16 @@ impl SdlGlWrapper {
             gl_attr.set_stencil_size(0);
         }
 
-        let target_display = select_target_display(&video_subsystem, config)?;
+        let target_display = select_target_display(&video_subsystem, &app_context)?;
         let (window_width, window_height) =
-            resolve_window_size(&video_subsystem, config, target_display)?;
+            resolve_window_size(&video_subsystem, &app_context, target_display)?;
 
         let mut window_builder =
             video_subsystem.window("NES Emulator in Rust", window_width, window_height);
         window_builder.opengl();
 
         window_builder.position_centered();
-        if !config.fullscreen {
+        if !fullscreen {
             window_builder.resizable();
         }
 
@@ -72,7 +77,7 @@ impl SdlGlWrapper {
             .map_err(|e| e.to_string())?;
 
         video_subsystem
-            .gl_set_swap_interval(if config.vsync_enabled { 1 } else { 0 })
+            .gl_set_swap_interval(if vsync_enabled { 1 } else { 0 })
             .map_err(|e| e.to_string())?;
 
         gl::load_with(|s| video_subsystem.gl_get_proc_address(s) as _);
@@ -84,10 +89,10 @@ impl SdlGlWrapper {
         let mut gl_backend = GlBackend::new(
             render_target,
             proc_address,
-            config.shader_path.as_deref(),
+            shader_path.as_deref(),
             app_context,
         )?;
-        gl_backend.set_debugger_alpha(config.debugger_alpha);
+        gl_backend.set_debugger_alpha(debugger_alpha);
 
         Ok(Self { gl_backend })
     }
@@ -141,8 +146,10 @@ impl SdlGlWrapper {
 /// Chooses which display to use for fullscreen rendering.
 fn select_target_display(
     video_subsystem: &sdl2::VideoSubsystem,
-    config: &Config,
+    app_context: &AppContext,
 ) -> Result<Option<i32>, String> {
+    let config_handle = app_context.config();
+    let config = config_handle.borrow();
     if !config.fullscreen {
         return Ok(None);
     }
@@ -172,9 +179,11 @@ fn select_target_display(
 /// Resolves window size based on fullscreen state and aspect policy.
 fn resolve_window_size(
     video_subsystem: &sdl2::VideoSubsystem,
-    config: &Config,
+    app_context: &AppContext,
     target_display: Option<i32>,
 ) -> Result<(u32, u32), String> {
+    let config_handle = app_context.config();
+    let config = config_handle.borrow();
     if let Some(display) = target_display {
         match video_subsystem.display_bounds(display) {
             Ok(bounds) => Ok((bounds.width(), bounds.height())),

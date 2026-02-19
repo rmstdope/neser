@@ -619,7 +619,9 @@ mod tests {
 
     #[test]
     fn test_cpu_register_lines_render_expected_values() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.cpu.set_pc(0xC000);
         nes.cpu.set_a_register(0x12);
         nes.cpu.set_x(0x34);

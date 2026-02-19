@@ -63,12 +63,13 @@ impl WasmNes {
     #[wasm_bindgen(constructor)]
     pub fn new() -> WasmNes {
         console_error_panic_hook::set_once();
+        let app_context = AppContext::new_with_config(Config::default());
         WasmNes {
-            nes: Nes::new(Config::default()),
+            nes: Nes::new(app_context.clone()),
             audio_muted: false,
             rom_loaded: false,
             pending_toasts: Vec::new(),
-            app_context: AppContext::new(),
+            app_context,
         }
     }
 
@@ -76,7 +77,10 @@ impl WasmNes {
     #[wasm_bindgen]
     pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
         let app_context = self.app_context.clone();
-        let mut config = Config::default();
+        {
+            let config = app_context.config();
+            *config.borrow_mut() = Config::default();
+        }
         self.rom_loaded = false;
         let cart = match Cartridge::load_from_file(rom, rom_name, &app_context) {
             Ok(cart) => cart,
@@ -88,10 +92,13 @@ impl WasmNes {
         };
 
         let rom_timing_mode = cart.rom_timing_mode();
-        let applied = config.apply_rom_timing_mode(rom_timing_mode);
-        log_rom_timing_mode_selection(&config, rom_timing_mode, applied);
+        let applied = {
+            let config = app_context.config();
+            config.borrow_mut().apply_rom_timing_mode(rom_timing_mode)
+        };
+        log_rom_timing_mode_selection(&app_context, rom_timing_mode, applied);
 
-        self.nes = Nes::new(config);
+        self.nes = Nes::new(app_context);
         self.nes.insert_cartridge(cart);
         self.nes.reset(false);
         self.rom_loaded = true;

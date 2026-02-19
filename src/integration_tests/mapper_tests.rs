@@ -51,7 +51,9 @@ mod tests {
             Cartridge::load_from_file(&rom_data, rom_path, &crate::app_context::AppContext::new())
                 .expect("mmc5exram ROM should parse");
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 

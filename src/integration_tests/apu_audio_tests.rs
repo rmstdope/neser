@@ -48,7 +48,9 @@ mod tests {
         let rom_data = fs::read(rom_path).expect("ROM should load");
         let cartridge = load_test_cartridge(&rom_data, rom_path);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -101,7 +103,9 @@ mod tests {
         let rom_data = fs::read(rom_path).expect("ROM should load");
         let cartridge = load_test_cartridge(&rom_data, rom_path);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 

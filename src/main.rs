@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
     let args: Vec<String> = std::env::args().collect();
 
-    let mut config = match Config::new(&args)? {
+    let parsed_config = match Config::new(&args)? {
         ParseResult::Help => {
             Config::print_help();
             return Ok(());
@@ -31,8 +31,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ParseResult::Config(c) => c,
     };
 
+    let app_context = AppContext::new();
+    {
+        let config = app_context.config();
+        *config.borrow_mut() = parsed_config;
+    }
+
     // Initialize global tracing state (only active in debug builds)
-    debugging::init_tracing(config.tracing);
+    let tracing_config = {
+        let config = app_context.config();
+        config.borrow().tracing
+    };
+    debugging::init_tracing(tracing_config);
 
     // Initialize SDL2
     let sdl_context = sdl2::init()?;
@@ -41,7 +51,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // SDL may open the device at a different rate; always sync the APU to the actual rate
     // to avoid steady underruns.
     let mut audio_sample_rate = None;
-    let audio = if !config.audio_enabled {
+    let audio_enabled = {
+        let config = app_context.config();
+        config.borrow().audio_enabled
+    };
+    let audio = if !audio_enabled {
         None
     } else {
         let audio = SdlNesAudio::new(&sdl_context, 44100)?;
@@ -79,12 +93,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
-    let app_context = AppContext::new();
-
-    let rom_path = config
-        .rom_path
-        .clone()
-        .unwrap_or_else(|| default_rom_path.to_string());
+    let rom_path = {
+        let config = app_context.config();
+        config
+            .borrow()
+            .rom_path
+            .clone()
+            .unwrap_or_else(|| default_rom_path.to_string())
+    };
     let rom_bytes = match fs::read(&rom_path) {
         Ok(bytes) => bytes,
         Err(err) => {
@@ -104,43 +120,65 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let rom_timing_mode = cart.rom_timing_mode();
-    let applied = config.apply_rom_timing_mode(rom_timing_mode);
-    log_rom_timing_mode_selection(&config, rom_timing_mode, applied);
+    let applied = {
+        let config = app_context.config();
+        config.borrow_mut().apply_rom_timing_mode(rom_timing_mode)
+    };
+    log_rom_timing_mode_selection(&app_context, rom_timing_mode, applied);
 
-    let mut nes_instance = Nes::new(config.clone());
+    let mut nes_instance = Nes::new(app_context.clone());
     nes_instance.insert_cartridge(cart);
-    app_context.add_toast(emulator_timing_toast_message(config.tv_system));
+    let tv_system = {
+        let config = app_context.config();
+        config.borrow().tv_system
+    };
+    app_context.add_toast(emulator_timing_toast_message(tv_system));
 
     if let Some(actual_rate) = audio_sample_rate {
         nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
     }
 
     // Create event loop with headless mode if autorun playback is headless
-    let headless = config.autorun_headless;
+    let headless = {
+        let config = app_context.config();
+        config.borrow().autorun_headless
+    };
     // In headless autorun/playback, force audio to None so no audio device is required
     let audio_for_frontend = if headless { None } else { audio };
     let mut event_loop =
-        SdlEventLoop::new_with_context(headless, audio_for_frontend, &config, app_context)?;
+        SdlEventLoop::new_with_context(headless, audio_for_frontend, app_context.clone())?;
 
     // Initialize autorun if enabled
-    if config.autorun_mode != console::AutorunMode::None {
-        event_loop.init_autorun(
+    let (autorun_mode, autorun_overwrite, autorun_extend) = {
+        let config = app_context.config();
+        let config = config.borrow();
+        (
             config.autorun_mode,
-            &rom_path,
             config.autorun_overwrite,
             config.autorun_extend,
-        )?;
+        )
+    };
+    if autorun_mode != console::AutorunMode::None {
+        event_loop.init_autorun(autorun_mode, &rom_path, autorun_overwrite, autorun_extend)?;
     }
 
     // Request debugger open if enabled via CLI
-    if config.debugger_enabled {
+    let debugger_enabled = {
+        let config = app_context.config();
+        config.borrow().debugger_enabled
+    };
+    if debugger_enabled {
         event_loop.request_debugger_open();
     }
 
     // Temporary hard-coded breakpoint for debugger development.
     // event_loop.add_breakpoint(0xE486);
 
-    if config.load_state {
+    let load_state = {
+        let config = app_context.config();
+        config.borrow().load_state
+    };
+    if load_state {
         let state_path = nes_instance
             .state_path()
             .ok_or("No save-state path available for loaded ROM")?;
@@ -157,6 +195,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Apply channel enable/disable settings
     {
         let mut apu = nes_instance.apu.borrow_mut();
+        let config = app_context.config();
+        let config = config.borrow();
         apu.set_pulse1_enabled(config.apu_channels.contains(ApuChannels::PULSE1));
         apu.set_pulse2_enabled(config.apu_channels.contains(ApuChannels::PULSE2));
         apu.set_triangle_enabled(config.apu_channels.contains(ApuChannels::TRIANGLE));
@@ -164,7 +204,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         apu.set_dmc_enabled(config.apu_channels.contains(ApuChannels::DMC));
     }
 
-    let run_result = event_loop.run(&mut nes_instance, config.tracing);
+    let run_tracing = {
+        let config = app_context.config();
+        config.borrow().tracing
+    };
+    let run_result = event_loop.run(&mut nes_instance, run_tracing);
 
     // Handle autorun exit codes before save-on-shutdown
     if let Err(ref e) = run_result
@@ -212,7 +256,8 @@ mod tests {
             ParseResult::Help => panic!("Expected Config"),
         };
 
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let app_context = AppContext::new_with_config(config.clone());
+        let mut event_loop = SdlEventLoop::new(true, None, app_context).unwrap();
 
         if config.debugger_enabled {
             event_loop.request_debugger_open();

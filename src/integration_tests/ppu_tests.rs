@@ -72,14 +72,18 @@ mod tests {
         line[start_x..=end_x].iter().all(|&pixel| pixel == white)
     }
 
-    fn create_nes_from_rom(rom_path: &str, config: Config, rom_name: &str) -> Nes {
+    fn create_nes_from_rom(
+        rom_path: &str,
+        app_context: crate::app_context::AppContext,
+        rom_name: &str,
+    ) -> Nes {
         let rom_data =
             fs::read(rom_path).unwrap_or_else(|e| panic!("{} ROM should load: {}", rom_name, e));
         let cartridge =
             Cartridge::load_from_file(&rom_data, rom_path, &crate::app_context::AppContext::new())
                 .unwrap_or_else(|e| panic!("{} ROM should parse: {}", rom_name, e));
 
-        let mut nes = Nes::new(config);
+        let mut nes = Nes::new(app_context);
         nes.insert_cartridge(cartridge);
         nes.reset(false);
         nes
@@ -389,7 +393,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
             ram_init_mode: RamInitMode::SeededRandom(0x5760_0000_0000_0001),
             ..Config::default()
         };
-        let mut nes = Nes::new(config);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
         // Remove sprites 4-63 to avoid random garbage

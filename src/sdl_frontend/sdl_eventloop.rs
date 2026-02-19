@@ -2,7 +2,7 @@ use super::autorun_state::AutorunState;
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
 use crate::app_context::AppContext;
-use crate::console::{AutorunMode, Config, ControllerStateWrapper, Nes, SaveState, TimingMode};
+use crate::console::{AutorunMode, ControllerStateWrapper, Nes, SaveState, TimingMode};
 use crate::frontend_toasts::gamepad_init_toast_message;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
@@ -262,38 +262,35 @@ impl SdlEventLoop {
     ///
     /// let config = Config::default();
     /// // Create a headless EventLoop for testing
-    /// let headless = SdlEventLoop::new(true, None, &config)?;
+    /// let headless = SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone()))?;
     ///
     /// // Create an EventLoop with a window
-    /// let windowed = SdlEventLoop::new(false, None, &config)?;
+    /// let windowed = SdlEventLoop::new(false, None, AppContext::new_with_config(config.clone()))?;
     /// # Ok::<(), String>(())
     /// ```
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn new(
         headless: bool,
         audio: Option<SdlNesAudio>,
-        config: &Config,
+        app_context: AppContext,
     ) -> Result<Self, String> {
-        Self::new_with_context(headless, audio, config, AppContext::new())
+        Self::new_with_context(headless, audio, app_context)
     }
 
     pub fn new_with_context(
         headless: bool,
         audio: Option<SdlNesAudio>,
-        config: &Config,
         app_context: AppContext,
     ) -> Result<Self, String> {
+        let config_handle = app_context.config();
+        let config = config_handle.borrow();
         let sdl_context = sdl2::init()?;
         let event_pump = sdl_context.event_pump()?;
 
         let gl_backend = if headless {
             None
         } else {
-            Some(SdlGlWrapper::new(
-                &sdl_context,
-                config,
-                app_context.clone(),
-            )?)
+            Some(SdlGlWrapper::new(&sdl_context, app_context.clone())?)
         };
 
         // Initialize gamepads if enabled
@@ -884,8 +881,8 @@ impl SdlEventLoop {
     /// Currently returns Ok(()) in all cases, but the Result type is kept for future error handling.
     pub fn run(&mut self, nes: &mut Nes, tracing: Tracing) -> Result<(), String> {
         self.load_breakpoints_from_debug_file(nes);
-        let config = nes.config.borrow().clone();
-        self.load_breakpoints_from_config(&config);
+        let app_context = self.app_context.clone();
+        self.load_breakpoints_from_context(&app_context);
 
         let mut last_audio_stats_print = Instant::now();
         let mut last_cpu_cycles = nes.cpu.get_total_cycles();
@@ -1254,7 +1251,9 @@ impl SdlEventLoop {
         }
     }
 
-    pub(crate) fn load_breakpoints_from_config(&mut self, config: &Config) {
+    pub(crate) fn load_breakpoints_from_context(&mut self, app_context: &AppContext) {
+        let config_handle = app_context.config();
+        let config = config_handle.borrow();
         for &kind in &config.breakpoints {
             self.breakpoints.add(kind);
         }
@@ -2126,7 +2125,8 @@ mod tests {
     #[serial]
     fn test_headless_run_tick_advances_to_frame_boundary() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         let mut nes = nes_with_nop_loop_program();
 
         assert!(!nes.is_ready_to_render());
@@ -2144,7 +2144,8 @@ mod tests {
         // must break immediately. Previously it kept running until the end of the frame, causing the
         // debugger to display the frame-end cycle count (~27000+) instead of the target (~100).
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         let mut nes = nes_with_nop_loop_program();
 
         let cycles_before = nes.cpu.get_total_cycles();
@@ -2172,7 +2173,8 @@ mod tests {
     #[serial]
     fn test_frame_breakpoint_pauses_on_first_instruction_of_target_frame() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         let mut nes = nes_with_nop_loop_program();
 
         let target_frame = {
@@ -2268,7 +2270,9 @@ mod tests {
     fn test_paddle_mode_suppresses_keyboard_joypad_input() {
         let mut paused = false;
         let mut debugger_open_requested = false;
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Arkanoid);
@@ -2292,8 +2296,11 @@ mod tests {
     #[serial]
     fn test_keyboard_only_targets_ports_without_gamepads() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Two gamepad-capable controllers, but only one physical gamepad present.
         event_loop.controller_player_map.insert(42, 1);
@@ -2308,8 +2315,11 @@ mod tests {
     #[serial]
     fn test_handle_key_down_f12_toggles_fullscreen_state() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         assert!(!event_loop.is_fullscreen());
 
@@ -2324,8 +2334,11 @@ mod tests {
     #[serial]
     fn test_keyboard_targets_all_gamepad_ports_when_no_gamepads() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::W);
 
@@ -2337,8 +2350,11 @@ mod tests {
     #[serial]
     fn test_gamepad_routes_to_first_gamepad_port() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Port 1 is mouse-only, port 2 is gamepad.
         nes.bus
@@ -2357,7 +2373,9 @@ mod tests {
 
     #[test]
     fn test_mouse_routes_to_all_mouse_ports() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Arkanoid);
@@ -2379,7 +2397,9 @@ mod tests {
 
     #[test]
     fn test_paddle_mouse_button_sets_trigger_when_enabled() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Arkanoid);
@@ -2393,7 +2413,9 @@ mod tests {
 
     #[test]
     fn test_paddle_mouse_button_ignored_when_disabled() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         nes.bus
             .borrow_mut()
@@ -2408,7 +2430,9 @@ mod tests {
 
     #[test]
     fn test_paddle_mouse_motion_updates_position_when_enabled() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Arkanoid);
@@ -2426,7 +2450,9 @@ mod tests {
 
     #[test]
     fn test_paddle_mouse_motion_ignored_when_disabled() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         let window_width = 320;
         let window_height = 240;
@@ -2448,8 +2474,11 @@ mod tests {
     #[serial]
     fn test_paddle_mode_suppresses_controller_input() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.bus
             .borrow_mut()
             .set_controller_type(1, crate::input::ControllerType::Arkanoid);
@@ -2464,8 +2493,11 @@ mod tests {
     #[serial]
     fn test_breakpoint_hit_pauses_and_opens_debugger() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -2491,8 +2523,11 @@ mod tests {
     #[serial]
     fn test_remove_breakpoint_allows_execution_to_continue() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -2521,7 +2556,7 @@ mod tests {
     #[serial]
     fn test_eventloop_creation() {
         let config = default_config();
-        let event_loop = SdlEventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone()));
         assert!(event_loop.is_ok());
     }
 
@@ -2597,7 +2632,9 @@ mod tests {
         }
         let sdl_context = sdl2::init().expect("Failed to initialize SDL2");
         let audio = SdlNesAudio::new(&sdl_context, 44100).expect("Audio init should succeed");
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -2631,7 +2668,9 @@ mod tests {
         let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
         let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &app_context)
             .expect("Failed to load ROM");
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cart);
         nes.reset(false);
 
@@ -2658,7 +2697,9 @@ mod tests {
         let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
         let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &app_context)
             .expect("Failed to load ROM");
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cart);
         nes.reset(false);
 
@@ -2689,7 +2730,9 @@ mod tests {
     fn test_handle_key_down_escape_requests_quit() {
         // Desired behavior: key handling for Escape is centralized in handle_key_down,
         // and it indicates that the event loop should exit.
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -2706,7 +2749,9 @@ mod tests {
     #[test]
     fn test_handle_key_down_space_toggles_pause() {
         // Desired behavior: Space toggles pause state via centralized handle_key_down.
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -2732,8 +2777,11 @@ mod tests {
     #[serial]
     fn test_handle_key_down_h_toggles_help_overlay() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::H);
         assert!(event_loop.help_overlay_visible);
@@ -2768,7 +2816,8 @@ mod tests {
     #[serial]
     fn test_help_overlay_text_for_rendering() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
 
         assert_eq!(event_loop.help_overlay_render_text(), None);
 
@@ -2780,7 +2829,9 @@ mod tests {
     }
 
     fn nes_with_jsr_program() -> Nes {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Program at $8000:
         //   JSR $8006
@@ -2825,7 +2876,9 @@ mod tests {
     }
 
     fn nes_with_nop_loop_program() -> Nes {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Program at $8000:
         //   NOP
@@ -2861,7 +2914,9 @@ mod tests {
     #[test]
     fn test_handle_key_down_f5_pauses_emulation() {
         // Desired behavior: F5 opens debugger windows, which immediately pauses emulation.
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -2878,7 +2933,9 @@ mod tests {
 
     #[test]
     fn test_handle_key_down_f5_when_debugger_open_continues_and_closes_debugger() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let mut paused = true;
         let mut debugger_open_requested = true;
 
@@ -2950,7 +3007,8 @@ mod tests {
     fn test_run_to_next_scanline_stops_after_first_scanline_advance() {
         let mut nes_expected = nes_with_nop_loop_program();
         let config = Config::default();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         event_loop.debugger_open_requested = true;
 
         {
@@ -3061,8 +3119,11 @@ mod tests {
     #[serial]
     fn test_continue_action_unpauses_and_closes_debugger() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         event_loop.request_debugger_open();
 
@@ -3085,8 +3146,11 @@ mod tests {
     #[serial]
     fn test_continue_skips_breakpoint_once_on_same_pc() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -3122,8 +3186,11 @@ mod tests {
     #[serial]
     fn test_f5_when_debugger_open_behaves_like_continue_for_breakpoints() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -3152,8 +3219,11 @@ mod tests {
     #[serial]
     fn test_run_to_nmi_action_runs_until_nmi_vector_pc() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Minimal cartridge with vectors.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -3220,8 +3290,11 @@ mod tests {
     #[serial]
     fn test_run_to_irq_action_runs_until_irq_vector_pc() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Minimal cartridge with vectors.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -3291,8 +3364,11 @@ mod tests {
     #[serial]
     fn test_run_to_irq_requires_actual_irq_entry_not_just_pc_match() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Minimal cartridge where IRQ vector points at the reset entrypoint.
         // This catches false positives where the debugger stops just because PC == vector.
@@ -3352,8 +3428,11 @@ mod tests {
     #[serial]
     fn test_run_to_nmi_when_already_in_nmi_waits_for_next_nmi_entry() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Cartridge with RESET=$8000, NMI=$9000.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -3462,8 +3541,11 @@ mod tests {
     #[serial]
     fn test_run_to_nmi_ignores_other_breakpoints_until_next_nmi_entry() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Cartridge with RESET=$8000, NMI=$9000.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -3556,8 +3638,11 @@ mod tests {
     #[serial]
     fn test_step_into_action_runs_via_temporary_breakpoint_and_reopens_debugger() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -3600,7 +3685,8 @@ mod tests {
     #[serial]
     fn test_step_over_action_runs_via_temporary_breakpoint_and_reopens_debugger() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         let mut nes = nes_with_jsr_program();
         nes.cpu.set_x(0);
 
@@ -3651,7 +3737,8 @@ mod tests {
     #[serial]
     fn test_request_debugger_open_pauses_and_sets_request_flag() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
 
         assert!(!event_loop.paused);
         assert!(!event_loop.debugger_open_requested);
@@ -3665,7 +3752,9 @@ mod tests {
     #[test]
     fn test_handle_key_down_f1_resets_nes() {
         // Desired behavior: F1 triggers a reset through centralized handle_key_down.
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -3705,7 +3794,9 @@ mod tests {
         let mut debugger_open_requested = false;
 
         // W => Up
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::W,
@@ -3716,7 +3807,9 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 1, 0, 0, 0]);
 
         // S => Down
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::S,
@@ -3727,7 +3820,9 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 1, 0, 0]);
 
         // A => Left
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::A,
@@ -3738,7 +3833,9 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 1, 0]);
 
         // D => Right
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::D,
@@ -3749,7 +3846,9 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 0, 1]);
 
         // R => Select
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::R,
@@ -3760,7 +3859,9 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 1, 0, 0, 0, 0, 0]);
 
         // T => Start
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::T,
@@ -3771,7 +3872,9 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 1, 0, 0, 0, 0]);
 
         // F => A
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::F,
@@ -3782,7 +3885,9 @@ mod tests {
         assert_eq!(read_joypad1_buttons(&mut nes), [1, 0, 0, 0, 0, 0, 0, 0]);
 
         // G => B
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::G,
@@ -3797,7 +3902,7 @@ mod tests {
     #[serial]
     fn test_new_headless() {
         let config = config_with_window_height(960);
-        let event_loop = SdlEventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone()));
         assert!(event_loop.is_ok());
     }
 
@@ -3805,7 +3910,7 @@ mod tests {
     #[serial]
     fn test_window_height_small() {
         let config = config_with_window_height(240);
-        let event_loop = SdlEventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone()));
         assert!(event_loop.is_ok());
     }
 
@@ -3813,7 +3918,7 @@ mod tests {
     #[serial]
     fn test_window_height_large() {
         let config = config_with_window_height(1200);
-        let event_loop = SdlEventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone()));
         assert!(event_loop.is_ok());
     }
 
@@ -3821,8 +3926,11 @@ mod tests {
     #[serial]
     fn test_run_with_nes() {
         let config = default_config();
-        let _event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let _event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Just verify that run accepts a Nes instance
         // We can't actually run the event loop in tests as it would loop forever
@@ -3847,7 +3955,7 @@ mod tests {
     fn test_gamepad_disabled_by_default() {
         // When gamepads are disabled, no controllers should be initialized
         let config = config_with_gamepads(false);
-        let event_loop = SdlEventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone()));
         assert!(event_loop.is_ok());
         let event_loop = event_loop.unwrap();
         assert_eq!(event_loop.controllers.len(), 0);
@@ -3859,7 +3967,7 @@ mod tests {
     fn test_gamepad_enabled_no_controllers_present() {
         // When gamepads are enabled but no controllers are present, should still work
         let config = config_with_gamepads(true);
-        let event_loop = SdlEventLoop::new(true, None, &config);
+        let event_loop = SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone()));
         // This may succeed or fail depending on whether controllers are actually present
         // We just verify it doesn't panic
         if let Ok(event_loop) = event_loop {
@@ -3907,12 +4015,15 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
 
-        let nes = Nes::new(Config::default());
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         event_loop.request_debugger_open();
         event_loop.render_debugger_if_needed(&nes);
@@ -3935,13 +4046,16 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
         event_loop.request_debugger_open();
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Provide a minimal cartridge so `run_cpu_tick()` won't panic on unmapped vector reads.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -3992,13 +4106,16 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
         event_loop.request_debugger_open();
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Provide a minimal cartridge so `run_cpu_tick()` won't panic on unmapped vector reads.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP
@@ -4050,12 +4167,15 @@ mod tests {
 
         let calls = Rc::new(RefCell::new(0usize));
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         event_loop.set_debugger_renderer(Box::new(Spy {
             calls: calls.clone(),
         }));
 
-        let nes = Nes::new(Config::default());
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         event_loop.request_debugger_open();
         SdlEventLoop::tick_windowed_paused_for_run(
@@ -4075,8 +4195,11 @@ mod tests {
         // stays stale. On continue, the first check sees prev=0, current=27395 and fires the
         // CYC=100 breakpoint even though that threshold was already passed while paused.
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -4103,8 +4226,11 @@ mod tests {
     #[serial]
     fn test_cycle_breakpoint_pauses_at_configured_cycle() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         insert_nop_cartridge(&mut nes, 0x8000);
         nes.reset(false);
@@ -4129,8 +4255,11 @@ mod tests {
     #[serial]
     fn test_write_address_breakpoint_pauses_on_store_to_address() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let mut nes = Nes::new(Config::default());
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Program: NOP at $8000, STA $1234 at $8001.
         let mut prg_rom = vec![0xEAu8; 0x8000]; // NOP fill
@@ -4181,12 +4310,15 @@ mod tests {
         let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
         let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &AppContext::new())
             .expect("Failed to load ROM");
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cart);
         nes.reset(false);
 
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         event_loop.load_breakpoints_from_debug_file(&nes);
 
         assert_eq!(
@@ -4207,12 +4339,15 @@ mod tests {
         let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
         let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &AppContext::new())
             .expect("Failed to load ROM");
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cart);
         nes.reset(false);
 
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         event_loop.load_breakpoints_from_debug_file(&nes);
 
         assert_eq!(
@@ -4233,12 +4368,15 @@ mod tests {
         let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
         let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &AppContext::new())
             .expect("Failed to load ROM");
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cart);
         nes.reset(false);
 
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
         event_loop.add_breakpoint(0xC000);
         event_loop.save_breakpoints_to_debug_file(&nes);
 
@@ -4254,8 +4392,11 @@ mod tests {
     #[serial]
     fn test_save_breakpoints_to_debug_file_is_noop_without_rom_path() {
         let config = default_config();
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
-        let nes = Nes::new(Config::default()); // no cartridge inserted
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        )); // no cartridge inserted
         event_loop.add_breakpoint(0xC000);
         // Should not panic
         event_loop.save_breakpoints_to_debug_file(&nes);
@@ -4269,9 +4410,10 @@ mod tests {
         let mut config = default_config();
         config.breakpoints = vec![BreakpointKind::Pc(0xC000)];
 
-        let mut event_loop = SdlEventLoop::new(true, None, &config).unwrap();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
 
-        event_loop.load_breakpoints_from_config(&config);
+        event_loop.load_breakpoints_from_context(&AppContext::new_with_config(config));
 
         assert_eq!(
             event_loop.breakpoint_count(),

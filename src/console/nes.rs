@@ -1,3 +1,4 @@
+use crate::app_context::AppContext;
 use crate::apu::Apu;
 use crate::bus::Bus;
 use crate::cartridge::Cartridge;
@@ -24,7 +25,9 @@ pub struct Nes {
 }
 
 impl Nes {
-    pub fn new(config: Config) -> Self {
+    pub fn new(app_context: AppContext) -> Self {
+        let config = app_context.config();
+        let config = config.borrow().clone();
         let tv_system = config.tv_system;
         let ram_init_mode = config.ram_init_mode;
         let oam_dram_decay_enabled = config.oam_dram_decay_enabled;
@@ -826,7 +829,9 @@ mod tests {
 
     #[test]
     fn test_ntsc_ppu_runs_3x_cpu_cycles() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         // Write NOP to RAM and set PC directly (skip reset to avoid ROM requirement)
         nes.bus.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
         nes.cpu.set_pc(0x0000); // Set PC to RAM address
@@ -843,7 +848,7 @@ mod tests {
             tv_system: TimingMode::Pal,
             ..Default::default()
         };
-        let mut nes = Nes::new(config);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         // Write NOP to RAM and set PC directly
         nes.bus.borrow_mut().write(0x0000, 0xEA, false); // NOP in RAM
         nes.cpu.set_pc(0x0000);
@@ -861,7 +866,7 @@ mod tests {
             tv_system: TimingMode::Pal,
             ..Default::default()
         };
-        let mut nes = Nes::new(config);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         // Write NOP instructions to RAM
         for i in 0..10 {
             nes.bus.borrow_mut().write(i, 0xEA, false); // NOP
@@ -878,7 +883,9 @@ mod tests {
 
     #[test]
     fn test_ntsc_ppu_accumulates_over_multiple_instructions() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         // Write NOP instructions to RAM
         for i in 0..3 {
             nes.bus.borrow_mut().write(i, 0xEA, false); // NOP (2 cycles each)
@@ -894,7 +901,9 @@ mod tests {
 
     #[test]
     fn test_ppu_cycles_reset_on_nes_reset() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.bus.borrow_mut().write(0x0000, 0xEA, false); // NOP
         nes.cpu.set_pc(0x0000);
 
@@ -913,7 +922,9 @@ mod tests {
         let rom_data = create_minimal_rom();
         let cartridge = load_test_cartridge(&rom_data);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
 
         // After a power-on reset, CPU reset consumes 7 cycles (21 PPU cycles at 3x).
@@ -939,7 +950,9 @@ mod tests {
 
     #[test]
     fn test_nes_provides_access_to_ppu_screen_buffer() {
-        let nes = Nes::new(Config::default());
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Should be able to access the PPU's screen buffer
         let screen_buffer = nes.get_screen_buffer();
@@ -980,7 +993,9 @@ mod tests {
 
     #[test]
     fn test_nes_reset_resets_apu_before_cpu_reset_ticks() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let rom_data = create_minimal_rom();
         let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
@@ -1007,7 +1022,9 @@ mod tests {
 
     #[test]
     fn test_nes_reset_soft_reset_rewrites_last_4017_value() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let rom_data = create_minimal_rom();
         let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
@@ -1032,7 +1049,9 @@ mod tests {
 
     #[test]
     fn test_oam_dma_takes_513_cycles_on_even_cpu_cycle() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let rom_data = create_minimal_rom();
         let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
@@ -1061,7 +1080,9 @@ mod tests {
 
     #[test]
     fn test_oam_dma_takes_514_cycles_on_odd_cpu_cycle() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let rom_data = create_minimal_rom();
         let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
@@ -1090,7 +1111,9 @@ mod tests {
 
     #[test]
     fn test_oam_dma_transfers_256_bytes() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let rom_data = create_minimal_rom();
         let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
@@ -1129,7 +1152,9 @@ mod tests {
 
     #[test]
     fn test_oam_dma_uses_correct_source_page() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let rom_data = create_minimal_rom();
         let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
@@ -1167,7 +1192,9 @@ mod tests {
 
     #[test]
     fn test_ppu_advances_during_oam_dma() {
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         let rom_data = create_minimal_rom();
         let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
@@ -1244,7 +1271,9 @@ mod tests {
     #[test]
     fn test_apu_clocked_every_cpu_cycle() {
         // Test that the APU is clocked once for every CPU cycle
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         // Load a simple NOP program that executes predictably
         let rom_data = create_minimal_nrom_rom();
@@ -1274,7 +1303,9 @@ mod tests {
     fn test_apu_clocked_for_nmi_cycles_once_per_cpu_cycle() {
         // NMI handling consumes 7 CPU cycles. Regardless of how the CPU services the NMI,
         // the APU should still be clocked exactly once per CPU cycle overall.
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
@@ -1298,7 +1329,9 @@ mod tests {
     #[test]
     fn test_apu_clocked_during_oam_dma() {
         // Test that the APU is clocked during OAM DMA cycles
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
@@ -1335,7 +1368,9 @@ mod tests {
     fn test_dmc_dma_stalls_cpu_on_sample_fetch() {
         // DMC DMA reads should stall the CPU (RDY low) for 1-4 cycles.
         // With a 2-cycle NOP instruction, this means the first tick should cost 3-6 cycles.
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
@@ -1364,7 +1399,9 @@ mod tests {
     #[test]
     fn test_sample_ready_initially_false() {
         // Test that sample_ready returns false initially
-        let nes = Nes::new(Config::default());
+        let nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         assert!(!nes.sample_ready());
     }
@@ -1372,7 +1409,9 @@ mod tests {
     #[test]
     fn test_sample_ready_after_clocking() {
         // Test that sample_ready returns true after enough APU clocks
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
@@ -1396,7 +1435,9 @@ mod tests {
     #[test]
     fn test_get_sample_returns_value() {
         // Test that get_sample returns a valid audio sample
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
@@ -1423,7 +1464,9 @@ mod tests {
     #[test]
     fn test_get_sample_clears_ready_flag() {
         // Test that get_sample clears the sample_ready flag
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
@@ -1450,7 +1493,9 @@ mod tests {
     #[test]
     fn test_get_sample_returns_none_when_not_ready() {
         // Test that get_sample returns None when no sample is ready
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
         let sample = nes.get_sample();
         assert!(sample.is_none());
@@ -1482,7 +1527,9 @@ mod tests {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1505,7 +1552,9 @@ mod tests {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1547,7 +1596,9 @@ mod tests {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1572,7 +1623,9 @@ mod tests {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1598,7 +1651,9 @@ mod tests {
         let rom_data = create_minimal_nrom_rom();
         let cartridge = load_test_cartridge(&rom_data);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1646,7 +1701,9 @@ mod tests {
         let mut cartridge = load_test_cartridge(&rom_data);
         cartridge.set_crc32_for_test(0x32FB0583);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
 
         // Should configure paddle on port 2 for Arkanoid ROM
@@ -1666,7 +1723,9 @@ mod tests {
         let mut cartridge = load_test_cartridge(&rom_data);
         cartridge.set_crc32_for_test(0xDEADBEEF);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
 
         // Should have joypad on both ports by default
@@ -1693,7 +1752,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut nes = Nes::new(config);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);
 
         let bus_state = nes.bus.borrow().capture_state();
@@ -1713,7 +1772,9 @@ mod tests {
         let mut cartridge = load_test_cartridge(&rom_data);
         cartridge.set_crc32_for_test(0x24598791);
 
-        let mut nes = Nes::new(Config::default());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
         nes.insert_cartridge(cartridge);
 
         let bus_state = nes.bus.borrow().capture_state();
@@ -1741,7 +1802,7 @@ mod tests {
             ..Default::default()
         };
 
-        let mut nes = Nes::new(config);
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(config));
         nes.insert_cartridge(cartridge);
 
         let bus_state = nes.bus.borrow().capture_state();

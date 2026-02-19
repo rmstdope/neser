@@ -107,7 +107,9 @@ mod tests {
         let rom_path = "roms/automated_tests/dma_sync_test_v2/dma_sync_test.nes";
         let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
         let cartridge = load_test_cartridge(&rom_data, rom_path);
-        let mut nes = Nes::new(deterministic_config());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            deterministic_config(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
         run_nes_for_frames(&mut nes, 300);
@@ -125,7 +127,9 @@ mod tests {
         let rom_path = "roms/automated_tests/dma_sync_test_v2/dma_sync_test.nes";
         let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
         let cartridge = load_test_cartridge(&rom_data, rom_path);
-        let mut nes = Nes::new(deterministic_config());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            deterministic_config(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
         run_nes_for_frames(&mut nes, 150);
@@ -175,7 +179,9 @@ mod tests {
         let rom_data = fs::read(rom_path).expect("dpcmletterbox ROM should load");
         let cartridge = load_test_cartridge(&rom_data, rom_path);
 
-        let mut nes = Nes::new(deterministic_config());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            deterministic_config(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -381,7 +387,9 @@ mod tests {
         let cartridge = load_test_cartridge(&rom_data, "roms/automated_tests/nestest/nestest.nes");
 
         // Create NES and insert cartridge
-        let mut nes = Nes::new(deterministic_config());
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            deterministic_config(),
+        ));
         nes.insert_cartridge(cartridge);
         nes.cpu.reset(false);
         // nestest automated test starts execution at $C000 (not reset vector $C004)
