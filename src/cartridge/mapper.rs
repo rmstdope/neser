@@ -772,6 +772,13 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         )));
     }
 
+    if mapper_number == 21 {
+        let submapper = metadata.submapper;
+        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
+        let mapper = Vrc2Vrc4Mapper::new_with_submapper(21, submapper, prg_rom, chr_rom, mirroring);
+        return Ok(Box::new(mapper));
+    }
+
     if let Some(mut mapper) = create_registry_mapper(metadata) {
         probe_mapper_core(&*mapper);
         probe_mapper_ppu_extension(&mut *mapper);
