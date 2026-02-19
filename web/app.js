@@ -19,7 +19,7 @@ import { createSineScroller } from "./sine_scroller.js";
 import { getKeyboardControllerTarget } from "./input_routing.js";
 import { dispatchWebShortcutAction } from "./shortcut_actions.js";
 import {
-    buildShortcutOverlayText,
+    buildFullHelpOverlayText,
     buildShortcutReferenceText,
     computeShortcutHelpFontSizePx,
     toggleShortcutHelpVisibility
@@ -1389,28 +1389,28 @@ async function populateRomSelect() {
 populateRomSelect();
 
 // Keyboard input mappings for both controllers
-// Controller 1: W=Up, S=Down, A=Left, D=Right, G=B, F=A, R=Select, T=Start
+// Controller 1: W=Up, S=Down, A=Left, D=Right, T=B, R=A, 4=Select, 5=Start
 const keyToButtonController1 = {
     'w': { button: 4, name: 'Up' },      // Button 4 = Up
     's': { button: 5, name: 'Down' },    // Button 5 = Down
     'a': { button: 6, name: 'Left' },    // Button 6 = Left
     'd': { button: 7, name: 'Right' },   // Button 7 = Right
-    'g': { button: 1, name: 'B' },       // Button 1 = B
-    'f': { button: 0, name: 'A' },       // Button 0 = A
-    'r': { button: 2, name: 'Select' },  // Button 2 = Select
-    't': { button: 3, name: 'Start' }    // Button 3 = Start
+    't': { button: 1, name: 'B' },       // Button 1 = B
+    'r': { button: 0, name: 'A' },       // Button 0 = A
+    '4': { button: 2, name: 'Select' },  // Button 2 = Select
+    '5': { button: 3, name: 'Start' }    // Button 3 = Start
 };
 
-// Controller 2: U=Up, J=Down, H=Left, K=Right, ;=B, L=A, O=Select, P=Start
+// Controller 2: I=Up, K=Down, J=Left, L=Right, P=B, O=A, 9=Select, 0=Start
 const keyToButtonController2 = {
-    'u': { button: 4, name: 'Up' },      // Button 4 = Up
-    'j': { button: 5, name: 'Down' },    // Button 5 = Down
-    'h': { button: 6, name: 'Left' },    // Button 6 = Left
-    'k': { button: 7, name: 'Right' },   // Button 7 = Right
-    ';': { button: 1, name: 'B' },       // Button 1 = B
-    'l': { button: 0, name: 'A' },       // Button 0 = A
-    'o': { button: 2, name: 'Select' },  // Button 2 = Select
-    'p': { button: 3, name: 'Start' }    // Button 3 = Start
+    'i': { button: 4, name: 'Up' },      // Button 4 = Up
+    'k': { button: 5, name: 'Down' },    // Button 5 = Down
+    'j': { button: 6, name: 'Left' },    // Button 6 = Left
+    'l': { button: 7, name: 'Right' },   // Button 7 = Right
+    'p': { button: 1, name: 'B' },       // Button 1 = B
+    'o': { button: 0, name: 'A' },       // Button 0 = A
+    '9': { button: 2, name: 'Select' },  // Button 2 = Select
+    '0': { button: 3, name: 'Start' }    // Button 3 = Start
 };
 
 // Track connected gamepads for routing
@@ -1423,7 +1423,9 @@ function updateConnectedGamepads() {
 }
 
 function showPageLoadGamepadInitToast() {
-    gamepadInitToastNotifier.showOnce(gamepadEnabled, connectedGamepads.length);
+    if (gamepadEnabled) {
+        toastOverlay.show("Press a button on any connected gamepad");
+    }
 }
 
 // Initialize connectedGamepads to detect any gamepads already connected on page load
@@ -1431,6 +1433,7 @@ updateConnectedGamepads();
 
 ensureWasmInitialized()
     .then(() => {
+        updateConnectedGamepads();
         showPageLoadGamepadInitToast();
     })
     .catch((error) => {
@@ -1446,7 +1449,14 @@ const webShortcutActions = {
     toggleHelp: toggleShortcutHelp
 };
 
+function updateShortcutHelpOverlayText() {
+    if (shortcutHelpOverlay) {
+        shortcutHelpOverlay.textContent = buildFullHelpOverlayText(connectedGamepads.length);
+    }
+}
+
 function toggleShortcutHelp() {
+    updateShortcutHelpOverlayText();
     toggleShortcutHelpVisibility(shortcutHelpOverlay);
 }
 
@@ -1662,7 +1672,7 @@ if (shortcutReference) {
     shortcutReference.textContent = `Shortcuts: ${shortcutReferenceText}`;
 }
 if (shortcutHelpOverlay) {
-    shortcutHelpOverlay.textContent = buildShortcutOverlayText();
+    updateShortcutHelpOverlayText();
 }
 updateShortcutHelpScale();
 startIdleScroller();
@@ -1756,15 +1766,23 @@ function resetGamepadState() {
     lastGamepadState2 = { ...emptyState };
 }
 
-window.addEventListener("gamepadconnected", () => {
+function onGamepadConnectionChanged() {
     updateConnectedGamepads();
+    updateShortcutHelpOverlayText();
+    ensureWasmInitialized()
+        .then(() => toastOverlay.show(gamepad_init_toast_message(gamepadEnabled, connectedGamepads.length)))
+        .catch(() => {});
+}
+
+window.addEventListener("gamepadconnected", () => {
+    onGamepadConnectionChanged();
     if (gamepadEnabled && running && !paused) {
         pollGamepad();
     }
 });
 
 window.addEventListener("gamepaddisconnected", () => {
-    updateConnectedGamepads();
+    onGamepadConnectionChanged();
     resetGamepadState();
 });
 

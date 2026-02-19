@@ -417,10 +417,10 @@ impl Vrc2Vrc4Mapper {
 impl Mapper for Vrc2Vrc4Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         // PRG-RAM at $6000-$7FFF (only when WRAM is enabled; VRC2 is always enabled)
-        if !self.variant.has_irq() || self.prg_ram_enabled {
-            if let Some(value) = self.prg_ram.try_read(addr) {
-                return value;
-            }
+        if (!self.variant.has_irq() || self.prg_ram_enabled)
+            && let Some(value) = self.prg_ram.try_read(addr)
+        {
+            return value;
         }
 
         match addr {
@@ -457,10 +457,9 @@ impl Mapper for Vrc2Vrc4Mapper {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         // PRG-RAM at $6000-$7FFF (only when WRAM is enabled; VRC2 is always enabled)
-        if !self.variant.has_irq() || self.prg_ram_enabled {
-            if self.prg_ram.try_write(addr, value) {
-                return;
-            }
+        if (!self.variant.has_irq() || self.prg_ram_enabled) && self.prg_ram.try_write(addr, value)
+        {
+            return;
         }
 
         if (0x8000..=0xFFFF).contains(&addr) {
