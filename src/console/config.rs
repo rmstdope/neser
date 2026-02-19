@@ -325,6 +325,20 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some("Add a frame breakpoint on startup (break at first instruction of frame N)"),
         has_value: true,
     },
+    CliFlag {
+        flag: "--horizontal-overscan",
+        help: Some(
+            "Horizontal overscan removal in pixels (0..=8, default: 8; removed from left and right)",
+        ),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--vertical-overscan",
+        help: Some(
+            "Vertical overscan removal in pixels (0..=16, default: 8; removed from top and bottom)",
+        ),
+        has_value: true,
+    },
 ];
 
 /// Boolean flags that accept optional values (shared by validate_args and parse_rom_arg).
@@ -462,6 +476,14 @@ pub struct Config {
     pub oam_dram_decay_enabled: bool,
     /// Breakpoints to set on startup (from --breakpoint / --frame CLI flags).
     pub breakpoints: Vec<BreakpointKind>,
+    /// Horizontal overscan removal in pixels (removed from both left and right edges).
+    ///
+    /// Valid range: `0..=8`. Default: `8`.
+    pub horizontal_overscan: u8,
+    /// Vertical overscan removal in pixels (removed from both top and bottom edges).
+    ///
+    /// Valid range: `0..=16`. Default: `8`.
+    pub vertical_overscan: u8,
 }
 
 /// Autorun operating mode.
@@ -573,6 +595,8 @@ impl Default for Config {
             ram_init_mode: RamInitMode::Random,
             oam_dram_decay_enabled: false,
             breakpoints: Vec::new(),
+            horizontal_overscan: 8,
+            vertical_overscan: 8,
         }
     }
 }
@@ -809,6 +833,14 @@ impl Config {
         // RAM initialization mode
         if let Some(value) = Self::parse_string_arg(args, "--ram-init-mode") {
             self.apply_config_value("ram_init_mode", &value)?;
+        }
+
+        // Overscan
+        if let Some(v) = Self::parse_u32_arg(args, "--horizontal-overscan")? {
+            self.horizontal_overscan = (v as u8).min(8);
+        }
+        if let Some(v) = Self::parse_u32_arg(args, "--vertical-overscan")? {
+            self.vertical_overscan = (v as u8).min(16);
         }
 
         // Autorun mode flags
@@ -1404,6 +1436,16 @@ impl Config {
                          Valid values: true/false/yes/no/1/0",
                         value
                     );
+                }
+            }
+            "horizontal_overscan" => {
+                if let Ok(v) = value.parse::<u8>() {
+                    self.horizontal_overscan = v.min(8);
+                }
+            }
+            "vertical_overscan" => {
+                if let Ok(v) = value.parse::<u8>() {
+                    self.vertical_overscan = v.min(16);
                 }
             }
             _ => {} // Unknown keys are silently ignored
@@ -2069,6 +2111,105 @@ mod tests {
         ];
         let result = config_new(args);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_config_default_horizontal_overscan_is_8() {
+        let config = Config::default();
+        assert_eq!(config.horizontal_overscan, 8);
+    }
+
+    #[test]
+    fn test_config_default_vertical_overscan_is_8() {
+        let config = Config::default();
+        assert_eq!(config.vertical_overscan, 8);
+    }
+
+    #[test]
+    fn test_config_file_horizontal_overscan() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("horizontal_overscan", "4")
+            .unwrap();
+        assert_eq!(config.horizontal_overscan, 4);
+    }
+
+    #[test]
+    fn test_config_file_vertical_overscan() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("vertical_overscan", "12")
+            .unwrap();
+        assert_eq!(config.vertical_overscan, 12);
+    }
+
+    #[test]
+    fn test_config_file_overscan_zero() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("horizontal_overscan", "0")
+            .unwrap();
+        config.apply_config_value("vertical_overscan", "0").unwrap();
+        assert_eq!(config.horizontal_overscan, 0);
+        assert_eq!(config.vertical_overscan, 0);
+    }
+
+    #[test]
+    fn test_config_file_horizontal_overscan_max_is_8() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("horizontal_overscan", "8")
+            .unwrap();
+        assert_eq!(config.horizontal_overscan, 8);
+    }
+
+    #[test]
+    fn test_config_file_vertical_overscan_max_is_16() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("vertical_overscan", "16")
+            .unwrap();
+        assert_eq!(config.vertical_overscan, 16);
+    }
+
+    #[test]
+    fn test_config_file_horizontal_overscan_above_max_is_clamped_to_8() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("horizontal_overscan", "9")
+            .unwrap();
+        assert_eq!(config.horizontal_overscan, 8);
+    }
+
+    #[test]
+    fn test_config_file_vertical_overscan_above_max_is_clamped_to_16() {
+        let mut config = Config::default();
+        config
+            .apply_config_value("vertical_overscan", "17")
+            .unwrap();
+        assert_eq!(config.vertical_overscan, 16);
+    }
+
+    #[test]
+    fn test_config_cli_horizontal_overscan() {
+        let args = vec![
+            "neser".to_string(),
+            "--horizontal-overscan".to_string(),
+            "4".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.horizontal_overscan, 4);
+    }
+
+    #[test]
+    fn test_config_cli_vertical_overscan() {
+        let args = vec![
+            "neser".to_string(),
+            "--vertical-overscan".to_string(),
+            "0".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.vertical_overscan, 0);
     }
 
     #[test]

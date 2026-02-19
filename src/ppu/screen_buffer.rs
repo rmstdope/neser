@@ -106,24 +106,29 @@ impl ScreenBuffer {
             dest.len()
         );
 
-        // let len = self.buffer.len();
-        // dest[..len].copy_from_slice(&self.buffer);
-
         dest[..self.buffer.len()].copy_from_slice(&self.buffer);
-
-        // // Display debug pixels to help count and pinpoint positions
-        // for x in 189usize..=190 {
-        //     for y in 192usize..=198 {
-        //         let offset = ((y * Self::WIDTH as usize) + x) * Self::BYTES_PER_PIXEL;
-        //         dest[offset] = if x.is_multiple_of(2) { 0xFF } else { 0x00 };
-        //         dest[offset + 1] = 0xFF;
-        //         dest[offset + 2] = if x.is_multiple_of(2) { 0x00 } else { 0xFF };
-        //     }
-        // }
     }
 
     pub fn snapshot(&self) -> Vec<u8> {
         self.buffer.clone()
+    }
+
+    /// Returns a cropped snapshot with the given overscan removed from all edges.
+    ///
+    /// `h_overscan` pixels are removed from the left and right edges.
+    /// `v_overscan` pixels are removed from the top and bottom edges.
+    /// The returned buffer has dimensions `(256 - 2*h_overscan) × (240 - 2*v_overscan)` in RGB888.
+    pub fn cropped_snapshot(&self, h_overscan: u32, v_overscan: u32) -> Vec<u8> {
+        let src_w = Self::WIDTH;
+        let dst_w = src_w - 2 * h_overscan;
+        let dst_h = Self::HEIGHT - 2 * v_overscan;
+        let mut out = Vec::with_capacity((dst_w * dst_h) as usize * Self::BYTES_PER_PIXEL);
+        for row in v_overscan..v_overscan + dst_h {
+            let row_start = (row * src_w + h_overscan) as usize * Self::BYTES_PER_PIXEL;
+            let row_end = row_start + dst_w as usize * Self::BYTES_PER_PIXEL;
+            out.extend_from_slice(&self.buffer[row_start..row_end]);
+        }
+        out
     }
 
     pub fn crc32(&self) -> u32 {
@@ -334,5 +339,82 @@ mod tests {
         let luminance = screen_buffer.get_luminance(50, 50);
         // 0.2126 * 128 + 0.7152 * 200 + 0.0722 * 64 = 27.2128 + 143.04 + 4.6208 = 174.8736
         assert!((luminance - 174.8736).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_cropped_snapshot_no_overscan_returns_full_frame() {
+        let mut buf = ScreenBuffer::new();
+        buf.set_pixel(0, 0, 10, 20, 30);
+        buf.set_pixel(255, 239, 40, 50, 60);
+        let cropped = buf.cropped_snapshot(0, 0);
+        assert_eq!(cropped.len(), 256 * 240 * 3);
+        assert_eq!(&cropped[0..3], &[10, 20, 30]);
+    }
+
+    #[test]
+    fn test_cropped_snapshot_default_overscan_produces_240x224_frame() {
+        let buf = ScreenBuffer::new();
+        let h: u32 = 8;
+        let v: u32 = 8;
+        let cropped = buf.cropped_snapshot(h, v);
+        let expected_w = 256 - 2 * h; // 240
+        let expected_h = 240 - 2 * v; // 224
+        assert_eq!(cropped.len() as u32, expected_w * expected_h * 3);
+    }
+
+    #[test]
+    fn test_cropped_snapshot_first_visible_pixel_is_at_overscan_offset() {
+        let mut buf = ScreenBuffer::new();
+        // Mark the first pixel inside the overscan boundary
+        buf.set_pixel(8, 8, 1, 2, 3);
+        // Mark a pixel inside the left overscan (should not appear in cropped output)
+        buf.set_pixel(0, 8, 255, 0, 0);
+        let cropped = buf.cropped_snapshot(8, 8);
+        assert_eq!(&cropped[0..3], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_cropped_snapshot_last_visible_pixel_is_before_overscan_boundary() {
+        let mut buf = ScreenBuffer::new();
+        let h: u32 = 8;
+        let v: u32 = 8;
+        // Last visible pixel: (255 - h, 239 - v) = (247, 231)
+        buf.set_pixel(247, 231, 7, 8, 9);
+        let cropped = buf.cropped_snapshot(h, v);
+        let expected_w = (256 - 2 * h) as usize;
+        let expected_h = (240 - 2 * v) as usize;
+        let last_offset = (expected_h - 1) * expected_w * 3 + (expected_w - 1) * 3;
+        assert_eq!(&cropped[last_offset..last_offset + 3], &[7, 8, 9]);
+    }
+
+    #[test]
+    fn test_cropped_snapshot_right_overscan_pixel_excluded() {
+        let mut buf = ScreenBuffer::new();
+        // Pixel at x=248 is in the right overscan region (h=8 → right starts at 256-8=248)
+        buf.set_pixel(248, 8, 99, 0, 0);
+        let cropped = buf.cropped_snapshot(8, 8);
+        let expected_w = (256 - 2 * 8) as usize; // 240
+        // Row 0 of cropped (row 8 of original) has 240 pixels; none should be 99
+        for x in 0..expected_w {
+            assert_ne!(
+                cropped[x * 3],
+                99,
+                "overscan pixel should not appear at x={x}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cropped_snapshot_max_horizontal_overscan() {
+        let buf = ScreenBuffer::new();
+        let cropped = buf.cropped_snapshot(8, 0);
+        assert_eq!(cropped.len(), (256 - 16) * 240 * 3); // 240 * 240 * 3
+    }
+
+    #[test]
+    fn test_cropped_snapshot_max_vertical_overscan() {
+        let buf = ScreenBuffer::new();
+        let cropped = buf.cropped_snapshot(0, 16);
+        assert_eq!(cropped.len(), 256 * (240 - 32) * 3); // 256 * 208 * 3
     }
 }
