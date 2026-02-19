@@ -1598,6 +1598,8 @@ impl Cpu {
             }
             "HLT" | "KIL" => {
                 self.halted = true;
+                // Halt on instruction, not after
+                self.pc -= 1;   
             }
             "*SLO" => {
                 self.slo(operand);
@@ -3296,6 +3298,7 @@ mod tests {
         cpu.execute();
 
         assert!(cpu.halted, "KIL should halt the CPU when executed");
+        assert_eq!(cpu.pc, 0x8000, "KIL should not advance PC");
     }
 
     #[test]
@@ -3795,8 +3798,8 @@ mod tests {
         cpu.reset(true);
         cpu.p &= !FLAG_CARRY; // Ensure carry is clear
         run(&mut cpu);
-        // PC should be at 0x8000 + 2 (after reading BCC and offset) + 2 (offset) + 1 (BRK) = 0x8005
-        assert_eq!(cpu.pc, 0x8005);
+        // PC should be at 0x8000 + 2 (after reading BCC and offset) + 2 (offset) = 0x8004
+        assert_eq!(cpu.pc, 0x8004);
     }
 
     #[test]
@@ -3808,8 +3811,8 @@ mod tests {
         cpu.reset(true);
         cpu.p |= FLAG_CARRY; // Set carry flag
         run(&mut cpu);
-        // PC should be at 0x8000 + 2 (instruction) + 1 (BRK) = 0x8003
-        assert_eq!(cpu.pc, 0x8003);
+        // PC should be at 0x8000 + 2 (instruction) = 0x8002
+        assert_eq!(cpu.pc, 0x8002);
     }
 
     #[test]
@@ -3824,7 +3827,7 @@ mod tests {
         cpu.pc = 0x8003; // Start at offset 3 (the BCC instruction)
         run(&mut cpu);
         // Should branch back to 0x8000 where the BRK is
-        assert_eq!(cpu.pc, 0x8001);
+        assert_eq!(cpu.pc, 0x8000);
     }
 
     #[test]
@@ -3836,7 +3839,7 @@ mod tests {
         cpu.reset(true);
         cpu.p |= FLAG_CARRY; // Set carry flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8004);
+        assert_eq!(cpu.pc, 0x8003);
     }
 
     #[test]
@@ -3848,7 +3851,7 @@ mod tests {
         cpu.reset(true);
         cpu.p &= !FLAG_CARRY; // Clear carry flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8003);
+        assert_eq!(cpu.pc, 0x8002);
     }
 
     #[test]
@@ -3860,7 +3863,7 @@ mod tests {
         cpu.reset(true);
         cpu.p |= FLAG_ZERO; // Set zero flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8004);
+        assert_eq!(cpu.pc, 0x8003);
     }
 
     #[test]
@@ -3872,7 +3875,7 @@ mod tests {
         cpu.reset(true);
         cpu.p &= !FLAG_ZERO; // Clear zero flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8003);
+        assert_eq!(cpu.pc, 0x8002);
     }
 
     #[test]
@@ -3884,7 +3887,7 @@ mod tests {
         cpu.reset(true);
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8004);
+        assert_eq!(cpu.pc, 0x8003);
     }
 
     #[test]
@@ -3896,7 +3899,7 @@ mod tests {
         cpu.reset(true);
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8003);
+        assert_eq!(cpu.pc, 0x8002);
     }
 
     #[test]
@@ -3908,7 +3911,7 @@ mod tests {
         cpu.reset(true);
         cpu.p &= !FLAG_ZERO; // Clear zero flag (not equal)
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8004);
+        assert_eq!(cpu.pc, 0x8003);
     }
 
     #[test]
@@ -3920,7 +3923,7 @@ mod tests {
         cpu.reset(true);
         cpu.p |= FLAG_ZERO; // Set zero flag (equal)
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8003);
+        assert_eq!(cpu.pc, 0x8002);
     }
 
     #[test]
@@ -3932,7 +3935,7 @@ mod tests {
         cpu.reset(true);
         cpu.p &= !FLAG_NEGATIVE; // Clear negative flag (positive)
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8004);
+        assert_eq!(cpu.pc, 0x8003);
     }
 
     #[test]
@@ -3944,7 +3947,7 @@ mod tests {
         cpu.reset(true);
         cpu.p |= FLAG_NEGATIVE; // Set negative flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8003);
+        assert_eq!(cpu.pc, 0x8002);
     }
 
     #[test]
@@ -3956,7 +3959,7 @@ mod tests {
         cpu.reset(true);
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8004);
+        assert_eq!(cpu.pc, 0x8003);
     }
 
     #[test]
@@ -3968,7 +3971,7 @@ mod tests {
         cpu.reset(true);
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8003);
+        assert_eq!(cpu.pc, 0x8002);
     }
 
     #[test]
@@ -3980,7 +3983,7 @@ mod tests {
         cpu.reset(true);
         cpu.p |= FLAG_OVERFLOW; // Set overflow flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8004);
+        assert_eq!(cpu.pc, 0x8003);
     }
 
     #[test]
@@ -3992,7 +3995,7 @@ mod tests {
         cpu.reset(true);
         cpu.p &= !FLAG_OVERFLOW; // Clear overflow flag
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x8003);
+        assert_eq!(cpu.pc, 0x8002);
     }
 
     #[test]
@@ -4681,7 +4684,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x1234, KIL, false);
         cpu.pc = 0x0600;
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x1235); // PC after BRK at 0x1234
+        assert_eq!(cpu.pc, 0x1234); // BRK at 0x1234
     }
 
     #[test]
@@ -4698,7 +4701,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x1856, KIL, false);
         cpu.pc = 0x0600;
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x1857); // PC after BRK at 0x1856
+        assert_eq!(cpu.pc, 0x1856); // BRK at 0x1856
     }
 
     #[test]
@@ -4718,7 +4721,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x1234, KIL, false);
         cpu.pc = 0x0600;
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x1235); // Should jump to 0x1234 (low=0x34, high=0x12)
+        assert_eq!(cpu.pc, 0x1234); // Should jump to 0x1234 (low=0x34, high=0x12)
     }
 
     #[test]
@@ -4734,7 +4737,7 @@ mod tests {
         cpu.pc = 0x0600;
         cpu.sp = 0xFF;
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x1235); // PC after BRK at 0x1234
+        assert_eq!(cpu.pc, 0x1234); // BRK at 0x1234
         assert_eq!(cpu.sp, 0xFD); // SP decremented by 2 (pushed 2 bytes)
         // Return address should be 0x0602 (address of last byte of JSR instruction)
         assert_eq!(cpu.bus.borrow_mut().read(0x01FF, false), 0x06); // High byte of return address
@@ -5660,7 +5663,7 @@ mod tests {
         // RTI should behave like PLP - ignore B flag and unused bit, always set unused to 1
         // 0b11010011 with B flag cleared and unused set: 0b11100011 = 0xE3
         assert_eq!(cpu.p, 0b11100011);
-        assert_eq!(cpu.pc, 0x1235); // PC after BRK instruction
+        assert_eq!(cpu.pc, 0x1234); // BRK instruction
         assert_eq!(cpu.sp, 0xFF);
     }
 
@@ -5677,7 +5680,7 @@ mod tests {
         cpu.bus.borrow_mut().write(0x01FF, 0x12, false); // PC-1 high byte
         cpu.bus.borrow_mut().write(0x1234, KIL, false); // BRK at return address
         run(&mut cpu);
-        assert_eq!(cpu.pc, 0x1235); // PC after BRK instruction (0x1234 + 1)
+        assert_eq!(cpu.pc, 0x1234); // BRK instruction (0x1234)
         assert_eq!(cpu.sp, 0xFF);
     }
 
