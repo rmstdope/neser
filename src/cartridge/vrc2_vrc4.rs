@@ -62,11 +62,10 @@ impl Vrc2Vrc4Variant {
 /// NES 2.0 submapper 1 = VRC4a only, submapper 2 = VRC4c only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mapper21PinMode {
-    Combined, // Both VRC4a (A1,A2) and VRC4c (A6,A7) active (iNES 1.0 default)
+    Combined,  // Both VRC4a (A1,A2) and VRC4c (A6,A7) active (iNES 1.0 default)
     Vrc4aOnly, // Submapper 1: A1→chip A0, A2→chip A1
     Vrc4cOnly, // Submapper 2: A6→chip A0, A7→chip A1
 }
-
 
 pub struct Vrc2Vrc4Mapper {
     variant: Vrc2Vrc4Variant,
@@ -343,8 +342,8 @@ impl Vrc2Vrc4Mapper {
             self.chr_banks_1k[bank_idx] = (self.chr_banks_1k[bank_idx] & Self::CHR_LOW_NIBBLE_MASK)
                 | (((value & Self::CHR_HIGH_VALUE_MASK) as u16) << 4);
         } else {
-            self.chr_banks_1k[bank_idx] = (self.chr_banks_1k[bank_idx] & Self::CHR_HIGH_BITS_MASK)
-                | (value & 0x0F) as u16;
+            self.chr_banks_1k[bank_idx] =
+                (self.chr_banks_1k[bank_idx] & Self::CHR_HIGH_BITS_MASK) | (value & 0x0F) as u16;
         }
     }
 
@@ -692,7 +691,11 @@ mod tests {
         assert_eq!(mapper.read_prg(0xA000), 5, "$A000 should be bank 5");
         assert_eq!(mapper.read_prg(0xBFFF), 5, "$BFFF should still be bank 5");
         // $C000-$DFFF fixed to second-to-last (bank 6 for 8 banks)
-        assert_eq!(mapper.read_prg(0xC000), 6, "$C000 should be second-to-last bank 6");
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            6,
+            "$C000 should be second-to-last bank 6"
+        );
         // $E000-$FFFF fixed to last (bank 7)
         assert_eq!(mapper.read_prg(0xE000), 7, "$E000 should be last bank 7");
     }
@@ -803,14 +806,38 @@ mod tests {
         // PRG Select 1: bank 5 at $A000-$BFFF
         mapper.write_prg(0xA000, 5);
 
-        assert_eq!(mapper.read_prg(0x8000), 3, "$8000 should read from 8KB bank 3");
-        assert_eq!(mapper.read_prg(0x9FFF), 3, "$9FFF should still be in 8KB bank 3");
-        assert_eq!(mapper.read_prg(0xA000), 5, "$A000 should read from 8KB bank 5");
-        assert_eq!(mapper.read_prg(0xBFFF), 5, "$BFFF should still be in 8KB bank 5");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            3,
+            "$8000 should read from 8KB bank 3"
+        );
+        assert_eq!(
+            mapper.read_prg(0x9FFF),
+            3,
+            "$9FFF should still be in 8KB bank 3"
+        );
+        assert_eq!(
+            mapper.read_prg(0xA000),
+            5,
+            "$A000 should read from 8KB bank 5"
+        );
+        assert_eq!(
+            mapper.read_prg(0xBFFF),
+            5,
+            "$BFFF should still be in 8KB bank 5"
+        );
         // $C000-$DFFF fixed to second-to-last bank (bank 6 for 8 banks)
-        assert_eq!(mapper.read_prg(0xC000), 6, "$C000 should be fixed to second-to-last bank");
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            6,
+            "$C000 should be fixed to second-to-last bank"
+        );
         // $E000-$FFFF fixed to last bank (bank 7)
-        assert_eq!(mapper.read_prg(0xE000), 7, "$E000 should be fixed to last bank");
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            7,
+            "$E000 should be fixed to last bank"
+        );
     }
 
     /// VRC4 CHR banks are 9-bit values written via split low/high nibble registers.
@@ -873,7 +900,10 @@ mod tests {
         assert!(!mapper.irq_pending(), "IRQ should not fire after 1 cycle");
         // cycle 2: 0xFF overflows → reload and fire IRQ
         mapper.cpu_cycle();
-        assert!(mapper.irq_pending(), "IRQ should fire after 2 cycles (latch=0xFE, cycle mode)");
+        assert!(
+            mapper.irq_pending(),
+            "IRQ should fire after 2 cycles (latch=0xFE, cycle mode)"
+        );
 
         // Acknowledge at physical $F006 (chip pos 3, VRC4a A1=1,A2=1 → chip A0=1,A1=1)
         mapper.write_prg(0xF006, 0);
@@ -906,7 +936,10 @@ mod tests {
 
         // Acknowledge via VRC4c: A6=1, A7=1 → chip A0=1, A1=1 → chip pos 3 → $F0C0
         mapper.write_prg(0xF0C0, 0);
-        assert!(!mapper.irq_pending(), "IRQ should clear via VRC4c ack address");
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ should clear via VRC4c ack address"
+        );
     }
 
     /// VRC4 $9002 is PRG Swap Mode + WRAM control, NOT mirroring.
@@ -923,8 +956,16 @@ mod tests {
         mapper.write_prg(0x8000, 2);
 
         // Before swap mode: bank 2 should be at $8000-$9FFF
-        assert_eq!(mapper.read_prg(0x8000), 2, "before swap: $8000 should be bank 2");
-        assert_eq!(mapper.read_prg(0xC000), 6, "before swap: $C000 should be second-to-last");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            2,
+            "before swap: $8000 should be bank 2"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            6,
+            "before swap: $C000 should be second-to-last"
+        );
 
         // Enable swap mode: $9002 bit 1 = M
         // For mapper 21 (VRC4a): $9002 normalized → base=$9000, A1=1→chip A0=1 → norm pos 1
@@ -933,9 +974,17 @@ mod tests {
         mapper.write_prg(0x9004, 0b0000_0010); // VRC4a: A2=1 → norm $9002, M=1
 
         // After swap mode: $8000-$9FFF should be fixed to second-to-last (bank 6)
-        assert_eq!(mapper.read_prg(0x8000), 6, "after swap: $8000 should be second-to-last");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            6,
+            "after swap: $8000 should be second-to-last"
+        );
         // $C000-$DFFF should now be controlled by PRG Select 0 (bank 2)
-        assert_eq!(mapper.read_prg(0xC000), 2, "after swap: $C000 should be bank 2");
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            2,
+            "after swap: $C000 should be bank 2"
+        );
     }
 
     #[test]
@@ -975,10 +1024,26 @@ mod tests {
         let mut restored = create_vrc_mapper(21, prg_rom, chr_rom, NametableLayout::Vertical);
         restored.restore_registers(&regs);
 
-        assert_eq!(restored.read_prg(0x8000), 3, "PRG bank 0 should be restored");
-        assert_eq!(restored.read_prg(0xA000), 5, "PRG bank 1 should be restored");
-        assert_eq!(restored.read_chr(0x0000), 2, "CHR bank 0 should be restored");
-        assert_eq!(restored.read_chr(0x1000), 4, "CHR bank 4 should be restored");
+        assert_eq!(
+            restored.read_prg(0x8000),
+            3,
+            "PRG bank 0 should be restored"
+        );
+        assert_eq!(
+            restored.read_prg(0xA000),
+            5,
+            "PRG bank 1 should be restored"
+        );
+        assert_eq!(
+            restored.read_chr(0x0000),
+            2,
+            "CHR bank 0 should be restored"
+        );
+        assert_eq!(
+            restored.read_chr(0x1000),
+            4,
+            "CHR bank 4 should be restored"
+        );
         assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
         assert_eq!(restored.irq_pending(), mapper.irq_pending());
     }
@@ -1050,13 +1115,8 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
         // Submapper 1 = VRC4a only
-        let mut mapper = create_vrc_mapper_with_submapper(
-            21,
-            1,
-            prg_rom,
-            chr_rom,
-            NametableLayout::Horizontal,
-        );
+        let mut mapper =
+            create_vrc_mapper_with_submapper(21, 1, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set latch low nibble via $F000 (chip pos 0 — same in all variants)
         mapper.write_prg(0xF000, 0x0E); // latch bits [3:0] = 0xE
