@@ -74,7 +74,6 @@ Your core methodology follows these strict phases:
 ### MERGE PHASE:
 
 - Only proceed when given explicit permission
-- **Before merging**: verify that all CI checks on the PR have passed (not just local tests) using `gh pr checks <PR_NUMBER>`. Do not merge if any check is failing or still pending.
 - **Before merging**: verify that there are no pending or unresolved review comments on the PR using `gh pr view <PR_NUMBER> --comments` and the `get_review_comments` GitHub tool. Address all review comments before merging.
 - After merging, close the issue and delete the branch
 - Update the main issue with any relevant information about the implementation and close it when all sub-issues are completed
