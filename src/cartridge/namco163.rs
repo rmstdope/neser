@@ -52,6 +52,7 @@ pub struct Namco163Mapper {
     audio_update_counter: u8,
     audio_current_channel: i8,
     audio_last_output: i16,
+    wram_protect: u8,
     irq_counter: u16, // 15-bit counter
     irq_enabled: bool,
     irq_pending: bool,
@@ -85,6 +86,7 @@ impl Namco163Mapper {
             audio_update_counter: 0,
             audio_current_channel: 7,
             audio_last_output: 0,
+            wram_protect: 0,
             irq_counter: 0,
             irq_enabled: false,
             irq_pending: false,
@@ -207,6 +209,17 @@ impl Namco163Mapper {
     fn nametable_bank_for_addr(&self, addr: u16) -> u8 {
         let quadrant = ((addr & 0x0FFF) >> 10) as usize;
         self.chr_nt_regs[8 + quadrant]
+    }
+
+    fn wram_write_enabled(&self, addr: u16) -> bool {
+        let has_valid_wram_protect_prefix = (0x40..=0x4E).contains(&self.wram_protect);
+        if !has_valid_wram_protect_prefix {
+            return false;
+        }
+
+        let window = ((addr - 0x6000) / 0x0800) as u8;
+        let window_write_protect_bit = 1u8 << window;
+        (self.wram_protect & window_write_protect_bit) == 0
     }
 
     fn nametable_ciram_index(&self, addr: u16) -> Option<usize> {
@@ -434,6 +447,7 @@ impl Mapper for Namco163Mapper {
             }
             0xF800 => {
                 self.audio_set_address(value);
+                self.wram_protect = value;
             }
             0xE000 => {
                 self.audio_disabled = (value & 0x40) != 0;
@@ -446,6 +460,13 @@ impl Mapper for Namco163Mapper {
                 self.prg_select[2] = value & 0x3F;
             }
             _ => {
+                if (0x6000..=0x7FFF).contains(&addr) {
+                    if self.wram_write_enabled(addr) {
+                        let _ = self.prg_ram.try_write(addr, value);
+                    }
+                    return;
+                }
+
                 if self.prg_ram.try_write(addr, value) {
                     return;
                 }
@@ -532,6 +553,7 @@ impl Mapper for Namco163Mapper {
         self.audio_update_counter = 0;
         self.audio_current_channel = 7;
         self.audio_last_output = 0;
+        self.wram_protect = 0;
     }
 
     fn wram_size(&self) -> usize {
@@ -792,6 +814,34 @@ mod tests {
     }
 
     #[test]
+    fn namco163_f800_controls_wram_write_protect_windows() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Given invalid high nibble, all WRAM writes should be blocked
+        mapper.write_prg(0xF800, 0x00);
+        mapper.write_prg(0x6000, 0xAA);
+        assert_ne!(mapper.read_prg(0x6000), 0xAA);
+
+        // Given 0x40 (valid high nibble + all windows writable), writes are allowed
+        mapper.write_prg(0xF800, 0x40);
+        mapper.write_prg(0x6000, 0x11);
+        mapper.write_prg(0x6800, 0x22);
+        assert_eq!(mapper.read_prg(0x6000), 0x11);
+        assert_eq!(mapper.read_prg(0x6800), 0x22);
+
+        // Given bit A set, only $6000-$67FF is write-protected
+        mapper.write_prg(0xF800, 0x41);
+        mapper.write_prg(0x6000, 0x33);
+        mapper.write_prg(0x6800, 0x44);
+
+        // Then protected window remains unchanged while unprotected window updates
+        assert_eq!(mapper.read_prg(0x6000), 0x11);
+        assert_eq!(mapper.read_prg(0x6800), 0x44);
+    }
+
+    #[test]
     fn namco163_internal_ram_and_wram_snapshot() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = Vec::new(); // CHR-RAM path is fine for this test.
@@ -812,6 +862,7 @@ mod tests {
         assert_eq!(mapper.read_namco_ram(0x4800), 0xCC);
 
         // PRG-RAM snapshot/restore.
+        mapper.write_prg(0xF800, 0x40);
         mapper.write_prg(0x6000, 0x11);
         assert_eq!(mapper.read_prg(0x6000), 0x11);
 
