@@ -49,8 +49,9 @@ if (!gl) {
     throw new Error("WebGL rendering context not available for canvas 'screen'");
 }
 
-const width = 256;
-const height = 240;
+// NES display dimensions after overscan removal (updated after NES instance is created).
+let width = 256 - 2 * 8; // default: horizontal_overscan=8 → 240
+let height = 240 - 2 * 8; // default: vertical_overscan=8  → 224
 const SCROLLER_TEXT = "Updates: Feb 14: Full PAL support! Keyboard shortcuts with 'H'. ** Feb 7: Added support for NES Zapper controller. ** Feb 5: Added support for Arkanoid controller!  **";
 const SCROLLER_SPEED = 2.0;
 const SCROLLER_AMPLITUDE = 40;
@@ -795,6 +796,22 @@ let saveStateController = null;
 let saveStateAvailable = false;
 let running = false;
 let paused = false;
+
+/**
+ * Update NES display dimensions from the WASM instance and reallocate the GL texture.
+ * Must be called after `nes` is created so overscan is reflected.
+ */
+function updateNesDisplayDimensions() {
+    if (!nes) return;
+    width = nes.screen_width();
+    height = nes.screen_height();
+    NES_ASPECT_RATIO = width / height;
+    // Reallocate the NES texture with the correct (cropped) dimensions.
+    if (nesTexture) {
+        gl.bindTexture(gl.TEXTURE_2D, nesTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    }
+}
 let lastFrameTime = 0;
 const fpsLogIntervalMs = 1000;
 let fpsLastTime = 0;
@@ -1007,6 +1024,7 @@ async function start() {
             }
 
             nes = new WasmNes();
+            updateNesDisplayDimensions();
         }
         const romName = romMetadata?.name || "selected-rom.nes";
         nes.load_rom(romBytes, romName);
@@ -1531,8 +1549,8 @@ const filterToggleBtn = document.getElementById("filter-toggle");
 const saveStateBtn = document.getElementById("save-state");
 const loadStateBtn = document.getElementById("load-state");
 
-// NES native resolution is 256x240 pixels
-const NES_ASPECT_RATIO = 256 / 240;
+// NES native resolution is 256x240 pixels; aspect ratio updated after NES init.
+let NES_ASPECT_RATIO = width / height;
 const SCALE_STEP = 120; // Change height by 120px each step
 const INITIAL_HEIGHT = 720; // Initial display height in pixels
 let currentHeight = INITIAL_HEIGHT;

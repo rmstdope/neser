@@ -209,3 +209,18 @@ ram_init_mode=zero
 # Valid values: true, false
 #
 oam_dram_decay=false
+
+# -----------------------------------------------------------------------------
+# Overscan Removal
+# -----------------------------------------------------------------------------
+# Simulate a CRT television by removing overscan pixels before displaying.
+# Pixels are removed symmetrically from both edges.
+#
+# horizontal_overscan: pixels removed from each of left and right edges.
+#   Valid range: 0..=8. Default: 8.
+#
+# vertical_overscan: pixels removed from each of top and bottom edges.
+#   Valid range: 0..=16. Default: 8.
+#
+horizontal_overscan=8
+vertical_overscan=8

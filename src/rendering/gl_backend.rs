@@ -64,6 +64,10 @@ pub struct GlBackend {
     bp_add_state: BreakpointAddUiState,
     hexdump_ui_state: HexdumpUiState,
     shader_manager: ShaderManager,
+    /// Horizontal overscan in pixels (removed from left and right).
+    h_overscan: u32,
+    /// Vertical overscan in pixels (removed from top and bottom).
+    v_overscan: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -223,7 +227,19 @@ impl GlBackend {
 
     /// Returns the aspect ratio used for rendering the NES output.
     fn target_aspect(&self) -> f32 {
-        Self::NTSC_ASPECT
+        // NES pixel aspect ratio (8:7 NTSC) applied to the cropped pixel dimensions.
+        let w = self.cropped_width() as f32;
+        let h = self.cropped_height() as f32;
+        // pixel_ar = 8/7; display_ar = (w / h) * pixel_ar
+        (w / h) * (8.0 / 7.0)
+    }
+
+    fn cropped_width(&self) -> u32 {
+        256 - 2 * self.h_overscan
+    }
+
+    fn cropped_height(&self) -> u32 {
+        240 - 2 * self.v_overscan
     }
 
     /// Returns the logical window size in pixels reported by the render target.
@@ -264,6 +280,14 @@ impl GlBackend {
         shader_path: Option<&str>,
         app_context: SharedAppContext,
     ) -> Result<Self, String> {
+        let (h_overscan, v_overscan) = {
+            let ctx = app_context.borrow();
+            let cfg = ctx.config();
+            (cfg.horizontal_overscan as u32, cfg.vertical_overscan as u32)
+        };
+        let tex_w = 256 - 2 * h_overscan;
+        let tex_h = 240 - 2 * v_overscan;
+
         unsafe {
             gl::Disable(gl::DEPTH_TEST);
             gl::Disable(gl::CULL_FACE);
@@ -298,13 +322,13 @@ impl GlBackend {
             gl::TexParameteri(gl::TEXTURE_2D, gl::TEXTURE_WRAP_T, gl::CLAMP_TO_EDGE as i32);
             gl::PixelStorei(gl::UNPACK_ALIGNMENT, 1);
 
-            // Allocate texture storage.
+            // Allocate texture storage with cropped (overscan-removed) dimensions.
             gl::TexImage2D(
                 gl::TEXTURE_2D,
                 0,
                 gl::RGB8 as i32,
-                256,
-                240,
+                tex_w as i32,
+                tex_h as i32,
                 0,
                 gl::RGB,
                 gl::UNSIGNED_BYTE,
@@ -360,7 +384,7 @@ impl GlBackend {
             overlay_font,
             overlay_text_color: OverlayTextColor::White,
             app_context,
-            framebuffer: vec![0u8; 256 * 240 * 3],
+            framebuffer: vec![0u8; (tex_w * tex_h * 3) as usize],
             last_frame: Instant::now(),
             debugger_view_state: DebuggerViewState::default(),
             debugger_alpha: 1.0,
@@ -368,6 +392,8 @@ impl GlBackend {
             bp_add_state: BreakpointAddUiState::default(),
             hexdump_ui_state: HexdumpUiState::default(),
             shader_manager,
+            h_overscan,
+            v_overscan,
         })
     }
 
@@ -439,8 +465,12 @@ impl GlBackend {
         // Update NES texture (keep the PPU borrow short-lived so we can snapshot later).
         {
             let screen_buffer = nes.get_screen_buffer();
-            screen_buffer.copy_buffer(&mut self.framebuffer);
+            let cropped = screen_buffer.cropped_snapshot(self.h_overscan, self.v_overscan);
+            self.framebuffer.copy_from_slice(&cropped);
         }
+
+        let tex_w = self.cropped_width() as i32;
+        let tex_h = self.cropped_height() as i32;
 
         unsafe {
             gl::BindTexture(gl::TEXTURE_2D, self.nes_texture);
@@ -450,8 +480,8 @@ impl GlBackend {
                 0,
                 0,
                 0,
-                256,
-                240,
+                tex_w,
+                tex_h,
                 gl::RGB,
                 gl::UNSIGNED_BYTE,
                 self.framebuffer.as_ptr() as *const _,

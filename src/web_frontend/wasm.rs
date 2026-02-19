@@ -39,13 +39,21 @@ impl WasmNes {
         self.nes.clear_ready_to_render();
     }
 
-    fn opaque_black_rgba_frame() -> Vec<u8> {
-        let pixel_count = 256 * 240;
+    fn opaque_black_rgba_frame(pixel_count: usize) -> Vec<u8> {
         let mut rgba = vec![0u8; pixel_count * 4];
         for alpha in rgba.iter_mut().skip(3).step_by(4) {
             *alpha = 0xFF;
         }
         rgba
+    }
+
+    fn overscan(&self) -> (u32, u32) {
+        let cfg = self.app_context.borrow();
+        let config = cfg.config();
+        (
+            config.horizontal_overscan as u32,
+            config.vertical_overscan as u32,
+        )
     }
 
     fn rgb_to_rgba(rgb: &[u8]) -> Vec<u8> {
@@ -125,30 +133,47 @@ impl WasmNes {
 
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGB888).
     ///
-    /// Returns a Uint8Array with length 256*240*3.
+    /// Returns a Uint8Array with the cropped frame after overscan removal.
+    /// Width = 256 - 2*horizontal_overscan, Height = 240 - 2*vertical_overscan.
     #[wasm_bindgen]
     pub fn render_frame(&mut self) -> Vec<u8> {
         if !self.rom_loaded {
-            return vec![0u8; 256 * 240 * 3];
+            let pixel_count = self.screen_width() as usize * self.screen_height() as usize;
+            return vec![0u8; pixel_count * 3];
         }
-        // For browser responsiveness, this could be broken into smaller chunks via
-        // async/yield in a future enhancement. See web/README.md for notes about
-        // potential main-thread blocking with heavy frames.
+        let (h, v) = self.overscan();
         self.run_until_frame_ready();
-        self.nes.get_screen_buffer().snapshot()
+        self.nes.get_screen_buffer().cropped_snapshot(h, v)
     }
 
     /// Step the emulator until a full frame is ready and return the pixel buffer (RGBA8888).
     ///
-    /// Returns a Uint8Array with length 256*240*4 (alpha set to 0xFF).
+    /// Returns a Uint8Array with the cropped frame after overscan removal.
+    /// Width = 256 - 2*horizontal_overscan, Height = 240 - 2*vertical_overscan.
     #[wasm_bindgen]
     pub fn render_frame_rgba(&mut self) -> Vec<u8> {
+        let pixel_count = self.screen_width() as usize * self.screen_height() as usize;
         if !self.rom_loaded {
-            return Self::opaque_black_rgba_frame();
+            return Self::opaque_black_rgba_frame(pixel_count);
         }
+        let (h, v) = self.overscan();
         self.run_until_frame_ready();
-        let rgb = self.nes.get_screen_buffer().snapshot();
+        let rgb = self.nes.get_screen_buffer().cropped_snapshot(h, v);
         Self::rgb_to_rgba(&rgb)
+    }
+
+    /// Returns the display width in pixels after overscan removal.
+    #[wasm_bindgen]
+    pub fn screen_width(&self) -> u32 {
+        let (h, _) = self.overscan();
+        256 - 2 * h
+    }
+
+    /// Returns the display height in pixels after overscan removal.
+    #[wasm_bindgen]
+    pub fn screen_height(&self) -> u32 {
+        let (_, v) = self.overscan();
+        240 - 2 * v
     }
 
     /// Set button state for a controller.
