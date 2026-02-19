@@ -14,7 +14,7 @@ use crate::cartridge::NametableLayout;
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 const CHR_BANK_SIZE: usize = 0x1000; // 4 KiB
-const CHR_RAM_SIZE: usize = 0x4000;  // 16 KiB total (4 banks)
+const CHR_RAM_SIZE: usize = 0x4000; // 16 KiB total (4 banks)
 
 /// Mapper 13 - CPROM
 ///
