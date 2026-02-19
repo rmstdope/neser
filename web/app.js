@@ -19,7 +19,7 @@ import { createSineScroller } from "./sine_scroller.js";
 import { getKeyboardControllerTarget } from "./input_routing.js";
 import { dispatchWebShortcutAction } from "./shortcut_actions.js";
 import {
-    buildShortcutOverlayText,
+    buildFullHelpOverlayText,
     buildShortcutReferenceText,
     computeShortcutHelpFontSizePx,
     toggleShortcutHelpVisibility
@@ -1423,7 +1423,9 @@ function updateConnectedGamepads() {
 }
 
 function showPageLoadGamepadInitToast() {
-    gamepadInitToastNotifier.showOnce(gamepadEnabled, connectedGamepads.length);
+    if (gamepadEnabled) {
+        toastOverlay.show("Press a button on any connected gamepad");
+    }
 }
 
 // Initialize connectedGamepads to detect any gamepads already connected on page load
@@ -1431,6 +1433,7 @@ updateConnectedGamepads();
 
 ensureWasmInitialized()
     .then(() => {
+        updateConnectedGamepads();
         showPageLoadGamepadInitToast();
     })
     .catch((error) => {
@@ -1446,7 +1449,14 @@ const webShortcutActions = {
     toggleHelp: toggleShortcutHelp
 };
 
+function updateShortcutHelpOverlayText() {
+    if (shortcutHelpOverlay) {
+        shortcutHelpOverlay.textContent = buildFullHelpOverlayText(connectedGamepads.length);
+    }
+}
+
 function toggleShortcutHelp() {
+    updateShortcutHelpOverlayText();
     toggleShortcutHelpVisibility(shortcutHelpOverlay);
 }
 
@@ -1662,7 +1672,7 @@ if (shortcutReference) {
     shortcutReference.textContent = `Shortcuts: ${shortcutReferenceText}`;
 }
 if (shortcutHelpOverlay) {
-    shortcutHelpOverlay.textContent = buildShortcutOverlayText();
+    updateShortcutHelpOverlayText();
 }
 updateShortcutHelpScale();
 startIdleScroller();
@@ -1756,15 +1766,23 @@ function resetGamepadState() {
     lastGamepadState2 = { ...emptyState };
 }
 
-window.addEventListener("gamepadconnected", () => {
+function onGamepadConnectionChanged() {
     updateConnectedGamepads();
+    updateShortcutHelpOverlayText();
+    ensureWasmInitialized()
+        .then(() => toastOverlay.show(gamepad_init_toast_message(gamepadEnabled, connectedGamepads.length)))
+        .catch(() => {});
+}
+
+window.addEventListener("gamepadconnected", () => {
+    onGamepadConnectionChanged();
     if (gamepadEnabled && running && !paused) {
         pollGamepad();
     }
 });
 
 window.addEventListener("gamepaddisconnected", () => {
-    updateConnectedGamepads();
+    onGamepadConnectionChanged();
     resetGamepadState();
 });
 

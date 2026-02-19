@@ -5,6 +5,7 @@ import {
     WEB_SHORTCUT_REFERENCE,
     buildShortcutOverlayText,
     buildShortcutReferenceText,
+    buildControllerOverlayText,
     computeShortcutHelpFontSizePx,
     toggleShortcutHelpVisibility
 } from "./shortcut_help.js";
@@ -82,4 +83,40 @@ test("toggleShortcutHelpVisibility hides visible overlay", () => {
     assert.equal(visible, false);
     assert.equal(overlay.classList.contains("d-none"), true);
     assert.equal(overlay.getAttribute("aria-hidden"), "true");
+});
+
+// Tests for buildControllerOverlayText
+test("buildControllerOverlayText shows keyboard keys for both players when no gamepads", () => {
+    const text = buildControllerOverlayText(0);
+    assert.match(text, /Controller \(Player 1\)/);
+    assert.match(text, /W\/A\/S\/D: D-Pad/);
+    assert.match(text, /R: A/);
+    assert.match(text, /T: B/);
+    assert.match(text, /4: Select/);
+    assert.match(text, /5: Start/);
+    assert.match(text, /Controller \(Player 2\)/);
+    assert.match(text, /I\/J\/K\/L: D-Pad/);
+    assert.match(text, /O: A/);
+    assert.match(text, /P: B/);
+    assert.match(text, /9: Select/);
+    assert.match(text, /0: Start/);
+});
+
+test("buildControllerOverlayText shows Gamepad for player 1 and keyboard for player 2 when one gamepad connected", () => {
+    const text = buildControllerOverlayText(1);
+    assert.match(text, /Controller \(Player 1\)/);
+    assert.match(text, /Gamepad/);
+    assert.doesNotMatch(text, /W\/A\/S\/D/);
+    assert.match(text, /Controller \(Player 2\)/);
+    assert.match(text, /I\/J\/K\/L: D-Pad/);
+});
+
+test("buildControllerOverlayText shows Gamepad for both players when two gamepads connected", () => {
+    const text = buildControllerOverlayText(2);
+    assert.match(text, /Controller \(Player 1\)/);
+    assert.match(text, /Controller \(Player 2\)/);
+    assert.doesNotMatch(text, /W\/A\/S\/D/);
+    assert.doesNotMatch(text, /I\/J\/K\/L/);
+    const gamepadMatches = [...text.matchAll(/Gamepad/g)];
+    assert.equal(gamepadMatches.length, 2);
 });
