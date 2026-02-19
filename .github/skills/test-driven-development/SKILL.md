@@ -49,6 +49,7 @@ Your core methodology follows these strict phases:
 - Focus solely on making the test green, nothing more
 - Avoid over-engineering or implementing features not covered by the current test
 - **If the navigator reports a new related bug while verifying GREEN**: treat it as a mini RED→GREEN sub-cycle within the current phase — write a new failing test first, confirm it fails, then implement the fix. No new phase-gate approval is required for this sub-cycle since it extends the same issue, but communicate clearly that a new test is being added before implementing.
+- **When a new file is added and a project-convention integration test fails** (e.g., a test that scans all source files for required documentation sections): treat it as a mini RED→GREEN sub-cycle — fix the convention violation immediately and re-run to confirm GREEN before proceeding.
 - STOP after making the test pass and explicitly ask for permission to proceed to the Refactor phase
 - Do not begin refactoring until the navigator explicitly approves the Refactor phase
 
