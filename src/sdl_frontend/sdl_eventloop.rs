@@ -228,17 +228,23 @@ impl SdlEventLoop {
         })
     }
 
-    fn keyboard_ports(nes: &Nes, controller_player_map: &HashMap<u32, u8>) -> Vec<u8> {
+    fn keyboard_ports(
+        nes: &Nes,
+        controller_player_map: &HashMap<u32, u8>,
+    ) -> (Option<u8>, Option<u8>) {
         let gamepad_ports = Self::gamepad_ports(nes);
-        if gamepad_ports.is_empty() {
-            return Vec::new();
-        }
-
         let assigned_count = controller_player_map.len().min(gamepad_ports.len());
-        // Only target the first unassigned port so that WASD never controls multiple
-        // controllers simultaneously (matching web behavior where each key set is
-        // hardcoded to a single controller).
-        gamepad_ports[assigned_count..].iter().take(1).copied().collect()
+        let port_1 = if assigned_count == 0 {
+            gamepad_ports.first().copied()
+        } else {
+            None
+        };
+        let port_2 = if assigned_count <= 1 {
+            gamepad_ports.get(1).copied()
+        } else {
+            None
+        };
+        (port_1, port_2)
     }
 
     fn apply_keyboard_button(nes: &mut Nes, ports: &[u8], button: Button, pressed: bool) {
@@ -1493,14 +1499,15 @@ impl SdlEventLoop {
             return KeyDownOutcome::Continue;
         }
 
-        let keyboard_ports = Self::keyboard_ports(nes, &self.controller_player_map);
+        let (port_1, port_2) = Self::keyboard_ports(nes, &self.controller_player_map);
         Self::handle_key_down_with_keyboard_ports(
             nes,
             keycode,
             self.audio.as_ref(),
             &mut self.paused,
             &mut self.debugger_open_requested,
-            &keyboard_ports,
+            port_1,
+            port_2,
         )
     }
 
@@ -1606,12 +1613,19 @@ impl SdlEventLoop {
 
     /// Handle keyboard key press events
     ///
-    /// Maps keyboard keys to NES controller buttons:
+    /// Player 1 keys (port 1):
     /// - W/A/S/D: D-Pad (Up, Left, Down, Right)
-    /// - G: B button
-    /// - F: A button
-    /// - R: Select button
-    /// - T: Start button
+    /// - R: A button
+    /// - T: B button
+    /// - 4: Select button
+    /// - 5: Start button
+    ///
+    /// Player 2 keys (port 2):
+    /// - I/J/K/L: D-Pad (Up, Left, Down, Right)
+    /// - O: A button
+    /// - P: B button
+    /// - 9: Select button
+    /// - 0: Start button
     ///
     /// Emulator controls:
     /// - Escape: Quit
@@ -1630,7 +1644,8 @@ impl SdlEventLoop {
         audio: Option<&SdlNesAudio>,
         paused: &mut bool,
         debugger_open_requested: &mut bool,
-        keyboard_ports: &[u8],
+        port_1: Option<u8>,
+        port_2: Option<u8>,
     ) -> KeyDownOutcome {
         match keycode {
             Keycode::Escape => return KeyDownOutcome::Quit,
@@ -1680,18 +1695,42 @@ impl SdlEventLoop {
             Keycode::F7 => {
                 Self::load_state_from_disk(nes);
             }
-            Keycode::W => Self::apply_keyboard_button(nes, keyboard_ports, Button::Up, true),
-            Keycode::S => Self::apply_keyboard_button(nes, keyboard_ports, Button::Down, true),
-            Keycode::A => Self::apply_keyboard_button(nes, keyboard_ports, Button::Left, true),
-            Keycode::D => Self::apply_keyboard_button(nes, keyboard_ports, Button::Right, true),
-            Keycode::F => Self::apply_keyboard_button(nes, keyboard_ports, Button::B, true),
-            Keycode::G => Self::apply_keyboard_button(nes, keyboard_ports, Button::A, true),
-            Keycode::R => Self::apply_keyboard_button(nes, keyboard_ports, Button::Select, true),
-            Keycode::T => Self::apply_keyboard_button(nes, keyboard_ports, Button::Start, true),
-            _ => {}
+            _ => Self::handle_joypad_key(nes, keycode, port_1, port_2, true),
         }
 
         KeyDownOutcome::Continue
+    }
+
+    fn handle_joypad_key(
+        nes: &mut Nes,
+        keycode: Keycode,
+        port_1: Option<u8>,
+        port_2: Option<u8>,
+        pressed: bool,
+    ) {
+        let p1 = port_1.as_slice();
+        let p2 = port_2.as_slice();
+        match keycode {
+            // Player 1: W/A/S/D + R/T (A/B) + 4/5 (Select/Start)
+            Keycode::W => Self::apply_keyboard_button(nes, p1, Button::Up, pressed),
+            Keycode::S => Self::apply_keyboard_button(nes, p1, Button::Down, pressed),
+            Keycode::A => Self::apply_keyboard_button(nes, p1, Button::Left, pressed),
+            Keycode::D => Self::apply_keyboard_button(nes, p1, Button::Right, pressed),
+            Keycode::R => Self::apply_keyboard_button(nes, p1, Button::A, pressed),
+            Keycode::T => Self::apply_keyboard_button(nes, p1, Button::B, pressed),
+            Keycode::Num4 => Self::apply_keyboard_button(nes, p1, Button::Select, pressed),
+            Keycode::Num5 => Self::apply_keyboard_button(nes, p1, Button::Start, pressed),
+            // Player 2: I/J/K/L + P/O (A/B) + 8/9 (Select/Start)
+            Keycode::I => Self::apply_keyboard_button(nes, p2, Button::Up, pressed),
+            Keycode::K => Self::apply_keyboard_button(nes, p2, Button::Down, pressed),
+            Keycode::J => Self::apply_keyboard_button(nes, p2, Button::Left, pressed),
+            Keycode::L => Self::apply_keyboard_button(nes, p2, Button::Right, pressed),
+            Keycode::P => Self::apply_keyboard_button(nes, p2, Button::B, pressed),
+            Keycode::O => Self::apply_keyboard_button(nes, p2, Button::A, pressed),
+            Keycode::Num9 => Self::apply_keyboard_button(nes, p2, Button::Select, pressed),
+            Keycode::Num0 => Self::apply_keyboard_button(nes, p2, Button::Start, pressed),
+            _ => {}
+        }
     }
 
     #[cfg(test)]
@@ -1702,38 +1741,61 @@ impl SdlEventLoop {
         paused: &mut bool,
         debugger_open_requested: &mut bool,
     ) -> KeyDownOutcome {
-        let keyboard_ports = Self::gamepad_ports(nes);
+        let gamepad_ports = Self::gamepad_ports(nes);
+        let port_1 = gamepad_ports.first().copied();
+        let port_2 = gamepad_ports.get(1).copied();
         Self::handle_key_down_with_keyboard_ports(
             nes,
             keycode,
             audio,
             paused,
             debugger_open_requested,
-            &keyboard_ports,
+            port_1,
+            port_2,
         )
     }
 
-    fn handle_key_up_with_keyboard_ports(nes: &mut Nes, keycode: Keycode, keyboard_ports: &[u8]) {
-        match keycode {
-            Keycode::W => Self::apply_keyboard_button(nes, keyboard_ports, Button::Up, false),
-            Keycode::S => Self::apply_keyboard_button(nes, keyboard_ports, Button::Down, false),
-            Keycode::A => Self::apply_keyboard_button(nes, keyboard_ports, Button::Left, false),
-            Keycode::D => Self::apply_keyboard_button(nes, keyboard_ports, Button::Right, false),
-            Keycode::G => Self::apply_keyboard_button(nes, keyboard_ports, Button::B, false),
-            Keycode::F => Self::apply_keyboard_button(nes, keyboard_ports, Button::A, false),
-            Keycode::R => Self::apply_keyboard_button(nes, keyboard_ports, Button::Select, false),
-            Keycode::T => Self::apply_keyboard_button(nes, keyboard_ports, Button::Start, false),
-            _ => {}
-        }
+    fn handle_key_up_with_keyboard_ports(
+        nes: &mut Nes,
+        keycode: Keycode,
+        port_1: Option<u8>,
+        port_2: Option<u8>,
+    ) {
+        Self::handle_joypad_key(nes, keycode, port_1, port_2, false);
     }
 
     fn handle_key_up_for_run(&mut self, nes: &mut Nes, keycode: Keycode) {
-        let keyboard_ports = Self::keyboard_ports(nes, &self.controller_player_map);
-        Self::handle_key_up_with_keyboard_ports(nes, keycode, &keyboard_ports);
+        let (port_1, port_2) = Self::keyboard_ports(nes, &self.controller_player_map);
+        Self::handle_key_up_with_keyboard_ports(nes, keycode, port_1, port_2);
     }
 
-    fn help_overlay_text() -> &'static str {
-        "Controls\n\
+    fn help_overlay_text(&self, nes: &Nes) -> String {
+        let (port_1, port_2) = Self::keyboard_ports(nes, &self.controller_player_map);
+
+        let player1_section = if port_1.is_some() {
+            "Controller (Player 1)\n\
+W/A/S/D: D-Pad\n\
+R: A\n\
+T: B\n\
+4: Select\n\
+5: Start"
+        } else {
+            "Controller (Player 1)\nGamepad"
+        };
+
+        let player2_section = if port_2.is_some() {
+            "Controller (Player 2)\n\
+I/J/K/L: D-Pad\n\
+O: A\n\
+P: B\n\
+9: Select\n\
+0: Start"
+        } else {
+            "Controller (Player 2)\nGamepad"
+        };
+
+        format!(
+            "Controls\n\
 Esc: Quit\n\
 Space: Pause\n\
 H: Toggle help\n\
@@ -1749,12 +1811,10 @@ F10: Step over\n\
 F11: Step into\n\
 F12: Fullscreen\n\
 \n\
-Controller (Player 1)\n\
-W/A/S/D: D-Pad\n\
-F: A\n\
-G: B\n\
-R: Select\n\
-T: Start"
+{player1_section}\n\
+\n\
+{player2_section}"
+        )
     }
 
     /// Generate overlay text for rendering.
@@ -1769,7 +1829,7 @@ T: Start"
 
         // Fall back to help overlay if visible
         if self.help_overlay_visible {
-            Some(Self::help_overlay_text().to_string())
+            Some(self.help_overlay_text(nes))
         } else {
             None
         }
@@ -1829,10 +1889,10 @@ T: Start"
         format!("{:02}:{:02}", minutes, secs)
     }
 
-    #[allow(dead_code)]
-    fn help_overlay_render_text(&self) -> Option<&'static str> {
+    #[cfg(test)]
+    fn help_overlay_render_text(&self, nes: &Nes) -> Option<String> {
         if self.help_overlay_visible {
-            Some(Self::help_overlay_text())
+            Some(self.help_overlay_text(nes))
         } else {
             None
         }
@@ -2040,7 +2100,9 @@ mod tests {
     use tempfile::TempDir;
 
     fn default_config() -> Config {
-        Config::with_defaults()
+        let mut config = Config::with_defaults();
+        config.gamepads_enabled = false;
+        config
     }
 
     fn copy_test_rom(temp_dir: &TempDir) -> PathBuf {
@@ -2319,11 +2381,19 @@ mod tests {
             Config::default(),
         ));
 
-        // Two gamepad-capable controllers, but only one physical gamepad present.
+        // One physical gamepad on port 1. Player 1 keys (WASD) should be inactive
+        // because port 1 is taken by the gamepad. Player 2 keys (IJKL) should
+        // control port 2.
         event_loop.controller_player_map.insert(42, 1);
 
         let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::W);
 
+        // WASD no longer falls through to port 2 – it is exclusively player 1's key set.
+        assert_eq!(read_joypad_buttons(&mut nes, 1), [0; 8]);
+        assert_eq!(read_joypad_buttons(&mut nes, 2), [0; 8]);
+
+        // Player 2 key (I = Up) must reach port 2.
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::I);
         assert_eq!(read_joypad_buttons(&mut nes, 1), [0; 8]);
         assert_eq!(read_joypad_buttons(&mut nes, 2), [0, 0, 0, 0, 1, 0, 0, 0]);
     }
@@ -2361,6 +2431,150 @@ mod tests {
 
         assert_eq!(read_joypad_buttons(&mut nes, 1), [0, 0, 0, 0, 1, 0, 0, 0]);
         assert_eq!(read_joypad_buttons(&mut nes, 2), [0; 8]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_player2_keyboard_dpad_no_gamepads() {
+        // I=Up, K=Down, J=Left, L=Right should all route to port 2 when no gamepads connected.
+        let config = default_config();
+
+        let cases: &[(Keycode, [u8; 8])] = &[
+            (Keycode::I, [0, 0, 0, 0, 1, 0, 0, 0]), // Up
+            (Keycode::K, [0, 0, 0, 0, 0, 1, 0, 0]), // Down
+            (Keycode::J, [0, 0, 0, 0, 0, 0, 1, 0]), // Left
+            (Keycode::L, [0, 0, 0, 0, 0, 0, 0, 1]), // Right
+        ];
+
+        for (keycode, expected_port2) in cases {
+            let mut event_loop =
+                SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+            let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+                Config::default(),
+            ));
+
+            let _ = event_loop.handle_key_down_for_run(&mut nes, *keycode);
+
+            assert_eq!(
+                read_joypad_buttons(&mut nes, 1),
+                [0; 8],
+                "key {:?} must not affect port 1",
+                keycode
+            );
+            assert_eq!(
+                read_joypad_buttons(&mut nes, 2),
+                *expected_port2,
+                "key {:?} must control port 2",
+                keycode
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_player2_keyboard_buttons_no_gamepads() {
+        // 9=Select, 0=Start, O=A, P=B should all route to port 2 when no gamepads connected.
+        let config = default_config();
+
+        let cases: &[(Keycode, [u8; 8])] = &[
+            (Keycode::Num9, [0, 0, 1, 0, 0, 0, 0, 0]), // Select
+            (Keycode::Num0, [0, 0, 0, 1, 0, 0, 0, 0]), // Start
+            (Keycode::O, [1, 0, 0, 0, 0, 0, 0, 0]),    // A
+            (Keycode::P, [0, 1, 0, 0, 0, 0, 0, 0]),    // B
+        ];
+
+        for (keycode, expected_port2) in cases {
+            let mut event_loop =
+                SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+            let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+                Config::default(),
+            ));
+
+            let _ = event_loop.handle_key_down_for_run(&mut nes, *keycode);
+
+            assert_eq!(
+                read_joypad_buttons(&mut nes, 1),
+                [0; 8],
+                "key {:?} must not affect port 1",
+                keycode
+            );
+            assert_eq!(
+                read_joypad_buttons(&mut nes, 2),
+                *expected_port2,
+                "key {:?} must control port 2",
+                keycode
+            );
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn test_player2_keyboard_key_release() {
+        // Releasing a player 2 key must clear the button state on port 2.
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::I);
+        assert_eq!(read_joypad_buttons(&mut nes, 2), [0, 0, 0, 0, 1, 0, 0, 0]);
+
+        event_loop.handle_key_up_for_run(&mut nes, Keycode::I);
+        assert_eq!(read_joypad_buttons(&mut nes, 2), [0; 8]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_player2_keyboard_disabled_with_two_gamepads() {
+        // When both ports have physical gamepads, player 2 keyboard must be inactive.
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        event_loop.controller_player_map.insert(42, 1);
+        event_loop.controller_player_map.insert(43, 2);
+
+        let _ = event_loop.handle_key_down_for_run(&mut nes, Keycode::I);
+
+        assert_eq!(read_joypad_buttons(&mut nes, 1), [0; 8]);
+        assert_eq!(read_joypad_buttons(&mut nes, 2), [0; 8]);
+    }
+
+    #[test]
+    #[serial]
+    fn test_player1_keyboard_a_b_key_release() {
+        // R=A and T=B: pressing then releasing each key must clear the correct button.
+        let config = default_config();
+
+        for (down_key, up_key, expected_down, label) in [
+            (Keycode::R, Keycode::R, [1u8, 0, 0, 0, 0, 0, 0, 0], "R=A"),
+            (Keycode::T, Keycode::T, [0u8, 1, 0, 0, 0, 0, 0, 0], "T=B"),
+        ] {
+            let mut event_loop =
+                SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+            let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+                Config::default(),
+            ));
+
+            let _ = event_loop.handle_key_down_for_run(&mut nes, down_key);
+            assert_eq!(
+                read_joypad_buttons(&mut nes, 1),
+                expected_down,
+                "{label}: wrong button on press"
+            );
+
+            event_loop.handle_key_up_for_run(&mut nes, up_key);
+            assert_eq!(
+                read_joypad_buttons(&mut nes, 1),
+                [0; 8],
+                "{label}: button not cleared on release"
+            );
+        }
     }
 
     #[test]
@@ -2820,8 +3034,15 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_help_overlay_text_mentions_shortcuts() {
-        let text = SdlEventLoop::help_overlay_text();
+        let config = default_config();
+        let event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        let text = event_loop.help_overlay_text(&mut nes);
         assert!(text.contains("Esc"));
         assert!(text.contains("Space"));
         assert!(text.contains("F1"));
@@ -2834,11 +3055,85 @@ mod tests {
         assert!(text.contains("F11"));
         assert!(text.contains("F12"));
         assert!(text.contains("W/A/S/D"));
-        assert!(text.contains("G"));
-        assert!(text.contains("F"));
         assert!(text.contains("R"));
         assert!(text.contains("T"));
+        assert!(text.contains("4"));
+        assert!(text.contains("5"));
         assert!(text.contains("H"));
+    }
+
+    #[test]
+    #[serial]
+    fn test_help_overlay_shows_keyboard_for_both_players_when_no_gamepads() {
+        // Given no physical gamepads connected, both players should show keyboard keys.
+        let config = default_config();
+        let event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+
+        let text = event_loop.help_overlay_text(&mut nes);
+
+        assert!(text.contains("W/A/S/D"), "Player 1 D-pad should be shown");
+        assert!(text.contains("I/J/K/L"), "Player 2 D-pad should be shown");
+        assert!(!text.contains("Gamepad"), "No gamepad should be mentioned");
+    }
+
+    #[test]
+    #[serial]
+    fn test_help_overlay_shows_gamepad_for_player1_when_one_gamepad_connected() {
+        // Given one gamepad on port 1, player 1 section shows "Gamepad" and player 2 shows keyboard.
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        event_loop.controller_player_map.insert(42, 1);
+
+        let text = event_loop.help_overlay_text(&mut nes);
+
+        assert!(text.contains("Gamepad"), "Player 1 should show Gamepad");
+        assert!(
+            !text.contains("W/A/S/D"),
+            "Player 1 keyboard should be hidden"
+        );
+        assert!(
+            text.contains("I/J/K/L"),
+            "Player 2 keyboard D-pad should still be shown"
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn test_help_overlay_shows_gamepad_for_both_players_when_two_gamepads_connected() {
+        // Given two gamepads, both player sections show "Gamepad" and no keyboard keys.
+        let config = default_config();
+        let mut event_loop =
+            SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        event_loop.controller_player_map.insert(42, 1);
+        event_loop.controller_player_map.insert(43, 2);
+
+        let text = event_loop.help_overlay_text(&mut nes);
+
+        assert!(
+            !text.contains("W/A/S/D"),
+            "Player 1 keyboard should be hidden"
+        );
+        assert!(
+            !text.contains("I/J/K/L"),
+            "Player 2 keyboard should be hidden"
+        );
+        // Both players should have a "Gamepad" entry
+        assert_eq!(
+            text.matches("Gamepad").count(),
+            2,
+            "Both players should show Gamepad"
+        );
     }
 
     #[test]
@@ -2847,14 +3142,14 @@ mod tests {
         let config = default_config();
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
 
-        assert_eq!(event_loop.help_overlay_render_text(), None);
+        assert_eq!(event_loop.help_overlay_render_text(&mut nes), None);
 
         event_loop.help_overlay_visible = true;
-        assert_eq!(
-            event_loop.help_overlay_render_text(),
-            Some(SdlEventLoop::help_overlay_text())
-        );
+        assert!(event_loop.help_overlay_render_text(&mut nes).is_some());
     }
 
     fn nes_with_jsr_program() -> Nes {
@@ -3816,10 +4111,10 @@ mod tests {
     fn test_joypad1_keyboard_mapping_wasd_r_t_f_g() {
         // Desired mapping (Joypad 1):
         // - D-pad: W/A/S/D
-        // - Select: R
-        // - Start:  T
-        // - A:      G
-        // - B:      F
+        // - Select: 4
+        // - Start:  5
+        // - A:      R
+        // - B:      T
         let mut paused = false;
         let mut debugger_open_requested = false;
 
@@ -3875,7 +4170,33 @@ mod tests {
         );
         assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 0, 0, 0, 0, 1]);
 
-        // R => Select
+        // 4 => Select
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        let _ = SdlEventLoop::handle_key_down(
+            &mut nes,
+            Keycode::Num4,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 1, 0, 0, 0, 0, 0]);
+
+        // 5 => Start
+        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
+            Config::default(),
+        ));
+        let _ = SdlEventLoop::handle_key_down(
+            &mut nes,
+            Keycode::Num5,
+            None,
+            &mut paused,
+            &mut debugger_open_requested,
+        );
+        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 1, 0, 0, 0, 0]);
+
+        // R => A
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
@@ -3886,41 +4207,15 @@ mod tests {
             &mut paused,
             &mut debugger_open_requested,
         );
-        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 1, 0, 0, 0, 0, 0]);
+        assert_eq!(read_joypad1_buttons(&mut nes), [1, 0, 0, 0, 0, 0, 0, 0]);
 
-        // T => Start
+        // T => B
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
         ));
         let _ = SdlEventLoop::handle_key_down(
             &mut nes,
             Keycode::T,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
-        assert_eq!(read_joypad1_buttons(&mut nes), [0, 0, 0, 1, 0, 0, 0, 0]);
-
-        // G => A
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
-            Config::default(),
-        ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::G,
-            None,
-            &mut paused,
-            &mut debugger_open_requested,
-        );
-        assert_eq!(read_joypad1_buttons(&mut nes), [1, 0, 0, 0, 0, 0, 0, 0]);
-
-        // F => B
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
-            Config::default(),
-        ));
-        let _ = SdlEventLoop::handle_key_down(
-            &mut nes,
-            Keycode::F,
             None,
             &mut paused,
             &mut debugger_open_requested,
