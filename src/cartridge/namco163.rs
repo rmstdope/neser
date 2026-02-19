@@ -52,6 +52,7 @@ pub struct Namco163Mapper {
     audio_update_counter: u8,
     audio_current_channel: i8,
     audio_last_output: i16,
+    e800_control: u8,
     wram_protect: u8,
     irq_counter: u16, // 15-bit counter
     irq_enabled: bool,
@@ -64,6 +65,7 @@ impl Namco163Mapper {
     const CIRAM_BANK_THRESHOLD: u8 = 0xE0;
     const CIRAM_INDEX_MASK: usize = 0x07FF;
     const IRQ_COUNTER_MAX: u16 = 0x7FFF;
+    const PRG_SELECT_MASK: u8 = 0x3F;
     const MIRRORING_REG: usize = 11;
     const IRQ_LOW_REG: usize = 12;
     const IRQ_HIGH_ENABLE_REG: usize = 13;
@@ -86,6 +88,7 @@ impl Namco163Mapper {
             audio_update_counter: 0,
             audio_current_channel: 7,
             audio_last_output: 0,
+            e800_control: 0,
             wram_protect: 0,
             irq_counter: 0,
             irq_enabled: false,
@@ -115,6 +118,10 @@ impl Namco163Mapper {
             return 0;
         }
         (bank as usize) % count
+    }
+
+    fn set_prg_select_bank(&mut self, slot: usize, value: u8) {
+        self.prg_select[slot] = value & Self::PRG_SELECT_MASK;
     }
 
     fn chr_bank_index_1k(&self, bank: u8) -> usize {
@@ -176,9 +183,9 @@ impl Namco163Mapper {
             return false;
         }
         let disable = if slot < 4 {
-            (self.prg_select[1] & 0x40) != 0
+            (self.e800_control & 0x40) != 0
         } else {
-            (self.prg_select[1] & 0x80) != 0
+            (self.e800_control & 0x80) != 0
         };
         !disable
     }
@@ -382,6 +389,18 @@ impl Namco163Mapper {
         }
     }
 
+    fn clock_irq_counter(&mut self) {
+        if self.irq_counter < Self::IRQ_COUNTER_MAX {
+            self.irq_counter += 1;
+            if self.irq_counter == Self::IRQ_COUNTER_MAX {
+                self.irq_pending = true;
+            }
+            return;
+        }
+
+        self.irq_pending = true;
+    }
+
     #[cfg(test)]
     fn debug_audio_last_output(&self) -> i16 {
         self.audio_last_output
@@ -451,13 +470,14 @@ impl Mapper for Namco163Mapper {
             }
             0xE000 => {
                 self.audio_disabled = (value & 0x40) != 0;
-                self.prg_select[0] = value & 0x3F;
+                self.set_prg_select_bank(0, value);
             }
             0xE800 => {
-                self.prg_select[1] = value;
+                self.e800_control = value;
+                self.set_prg_select_bank(1, value);
             }
             0xF000 => {
-                self.prg_select[2] = value & 0x3F;
+                self.set_prg_select_bank(2, value);
             }
             _ => {
                 if (0x6000..=0x7FFF).contains(&addr) {
@@ -515,12 +535,7 @@ impl Mapper for Namco163Mapper {
             return;
         }
 
-        if self.irq_counter == Self::IRQ_COUNTER_MAX {
-            self.irq_counter = 0;
-            self.irq_pending = true;
-        } else {
-            self.irq_counter = (self.irq_counter + 1) & Self::IRQ_COUNTER_MAX;
-        }
+        self.clock_irq_counter();
     }
 
     fn irq_pending(&self) -> bool {
@@ -553,6 +568,7 @@ impl Mapper for Namco163Mapper {
         self.audio_update_counter = 0;
         self.audio_current_channel = 7;
         self.audio_last_output = 0;
+        self.e800_control = 0;
         self.wram_protect = 0;
     }
 
@@ -839,6 +855,41 @@ mod tests {
         // Then protected window remains unchanged while unprotected window updates
         assert_eq!(mapper.read_prg(0x6000), 0x11);
         assert_eq!(mapper.read_prg(0x6800), 0x44);
+    }
+
+    #[test]
+    fn namco163_irq_counter_saturates_at_7fff() {
+        let prg_rom = banked_data(8 * 1024, 4);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
+
+        // Given IRQ counter at $7FFF and enabled
+        mapper.write_prg(0x5000, 0xFF);
+        mapper.write_prg(0x5800, 0xFF);
+
+        // When clocked, IRQ should assert and counter should remain saturated at $7FFF
+        mapper.cpu_cycle();
+        assert!(mapper.irq_pending());
+        assert_eq!(mapper.read_prg(0x5000), 0xFF);
+        assert_eq!(mapper.read_prg(0x5800), 0xFF);
+
+        // Additional clocks should keep it saturated
+        mapper.cpu_cycle();
+        assert_eq!(mapper.read_prg(0x5000), 0xFF);
+        assert_eq!(mapper.read_prg(0x5800), 0xFF);
+    }
+
+    #[test]
+    fn namco163_e800_prg_bank_uses_low_6_bits_only() {
+        let prg_rom = banked_data(8 * 1024, 128);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Given E800 with upper control bits set and low bank bits = 3
+        mapper.write_prg(0xE800, 0xC3);
+
+        // Then $A000 PRG bank should use only low 6 bits for bank selection
+        assert_eq!(mapper.read_prg(0xA000), 3);
     }
 
     #[test]
