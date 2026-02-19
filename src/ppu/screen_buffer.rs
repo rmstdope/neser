@@ -98,6 +98,7 @@ impl ScreenBuffer {
     /// # Arguments
     ///
     /// * `dest` - Destination buffer slice to copy to. Must be at least as large as the source buffer.
+    #[cfg(test)]
     pub fn copy_buffer(&self, dest: &mut [u8]) {
         assert!(
             dest.len() >= self.buffer.len(),

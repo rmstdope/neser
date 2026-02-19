@@ -25,6 +25,7 @@ import {
     toggleShortcutHelpVisibility
 } from "./shortcut_help.js";
 import { createCrosshair } from "./crosshair.js";
+import { computeFullscreenCanvasSize, computeWindowedCanvasSize } from "./canvas_size.js";
 import { createToastContainer, createToastOverlay, drainNesToasts } from "./toast_overlay.js";
 import { createGamepadInitToastNotifier } from "./gamepad_init_toast.js";
 
@@ -52,10 +53,10 @@ if (!gl) {
 // NES display dimensions after overscan removal (updated after NES instance is created).
 let width = 256 - 2 * 8; // default: horizontal_overscan=8 → 240
 let height = 240 - 2 * 8; // default: vertical_overscan=8  → 224
-const SCROLLER_TEXT = "Updates: Feb 14: Full PAL support! Keyboard shortcuts with 'H'. ** Feb 7: Added support for NES Zapper controller. ** Feb 5: Added support for Arkanoid controller!  **";
+const SCROLLER_TEXT = "Updates: Feb 19: Added scraping of ROM database for better comapibility. Feb 14: Full PAL support! Keyboard shortcuts with 'H'. ** Feb 7: Added support for NES Zapper controller. ** Feb 5: Added support for Arkanoid controller!  **";
 const SCROLLER_SPEED = 2.0;
-const SCROLLER_AMPLITUDE = 40;
-const SCROLLER_FREQUENCY = 0.009;
+const SCROLLER_AMPLITUDE = 20;
+const SCROLLER_FREQUENCY = 0.05;
 const SCROLLER_FONT_SIZE_PX = 20;
 const SCROLLER_FONT_FAMILY = "'VT323', monospace";
 
@@ -1565,42 +1566,31 @@ const SCALE_STEP = 120; // Change height by 120px each step
 const INITIAL_HEIGHT = 720; // Initial display height in pixels
 let currentHeight = INITIAL_HEIGHT;
 
+function applyCanvasSize(size) {
+    canvas.style.width = size.cssWidth;
+    canvas.style.height = size.cssHeight;
+    canvas.width = size.pixelWidth;
+    canvas.height = size.pixelHeight;
+}
+
 function updateCanvasSize(newHeight) {
-    currentHeight = Math.max(240, Math.min(newHeight, 1440)); // Clamp between 240 and 1440
-    const newWidth = Math.round(currentHeight * NES_ASPECT_RATIO);
-    canvas.style.width = `${newWidth}px`;
-    canvas.style.height = `${currentHeight}px`;
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(newWidth * dpr);
-    canvas.height = Math.round(currentHeight * dpr);
-    
-    // Update crosshair overlay size if it exists
+    const size = computeWindowedCanvasSize(newHeight, NES_ASPECT_RATIO, dpr);
+    currentHeight = size.pixelHeight / dpr; // track the clamped height
+    applyCanvasSize(size);
     if (crosshair) {
         crosshair.updateCanvasSize();
     }
-
     updateShortcutHelpScale();
 }
 
 function updateCanvasSizeForFullscreenViewport() {
-    const viewportWidth = window.innerWidth;
-    const viewportHeight = window.innerHeight;
-    const viewportAspect = viewportWidth / viewportHeight;
     const dpr = window.devicePixelRatio || 1;
-
-    if (viewportAspect > NES_ASPECT_RATIO) {
-        canvas.style.height = "100vh";
-        canvas.style.width = `${viewportHeight * NES_ASPECT_RATIO}px`;
-        canvas.width = Math.round(viewportHeight * NES_ASPECT_RATIO * dpr);
-        canvas.height = Math.round(viewportHeight * dpr);
-        updateShortcutHelpScale();
-        return;
+    const size = computeFullscreenCanvasSize(window.innerWidth, window.innerHeight, NES_ASPECT_RATIO, dpr);
+    applyCanvasSize(size);
+    if (crosshair) {
+        crosshair.updateCanvasSize();
     }
-
-    canvas.style.width = "100vw";
-    canvas.style.height = `${viewportWidth / NES_ASPECT_RATIO}px`;
-    canvas.width = Math.round(viewportWidth * dpr);
-    canvas.height = Math.round((viewportWidth / NES_ASPECT_RATIO) * dpr);
     updateShortcutHelpScale();
 }
 
@@ -1795,9 +1785,11 @@ document.addEventListener("fullscreenchange", () => {
         // Exited fullscreen - restore previous size
         updateCanvasSize(currentHeight);
     }
-    
-    // Update crosshair overlay size if it exists
-    if (crosshair) {
-        crosshair.updateCanvasSize();
+});
+
+// Re-fit canvas when viewport resizes while in fullscreen (e.g. orientation change)
+window.addEventListener("resize", () => {
+    if (document.fullscreenElement === screenWrap) {
+        updateCanvasSizeForFullscreenViewport();
     }
 });
