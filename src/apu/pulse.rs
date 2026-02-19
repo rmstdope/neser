@@ -2,7 +2,7 @@
 /// Generates square waves with variable duty cycle
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
-use crate::apu::PulseState;
+use crate::console::PulseState;
 use crate::trace_apu;
 
 pub struct Pulse {

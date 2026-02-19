@@ -15,17 +15,130 @@ pub struct SaveState {
     /// Version of the save-state format
     pub version: u32,
     /// CPU state
-    pub cpu: crate::cpu::CpuState,
+    pub cpu: CpuState,
     /// PPU state
-    pub ppu: crate::ppu::PpuState,
+    pub ppu: PpuState,
     /// APU state
-    pub apu: crate::apu::ApuState,
+    pub apu: ApuState,
     /// Bus state
-    pub bus: crate::bus::BusState,
+    pub bus: BusState,
     /// CPU RAM (2KB, mirrored to 8KB)
     pub ram: Vec<u8>,
     /// Mapper state (serialized as opaque bytes)
-    pub mapper: crate::bus::MapperState,
+    pub mapper: MapperState,
+}
+
+/// CPU register and internal state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CpuState {
+    pub a: u8,
+    pub x: u8,
+    pub y: u8,
+    pub sp: u8,
+    pub pc: u16,
+    pub p: u8,
+    pub total_cycles: u64,
+    pub halted: bool,
+    pub nmi_pending: bool,
+    pub irq_pending: bool,
+    pub prev_need_nmi: bool,
+    pub prev_run_irq: bool,
+    pub run_irq: bool,
+    pub delayed_i_flag: Option<bool>,
+    pub forced_irq_pending: bool,
+    pub skip_interrupt_latch_this_cycle: bool,
+    pub master_clock: u64,
+    pub master_clock_ppu: u64,
+    pub dmc_dma_running: bool,
+    pub dmc_dma_need_halt: bool,
+    pub dmc_dma_need_dummy_read: bool,
+    pub interrupt_stack: Vec<crate::cpu::InterruptKind>,
+    pub current_tick_info: Option<(u8, u8)>,
+}
+
+/// PPU timing state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PpuTimingState {
+    pub scanline: u16,
+    pub pixel: u16,
+    pub total_cycles: u64,
+    pub frame_count: u64,
+    pub rendering_enabled_d1: bool,
+    pub rendering_enabled_d2: bool,
+}
+
+/// PPU register state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PpuRegisterState {
+    pub control: u8,
+    pub mask: u8,
+    pub oam_addr: u8,
+    pub v: u16,
+    pub t: u16,
+    pub fine_x: u8,
+    pub w: bool,
+    pub io_bus: u8,
+    pub io_bus_refresh_time: [u64; 8],
+    pub cycle_count: u64,
+}
+
+/// PPU complete state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PpuState {
+    pub timing: PpuTimingState,
+    pub registers: PpuRegisterState,
+    pub vblank_flag: bool,
+    pub sprite_zero_hit: bool,
+    pub pending_sprite_zero_hit: bool,
+    pub sprite_overflow: bool,
+    /// Internal edge-detection latch for NMI generation.
+    /// This is polled and cleared by the CPU, not the NMI enable control bit.
+    pub nmi_pending: bool,
+    pub frame_complete: bool,
+    pub vblank_suppressed_for_frame: bool,
+    pub vblank_for_nmi: bool,
+    pub prev_a12: bool,
+    pub vram: Vec<u8>,
+    pub palette: Vec<u8>,
+    pub last_palette_index: Option<u8>,
+    pub last_palette_value: u8,
+    pub mirroring_mode: crate::cartridge::MirroringMode,
+    pub oam: Vec<u8>,
+    pub secondary_oam: Vec<u8>,
+    pub sprites_found: u8,
+    pub sprite_count: u8,
+    pub next_sprite_count: u8,
+    pub sprite_buffers_ready: bool,
+    pub sprite_0_index: Option<usize>,
+    pub next_sprite_0_index: Option<usize>,
+    pub sprite_eval_n: u8,
+    pub sprite_eval_m: u8,
+    pub sprite_eval_cycle: u8,
+    pub sprite_eval_in_range: bool,
+    #[serde(default)]
+    pub sprite_eval_overflow_reads_remaining: u8,
+    #[serde(default)]
+    pub sprite_eval_overflow_signaled: bool,
+    #[serde(default)]
+    pub oam_read_latch: u8,
+    pub sprite_pattern_shift_lo: [u8; 8],
+    pub sprite_pattern_shift_hi: [u8; 8],
+    pub sprite_x_positions: [u8; 8],
+    pub sprite_attributes: [u8; 8],
+    pub next_sprite_pattern_shift_lo: [u8; 8],
+    pub next_sprite_pattern_shift_hi: [u8; 8],
+    pub next_sprite_x_positions: [u8; 8],
+    pub next_sprite_attributes: [u8; 8],
+    pub bg_pattern_shift_lo: u16,
+    pub bg_pattern_shift_hi: u16,
+    pub bg_attribute_shift_lo: u16,
+    pub bg_attribute_shift_hi: u16,
+    pub nametable_latch: u8,
+    pub attribute_latch: u8,
+    pub pattern_lo_latch: u8,
+    pub pattern_hi_latch: u8,
+    pub screen_buffer: Vec<u8>,
+    pub read_buffer: u8,
 }
 
 // TODO We are duplicating a lot of sprite state info in PpuState
@@ -56,15 +169,196 @@ pub struct SpritesState {
     pub oam_read_latch: u8,
 }
 
+/// APU channel envelope state.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct EnvelopeState {
+    pub start_flag: bool,
+    pub divider: u8,
+    pub decay_level: u8,
+    pub constant_volume: bool,
+    pub loop_flag: bool,
+    pub period: u8,
+}
+
+/// APU pulse channel state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PulseState {
+    pub timer: u16,
+    pub timer_period: u16,
+    pub length_counter: u8,
+    pub length_counter_enabled: bool,
+    pub length_counter_halt: bool,
+    pub length_counter_pending_halt: Option<bool>,
+    pub length_counter_reload_value: u8,
+    pub length_counter_previous_value: u8,
+    pub duty: u8,
+    pub duty_position: u8,
+    pub envelope: EnvelopeState,
+    pub sweep_enabled: bool,
+    pub sweep_period: u8,
+    pub sweep_negate: bool,
+    pub sweep_shift: u8,
+    pub sweep_reload: bool,
+    pub sweep_divider: u8,
+}
+
+/// APU triangle channel state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct TriangleState {
+    pub timer: u16,
+    pub timer_period: u16,
+    pub length_counter: u8,
+    pub length_counter_enabled: bool,
+    pub length_counter_halt: bool,
+    pub length_counter_pending_halt: Option<bool>,
+    pub length_counter_reload_value: u8,
+    pub length_counter_previous_value: u8,
+    pub linear_counter: u8,
+    pub linear_counter_reload: u8,
+    pub linear_counter_reload_flag: bool,
+    pub control_flag: bool,
+    pub sequence_position: u8,
+}
+
+/// APU noise channel state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct NoiseState {
+    pub timer: u16,
+    pub timer_period: u16,
+    pub length_counter: u8,
+    pub length_counter_enabled: bool,
+    pub length_counter_halt: bool,
+    pub length_counter_pending_halt: Option<bool>,
+    pub length_counter_reload_value: u8,
+    pub length_counter_previous_value: u8,
+    pub envelope: EnvelopeState,
+    pub mode_flag: bool,
+    pub shift_register: u16,
+}
+
+/// APU DMC channel state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct DmcState {
+    pub timer: u16,
+    pub timer_period: u16,
+    pub output_level: u8,
+    pub sample_address: u16,
+    pub sample_length: u16,
+    pub current_address: u16,
+    pub bytes_remaining: u16,
+    pub sample_buffer: Option<u8>,
+    pub shift_register: u8,
+    pub bits_remaining: u8,
+    pub silence_flag: bool,
+    pub irq_enabled: bool,
+    pub irq_flag: bool,
+    pub loop_flag: bool,
+    pub dma_pending: bool,
+    pub transfer_start_delay: u8,
+}
+
+/// APU frame counter state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct FrameCounterState {
+    pub cycle_counter: u32,
+    pub mode: bool,
+    pub irq_inhibit: bool,
+    pub irq_flag: bool,
+    pub irq_assert_cycles_remaining: u8,
+    pub block_frame_counter: bool,
+    pub five_step_extra_cycle: bool,
+    pub pending_write: Option<u8>,
+    pub write_delay: u8,
+    pub pending_write_on_odd_cpu_cycle: bool,
+    pub pending_immediate_quarter: bool,
+    pub pending_immediate_half: bool,
+}
+
+/// Bus joypad state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct JoypadState {
+    pub strobe: bool,
+    pub button_index: u8,
+    pub button_states: u8,
+}
+
+/// Bus Arkanoid controller state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ArkanoidState {
+    pub strobe: bool,
+    pub shift_index: u8,
+    pub position: u8,
+    pub latched_position: u8,
+    pub trigger: bool,
+    pub enabled: bool,
+}
+
+/// Bus Zapper controller state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ZapperState {
+    pub x: u8,
+    pub y: u8,
+    pub trigger: bool,
+    pub light: bool,
+}
+
+/// Bus state for save-state support.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BusState {
+    pub open_bus: u8,
+    pub oam_dma_page: Option<u8>,
+    pub port1_controller: ControllerStateWrapper,
+    pub port2_controller: ControllerStateWrapper,
+}
+
+/// Wrapper for controller state to support serialization.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ControllerStateWrapper {
+    Joypad(JoypadState),
+    Arkanoid(ArkanoidState),
+    Zapper(ZapperState),
+}
+
+/// APU complete state.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ApuState {
+    pub frame_counter: FrameCounterState,
+    pub pulse1: PulseState,
+    pub pulse2: PulseState,
+    pub triangle: TriangleState,
+    pub noise: NoiseState,
+    pub dmc: DmcState,
+    pub sample_accumulator: f32,
+    pub cycles_per_sample: f32,
+    pub pending_samples: Vec<f32>,
+    pub pulse1_enabled: bool,
+    pub pulse2_enabled: bool,
+    pub triangle_enabled: bool,
+    pub noise_enabled: bool,
+    pub dmc_enabled: bool,
+    pub apu_cycle: u32,
+    pub cpu_cycle: u64,
+    pub last_4017_write: u8,
+}
+
+/// Mapper state (opaque serialization).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct MapperState {
+    pub mapper_number: u8,
+    pub prg_ram: Vec<u8>,
+    pub chr_ram: Vec<u8>,
+    pub registers: Vec<u8>,
+}
+
 impl SaveState {
     /// Create a new save state with the current version.
     pub fn new(
-        cpu: crate::cpu::CpuState,
-        ppu: crate::ppu::PpuState,
-        apu: crate::apu::ApuState,
-        bus: crate::bus::BusState,
+        cpu: CpuState,
+        ppu: PpuState,
+        apu: ApuState,
+        bus: BusState,
         ram: Vec<u8>,
-        mapper: crate::bus::MapperState,
+        mapper: MapperState,
     ) -> Self {
         Self {
             version: SAVESTATE_VERSION,
@@ -103,11 +397,9 @@ impl SaveState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::{BusState, ControllerStateWrapper, MapperState};
-    use crate::input::JoypadState;
 
-    fn create_test_cpu_state() -> crate::cpu::CpuState {
-        crate::cpu::CpuState {
+    fn create_test_cpu_state() -> CpuState {
+        CpuState {
             a: 0x42,
             x: 0x10,
             y: 0x20,
@@ -134,9 +426,9 @@ mod tests {
         }
     }
 
-    fn create_test_ppu_state() -> crate::ppu::PpuState {
-        crate::ppu::PpuState {
-            timing: crate::ppu::PpuTimingState {
+    fn create_test_ppu_state() -> PpuState {
+        PpuState {
+            timing: PpuTimingState {
                 scanline: 100,
                 pixel: 200,
                 total_cycles: 50000,
@@ -144,7 +436,7 @@ mod tests {
                 rendering_enabled_d1: false,
                 rendering_enabled_d2: false,
             },
-            registers: crate::ppu::PpuRegisterState {
+            registers: PpuRegisterState {
                 control: 0x80,
                 mask: 0x1E,
                 oam_addr: 0,
@@ -206,9 +498,9 @@ mod tests {
         }
     }
 
-    fn create_test_apu_state() -> crate::apu::ApuState {
-        crate::apu::ApuState {
-            frame_counter: crate::apu::FrameCounterState {
+    fn create_test_apu_state() -> ApuState {
+        ApuState {
+            frame_counter: FrameCounterState {
                 cycle_counter: 0,
                 mode: false,
                 irq_inhibit: false,
@@ -222,7 +514,7 @@ mod tests {
                 pending_immediate_quarter: false,
                 pending_immediate_half: false,
             },
-            pulse1: crate::apu::PulseState {
+            pulse1: PulseState {
                 timer: 0,
                 timer_period: 0,
                 length_counter: 0,
@@ -233,7 +525,7 @@ mod tests {
                 length_counter_previous_value: 0,
                 duty: 0,
                 duty_position: 0,
-                envelope: crate::apu::EnvelopeState::default(),
+                envelope: EnvelopeState::default(),
                 sweep_enabled: false,
                 sweep_period: 0,
                 sweep_negate: false,
@@ -241,7 +533,7 @@ mod tests {
                 sweep_reload: false,
                 sweep_divider: 0,
             },
-            pulse2: crate::apu::PulseState {
+            pulse2: PulseState {
                 timer: 0,
                 timer_period: 0,
                 length_counter: 0,
@@ -252,7 +544,7 @@ mod tests {
                 length_counter_previous_value: 0,
                 duty: 0,
                 duty_position: 0,
-                envelope: crate::apu::EnvelopeState::default(),
+                envelope: EnvelopeState::default(),
                 sweep_enabled: false,
                 sweep_period: 0,
                 sweep_negate: false,
@@ -260,7 +552,7 @@ mod tests {
                 sweep_reload: false,
                 sweep_divider: 0,
             },
-            triangle: crate::apu::TriangleState {
+            triangle: TriangleState {
                 timer: 0,
                 timer_period: 0,
                 length_counter: 0,
@@ -275,7 +567,7 @@ mod tests {
                 control_flag: false,
                 sequence_position: 0,
             },
-            noise: crate::apu::NoiseState {
+            noise: NoiseState {
                 timer: 0,
                 timer_period: 0,
                 length_counter: 0,
@@ -284,11 +576,11 @@ mod tests {
                 length_counter_pending_halt: None,
                 length_counter_reload_value: 0,
                 length_counter_previous_value: 0,
-                envelope: crate::apu::EnvelopeState::default(),
+                envelope: EnvelopeState::default(),
                 mode_flag: false,
                 shift_register: 1,
             },
-            dmc: crate::apu::DmcState {
+            dmc: DmcState {
                 timer: 0,
                 timer_period: 428,
                 output_level: 0,

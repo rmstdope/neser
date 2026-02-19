@@ -9,8 +9,7 @@
 /// - Length counter
 use super::envelope::Envelope;
 use super::length_counter::LengthCounter;
-use crate::apu::NoiseState;
-use crate::console::TvSystem;
+use crate::console::{NoiseState, TvSystem};
 use crate::trace_apu;
 
 // Period lookup table for NTSC (in CPU cycles)

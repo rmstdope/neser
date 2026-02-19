@@ -1,9 +1,8 @@
 use crate::cartridge::{Cartridge, MirroringMode};
-use crate::console::{Nes, SpritesState, TvSystem};
+use crate::console::{Nes, PpuRegisterState, PpuState, PpuTimingState, SpritesState, TvSystem};
 use crate::ppu::color_effects::apply_grayscale;
 use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
 use crate::trace_ppu;
-use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -2659,89 +2658,4 @@ mod tests {
             "oam_read_latch should be preserved across save/restore"
         );
     }
-}
-
-/// PPU timing state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PpuTimingState {
-    pub scanline: u16,
-    pub pixel: u16,
-    pub total_cycles: u64,
-    pub frame_count: u64,
-    pub rendering_enabled_d1: bool,
-    pub rendering_enabled_d2: bool,
-}
-
-/// PPU register state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PpuRegisterState {
-    pub control: u8,
-    pub mask: u8,
-    pub oam_addr: u8,
-    pub v: u16,
-    pub t: u16,
-    pub fine_x: u8,
-    pub w: bool,
-    pub io_bus: u8,
-    pub io_bus_refresh_time: [u64; 8],
-    pub cycle_count: u64,
-}
-
-/// PPU complete state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PpuState {
-    pub timing: PpuTimingState,
-    pub registers: PpuRegisterState,
-    pub vblank_flag: bool,
-    pub sprite_zero_hit: bool,
-    pub pending_sprite_zero_hit: bool,
-    pub sprite_overflow: bool,
-    /// Internal edge-detection latch for NMI generation.
-    /// This is polled and cleared by the CPU, not the NMI enable control bit.
-    pub nmi_pending: bool,
-    pub frame_complete: bool,
-    pub vblank_suppressed_for_frame: bool,
-    pub vblank_for_nmi: bool,
-    pub prev_a12: bool,
-    pub vram: Vec<u8>,
-    pub palette: Vec<u8>,
-    pub last_palette_index: Option<u8>,
-    pub last_palette_value: u8,
-    pub mirroring_mode: crate::cartridge::MirroringMode,
-    pub oam: Vec<u8>,
-    pub secondary_oam: Vec<u8>,
-    pub sprites_found: u8,
-    pub sprite_count: u8,
-    pub next_sprite_count: u8,
-    pub sprite_buffers_ready: bool,
-    pub sprite_0_index: Option<usize>,
-    pub next_sprite_0_index: Option<usize>,
-    pub sprite_eval_n: u8,
-    pub sprite_eval_m: u8,
-    pub sprite_eval_cycle: u8,
-    pub sprite_eval_in_range: bool,
-    #[serde(default)]
-    pub sprite_eval_overflow_reads_remaining: u8,
-    #[serde(default)]
-    pub sprite_eval_overflow_signaled: bool,
-    #[serde(default)]
-    pub oam_read_latch: u8,
-    pub sprite_pattern_shift_lo: [u8; 8],
-    pub sprite_pattern_shift_hi: [u8; 8],
-    pub sprite_x_positions: [u8; 8],
-    pub sprite_attributes: [u8; 8],
-    pub next_sprite_pattern_shift_lo: [u8; 8],
-    pub next_sprite_pattern_shift_hi: [u8; 8],
-    pub next_sprite_x_positions: [u8; 8],
-    pub next_sprite_attributes: [u8; 8],
-    pub bg_pattern_shift_lo: u16,
-    pub bg_pattern_shift_hi: u16,
-    pub bg_attribute_shift_lo: u16,
-    pub bg_attribute_shift_hi: u16,
-    pub nametable_latch: u8,
-    pub attribute_latch: u8,
-    pub pattern_lo_latch: u8,
-    pub pattern_hi_latch: u8,
-    pub screen_buffer: Vec<u8>,
-    pub read_buffer: u8,
 }

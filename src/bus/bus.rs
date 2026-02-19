@@ -6,41 +6,15 @@ use super::ppu_device::PpuDevice;
 use super::ram_device::RamDevice;
 use crate::apu;
 use crate::cartridge::Cartridge;
+use crate::console::{BusState, MapperState};
 use crate::debugging::log_info;
 use crate::input::{ArkanoidController, Button, Controller, ControllerType, NesJoypad, Zapper};
 use crate::ppu;
-use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::io;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::rc::Rc;
-
-/// Bus state for save-state support.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct BusState {
-    pub open_bus: u8,
-    pub oam_dma_page: Option<u8>,
-    pub port1_controller: ControllerStateWrapper,
-    pub port2_controller: ControllerStateWrapper,
-}
-
-/// Wrapper for controller state to support serialization.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum ControllerStateWrapper {
-    Joypad(crate::input::JoypadState),
-    Arkanoid(crate::input::ArkanoidState),
-    Zapper(crate::input::ZapperState),
-}
-
-/// Mapper state (opaque serialization).
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct MapperState {
-    pub mapper_number: u8,
-    pub prg_ram: Vec<u8>,
-    pub chr_ram: Vec<u8>,
-    pub registers: Vec<u8>,
-}
 
 pub trait BusDevice {
     fn read(&mut self, addr: u16, open_bus: u8, is_dummy_read: bool) -> Option<u8>;

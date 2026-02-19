@@ -1,7 +1,7 @@
 /// Triangle wave channel for the NES APU
 /// Generates triangle waves with a 32-step linear sequence
 use super::length_counter::LengthCounter;
-use crate::apu::TriangleState;
+use crate::console::TriangleState;
 use crate::trace_apu;
 
 pub struct Triangle {

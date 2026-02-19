@@ -4,15 +4,7 @@
 /// The controller state is read via a shift register that outputs button states
 /// sequentially when clocked. Writing to the strobe register resets the read position.
 use super::ControllerInput;
-use serde::{Deserialize, Serialize};
-
-/// Joypad state for save/restore.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JoypadState {
-    pub strobe: bool,
-    pub button_index: u8,
-    pub button_states: u8,
-}
+use crate::console::JoypadState;
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum Button {

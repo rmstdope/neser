@@ -1,4 +1,4 @@
-use crate::apu::EnvelopeState;
+use crate::console::EnvelopeState;
 use crate::trace_apu;
 
 /// Envelope Generator

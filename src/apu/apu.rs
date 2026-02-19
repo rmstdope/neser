@@ -3,11 +3,10 @@ use super::frame_counter::FrameCounter;
 use super::noise::Noise;
 use super::pulse::Pulse;
 use super::triangle::Triangle;
-use crate::console::TvSystem;
+use crate::console::{ApuState, FrameCounterState, TvSystem};
 use crate::trace_apu;
 use ringbuf::HeapRb;
 use ringbuf::traits::{Consumer, Observer, RingBuffer};
-use serde::{Deserialize, Serialize};
 
 // Upper bound for queued audio samples awaiting retrieval.
 //
@@ -1998,131 +1997,4 @@ mod tests {
         let first = apu.get_sample().expect("sample should be available");
         assert_eq!(first, 2.0);
     }
-}
-
-/// APU channel envelope state.
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
-pub struct EnvelopeState {
-    pub start_flag: bool,
-    pub divider: u8,
-    pub decay_level: u8,
-    pub constant_volume: bool,
-    pub loop_flag: bool,
-    pub period: u8,
-}
-
-/// APU pulse channel state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PulseState {
-    pub timer: u16,
-    pub timer_period: u16,
-    pub length_counter: u8,
-    pub length_counter_enabled: bool,
-    pub length_counter_halt: bool,
-    pub length_counter_pending_halt: Option<bool>,
-    pub length_counter_reload_value: u8,
-    pub length_counter_previous_value: u8,
-    pub duty: u8,
-    pub duty_position: u8,
-    pub envelope: EnvelopeState,
-    pub sweep_enabled: bool,
-    pub sweep_period: u8,
-    pub sweep_negate: bool,
-    pub sweep_shift: u8,
-    pub sweep_reload: bool,
-    pub sweep_divider: u8,
-}
-
-/// APU triangle channel state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct TriangleState {
-    pub timer: u16,
-    pub timer_period: u16,
-    pub length_counter: u8,
-    pub length_counter_enabled: bool,
-    pub length_counter_halt: bool,
-    pub length_counter_pending_halt: Option<bool>,
-    pub length_counter_reload_value: u8,
-    pub length_counter_previous_value: u8,
-    pub linear_counter: u8,
-    pub linear_counter_reload: u8,
-    pub linear_counter_reload_flag: bool,
-    pub control_flag: bool,
-    pub sequence_position: u8,
-}
-
-/// APU noise channel state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NoiseState {
-    pub timer: u16,
-    pub timer_period: u16,
-    pub length_counter: u8,
-    pub length_counter_enabled: bool,
-    pub length_counter_halt: bool,
-    pub length_counter_pending_halt: Option<bool>,
-    pub length_counter_reload_value: u8,
-    pub length_counter_previous_value: u8,
-    pub envelope: EnvelopeState,
-    pub mode_flag: bool,
-    pub shift_register: u16,
-}
-
-/// APU DMC channel state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct DmcState {
-    pub timer: u16,
-    pub timer_period: u16,
-    pub output_level: u8,
-    pub sample_address: u16,
-    pub sample_length: u16,
-    pub current_address: u16,
-    pub bytes_remaining: u16,
-    pub sample_buffer: Option<u8>,
-    pub shift_register: u8,
-    pub bits_remaining: u8,
-    pub silence_flag: bool,
-    pub irq_enabled: bool,
-    pub irq_flag: bool,
-    pub loop_flag: bool,
-    pub dma_pending: bool,
-    pub transfer_start_delay: u8,
-}
-
-/// APU frame counter state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct FrameCounterState {
-    pub cycle_counter: u32,
-    pub mode: bool,
-    pub irq_inhibit: bool,
-    pub irq_flag: bool,
-    pub irq_assert_cycles_remaining: u8,
-    pub block_frame_counter: bool,
-    pub five_step_extra_cycle: bool,
-    pub pending_write: Option<u8>,
-    pub write_delay: u8,
-    pub pending_write_on_odd_cpu_cycle: bool,
-    pub pending_immediate_quarter: bool,
-    pub pending_immediate_half: bool,
-}
-
-/// APU complete state.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ApuState {
-    pub frame_counter: FrameCounterState,
-    pub pulse1: PulseState,
-    pub pulse2: PulseState,
-    pub triangle: TriangleState,
-    pub noise: NoiseState,
-    pub dmc: DmcState,
-    pub sample_accumulator: f32,
-    pub cycles_per_sample: f32,
-    pub pending_samples: Vec<f32>,
-    pub pulse1_enabled: bool,
-    pub pulse2_enabled: bool,
-    pub triangle_enabled: bool,
-    pub noise_enabled: bool,
-    pub dmc_enabled: bool,
-    pub apu_cycle: u32,
-    pub cpu_cycle: u64,
-    pub last_4017_write: u8,
 }
