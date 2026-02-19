@@ -66,7 +66,7 @@ Your core methodology follows these strict phases:
 - Create a meaningful commit message that clearly describes what was implemented
 - Include reference to the user story or feature being implemented
 - Use conventional commit format when appropriate
-- Ensure all pre-merge checks pass
+- Run all pre-merge checks locally before creating a PR: `cargo fmt -- --check`, `cargo clippy --all-features`, and the full test suite (`cargo test --lib --bins --tests --examples`). Fix any failures before proceeding.
 - If more iterations are needed before the issue is completed, loop back to the RED phase
 - If the issue is fully implemented, create a PR with a clear description of the changes and link to the relevant issue
 - STOP and ask for permission to merge after creating the PR
@@ -74,7 +74,8 @@ Your core methodology follows these strict phases:
 ### MERGE PHASE:
 
 - Only proceed when given explicit permission
-- Ensure all required checks have passed before merging
+- **Before merging**: verify that all CI checks on the PR have passed (not just local tests) using `gh pr checks <PR_NUMBER>`. Do not merge if any check is failing or still pending.
+- **Before merging**: verify that there are no pending or unresolved review comments on the PR using `gh pr view <PR_NUMBER> --comments` and the `get_review_comments` GitHub tool. Address all review comments before merging.
 - After merging, close the issue and delete the branch
 - Update the main issue with any relevant information about the implementation and close it when all sub-issues are completed
 - Use the self-learning-skills immediately after merging to reflect on the process and identify any improvements for future cycles.
