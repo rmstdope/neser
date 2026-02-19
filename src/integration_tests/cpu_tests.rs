@@ -15,6 +15,11 @@ mod tests {
         }
     }
 
+    fn load_test_cartridge(rom_data: &[u8], rom_path: &str) -> Cartridge {
+        Cartridge::load_from_file(rom_data, rom_path, &crate::app_context::AppContext::new())
+            .expect("ROM should parse")
+    }
+
     // branch_timing_tests
     setup_rom_console_test!(
         test_branch_timing,
@@ -101,7 +106,7 @@ mod tests {
     fn test_dma_sync_test_v2() {
         let rom_path = "roms/automated_tests/dma_sync_test_v2/dma_sync_test.nes";
         let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("DMA Sync Test v2 ROM should parse");
+        let cartridge = load_test_cartridge(&rom_data, rom_path);
         let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -119,7 +124,7 @@ mod tests {
     fn test_dma_sync_test_v2_simulate_failure() {
         let rom_path = "roms/automated_tests/dma_sync_test_v2/dma_sync_test.nes";
         let rom_data = fs::read(rom_path).expect("DMA Sync Test v2 ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("DMA Sync Test v2 ROM should parse");
+        let cartridge = load_test_cartridge(&rom_data, rom_path);
         let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -168,7 +173,7 @@ mod tests {
     fn test_dpcmletterbox() {
         let rom_path = "roms/automated_tests/dpcmletterbox/dpcmletterbox.nes";
         let rom_data = fs::read(rom_path).expect("dpcmletterbox ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("dpcmletterbox ROM should parse");
+        let cartridge = load_test_cartridge(&rom_data, rom_path);
 
         let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);
@@ -373,7 +378,7 @@ mod tests {
         // Load the nestest ROM
         let rom_data =
             fs::read("roms/automated_tests/nestest/nestest.nes").expect("Failed to load ROM");
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to parse ROM");
+        let cartridge = load_test_cartridge(&rom_data, "roms/automated_tests/nestest/nestest.nes");
 
         // Create NES and insert cartridge
         let mut nes = Nes::new(deterministic_config());

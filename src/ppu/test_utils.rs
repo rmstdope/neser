@@ -120,7 +120,9 @@ impl InesRomBuilder {
 
     pub fn build_cartridge(self) -> Cartridge {
         let rom_data = self.build();
-        Cartridge::new(&rom_data).expect("Failed to create cartridge")
+        let app_context = crate::app_context::AppContext::new();
+        Cartridge::load_from_file(&rom_data, "ppu-test-rom.nes", &app_context)
+            .expect("Failed to create cartridge")
     }
 }
 

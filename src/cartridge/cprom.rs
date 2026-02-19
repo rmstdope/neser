@@ -7,7 +7,7 @@
 
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
-use crate::cartridge::MirroringMode;
+use crate::cartridge::NametableLayout;
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
@@ -36,12 +36,12 @@ pub struct CpromMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,
     chr_memory: ChrMemory,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
     chr_bank_select: u8,
 }
 
 impl CpromMapper {
-    pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, _chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         // CPROM uses CHR-RAM, ignore chr_rom parameter
         Self {
             prg_rom,
@@ -111,7 +111,7 @@ impl Mapper for CpromMapper {
         self.chr_memory.write_at_index(index, value);
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -176,7 +176,7 @@ mod tests {
             *byte = (i / 1024) as u8;
         }
 
-        let mapper = CpromMapper::new(prg_rom, vec![], MirroringMode::Horizontal);
+        let mapper = CpromMapper::new(prg_rom, vec![], NametableLayout::Horizontal);
 
         // PRG ROM should be accessible at $8000-$FFFF
         assert_eq!(mapper.read_prg(0x8000), 0); // First byte of first 1KB block
@@ -188,7 +188,7 @@ mod tests {
     #[test]
     fn test_cprom_chr_ram_lower_bank_switching() {
         // CPROM has 16KB CHR-RAM with 4KB bank switching in lower half
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
         // Write distinct patterns to each 4KB bank in CHR-RAM
         for bank in 0..4 {
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn test_cprom_chr_ram_upper_bank_fixed() {
         // Upper 4KB should always be fixed to bank 3
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
         // Fill bank 3 with a distinct pattern via writes to $1000-$1FFF.
         // The upper 4KB address range ($1000-$1FFF) is hardwired to bank 3,
@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn test_cprom_chr_ram_writable() {
         // CHR-RAM should be writable
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
         // Write to lower bank (initially bank 0)
         mapper.write_chr(0x0000, 0xAA);
@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn test_cprom_bank_select_mask() {
         // Only lower 2 bits should be used for bank select (4 banks total)
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
         // Fill each bank with distinct pattern
         for bank in 0..4 {
@@ -333,17 +333,17 @@ mod tests {
 
     #[test]
     fn test_cprom_mirroring() {
-        let mapper_h = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
-        assert_eq!(mapper_h.get_mirroring(), MirroringMode::Horizontal);
+        let mapper_h = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
+        assert_eq!(mapper_h.get_mirroring(), NametableLayout::Horizontal);
 
-        let mapper_v = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Vertical);
-        assert_eq!(mapper_v.get_mirroring(), MirroringMode::Vertical);
+        let mapper_v = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Vertical);
+        assert_eq!(mapper_v.get_mirroring(), NametableLayout::Vertical);
     }
 
     #[test]
     fn test_cprom_bank_select_any_address() {
         // CPROM responds to writes anywhere in $8000-$FFFF
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
         // Fill banks with distinct patterns
         for bank in 0..4 {
@@ -373,12 +373,13 @@ mod tests {
 
     #[test]
     fn test_cprom_registers_snapshot_restores_chr_bank() {
-        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
         mapper.write_prg(0x8000, 0b0000_0010); // select bank 2
         let regs = mapper.registers_snapshot();
 
-        let mut restored = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        let mut restored =
+            CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
         restored.restore_registers(&regs);
 
         restored.write_chr(0x0000, 0xAA);
@@ -390,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_cprom_open_bus() {
-        let mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], MirroringMode::Horizontal);
+        let mapper = CpromMapper::new(vec![0; 32 * 1024], vec![], NametableLayout::Horizontal);
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x77), 0x77);
         assert_eq!(mapper.read_prg_open_bus(0x5FFF, 0x88), 0x88);

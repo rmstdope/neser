@@ -40,14 +40,14 @@
 //! - **Expansion audio not implemented** (5B audio chip)
 
 use crate::cartridge::common::ChrMemory;
-use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
 pub struct SunsoftFme7Mapper {
     prg_rom: Vec<u8>,
     prg_ram: Vec<u8>,
     chr_memory: ChrMemory,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
 
     // Register selection
     command: u8,
@@ -72,7 +72,7 @@ impl SunsoftFme7Mapper {
     const CHR_BANK_SIZE: usize = 1024; // 1KB
     const PRG_RAM_SIZE: usize = 8 * 1024; // 8KB (can be larger, but 8KB is standard)
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self {
             prg_rom,
             prg_ram: vec![0u8; Self::PRG_RAM_SIZE],
@@ -158,10 +158,10 @@ impl SunsoftFme7Mapper {
             0x0C => {
                 // Mirroring
                 self.mirroring = match value & 0x03 {
-                    0 => MirroringMode::Vertical,
-                    1 => MirroringMode::Horizontal,
-                    2 => MirroringMode::SingleScreenLower,
-                    3 => MirroringMode::SingleScreenUpper,
+                    0 => NametableLayout::Vertical,
+                    1 => NametableLayout::Horizontal,
+                    2 => NametableLayout::SingleScreenLower,
+                    3 => NametableLayout::SingleScreenUpper,
                     _ => unreachable!(),
                 };
             }
@@ -288,7 +288,7 @@ impl Mapper for SunsoftFme7Mapper {
         self.irq_pending
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -343,12 +343,12 @@ impl Mapper for SunsoftFme7Mapper {
         snapshot.push((self.irq_counter & 0xFF) as u8);
         snapshot.push((self.irq_counter >> 8) as u8);
         let mirroring = match self.mirroring {
-            MirroringMode::Horizontal => 0,
-            MirroringMode::Vertical => 1,
-            MirroringMode::SingleScreenLower => 2,
-            MirroringMode::SingleScreenUpper => 3,
-            MirroringMode::SingleScreen => 2,
-            MirroringMode::FourScreen => 4,
+            NametableLayout::Horizontal => 0,
+            NametableLayout::Vertical => 1,
+            NametableLayout::SingleScreenLower => 2,
+            NametableLayout::SingleScreenUpper => 3,
+            NametableLayout::SingleScreen => 2,
+            NametableLayout::FourScreen => 4,
         };
         snapshot.push(mirroring);
         snapshot
@@ -367,12 +367,12 @@ impl Mapper for SunsoftFme7Mapper {
             self.irq_pending = (flags & 16) != 0;
             self.irq_counter = (data[14] as u16) | ((data[15] as u16) << 8);
             self.mirroring = match data[16] {
-                0 => MirroringMode::Horizontal,
-                1 => MirroringMode::Vertical,
-                2 => MirroringMode::SingleScreenLower,
-                3 => MirroringMode::SingleScreenUpper,
-                4 => MirroringMode::FourScreen,
-                _ => MirroringMode::Horizontal,
+                0 => NametableLayout::Horizontal,
+                1 => NametableLayout::Vertical,
+                2 => NametableLayout::SingleScreenLower,
+                3 => NametableLayout::SingleScreenUpper,
+                4 => NametableLayout::FourScreen,
+                _ => NametableLayout::Horizontal,
             };
         }
     }
@@ -404,7 +404,7 @@ mod tests {
             69,
             prg_rom,
             chr_rom,
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         ));
         assert!(mapper.is_ok(), "Mapper 69 should be implemented");
     }
@@ -413,7 +413,7 @@ mod tests {
     fn test_prg_banking() {
         let prg_rom = banked_data(8 * 1024, 16); // 16 x 8KB banks
         let chr_rom = banked_data(1024, 8);
-        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set bank 1 ($8000-$9FFF) to bank 5
         mapper.write_prg(0x8000, 0x09); // Command 9 = PRG bank 1
@@ -427,7 +427,7 @@ mod tests {
     fn test_chr_banking() {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 64); // 64 x 1KB banks
-        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set CHR bank 0 to bank 10
         mapper.write_prg(0x8000, 0x00); // Command 0 = CHR bank 0
@@ -441,7 +441,7 @@ mod tests {
     fn test_prg_ram_access() {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
-        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Initially RAM is disabled
         mapper.write_prg(0x6000, 0x42);
@@ -460,7 +460,7 @@ mod tests {
     fn test_prg_ram_readonly() {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
-        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Enable RAM but make it readonly
         mapper.write_prg(0x8000, 0x08); // Command 8 = PRG bank 0
@@ -482,26 +482,26 @@ mod tests {
     fn test_mirroring() {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
-        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
 
         // Change to vertical
         mapper.write_prg(0x8000, 0x0C); // Command C = mirroring
         mapper.write_prg(0xA000, 0x00); // 0 = vertical
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // Change to single screen lower
         mapper.write_prg(0x8000, 0x0C);
         mapper.write_prg(0xA000, 0x02); // 2 = single screen lower
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
     }
 
     #[test]
     fn test_irq_countdown() {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
-        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set counter to 10
         mapper.write_prg(0x8000, 0x0E); // Command E = IRQ counter low
@@ -531,7 +531,7 @@ mod tests {
     fn test_irq_disabled() {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
-        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set counter to 5
         mapper.write_prg(0x8000, 0x0E);
@@ -567,7 +567,7 @@ mod tests {
     fn test_last_prg_bank_fixed() {
         let prg_rom = banked_data(8 * 1024, 16); // 16 x 8KB banks
         let chr_rom = banked_data(1024, 8);
-        let mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mapper = SunsoftFme7Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // $E000-$FFFF should read from last bank (bank 15)
         assert_eq!(mapper.read_prg(0xE000), 15);
@@ -577,8 +577,11 @@ mod tests {
     fn test_fme7_registers_snapshot_restores_mirroring_and_banks() {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
-        let mut mapper =
-            SunsoftFme7Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper = SunsoftFme7Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
 
         // Set PRG bank 1 and CHR bank 0.
         mapper.write_prg(0x8000, 0x09);
@@ -592,10 +595,10 @@ mod tests {
 
         let regs = mapper.registers_snapshot();
 
-        let mut restored = SunsoftFme7Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut restored = SunsoftFme7Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
         restored.restore_registers(&regs);
 
-        assert_eq!(restored.get_mirroring(), MirroringMode::SingleScreenUpper);
+        assert_eq!(restored.get_mirroring(), NametableLayout::SingleScreenUpper);
         assert_eq!(restored.read_prg(0x8000), 3);
         assert_eq!(restored.read_chr(0x0000), 4);
     }

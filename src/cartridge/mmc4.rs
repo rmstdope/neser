@@ -8,7 +8,7 @@
 use std::cell::Cell;
 
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 10 - MMC4 (FxROM boards)
 ///
@@ -35,7 +35,7 @@ pub struct MMC4Mapper {
 
     chr_memory: ChrMemory,
 
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
 
     // --- PRG banking ---
     prg_bank_16k: u8,
@@ -54,7 +54,7 @@ impl MMC4Mapper {
     const PRG_BANK_SIZE: usize = 0x4000; // 16KB
     const CHR_BANK_SIZE: usize = 0x1000; // 4KB
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self {
             prg_rom,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
@@ -168,9 +168,9 @@ impl Mapper for MMC4Mapper {
             0xE000..=0xEFFF => self.chr_bank_1_fe = value & 0x1F,
             0xF000..=0xFFFF => {
                 self.mirroring = if (value & 0x01) != 0 {
-                    MirroringMode::Horizontal
+                    NametableLayout::Horizontal
                 } else {
-                    MirroringMode::Vertical
+                    NametableLayout::Vertical
                 };
             }
             _ => {}
@@ -198,7 +198,7 @@ impl Mapper for MMC4Mapper {
         self.update_latches(addr);
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -243,8 +243,8 @@ impl Mapper for MMC4Mapper {
             self.chr_bank_1_fe,
             (self.latch0_is_fd.get() as u8) | ((self.latch1_is_fd.get() as u8) << 1),
             match self.mirroring {
-                MirroringMode::Vertical => 0,
-                MirroringMode::Horizontal => 1,
+                NametableLayout::Vertical => 0,
+                NametableLayout::Horizontal => 1,
                 _ => 1,
             },
         ]
@@ -260,9 +260,9 @@ impl Mapper for MMC4Mapper {
             self.latch0_is_fd.set((data[5] & 1) != 0);
             self.latch1_is_fd.set((data[5] & 2) != 0);
             self.mirroring = match data[6] {
-                0 => MirroringMode::Vertical,
-                1 => MirroringMode::Horizontal,
-                _ => MirroringMode::Horizontal,
+                0 => NametableLayout::Vertical,
+                1 => NametableLayout::Horizontal,
+                _ => NametableLayout::Horizontal,
             };
         }
     }
@@ -296,7 +296,7 @@ mod tests {
         let prg_rom = filled_banks(MMC4Mapper::PRG_BANK_SIZE, prg_banks);
         let chr_rom = filled_banks(MMC4Mapper::CHR_BANK_SIZE, 8);
 
-        let mut mapper = MMC4Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut mapper = MMC4Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
 
         // Power-on: bank 0 at $8000.
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -318,7 +318,7 @@ mod tests {
         let chr_rom = filled_banks(MMC4Mapper::CHR_BANK_SIZE, 8);
         let prg_rom = filled_banks(MMC4Mapper::PRG_BANK_SIZE, 4);
 
-        let mut mapper = MMC4Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut mapper = MMC4Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
 
         // Configure banks.
         mapper.write_prg(0xB000, 1); // low FD
@@ -348,7 +348,8 @@ mod tests {
         let prg_rom = filled_banks(MMC4Mapper::PRG_BANK_SIZE, 4);
         let chr_rom = filled_banks(MMC4Mapper::CHR_BANK_SIZE, 8);
 
-        let mut mapper = MMC4Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+        let mut mapper =
+            MMC4Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
 
         mapper.write_prg(0xA000, 0x03); // PRG bank
         mapper.write_prg(0xB000, 0x01); // CHR 0 FD
@@ -362,10 +363,10 @@ mod tests {
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = MMC4Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut restored = MMC4Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
         restored.restore_registers(&saved);
 
-        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
         assert_eq!(restored.read_prg(0x8000), 3);
         assert_eq!(restored.read_chr(0x0000), 1);
         assert_eq!(restored.read_chr(0x1000), 4);
@@ -376,7 +377,7 @@ mod tests {
         let mapper = MMC4Mapper::new(
             vec![0; 128 * 1024],
             vec![0; 128 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x33), 0x33);

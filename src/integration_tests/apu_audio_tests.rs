@@ -31,6 +31,11 @@ mod tests {
     const SAMPLE_RATE_HZ: f32 = 44_100.0;
     const WARMUP_SAMPLES: usize = 2_000;
 
+    fn load_test_cartridge(rom_data: &[u8], rom_path: &str) -> Cartridge {
+        Cartridge::load_from_file(rom_data, rom_path, &crate::app_context::AppContext::new())
+            .expect("ROM should parse")
+    }
+
     /// Run a ROM for a fixed number of CPU cycles and collect pulse-only audio samples.
     ///
     /// This configures the APU to output a single pulse channel and disables other channels.
@@ -41,7 +46,7 @@ mod tests {
         enable_noise: bool,
     ) -> Vec<f32> {
         let rom_data = fs::read(rom_path).expect("ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
+        let cartridge = load_test_cartridge(&rom_data, rom_path);
 
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
@@ -94,7 +99,7 @@ mod tests {
         dmc_enabled: bool,
     ) -> Vec<f32> {
         let rom_data = fs::read(rom_path).expect("ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
+        let cartridge = load_test_cartridge(&rom_data, rom_path);
 
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);

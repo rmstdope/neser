@@ -27,7 +27,7 @@
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
 use crate::cartridge::common::{BankedRom, ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 const PRG_BANK_SIZE: usize = 0x4000; // 16KB
 const CHR_BANK_SIZE_2K: usize = 0x0800; // 2KB
@@ -37,7 +37,7 @@ pub struct Sunsoft4Mapper {
     prg_rom: BankedRom,
     prg_ram: PrgRam,
     chr_memory: ChrMemory,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
     prg_bank: u8,
     chr_banks_2k: [u8; 4],
     nametable_banks_1k: [u8; 2],
@@ -47,14 +47,14 @@ pub struct Sunsoft4Mapper {
 
 impl Sunsoft4Mapper {
     #[allow(dead_code)]
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self::new_with_prg_ram_banks(prg_rom, chr_rom, mirroring, 1)
     }
 
     pub fn new_with_prg_ram_banks(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
         prg_ram_banks_8k: u8,
     ) -> Self {
         let prg_ram_size = (prg_ram_banks_8k.max(1) as usize) * DEFAULT_PRG_RAM_SIZE;
@@ -100,12 +100,12 @@ impl Sunsoft4Mapper {
         let offset = (addr & 0x03FF) as usize;
 
         let use_upper = match self.mirroring {
-            MirroringMode::Vertical => table == 1 || table == 3,
-            MirroringMode::Horizontal => table == 2 || table == 3,
-            MirroringMode::SingleScreenLower => false,
-            MirroringMode::SingleScreenUpper => true,
-            MirroringMode::FourScreen => table == 1 || table == 3,
-            MirroringMode::SingleScreen => false,
+            NametableLayout::Vertical => table == 1 || table == 3,
+            NametableLayout::Horizontal => table == 2 || table == 3,
+            NametableLayout::SingleScreenLower => false,
+            NametableLayout::SingleScreenUpper => true,
+            NametableLayout::FourScreen => table == 1 || table == 3,
+            NametableLayout::SingleScreen => false,
         };
 
         let bank_index = if use_upper { 1 } else { 0 };
@@ -172,11 +172,11 @@ impl Mapper for Sunsoft4Mapper {
             }
             0xE000..=0xEFFF => {
                 self.mirroring = match value & 0x03 {
-                    0 => MirroringMode::Vertical,
-                    1 => MirroringMode::Horizontal,
-                    2 => MirroringMode::SingleScreenLower,
-                    3 => MirroringMode::SingleScreenUpper,
-                    _ => MirroringMode::Horizontal,
+                    0 => NametableLayout::Vertical,
+                    1 => NametableLayout::Horizontal,
+                    2 => NametableLayout::SingleScreenLower,
+                    3 => NametableLayout::SingleScreenUpper,
+                    _ => NametableLayout::Horizontal,
                 };
                 self.nametable_rom_mode = (value & 0x10) != 0;
             }
@@ -225,7 +225,7 @@ impl Mapper for Sunsoft4Mapper {
         true
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -261,11 +261,11 @@ impl Mapper for Sunsoft4Mapper {
         snapshot.push(self.nametable_rom_mode as u8);
         snapshot.push(self.prg_ram_enabled as u8);
         let mirroring_bits = match self.mirroring {
-            MirroringMode::Vertical => 0,
-            MirroringMode::Horizontal => 1,
-            MirroringMode::SingleScreenLower => 2,
-            MirroringMode::SingleScreenUpper => 3,
-            MirroringMode::FourScreen | MirroringMode::SingleScreen => 0,
+            NametableLayout::Vertical => 0,
+            NametableLayout::Horizontal => 1,
+            NametableLayout::SingleScreenLower => 2,
+            NametableLayout::SingleScreenUpper => 3,
+            NametableLayout::FourScreen | NametableLayout::SingleScreen => 0,
         };
         snapshot.push(mirroring_bits);
         snapshot
@@ -281,10 +281,10 @@ impl Mapper for Sunsoft4Mapper {
         self.nametable_rom_mode = data[7] != 0;
         self.prg_ram_enabled = data[8] != 0;
         self.mirroring = match data[9] & 0x03 {
-            0 => MirroringMode::Vertical,
-            1 => MirroringMode::Horizontal,
-            2 => MirroringMode::SingleScreenLower,
-            3 => MirroringMode::SingleScreenUpper,
+            0 => NametableLayout::Vertical,
+            1 => NametableLayout::Horizontal,
+            2 => NametableLayout::SingleScreenLower,
+            3 => NametableLayout::SingleScreenUpper,
             _ => self.mirroring,
         };
     }
@@ -326,7 +326,7 @@ mod tests {
         }
 
         let mut mapper =
-            Sunsoft4Mapper::new(prg_rom, vec![0u8; 8 * 1024], MirroringMode::Horizontal);
+            Sunsoft4Mapper::new(prg_rom, vec![0u8; 8 * 1024], NametableLayout::Horizontal);
 
         // Default power-on PRG bank is 0 in the switchable $8000-$BFFF window.
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -356,7 +356,7 @@ mod tests {
         let mut mapper = Sunsoft4Mapper::new(
             vec![0u8; 2 * PRG_BANK_SIZE],
             chr_rom,
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
         mapper.write_prg(0x8000, 0x00);
         mapper.write_prg(0x9000, 0x01);
@@ -388,7 +388,7 @@ mod tests {
         let mut mapper = Sunsoft4Mapper::new(
             vec![0u8; 2 * PRG_BANK_SIZE],
             chr_rom,
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
 
         mapper.write_prg(0xC000, 0x01);
@@ -433,7 +433,7 @@ mod tests {
         }
 
         let mut mapper =
-            Sunsoft4Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+            Sunsoft4Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
 
         // Configure complex state
         mapper.write_prg(0x8000, 10); // CHR bank 0 (addresses $8000-$8FFF)
@@ -451,14 +451,14 @@ mod tests {
         assert_eq!(mapper.read_chr(0x1000), 30);
         assert_eq!(mapper.read_chr(0x1800), 40);
         assert_eq!(mapper.read_prg(0x8000), 2);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
 
         // Take snapshot
         let registers = mapper.registers_snapshot();
         let prg_ram = mapper.wram_snapshot();
 
         // Create fresh mapper and restore
-        let mut restored = Sunsoft4Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut restored = Sunsoft4Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
         restored.restore_registers(&registers);
         restored.load_wram_snapshot(&prg_ram);
 
@@ -468,6 +468,6 @@ mod tests {
         assert_eq!(restored.read_chr(0x1000), 30);
         assert_eq!(restored.read_chr(0x1800), 40);
         assert_eq!(restored.read_prg(0x8000), 2);
-        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
     }
 }

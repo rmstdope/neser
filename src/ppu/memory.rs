@@ -1,4 +1,4 @@
-use crate::cartridge::{Cartridge, MirroringMode};
+use crate::cartridge::{Cartridge, NametableLayout};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -18,7 +18,7 @@ pub struct Memory {
     /// Cached palette value for last_palette_index
     last_palette_value: u8,
     /// Mirroring mode
-    mirroring_mode: MirroringMode,
+    mirroring_mode: NametableLayout,
 }
 
 impl Default for Memory {
@@ -54,7 +54,7 @@ impl Memory {
             palette_ram,
             last_palette_index: None,
             last_palette_value: 0,
-            mirroring_mode: MirroringMode::Horizontal,
+            mirroring_mode: NametableLayout::Horizontal,
         }
     }
 
@@ -95,7 +95,7 @@ impl Memory {
     }
 
     /// Set mirroring mode
-    pub fn set_mirroring(&mut self, mirroring: MirroringMode) {
+    pub fn set_mirroring(&mut self, mirroring: NametableLayout) {
         self.mirroring_mode = mirroring;
     }
 
@@ -253,13 +253,13 @@ impl Memory {
         let vram_index = (addr & 0x2FFF) - 0x2000;
 
         match self.mirroring_mode {
-            MirroringMode::Vertical => {
+            NametableLayout::Vertical => {
                 // Vertical mirroring: A, A, B, B
                 // $2000/$2800 map to first 1KB, $2400/$2C00 map to second 1KB
                 // Use modulo 0x0800 to map tables 0,2 together and 1,3 together
                 vram_index % 0x0800
             }
-            MirroringMode::Horizontal => {
+            NametableLayout::Horizontal => {
                 // Horizontal mirroring: A, A, B, B (left-right mirrored)
                 // $2000/$2400 map to A (first 1KB), $2800/$2C00 map to B (second 1KB)
                 // Tables 0&1 share first 1KB, tables 2&3 share second 1KB
@@ -272,15 +272,15 @@ impl Memory {
                 };
                 mirrored_table * 0x0400 + offset
             }
-            MirroringMode::SingleScreen | MirroringMode::SingleScreenLower => {
+            NametableLayout::SingleScreen | NametableLayout::SingleScreenLower => {
                 // SingleScreen/Lower mirroring: all nametables map to first 1KB (lower bank)
                 vram_index % 0x0400
             }
-            MirroringMode::SingleScreenUpper => {
+            NametableLayout::SingleScreenUpper => {
                 // SingleScreenUpper mirroring: all nametables map to second 1KB (upper bank)
                 0x0400 + (vram_index % 0x0400)
             }
-            MirroringMode::FourScreen => {
+            NametableLayout::FourScreen => {
                 // FourScreen: no mirroring, direct mapping (needs 4KB VRAM)
                 vram_index
             }
@@ -330,7 +330,7 @@ impl Memory {
         self.last_palette_value
     }
 
-    pub fn mirroring_mode(&self) -> MirroringMode {
+    pub fn mirroring_mode(&self) -> NametableLayout {
         self.mirroring_mode
     }
 
@@ -347,7 +347,7 @@ pub struct MemoryDebugState {
     pub palette: [u8; 32],
     pub last_palette_index: Option<u8>,
     pub last_palette_value: u8,
-    pub mirroring_mode: MirroringMode,
+    pub mirroring_mode: NametableLayout,
 }
 
 #[cfg(test)]
@@ -400,8 +400,8 @@ mod tests {
             None
         }
 
-        fn get_mirroring(&self) -> MirroringMode {
-            MirroringMode::Horizontal
+        fn get_mirroring(&self) -> NametableLayout {
+            NametableLayout::Horizontal
         }
     }
 
@@ -482,7 +482,12 @@ mod tests {
         // If PPU CHR reads don't call mapper.ppu_address_changed(addr), MMC3 IRQ can never fire
         // during real rendering.
 
-        let cartridge = Cartridge::new(&create_mmc3_ines_rom()).expect("MMC3 test ROM should load");
+        let cartridge = Cartridge::load_from_file(
+            &create_mmc3_ines_rom(),
+            "ppu-memory-mmc3-test.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("MMC3 test ROM should load");
         let cartridge_rc = Rc::new(RefCell::new(cartridge));
         let cartridge_opt = Some(cartridge_rc.clone());
 
@@ -567,7 +572,7 @@ mod tests {
     #[test]
     fn test_vertical_mirroring() {
         let mut mem = Memory::default();
-        mem.set_mirroring(MirroringMode::Vertical);
+        mem.set_mirroring(NametableLayout::Vertical);
 
         // Write to nametable 0
         mem.write_nametable(0x2000, 0x11);
@@ -578,7 +583,7 @@ mod tests {
     #[test]
     fn test_horizontal_mirroring() {
         let mut mem = Memory::default();
-        mem.set_mirroring(MirroringMode::Horizontal);
+        mem.set_mirroring(NametableLayout::Horizontal);
 
         // Write to nametable 0
         mem.write_nametable(0x2000, 0x22);
@@ -592,7 +597,7 @@ mod tests {
     #[test]
     fn test_single_screen_mirroring() {
         let mut memory = Memory::default();
-        memory.set_mirroring(MirroringMode::SingleScreen);
+        memory.set_mirroring(NametableLayout::SingleScreen);
 
         // In SingleScreen mode, all four nametables map to the same 1KB
         // Write to $2000 (nametable 0)
@@ -615,7 +620,7 @@ mod tests {
     #[test]
     fn test_four_screen_mirroring() {
         let mut memory = Memory::default();
-        memory.set_mirroring(MirroringMode::FourScreen);
+        memory.set_mirroring(NametableLayout::FourScreen);
 
         // In FourScreen mode, all four nametables are independent (no mirroring)
         // Each nametable gets its own 1KB of VRAM
@@ -647,7 +652,7 @@ mod tests {
     #[test]
     fn test_vertical_mirroring_comprehensive() {
         let mut memory = Memory::default();
-        memory.set_mirroring(MirroringMode::Vertical);
+        memory.set_mirroring(NametableLayout::Vertical);
 
         // Vertical mirroring: A, A, B, B
         // Nametable 0 ($2000) and 2 ($2800) share memory
@@ -677,7 +682,7 @@ mod tests {
     #[test]
     fn test_horizontal_mirroring_comprehensive() {
         let mut memory = Memory::default();
-        memory.set_mirroring(MirroringMode::Horizontal);
+        memory.set_mirroring(NametableLayout::Horizontal);
 
         // Horizontal mirroring: A, A, B, B (left-right mirrored)
         // Nametable 0 ($2000) and 1 ($2400) share memory (top row)
@@ -709,12 +714,12 @@ mod tests {
         let mut memory = Memory::default();
 
         // Start with Vertical mirroring (A, A, B, B)
-        memory.set_mirroring(MirroringMode::Vertical);
+        memory.set_mirroring(NametableLayout::Vertical);
         memory.write_nametable(0x2000, 0xAA);
         assert_eq!(memory.read_nametable(0x2800), 0xAA); // $2000 mirrors to $2800 in vertical
 
         // Switch to Horizontal mirroring (A, A, B, B)
-        memory.set_mirroring(MirroringMode::Horizontal);
+        memory.set_mirroring(NametableLayout::Horizontal);
         memory.write_nametable(0x2000, 0xBB);
         assert_eq!(memory.read_nametable(0x2400), 0xBB); // $2000 mirrors to $2400 in horizontal
         // And $2800 mirrors to $2C00
@@ -722,14 +727,14 @@ mod tests {
         assert_eq!(memory.read_nametable(0x2C00), 0xDD);
 
         // Switch to SingleScreen (A, A, A, A)
-        memory.set_mirroring(MirroringMode::SingleScreen);
+        memory.set_mirroring(NametableLayout::SingleScreen);
         memory.write_nametable(0x2000, 0xCC);
         assert_eq!(memory.read_nametable(0x2400), 0xCC);
         assert_eq!(memory.read_nametable(0x2800), 0xCC);
         assert_eq!(memory.read_nametable(0x2C00), 0xCC);
 
         // Switch to FourScreen (A, B, C, D)
-        memory.set_mirroring(MirroringMode::FourScreen);
+        memory.set_mirroring(NametableLayout::FourScreen);
         memory.write_nametable(0x2000, 0x11);
         memory.write_nametable(0x2400, 0x22);
         memory.write_nametable(0x2800, 0x33);

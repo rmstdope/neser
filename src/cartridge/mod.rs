@@ -39,7 +39,7 @@ pub use common::{
 };
 #[allow(unused_imports)]
 pub use ines::{
-    ConsoleType, InesHeader, Mirroring, MirroringMode, TimingMode, parse_header, parse_rom,
+    ConsoleType, InesHeader, Mirroring, NametableLayout, TimingMode, parse_header, parse_rom,
 };
 #[allow(unused_imports)]
 pub use mapper::{

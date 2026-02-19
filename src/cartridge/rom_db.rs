@@ -7,7 +7,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::cartridge::{ConsoleType, MirroringMode, TimingMode};
+use crate::cartridge::{ConsoleType, NametableLayout, TimingMode};
 
 const ROM_DB_COLUMN_COUNT: usize = 22;
 
@@ -22,7 +22,7 @@ pub struct RomDbEntry {
     pub rom_class: Option<String>,
     pub mapper: Option<u16>,
     pub submapper: Option<u8>,
-    pub nametable_layout: Option<MirroringMode>,
+    pub nametable_layout: Option<NametableLayout>,
     pub prg_rom_size: Option<u32>,
     pub prg_rom_crc: Option<u32>,
     pub prg_nvram_size: Option<u32>,
@@ -201,16 +201,16 @@ fn parse_optional_timing_mode(raw: &str) -> Option<TimingMode> {
     })
 }
 
-fn parse_optional_nametable_layout(raw: &str) -> Option<MirroringMode> {
+fn parse_optional_nametable_layout(raw: &str) -> Option<NametableLayout> {
     let value = parse_optional_field(raw)?;
     match value.as_str() {
-        "H" | "h" => Some(MirroringMode::Horizontal),
-        "V" | "v" => Some(MirroringMode::Vertical),
-        "0" => Some(MirroringMode::Horizontal),
-        "1" => Some(MirroringMode::Vertical),
-        "2" => Some(MirroringMode::SingleScreenLower),
-        "3" => Some(MirroringMode::SingleScreenUpper),
-        "4" => Some(MirroringMode::FourScreen),
+        "H" | "h" => Some(NametableLayout::Horizontal),
+        "V" | "v" => Some(NametableLayout::Vertical),
+        "0" => Some(NametableLayout::Horizontal),
+        "1" => Some(NametableLayout::Vertical),
+        "2" => Some(NametableLayout::SingleScreenLower),
+        "3" => Some(NametableLayout::SingleScreenUpper),
+        "4" => Some(NametableLayout::FourScreen),
         "5" => None,
         _ => None,
     }
@@ -329,19 +329,6 @@ const MMC3_ALTERNATE_IRQ_CRCS: &[u32] = &[
     0xA512BDF6, // 6-MMC6.nes
 ];
 
-/// CRC32 values for mapper 11 ROMs that should disable bus conflict emulation.
-const MAPPER11_NO_BUS_CONFLICT_CRCS: &[u32] = &[];
-
-/// CRC32 values for mapper 11 ROMs that latch register writes from $6000-$FFFF.
-const MAPPER11_LOW_REGISTER_DECODE_CRCS: &[u32] = &[
-    0x231BC76E, // Chiller (HES) [!]
-];
-
-/// CRC32 values for mapper 11 ROMs that require suppressing NTSC odd-frame skip.
-const MAPPER11_SUPPRESS_NTSC_ODD_FRAME_SKIP_CRCS: &[u32] = &[
-    0x231BC76E, // Chiller (HES) [!]
-];
-
 /// CRC32 values for ROMs that default to Arkanoid controller input on port 2.
 const ARKANOID_PADDLE_PORT2_CRCS: &[u32] = &[
     0x32FB0583, // Arkanoid (NES, 1987)
@@ -361,21 +348,6 @@ const ZAPPER_PORT2_CRCS: &[u32] = &[
 /// Check if a ROM CRC requires alternate MMC3 IRQ behavior.
 pub fn requires_mmc3_alternate_irq(crc: u32) -> bool {
     MMC3_ALTERNATE_IRQ_CRCS.contains(&crc)
-}
-
-/// Check if a mapper 11 ROM should disable bus conflict emulation.
-pub fn mapper11_disables_bus_conflicts(crc: u32) -> bool {
-    MAPPER11_NO_BUS_CONFLICT_CRCS.contains(&crc)
-}
-
-/// Check if a mapper 11 ROM should decode register writes from $6000-$FFFF.
-pub fn mapper11_uses_low_register_decode(crc: u32) -> bool {
-    MAPPER11_LOW_REGISTER_DECODE_CRCS.contains(&crc)
-}
-
-/// Check if a mapper 11 ROM should suppress NTSC odd-frame skip.
-pub fn mapper11_suppresses_ntsc_odd_frame_skip(crc: u32) -> bool {
-    MAPPER11_SUPPRESS_NTSC_ODD_FRAME_SKIP_CRCS.contains(&crc)
 }
 
 /// Return the default Arkanoid controller port for a ROM CRC.
@@ -433,36 +405,6 @@ mod tests {
     fn test_mmc3_alternate_irq_unknown_crc() {
         // Random CRC should not require alternate IRQ
         assert!(!requires_mmc3_alternate_irq(0x12345678));
-    }
-
-    #[test]
-    fn test_mapper11_no_bus_conflicts_known_crc() {
-        assert!(!mapper11_disables_bus_conflicts(0x231BC76E));
-    }
-
-    #[test]
-    fn test_mapper11_no_bus_conflicts_unknown_crc() {
-        assert!(!mapper11_disables_bus_conflicts(0x12345678));
-    }
-
-    #[test]
-    fn test_mapper11_low_register_decode_known_crc() {
-        assert!(mapper11_uses_low_register_decode(0x231BC76E));
-    }
-
-    #[test]
-    fn test_mapper11_low_register_decode_unknown_crc() {
-        assert!(!mapper11_uses_low_register_decode(0x12345678));
-    }
-
-    #[test]
-    fn test_mapper11_suppress_odd_frame_skip_known_crc() {
-        assert!(mapper11_suppresses_ntsc_odd_frame_skip(0x231BC76E));
-    }
-
-    #[test]
-    fn test_mapper11_suppress_odd_frame_skip_unknown_crc() {
-        assert!(!mapper11_suppresses_ntsc_odd_frame_skip(0x12345678));
     }
 
     #[test]
@@ -539,7 +481,7 @@ mod tests {
         assert_eq!(entry.console_type, Some(ConsoleType::NesFamicom));
         assert_eq!(entry.console_region, Some(TimingMode::Pal));
         assert_eq!(entry.submapper, Some(2));
-        assert_eq!(entry.nametable_layout, Some(MirroringMode::Horizontal));
+        assert_eq!(entry.nametable_layout, Some(NametableLayout::Horizontal));
         assert_eq!(entry.prg_rom_size, Some(262144));
         assert_eq!(entry.prg_ram_size, Some(8192));
         assert_eq!(entry.chr_ram_size, Some(8192));
@@ -574,7 +516,7 @@ mod tests {
 
         assert_eq!(
             entry.nametable_layout,
-            Some(crate::cartridge::MirroringMode::Horizontal)
+            Some(crate::cartridge::NametableLayout::Horizontal)
         );
     }
 

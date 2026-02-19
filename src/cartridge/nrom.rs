@@ -7,7 +7,7 @@
 
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
-use crate::cartridge::MirroringMode;
+use crate::cartridge::NametableLayout;
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
@@ -34,13 +34,13 @@ pub struct NROMMapper {
     prg_rom: Vec<u8>,
     prg_ram: PrgRam,
     chr_memory: ChrMemory,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
 }
 
 impl NROMMapper {
     /// Create a new NROM mapper
     /// If chr_rom is empty, 8KB of CHR-RAM is allocated
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self {
             prg_rom,
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
@@ -90,7 +90,7 @@ impl Mapper for NROMMapper {
         self.chr_memory.write(addr, value);
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -148,7 +148,7 @@ mod tests {
         prg_rom[0x4000] = 0xBB; // First byte at $C000
         prg_rom[0x7FFF] = 0xCC; // Last byte at $FFFF
 
-        let mapper = NROMMapper::new(prg_rom, vec![0; 8192], MirroringMode::Horizontal);
+        let mapper = NROMMapper::new(prg_rom, vec![0; 8192], NametableLayout::Horizontal);
 
         // Test reading from different PRG addresses
         assert_eq!(mapper.read_prg(0x8000), 0xAA);
@@ -163,7 +163,7 @@ mod tests {
         prg_rom[0x0000] = 0xAA; // First byte
         prg_rom[0x3FFF] = 0xBB; // Last byte
 
-        let mapper = NROMMapper::new(prg_rom, vec![0; 8192], MirroringMode::Horizontal);
+        let mapper = NROMMapper::new(prg_rom, vec![0; 8192], NametableLayout::Horizontal);
 
         // Test reading from $8000-$BFFF (first 16KB)
         assert_eq!(mapper.read_prg(0x8000), 0xAA);
@@ -183,7 +183,7 @@ mod tests {
         chr_rom[0x1000] = 0x33;
         chr_rom[0x1FFF] = 0x44;
 
-        let mapper = NROMMapper::new(vec![0; 0x8000], chr_rom, MirroringMode::Horizontal);
+        let mapper = NROMMapper::new(vec![0; 0x8000], chr_rom, NametableLayout::Horizontal);
 
         // Test reading from CHR ROM
         assert_eq!(mapper.read_chr(0x0000), 0x11);
@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn test_nrom_chr_ram_write_and_read() {
         // Create mapper with CHR-RAM (empty CHR ROM)
-        let mut mapper = NROMMapper::new(vec![0; 0x8000], vec![], MirroringMode::Horizontal);
+        let mut mapper = NROMMapper::new(vec![0; 0x8000], vec![], NametableLayout::Horizontal);
 
         // Initially should read 0
         assert_eq!(mapper.read_chr(0x0000), 0x00);
@@ -215,7 +215,7 @@ mod tests {
     fn test_nrom_chr_rom_write_ignored() {
         // Create mapper with CHR ROM (not RAM)
         let chr_rom = vec![0x55; 8192];
-        let mut mapper = NROMMapper::new(vec![0; 0x8000], chr_rom, MirroringMode::Horizontal);
+        let mut mapper = NROMMapper::new(vec![0; 0x8000], chr_rom, NametableLayout::Horizontal);
 
         // Try to write to CHR ROM (should be ignored)
         mapper.write_chr(0x0000, 0xAA);
@@ -228,7 +228,7 @@ mod tests {
     fn test_nrom_prg_write_ignored() {
         // NROM has no PRG-RAM or mapper registers
         let prg_rom = vec![0xAA; 0x8000];
-        let mut mapper = NROMMapper::new(prg_rom, vec![0; 8192], MirroringMode::Horizontal);
+        let mut mapper = NROMMapper::new(prg_rom, vec![0; 8192], NametableLayout::Horizontal);
 
         // Try to write to PRG space (should be ignored)
         mapper.write_prg(0x8000, 0xBB);
@@ -239,20 +239,21 @@ mod tests {
 
     #[test]
     fn test_nrom_mirroring_modes() {
-        let mapper_h = NROMMapper::new(vec![0; 0x8000], vec![0; 8192], MirroringMode::Horizontal);
-        assert_eq!(mapper_h.get_mirroring(), MirroringMode::Horizontal);
+        let mapper_h = NROMMapper::new(vec![0; 0x8000], vec![0; 8192], NametableLayout::Horizontal);
+        assert_eq!(mapper_h.get_mirroring(), NametableLayout::Horizontal);
 
-        let mapper_v = NROMMapper::new(vec![0; 0x8000], vec![0; 8192], MirroringMode::Vertical);
-        assert_eq!(mapper_v.get_mirroring(), MirroringMode::Vertical);
+        let mapper_v = NROMMapper::new(vec![0; 0x8000], vec![0; 8192], NametableLayout::Vertical);
+        assert_eq!(mapper_v.get_mirroring(), NametableLayout::Vertical);
 
-        let mapper_4 = NROMMapper::new(vec![0; 0x8000], vec![0; 8192], MirroringMode::FourScreen);
-        assert_eq!(mapper_4.get_mirroring(), MirroringMode::FourScreen);
+        let mapper_4 = NROMMapper::new(vec![0; 0x8000], vec![0; 8192], NametableLayout::FourScreen);
+        assert_eq!(mapper_4.get_mirroring(), NametableLayout::FourScreen);
     }
 
     #[test]
     fn test_nrom_ppu_address_changed_noop() {
         // NROM doesn't care about PPU address changes (no IRQ, no banking)
-        let mut mapper = NROMMapper::new(vec![0; 0x8000], vec![0; 8192], MirroringMode::Horizontal);
+        let mut mapper =
+            NROMMapper::new(vec![0; 0x8000], vec![0; 8192], NametableLayout::Horizontal);
 
         // Should not panic or change behavior
         mapper.ppu_address_changed(0x0000);
@@ -262,14 +263,14 @@ mod tests {
 
     #[test]
     fn test_nrom_chr_ram_snapshot_restores_contents() {
-        let mut mapper = NROMMapper::new(vec![0; 0x8000], vec![], MirroringMode::Horizontal);
+        let mut mapper = NROMMapper::new(vec![0; 0x8000], vec![], NametableLayout::Horizontal);
 
         mapper.write_chr(0x0000, 0xAA);
         mapper.write_chr(0x1FFF, 0xBB);
 
         let chr = mapper.chr_ram_snapshot();
 
-        let mut restored = NROMMapper::new(vec![0; 0x8000], vec![], MirroringMode::Horizontal);
+        let mut restored = NROMMapper::new(vec![0; 0x8000], vec![], NametableLayout::Horizontal);
         restored.restore_chr_ram(&chr);
 
         assert_eq!(restored.read_chr(0x0000), 0xAA);
@@ -278,7 +279,11 @@ mod tests {
 
     #[test]
     fn test_nrom_open_bus() {
-        let mapper = NROMMapper::new(vec![0; 32 * 1024], vec![0; 8192], MirroringMode::Horizontal);
+        let mapper = NROMMapper::new(
+            vec![0; 32 * 1024],
+            vec![0; 8192],
+            NametableLayout::Horizontal,
+        );
 
         // Test various open-bus scenarios
         assert_eq!(mapper.read_prg_open_bus(0x0000, 0x12), 0x12);
@@ -294,7 +299,7 @@ mod tests {
     fn test_nrom_mapped_regions_dont_return_open_bus() {
         let prg_rom = vec![0xAB; 32 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mapper = NROMMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mapper = NROMMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         let open_bus = 0x42;
 
@@ -314,7 +319,11 @@ mod tests {
 
     #[test]
     fn test_nrom_open_bus_boundary_at_6000() {
-        let mapper = NROMMapper::new(vec![0; 32 * 1024], vec![0; 8192], MirroringMode::Horizontal);
+        let mapper = NROMMapper::new(
+            vec![0; 32 * 1024],
+            vec![0; 8192],
+            NametableLayout::Horizontal,
+        );
         let open_bus = 0x55;
 
         // $5FFF should return open-bus

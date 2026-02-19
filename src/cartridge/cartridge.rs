@@ -5,7 +5,7 @@ use std::{error, fmt};
 
 use crate::app_context::AppContext;
 use crate::cartridge::mapper::MapperContext;
-use crate::cartridge::{Mapper, MirroringMode, TimingMode};
+use crate::cartridge::{Mapper, NametableLayout, TimingMode};
 
 #[derive(Debug)]
 pub enum CartridgeError {
@@ -96,7 +96,7 @@ impl Cartridge {
         info: &crate::cartridge::ines::InesHeader,
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> Result<Box<dyn Mapper>, CartridgeError> {
         let mut context = MapperContext::new(info.mapper, prg_rom, chr_rom, mirroring)
             .with_prg_ram_banks(Self::prg_ram_banks_8k(info.prg_ram_size_bytes))
@@ -116,9 +116,9 @@ impl Cartridge {
     }
 
     fn resolve_mirroring_mode_with_db_override(
-        header_mirroring: MirroringMode,
+        header_mirroring: NametableLayout,
         db_entry: Option<&crate::cartridge::RomDbEntry>,
-    ) -> MirroringMode {
+    ) -> NametableLayout {
         db_entry
             .and_then(|entry| entry.nametable_layout)
             .unwrap_or(header_mirroring)
@@ -127,11 +127,6 @@ impl Cartridge {
     fn configure_paths_from_rom(&mut self, rom_path: PathBuf) {
         self.rom_path = Some(rom_path.clone());
         self.save_path = Some(rom_path.with_extension(SAVE_FILE_EXTENSION));
-    }
-
-    pub fn apply_db_timing_mode_override(&mut self, app_context: &AppContext) {
-        let db_entry = app_context.get_db_entry_by_crc(self.crc32);
-        self.apply_db_timing_mode_override_from_entry(db_entry.as_ref());
     }
 
     fn apply_db_timing_mode_override_from_entry(
@@ -182,26 +177,6 @@ impl Cartridge {
         Ok(())
     }
 
-    /// Create a new cartridge by parsing iNES v1 file data
-    pub fn new(data: &[u8]) -> Result<Self, CartridgeError> {
-        let (info, prg_rom, chr_rom, trainer, crc32) =
-            crate::cartridge::parse_rom(data).map_err(Self::map_parse_error)?;
-
-        let battery_backed_prg_ram = info.battery_backed_prg_ram;
-        let rom_timing_mode = info.timing_mode.normalize_rom_timing_mode();
-        let mapper = Self::create_mapper(&info, prg_rom, chr_rom, info.mirroring)?;
-
-        Ok(Self {
-            mapper,
-            crc32,
-            rom_timing_mode,
-            rom_path: None,
-            save_path: None,
-            battery_backed_prg_ram,
-            trainer,
-        })
-    }
-
     /// Create a new cartridge from an iNES ROM byte stream and its source path.
     pub fn load_from_file<P: AsRef<Path>>(
         data: &[u8],
@@ -213,7 +188,8 @@ impl Cartridge {
             crate::cartridge::parse_rom(data).map_err(Self::map_parse_error)?;
 
         let db_entry = app_context.get_db_entry_by_crc(crc32);
-        let mirroring = Self::resolve_mirroring_mode_with_db_override(info.mirroring, db_entry.as_ref());
+        let mirroring =
+            Self::resolve_mirroring_mode_with_db_override(info.mirroring, db_entry.as_ref());
 
         let mut cart = Self {
             mapper: Self::create_mapper(&info, prg_rom, chr_rom, mirroring)?,
@@ -313,7 +289,7 @@ impl Cartridge {
 
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
-    pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         use crate::cartridge::nrom::NROMMapper;
         let crc32 = crate::cartridge::calculate_rom_crc32(&prg_rom, &chr_rom);
         let mapper = Box::new(NROMMapper::new(prg_rom, chr_rom, mirroring));
@@ -483,6 +459,11 @@ mod tests {
         Cartridge::load_from_file(&data, path, app_context).expect("load_from_file should succeed")
     }
 
+    fn load_cartridge_from_bytes(data: &[u8]) -> Result<Cartridge, CartridgeError> {
+        let app_context = AppContext::new();
+        Cartridge::load_from_file(data, unique_temp_path("in_memory_test.nes"), &app_context)
+    }
+
     #[test]
     fn test_load_from_file_parses_ines_rom() {
         // iNES Flags 6 bit 0 set => vertical mirroring.
@@ -492,7 +473,7 @@ mod tests {
 
         let app_context = AppContext::new();
         let cart = load_cartridge_from_disk(&path, &app_context);
-        assert_eq!(cart.mapper().get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(cart.mapper().get_mirroring(), NametableLayout::Vertical);
 
         remove_file_if_exists(&path);
     }
@@ -551,7 +532,7 @@ mod tests {
     fn test_load_simple_rom() {
         let rom_data = create_test_rom(1, 1, 0, false);
 
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         // Verify mapper can read PRG ROM (16KB at $8000-$BFFF)
         assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
         // Verify mapper can read CHR ROM (8KB at $0000-$1FFF)
@@ -585,7 +566,7 @@ mod tests {
         // Add CHR ROM data
         rom.extend(vec![0xBB; 8 * 1024]);
 
-        let cartridge = Cartridge::new(&rom).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom).unwrap();
 
         // Verify trainer data is accessible
         let trainer = cartridge.trainer().expect("Trainer should be present");
@@ -604,7 +585,7 @@ mod tests {
     #[test]
     fn test_load_rom_without_trainer_has_none() {
         let rom_data = create_test_rom(1, 1, 0, false);
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert!(cartridge.trainer().is_none());
     }
 
@@ -612,7 +593,7 @@ mod tests {
     fn test_load_rom_with_trainer() {
         let rom_data = create_test_rom(1, 1, 0x04, true);
 
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         // Verify mapper can read PRG ROM after skipping trainer
         assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
         // Verify mapper can read CHR ROM
@@ -623,7 +604,7 @@ mod tests {
     fn test_load_rom_multiple_banks() {
         let rom_data = create_test_rom(2, 4, 0, false);
 
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         // Verify 32KB PRG ROM can be read
         assert_eq!(cartridge.mapper().read_prg(0x8000), 0xAA);
         assert_eq!(cartridge.mapper().read_prg(0xFFFF), 0xAA);
@@ -635,21 +616,21 @@ mod tests {
     #[test]
     fn test_rom_timing_mode_defaults_to_ntsc() {
         let rom_data = create_test_rom_with_flags9(1, 1, 0, 0, 0, false);
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert_eq!(cartridge.rom_timing_mode(), TimingMode::Ntsc);
     }
 
     #[test]
     fn test_rom_timing_mode_parses_pal_flag() {
         let rom_data = create_test_rom_with_flags9(1, 1, 0, 0, 0x01, false);
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert_eq!(cartridge.rom_timing_mode(), TimingMode::Pal);
     }
 
     #[test]
     fn test_rom_timing_mode_nes2_timing_mode_zero_is_ntsc() {
         let rom_data = create_test_rom_with_flags9(1, 1, 0, 0x08, 0x01, false);
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert_eq!(cartridge.rom_timing_mode(), TimingMode::Ntsc);
     }
 
@@ -657,14 +638,14 @@ mod tests {
     fn test_rom_timing_mode_nes2_uses_header_timing_mode() {
         let mut rom_data = create_test_rom_with_flags9(1, 1, 0, 0x08, 0x00, false);
         rom_data[12] = 0x01; // NES2 timing mode PAL
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert_eq!(cartridge.rom_timing_mode(), TimingMode::Pal);
     }
 
     #[test]
     fn test_db_timing_mode_override_applies_known_crc_entry() {
         let rom_data = create_test_rom_with_flags9(1, 1, 0, 0, 0, false);
-        let mut cartridge = Cartridge::new(&rom_data).unwrap();
+        let mut cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert_eq!(cartridge.rom_timing_mode(), TimingMode::Ntsc);
 
         let rom_db = crate::cartridge::RomDb::new().expect("rom db should load");
@@ -679,8 +660,8 @@ mod tests {
             .expect("rom db should contain at least one entry with console region");
 
         cartridge.set_crc32_for_test(crc);
-        let app_context = AppContext::new();
-        cartridge.apply_db_timing_mode_override(&app_context);
+        let db_entry = rom_db.get_by_crc(crc);
+        cartridge.apply_db_timing_mode_override_from_entry(db_entry);
 
         assert_eq!(cartridge.rom_timing_mode(), expected_timing_mode);
     }
@@ -697,7 +678,7 @@ mod tests {
             rom_class: None,
             mapper: None,
             submapper: None,
-            nametable_layout: Some(MirroringMode::Vertical),
+            nametable_layout: Some(NametableLayout::Vertical),
             prg_rom_size: None,
             prg_rom_crc: None,
             prg_nvram_size: None,
@@ -712,10 +693,12 @@ mod tests {
             expansion_type: None,
         };
 
-        let resolved =
-            Cartridge::resolve_mirroring_mode_with_db_override(MirroringMode::Horizontal, Some(&db_entry));
+        let resolved = Cartridge::resolve_mirroring_mode_with_db_override(
+            NametableLayout::Horizontal,
+            Some(&db_entry),
+        );
 
-        assert_eq!(resolved, MirroringMode::Vertical);
+        assert_eq!(resolved, NametableLayout::Vertical);
     }
 
     #[test]
@@ -729,7 +712,7 @@ mod tests {
         let mut rom_data = vec![b'X', b'Y', b'Z', 0x1A];
         rom_data.extend(vec![0; 12]); // Rest of header
 
-        let result = Cartridge::new(&rom_data);
+        let result = load_cartridge_from_bytes(&rom_data);
         assert!(matches!(result, Err(CartridgeError::InvalidHeader)));
     }
 
@@ -738,7 +721,7 @@ mod tests {
         let rom_data = create_test_rom(2, 1, 0, false);
         let truncated = &rom_data[0..100]; // Truncate to only 100 bytes
 
-        let result = Cartridge::new(truncated);
+        let result = load_cartridge_from_bytes(truncated);
         if let Err(CartridgeError::FileTooSmall { expected, actual }) = result {
             assert_eq!(expected, 40_976);
             assert_eq!(actual, 100);
@@ -749,7 +732,7 @@ mod tests {
 
     #[test]
     fn test_empty_data() {
-        let result = Cartridge::new(&[]);
+        let result = load_cartridge_from_bytes(&[]);
         if let Err(CartridgeError::FileTooSmall { expected, actual }) = result {
             assert_eq!(expected, 16);
             assert_eq!(actual, 0);
@@ -762,7 +745,7 @@ mod tests {
     fn test_unsupported_mapper() {
         let rom_data = create_test_rom_with_mapper(1, 1, 0xFF, false, 1);
 
-        let result = Cartridge::new(&rom_data);
+        let result = load_cartridge_from_bytes(&rom_data);
         assert!(matches!(
             result,
             Err(CartridgeError::UnsupportedMapper(0xFF))
@@ -786,7 +769,7 @@ mod tests {
         rom_data.extend(vec![0xAA; 16 * 1024]);
         rom_data.extend(vec![0xBB; 8 * 1024]);
 
-        let result = Cartridge::new(&rom_data);
+        let result = load_cartridge_from_bytes(&rom_data);
         assert!(matches!(
             result,
             Err(CartridgeError::UnsupportedMapper(0x100))
@@ -796,41 +779,41 @@ mod tests {
     #[test]
     fn test_horizontal_mirroring() {
         let rom_data = create_test_rom(1, 1, 0x00, false); // Bit 0 = 0 = Horizontal
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert!(matches!(
             cartridge.mapper().get_mirroring(),
-            MirroringMode::Horizontal
+            NametableLayout::Horizontal
         ));
     }
 
     #[test]
     fn test_vertical_mirroring() {
         let rom_data = create_test_rom(1, 1, 0x01, false); // Bit 0 = 1 = Vertical
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert!(matches!(
             cartridge.mapper().get_mirroring(),
-            MirroringMode::Vertical
+            NametableLayout::Vertical
         ));
     }
 
     #[test]
     fn test_four_screen_mirroring() {
         let rom_data = create_test_rom(1, 1, 0x08, false); // Bit 3 = 1 = Four-screen
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert!(matches!(
             cartridge.mapper().get_mirroring(),
-            MirroringMode::FourScreen
+            NametableLayout::FourScreen
         ));
     }
 
     #[test]
     fn test_four_screen_overrides_vertical() {
         let rom_data = create_test_rom(1, 1, 0x09, false); // Bit 3 and Bit 0 set
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         // Four-screen should take precedence
         assert!(matches!(
             cartridge.mapper().get_mirroring(),
-            MirroringMode::FourScreen
+            NametableLayout::FourScreen
         ));
     }
 
@@ -838,10 +821,10 @@ mod tests {
     fn test_mirroring_bit_0_horizontal() {
         // Flags6 = 0b0000_0000: Bit 0 clear = Horizontal
         let rom_data = create_test_rom(1, 1, 0b0000_0000, false);
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert!(matches!(
             cartridge.mapper().get_mirroring(),
-            MirroringMode::Horizontal
+            NametableLayout::Horizontal
         ));
     }
 
@@ -849,10 +832,10 @@ mod tests {
     fn test_mirroring_bit_0_vertical() {
         // Flags6 = 0b0000_0001: Bit 0 set = Vertical
         let rom_data = create_test_rom(1, 1, 0b0000_0001, false);
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert!(matches!(
             cartridge.mapper().get_mirroring(),
-            MirroringMode::Vertical
+            NametableLayout::Vertical
         ));
     }
 
@@ -860,10 +843,10 @@ mod tests {
     fn test_mirroring_bit_3_four_screen() {
         // Flags6 = 0b0000_1000: Bit 3 set = Four-screen
         let rom_data = create_test_rom(1, 1, 0b0000_1000, false);
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert!(matches!(
             cartridge.mapper().get_mirroring(),
-            MirroringMode::FourScreen
+            NametableLayout::FourScreen
         ));
     }
 
@@ -872,10 +855,10 @@ mod tests {
         // Flags6 = 0b0000_0110: Bit 2 (trainer) and bit 1 set, but bit 0 clear = Horizontal
         // Lower nibble (bits 4-7) is 0, so mapper number is 0
         let rom_data = create_test_rom(1, 1, 0b0000_0110, true);
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert!(matches!(
             cartridge.mapper().get_mirroring(),
-            MirroringMode::Horizontal
+            NametableLayout::Horizontal
         ));
     }
 
@@ -883,10 +866,10 @@ mod tests {
     fn test_mirroring_with_trainer_and_vertical() {
         // Flags6 = 0b0000_0101: Bit 2 (trainer) and Bit 0 (vertical) set
         let rom_data = create_test_rom(1, 1, 0b0000_0101, true);
-        let cartridge = Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_cartridge_from_bytes(&rom_data).unwrap();
         assert!(matches!(
             cartridge.mapper().get_mirroring(),
-            MirroringMode::Vertical
+            NametableLayout::Vertical
         ));
     }
 

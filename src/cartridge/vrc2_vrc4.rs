@@ -6,7 +6,7 @@
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
 /// Mappers 21, 22, 23, 25 - Konami VRC2/VRC4
@@ -71,7 +71,7 @@ pub struct Vrc2Vrc4Mapper {
     chr_banks_1k: [u8; 8],
 
     b003: u8,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
 
     // --- VRC IRQ (used by VRC4 variants only) ---
     irq_latch: u8,
@@ -91,7 +91,7 @@ impl Vrc2Vrc4Mapper {
         mapper_number: u8,
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> Self {
         let variant = match mapper_number {
             21 => Vrc2Vrc4Variant::Mapper21,
@@ -194,9 +194,9 @@ impl Vrc2Vrc4Mapper {
     fn update_mirroring_from_b003(&mut self) {
         // Mirroring control bits (same as VRC6)
         self.mirroring = match self.b003 & 0x03 {
-            0x0 => MirroringMode::Vertical,
-            0x1 => MirroringMode::Horizontal,
-            0x2 | 0x3 => MirroringMode::SingleScreen,
+            0x0 => NametableLayout::Vertical,
+            0x1 => NametableLayout::Horizontal,
+            0x2 | 0x3 => NametableLayout::SingleScreen,
             _ => self.mirroring,
         };
     }
@@ -378,7 +378,7 @@ impl Mapper for Vrc2Vrc4Mapper {
         }
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -437,12 +437,12 @@ impl Mapper for Vrc2Vrc4Mapper {
         let prescaler_bytes = self.irq_prescaler.to_le_bytes();
         snapshot.extend_from_slice(&prescaler_bytes);
         let mirroring = match self.mirroring {
-            MirroringMode::Horizontal => 0,
-            MirroringMode::Vertical => 1,
-            MirroringMode::SingleScreen => 2,
-            MirroringMode::FourScreen => 3,
-            MirroringMode::SingleScreenLower => 2,
-            MirroringMode::SingleScreenUpper => 2,
+            NametableLayout::Horizontal => 0,
+            NametableLayout::Vertical => 1,
+            NametableLayout::SingleScreen => 2,
+            NametableLayout::FourScreen => 3,
+            NametableLayout::SingleScreenLower => 2,
+            NametableLayout::SingleScreenUpper => 2,
         };
         snapshot.push(mirroring);
         snapshot
@@ -463,11 +463,11 @@ impl Mapper for Vrc2Vrc4Mapper {
             self.irq_asserted = (flags & 8) != 0;
             self.irq_prescaler = i32::from_le_bytes([data[14], data[15], data[16], data[17]]);
             self.mirroring = match data[18] {
-                0 => MirroringMode::Horizontal,
-                1 => MirroringMode::Vertical,
-                2 => MirroringMode::SingleScreen,
-                3 => MirroringMode::FourScreen,
-                _ => MirroringMode::Horizontal,
+                0 => NametableLayout::Horizontal,
+                1 => NametableLayout::Vertical,
+                2 => NametableLayout::SingleScreen,
+                3 => NametableLayout::FourScreen,
+                _ => NametableLayout::Horizontal,
             };
         }
     }
@@ -487,7 +487,7 @@ impl Mapper for Vrc2Vrc4Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::MirroringMode;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
@@ -495,7 +495,7 @@ mod tests {
         mapper_number: u16,
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> Box<dyn Mapper> {
         create_mapper(MapperContext::new(
             mapper_number,
@@ -515,7 +515,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_vrc_mapper(21, prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_vrc_mapper(21, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Select 16KB bank #1 at $8000-$BFFF (8KB banks 2 and 3)
         mapper.write_prg(0x8000, 0x01);
@@ -535,7 +535,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_vrc_mapper(22, prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_vrc_mapper(22, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Try to enable IRQ (should be ignored for VRC2)
         mapper.write_prg(0xF000, 0xFF);
@@ -555,7 +555,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         mapper.write_prg(0xF000, 0xFE);
         mapper.write_prg(0xF001, 0b0000_0110); // M=1, E=1, A=0
@@ -578,7 +578,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 32);
 
-        let mut mapper = create_vrc_mapper(25, prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_vrc_mapper(25, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set CHR bank 0 to bank 7
         mapper.write_prg(0xB000, 7);
@@ -594,19 +594,19 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_vrc_mapper(21, prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_vrc_mapper(21, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Test vertical mirroring
         mapper.write_prg(0x9000, 0x00);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // Test horizontal mirroring
         mapper.write_prg(0x9000, 0x01);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
 
         // Test single screen mirroring
         mapper.write_prg(0x9000, 0x02);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreen);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreen);
     }
 
     #[test]
@@ -618,7 +618,7 @@ mod tests {
             21,
             prg_rom.clone(),
             chr_rom.clone(),
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
 
         mapper.write_prg(0x8000, 0x03); // prg_bank_16k
@@ -633,14 +633,14 @@ mod tests {
 
         let regs = mapper.registers_snapshot();
 
-        let mut restored = create_vrc_mapper(21, prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut restored = create_vrc_mapper(21, prg_rom, chr_rom, NametableLayout::Vertical);
         restored.restore_registers(&regs);
 
         assert_eq!(restored.read_prg(0x8000), 6);
         assert_eq!(restored.read_prg(0xC000), 5);
         assert_eq!(restored.read_chr(0x0000), 2);
         assert_eq!(restored.read_chr(0x1000), 4);
-        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
         assert_eq!(restored.irq_pending(), mapper.irq_pending());
     }
 }

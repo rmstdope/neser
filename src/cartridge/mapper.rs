@@ -1,4 +1,4 @@
-use crate::cartridge::MirroringMode;
+use crate::cartridge::NametableLayout;
 use std::io;
 
 use super::axrom::AxROMMapper;
@@ -36,7 +36,7 @@ pub struct MapperContext {
     /// NES 2.0 submapper id (0 when not specified).
     pub submapper: u8,
     /// PPU nametable mirroring mode from the header.
-    pub mirroring: MirroringMode,
+    pub mirroring: NametableLayout,
     /// PRG ROM bytes.
     pub prg_rom: Vec<u8>,
     /// CHR ROM bytes (empty when CHR-RAM).
@@ -52,7 +52,12 @@ pub struct MapperContext {
 impl MapperContext {
     /// Create mapper metadata with default submapper 0, 1×8KB PRG-RAM (not battery-backed),
     /// and CRC32 computed from PRG+CHR data.
-    pub fn new(mapper: u16, prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(
+        mapper: u16,
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: NametableLayout,
+    ) -> Self {
         let crc32 = rom_db::calculate_rom_crc32(&prg_rom, &chr_rom);
         Self {
             mapper,
@@ -95,7 +100,7 @@ impl MapperContext {
         self.mapper
     }
 
-    fn into_parts(self) -> (Vec<u8>, Vec<u8>, MirroringMode) {
+    fn into_parts(self) -> (Vec<u8>, Vec<u8>, NametableLayout) {
         (self.prg_rom, self.chr_rom, self.mirroring)
     }
 }
@@ -144,7 +149,7 @@ pub trait MapperCore {
     fn write_prg(&mut self, addr: u16, value: u8);
     fn read_chr(&self, addr: u16) -> u8;
     fn write_chr(&mut self, addr: u16, value: u8);
-    fn get_mirroring(&self) -> MirroringMode;
+    fn get_mirroring(&self) -> NametableLayout;
 }
 
 /// Optional IRQ behavior for mappers that can assert CPU interrupts.
@@ -410,7 +415,7 @@ pub trait Mapper {
 
     /// Get the current nametable mirroring mode
     /// Some mappers can change mirroring dynamically
-    fn get_mirroring(&self) -> MirroringMode;
+    fn get_mirroring(&self) -> NametableLayout;
 
     /// Get the size of cartridge WRAM (PRG-RAM) in bytes.
     ///
@@ -530,7 +535,7 @@ impl<T: Mapper + ?Sized> MapperCore for T {
         Mapper::write_chr(self, addr, value);
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         Mapper::get_mirroring(self)
     }
 }
@@ -595,7 +600,7 @@ fn probe_mapper_core<T: MapperCore + ?Sized>(_mapper: &T) {
     let _ = <T as MapperCore>::write_prg as fn(&mut T, u16, u8);
     let _ = <T as MapperCore>::read_chr as fn(&T, u16) -> u8;
     let _ = <T as MapperCore>::write_chr as fn(&mut T, u16, u8);
-    let _ = <T as MapperCore>::get_mirroring as fn(&T) -> MirroringMode;
+    let _ = <T as MapperCore>::get_mirroring as fn(&T) -> NametableLayout;
 }
 
 #[inline]
@@ -631,29 +636,29 @@ fn probe_mapper_state_snapshot<T: MapperStateSnapshot + ?Sized>(_mapper: &T) {
 #[inline]
 fn probe_mapper_composable<T: MapperComposable + ?Sized>(_mapper: &T) {}
 
-fn vrc2_vrc4_21(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
+fn vrc2_vrc4_21(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Vrc2Vrc4Mapper {
     Vrc2Vrc4Mapper::new(21, prg_rom, chr_rom, mirroring)
 }
 
-fn vrc2_vrc4_22(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
+fn vrc2_vrc4_22(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Vrc2Vrc4Mapper {
     Vrc2Vrc4Mapper::new(22, prg_rom, chr_rom, mirroring)
 }
 
-fn vrc2_vrc4_23(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
+fn vrc2_vrc4_23(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Vrc2Vrc4Mapper {
     Vrc2Vrc4Mapper::new(23, prg_rom, chr_rom, mirroring)
 }
 
-fn vrc2_vrc4_25(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Vrc2Vrc4Mapper {
+fn vrc2_vrc4_25(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Vrc2Vrc4Mapper {
     Vrc2Vrc4Mapper::new(25, prg_rom, chr_rom, mirroring)
 }
 
-fn vrc6_24(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> VRC6Mapper {
+fn vrc6_24(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> VRC6Mapper {
     let mapper = VRC6Mapper::new(24, prg_rom, chr_rom, mirroring);
     probe_mapper_irq(&mapper);
     mapper
 }
 
-fn vrc6_26(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> VRC6Mapper {
+fn vrc6_26(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> VRC6Mapper {
     let mapper = VRC6Mapper::new(26, prg_rom, chr_rom, mirroring);
     probe_mapper_irq(&mapper);
     mapper
@@ -785,7 +790,7 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::MirroringMode;
+    use crate::cartridge::NametableLayout;
 
     #[test]
     fn test_supported_mappers_contains_common_ids() {
@@ -805,7 +810,7 @@ mod tests {
         let chr_rom = vec![0u8; 8 * 1024];
         let metadata = MapperContext {
             prg_ram_banks_8k: 2,
-            ..MapperContext::new(5, prg_rom, chr_rom, MirroringMode::Horizontal)
+            ..MapperContext::new(5, prg_rom, chr_rom, NametableLayout::Horizontal)
         };
 
         let mapper = create_mapper(metadata).expect("MMC5 mapper should be created");
@@ -817,7 +822,7 @@ mod tests {
         // Test that simple mappers can use the default no-op implementation
         let prg_rom = vec![0u8; 32 * 1024];
         let chr_rom = vec![0u8; 8 * 1024];
-        let metadata = MapperContext::new(0, prg_rom, chr_rom, MirroringMode::Horizontal);
+        let metadata = MapperContext::new(0, prg_rom, chr_rom, NametableLayout::Horizontal);
 
         let mut mapper = create_mapper(metadata).expect("NROM mapper should be created");
 
@@ -833,7 +838,7 @@ mod tests {
         let prg_size = 32 * 1024; // Use 32KB PRG-ROM for these tests (MMC5 and others)
         let prg_rom = vec![0u8; prg_size];
         let chr_rom = vec![0u8; 8 * 1024];
-        let metadata = MapperContext::new(id, prg_rom, chr_rom, MirroringMode::Horizontal);
+        let metadata = MapperContext::new(id, prg_rom, chr_rom, NametableLayout::Horizontal);
         create_mapper(metadata).unwrap_or_else(|_| panic!("Mapper {} should be created", id))
     }
 
@@ -1070,7 +1075,7 @@ mod tests {
         let mut mapper = NROMMapper::new(
             vec![0u8; 32 * 1024],
             vec![0u8; 8 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
         assert_core_contract(&mut mapper);
         assert_state_contract(&mut mapper);
@@ -1082,7 +1087,7 @@ mod tests {
         let mut mapper = MMC3Mapper::new(
             vec![0u8; 32 * 1024],
             vec![0u8; 8 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
         assert_core_contract(&mut mapper);
         assert_irq_contract(&mut mapper);
@@ -1096,7 +1101,7 @@ mod tests {
             24,
             vec![0u8; 32 * 1024],
             vec![0u8; 8 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
         assert_core_contract(&mut mapper);
         assert_irq_contract(&mut mapper);

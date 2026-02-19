@@ -65,6 +65,11 @@ mod tests {
         snapshot_screen_buffer_rgb(nes)
     }
 
+    fn load_test_cartridge(rom_data: &[u8], rom_path: &Path) -> Result<Cartridge, String> {
+        Cartridge::load_from_file(rom_data, rom_path, &crate::app_context::AppContext::new())
+            .map_err(|e| format!("Failed to parse ROM {}: {e}", rom_path.display()))
+    }
+
     fn collect_game_roms(games_dir: &Path) -> Result<Vec<PathBuf>, String> {
         let mut roms = Vec::new();
 
@@ -109,8 +114,7 @@ mod tests {
     fn run_rom_for_frames(rom_path: &Path, frames: u32) -> Result<(Vec<u8>, u32, u32), String> {
         let rom_data = std::fs::read(rom_path)
             .map_err(|e| format!("Failed to load ROM {}: {e}", rom_path.display()))?;
-        let cartridge = Cartridge::new(&rom_data)
-            .map_err(|e| format!("Failed to parse ROM {}: {e}", rom_path.display()))?;
+        let cartridge = load_test_cartridge(&rom_data, rom_path)?;
 
         let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);
@@ -127,7 +131,12 @@ mod tests {
     #[test]
     fn test_run_nes_for_frames_returns_rgb_buffer() {
         let rom_data = manual_test_cartridges::triangle_only_nrom_128();
-        let cartridge = Cartridge::new(&rom_data).expect("ROM should parse");
+        let cartridge = Cartridge::load_from_file(
+            &rom_data,
+            "manual-triangle-only.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("ROM should parse");
 
         let mut nes = Nes::new(deterministic_config());
         nes.insert_cartridge(cartridge);

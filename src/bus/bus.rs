@@ -734,8 +734,8 @@ mod tests {
             *self.oam_dma_calls.borrow_mut() += 1;
         }
 
-        fn get_mirroring(&self) -> crate::cartridge::MirroringMode {
-            crate::cartridge::MirroringMode::Horizontal
+        fn get_mirroring(&self) -> crate::cartridge::NametableLayout {
+            crate::cartridge::NametableLayout::Horizontal
         }
     }
 
@@ -806,7 +806,12 @@ mod tests {
         let mut bus = Bus::new(ppu.clone(), apu, config);
 
         let rom = create_mmc1_rom();
-        let cartridge = Cartridge::new(&rom).expect("Failed to create MMC1 ROM");
+        let cartridge = Cartridge::load_from_file(
+            &rom,
+            "bus-mmc1-state-test.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("Failed to create MMC1 ROM");
         bus.map_cartridge(cartridge);
 
         write_mmc1_control(&mut bus, 0x1E); // PRG mode 3, vertical mirroring
@@ -1052,7 +1057,12 @@ mod tests {
     fn test_unmapped_cartridge_space_returns_open_bus_with_mapper() {
         let mut memory = create_test_memory();
         let rom = create_mmc1_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom).expect("valid cartridge");
+        let cartridge = crate::cartridge::Cartridge::load_from_file(
+            &rom,
+            "bus-open-bus-mmc1.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("valid cartridge");
         memory.map_cartridge(cartridge);
 
         memory.write(0x0000, 0x5A, false);
@@ -1066,7 +1076,12 @@ mod tests {
     fn test_unmapped_cartridge_space_returns_open_bus_with_nrom() {
         let mut memory = create_test_memory();
         let rom = create_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom).expect("valid cartridge");
+        let cartridge = crate::cartridge::Cartridge::load_from_file(
+            &rom,
+            "bus-open-bus-nrom.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("valid cartridge");
         memory.map_cartridge(cartridge);
 
         memory.write(0x0000, 0xA5, false);
@@ -1148,8 +1163,12 @@ mod tests {
         let config = Rc::new(RefCell::new(crate::console::Config::default()));
         let mut mem = Bus::new(ppu.clone(), apu, config);
 
-        let cart = Cartridge::new(&create_mmc1_ines_rom_with_vertical_mirroring())
-            .expect("MMC1 test ROM should load");
+        let cart = Cartridge::load_from_file(
+            &create_mmc1_ines_rom_with_vertical_mirroring(),
+            "bus-mmc1-mirroring-runtime.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("MMC1 test ROM should load");
         mem.map_cartridge(cart);
 
         // Sanity: initial mirroring is vertical (tables 0 and 2 are mirrored).
@@ -1191,8 +1210,12 @@ mod tests {
     fn test_mmc1_wram_disabled_reads_return_open_bus() {
         let mut mem = create_test_memory();
 
-        let cart = Cartridge::new(&create_mmc1_ines_rom_with_vertical_mirroring())
-            .expect("MMC1 test ROM should load");
+        let cart = Cartridge::load_from_file(
+            &create_mmc1_ines_rom_with_vertical_mirroring(),
+            "bus-mmc1-wram-disable.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("MMC1 test ROM should load");
         mem.map_cartridge(cart);
 
         // Disable WRAM by setting bit 4 of the PRG bank register via 5 writes to $E000.
@@ -1269,8 +1292,11 @@ mod tests {
         prg_rom[0] = 0xAA; // First byte
         prg_rom[0x3FFF] = 0xBB; // Last byte of 16KB
 
-        let cartridge =
-            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::NametableLayout::Horizontal,
+        );
 
         memory.map_cartridge(cartridge);
 
@@ -1296,8 +1322,11 @@ mod tests {
         prg_rom[0x4000] = 0xCC; // First byte at $C000
         prg_rom[0x7FFF] = 0xDD; // Last byte at $FFFF
 
-        let cartridge =
-            Cartridge::from_parts(prg_rom, vec![], crate::cartridge::MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(
+            prg_rom,
+            vec![],
+            crate::cartridge::NametableLayout::Horizontal,
+        );
 
         memory.map_cartridge(cartridge);
 
@@ -1318,7 +1347,7 @@ mod tests {
         let cartridge = Cartridge::from_parts(
             vec![0; 0x4000],
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
 
         memory.map_cartridge(cartridge);
@@ -1457,7 +1486,12 @@ mod tests {
 
         // Load a simple NROM cartridge with PRG-RAM
         let rom_data = create_nrom_rom_with_prg_ram();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = Cartridge::load_from_file(
+            &rom_data,
+            "bus-prg-ram-rw.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
 
         // Write to PRG-RAM
@@ -1489,7 +1523,12 @@ mod tests {
         let mut memory = create_test_memory();
 
         let rom_data = create_nrom_rom_with_prg_ram();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = Cartridge::load_from_file(
+            &rom_data,
+            "bus-prg-ram-persistence.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
 
         memory.write(0x6100, 0xAB, false);
@@ -1506,7 +1545,12 @@ mod tests {
         let mut memory = create_test_memory();
 
         let rom_data = create_nrom_rom_with_prg_ram();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = Cartridge::load_from_file(
+            &rom_data,
+            "bus-prg-ram-size.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
 
         // Write to first and last byte of 8KB range
@@ -1526,7 +1570,12 @@ mod tests {
         let mut memory = create_test_memory();
 
         let rom_data = create_nrom_rom_with_prg_ram();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = Cartridge::load_from_file(
+            &rom_data,
+            "bus-prg-ram-zero-init.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
 
         // Check various addresses are initialized to 0
@@ -2026,7 +2075,12 @@ mod tests {
         rom.extend(vec![0xBB; 8 * 1024]);
 
         // Create cartridge and map it
-        let cartridge = crate::cartridge::Cartridge::new(&rom).unwrap();
+        let cartridge = crate::cartridge::Cartridge::load_from_file(
+            &rom,
+            "bus-trainer-load.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .unwrap();
         memory.map_cartridge(cartridge);
 
         // Verify trainer data was loaded into RAM at $7000-$71FF
@@ -2065,7 +2119,12 @@ mod tests {
         rom.extend(vec![0xBB; 8 * 1024]);
 
         // Create cartridge and map it
-        let cartridge = crate::cartridge::Cartridge::new(&rom).unwrap();
+        let cartridge = crate::cartridge::Cartridge::load_from_file(
+            &rom,
+            "bus-no-trainer.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .unwrap();
         memory.map_cartridge(cartridge);
 
         // Verify RAM at $7000-$71FF remains zero (initial state)

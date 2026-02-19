@@ -10,7 +10,7 @@
 //!   comprehensively validated by dedicated ROM test suites.
 
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,7 +252,7 @@ pub struct VRC6Mapper {
     chr_banks_1k: [u8; 8],
 
     b003: u8,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
 
     // --- VRC IRQ (used by VRC6) ---
     irq_latch: u8,
@@ -275,7 +275,7 @@ impl VRC6Mapper {
         mapper_number: u8,
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> Self {
         let variant = match mapper_number {
             24 => Vrc6Variant::Mapper24,
@@ -354,9 +354,9 @@ impl VRC6Mapper {
         // Commercial VRC6 games use banking mode 0 and write values where (b003 & 0x0F)
         // is one of: 0, 4, 8, C.
         self.mirroring = match self.b003 & 0x0F {
-            0x0 => MirroringMode::Vertical,
-            0x4 => MirroringMode::Horizontal,
-            0x8 | 0xC => MirroringMode::SingleScreen,
+            0x0 => NametableLayout::Vertical,
+            0x4 => NametableLayout::Horizontal,
+            0x8 | 0xC => NametableLayout::SingleScreen,
             _ => self.mirroring,
         };
     }
@@ -539,7 +539,7 @@ impl Mapper for VRC6Mapper {
         self.audio.sample()
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -601,10 +601,10 @@ impl Mapper for VRC6Mapper {
         let prescaler_bytes = self.irq_prescaler.to_le_bytes();
         snapshot.extend_from_slice(&prescaler_bytes);
         snapshot.push(match self.mirroring {
-            MirroringMode::Horizontal => 0,
-            MirroringMode::Vertical => 1,
-            MirroringMode::SingleScreen => 2,
-            MirroringMode::FourScreen => 3,
+            NametableLayout::Horizontal => 0,
+            NametableLayout::Vertical => 1,
+            NametableLayout::SingleScreen => 2,
+            NametableLayout::FourScreen => 3,
             _ => 0,
         });
         snapshot.push(self.audio.global_halt as u8);
@@ -650,11 +650,11 @@ impl Mapper for VRC6Mapper {
             self.irq_asserted = (flags & 8) != 0;
             self.irq_prescaler = i32::from_le_bytes([data[14], data[15], data[16], data[17]]);
             self.mirroring = match data[18] {
-                0 => MirroringMode::Horizontal,
-                1 => MirroringMode::Vertical,
-                2 => MirroringMode::SingleScreen,
-                3 => MirroringMode::FourScreen,
-                _ => MirroringMode::Horizontal,
+                0 => NametableLayout::Horizontal,
+                1 => NametableLayout::Vertical,
+                2 => NametableLayout::SingleScreen,
+                3 => NametableLayout::FourScreen,
+                _ => NametableLayout::Horizontal,
             };
         }
 
@@ -716,7 +716,7 @@ impl crate::cartridge::MapperIrq for VRC6Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::MirroringMode;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
@@ -724,7 +724,7 @@ mod tests {
         mapper_number: u16,
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
         create_mapper(MapperContext::new(
             mapper_number,
@@ -742,7 +742,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
 
         // Pulse 1: mode=1, duty doesn't matter, volume=15
@@ -760,7 +760,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
 
         // Saw: rate=8, period=0, enable
@@ -785,7 +785,7 @@ mod tests {
             24,
             prg_rom.clone(),
             chr_rom.clone(),
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         )
         .expect("VRC6 (mapper 24) should be implemented");
 
@@ -812,7 +812,7 @@ mod tests {
         }
         let sample = mapper.expansion_audio_sample();
 
-        let mut restored = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut restored = create_vrc6_mapper(24, prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
         restored.restore_registers(&saved);
 
@@ -837,7 +837,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
 
         mapper.write_prg(0xF000, 0xFE);
@@ -873,7 +873,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
 
         // Force immediate trip on first counter clock by starting at 0xFF.
@@ -901,7 +901,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_vrc6_mapper(24, prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("VRC6 (mapper 24) should be implemented");
 
         // Select 16KB bank #1 at $8000-$BFFF.
@@ -931,7 +931,7 @@ mod tests {
             24,
             prg_rom.clone(),
             chr_rom.clone(),
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         )
         .expect("VRC6 (mapper 24) should be implemented");
         m24.write_prg(0xD001, 7);
@@ -939,7 +939,7 @@ mod tests {
 
         // Mapper 26: the same CPU address $D001 should target internal R2 (not R1).
         // So $0400 should remain at default bank 0, while $0800 uses bank 7.
-        let mut m26 = create_vrc6_mapper(26, prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut m26 = create_vrc6_mapper(26, prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("VRC6 (mapper 26) should be implemented");
         m26.write_prg(0xD001, 7);
         assert_eq!(m26.read_chr(0x0400), 0);

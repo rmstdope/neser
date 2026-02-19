@@ -43,7 +43,7 @@ impl ConsoleType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum MirroringMode {
+pub enum NametableLayout {
     Horizontal,
     Vertical,
     FourScreen,
@@ -52,7 +52,7 @@ pub enum MirroringMode {
     SingleScreenUpper,
 }
 
-impl MirroringMode {
+impl NametableLayout {
     pub fn from_flags6(flags6: u8) -> Self {
         if (flags6 & 0x08) != 0 {
             Self::FourScreen
@@ -75,7 +75,7 @@ impl MirroringMode {
 }
 
 #[allow(dead_code)]
-pub type Mirroring = MirroringMode;
+pub type Mirroring = NametableLayout;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimingMode {
@@ -195,7 +195,7 @@ pub struct InesHeader {
     pub mapper: u16,
     pub submapper: u8,
     pub console_type: ConsoleType,
-    pub mirroring: MirroringMode,
+    pub mirroring: NametableLayout,
     pub has_trainer: bool,
     pub header_version: &'static str,
     pub battery_backed_prg_ram: bool,
@@ -248,7 +248,7 @@ pub fn parse_header(header: &[u8; 16]) -> Option<InesHeader> {
     let header_version = if nes2 { "2.0" } else { "1.0" };
     let has_trainer = (flags6 & 0x04) != 0;
     let battery_backed_prg_ram = (flags6 & 0x02) != 0;
-    let mirroring = MirroringMode::from_flags6(flags6);
+    let mirroring = NametableLayout::from_flags6(flags6);
 
     let (mapper, submapper) = if nes2 {
         let mapper =
@@ -687,10 +687,10 @@ mod tests {
 
     #[test]
     fn mirroring_mode_header_values_match_ines_flags6() {
-        assert_eq!(MirroringMode::Horizontal.header_value(), Some(0x00));
-        assert_eq!(MirroringMode::Vertical.header_value(), Some(0x01));
-        assert_eq!(MirroringMode::FourScreen.header_value(), Some(0x08));
-        assert_eq!(MirroringMode::SingleScreen.header_value(), None);
+        assert_eq!(NametableLayout::Horizontal.header_value(), Some(0x00));
+        assert_eq!(NametableLayout::Vertical.header_value(), Some(0x01));
+        assert_eq!(NametableLayout::FourScreen.header_value(), Some(0x08));
+        assert_eq!(NametableLayout::SingleScreen.header_value(), None);
     }
 
     #[test]

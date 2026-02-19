@@ -88,7 +88,7 @@ impl BusDevice for PpuDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::{Cartridge, Mapper, MirroringMode};
+    use crate::cartridge::{Cartridge, Mapper, NametableLayout};
     use crate::console::TimingMode;
     use std::cell::Cell;
 
@@ -111,8 +111,8 @@ mod tests {
 
         fn ppu_address_changed(&mut self, _addr: u16) {}
 
-        fn get_mirroring(&self) -> MirroringMode {
-            MirroringMode::Horizontal
+        fn get_mirroring(&self) -> NametableLayout {
+            NametableLayout::Horizontal
         }
 
         fn mapper_number(&self) -> u8 {

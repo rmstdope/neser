@@ -218,7 +218,7 @@ pub fn snapshot_with_disasm_state(nes: &Nes, state: &mut CpuDisasmWindowState) -
 mod tests {
     use super::*;
     use crate::cartridge::Cartridge;
-    use crate::cartridge::MirroringMode;
+    use crate::cartridge::NametableLayout;
     use crate::console::{Config, Nes};
 
     #[test]
@@ -244,7 +244,7 @@ mod tests {
         prg_rom[0x7FFE] = irq_lo;
         prg_rom[0x7FFF] = irq_hi;
 
-        let cartridge = Cartridge::from_parts(prg_rom, vec![], MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, vec![], NametableLayout::Horizontal);
         nes.insert_cartridge(cartridge);
 
         // Seed a couple of CPU registers so the snapshot has something meaningful.
@@ -294,7 +294,7 @@ mod tests {
         prg_rom[0x0002] = 0xAA;
         prg_rom[0x0003] = 0xE8;
         prg_rom[0x0004] = 0x00;
-        let cartridge = Cartridge::from_parts(prg_rom, vec![], MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, vec![], NametableLayout::Horizontal);
         nes.insert_cartridge(cartridge);
         nes.cpu.set_pc(0x8000);
 

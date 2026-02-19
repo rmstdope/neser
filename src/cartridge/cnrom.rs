@@ -33,7 +33,7 @@ pub type CNROMMapper = SimpleFixedPrgMapper<8, 3>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::{Mapper, MirroringMode};
+    use crate::cartridge::{Mapper, NametableLayout};
 
     #[test]
     fn test_cnrom_32kb_prg_no_banking() {
@@ -45,7 +45,7 @@ mod tests {
             *byte = (i / 1024) as u8;
         }
 
-        let mapper = CNROMMapper::new(prg_rom, vec![0; 32 * 1024], MirroringMode::Horizontal);
+        let mapper = CNROMMapper::new(prg_rom, vec![0; 32 * 1024], NametableLayout::Horizontal);
 
         // PRG ROM should be accessible at $8000-$FFFF
         assert_eq!(mapper.read_prg(0x8000), 0); // First byte of first 1KB block
@@ -68,7 +68,7 @@ mod tests {
             }
         }
 
-        let mut mapper = CNROMMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+        let mut mapper = CNROMMapper::new(vec![0; 32 * 1024], chr_rom, NametableLayout::Horizontal);
 
         // Initially bank 0
         assert_eq!(mapper.read_chr(0x0000), 0);
@@ -107,7 +107,7 @@ mod tests {
             }
         }
 
-        let mut mapper = CNROMMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Vertical);
+        let mut mapper = CNROMMapper::new(vec![0; 32 * 1024], chr_rom, NametableLayout::Vertical);
 
         // Initially bank 0
         assert_eq!(mapper.read_chr(0x0000), 0);
@@ -136,13 +136,14 @@ mod tests {
         let mut mapper = CNROMMapper::new(
             vec![0; 32 * 1024],
             chr_rom.clone(),
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
         mapper.write_prg(0x8000, 0b0000_0011);
 
         let registers = mapper.registers_snapshot();
 
-        let mut restored = CNROMMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+        let mut restored =
+            CNROMMapper::new(vec![0; 32 * 1024], chr_rom, NametableLayout::Horizontal);
         restored.restore_registers(&registers);
 
         assert_eq!(restored.read_chr(0x0000), 21);
@@ -153,7 +154,7 @@ mod tests {
     fn test_cnrom_chr_read_only() {
         // CNROM uses CHR-ROM, not CHR-RAM - writes should be ignored
         let chr_rom = vec![0xAA; 32 * 1024];
-        let mut mapper = CNROMMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+        let mut mapper = CNROMMapper::new(vec![0; 32 * 1024], chr_rom, NametableLayout::Horizontal);
 
         // Try to write to CHR
         mapper.write_chr(0x0000, 0x55);
@@ -167,16 +168,16 @@ mod tests {
         let mapper_h = CNROMMapper::new(
             vec![0; 32 * 1024],
             vec![0; 32 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
-        assert_eq!(mapper_h.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper_h.get_mirroring(), NametableLayout::Horizontal);
 
         let mapper_v = CNROMMapper::new(
             vec![0; 32 * 1024],
             vec![0; 32 * 1024],
-            MirroringMode::Vertical,
+            NametableLayout::Vertical,
         );
-        assert_eq!(mapper_v.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper_v.get_mirroring(), NametableLayout::Vertical);
     }
 
     #[test]
@@ -192,7 +193,7 @@ mod tests {
             }
         }
 
-        let mut mapper = CNROMMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+        let mut mapper = CNROMMapper::new(vec![0; 32 * 1024], chr_rom, NametableLayout::Horizontal);
 
         // Write to different addresses in PRG space
         mapper.write_prg(0x8000, 1);
@@ -221,8 +222,11 @@ mod tests {
         }
 
         // Create mapper and attempt to select bank 3 (should wrap to bank 1)
-        let mut mapper =
-            CNROMMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper = CNROMMapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
         mapper.write_prg(0x8000, 3); // Select bank 3, should wrap to bank 1 (3 % 2 = 1)
 
         // Verify bank wrapping before snapshot
@@ -232,7 +236,7 @@ mod tests {
         let registers = mapper.registers_snapshot();
 
         // Create a fresh mapper and restore
-        let mut restored = CNROMMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut restored = CNROMMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
         restored.restore_registers(&registers);
 
         // Verify the restored state maintains bank wrapping
@@ -247,7 +251,7 @@ mod tests {
         let chr_rom = vec![0; 32 * 1024];
 
         let mut mapper =
-            CNROMMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+            CNROMMapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
 
         // Write pattern to PRG-RAM
         for i in 0..0x2000 {
@@ -283,7 +287,7 @@ mod tests {
         let mapper = CNROMMapper::new(
             vec![0; 32 * 1024],
             vec![0; 32 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0xCC), 0xCC);

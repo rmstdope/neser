@@ -2061,7 +2061,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
     }
@@ -2817,7 +2817,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -2851,7 +2851,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -3169,7 +3169,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -3237,7 +3237,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -3309,7 +3309,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -3386,7 +3386,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -3483,7 +3483,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -3678,7 +3678,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
 
@@ -3956,7 +3956,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -4013,7 +4013,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.reset(false);
@@ -4144,7 +4144,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::from_parts(
             prg_rom,
             vec![],
-            crate::cartridge::MirroringMode::Horizontal,
+            crate::cartridge::NametableLayout::Horizontal,
         );
         nes.insert_cartridge(cartridge);
         nes.reset(false);

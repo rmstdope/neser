@@ -2,14 +2,14 @@
 // in `src/cartridge/ines.rs`. The local copies were removed to avoid
 // dead-code warnings.
 
-use neser::cartridge::{ConsoleType, MirroringMode, TimingMode};
+use neser::cartridge::{ConsoleType, NametableLayout, TimingMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Rom {
     mapper: u16,
     submapper: u8,
     console_type: ConsoleType,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
     has_trainer: bool,
     header_version: &'static str,
     battery_backed_prg_ram: bool,
@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(info.chr_rom_size_bytes, 8 * 1024);
         assert_eq!(info.prg_ram_size_bytes, Some(2 * 8 * 1024));
         assert_eq!(info.mapper, 0x50);
-        assert_eq!(info.mirroring, MirroringMode::Vertical);
+        assert_eq!(info.mirroring, NametableLayout::Vertical);
         assert!(info.battery_backed_prg_ram);
         assert!(!info.has_trainer);
     }
@@ -374,7 +374,7 @@ mod tests {
         assert_eq!(info.mapper, 0x4A2);
         assert_eq!(info.submapper, 0x3);
         assert_eq!(info.console_type, ConsoleType::VsSystem);
-        assert_eq!(info.mirroring, MirroringMode::Vertical);
+        assert_eq!(info.mirroring, NametableLayout::Vertical);
         assert!(info.battery_backed_prg_ram);
         assert!(!info.has_trainer);
         assert_eq!(info.prg_rom_size_bytes, 4_227_072);

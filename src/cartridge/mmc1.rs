@@ -7,7 +7,7 @@
 
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
-use crate::cartridge::MirroringMode;
+use crate::cartridge::NametableLayout;
 use crate::cartridge::common::ChrMemory;
 use crate::trace_mapper;
 
@@ -89,7 +89,7 @@ pub struct MMC1Mapper {
 }
 
 impl MMC1Mapper {
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: NametableLayout) -> Self {
         // Default to MMC1B for backward compatibility and broader game support
         Self::new_with_revision(prg_rom, chr_rom, _mirroring, Mmc1Revision::Mmc1B)
     }
@@ -97,7 +97,7 @@ impl MMC1Mapper {
     pub fn new_with_revision(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        _mirroring: MirroringMode,
+        _mirroring: NametableLayout,
         revision: Mmc1Revision,
     ) -> Self {
         Self {
@@ -206,12 +206,12 @@ impl MMC1Mapper {
         }
     }
 
-    fn get_mirroring_mode(&self) -> MirroringMode {
+    fn get_mirroring_mode(&self) -> NametableLayout {
         match self.control & 0x03 {
-            0 => MirroringMode::SingleScreenLower, // One-screen, lower bank
-            1 => MirroringMode::SingleScreenUpper, // One-screen, upper bank
-            2 => MirroringMode::Vertical,
-            3 => MirroringMode::Horizontal,
+            0 => NametableLayout::SingleScreenLower, // One-screen, lower bank
+            1 => NametableLayout::SingleScreenUpper, // One-screen, upper bank
+            2 => NametableLayout::Vertical,
+            3 => NametableLayout::Horizontal,
             _ => unreachable!(),
         }
     }
@@ -366,7 +366,7 @@ impl Mapper for MMC1Mapper {
         self.chr_memory.write_at_index(index, value);
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.get_mirroring_mode()
     }
 
@@ -489,7 +489,7 @@ mod tests {
     fn create_mmc1_mapper(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> Box<dyn Mapper> {
         create_mapper(MapperContext::new(1, prg_rom, chr_rom, mirroring))
             .expect("MMC1 (mapper 1) should be implemented")
@@ -503,7 +503,7 @@ mod tests {
 
         let prg_rom = vec![0; 128 * 1024]; // 128KB = 8 banks of 16KB
         let chr_rom = vec![0; 32 * 1024]; // 32KB = 8 banks of 4KB
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Load value 0b00011 (3) into control register at $8000-$9FFF
         // This requires 5 writes, each with bit 0 containing the next bit of the value
@@ -517,7 +517,7 @@ mod tests {
         // Bits 0-1: Mirroring = 0b11 = Horizontal
         // Bits 2-3: PRG ROM bank mode = 0b00
         // Bit 4: CHR ROM bank mode = 0
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     #[test]
@@ -525,15 +525,18 @@ mod tests {
         let prg_rom = vec![0; PRG_BANK_SIZE * 2];
         let chr_rom = vec![];
 
-        let mut mapper =
-            MMC1Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper = MMC1Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
 
         mapper.cpu_cycle();
         mapper.write_prg(0x8000, 0x01);
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
         restored.restore_registers(&saved);
 
         let before = restored.registers_snapshot();
@@ -551,7 +554,7 @@ mod tests {
         // Writing with bit 7 set should reset the shift register
         let prg_rom = vec![0; 256 * 1024];
         let chr_rom = vec![0; 128 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Start loading a value
         mapper.write_prg(0x8000, 0b00000001);
@@ -566,7 +569,7 @@ mod tests {
         for _ in 0..5 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
     }
 
     #[test]
@@ -578,20 +581,20 @@ mod tests {
         // 3: horizontal
         let prg_rom = vec![0; 256 * 1024];
         let chr_rom = vec![0; 128 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Load 0b00000 (mirroring = 0 = SingleScreenLower)
         for _ in 0..5 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
 
         // Load 0b00001 (mirroring = 1 = SingleScreenUpper)
         mapper.write_prg(0x8000, 0b00000001);
         for _ in 0..4 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenUpper);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
 
         // Load 0b00010 (mirroring = 2 = Vertical)
         mapper.write_prg(0x8000, 0b00000000);
@@ -599,7 +602,7 @@ mod tests {
         for _ in 0..3 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // Load 0b00011 (mirroring = 3 = Horizontal)
         mapper.write_prg(0x8000, 0b00000001);
@@ -607,7 +610,7 @@ mod tests {
         for _ in 0..3 {
             mapper.write_prg(0x8000, 0b00000000);
         }
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     #[test]
@@ -625,7 +628,7 @@ mod tests {
         }
 
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set control register to PRG mode 0 (bits 2-3 = 0b00) and mirroring
         // Value: 0b00000 (mirroring=0, prg_mode=0, chr_mode=0)
@@ -666,7 +669,7 @@ mod tests {
         }
 
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set control register to PRG mode 2 (bits 2-3 = 0b10)
         // Value: 0b01000 (mirroring=0, prg_mode=2, chr_mode=0)
@@ -704,7 +707,7 @@ mod tests {
         }
 
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set control register to PRG mode 3 (bits 2-3 = 0b11) - this is the default
         // Value: 0b01100 (mirroring=0, prg_mode=3, chr_mode=0)
@@ -742,7 +745,7 @@ mod tests {
         }
 
         let prg_rom = vec![0; 32 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set control register to CHR mode 0 (bit 4 = 0)
         // Value: 0b00000 (mirroring=0, prg_mode=0, chr_mode=0)
@@ -778,7 +781,7 @@ mod tests {
         }
 
         let prg_rom = vec![0; 32 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set control register to CHR mode 1 (bit 4 = 1)
         // Value: 0b10000 (mirroring=0, prg_mode=0, chr_mode=1)
@@ -812,7 +815,7 @@ mod tests {
         // MMC1 should support 8KB PRG-RAM at $6000-$7FFF
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Write to PRG-RAM
         mapper.write_prg(0x6000, 0xAA);
@@ -829,7 +832,7 @@ mod tests {
     fn test_mmc1_chr_ram_when_no_chr_rom() {
         // If CHR ROM is empty, MMC1 should use CHR-RAM
         let prg_rom = vec![0; 128 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, vec![], MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, vec![], NametableLayout::Horizontal);
 
         // Initially should read 0
         assert_eq!(mapper.read_chr(0x0000), 0x00);
@@ -852,7 +855,7 @@ mod tests {
         // After 5 writes, the shift register should contain the 5-bit value
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Write sequence: 1, 0, 1, 0, 1 should result in value 0b10101
         // With proper power-on state (0x10), after 5 writes we should see the bit pattern
@@ -863,7 +866,7 @@ mod tests {
         mapper.write_prg(0x8000, 0b00000001); // Write bit 0 = 1 (5th write, should load)
 
         // The control register should now contain 0b10101 (mirroring = 0b01 = SingleScreenUpper)
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenUpper);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
     }
 
     #[test]
@@ -871,7 +874,7 @@ mod tests {
         // After reset, the shift register should go back to 0x10
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Do some writes
         mapper.write_prg(0x8000, 0b00000001);
@@ -887,7 +890,7 @@ mod tests {
         }
 
         // Control register should be 0b11111 (mirroring = 0b11 = Horizontal)
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     #[test]
@@ -897,7 +900,7 @@ mod tests {
         // When bit 4 is clear (0), WRAM is enabled
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Initially WRAM should be enabled (prg_bank defaults to 0)
         mapper.write_prg(0x6000, 0xAA);
@@ -941,7 +944,7 @@ mod tests {
         // Verify WRAM disable affects the entire WRAM range ($6000-$7FFF)
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc1_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Write to various WRAM addresses while enabled
         mapper.write_prg(0x6000, 0x11);
@@ -983,7 +986,7 @@ mod tests {
         let mut mapper = MMC1Mapper::new_with_revision(
             prg_rom,
             chr_rom,
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
             Mmc1Revision::Mmc1A,
         );
 
@@ -1025,7 +1028,7 @@ mod tests {
         let mut mapper = MMC1Mapper::new_with_revision(
             prg_rom,
             chr_rom,
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
             Mmc1Revision::Mmc1B,
         );
 
@@ -1060,7 +1063,7 @@ mod tests {
         // Default constructor should use MMC1B for backward compatibility
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Write to WRAM
         mapper.write_prg(0x6000, 0xAA);
@@ -1079,7 +1082,7 @@ mod tests {
         // from shifting two bits. Reset writes (bit 7 set) are never ignored.
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Start with a clean shift register (reset it first)
         mapper.write_prg(0x8000, 0x80); // Reset, cycle 0
@@ -1123,7 +1126,7 @@ mod tests {
         // We should have shifted in: 1, 0, 1, 1, 0 (in LSB-first order)
         // This gives us 0b01101 in the register
         // Bits 0-1 = 01 = SingleScreenUpper
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenUpper);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
     }
 
     #[test]
@@ -1131,7 +1134,7 @@ mod tests {
         // Reset writes (bit 7 set) should never be ignored, even if consecutive
         let prg_rom = vec![0; 128 * 1024];
         let chr_rom = vec![0; 8 * 1024];
-        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Start loading a value
         mapper.write_prg(0x8000, 0x01);
@@ -1151,7 +1154,7 @@ mod tests {
         }
 
         // Should have mirroring mode 0 = SingleScreenLower
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
     }
 
     #[test]
@@ -1178,8 +1181,11 @@ mod tests {
             }
         }
 
-        let mut mapper =
-            MMC1Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper = MMC1Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
 
         // Configure complex state with all registers
         // Control register: CHR mode 1 (two 4KB banks), PRG mode 3 (switch at $8000, fixed last at $C000), horizontal mirroring
@@ -1214,7 +1220,7 @@ mod tests {
         }
 
         // Verify state before snapshot
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
         assert_eq!(mapper.read_chr(0x0000), 105); // CHR bank 5
         assert_eq!(mapper.read_chr(0x1000), 110); // CHR bank 10
         assert_eq!(mapper.read_prg(0x8000), 7); // Switchable bank 7 (PRG mode 3)
@@ -1227,13 +1233,13 @@ mod tests {
         let chr_ram = mapper.chr_ram_snapshot();
 
         // Create fresh mapper and restore
-        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
         restored.restore_registers(&registers);
         restored.load_wram_snapshot(&prg_ram);
         restored.restore_chr_ram(&chr_ram);
 
         // Verify all state is restored correctly
-        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
         assert_eq!(restored.read_chr(0x0000), 105); // CHR bank 5
         assert_eq!(restored.read_chr(0x1000), 110); // CHR bank 10
         assert_eq!(restored.read_prg(0x8000), 7); // Switchable bank 7
@@ -1248,8 +1254,11 @@ mod tests {
         let prg_rom = vec![0; 256 * 1024];
         let chr_rom = vec![0; 128 * 1024];
 
-        let mut mapper =
-            MMC1Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper = MMC1Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
 
         // Start writing to control register but don't finish
         mapper.cpu_cycle();
@@ -1263,7 +1272,7 @@ mod tests {
         let registers = mapper.registers_snapshot();
 
         // Restore to new mapper
-        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut restored = MMC1Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
         restored.restore_registers(&registers);
 
         // Complete the write sequence
@@ -1277,7 +1286,7 @@ mod tests {
         // Mirroring mode (bits 0-1): 11 = Horizontal
         // PRG mode (bits 2-3): 01 = mode 1
         // CHR mode (bit 4): 1 = two 4KB banks
-        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
     }
 
     /// Test MMC1 disabled WRAM returns open-bus
@@ -1286,7 +1295,7 @@ mod tests {
     /// When disabled, reads from $6000-$7FFF should return open-bus.
     #[test]
     fn test_mmc1_disabled_wram_returns_open_bus() {
-        let mut mapper = MMC1Mapper::new(vec![0; 256 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper = MMC1Mapper::new(vec![0; 256 * 1024], vec![], NametableLayout::Horizontal);
 
         // First, enable WRAM and write some data
         // Write to $E000-$FFFF controls PRG banking and WRAM enable
@@ -1348,7 +1357,7 @@ mod tests {
     /// Test MMC1 enabled WRAM doesn't return open-bus
     #[test]
     fn test_mmc1_enabled_wram_returns_data() {
-        let mut mapper = MMC1Mapper::new(vec![0; 256 * 1024], vec![], MirroringMode::Horizontal);
+        let mut mapper = MMC1Mapper::new(vec![0; 256 * 1024], vec![], NametableLayout::Horizontal);
 
         // Reset and ensure WRAM is enabled (bit 4 = 0)
         mapper.write_prg(0x8000, 0x80);

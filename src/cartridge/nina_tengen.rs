@@ -7,7 +7,7 @@
 
 use crate::cartridge::Mapper;
 use crate::cartridge::MapperCapabilities;
-use crate::cartridge::MirroringMode;
+use crate::cartridge::NametableLayout;
 use crate::cartridge::common::{BankedRom, DEFAULT_PRG_RAM_SIZE, PrgRam};
 
 // Memory size constants
@@ -45,11 +45,11 @@ pub struct NinaTengenMapper {
     chr_rom: BankedRom,
     prg_bank_select: u8,
     chr_bank_select: u8,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
 }
 
 impl NinaTengenMapper {
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
@@ -103,9 +103,9 @@ impl Mapper for NinaTengenMapper {
 
             // Bit 3: Mirroring (0=vertical, 1=horizontal)
             self.mirroring = if (value & 0x08) != 0 {
-                MirroringMode::Horizontal
+                NametableLayout::Horizontal
             } else {
-                MirroringMode::Vertical
+                NametableLayout::Vertical
             };
 
             // Bits 4-7: CHR bank select
@@ -122,7 +122,7 @@ impl Mapper for NinaTengenMapper {
         // Mapper 78 uses CHR-ROM, writes are ignored
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -144,11 +144,11 @@ impl Mapper for NinaTengenMapper {
 
     fn registers_snapshot(&self) -> Vec<u8> {
         let mirroring = match self.mirroring {
-            MirroringMode::Horizontal => 0,
-            MirroringMode::Vertical => 1,
-            MirroringMode::SingleScreen | MirroringMode::SingleScreenLower => 2,
-            MirroringMode::SingleScreenUpper => 3,
-            MirroringMode::FourScreen => 4,
+            NametableLayout::Horizontal => 0,
+            NametableLayout::Vertical => 1,
+            NametableLayout::SingleScreen | NametableLayout::SingleScreenLower => 2,
+            NametableLayout::SingleScreenUpper => 3,
+            NametableLayout::FourScreen => 4,
         };
         vec![self.prg_bank_select, self.chr_bank_select, mirroring]
     }
@@ -158,12 +158,12 @@ impl Mapper for NinaTengenMapper {
             self.prg_bank_select = data[0];
             self.chr_bank_select = data[1];
             self.mirroring = match data[2] {
-                0 => MirroringMode::Horizontal,
-                1 => MirroringMode::Vertical,
-                2 => MirroringMode::SingleScreen,
-                3 => MirroringMode::SingleScreenUpper,
-                4 => MirroringMode::FourScreen,
-                _ => MirroringMode::Horizontal,
+                0 => NametableLayout::Horizontal,
+                1 => NametableLayout::Vertical,
+                2 => NametableLayout::SingleScreen,
+                3 => NametableLayout::SingleScreenUpper,
+                4 => NametableLayout::FourScreen,
+                _ => NametableLayout::Horizontal,
             };
         }
     }
@@ -200,7 +200,7 @@ mod tests {
         }
 
         let mut mapper =
-            NinaTengenMapper::new(prg_rom, vec![0; 128 * 1024], MirroringMode::Horizontal);
+            NinaTengenMapper::new(prg_rom, vec![0; 128 * 1024], NametableLayout::Horizontal);
 
         // Initially bank 0 at $8000-$BFFF
         assert_eq!(mapper.read_prg(0x8000), 0);
@@ -238,7 +238,7 @@ mod tests {
         }
 
         let mut mapper =
-            NinaTengenMapper::new(vec![0; 128 * 1024], chr_rom, MirroringMode::Horizontal);
+            NinaTengenMapper::new(vec![0; 128 * 1024], chr_rom, NametableLayout::Horizontal);
 
         // Initially bank 0
         assert_eq!(mapper.read_chr(0x0000), 0);
@@ -262,26 +262,26 @@ mod tests {
         let mut mapper = NinaTengenMapper::new(
             vec![0; 128 * 1024],
             vec![0; 128 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
 
         // Initially horizontal (from constructor)
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
 
         // Bit 3 = 0: vertical mirroring
         mapper.write_prg(0x8000, 0b0000_0000);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // Bit 3 = 1: horizontal mirroring
         mapper.write_prg(0x8000, 0b0000_1000);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
 
         // Test with other bits set
         mapper.write_prg(0x8000, 0b1111_0111); // Bit 3 = 0
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         mapper.write_prg(0x8000, 0b1111_1111); // Bit 3 = 1
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     #[test]
@@ -308,14 +308,14 @@ mod tests {
             }
         }
 
-        let mut mapper = NinaTengenMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = NinaTengenMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Write combined register: PRG=3, Mirroring=Vertical, CHR=7
         // Binary: 0111_0011 (CHR=7, Mir=0, PRG=3)
         mapper.write_prg(0x8000, 0b0111_0011);
 
         assert_eq!(mapper.read_prg(0x8000), 103); // PRG bank 3
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical); // Bit 3 = 0
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical); // Bit 3 = 0
         assert_eq!(mapper.read_chr(0x0000), 207); // CHR bank 7
 
         // Write another combined register: PRG=5, Mirroring=Horizontal, CHR=10
@@ -323,7 +323,7 @@ mod tests {
         mapper.write_prg(0x8000, 0b1010_1101);
 
         assert_eq!(mapper.read_prg(0x8000), 105); // PRG bank 5
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal); // Bit 3 = 1
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal); // Bit 3 = 1
         assert_eq!(mapper.read_chr(0x0000), 210); // CHR bank 10
     }
 
@@ -340,7 +340,7 @@ mod tests {
         }
 
         let mut mapper =
-            NinaTengenMapper::new(prg_rom, vec![0; 8 * 1024], MirroringMode::Horizontal);
+            NinaTengenMapper::new(prg_rom, vec![0; 8 * 1024], NametableLayout::Horizontal);
 
         // Write with upper bits set - should only use lower 3 bits
         mapper.write_prg(0x8000, 0b1111_1111); // PRG bank = 7
@@ -363,7 +363,7 @@ mod tests {
         }
 
         let mut mapper =
-            NinaTengenMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+            NinaTengenMapper::new(vec![0; 32 * 1024], chr_rom, NametableLayout::Horizontal);
 
         // Write with lower bits set - should only use bits 4-7
         mapper.write_prg(0x8000, 0b1111_0000); // CHR bank = 15
@@ -386,7 +386,7 @@ mod tests {
         }
 
         let mut mapper =
-            NinaTengenMapper::new(prg_rom, vec![0; 8 * 1024], MirroringMode::Horizontal);
+            NinaTengenMapper::new(prg_rom, vec![0; 8 * 1024], NametableLayout::Horizontal);
 
         // Last bank should always read 57 (bank 7 + 50)
         assert_eq!(mapper.read_prg(0xC000), 57);
@@ -407,7 +407,7 @@ mod tests {
         // CHR ROM should not be writable
         let chr_rom = vec![0xAA; 8 * 1024];
         let mut mapper =
-            NinaTengenMapper::new(vec![0; 32 * 1024], chr_rom, MirroringMode::Horizontal);
+            NinaTengenMapper::new(vec![0; 32 * 1024], chr_rom, NametableLayout::Horizontal);
 
         // Try to write to CHR
         mapper.write_chr(0x0000, 0x55);
@@ -437,19 +437,22 @@ mod tests {
             }
         }
 
-        let mut mapper =
-            NinaTengenMapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper = NinaTengenMapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
 
         // PRG=5, Mirroring=Horizontal, CHR=9
         mapper.write_prg(0x8000, 0b1001_1101);
 
         let snapshot = mapper.registers_snapshot();
 
-        let mut restored = NinaTengenMapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut restored = NinaTengenMapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
         restored.restore_registers(&snapshot);
 
         assert_eq!(restored.read_prg(0x8000), 15);
-        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
         assert_eq!(restored.read_chr(0x0000), 29);
     }
 

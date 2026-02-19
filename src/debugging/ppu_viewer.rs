@@ -162,7 +162,7 @@ fn render_tile_into(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::{Cartridge, MirroringMode};
+    use crate::cartridge::{Cartridge, NametableLayout};
     use crate::console::{Config, Nes};
 
     #[test]
@@ -321,7 +321,7 @@ mod tests {
         let mut nes = Nes::new(Config::default());
         let prg_rom = vec![0u8; 32 * 1024];
         let chr_rom = vec![0u8; 8 * 1024];
-        let cart = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cart = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         nes.insert_cartridge(cart);
 
         let snap = PpuViewerSnapshot::from_nes(&nes);

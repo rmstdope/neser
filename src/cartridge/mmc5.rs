@@ -62,7 +62,7 @@
 // Imports & Dependencies
 // ============================================================================
 
-use crate::cartridge::MirroringMode;
+use crate::cartridge::NametableLayout;
 use crate::cartridge::common::ChrMemory;
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 use crate::trace_mapper;
@@ -76,7 +76,7 @@ pub struct MMC5Mapper {
     prg_rom: Vec<u8>,
     chr_memory: ChrMemory,
     prg_ram: Vec<u8>,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
     ciram: Vec<u8>,
 
     // PRG banking
@@ -255,7 +255,7 @@ impl MMC5Mapper {
     const PRG_ROM_BANK_SIZE: usize = 8 * 1024;
 
     #[allow(dead_code)]
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self::new_with_prg_ram_size(
             prg_rom,
             chr_rom,
@@ -267,7 +267,7 @@ impl MMC5Mapper {
     pub fn new_with_prg_ram_size(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
         prg_ram_banks_8k: u8,
     ) -> Self {
         let prg_rom_bank_count_8k = prg_rom.len() / Self::PRG_ROM_BANK_SIZE;
@@ -1631,7 +1631,7 @@ impl Mapper for MMC5Mapper {
         self.in_frame = false;
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         // MMC5's $5105 register controls nametable mapping
         // Each 2 bits control one quadrant (bits 1-0: $2000, 3-2: $2400, 5-4: $2800, 7-6: $2C00)
         // Values: 0 = $2000 (A), 1 = $2400 (B), 2 = ExRAM, 3 = fill mode
@@ -1642,16 +1642,16 @@ impl Mapper for MMC5Mapper {
         // Check for standard patterns
         if mapping == 0b00_00_00_00 {
             // All to A -> Single screen
-            return MirroringMode::SingleScreen;
+            return NametableLayout::SingleScreen;
         } else if mapping == 0b01_01_01_01 {
             // All to B -> Single screen
-            return MirroringMode::SingleScreen;
+            return NametableLayout::SingleScreen;
         } else if mapping == 0b01_00_01_00 {
             // Vertical mirroring (A|B, A|B)
-            return MirroringMode::Vertical;
+            return NametableLayout::Vertical;
         } else if mapping == 0b01_01_00_00 {
             // Horizontal mirroring (A|A, B|B)
-            return MirroringMode::Horizontal;
+            return NametableLayout::Horizontal;
         }
 
         // Default to the original iNES mirroring for other cases
@@ -1771,10 +1771,10 @@ impl Mapper for MMC5Mapper {
         snapshot.push(self.pcm_value);
 
         snapshot.push(match self.mirroring {
-            MirroringMode::Horizontal => 0,
-            MirroringMode::Vertical => 1,
-            MirroringMode::SingleScreen => 2,
-            MirroringMode::FourScreen => 3,
+            NametableLayout::Horizontal => 0,
+            NametableLayout::Vertical => 1,
+            NametableLayout::SingleScreen => 2,
+            NametableLayout::FourScreen => 3,
             _ => 0,
         });
 
@@ -2026,11 +2026,11 @@ impl Mapper for MMC5Mapper {
         let pcm_enabled = pcm_enabled_raw != 0;
 
         let mirroring = match mirroring_raw {
-            0 => MirroringMode::Horizontal,
-            1 => MirroringMode::Vertical,
-            2 => MirroringMode::SingleScreen,
-            3 => MirroringMode::FourScreen,
-            _ => MirroringMode::Horizontal,
+            0 => NametableLayout::Horizontal,
+            1 => NametableLayout::Vertical,
+            2 => NametableLayout::SingleScreen,
+            3 => NametableLayout::FourScreen,
+            _ => NametableLayout::Horizontal,
         };
 
         self.prg_mode = prg_mode;
@@ -2120,7 +2120,7 @@ impl Mapper for MMC5Mapper {
 #[cfg(test)]
 #[allow(clippy::identity_op)]
 mod tests {
-    use crate::cartridge::MirroringMode;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::cartridge::Cartridge;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::{banked_data, banked_data_with_upper_marker};
@@ -2131,13 +2131,13 @@ mod tests {
     fn new_mmc5_for_irq_test() -> MMC5Mapper {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
-        MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal)
+        MMC5Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal)
     }
 
     fn create_mmc5_mapper(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
         let context = MapperContext {
             prg_ram_banks_8k: (MMC5Mapper::PRG_RAM_BANK_COUNT_MAX as u8).max(1),
@@ -2234,8 +2234,11 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper =
-            MMC5Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper = MMC5Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
 
         mapper.write_prg(0x5100, 3);
         mapper.write_prg(0x5114, 0x80 | 1);
@@ -2265,7 +2268,7 @@ mod tests {
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut restored = MMC5Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
         restored.restore_registers(&saved);
 
         assert_eq!(restored.read_prg(0x8000), 1);
@@ -2275,7 +2278,7 @@ mod tests {
 
         assert_eq!(restored.read_chr(0x0000), 5);
 
-        assert_eq!(restored.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(restored.get_mirroring(), NametableLayout::Horizontal);
 
         assert_eq!(restored.read_nametable(0x2000), Some(0x77));
 
@@ -2394,7 +2397,7 @@ mod tests {
     fn test_mmc5_read_prg_open_bus_allows_expansion_registers() {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 1);
-        let mut mmc5 = MMC5Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mmc5 = MMC5Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         mmc5.write_prg(0x5205, 3);
         mmc5.write_prg(0x5206, 4);
@@ -2409,9 +2412,12 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper =
-            create_mmc5_mapper(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
-                .expect("MMC5 (mapper 5) should be implemented");
+        let mut mapper = create_mmc5_mapper(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        )
+        .expect("MMC5 (mapper 5) should be implemented");
 
         mapper.write_prg(0x5105, 0x44);
         assert!(mapper.write_nametable(0x2000, 0x11));
@@ -2419,7 +2425,7 @@ mod tests {
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut restored = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
         restored.restore_registers(&saved);
 
@@ -2451,7 +2457,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
     }
 
@@ -2468,7 +2474,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Explicitly select PRG mode 3.
@@ -2491,7 +2497,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 4);
         let chr_rom = banked_data(1 * 1024, 1);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // PRG mode 1: two 16KB banks.
@@ -2512,7 +2518,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data_with_upper_marker(1024, 2048);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         mapper.ppu_set_chr_fetch_is_ppudata();
@@ -2537,7 +2543,7 @@ mod tests {
         let chr_rom_8k = banked_data_with_upper_marker(8 * 1024, 257);
 
         let mut mapper_4k =
-            create_mmc5_mapper(prg_rom.clone(), chr_rom_4k, MirroringMode::Horizontal)
+            create_mmc5_mapper(prg_rom.clone(), chr_rom_4k, NametableLayout::Horizontal)
                 .expect("MMC5 (mapper 5) should be implemented");
 
         mapper_4k.ppu_set_chr_fetch_is_ppudata();
@@ -2546,7 +2552,7 @@ mod tests {
         mapper_4k.write_prg(0x5123, 0x00);
         assert_eq!(mapper_4k.read_chr(0x0000), 1);
 
-        let mut mapper_8k = create_mmc5_mapper(prg_rom, chr_rom_8k, MirroringMode::Horizontal)
+        let mut mapper_8k = create_mmc5_mapper(prg_rom, chr_rom_8k, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         mapper_8k.ppu_set_chr_fetch_is_ppudata();
@@ -2568,7 +2574,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 16);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // CHR mode 3 (1KB).
@@ -2608,7 +2614,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 16);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // CHR mode 3 (1KB).
@@ -2644,7 +2650,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Map $2000 quadrant to ExRAM (value 2 in bits 1-0).
@@ -2662,7 +2668,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Map $2000 quadrant to ExRAM (value 2).
@@ -2709,7 +2715,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Disable rendering (PPUMASK = 0).
@@ -2729,7 +2735,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Disable rendering (PPUMASK = 0).
@@ -2749,7 +2755,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Disable rendering (PPUMASK = 0).
@@ -2767,16 +2773,16 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // $5105: A/B/A/B (0x44) should be vertical mirroring.
         mapper.write_prg(0x5105, 0x44);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // $5105: A/A/B/B (0x50) should be horizontal mirroring.
         mapper.write_prg(0x5105, 0x50);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     #[test]
@@ -2784,7 +2790,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Enable rendering and select 8x8 sprites.
@@ -2808,7 +2814,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Map $2000 quadrant to fill mode (value 3 in bits 1-0).
@@ -2835,7 +2841,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Enable extended attribute mode.
@@ -2864,7 +2870,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Map $2000 quadrant to CIRAM page 0 (value 0 in bits 1-0).
@@ -2886,7 +2892,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Enable extended attribute mode.
@@ -2933,7 +2939,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(4 * 1024, 64);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Note: CHR mode is ignored in extended attribute mode, but set it anyway
@@ -2985,7 +2991,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Explicitly disable extended attribute mode.
@@ -3005,7 +3011,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Enable extended attribute mode and provide a palette entry in ExRAM.
@@ -3034,7 +3040,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Write a value into ExRAM so we can detect if reads leak data.
@@ -3062,7 +3068,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Mode 2: CPU read/write allowed.
@@ -3087,7 +3093,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(4 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         mapper.write_prg(0x5101, 0x01);
@@ -3116,7 +3122,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // $5105 = 0x44: NTA=0, NTB=1, NTC=0, NTD=1
@@ -3140,7 +3146,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data_with_upper_marker(1 * 1024, 512);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // 1KB CHR mode.
@@ -3165,7 +3171,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(4 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         mapper.write_prg(0x5101, 0x01);
@@ -3194,7 +3200,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(4 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // CHR mode 1 (4KB banks).
@@ -3222,7 +3228,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Pulse 1 control (volume = 15).
@@ -3246,7 +3252,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Pulse 2 control (volume = 15).
@@ -3269,7 +3275,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Enable PCM / set mode (exact bit meaning handled in implementation).
@@ -3288,7 +3294,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Select PRG-RAM bank 0 and write a value.
@@ -3315,7 +3321,12 @@ mod tests {
         // With 8KB PRG-RAM, bank selection must wrap so bank 1 aliases bank 0.
 
         let rom = make_mmc5_ines_rom_with_prg_ram_banks(1);
-        let mut cart = Cartridge::new(&rom).expect("ROM should parse");
+        let mut cart = Cartridge::load_from_file(
+            &rom,
+            "mmc5-prg-ram-8k-test.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("ROM should parse");
         let mapper = cart.mapper_mut();
 
         mapper.write_prg(0x5113, 0);
@@ -3334,7 +3345,12 @@ mod tests {
         // With 16KB PRG-RAM (2 x 8KB), bank 2 must wrap back to bank 0.
 
         let rom = make_mmc5_ines_rom_with_prg_ram_banks(2);
-        let mut cart = Cartridge::new(&rom).expect("ROM should parse");
+        let mut cart = Cartridge::load_from_file(
+            &rom,
+            "mmc5-prg-ram-16k-test.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("ROM should parse");
         let mapper = cart.mapper_mut();
 
         mapper.write_prg(0x5113, 0);
@@ -3363,7 +3379,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Select PRG mode 2.
@@ -3392,7 +3408,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 16);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Select PRG mode 0
@@ -3415,7 +3431,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 16);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Select PRG mode 1
@@ -3440,7 +3456,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Write multiplicand and multiplier
@@ -3467,7 +3483,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // Mode 2 allows CPU read/write access to ExRAM.
@@ -3491,7 +3507,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1 * 1024, 8);
 
-        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_mmc5_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("MMC5 (mapper 5) should be implemented");
 
         // By default, PRG-RAM should be writable (protect registers initialized to 0x02/0x01)
@@ -3746,7 +3762,7 @@ mod tests {
         let chr_rom = banked_data(1 * 1024, 8);
 
         let mut mapper =
-            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, MirroringMode::Horizontal, 1);
+            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, NametableLayout::Horizontal, 1);
 
         // Verify PRG-RAM size is 8KB (1 bank).
         assert_eq!(mapper.wram_size(), 8 * 1024);
@@ -3809,7 +3825,7 @@ mod tests {
         let chr_rom = banked_data(1 * 1024, 8);
 
         let mut mapper =
-            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, MirroringMode::Horizontal, 8);
+            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, NametableLayout::Horizontal, 8);
 
         // Verify PRG-RAM size is 64KB (8 banks).
         assert_eq!(mapper.wram_size(), 64 * 1024);
@@ -3882,7 +3898,7 @@ mod tests {
         let chr_rom = banked_data(1 * 1024, 8);
 
         let mut mapper =
-            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, MirroringMode::Horizontal, 2);
+            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, NametableLayout::Horizontal, 2);
 
         // Enable PRG-RAM writes temporarily.
         mapper.write_prg(0x5102, 0x02);
@@ -3934,7 +3950,7 @@ mod tests {
         let chr_rom = banked_data(1 * 1024, 8);
 
         let mut mapper =
-            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, MirroringMode::Horizontal, 4);
+            MMC5Mapper::new_with_prg_ram_size(prg_rom, chr_rom, NametableLayout::Horizontal, 4);
 
         // Enable PRG-RAM writes.
         mapper.write_prg(0x5102, 0x02);
@@ -3986,7 +4002,7 @@ mod tests {
         let mut mapper = create_mmc5_mapper(
             vec![0; 256 * 1024],
             vec![0; 8 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         )
         .expect("MMC5 should be supported");
 
@@ -4020,7 +4036,7 @@ mod tests {
         let mut mapper = create_mmc5_mapper(
             vec![0; 256 * 1024],
             vec![0; 8 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         )
         .expect("MMC5 should be supported");
 
@@ -4054,7 +4070,7 @@ mod tests {
         let mapper = create_mmc5_mapper(
             vec![0; 256 * 1024],
             vec![0; 8 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         )
         .expect("MMC5 should be supported");
 

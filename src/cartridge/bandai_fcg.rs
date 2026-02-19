@@ -26,7 +26,7 @@
 //! - Games requiring EEPROM cannot save progress
 use crate::trace_mapper;
 
-use crate::cartridge::MirroringMode;
+use crate::cartridge::NametableLayout;
 use crate::cartridge::common::{BankedRom, ChrMemory};
 use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 
@@ -45,7 +45,7 @@ pub enum BandaiFcgVariant {
 pub struct BandaiFcgMapper {
     prg_rom: BankedRom,
     chr_memory: ChrMemory,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
     variant: BandaiFcgVariant,
 
     // PRG banking
@@ -65,7 +65,7 @@ impl BandaiFcgMapper {
     const PRG_BANK_SIZE: usize = 16 * 1024; // 16KB
     const CHR_BANK_SIZE: usize = 1024; // 1KB
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         // Default to Both variant for submapper 0 (unspecified) compatibility
         Self::new_with_variant(prg_rom, chr_rom, mirroring, BandaiFcgVariant::Both)
     }
@@ -73,7 +73,7 @@ impl BandaiFcgMapper {
     pub fn new_with_variant(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
         variant: BandaiFcgVariant,
     ) -> Self {
         Self {
@@ -176,10 +176,10 @@ impl Mapper for BandaiFcgMapper {
             0x09 => {
                 // Mirroring
                 self.mirroring = match value & 0x03 {
-                    0 => MirroringMode::Vertical,
-                    1 => MirroringMode::Horizontal,
-                    2 => MirroringMode::SingleScreenLower,
-                    3 => MirroringMode::SingleScreenUpper,
+                    0 => NametableLayout::Vertical,
+                    1 => NametableLayout::Horizontal,
+                    2 => NametableLayout::SingleScreenLower,
+                    3 => NametableLayout::SingleScreenUpper,
                     _ => unreachable!(),
                 };
             }
@@ -255,7 +255,7 @@ impl Mapper for BandaiFcgMapper {
         self.irq_pending
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -304,12 +304,12 @@ impl Mapper for BandaiFcgMapper {
         snapshot.push((self.irq_latch & 0xFF) as u8);
         snapshot.push((self.irq_latch >> 8) as u8);
         let mirroring = match self.mirroring {
-            MirroringMode::Horizontal => 0,
-            MirroringMode::Vertical => 1,
-            MirroringMode::SingleScreenLower => 2,
-            MirroringMode::SingleScreenUpper => 3,
-            MirroringMode::SingleScreen => 2,
-            MirroringMode::FourScreen => 4,
+            NametableLayout::Horizontal => 0,
+            NametableLayout::Vertical => 1,
+            NametableLayout::SingleScreenLower => 2,
+            NametableLayout::SingleScreenUpper => 3,
+            NametableLayout::SingleScreen => 2,
+            NametableLayout::FourScreen => 4,
         };
         snapshot.push(mirroring);
         snapshot
@@ -325,12 +325,12 @@ impl Mapper for BandaiFcgMapper {
             self.irq_counter = (data[10] as u16) | ((data[11] as u16) << 8);
             self.irq_latch = (data[12] as u16) | ((data[13] as u16) << 8);
             self.mirroring = match data[14] {
-                0 => MirroringMode::Horizontal,
-                1 => MirroringMode::Vertical,
-                2 => MirroringMode::SingleScreenLower,
-                3 => MirroringMode::SingleScreenUpper,
-                4 => MirroringMode::FourScreen,
-                _ => MirroringMode::Horizontal,
+                0 => NametableLayout::Horizontal,
+                1 => NametableLayout::Vertical,
+                2 => NametableLayout::SingleScreenLower,
+                3 => NametableLayout::SingleScreenUpper,
+                4 => NametableLayout::FourScreen,
+                _ => NametableLayout::Horizontal,
             };
         }
     }
@@ -362,7 +362,7 @@ mod tests {
             16,
             prg_rom,
             chr_rom,
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         ));
         assert!(mapper.is_ok(), "Mapper 16 should be implemented");
     }
@@ -372,7 +372,7 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 4); // 4 x 16KB banks
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Initially bank 0 at $8000, last bank (3) at $C000
         assert_eq!(mapper.read_prg(0x8000), 0, "Bank 0 at $8000");
@@ -389,7 +389,7 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 16); // 16 x 1KB banks
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set different banks for each 1KB slot
         for i in 0..8 {
@@ -414,20 +414,20 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Test all mirroring modes
         mapper.write_prg(0x8009, 0);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         mapper.write_prg(0x8009, 1);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
 
         mapper.write_prg(0x8009, 2);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
 
         mapper.write_prg(0x8009, 3);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenUpper);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenUpper);
     }
 
     #[test]
@@ -435,7 +435,7 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set latch to 3
         mapper.write_prg(0x800B, 3); // Low byte
@@ -462,7 +462,7 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Trigger an IRQ
         mapper.write_prg(0x800B, 1);
@@ -482,7 +482,7 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set latch to 0
         mapper.write_prg(0x800B, 0);
@@ -508,7 +508,7 @@ mod tests {
         let mut mapper = BandaiFcgMapper::new_with_variant(
             prg_rom,
             chr_rom,
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
             BandaiFcgVariant::Fcg1_2,
         );
 
@@ -530,7 +530,7 @@ mod tests {
 
         // Mirroring via $6009
         mapper.write_prg(0x6009, 0);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
     }
 
     #[test]
@@ -541,7 +541,7 @@ mod tests {
         let mut mapper = BandaiFcgMapper::new_with_variant(
             prg_rom,
             chr_rom,
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
             BandaiFcgVariant::Fcg1_2,
         );
 
@@ -562,7 +562,7 @@ mod tests {
         let mut mapper = BandaiFcgMapper::new_with_variant(
             prg_rom,
             chr_rom,
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
             BandaiFcgVariant::Fcg1_2,
         );
 
@@ -595,7 +595,7 @@ mod tests {
         let mut mapper = BandaiFcgMapper::new_with_variant(
             prg_rom,
             chr_rom,
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
             BandaiFcgVariant::Lz93d50,
         );
 
@@ -626,7 +626,7 @@ mod tests {
         let chr_rom = banked_data(1024, 16);
 
         // Default constructor uses Both variant
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // $6000 range should work
         mapper.write_prg(0x6008, 1);
@@ -650,7 +650,7 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = BandaiFcgMapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // $6000 range uses FCG-1/2 behavior (direct counter writes)
         mapper.write_prg(0x600B, 5); // Direct counter low = 5
@@ -692,7 +692,8 @@ mod tests {
         let prg_rom = banked_data(16 * 1024, 4);
         let chr_rom = vec![]; // CHR-RAM path
 
-        let mut mapper = BandaiFcgMapper::new(prg_rom.clone(), chr_rom, MirroringMode::Horizontal);
+        let mut mapper =
+            BandaiFcgMapper::new(prg_rom.clone(), chr_rom, NametableLayout::Horizontal);
 
         mapper.write_prg(0x8008, 2); // PRG bank
         mapper.write_prg(0x8000, 3); // CHR bank 0
@@ -707,13 +708,13 @@ mod tests {
         let regs = mapper.registers_snapshot();
         let chr = mapper.chr_ram_snapshot();
 
-        let mut restored = BandaiFcgMapper::new(prg_rom, vec![], MirroringMode::Vertical);
+        let mut restored = BandaiFcgMapper::new(prg_rom, vec![], NametableLayout::Vertical);
         restored.restore_registers(&regs);
         restored.restore_chr_ram(&chr);
 
         assert_eq!(restored.read_prg(0x8000), 2);
         assert_eq!(restored.read_chr(0x0000), 0xAB);
-        assert_eq!(restored.get_mirroring(), MirroringMode::SingleScreenUpper);
+        assert_eq!(restored.get_mirroring(), NametableLayout::SingleScreenUpper);
         assert_eq!(restored.irq_pending(), mapper.irq_pending());
     }
 

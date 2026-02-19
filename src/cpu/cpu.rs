@@ -2298,7 +2298,7 @@ impl Cpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::{Cartridge, MirroringMode};
+    use crate::cartridge::{Cartridge, NametableLayout};
     use crate::cpu::opcode;
     use std::cell::RefCell;
     use std::rc::Rc;
@@ -2310,7 +2310,7 @@ mod tests {
         prg_rom[0x3FFD] = 0x80;
         prg_rom[0x0000] = 0xEA; // NOP at $8000
         let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
     }
 
@@ -2569,7 +2569,7 @@ mod tests {
         prg_rom[0x0000] = 0xEA; // NOP at $8000
         prg_rom[0x1000] = 0xEA; // NOP at $9000
         let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
@@ -2617,7 +2617,7 @@ mod tests {
         prg_rom[0x0000] = 0xEA; // NOP at $8000
         prg_rom[0x1000] = 0x40; // RTI at $9000
         let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
@@ -2760,7 +2760,12 @@ mod tests {
         rom.extend(vec![0u8; 2 * 16 * 1024]);
         rom.extend(vec![0u8; 8 * 1024]);
 
-        let cart = crate::cartridge::Cartridge::new(&rom).expect("cartridge should parse");
+        let cart = crate::cartridge::Cartridge::load_from_file(
+            &rom,
+            "cpu-reset-test.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("cartridge should parse");
         memory.borrow_mut().map_cartridge(cart);
 
         // Configure VRC6 saw: rate=8, period=0, enable.
@@ -2811,7 +2816,7 @@ mod tests {
         prg_rom[0x3FFF] = 0x90;
         prg_rom[0x0000] = 0xEA; // NOP at $8000
         let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
@@ -2851,7 +2856,7 @@ mod tests {
         prg_rom[0x0000] = 0xEA; // NOP at $8000
         prg_rom[0x1000] = 0xEA; // NOP at $9000
         let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
@@ -2944,7 +2949,12 @@ mod tests {
         rom.extend_from_slice(&prg_rom);
         rom.extend_from_slice(&chr_rom);
 
-        let cartridge = Cartridge::new(&rom).expect("MMC3 iNES ROM should parse");
+        let cartridge = Cartridge::load_from_file(
+            &rom,
+            "cpu-mmc3-test.nes",
+            &crate::app_context::AppContext::new(),
+        )
+        .expect("MMC3 iNES ROM should parse");
         cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
@@ -3001,7 +3011,7 @@ mod tests {
         prg_rom[0x3FFD] = 0x80;
         prg_rom[0x0000] = 0xEA; // NOP at $8000
         let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
@@ -3124,7 +3134,7 @@ mod tests {
         prg_rom[0x3FFC] = 0x00;
         prg_rom[0x3FFD] = 0x80;
         let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         // Enable NMI on VBlank (PPUCTRL bit 7)
@@ -3226,7 +3236,7 @@ mod tests {
         // Create CHR ROM with zeros only (8KB)
         let chr_rom = vec![0; 0x2000];
 
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         cpu.bus.borrow_mut().map_cartridge(cartridge);
     }
@@ -7751,7 +7761,7 @@ mod tests {
         prg_rom[0x3FFF] = 0x80; // High byte of 0x8000
 
         let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
         cpu.reset(true);
 
@@ -10811,7 +10821,7 @@ mod tests {
         prg_rom[0x0000] = CLI;
         prg_rom[0x0001] = NOP;
         let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);
@@ -10857,7 +10867,7 @@ mod tests {
         prg_rom[0x0001] = NOP;
         prg_rom[0x0002] = NOP;
         let chr_rom = vec![0; 0x2000];
-        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
 
         cpu.reset(true);

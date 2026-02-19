@@ -32,14 +32,14 @@ pub type GxROMMapper = DualBank32Mapper<0b0011, 4, 0b0011, 0, 66>;
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::MirroringMode;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
 
     fn create_gxrom_mapper(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
         create_mapper(MapperContext::new(66, prg_rom, chr_rom, mirroring))
     }
@@ -53,7 +53,7 @@ mod tests {
         let prg_rom = banked_data(32 * 1024, 4);
         let chr_rom = banked_data(8 * 1024, 4);
 
-        let mut mapper = create_gxrom_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_gxrom_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("GxROM (mapper 66) should be implemented");
 
         // Initial banks should be 0.
@@ -75,14 +75,14 @@ mod tests {
         let prg_rom = banked_data(32 * 1024, 2);
         let chr_rom = banked_data(8 * 1024, 2);
 
-        let mut mapper = create_gxrom_mapper(prg_rom, chr_rom, MirroringMode::Vertical)
+        let mut mapper = create_gxrom_mapper(prg_rom, chr_rom, NametableLayout::Vertical)
             .expect("GxROM (mapper 66) should be implemented");
 
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // Bank select write should not affect mirroring.
         mapper.write_prg(0xFFFF, 0xFF);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
     }
 
     #[test]
@@ -90,15 +90,18 @@ mod tests {
         let prg_rom = banked_data(32 * 1024, 4);
         let chr_rom = banked_data(8 * 1024, 4);
 
-        let mut mapper =
-            create_gxrom_mapper(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
-                .expect("GxROM (mapper 66) should be implemented");
+        let mut mapper = create_gxrom_mapper(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        )
+        .expect("GxROM (mapper 66) should be implemented");
 
         mapper.write_prg(0x8000, 0x21); // PRG bank 2, CHR bank 1
 
         let registers = mapper.registers_snapshot();
 
-        let mut restored = create_gxrom_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut restored = create_gxrom_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("GxROM (mapper 66) should be implemented");
         restored.restore_registers(&registers);
 
@@ -111,7 +114,7 @@ mod tests {
         let mapper = create_gxrom_mapper(
             vec![0; 128 * 1024],
             vec![0; 32 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         )
         .expect("GxROM (mapper 66) should be implemented");
 

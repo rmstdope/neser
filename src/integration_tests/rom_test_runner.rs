@@ -136,7 +136,11 @@ pub(crate) mod tests {
                 }
             };
 
-            let cartridge = match Cartridge::new(&rom_data) {
+            let cartridge = match Cartridge::load_from_file(
+                &rom_data,
+                &self.rom_path,
+                &crate::app_context::AppContext::new(),
+            ) {
                 Ok(cart) => cart,
                 Err(e) => {
                     eprintln!("Failed to parse ROM {}: {}", self.rom_path, e);
@@ -370,7 +374,11 @@ pub(crate) mod tests {
             }
         };
 
-        let cartridge = match Cartridge::new(&rom_data) {
+        let cartridge = match Cartridge::load_from_file(
+            &rom_data,
+            rom_path,
+            &crate::app_context::AppContext::new(),
+        ) {
             Ok(cart) => cart,
             Err(e) => {
                 eprintln!("Failed to parse ROM {}: {}", rom_path, e);
@@ -661,8 +669,12 @@ pub(crate) mod tests {
             #[test]
             fn $test_name() {
                 let rom_data = std::fs::read($rom_path).expect("ROM should load");
-                let cartridge =
-                    $crate::cartridge::Cartridge::new(&rom_data).expect("ROM should parse");
+                let cartridge = $crate::cartridge::Cartridge::load_from_file(
+                    &rom_data,
+                    $rom_path,
+                    &$crate::app_context::AppContext::new(),
+                )
+                .expect("ROM should parse");
 
                 let mut config = $crate::console::Config {
                     ram_init_mode: $crate::console::RamInitMode::Zero,

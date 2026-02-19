@@ -6,7 +6,7 @@
 //! - See CARTRIDGE_REVIEW.md sections 5 and 6 for remaining mapper test/documentation follow-up.
 
 use crate::cartridge::common::{BankSwitch, BankedRom};
-use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 11 - Color Dreams
 ///
@@ -35,13 +35,13 @@ use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
 pub struct ColorDreamsMapper {
     prg_rom: BankedRom,
     chr_rom: BankedRom,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
     prg_bank: BankSwitch,
     chr_bank: BankSwitch,
 }
 
 impl ColorDreamsMapper {
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         const PRG_BANK_SIZE: usize = 32 * 1024;
         const CHR_BANK_SIZE: usize = 8 * 1024;
 
@@ -92,7 +92,7 @@ impl Mapper for ColorDreamsMapper {
         // CHR-ROM is read-only
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -133,7 +133,7 @@ impl Mapper for ColorDreamsMapper {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::MirroringMode;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
     const BUS_CONFLICT_SAFE_ADDR: u16 = 0x8001;
@@ -149,7 +149,7 @@ mod tests {
     fn create_colordreams_mapper(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
         create_mapper(MapperContext::new(11, prg_rom, chr_rom, mirroring))
     }
@@ -164,7 +164,7 @@ mod tests {
         let prg_rom = banked_prg_with_conflict_safe_write(4);
         let chr_rom = banked_data(8 * 1024, 16);
 
-        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("ColorDreams (mapper 11) should be implemented");
 
         // Initial banks should be 0.
@@ -188,7 +188,7 @@ mod tests {
         let prg_rom = banked_prg_with_conflict_safe_write(4); // 4 PRG banks max
         let chr_rom = banked_data(8 * 1024, 16); // 16 CHR banks max
 
-        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("ColorDreams (mapper 11) should be implemented");
 
         mapper.write_prg(BUS_CONFLICT_SAFE_ADDR, 0xE3); // CHR=14, lockout bits=0, PRG=3
@@ -201,14 +201,14 @@ mod tests {
         let prg_rom = banked_data(32 * 1024, 2);
         let chr_rom = banked_data(8 * 1024, 2);
 
-        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Vertical)
+        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, NametableLayout::Vertical)
             .expect("ColorDreams (mapper 11) should be implemented");
 
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // Bank select write should not affect mirroring.
         mapper.write_prg(0xFFFF, 0xFF);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
     }
 
     #[test]
@@ -218,7 +218,7 @@ mod tests {
         let prg_rom = banked_prg_with_conflict_safe_write(2); // 2 PRG banks available
         let chr_rom = banked_data(8 * 1024, 2); // Only 2 CHR banks
 
-        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("ColorDreams (mapper 11) should be implemented");
 
         // PRG selects from bits 0-1. Bank 3 wraps to bank 1 (3 % 2 = 1).
@@ -235,16 +235,19 @@ mod tests {
         let prg_rom = banked_prg_with_conflict_safe_write(4);
         let chr_rom = banked_data(8 * 1024, 4);
 
-        let mut mapper =
-            create_colordreams_mapper(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
-                .expect("ColorDreams (mapper 11) should be implemented");
+        let mut mapper = create_colordreams_mapper(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        )
+        .expect("ColorDreams (mapper 11) should be implemented");
 
         // Select CHR bank 2 and PRG bank 3 (0b0010_0011 = 0x23)
         mapper.write_prg(BUS_CONFLICT_SAFE_ADDR, 0x23);
 
         let snapshot = mapper.registers_snapshot();
 
-        let mut restored = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut restored = create_colordreams_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("ColorDreams (mapper 11) should be implemented");
         restored.restore_registers(&snapshot);
 
@@ -291,7 +294,7 @@ mod tests {
         let mapper = ColorDreamsMapper::new(
             vec![0; 128 * 1024],
             vec![0; 128 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
 
         assert_eq!(mapper.read_prg_open_bus(0x5000, 0x55), 0x55);
@@ -305,7 +308,7 @@ mod tests {
         let mapper = create_colordreams_mapper(
             vec![0; 128 * 1024],
             vec![0; 128 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         )
         .expect("ColorDreams (mapper 11) should be implemented");
 
@@ -321,7 +324,7 @@ mod tests {
         }
         let chr_rom = banked_data(8 * 1024, 16);
 
-        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_colordreams_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("ColorDreams (mapper 11) should be implemented");
 
         // Initial bank at $8000 reads 0x00, so conflict masks write 0x01 -> 0x00.

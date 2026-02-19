@@ -10,7 +10,7 @@
 // ============================================================================
 
 use crate::cartridge::common::ChrMemory;
-use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 use crate::trace_mapper;
 
 // ============================================================================
@@ -55,7 +55,7 @@ pub struct MMC3Mapper {
     prg_ram_enabled: bool,
     prg_ram_write_protected: bool,
 
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
 
     bank_select: u8,
     regs: [u8; 8],
@@ -97,7 +97,7 @@ impl MMC3Mapper {
     /// let mapper = MMC3Mapper::new(prg_rom, chr_rom, mirroring).with_irq_mode(true);
     /// ```
     #[allow(dead_code)]
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self::new_with_irq_mode(prg_rom, chr_rom, mirroring, false)
     }
 
@@ -110,7 +110,7 @@ impl MMC3Mapper {
     pub fn new_with_irq_mode(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
         use_alternate_irq: bool,
     ) -> Self {
         Self {
@@ -387,7 +387,7 @@ impl MMC3Mapper {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use crate::cartridge::MirroringMode;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::mmc3::MMC3Mapper;
     use crate::cartridge::test_helpers::banked_data;
@@ -395,7 +395,7 @@ mod tests {
     fn create_mmc3_mapper(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> Box<dyn Mapper> {
         create_mapper(MapperContext::new(4, prg_rom, chr_rom, mirroring))
             .expect("MMC3 (mapper 4) should be implemented")
@@ -406,7 +406,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = MMC3Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
         mapper.write_prg(0x6000, 0xAA);
         assert_eq!(mapper.read_prg(0x6000), 0xAA);
     }
@@ -420,7 +420,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set IRQ latch to 1
         mapper.write_prg(0xC000, 1);
@@ -458,7 +458,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         mapper.write_prg(0xC000, 1); // latch=1
         mapper.write_prg(0xC001, 0); // reload
@@ -495,7 +495,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         mapper.write_prg(0xC000, 1); // latch=1
         mapper.write_prg(0xC001, 0); // reload
@@ -530,8 +530,11 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper =
-            create_mmc3_mapper(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
 
         mapper.write_prg(0xC000, 0); // latch=0
         mapper.write_prg(0xC001, 0); // reload
@@ -545,7 +548,7 @@ mod tests {
 
         let saved = mapper.registers_snapshot();
 
-        let mut restored = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut restored = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
         restored.restore_registers(&saved);
 
         restored.ppu_address_changed(0x1000);
@@ -564,7 +567,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = MMC3Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Set latch to a non-zero value
         mapper.write_prg(0xC000, 5);
@@ -632,7 +635,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8); // 8 x 8KB banks; last=7, second-last=6
         let chr_rom = banked_data(1024, 16); // Enough to satisfy mapper creation; not used in this test
 
-        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // PRG mode 0, set R6=$8000 bank 2, R7=$A000 bank 3
         mapper.write_prg(0x8000, 0b0000_0110); // bank select: register 6, PRG mode 0, CHR mode 0
@@ -666,7 +669,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16); // 16 x 1KB banks
 
-        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Ensure CHR mode 0.
         mapper.write_prg(0x8000, 0b0000_0000); // bank select: register 0, CHR mode 0
@@ -709,7 +712,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Default: PRG-RAM enabled (can read and write)
         mapper.write_prg(0x6000, 0xAA);
@@ -739,7 +742,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Write a value to PRG-RAM while it's enabled
         mapper.write_prg(0x6000, 0xAA);
@@ -780,7 +783,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16); // 16 x 1KB banks
 
-        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Enable CHR mode 1 (bit7=1) and program registers.
         mapper.write_prg(0x8000, 0b1000_0000); // R0, CHR mode 1
@@ -818,23 +821,23 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Starts with the cartridge-provided mirroring.
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
 
         // $A000 even: mirroring control (bit 0)
         // 0 => Vertical
         mapper.write_prg(0xA000, 0);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // $A001 odd: PRG-RAM protect; must not affect mirroring
         mapper.write_prg(0xA001, 1);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // 1 => Horizontal
         mapper.write_prg(0xA000, 1);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     #[test]
@@ -843,7 +846,7 @@ mod tests {
         // Switching the bank should change what is visible at the same PPU address.
 
         let prg_rom = banked_data(8 * 1024, 8);
-        let mut mapper = create_mmc3_mapper(prg_rom, vec![], MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, vec![], NametableLayout::Horizontal);
 
         // CHR mode 0: $1000-$13FF uses R2 (1KB bank).
         mapper.write_prg(0x8000, 0b0000_0010); // select R2
@@ -870,7 +873,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // Ensure CHR mode 0 and select R1.
         mapper.write_prg(0x8000, 0b0000_0001); // R1, CHR mode 0
@@ -893,7 +896,7 @@ mod tests {
 
         let chr_rom = vec![]; // No CHR-ROM (uses CHR-RAM)
 
-        let mapper = create_mmc3_mapper(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mapper = create_mmc3_mapper(prg_rom, chr_rom, NametableLayout::Horizontal);
 
         // With 2 banks and default configuration (PRG mode 0):
         // $8000-$9FFF: R6 (bank 0) = 0xAA
@@ -917,7 +920,8 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 32); // 256KB = 32 8KB banks
         let chr_rom = banked_data(1024, 128); // 128KB = 128 1KB banks
 
-        let mut mapper = MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+        let mut mapper =
+            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
 
         // Configure all 8 bank registers
         mapper.write_prg(0x8000, 0x00); // Select R0 (2KB CHR)
@@ -957,14 +961,14 @@ mod tests {
         assert_eq!(mapper.read_chr(0x0400), 17); // R0 bank + 1 (odd 2KB)
         assert_eq!(mapper.read_prg(0x6000), 0xAA); // PRG-RAM
         assert_eq!(mapper.read_prg(0x7FFF), 0x55);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
 
         // Take snapshot
         let registers = mapper.registers_snapshot();
         let prg_ram = mapper.wram_snapshot();
 
         // Create fresh mapper and restore
-        let mut restored = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut restored = MMC3Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
         restored.restore_registers(&registers);
         restored.load_wram_snapshot(&prg_ram);
 
@@ -975,7 +979,7 @@ mod tests {
         assert_eq!(restored.read_chr(0x0400), 17);
         assert_eq!(restored.read_prg(0x6000), 0xAA);
         assert_eq!(restored.read_prg(0x7FFF), 0x55);
-        assert_eq!(restored.get_mirroring(), MirroringMode::Vertical);
+        assert_eq!(restored.get_mirroring(), NametableLayout::Vertical);
     }
 
     #[test]
@@ -984,8 +988,11 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 8);
         let chr_rom = banked_data(1024, 16);
 
-        let mut mapper =
-            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut mapper = MMC3Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
 
         // Configure IRQ
         mapper.write_prg(0xC000, 5); // Latch = 5
@@ -1009,7 +1016,7 @@ mod tests {
         let registers = mapper.registers_snapshot();
 
         // Create fresh mapper and restore
-        let mut restored = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut restored = MMC3Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
         restored.restore_registers(&registers);
 
         // Verify IRQ state is preserved
@@ -1033,27 +1040,36 @@ mod tests {
         let chr_rom = banked_data(1024, 16);
 
         // Test FourScreen mirroring
-        let mut mapper_fourscreen =
-            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::FourScreen);
+        let mut mapper_fourscreen = MMC3Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::FourScreen,
+        );
 
         // Configure some state to make the test more realistic
         mapper_fourscreen.write_prg(0x8000, 0x00); // Select R0
         mapper_fourscreen.write_prg(0x8001, 0x05); // R0 = bank 5
 
         // FourScreen mode should be preserved even without explicit write (it's set at construction)
-        assert_eq!(mapper_fourscreen.get_mirroring(), MirroringMode::FourScreen);
+        assert_eq!(
+            mapper_fourscreen.get_mirroring(),
+            NametableLayout::FourScreen
+        );
 
         // Take snapshot
         let registers_fourscreen = mapper_fourscreen.registers_snapshot();
 
         // Restore to fresh mapper (initially Horizontal) and verify FourScreen is restored
-        let mut restored_fourscreen =
-            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mut restored_fourscreen = MMC3Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
         restored_fourscreen.restore_registers(&registers_fourscreen);
 
         assert_eq!(
             restored_fourscreen.get_mirroring(),
-            MirroringMode::FourScreen,
+            NametableLayout::FourScreen,
             "FourScreen mirroring should be preserved across save/load"
         );
 
@@ -1061,7 +1077,7 @@ mod tests {
         let mut mapper_singlescreen = MMC3Mapper::new(
             prg_rom.clone(),
             chr_rom.clone(),
-            MirroringMode::SingleScreen,
+            NametableLayout::SingleScreen,
         );
 
         // Configure some state
@@ -1070,19 +1086,20 @@ mod tests {
 
         assert_eq!(
             mapper_singlescreen.get_mirroring(),
-            MirroringMode::SingleScreen
+            NametableLayout::SingleScreen
         );
 
         // Take snapshot
         let registers_singlescreen = mapper_singlescreen.registers_snapshot();
 
         // Restore to fresh mapper and verify SingleScreen is restored
-        let mut restored_singlescreen = MMC3Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut restored_singlescreen =
+            MMC3Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
         restored_singlescreen.restore_registers(&registers_singlescreen);
 
         assert_eq!(
             restored_singlescreen.get_mirroring(),
-            MirroringMode::SingleScreen,
+            NametableLayout::SingleScreen,
             "SingleScreen mirroring should be preserved across save/load"
         );
     }
@@ -1094,19 +1111,25 @@ mod tests {
         let chr_rom = banked_data(1024, 8);
 
         // Create mapper with default (Sharp) IRQ behavior
-        let mapper_default =
-            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal);
+        let mapper_default = MMC3Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        );
         assert!(!mapper_default.use_alternate_irq);
 
         // Create mapper with alternate (NEC) IRQ behavior using builder pattern
-        let mapper_alternate =
-            MMC3Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Horizontal)
-                .with_irq_mode(true);
+        let mapper_alternate = MMC3Mapper::new(
+            prg_rom.clone(),
+            chr_rom.clone(),
+            NametableLayout::Horizontal,
+        )
+        .with_irq_mode(true);
         assert!(mapper_alternate.use_alternate_irq);
 
         // Verify new_with_irq_mode still works
         let mapper_explicit =
-            MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, MirroringMode::Horizontal, true);
+            MMC3Mapper::new_with_irq_mode(prg_rom, chr_rom, NametableLayout::Horizontal, true);
         assert!(mapper_explicit.use_alternate_irq);
     }
 
@@ -1116,7 +1139,7 @@ mod tests {
         let mut mapper = MMC3Mapper::new(
             vec![0; 128 * 1024],
             vec![0; 128 * 1024],
-            MirroringMode::Horizontal,
+            NametableLayout::Horizontal,
         );
 
         // Enable PRG-RAM (bit 7 = 1)
@@ -1237,9 +1260,9 @@ impl Mapper for MMC3Mapper {
                     // Mirroring
                     // MMC3: bit0 selects mirroring.
                     let new_mirroring = if (value & 1) == 0 {
-                        MirroringMode::Vertical
+                        NametableLayout::Vertical
                     } else {
-                        MirroringMode::Horizontal
+                        NametableLayout::Horizontal
                     };
                     trace_mapper!(1; "MMC3 mirroring={:?}", new_mirroring);
                     self.mirroring = new_mirroring;
@@ -1307,7 +1330,7 @@ impl Mapper for MMC3Mapper {
         self.irq_asserted
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -1370,10 +1393,10 @@ impl Mapper for MMC3Mapper {
             | ((self.prg_ram_write_protected as u8) << 4);
         snapshot.push(flags);
         snapshot.push(match self.mirroring {
-            MirroringMode::Vertical => 0,
-            MirroringMode::Horizontal => 1,
-            MirroringMode::FourScreen => 2,
-            MirroringMode::SingleScreen => 3,
+            NametableLayout::Vertical => 0,
+            NametableLayout::Horizontal => 1,
+            NametableLayout::FourScreen => 2,
+            NametableLayout::SingleScreen => 3,
             _ => 1,
         });
         snapshot.push(self.prev_a12 as u8);
@@ -1395,11 +1418,11 @@ impl Mapper for MMC3Mapper {
             self.prg_ram_enabled = (flags & 8) != 0;
             self.prg_ram_write_protected = (flags & 16) != 0;
             self.mirroring = match data[12] {
-                0 => MirroringMode::Vertical,
-                1 => MirroringMode::Horizontal,
-                2 => MirroringMode::FourScreen,
-                3 => MirroringMode::SingleScreen,
-                _ => MirroringMode::Horizontal,
+                0 => NametableLayout::Vertical,
+                1 => NametableLayout::Horizontal,
+                2 => NametableLayout::FourScreen,
+                3 => NametableLayout::SingleScreen,
+                _ => NametableLayout::Horizontal,
             };
         }
 

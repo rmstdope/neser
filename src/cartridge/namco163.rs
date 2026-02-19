@@ -8,7 +8,7 @@
 use std::cell::Cell;
 
 use crate::cartridge::common::{ChrMemory, DEFAULT_PRG_RAM_SIZE, PrgRam};
-use crate::cartridge::{Mapper, MapperCapabilities, MirroringMode};
+use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 /// Mapper 19 - Namco 163 (Namco 129/163 with expansion audio)
 ///
@@ -39,7 +39,7 @@ pub struct Namco163Mapper {
     prg_rom: Vec<u8>,
     chr_memory: ChrMemory,
     prg_ram: PrgRam,
-    mirroring: MirroringMode,
+    mirroring: NametableLayout,
     regs: [u8; 16],
     namco_ram: [u8; 128],
     audio_addr: Cell<u8>,
@@ -59,7 +59,7 @@ impl Namco163Mapper {
     const CHR_BANK_SIZE_1K: usize = 0x0400;
     const IRQ_COUNTER_MAX: u16 = 0x7FFF;
 
-    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: MirroringMode) -> Self {
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self {
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
@@ -106,10 +106,10 @@ impl Namco163Mapper {
 
     fn map_mirroring(&mut self, value: u8) {
         self.mirroring = match value & 0x3 {
-            0 => MirroringMode::Vertical,
-            1 => MirroringMode::Horizontal,
-            2 => MirroringMode::SingleScreenLower,
-            3 => MirroringMode::SingleScreenUpper,
+            0 => NametableLayout::Vertical,
+            1 => NametableLayout::Horizontal,
+            2 => NametableLayout::SingleScreenLower,
+            3 => NametableLayout::SingleScreenUpper,
             _ => unreachable!("value is masked to 0..3"),
         };
     }
@@ -402,7 +402,7 @@ impl Mapper for Namco163Mapper {
         self.audio_last_output as f32 / 128.0
     }
 
-    fn get_mirroring(&self) -> MirroringMode {
+    fn get_mirroring(&self) -> NametableLayout {
         self.mirroring
     }
 
@@ -518,7 +518,7 @@ impl Mapper for Namco163Mapper {
 
 #[cfg(test)]
 mod tests {
-    use crate::cartridge::MirroringMode;
+    use crate::cartridge::NametableLayout;
     use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
     use crate::cartridge::namco163::Namco163Mapper;
     use crate::cartridge::test_helpers::banked_data;
@@ -526,7 +526,7 @@ mod tests {
     fn create_namco163_mapper(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: MirroringMode,
+        mirroring: NametableLayout,
     ) -> std::io::Result<Box<dyn Mapper>> {
         create_mapper(MapperContext::new(19, prg_rom, chr_rom, mirroring))
     }
@@ -537,7 +537,7 @@ mod tests {
         let chr_rom = banked_data(1024, 16);
 
         let mut mapper: Namco163Mapper =
-            Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+            Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
 
         // Select PRG banks for $8000/$A000/$C000.
         mapper.write_prg(0x8008, 1);
@@ -570,7 +570,7 @@ mod tests {
 
         // Mirroring register (reg 11).
         mapper.write_prg(0x800B, 1);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
     }
 
     #[test]
@@ -578,7 +578,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 4);
         let chr_rom = banked_data(1024, 8);
 
-        let mut mapper = create_namco163_mapper(prg_rom, chr_rom, MirroringMode::Horizontal)
+        let mut mapper = create_namco163_mapper(prg_rom, chr_rom, NametableLayout::Horizontal)
             .expect("Mapper 19 should be implemented");
 
         // Load counter to 0x7FFF and enable (bit 7 of reg 13).
@@ -601,7 +601,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = Vec::new(); // CHR-RAM path is fine for this test.
 
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
 
         // Internal 128-byte RAM via data port + address port.
         mapper.write_prg(0xF800, 0x80); // ptr=0, auto-inc
@@ -631,7 +631,7 @@ mod tests {
         let prg_rom = banked_data(8 * 1024, 2);
         let chr_rom = banked_data(1024, 2);
 
-        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+        let mut mapper = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
 
         // Set RAM pointer to 0 with auto-increment.
         mapper.write_prg(0xF800, 0x80);
@@ -655,7 +655,7 @@ mod tests {
         let chr_rom = banked_data(1024, 2);
 
         let mut mapper: Namco163Mapper =
-            Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Vertical);
+            Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Vertical);
 
         // Write a simple waveform: nibble 0xF at position 0.
         mapper.write_prg(0xF800, 0x80); // pointer=0, auto-inc
@@ -708,7 +708,7 @@ mod tests {
         let chr_rom = banked_data(1024, 2);
 
         let mut mapper =
-            Namco163Mapper::new(prg_rom.clone(), chr_rom.clone(), MirroringMode::Vertical);
+            Namco163Mapper::new(prg_rom.clone(), chr_rom.clone(), NametableLayout::Vertical);
 
         // Configure audio so we have a non-zero last output.
         mapper.write_prg(0xF800, 0x80); // pointer=0, auto-inc
@@ -742,14 +742,14 @@ mod tests {
 
         // Set mirroring to SingleScreenLower.
         mapper.write_prg(0x800B, 2);
-        assert_eq!(mapper.get_mirroring(), MirroringMode::SingleScreenLower);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::SingleScreenLower);
 
         let snapshot = mapper.registers_snapshot();
 
-        let mut restored = Namco163Mapper::new(prg_rom, chr_rom, MirroringMode::Horizontal);
+        let mut restored = Namco163Mapper::new(prg_rom, chr_rom, NametableLayout::Horizontal);
         restored.restore_registers(&snapshot);
 
-        assert_eq!(restored.get_mirroring(), MirroringMode::SingleScreenLower);
+        assert_eq!(restored.get_mirroring(), NametableLayout::SingleScreenLower);
         assert_eq!(restored.read_prg(0x4800), 0xAA);
         assert_eq!(restored.read_prg(0x4800), 0xBB);
         assert_eq!(

@@ -75,8 +75,9 @@ mod tests {
     fn create_nes_from_rom(rom_path: &str, config: Config, rom_name: &str) -> Nes {
         let rom_data =
             fs::read(rom_path).unwrap_or_else(|e| panic!("{} ROM should load: {}", rom_name, e));
-        let cartridge = Cartridge::new(&rom_data)
-            .unwrap_or_else(|e| panic!("{} ROM should parse: {}", rom_name, e));
+        let cartridge =
+            Cartridge::load_from_file(&rom_data, rom_path, &crate::app_context::AppContext::new())
+                .unwrap_or_else(|e| panic!("{} ROM should parse: {}", rom_name, e));
 
         let mut nes = Nes::new(config);
         nes.insert_cartridge(cartridge);
@@ -380,7 +381,9 @@ AA AA 01 01 10 10 01 01 00 00\n\
     fn load_oamtest3_nes() -> Nes {
         let rom_path = "roms/automated_tests/oamtest3/oam3.nes";
         let rom_data = fs::read(rom_path).expect("oam3 ROM should load");
-        let cartridge = Cartridge::new(&rom_data).expect("oam3 ROM should parse");
+        let cartridge =
+            Cartridge::load_from_file(&rom_data, rom_path, &crate::app_context::AppContext::new())
+                .expect("oam3 ROM should parse");
 
         let config = Config {
             ram_init_mode: RamInitMode::SeededRandom(0x5760_0000_0000_0001),

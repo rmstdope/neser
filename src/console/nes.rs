@@ -770,6 +770,12 @@ pub use savestate_error::SaveStateError;
 mod tests {
     use super::*;
 
+    fn load_test_cartridge(rom_data: &[u8]) -> Cartridge {
+        let app_context = crate::app_context::AppContext::new();
+        Cartridge::load_from_file(rom_data, "nes-test-rom.nes", &app_context)
+            .expect("Failed to create cartridge")
+    }
+
     #[test]
     fn test_ntsc_ppu_cycles_per_cpu_cycle() {
         let ntsc = TimingMode::Ntsc;
@@ -905,7 +911,7 @@ mod tests {
     #[test]
     fn test_nes_reset_reestablishes_1_cycle_ppu_offset() {
         let rom_data = create_minimal_rom();
-        let cartridge = Cartridge::new(&rom_data).expect("minimal ROM should parse");
+        let cartridge = load_test_cartridge(&rom_data);
 
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
@@ -976,7 +982,7 @@ mod tests {
     fn test_nes_reset_resets_apu_before_cpu_reset_ticks() {
         let mut nes = Nes::new(Config::default());
         let rom_data = create_minimal_rom();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
 
         // Ensure cpu_cycle passed into APU reset is non-zero (so we don't take the power-on
@@ -1003,7 +1009,7 @@ mod tests {
     fn test_nes_reset_soft_reset_rewrites_last_4017_value() {
         let mut nes = Nes::new(Config::default());
         let rom_data = create_minimal_rom();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
 
         // Set a non-default $4017 value.
@@ -1028,7 +1034,7 @@ mod tests {
     fn test_oam_dma_takes_513_cycles_on_even_cpu_cycle() {
         let mut nes = Nes::new(Config::default());
         let rom_data = create_minimal_rom();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.cpu.reset(false);
 
@@ -1057,7 +1063,7 @@ mod tests {
     fn test_oam_dma_takes_514_cycles_on_odd_cpu_cycle() {
         let mut nes = Nes::new(Config::default());
         let rom_data = create_minimal_rom();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.cpu.reset(false);
 
@@ -1086,7 +1092,7 @@ mod tests {
     fn test_oam_dma_transfers_256_bytes() {
         let mut nes = Nes::new(Config::default());
         let rom_data = create_minimal_rom();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.cpu.reset(false);
 
@@ -1125,7 +1131,7 @@ mod tests {
     fn test_oam_dma_uses_correct_source_page() {
         let mut nes = Nes::new(Config::default());
         let rom_data = create_minimal_rom();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.cpu.reset(false);
 
@@ -1163,7 +1169,7 @@ mod tests {
     fn test_ppu_advances_during_oam_dma() {
         let mut nes = Nes::new(Config::default());
         let rom_data = create_minimal_rom();
-        let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.cpu.reset(false);
 
@@ -1242,7 +1248,7 @@ mod tests {
 
         // Load a simple NOP program that executes predictably
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
 
         // Reset to start execution
@@ -1271,7 +1277,7 @@ mod tests {
         let mut nes = Nes::new(Config::default());
 
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1295,7 +1301,7 @@ mod tests {
         let mut nes = Nes::new(Config::default());
 
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1332,7 +1338,7 @@ mod tests {
         let mut nes = Nes::new(Config::default());
 
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1369,7 +1375,7 @@ mod tests {
         let mut nes = Nes::new(Config::default());
 
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1393,7 +1399,7 @@ mod tests {
         let mut nes = Nes::new(Config::default());
 
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1420,7 +1426,7 @@ mod tests {
         let mut nes = Nes::new(Config::default());
 
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 
@@ -1474,7 +1480,7 @@ mod tests {
     #[test]
     fn test_nes_reset_resets_cartridge() {
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
 
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
@@ -1497,7 +1503,7 @@ mod tests {
     fn test_save_state_roundtrip() {
         // Create and initialize NES
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
 
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
@@ -1539,7 +1545,7 @@ mod tests {
     #[test]
     fn test_save_state_version_check() {
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
 
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
@@ -1564,7 +1570,7 @@ mod tests {
     #[test]
     fn test_save_state_mapper_mismatch() {
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
 
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
@@ -1590,7 +1596,7 @@ mod tests {
     fn test_save_state_deterministic_execution() {
         // This test verifies that loading a state and running produces identical results
         let rom_data = create_minimal_nrom_rom();
-        let cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let cartridge = load_test_cartridge(&rom_data);
 
         let mut nes = Nes::new(Config::default());
         nes.insert_cartridge(cartridge);
@@ -1637,7 +1643,7 @@ mod tests {
     #[test]
     fn test_insert_cartridge_enables_paddle_for_known_crc() {
         let rom_data = create_minimal_nrom_rom();
-        let mut cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let mut cartridge = load_test_cartridge(&rom_data);
         cartridge.set_crc32_for_test(0x32FB0583);
 
         let mut nes = Nes::new(Config::default());
@@ -1657,7 +1663,7 @@ mod tests {
     #[test]
     fn test_insert_cartridge_disables_paddle_for_unknown_crc() {
         let rom_data = create_minimal_nrom_rom();
-        let mut cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let mut cartridge = load_test_cartridge(&rom_data);
         cartridge.set_crc32_for_test(0xDEADBEEF);
 
         let mut nes = Nes::new(Config::default());
@@ -1676,7 +1682,7 @@ mod tests {
     #[test]
     fn test_insert_cartridge_does_not_add_second_arkanoid_port() {
         let rom_data = create_minimal_nrom_rom();
-        let mut cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let mut cartridge = load_test_cartridge(&rom_data);
         cartridge.set_crc32_for_test(0x32FB0583);
 
         let config = Config {
@@ -1704,7 +1710,7 @@ mod tests {
     #[test]
     fn test_insert_cartridge_enables_zapper_for_known_crc() {
         let rom_data = create_minimal_nrom_rom();
-        let mut cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let mut cartridge = load_test_cartridge(&rom_data);
         cartridge.set_crc32_for_test(0x24598791);
 
         let mut nes = Nes::new(Config::default());
@@ -1724,7 +1730,7 @@ mod tests {
     #[test]
     fn test_insert_cartridge_keeps_explicit_port2_when_zapper_detected() {
         let rom_data = create_minimal_nrom_rom();
-        let mut cartridge = crate::cartridge::Cartridge::new(&rom_data).unwrap();
+        let mut cartridge = load_test_cartridge(&rom_data);
         cartridge.set_crc32_for_test(0x24598791);
 
         let config = Config {

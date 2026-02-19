@@ -19,6 +19,11 @@ fn create_test_rom() -> Vec<u8> {
     rom
 }
 
+fn load_test_cartridge(rom_data: &[u8], rom_name: &str) -> Cartridge {
+    Cartridge::load_from_file(rom_data, rom_name, &crate::app_context::AppContext::new())
+        .expect("Failed to create cartridge")
+}
+
 #[test]
 fn test_cpu_ram_initialization_zero_mode() {
     let mut config = Config::with_defaults();
@@ -147,7 +152,7 @@ fn test_cartridge_ram_initialization_zero_mode() {
     let mut nes = Nes::new(config);
 
     let rom_data = create_test_rom();
-    let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+    let cartridge = load_test_cartridge(&rom_data, "ram-init-zero.nes");
     nes.insert_cartridge(cartridge);
 
     let mut bus = nes.bus.borrow_mut();
@@ -169,7 +174,7 @@ fn test_cartridge_ram_initialization_seeded_random_deterministic() {
     let mut nes1 = Nes::new(config1);
 
     let rom_data1 = create_test_rom();
-    let cartridge1 = Cartridge::new(&rom_data1).expect("Failed to create cartridge");
+    let cartridge1 = load_test_cartridge(&rom_data1, "ram-init-seeded-a.nes");
     nes1.insert_cartridge(cartridge1);
 
     let mut config2 = Config::with_defaults();
@@ -177,7 +182,7 @@ fn test_cartridge_ram_initialization_seeded_random_deterministic() {
     let mut nes2 = Nes::new(config2);
 
     let rom_data2 = create_test_rom();
-    let cartridge2 = Cartridge::new(&rom_data2).expect("Failed to create cartridge");
+    let cartridge2 = load_test_cartridge(&rom_data2, "ram-init-seeded-b.nes");
     nes2.insert_cartridge(cartridge2);
 
     let mut bus1 = nes1.bus.borrow_mut();
@@ -202,7 +207,7 @@ fn test_hard_reset_reinitializes_ram() {
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
-    let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+    let cartridge = load_test_cartridge(&rom_data, "ram-init-hard-reset.nes");
     nes.insert_cartridge(cartridge);
 
     // Write some non-zero data to RAM
@@ -232,7 +237,7 @@ fn test_soft_reset_preserves_ram() {
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
-    let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+    let cartridge = load_test_cartridge(&rom_data, "ram-init-soft-reset.nes");
     nes.insert_cartridge(cartridge);
 
     // Write some non-zero data to RAM
@@ -262,7 +267,7 @@ fn test_ppu_hard_reset_reinitializes_ram() {
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
-    let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+    let cartridge = load_test_cartridge(&rom_data, "ram-init-ppu-hard-reset.nes");
     nes.insert_cartridge(cartridge);
 
     // Write some non-zero data to PPU nametable
@@ -293,7 +298,7 @@ fn test_ppu_soft_reset_preserves_ram() {
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
-    let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+    let cartridge = load_test_cartridge(&rom_data, "ram-init-ppu-soft-reset.nes");
     nes.insert_cartridge(cartridge);
 
     // Write some non-zero data to PPU nametable
@@ -410,7 +415,7 @@ fn test_oam_hard_reset_reinitializes() {
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
-    let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+    let cartridge = load_test_cartridge(&rom_data, "ram-init-oam-hard-reset.nes");
     nes.insert_cartridge(cartridge);
 
     // Write some non-zero data to OAM
@@ -450,7 +455,7 @@ fn test_oam_soft_reset_preserves() {
 
     // Insert a cartridge so reset works
     let rom_data = create_test_rom();
-    let cartridge = Cartridge::new(&rom_data).expect("Failed to create cartridge");
+    let cartridge = load_test_cartridge(&rom_data, "ram-init-oam-soft-reset.nes");
     nes.insert_cartridge(cartridge);
 
     // Write some non-zero data to OAM

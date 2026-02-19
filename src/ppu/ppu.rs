@@ -1,4 +1,4 @@
-use crate::cartridge::{Cartridge, MirroringMode};
+use crate::cartridge::{Cartridge, NametableLayout};
 use crate::console::{Nes, PpuRegisterState, PpuState, PpuTimingState, SpritesState, TimingMode};
 use crate::ppu::color_effects::apply_grayscale;
 use crate::ppu::{Background, Memory, Registers, Rendering, Sprites, Status, Timing};
@@ -504,7 +504,7 @@ impl Ppu {
     }
 
     /// Set mirroring mode
-    pub fn set_mirroring(&mut self, mirroring: MirroringMode) {
+    pub fn set_mirroring(&mut self, mirroring: NametableLayout) {
         self.memory.set_mirroring(mirroring);
     }
 
@@ -986,7 +986,7 @@ impl Ppu {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cartridge::MirroringMode;
+    use crate::cartridge::NametableLayout;
     use crate::console::Nes;
     use crate::ppu::{
         background, memory, registers, rendering, screen_buffer, sprites, status, timing,
@@ -1015,8 +1015,8 @@ mod tests {
             self.calls.borrow_mut().push((scanline, rendering_enabled));
         }
 
-        fn get_mirroring(&self) -> MirroringMode {
-            MirroringMode::Horizontal
+        fn get_mirroring(&self) -> NametableLayout {
+            NametableLayout::Horizontal
         }
     }
 
@@ -1209,7 +1209,7 @@ mod tests {
                 palette,
                 last_palette_index: Some(7),
                 last_palette_value: 0x1C,
-                mirroring_mode: MirroringMode::SingleScreenUpper,
+                mirroring_mode: NametableLayout::SingleScreenUpper,
             },
             background: background::BackgroundDebugState {
                 bg_pattern_shift_lo: 0x1234,
@@ -1311,8 +1311,8 @@ mod tests {
             *self.calls.borrow_mut() += 1;
         }
 
-        fn get_mirroring(&self) -> MirroringMode {
-            MirroringMode::Horizontal
+        fn get_mirroring(&self) -> NametableLayout {
+            NametableLayout::Horizontal
         }
     }
 
@@ -1369,8 +1369,8 @@ mod tests {
                 .push(ChrFetchEvent::SetIsSprite(is_sprite));
         }
 
-        fn get_mirroring(&self) -> MirroringMode {
-            MirroringMode::Horizontal
+        fn get_mirroring(&self) -> NametableLayout {
+            NametableLayout::Horizontal
         }
     }
 
@@ -1395,8 +1395,8 @@ mod tests {
             self.calls.borrow_mut().push(addr);
         }
 
-        fn get_mirroring(&self) -> MirroringMode {
-            MirroringMode::Horizontal
+        fn get_mirroring(&self) -> NametableLayout {
+            NametableLayout::Horizontal
         }
     }
 
@@ -2205,7 +2205,7 @@ mod tests {
     #[test]
     fn test_vertical_mirroring() {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
-        ppu.set_mirroring(crate::cartridge::MirroringMode::Vertical);
+        ppu.set_mirroring(crate::cartridge::NametableLayout::Vertical);
 
         // Write to nametable 0
         ppu.write_address(0x20, false);
@@ -2222,7 +2222,7 @@ mod tests {
     #[test]
     fn test_horizontal_mirroring() {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
-        ppu.set_mirroring(crate::cartridge::MirroringMode::Horizontal);
+        ppu.set_mirroring(crate::cartridge::NametableLayout::Horizontal);
 
         // Write to nametable 0
         ppu.write_address(0x20, false);
