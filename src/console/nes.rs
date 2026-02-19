@@ -1,4 +1,4 @@
-use crate::app_context::AppContext;
+use crate::app_context::IntoSharedAppContext;
 use crate::apu::Apu;
 use crate::bus::Bus;
 use crate::cartridge::Cartridge;
@@ -25,9 +25,9 @@ pub struct Nes {
 }
 
 impl Nes {
-    pub fn new(app_context: AppContext) -> Self {
-        let config = app_context.config();
-        let config = config.borrow().clone();
+    pub fn new<C: IntoSharedAppContext>(app_context: C) -> Self {
+        let app_context = app_context.into_shared();
+        let config = app_context.borrow().config().clone();
         let tv_system = config.tv_system;
         let ram_init_mode = config.ram_init_mode;
         let oam_dram_decay_enabled = config.oam_dram_decay_enabled;
@@ -35,11 +35,10 @@ impl Nes {
         ppu.borrow_mut()
             .set_oam_dram_decay_enabled(oam_dram_decay_enabled);
         let apu = Rc::new(RefCell::new(Apu::new_with_tv_system(tv_system)));
-        let config_rc = Rc::new(RefCell::new(config));
         let memory = Rc::new(RefCell::new(Bus::new(
             ppu.clone(),
             apu.clone(),
-            config_rc.clone(),
+            app_context,
         )));
         let cpu = Cpu::new(tv_system, memory.clone(), ppu.clone(), apu.clone());
 
@@ -55,7 +54,7 @@ impl Nes {
             cpu,
             fractional_ppu_cycles: 0.0,
             ready_to_render: false,
-            config: config_rc,
+            config: Rc::new(RefCell::new(config)),
         }
     }
 

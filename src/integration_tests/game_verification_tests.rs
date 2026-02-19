@@ -66,7 +66,7 @@ mod tests {
     }
 
     fn load_test_cartridge(rom_data: &[u8], rom_path: &Path) -> Result<Cartridge, String> {
-        Cartridge::load_from_file(rom_data, rom_path, &crate::app_context::AppContext::new())
+        Cartridge::load_from_file(rom_data, rom_path, crate::app_context::AppContext::new())
             .map_err(|e| format!("Failed to parse ROM {}: {e}", rom_path.display()))
     }
 
@@ -136,7 +136,7 @@ mod tests {
         let cartridge = Cartridge::load_from_file(
             &rom_data,
             "manual-triangle-only.nes",
-            &crate::app_context::AppContext::new(),
+            crate::app_context::AppContext::new(),
         )
         .expect("ROM should parse");
 

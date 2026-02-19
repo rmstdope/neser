@@ -485,7 +485,7 @@ mod tests {
         let cartridge = Cartridge::load_from_file(
             &create_mmc3_ines_rom(),
             "ppu-memory-mmc3-test.nes",
-            &crate::app_context::AppContext::new(),
+            crate::app_context::AppContext::new(),
         )
         .expect("MMC3 test ROM should load");
         let cartridge_rc = Rc::new(RefCell::new(cartridge));

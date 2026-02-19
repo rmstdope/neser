@@ -80,7 +80,7 @@ mod tests {
         let rom_data =
             fs::read(rom_path).unwrap_or_else(|e| panic!("{} ROM should load: {}", rom_name, e));
         let cartridge =
-            Cartridge::load_from_file(&rom_data, rom_path, &crate::app_context::AppContext::new())
+            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
                 .unwrap_or_else(|e| panic!("{} ROM should parse: {}", rom_name, e));
 
         let mut nes = Nes::new(app_context);
@@ -386,7 +386,7 @@ AA AA 01 01 10 10 01 01 00 00\n\
         let rom_path = "roms/automated_tests/oamtest3/oam3.nes";
         let rom_data = fs::read(rom_path).expect("oam3 ROM should load");
         let cartridge =
-            Cartridge::load_from_file(&rom_data, rom_path, &crate::app_context::AppContext::new())
+            Cartridge::load_from_file(&rom_data, rom_path, crate::app_context::AppContext::new())
                 .expect("oam3 ROM should parse");
 
         let config = Config {

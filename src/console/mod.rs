@@ -3,7 +3,7 @@ mod nes;
 mod ram_init;
 mod savestate;
 
-use crate::app_context::AppContext;
+use crate::app_context::SharedAppContext;
 use crate::debugging::log_info;
 
 pub use crate::cartridge::TimingMode;
@@ -22,12 +22,12 @@ pub use savestate::{
 };
 
 pub fn log_rom_timing_mode_selection(
-    app_context: &AppContext,
+    app_context: &SharedAppContext,
     rom_timing_mode: TimingMode,
     applied: bool,
 ) {
-    let config = app_context.config();
-    let config = config.borrow();
+    let binding = app_context.borrow();
+    let config = binding.config();
     if !config.tv_system_explicit && !rom_timing_mode.is_ntsc_or_pal() {
         log_info(format!(
             "ROM TV system unknown; using configured {}",

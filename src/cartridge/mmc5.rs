@@ -3324,7 +3324,7 @@ mod tests {
         let mut cart = Cartridge::load_from_file(
             &rom,
             "mmc5-prg-ram-8k-test.nes",
-            &crate::app_context::AppContext::new(),
+            crate::app_context::AppContext::new(),
         )
         .expect("ROM should parse");
         let mapper = cart.mapper_mut();
@@ -3348,7 +3348,7 @@ mod tests {
         let mut cart = Cartridge::load_from_file(
             &rom,
             "mmc5-prg-ram-16k-test.nes",
-            &crate::app_context::AppContext::new(),
+            crate::app_context::AppContext::new(),
         )
         .expect("ROM should parse");
         let mapper = cart.mapper_mut();

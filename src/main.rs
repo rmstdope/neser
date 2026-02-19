@@ -17,7 +17,9 @@ use console::{ApuChannels, Config, Nes, ParseResult, SaveState, log_rom_timing_m
 use debugging::log_info;
 use frontend_toasts::{cartridge_load_toast_message, emulator_timing_toast_message};
 use sdl_frontend::{SdlEventLoop, SdlNesAudio};
+use std::cell::RefCell;
 use std::fs;
+use std::rc::Rc;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Parse command-line arguments
@@ -31,13 +33,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ParseResult::Config(c) => c,
     };
 
-    let app_context = AppContext::new_with_config(parsed_config);
+    let app_context = Rc::new(RefCell::new(AppContext::new_with_config(parsed_config)));
 
     // Initialize global tracing state (only active in debug builds)
-    let tracing_config = {
-        let config = app_context.config();
-        config.borrow().tracing
-    };
+    let tracing_config = app_context.borrow().config().tracing;
     debugging::init_tracing(tracing_config);
 
     // Initialize SDL2
@@ -47,10 +46,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // SDL may open the device at a different rate; always sync the APU to the actual rate
     // to avoid steady underruns.
     let mut audio_sample_rate = None;
-    let audio_enabled = {
-        let config = app_context.config();
-        config.borrow().audio_enabled
-    };
+    let audio_enabled = app_context.borrow().config().audio_enabled;
     let audio = if !audio_enabled {
         None
     } else {
@@ -89,56 +85,57 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // let rom_data = manual_test_cartridges::pulse2_only_nrom_128();
     // let rom_data = manual_test_cartridges::noise_only_nrom_128();
 
-    let rom_path = {
-        let config = app_context.config();
-        config
-            .borrow()
-            .rom_path
-            .clone()
-            .unwrap_or_else(|| default_rom_path.to_string())
-    };
+    let rom_path = app_context
+        .borrow()
+        .config()
+        .rom_path
+        .clone()
+        .unwrap_or_else(|| default_rom_path.to_string());
     let rom_bytes = match fs::read(&rom_path) {
         Ok(bytes) => bytes,
         Err(err) => {
-            app_context.add_toast(cartridge_load_toast_message(&rom_path, false));
+            app_context
+                .borrow_mut()
+                .add_toast(cartridge_load_toast_message(&rom_path, false));
             return Err(err.into());
         }
     };
-    let cart = match cartridge::Cartridge::load_from_file(&rom_bytes, &rom_path, &app_context) {
-        Ok(cartridge) => {
-            app_context.add_toast(cartridge_load_toast_message(&rom_path, true));
-            cartridge
-        }
-        Err(err) => {
-            app_context.add_toast(cartridge_load_toast_message(&rom_path, false));
-            return Err(err.into());
-        }
-    };
+    let cart =
+        match cartridge::Cartridge::load_from_file(&rom_bytes, &rom_path, app_context.clone()) {
+            Ok(cartridge) => {
+                app_context
+                    .borrow_mut()
+                    .add_toast(cartridge_load_toast_message(&rom_path, true));
+                cartridge
+            }
+            Err(err) => {
+                app_context
+                    .borrow_mut()
+                    .add_toast(cartridge_load_toast_message(&rom_path, false));
+                return Err(err.into());
+            }
+        };
 
     let rom_timing_mode = cart.rom_timing_mode();
-    let applied = {
-        let config = app_context.config();
-        config.borrow_mut().apply_rom_timing_mode(rom_timing_mode)
-    };
+    let applied = app_context
+        .borrow_mut()
+        .config_mut()
+        .apply_rom_timing_mode(rom_timing_mode);
     log_rom_timing_mode_selection(&app_context, rom_timing_mode, applied);
 
     let mut nes_instance = Nes::new(app_context.clone());
     nes_instance.insert_cartridge(cart);
-    let tv_system = {
-        let config = app_context.config();
-        config.borrow().tv_system
-    };
-    app_context.add_toast(emulator_timing_toast_message(tv_system));
+    let tv_system = app_context.borrow().config().tv_system;
+    app_context
+        .borrow_mut()
+        .add_toast(emulator_timing_toast_message(tv_system));
 
     if let Some(actual_rate) = audio_sample_rate {
         nes_instance.apu.borrow_mut().set_sample_rate(actual_rate);
     }
 
     // Create event loop with headless mode if autorun playback is headless
-    let headless = {
-        let config = app_context.config();
-        config.borrow().autorun_headless
-    };
+    let headless = app_context.borrow().config().autorun_headless;
     // In headless autorun/playback, force audio to None so no audio device is required
     let audio_for_frontend = if headless { None } else { audio };
     let mut event_loop =
@@ -146,8 +143,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize autorun if enabled
     let (autorun_mode, autorun_overwrite, autorun_extend) = {
-        let config = app_context.config();
-        let config = config.borrow();
+        let config = app_context.borrow();
+        let config = config.config();
         (
             config.autorun_mode,
             config.autorun_overwrite,
@@ -159,10 +156,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Request debugger open if enabled via CLI
-    let debugger_enabled = {
-        let config = app_context.config();
-        config.borrow().debugger_enabled
-    };
+    let debugger_enabled = app_context.borrow().config().debugger_enabled;
     if debugger_enabled {
         event_loop.request_debugger_open();
     }
@@ -170,10 +164,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Temporary hard-coded breakpoint for debugger development.
     // event_loop.add_breakpoint(0xE486);
 
-    let load_state = {
-        let config = app_context.config();
-        config.borrow().load_state
-    };
+    let load_state = app_context.borrow().config().load_state;
     if load_state {
         let state_path = nes_instance
             .state_path()
@@ -191,8 +182,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Apply channel enable/disable settings
     {
         let mut apu = nes_instance.apu.borrow_mut();
+        let app_context = app_context.borrow();
         let config = app_context.config();
-        let config = config.borrow();
         apu.set_pulse1_enabled(config.apu_channels.contains(ApuChannels::PULSE1));
         apu.set_pulse2_enabled(config.apu_channels.contains(ApuChannels::PULSE2));
         apu.set_triangle_enabled(config.apu_channels.contains(ApuChannels::TRIANGLE));
@@ -200,10 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         apu.set_dmc_enabled(config.apu_channels.contains(ApuChannels::DMC));
     }
 
-    let run_tracing = {
-        let config = app_context.config();
-        config.borrow().tracing
-    };
+    let run_tracing = app_context.borrow().config().tracing;
     let run_result = event_loop.run(&mut nes_instance, run_tracing);
 
     // Handle autorun exit codes before save-on-shutdown

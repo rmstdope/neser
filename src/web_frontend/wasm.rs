@@ -1,4 +1,4 @@
-use crate::app_context::AppContext;
+use crate::app_context::{AppContext, SharedAppContext};
 use crate::cartridge::Cartridge;
 use crate::console::{Config, Nes, SaveState, log_rom_timing_mode_selection};
 use crate::frontend_toasts::{
@@ -6,6 +6,8 @@ use crate::frontend_toasts::{
     gamepad_init_toast_message as shared_gamepad_init_toast_message,
 };
 use crate::input::{Button, ControllerType};
+use std::cell::RefCell;
+use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 
 /// Provides a minimal WASM bridge for running the emulator in the browser.
@@ -15,7 +17,7 @@ pub struct WasmNes {
     audio_muted: bool,
     rom_loaded: bool,
     pending_toasts: Vec<String>,
-    app_context: AppContext,
+    app_context: SharedAppContext,
 }
 
 impl Default for WasmNes {
@@ -63,7 +65,7 @@ impl WasmNes {
     #[wasm_bindgen(constructor)]
     pub fn new() -> WasmNes {
         console_error_panic_hook::set_once();
-        let app_context = AppContext::new_with_config(Config::default());
+        let app_context = Rc::new(RefCell::new(AppContext::new_with_config(Config::default())));
         WasmNes {
             nes: Nes::new(app_context.clone()),
             audio_muted: false,
@@ -78,11 +80,10 @@ impl WasmNes {
     pub fn load_rom(&mut self, rom: &[u8], rom_name: &str) -> Result<(), JsValue> {
         let app_context = self.app_context.clone();
         {
-            let config = app_context.config();
-            *config.borrow_mut() = Config::default();
+            *app_context.borrow_mut().config_mut() = Config::default();
         }
         self.rom_loaded = false;
-        let cart = match Cartridge::load_from_file(rom, rom_name, &app_context) {
+        let cart = match Cartridge::load_from_file(rom, rom_name, app_context.clone()) {
             Ok(cart) => cart,
             Err(err) => {
                 self.pending_toasts
@@ -92,10 +93,10 @@ impl WasmNes {
         };
 
         let rom_timing_mode = cart.rom_timing_mode();
-        let applied = {
-            let config = app_context.config();
-            config.borrow_mut().apply_rom_timing_mode(rom_timing_mode)
-        };
+        let applied = app_context
+            .borrow_mut()
+            .config_mut()
+            .apply_rom_timing_mode(rom_timing_mode);
         log_rom_timing_mode_selection(&app_context, rom_timing_mode, applied);
 
         self.nes = Nes::new(app_context);

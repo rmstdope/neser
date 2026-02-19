@@ -28,7 +28,7 @@ pub struct Bus {
     cartridge: Rc<RefCell<Option<Rc<RefCell<Cartridge>>>>>,
     ppu: Rc<RefCell<ppu::Ppu>>,
     apu: Rc<RefCell<apu::Apu>>,
-    config: Rc<RefCell<crate::console::Config>>,
+    app_context: Rc<RefCell<crate::app_context::AppContext>>,
     oam_dma_page: Rc<RefCell<Option<u8>>>, // Stores the page for pending OAM DMA
     dma_triggered: Rc<RefCell<bool>>,
     controllers: [Rc<RefCell<Box<dyn Controller>>>; 2], // Port 1 and Port 2 controllers
@@ -39,13 +39,13 @@ pub struct Bus {
 impl Bus {
     fn build_controller(
         ppu: Rc<RefCell<ppu::Ppu>>,
-        config: Rc<RefCell<crate::console::Config>>,
+        app_context: Rc<RefCell<crate::app_context::AppContext>>,
         controller_type: ControllerType,
     ) -> Box<dyn Controller> {
         match controller_type {
             ControllerType::Joypad => Box::new(NesJoypad::new()),
             ControllerType::Arkanoid => Box::new(ArkanoidController::new()),
-            ControllerType::Zapper => Box::new(Zapper::new(ppu, config)),
+            ControllerType::Zapper => Box::new(Zapper::new(ppu, app_context)),
         }
     }
 
@@ -53,24 +53,24 @@ impl Bus {
     pub fn new(
         ppu: Rc<RefCell<ppu::Ppu>>,
         apu: Rc<RefCell<apu::Apu>>,
-        config: Rc<RefCell<crate::console::Config>>,
+        app_context: Rc<RefCell<crate::app_context::AppContext>>,
     ) -> Self {
         let controllers = [
             Rc::new(RefCell::new(Self::build_controller(
                 ppu.clone(),
-                config.clone(),
+                app_context.clone(),
                 ControllerType::Joypad,
             ))),
             Rc::new(RefCell::new(Self::build_controller(
                 ppu.clone(),
-                config.clone(),
+                app_context.clone(),
                 ControllerType::Joypad,
             ))),
         ];
 
         // Initialize CPU RAM based on config
         let mut cpu_ram = vec![0; 0x10000];
-        let ram_init_mode = config.borrow().ram_init_mode;
+        let ram_init_mode = app_context.borrow().config().ram_init_mode;
         crate::console::initialize_ram(&mut cpu_ram[0..0x800], ram_init_mode);
 
         let mut controller = Self {
@@ -78,7 +78,7 @@ impl Bus {
             cartridge: Rc::new(RefCell::new(None)),
             ppu,
             apu,
-            config: config.clone(),
+            app_context,
             oam_dma_page: Rc::new(RefCell::new(None)),
             dma_triggered: Rc::new(RefCell::new(false)),
             controllers,
@@ -459,7 +459,7 @@ impl Bus {
         }
 
         let new_controller =
-            Self::build_controller(self.ppu.clone(), self.config.clone(), controller_type);
+            Self::build_controller(self.ppu.clone(), self.app_context.clone(), controller_type);
 
         *self.controllers[(port - 1) as usize].borrow_mut() = new_controller;
     }
@@ -597,7 +597,7 @@ impl Bus {
             ControllerStateWrapper::Joypad(s) => {
                 let mut controller = Self::build_controller(
                     self.ppu.clone(),
-                    self.config.clone(),
+                    self.app_context.clone(),
                     ControllerType::Joypad,
                 );
                 controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
@@ -606,7 +606,7 @@ impl Bus {
             ControllerStateWrapper::Arkanoid(s) => {
                 let mut controller = Self::build_controller(
                     self.ppu.clone(),
-                    self.config.clone(),
+                    self.app_context.clone(),
                     ControllerType::Arkanoid,
                 );
                 controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
@@ -615,7 +615,7 @@ impl Bus {
             ControllerStateWrapper::Zapper(s) => {
                 let mut controller = Self::build_controller(
                     self.ppu.clone(),
-                    self.config.clone(),
+                    self.app_context.clone(),
                     ControllerType::Zapper,
                 );
                 controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
@@ -628,7 +628,7 @@ impl Bus {
             ControllerStateWrapper::Joypad(s) => {
                 let mut controller = Self::build_controller(
                     self.ppu.clone(),
-                    self.config.clone(),
+                    self.app_context.clone(),
                     ControllerType::Joypad,
                 );
                 controller.restore_state(&crate::input::ControllerState::Joypad(s.clone()));
@@ -637,7 +637,7 @@ impl Bus {
             ControllerStateWrapper::Arkanoid(s) => {
                 let mut controller = Self::build_controller(
                     self.ppu.clone(),
-                    self.config.clone(),
+                    self.app_context.clone(),
                     ControllerType::Arkanoid,
                 );
                 controller.restore_state(&crate::input::ControllerState::Paddle(s.clone()));
@@ -646,7 +646,7 @@ impl Bus {
             ControllerStateWrapper::Zapper(s) => {
                 let mut controller = Self::build_controller(
                     self.ppu.clone(),
-                    self.config.clone(),
+                    self.app_context.clone(),
                     ControllerType::Zapper,
                 );
                 controller.restore_state(&crate::input::ControllerState::Zapper(s.clone()));
@@ -802,16 +802,13 @@ mod tests {
     fn test_restore_mapper_state_updates_ppu_mirroring() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        let config = Rc::new(RefCell::new(crate::console::Config::default()));
-        let mut bus = Bus::new(ppu.clone(), apu, config);
+        let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
+        let mut bus = Bus::new(ppu.clone(), apu, app_context.clone());
 
         let rom = create_mmc1_rom();
-        let cartridge = Cartridge::load_from_file(
-            &rom,
-            "bus-mmc1-state-test.nes",
-            &crate::app_context::AppContext::new(),
-        )
-        .expect("Failed to create MMC1 ROM");
+        let cartridge =
+            Cartridge::load_from_file(&rom, "bus-mmc1-state-test.nes", app_context.clone())
+                .expect("Failed to create MMC1 ROM");
         bus.map_cartridge(cartridge);
 
         write_mmc1_control(&mut bus, 0x1E); // PRG mode 3, vertical mirroring
@@ -897,8 +894,10 @@ mod tests {
             ram_init_mode: crate::console::RamInitMode::Zero,
             ..Default::default()
         };
-        let config = Rc::new(RefCell::new(config));
-        Bus::new(ppu, apu, config)
+        let app_context = Rc::new(RefCell::new(
+            crate::app_context::AppContext::new_with_config(config),
+        ));
+        Bus::new(ppu, apu, app_context.clone())
     }
 
     #[test]
@@ -1027,8 +1026,8 @@ mod tests {
     fn test_oam_dma_write_notifies_mapper_only_on_real_write() {
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        let config = Rc::new(RefCell::new(crate::console::Config::default()));
-        let mut memory = Bus::new(ppu, apu, config);
+        let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
+        let mut memory = Bus::new(ppu, apu, app_context.clone());
 
         let oam_dma_calls = Rc::new(RefCell::new(0u32));
         let mapper = Box::new(OamDmaCountingMapper::new(oam_dma_calls.clone()));
@@ -1060,7 +1059,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::load_from_file(
             &rom,
             "bus-open-bus-mmc1.nes",
-            &crate::app_context::AppContext::new(),
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
         )
         .expect("valid cartridge");
         memory.map_cartridge(cartridge);
@@ -1079,7 +1078,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::load_from_file(
             &rom,
             "bus-open-bus-nrom.nes",
-            &crate::app_context::AppContext::new(),
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
         )
         .expect("valid cartridge");
         memory.map_cartridge(cartridge);
@@ -1160,13 +1159,13 @@ mod tests {
 
         let ppu = Rc::new(RefCell::new(ppu::Ppu::new_for_testing(TimingMode::Ntsc)));
         let apu = Rc::new(RefCell::new(apu::Apu::new()));
-        let config = Rc::new(RefCell::new(crate::console::Config::default()));
-        let mut mem = Bus::new(ppu.clone(), apu, config);
+        let app_context = Rc::new(RefCell::new(crate::app_context::AppContext::new()));
+        let mut mem = Bus::new(ppu.clone(), apu, app_context.clone());
 
         let cart = Cartridge::load_from_file(
             &create_mmc1_ines_rom_with_vertical_mirroring(),
             "bus-mmc1-mirroring-runtime.nes",
-            &crate::app_context::AppContext::new(),
+            app_context.clone(),
         )
         .expect("MMC1 test ROM should load");
         mem.map_cartridge(cart);
@@ -1213,7 +1212,7 @@ mod tests {
         let cart = Cartridge::load_from_file(
             &create_mmc1_ines_rom_with_vertical_mirroring(),
             "bus-mmc1-wram-disable.nes",
-            &crate::app_context::AppContext::new(),
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
         )
         .expect("MMC1 test ROM should load");
         mem.map_cartridge(cart);
@@ -1489,7 +1488,7 @@ mod tests {
         let cartridge = Cartridge::load_from_file(
             &rom_data,
             "bus-prg-ram-rw.nes",
-            &crate::app_context::AppContext::new(),
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
         )
         .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
@@ -1526,7 +1525,7 @@ mod tests {
         let cartridge = Cartridge::load_from_file(
             &rom_data,
             "bus-prg-ram-persistence.nes",
-            &crate::app_context::AppContext::new(),
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
         )
         .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
@@ -1548,7 +1547,7 @@ mod tests {
         let cartridge = Cartridge::load_from_file(
             &rom_data,
             "bus-prg-ram-size.nes",
-            &crate::app_context::AppContext::new(),
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
         )
         .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
@@ -1573,7 +1572,7 @@ mod tests {
         let cartridge = Cartridge::load_from_file(
             &rom_data,
             "bus-prg-ram-zero-init.nes",
-            &crate::app_context::AppContext::new(),
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
         )
         .expect("Failed to create cartridge");
         memory.map_cartridge(cartridge);
@@ -2078,7 +2077,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::load_from_file(
             &rom,
             "bus-trainer-load.nes",
-            &crate::app_context::AppContext::new(),
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
         )
         .unwrap();
         memory.map_cartridge(cartridge);
@@ -2122,7 +2121,7 @@ mod tests {
         let cartridge = crate::cartridge::Cartridge::load_from_file(
             &rom,
             "bus-no-trainer.nes",
-            &crate::app_context::AppContext::new(),
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
         )
         .unwrap();
         memory.map_cartridge(cartridge);

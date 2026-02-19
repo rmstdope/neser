@@ -1,14 +1,20 @@
 use super::autorun_state::AutorunState;
 use super::sdl_audio::SdlNesAudio;
 use super::sdl_gl_wrapper::SdlGlWrapper;
-use crate::app_context::AppContext;
+use crate::app_context::{AppContext, IntoSharedAppContext, SharedAppContext};
 use crate::console::{AutorunMode, ControllerStateWrapper, Nes, SaveState, TimingMode};
 use crate::frontend_toasts::gamepad_init_toast_message;
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::mouse::MouseButton;
+#[cfg(test)]
+#[allow(unused_imports)]
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fs;
+#[cfg(test)]
+#[allow(unused_imports)]
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::debugging::{
@@ -32,7 +38,7 @@ pub enum AutorunExitCode {
 /// It handles user input and window events, exiting when Escape is pressed or the window is closed.
 pub struct SdlEventLoop {
     _sdl_context: sdl2::Sdl,
-    app_context: AppContext,
+    app_context: SharedAppContext,
     gl_backend: Option<SdlGlWrapper>,
     event_pump: sdl2::EventPump,
     vsync_enabled: bool,
@@ -274,16 +280,23 @@ impl SdlEventLoop {
         audio: Option<SdlNesAudio>,
         app_context: AppContext,
     ) -> Result<Self, String> {
-        Self::new_with_context(headless, audio, app_context)
+        Self::new_with_context(headless, audio, app_context.into_shared())
     }
 
     pub fn new_with_context(
         headless: bool,
         audio: Option<SdlNesAudio>,
-        app_context: AppContext,
+        app_context: SharedAppContext,
     ) -> Result<Self, String> {
-        let config_handle = app_context.config();
-        let config = config_handle.borrow();
+        let (gamepads_enabled, vsync_enabled, fullscreen) = {
+            let app_context_ref = app_context.borrow();
+            let config = app_context_ref.config();
+            (
+                config.gamepads_enabled,
+                config.vsync_enabled,
+                config.fullscreen,
+            )
+        };
         let sdl_context = sdl2::init()?;
         let event_pump = sdl_context.event_pump()?;
 
@@ -294,7 +307,7 @@ impl SdlEventLoop {
         };
 
         // Initialize gamepads if enabled
-        let (controllers, controller_player_map) = if config.gamepads_enabled {
+        let (controllers, controller_player_map) = if gamepads_enabled {
             Self::init_gamepads(&sdl_context)?
         } else {
             (Vec::new(), HashMap::new())
@@ -305,8 +318,8 @@ impl SdlEventLoop {
             app_context,
             gl_backend,
             event_pump,
-            vsync_enabled: config.vsync_enabled,
-            fullscreen: config.fullscreen,
+            vsync_enabled,
+            fullscreen,
             paused: false,
             help_overlay_visible: false,
             debugger_open_requested: false,
@@ -326,8 +339,8 @@ impl SdlEventLoop {
         };
 
         let gamepad_toast =
-            gamepad_init_toast_message(config.gamepads_enabled, event_loop.controllers.len());
-        event_loop.app_context.add_toast(gamepad_toast);
+            gamepad_init_toast_message(gamepads_enabled, event_loop.controllers.len());
+        event_loop.app_context.borrow_mut().add_toast(gamepad_toast);
 
         Ok(event_loop)
     }
@@ -1251,9 +1264,9 @@ impl SdlEventLoop {
         }
     }
 
-    pub(crate) fn load_breakpoints_from_context(&mut self, app_context: &AppContext) {
-        let config_handle = app_context.config();
-        let config = config_handle.borrow();
+    pub(crate) fn load_breakpoints_from_context(&mut self, app_context: &SharedAppContext) {
+        let app_context = app_context.borrow();
+        let config = app_context.config();
         for &kind in &config.breakpoints {
             self.breakpoints.add(kind);
         }
@@ -4328,7 +4341,7 @@ mod tests {
             .expect("Failed to write .debug file");
 
         let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
-        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &AppContext::new())
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
             .expect("Failed to load ROM");
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
@@ -4357,7 +4370,7 @@ mod tests {
         let rom_path = copy_test_rom(&temp_dir);
 
         let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
-        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &AppContext::new())
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
             .expect("Failed to load ROM");
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
@@ -4386,7 +4399,7 @@ mod tests {
         let rom_path = copy_test_rom(&temp_dir);
 
         let rom_bytes = std::fs::read(&rom_path).expect("Failed to read ROM");
-        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, &AppContext::new())
+        let cart = Cartridge::load_from_file(&rom_bytes, &rom_path, AppContext::new())
             .expect("Failed to load ROM");
         let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
             Config::default(),
@@ -4433,7 +4446,9 @@ mod tests {
         let mut event_loop =
             SdlEventLoop::new(true, None, AppContext::new_with_config(config.clone())).unwrap();
 
-        event_loop.load_breakpoints_from_context(&AppContext::new_with_config(config));
+        let app_context =
+            std::rc::Rc::new(std::cell::RefCell::new(AppContext::new_with_config(config)));
+        event_loop.load_breakpoints_from_context(&app_context);
 
         assert_eq!(
             event_loop.breakpoint_count(),

@@ -2651,11 +2651,13 @@ mod tests {
             TimingMode::Ntsc,
         )));
         let apu = Rc::new(RefCell::new(crate::apu::Apu::new()));
-        let config = Rc::new(RefCell::new(crate::console::Config::default()));
+        let app_context = Rc::new(RefCell::new(
+            crate::app_context::AppContext::new_with_config(crate::console::Config::default()),
+        ));
         let memory = Rc::new(RefCell::new(Bus::new(
             Rc::clone(&ppu),
             Rc::clone(&apu),
-            config,
+            app_context,
         )));
 
         let cpu = Cpu::new(TimingMode::Ntsc, memory, Rc::clone(&ppu), Rc::clone(&apu));
@@ -2763,7 +2765,7 @@ mod tests {
         let cart = crate::cartridge::Cartridge::load_from_file(
             &rom,
             "cpu-reset-test.nes",
-            &crate::app_context::AppContext::new(),
+            crate::app_context::AppContext::new(),
         )
         .expect("cartridge should parse");
         memory.borrow_mut().map_cartridge(cart);
@@ -2952,7 +2954,7 @@ mod tests {
         let cartridge = Cartridge::load_from_file(
             &rom,
             "cpu-mmc3-test.nes",
-            &crate::app_context::AppContext::new(),
+            crate::app_context::AppContext::new(),
         )
         .expect("MMC3 iNES ROM should parse");
         cpu.bus.borrow_mut().map_cartridge(cartridge);
@@ -3180,11 +3182,13 @@ mod tests {
             ram_init_mode: crate::console::RamInitMode::Zero,
             ..Default::default()
         };
-        let config = Rc::new(RefCell::new(config));
+        let app_context = Rc::new(RefCell::new(
+            crate::app_context::AppContext::new_with_config(config),
+        ));
         let memory = Rc::new(RefCell::new(Bus::new(
             Rc::clone(&ppu),
             Rc::clone(&apu),
-            config,
+            app_context,
         )));
         (ppu, apu, memory)
     }
@@ -3196,11 +3200,13 @@ mod tests {
             ram_init_mode: crate::console::RamInitMode::Zero,
             ..Default::default()
         };
-        let config = Rc::new(RefCell::new(config));
+        let app_context = Rc::new(RefCell::new(
+            crate::app_context::AppContext::new_with_config(config),
+        ));
         let memory = Rc::new(RefCell::new(Bus::new(
             Rc::clone(&ppu),
             Rc::clone(&apu),
-            config,
+            app_context,
         )));
         (ppu, apu, memory)
     }

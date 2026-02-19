@@ -1,6 +1,5 @@
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::cartridge::{RomDb, RomDbEntry};
@@ -9,20 +8,44 @@ use crate::console::Config;
 pub const TOAST_LIFETIME_SECS: u64 = 4;
 pub const MAX_VISIBLE_TOASTS: usize = 3;
 
+pub type SharedAppContext = Rc<RefCell<AppContext>>;
+
+pub trait IntoSharedAppContext {
+    fn into_shared(self) -> SharedAppContext;
+}
+
 #[derive(Debug, Clone)]
 pub struct AppContext {
-    toast_manager: Arc<Mutex<ToastManager>>,
-    rom_db: Arc<RomDb>,
-    config: Rc<RefCell<Config>>,
+    toast_manager: ToastManager,
+    rom_db: RomDb,
+    config: Config,
 }
 
 impl Default for AppContext {
     fn default() -> Self {
         Self {
-            toast_manager: Arc::new(Mutex::new(ToastManager::new())),
-            rom_db: Arc::new(load_rom_db()),
-            config: Rc::new(RefCell::new(Config::default())),
+            toast_manager: ToastManager::new(),
+            rom_db: load_rom_db(),
+            config: Config::default(),
         }
+    }
+}
+
+impl IntoSharedAppContext for AppContext {
+    fn into_shared(self) -> SharedAppContext {
+        Rc::new(RefCell::new(self))
+    }
+}
+
+impl IntoSharedAppContext for &AppContext {
+    fn into_shared(self) -> SharedAppContext {
+        Rc::new(RefCell::new(self.clone()))
+    }
+}
+
+impl IntoSharedAppContext for SharedAppContext {
+    fn into_shared(self) -> SharedAppContext {
+        self
     }
 }
 
@@ -44,26 +67,25 @@ impl AppContext {
 
     pub fn new_with_config(config: Config) -> Self {
         Self {
-            config: Rc::new(RefCell::new(config)),
+            config,
             ..Self::default()
         }
     }
 
-    pub fn config(&self) -> Rc<RefCell<Config>> {
-        self.config.clone()
+    pub fn config(&self) -> &Config {
+        &self.config
     }
 
-    pub fn add_toast(&self, text: impl Into<String>) {
-        self.toast_manager
-            .lock()
-            .expect("toast manager lock poisoned")
-            .push(text.into(), Instant::now());
+    pub fn config_mut(&mut self) -> &mut Config {
+        &mut self.config
     }
 
-    pub fn visible_toasts(&self, now: Instant) -> Vec<String> {
+    pub fn add_toast(&mut self, text: impl Into<String>) {
+        self.toast_manager.push(text.into(), Instant::now());
+    }
+
+    pub fn visible_toasts(&mut self, now: Instant) -> Vec<String> {
         self.toast_manager
-            .lock()
-            .expect("toast manager lock poisoned")
             .visible_toasts(now)
             .into_iter()
             .map(|toast| toast.text.clone())
@@ -81,7 +103,7 @@ struct Toast {
     created_at: Instant,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct ToastManager {
     toasts: Vec<Toast>,
 }
@@ -178,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_app_context_exposes_toast_visibility() {
-        let context = AppContext::new();
+        let mut context = AppContext::new();
         context.add_toast("Saved state");
 
         let visible = context.visible_toasts(Instant::now());

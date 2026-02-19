@@ -1,9 +1,13 @@
+#[cfg(test)]
+use std::cell::RefCell;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::rc::Rc;
 use std::{error, fmt};
 
-use crate::app_context::AppContext;
+use crate::app_context::IntoSharedAppContext;
 use crate::cartridge::mapper::MapperContext;
 use crate::cartridge::{Mapper, NametableLayout, TimingMode};
 
@@ -178,16 +182,17 @@ impl Cartridge {
     }
 
     /// Create a new cartridge from an iNES ROM byte stream and its source path.
-    pub fn load_from_file<P: AsRef<Path>>(
+    pub fn load_from_file<P: AsRef<Path>, C: IntoSharedAppContext>(
         data: &[u8],
         path: P,
-        app_context: &AppContext,
+        app_context: C,
     ) -> Result<Self, CartridgeError> {
+        let app_context = app_context.into_shared();
         let rom_path = path.as_ref().to_path_buf();
         let (info, prg_rom, chr_rom, trainer, crc32) =
             crate::cartridge::parse_rom(data).map_err(Self::map_parse_error)?;
 
-        let db_entry = app_context.get_db_entry_by_crc(crc32);
+        let db_entry = app_context.borrow().get_db_entry_by_crc(crc32);
         let mirroring =
             Self::resolve_mirroring_mode_with_db_override(info.mirroring, db_entry.as_ref());
 
@@ -326,6 +331,7 @@ impl Cartridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app_context::AppContext;
     use std::path::{Path, PathBuf};
 
     const INES_HEADER_SIZE: usize = 16;
@@ -454,14 +460,18 @@ mod tests {
         path
     }
 
-    fn load_cartridge_from_disk(path: &Path, app_context: &AppContext) -> Cartridge {
+    fn load_cartridge_from_disk<C: IntoSharedAppContext>(path: &Path, app_context: C) -> Cartridge {
         let data = std::fs::read(path).expect("reading ROM from disk should succeed");
         Cartridge::load_from_file(&data, path, app_context).expect("load_from_file should succeed")
     }
 
     fn load_cartridge_from_bytes(data: &[u8]) -> Result<Cartridge, CartridgeError> {
-        let app_context = AppContext::new();
-        Cartridge::load_from_file(data, unique_temp_path("in_memory_test.nes"), &app_context)
+        let app_context = Rc::new(RefCell::new(AppContext::new()));
+        Cartridge::load_from_file(
+            data,
+            unique_temp_path("in_memory_test.nes"),
+            app_context.clone(),
+        )
     }
 
     #[test]

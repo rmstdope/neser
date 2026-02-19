@@ -1,4 +1,4 @@
-use crate::app_context::AppContext;
+use crate::app_context::SharedAppContext;
 use crate::console::Nes;
 use crate::debugging::DebuggerViewState;
 use crate::debugging::breakpoints::BreakpointList;
@@ -55,7 +55,7 @@ pub struct GlBackend {
     ppu_viewer_tiles_texture_id: imgui::TextureId,
     overlay_font: imgui::FontId,
     overlay_text_color: OverlayTextColor,
-    app_context: AppContext,
+    app_context: SharedAppContext,
     framebuffer: Vec<u8>,
     last_frame: Instant,
     debugger_view_state: DebuggerViewState,
@@ -262,7 +262,7 @@ impl GlBackend {
         render_target: Box<dyn RenderTarget>,
         proc_address: ProcAddressLoader,
         shader_path: Option<&str>,
-        app_context: AppContext,
+        app_context: SharedAppContext,
     ) -> Result<Self, String> {
         unsafe {
             gl::Disable(gl::DEPTH_TEST);
@@ -491,7 +491,7 @@ impl GlBackend {
             }
         }
 
-        let visible_toasts = self.app_context.visible_toasts(now);
+        let visible_toasts = self.app_context.borrow_mut().visible_toasts(now);
         // Start ImGui frame
         {
             let ui = self.imgui.frame();

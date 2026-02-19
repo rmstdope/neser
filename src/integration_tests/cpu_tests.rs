@@ -16,7 +16,7 @@ mod tests {
     }
 
     fn load_test_cartridge(rom_data: &[u8], rom_path: &str) -> Cartridge {
-        Cartridge::load_from_file(rom_data, rom_path, &crate::app_context::AppContext::new())
+        Cartridge::load_from_file(rom_data, rom_path, crate::app_context::AppContext::new())
             .expect("ROM should parse")
     }
 

@@ -680,6 +680,9 @@ mod tests {
 
 #[cfg(test)]
 mod sample_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use super::*;
     use crate::cartridge::Cartridge;
     use crate::console::{Config, Nes};
@@ -829,13 +832,13 @@ mod sample_tests {
         let cartridge = Cartridge::load_from_file(
             &rom,
             "apu-dmc-test-rom.nes",
-            &crate::app_context::AppContext::new(),
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
         )
         .expect("test ROM should parse");
 
-        let mut nes = Nes::new(crate::app_context::AppContext::new_with_config(
-            Config::default(),
-        ));
+        let mut nes = Nes::new(Rc::new(RefCell::new(
+            crate::app_context::AppContext::new_with_config(Config::default()),
+        )));
         nes.insert_cartridge(cartridge);
         nes.reset(false);
 

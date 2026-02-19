@@ -1,5 +1,5 @@
 use super::sdl_render_target::SdlRenderTarget;
-use crate::app_context::AppContext;
+use crate::app_context::SharedAppContext;
 use crate::debugging::breakpoints::BreakpointList;
 use crate::debugging::ui::DebuggerUiAction;
 use crate::rendering::input::{InputEvent, MouseButton as RenderMouseButton};
@@ -20,11 +20,11 @@ pub struct SdlGlWrapper {
 
 impl SdlGlWrapper {
     /// Creates a new SDL-backed renderer instance.
-    pub fn new(sdl_context: &sdl2::Sdl, app_context: AppContext) -> Result<Self, String> {
+    pub fn new(sdl_context: &sdl2::Sdl, app_context: SharedAppContext) -> Result<Self, String> {
         let video_subsystem = sdl_context.video()?;
         let (fullscreen, vsync_enabled, shader_path, debugger_alpha) = {
-            let config_handle = app_context.config();
-            let config = config_handle.borrow();
+            let app_context_ref = app_context.borrow();
+            let config = app_context_ref.config();
             (
                 config.fullscreen,
                 config.vsync_enabled,
@@ -146,10 +146,10 @@ impl SdlGlWrapper {
 /// Chooses which display to use for fullscreen rendering.
 fn select_target_display(
     video_subsystem: &sdl2::VideoSubsystem,
-    app_context: &AppContext,
+    app_context: &SharedAppContext,
 ) -> Result<Option<i32>, String> {
-    let config_handle = app_context.config();
-    let config = config_handle.borrow();
+    let app_context = app_context.borrow();
+    let config = app_context.config();
     if !config.fullscreen {
         return Ok(None);
     }
@@ -179,11 +179,11 @@ fn select_target_display(
 /// Resolves window size based on fullscreen state and aspect policy.
 fn resolve_window_size(
     video_subsystem: &sdl2::VideoSubsystem,
-    app_context: &AppContext,
+    app_context: &SharedAppContext,
     target_display: Option<i32>,
 ) -> Result<(u32, u32), String> {
-    let config_handle = app_context.config();
-    let config = config_handle.borrow();
+    let app_context = app_context.borrow();
+    let config = app_context.config();
     if let Some(display) = target_display {
         match video_subsystem.display_bounds(display) {
             Ok(bounds) => Ok((bounds.width(), bounds.height())),

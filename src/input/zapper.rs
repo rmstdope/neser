@@ -1,5 +1,6 @@
 use super::ControllerInput;
-use crate::console::{Config, ZapperState};
+use crate::app_context::AppContext;
+use crate::console::ZapperState;
 use crate::input::Button;
 use crate::ppu::Ppu;
 use std::cell::{Cell, RefCell};
@@ -25,18 +26,18 @@ pub struct Zapper {
     trigger: bool,
     light: Cell<bool>,
     ppu: Rc<RefCell<Ppu>>,
-    config: Rc<RefCell<Config>>,
+    app_context: Rc<RefCell<AppContext>>,
 }
 
 impl Zapper {
-    pub fn new(ppu: Rc<RefCell<Ppu>>, config: Rc<RefCell<Config>>) -> Self {
+    pub fn new(ppu: Rc<RefCell<Ppu>>, app_context: Rc<RefCell<AppContext>>) -> Self {
         Self {
             x: 0,
             y: 0,
             trigger: false,
             light: Cell::new(false),
             ppu,
-            config,
+            app_context,
         }
     }
 
@@ -61,7 +62,7 @@ impl crate::input::Controller for Zapper {
     fn write_strobe(&mut self, _value: u8) {}
 
     fn read(&mut self, _is_dummy_read: bool) -> u8 {
-        let detection_size = self.config.borrow().zapper_detection_size;
+        let detection_size = self.app_context.borrow().config().zapper_detection_size;
         let ppu = self.ppu.borrow();
         let scanline = ppu.timing().scanline();
         let pixel = ppu.timing().pixel();
@@ -176,17 +177,20 @@ mod tests {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    fn test_config_with_size(size: u8) -> Rc<RefCell<crate::console::Config>> {
-        Rc::new(RefCell::new(crate::console::Config {
+    fn test_app_context_with_size(size: u8) -> Rc<RefCell<crate::app_context::AppContext>> {
+        let config = crate::console::Config {
             zapper_detection_size: size,
             ..Default::default()
-        }))
+        };
+        Rc::new(RefCell::new(
+            crate::app_context::AppContext::new_with_config(config),
+        ))
     }
 
     fn create_zapper_with_ppu(size: u8) -> (Zapper, Rc<RefCell<Ppu>>) {
         let ppu = Rc::new(RefCell::new(Ppu::new_for_testing(TimingMode::Ntsc)));
-        let config = test_config_with_size(size);
-        let zapper = Zapper::new(ppu.clone(), config);
+        let app_context = test_app_context_with_size(size);
+        let zapper = Zapper::new(ppu.clone(), app_context);
         (zapper, ppu)
     }
 
