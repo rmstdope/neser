@@ -49,7 +49,7 @@ const PRG_BANK3_LOWER_HALF: usize = 6; // 16 KiB index → 8 KiB banks 12 & 13
 ///   $4504-$4507 — 4M PRG slot registers; data bits 5-0 select 8 KiB bank per slot.
 ///   $6000-$7FFF — 8 KiB window into 32 KiB banked WRAM
 ///   $8000-$FFFF — latch write when latch is enabled; always updates 2M shadow slots
-pub struct Mapper6Mapper {
+pub struct SuperMagicCardMapper {
     prg_rom: BankedRom,
     chr_memory: ChrMemory,
     wram: Vec<u8>,
@@ -105,7 +105,7 @@ fn prg_slot_from_addr(addr: u16) -> usize {
     ((addr - 0x8000) / 0x2000) as usize
 }
 
-impl Mapper6Mapper {
+impl SuperMagicCardMapper {
     /// Create a new Mapper 6 instance.
     ///
     /// # Arguments
@@ -436,7 +436,7 @@ impl Mapper6Mapper {
     }
 }
 
-impl Mapper for Mapper6Mapper {
+impl Mapper for SuperMagicCardMapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x5000..=0x5FFF => self
