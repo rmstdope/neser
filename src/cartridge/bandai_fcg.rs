@@ -344,6 +344,7 @@ impl Mapper for BandaiFcgMapper {
             max_prg_ram_kb: 0,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 1,
+            trainer_jsr: false,
         }
     }
 }

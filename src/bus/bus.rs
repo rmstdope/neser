@@ -188,6 +188,19 @@ impl Bus {
         cartridge.borrow_mut().reset();
     }
 
+    /// Returns `true` if the currently mapped cartridge has a 512-byte trainer block
+    /// and its mapper executes it via JSR $7003 (Mapper 6 / SMC-801).
+    pub fn cartridge_has_trainer_jsr(&self) -> bool {
+        self.cartridge
+            .borrow()
+            .as_ref()
+            .map(|c| {
+                let cart = c.borrow();
+                cart.has_trainer() && cart.mapper().capabilities().trainer_jsr
+            })
+            .unwrap_or(false)
+    }
+
     #[cfg(test)]
     #[allow(dead_code)]
     pub fn cpu_ram_ref(&self) -> Rc<RefCell<Vec<u8>>> {

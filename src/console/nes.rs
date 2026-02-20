@@ -179,11 +179,27 @@ impl Nes {
         self.apu.borrow_mut().reset(cpu_cycle, soft_reset);
         self.bus.borrow_mut().reset(soft_reset, ram_init_mode);
         self.cpu.reset(soft_reset);
+
+        if !soft_reset {
+            self.start_trainer_if_present();
+        }
+
         self.fractional_ppu_cycles = 0.0;
         self.ready_to_render = false;
 
         // Re-establish 1-cycle PPU offset after reset
         self.ppu.borrow_mut().run_ppu_cycles(1);
+    }
+
+    /// On hard reset with a trainer: simulate JSR $7003 so trainer code runs
+    /// before the game's reset vector. Pushes (game_vector − 1) to the stack
+    /// and redirects PC to $7003. The trainer must end with RTS to return.
+    fn start_trainer_if_present(&mut self) {
+        if !self.bus.borrow().cartridge_has_trainer_jsr() {
+            return;
+        }
+        let game_vector = self.cpu.pc();
+        self.cpu.divert_to_trainer(game_vector);
     }
 
     /// Run one CPU "tick", executing one opcode and the corresponding PPU cycles
@@ -1817,5 +1833,129 @@ mod tests {
             bus_state.port2_controller,
             crate::console::ControllerStateWrapper::Joypad(_)
         ));
+    }
+
+    // ── Trainer JSR $7003 (#636) ──────────────────────────────────────────────
+    //
+    // On hard reset, if the cartridge has a trainer, the CPU must start at
+    // $7003 (not the game's reset vector). The game's reset vector is pushed
+    // to the stack so the trainer's RTS returns to it.
+    // Soft reset must NOT re-execute the trainer.
+
+    /// Builds a minimal valid iNES ROM for Mapper 6 (submapper 1).
+    /// The game reset vector at $FFFC–$FFFD is set to `game_reset_vector`.
+    /// When `include_trainer` is true, a 512-byte trainer block is included.
+    fn build_mapper6_rom(game_reset_vector: u16, include_trainer: bool) -> Vec<u8> {
+        // 256KB PRG ROM (16 × 16 KiB). CHR RAM (0 CHR ROM).
+        // Mapper 6: byte6 bits[7:4] = 0x6.  Trainer flag = bit 2 of byte 6.
+        let prg_size_units = 16u8;
+        let trainer_flag = if include_trainer { 0x04 } else { 0x00 };
+        let flags6 = 0x60 | trainer_flag; // mapper lower nibble = 6, trainer bit
+        let mut rom = vec![
+            b'N',
+            b'E',
+            b'S',
+            0x1A,           // iNES magic
+            prg_size_units, // PRG ROM: 16 × 16 KiB = 256 KiB
+            0,              // CHR ROM: 0 (uses CHR RAM)
+            flags6,         // Flags 6
+            0x00,           // Flags 7: mapper upper nibble = 0
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0, // Bytes 8–15: unused
+        ];
+        if include_trainer {
+            // 512-byte trainer: simple pattern
+            for i in 0u16..512 {
+                rom.push((i as u8).wrapping_add(0x55));
+            }
+        }
+        // 256 KiB PRG ROM, all NOP ($EA) so execution doesn't crash
+        let prg_len = prg_size_units as usize * 16 * 1024;
+        let mut prg = vec![0xEA_u8; prg_len]; // NOP sled
+        // Submapper 1 → latch_mode 1 (UN1ROM+CHRSW):
+        //   $C000–$FFFF fixed to absolute 16 KiB bank #7 (8 KiB banks 14+15)
+        //   Bank #7 starts at offset 7 * 16384 within PRG.
+        //   $FFFC is at offset 0x3FFC = 16380 within a 16 KiB bank.
+        let reset_vec_offset = 7 * 16384 + 16380;
+        prg[reset_vec_offset] = (game_reset_vector & 0xFF) as u8;
+        prg[reset_vec_offset + 1] = (game_reset_vector >> 8) as u8;
+        rom.extend(prg);
+        rom
+    }
+
+    #[test]
+    fn test_hard_reset_with_trainer_sets_pc_to_7003() {
+        let game_vector = 0xC000u16;
+        let rom = build_mapper6_rom(game_vector, true);
+        let mut nes = Nes::new(crate::app_context::AppContext::new());
+        nes.insert_cartridge(load_test_cartridge(&rom));
+        nes.reset(false); // hard reset
+        assert_eq!(
+            nes.cpu.pc(),
+            0x7003,
+            "CPU must start at $7003 (trainer entry) on hard reset with trainer"
+        );
+    }
+
+    #[test]
+    fn test_hard_reset_with_trainer_pushes_game_vector_to_stack() {
+        let game_vector = 0xC123u16;
+        let rom = build_mapper6_rom(game_vector, true);
+        let mut nes = Nes::new(crate::app_context::AppContext::new());
+        nes.insert_cartridge(load_test_cartridge(&rom));
+        nes.reset(false); // hard reset
+        // JSR convention: stack holds (game_vector − 1).
+        // After hard reset SP was 0xFD; two pushes bring it to 0xFB.
+        let sp = nes.cpu.sp();
+        let return_addr = game_vector.wrapping_sub(1);
+        let stacked_lo = nes
+            .bus
+            .borrow_mut()
+            .read(0x0100 | (sp.wrapping_add(1)) as u16, false);
+        let stacked_hi = nes
+            .bus
+            .borrow_mut()
+            .read(0x0100 | (sp.wrapping_add(2)) as u16, false);
+        let stacked = (stacked_hi as u16) << 8 | stacked_lo as u16;
+        assert_eq!(
+            stacked, return_addr,
+            "Stack must hold game_vector − 1 = ${:04X} for trainer RTS",
+            return_addr
+        );
+    }
+
+    #[test]
+    fn test_soft_reset_with_trainer_does_not_jump_to_7003() {
+        let game_vector = 0xC000u16;
+        let rom = build_mapper6_rom(game_vector, true);
+        let mut nes = Nes::new(crate::app_context::AppContext::new());
+        nes.insert_cartridge(load_test_cartridge(&rom));
+        nes.reset(false); // hard reset — goes to $7003
+        nes.reset(true); // soft reset — must go to game reset vector
+        assert_eq!(
+            nes.cpu.pc(),
+            game_vector,
+            "Soft reset must NOT re-execute trainer; must go to game reset vector"
+        );
+    }
+
+    #[test]
+    fn test_hard_reset_without_trainer_uses_game_reset_vector() {
+        let game_vector = 0xD000u16;
+        let rom = build_mapper6_rom(game_vector, false);
+        let mut nes = Nes::new(crate::app_context::AppContext::new());
+        nes.insert_cartridge(load_test_cartridge(&rom));
+        nes.reset(false); // hard reset — no trainer
+        assert_eq!(
+            nes.cpu.pc(),
+            game_vector,
+            "Hard reset without trainer must go directly to game reset vector"
+        );
     }
 }

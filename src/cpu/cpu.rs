@@ -253,6 +253,22 @@ impl Cpu {
         self.p = value;
     }
 
+    /// Simulate a JSR to $7003 for trainer execution.
+    /// Pushes `(game_vector − 1)` onto the stack (hi byte first) and sets PC to $7003.
+    /// The trainer must end with RTS to return execution to `game_vector`.
+    pub fn divert_to_trainer(&mut self, game_vector: u16) {
+        let return_addr = game_vector.wrapping_sub(1);
+        let hi = (return_addr >> 8) as u8;
+        let lo = return_addr as u8;
+        let addr_hi = 0x0100 | self.sp as u16;
+        self.bus.borrow_mut().write(addr_hi, hi, false);
+        self.sp = self.sp.wrapping_sub(1);
+        let addr_lo = 0x0100 | self.sp as u16;
+        self.bus.borrow_mut().write(addr_lo, lo, false);
+        self.sp = self.sp.wrapping_sub(1);
+        self.pc = 0x7003;
+    }
+
     pub fn add_cycles(&mut self, cycles: u64) {
         self.total_cycles += cycles;
     }

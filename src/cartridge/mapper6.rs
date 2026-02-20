@@ -78,16 +78,25 @@ pub struct Mapper6Mapper {
 }
 
 /// Map a switched 16 KiB bank `b` to an 8 KiB slot index where slots 0–1 follow
-/// the switched bank and slots 2–3 are fixed at the last 16 KiB bank.
+/// the switched bank and slots 2–3 are fixed at the specified 16 KiB bank.
 /// Used by latch modes 0 (UNROM), 1 (UN1ROM), and 2 (UOROM).
-fn lower_switched_upper_fixed(b: usize, slot: usize, last_lo: usize, last_hi: usize) -> usize {
+fn lower_switched_upper_fixed(b: usize, slot: usize, fixed_lo: usize, fixed_hi: usize) -> usize {
     match slot {
         0 => b * 2,
         1 => b * 2 + 1,
-        2 => last_lo,
-        _ => last_hi,
+        2 => fixed_lo,
+        _ => fixed_hi,
     }
 }
+
+/// First 8 KiB half of the fixed upper 16 KiB bank for UNROM/UN1ROM (16 KiB bank #7).
+const FIXED_PRG_BANK7_LO: usize = 14;
+/// Second 8 KiB half of the fixed upper 16 KiB bank for UNROM/UN1ROM (16 KiB bank #7).
+const FIXED_PRG_BANK7_HI: usize = 15;
+/// First 8 KiB half of the fixed upper 16 KiB bank for UOROM/Rev-UOROM (16 KiB bank #15).
+const FIXED_PRG_BANK15_LO: usize = 30;
+/// Second 8 KiB half of the fixed upper 16 KiB bank for UOROM/Rev-UOROM (16 KiB bank #15).
+const FIXED_PRG_BANK15_HI: usize = 31;
 
 /// Derive the 8 KiB PRG slot index (0–3) from a CPU address in $8000–$FFFF.
 fn prg_slot_from_addr(addr: u16) -> usize {
@@ -152,31 +161,28 @@ impl Mapper6Mapper {
 
     /// Return the 8 KiB bank index for PRG slot `slot` (0-3) using the 1M latch.
     fn latch_bank_for_slot(&self, slot: usize) -> usize {
-        let num = self.prg_rom.num_banks();
-        let last_lo = num.saturating_sub(2);
-        let last_hi = num.saturating_sub(1);
         match self.latch_mode {
             0 => {
-                // UNROM: bits 2-0 → 16 KiB bank at $8000; last at $C000
+                // UNROM: bits 2-0 → 16 KiB bank at $8000; bank #7 fixed at $C000
                 let b = (self.latch_value & 0x07) as usize;
-                lower_switched_upper_fixed(b, slot, last_lo, last_hi)
+                lower_switched_upper_fixed(b, slot, FIXED_PRG_BANK7_LO, FIXED_PRG_BANK7_HI)
             }
             1 => {
-                // UN1ROM+CHRSW: bits 5-2 → 16 KiB bank at $8000; last at $C000
+                // UN1ROM+CHRSW: bits 5-2 → 16 KiB bank at $8000; bank #7 fixed at $C000
                 let b = ((self.latch_value >> 2) & 0x0F) as usize;
-                lower_switched_upper_fixed(b, slot, last_lo, last_hi)
+                lower_switched_upper_fixed(b, slot, FIXED_PRG_BANK7_LO, FIXED_PRG_BANK7_HI)
             }
             2 => {
-                // UOROM: bits 3-0 → 16 KiB bank at $8000; last at $C000
+                // UOROM: bits 3-0 → 16 KiB bank at $8000; bank #15 fixed at $C000
                 let b = (self.latch_value & 0x0F) as usize;
-                lower_switched_upper_fixed(b, slot, last_lo, last_hi)
+                lower_switched_upper_fixed(b, slot, FIXED_PRG_BANK15_LO, FIXED_PRG_BANK15_HI)
             }
             3 => {
-                // Reverse UOROM: bits 3-0 → $C000 bank; fixed last at $8000
+                // Reverse UOROM: bits 3-0 → $C000 bank; bank #15 fixed at $8000
                 let b = (self.latch_value & 0x0F) as usize;
                 match slot {
-                    0 => last_lo,
-                    1 => last_hi,
+                    0 => FIXED_PRG_BANK15_LO,
+                    1 => FIXED_PRG_BANK15_HI,
                     2 => b * 2,
                     _ => b * 2 + 1,
                 }
@@ -493,6 +499,7 @@ impl Mapper for Mapper6Mapper {
             max_prg_ram_kb: 32,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 8,
+            trainer_jsr: true,
         }
     }
 
@@ -716,12 +723,13 @@ mod tests {
     }
 
     #[test]
-    fn test_mode0_c000_fixed_at_last_bank() {
-        let prg = banked_data(PRG_BANK_SIZE_16K, 8);
+    fn test_mode0_c000_fixed_at_bank7() {
+        // For 256 KiB ROM (16 × 16 KiB), fixed upper = 16 KiB bank #7 (not last)
+        let prg = banked_data(PRG_BANK_SIZE_16K, 16);
         let mut mapper = create_m6(prg, 0, NametableLayout::Vertical);
         mapper.write_prg(0x42FF, 0x00); // mode 0
         mapper.write_prg(0x8000, 0x00); // bank 0 at $8000
-        assert_eq!(mapper.read_prg(0xC000), 7); // fixed last bank
+        assert_eq!(mapper.read_prg(0xC000), 7); // fixed at absolute 16 KiB bank #7
     }
 
     // ── Mode 1 — UN1ROM + CHRSW (Air Fortress) ────────────────────────────────
@@ -738,11 +746,12 @@ mod tests {
     }
 
     #[test]
-    fn test_mode1_c000_fixed_at_last_bank() {
+    fn test_mode1_c000_fixed_at_bank7() {
+        // For 256 KiB ROM (16 × 16 KiB), fixed upper = 16 KiB bank #7 (not last bank #15)
         let prg = banked_data(PRG_BANK_SIZE_16K, 16);
         let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
         mapper.write_prg(0x8000, 0x00); // bank 0 at $8000
-        assert_eq!(mapper.read_prg(0xC000), 15); // last bank = 15
+        assert_eq!(mapper.read_prg(0xC000), 7); // fixed at absolute 16 KiB bank #7
     }
 
     #[test]
@@ -783,7 +792,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mode2_c000_fixed_at_last_bank() {
+    fn test_mode2_c000_fixed_at_bank15() {
         let prg = banked_data(PRG_BANK_SIZE_16K, 16);
         let mut mapper = create_m6(prg, 0, NametableLayout::Vertical);
         mapper.write_prg(0x42FF, 0x40); // mode 2
@@ -794,7 +803,7 @@ mod tests {
     // ── Mode 3 — Reverse UOROM + CHRSW ───────────────────────────────────────
 
     #[test]
-    fn test_mode3_c000_switches_8000_fixed_at_last_bank() {
+    fn test_mode3_c000_switches_8000_fixed_at_bank15() {
         // D~[..CC PPPP] → $C000-$FFFF = latch bits 0-3; $8000-$BFFF = fixed last
         let prg = banked_data(PRG_BANK_SIZE_16K, 16);
         let mut mapper = create_m6(prg, 0, NametableLayout::Vertical);
@@ -984,6 +993,7 @@ mod tests {
         assert!(caps.has_chr_banking, "mapper 6 has CHR banking");
         assert!(caps.has_dynamic_mirroring, "mapper 6 has dynamic mirroring");
         assert!(caps.has_irq, "mapper 6 has IRQ counter");
+        assert!(caps.trainer_jsr, "mapper 6 executes trainer via JSR $7003");
         assert_eq!(caps.prg_bank_size_kb, 8);
         assert_eq!(caps.chr_bank_size_kb, 8);
         assert_eq!(mapper.wram_size(), 32 * 1024);
