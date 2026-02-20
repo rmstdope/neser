@@ -717,8 +717,8 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     4, // MMC3 is constructed with CRC-specific behavior.
-    0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 34, 66, 68,
-    69, 71, 78, 206,
+    0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 34, 66, 68, 69,
+    71, 78, 206,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.

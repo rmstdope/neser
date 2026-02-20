@@ -1846,7 +1846,11 @@ mod tests {
 
         // Switch slot 0 ($8000) to bank 2
         mapper.write_prg(0x4504, 2);
-        assert_eq!(mapper.read_prg(0x8000), 2, "4M slot 0 should switch to bank 2");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            2,
+            "4M slot 0 should switch to bank 2"
+        );
     }
 
     #[test]
@@ -1859,7 +1863,11 @@ mod tests {
 
         // Select bank 3 for PPU $0000–$03FF
         mapper.write_prg(0x4510, 3);
-        assert_eq!(mapper.read_chr(0x0000), 3, "CHR $0000 should read from 1 KiB bank 3");
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            3,
+            "CHR $0000 should read from 1 KiB bank 3"
+        );
     }
 
     #[test]
