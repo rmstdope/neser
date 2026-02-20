@@ -328,7 +328,7 @@ const CLI_FLAGS: &[CliFlag] = &[
     CliFlag {
         flag: "--horizontal-overscan",
         help: Some(
-            "Horizontal overscan removal in pixels (0..=8, default: 8; removed from left and right)",
+            "Horizontal overscan removal in pixels (0..=8, default: 0; removed from left and right)",
         ),
         has_value: true,
     },
@@ -478,7 +478,7 @@ pub struct Config {
     pub breakpoints: Vec<BreakpointKind>,
     /// Horizontal overscan removal in pixels (removed from both left and right edges).
     ///
-    /// Valid range: `0..=8`. Default: `8`.
+    /// Valid range: `0..=8`. Default: `0`.
     pub horizontal_overscan: u8,
     /// Vertical overscan removal in pixels (removed from both top and bottom edges).
     ///
@@ -595,7 +595,7 @@ impl Default for Config {
             ram_init_mode: RamInitMode::Random,
             oam_dram_decay_enabled: false,
             breakpoints: Vec::new(),
-            horizontal_overscan: 8,
+            horizontal_overscan: 0,
             vertical_overscan: 8,
         }
     }
@@ -2116,7 +2116,7 @@ mod tests {
     #[test]
     fn test_config_default_horizontal_overscan_is_8() {
         let config = Config::default();
-        assert_eq!(config.horizontal_overscan, 8);
+        assert_eq!(config.horizontal_overscan, 0);
     }
 
     #[test]

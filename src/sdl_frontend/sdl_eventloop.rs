@@ -26,11 +26,14 @@ use crate::input::Button;
 use crate::rendering::Crosshair;
 
 // Type alias to simplify the complex return type used when initializing gamepads.
-type InitGamepadsResult = Result<(
-    sdl2::GameControllerSubsystem,
-    Vec<sdl2::controller::GameController>,
-    HashMap<u32, u8>,
-), String>;
+type InitGamepadsResult = Result<
+    (
+        sdl2::GameControllerSubsystem,
+        Vec<sdl2::controller::GameController>,
+        HashMap<u32, u8>,
+    ),
+    String,
+>;
 
 /// Result type for autorun playback completion with exit code.
 #[derive(Debug)]
