@@ -128,6 +128,9 @@ pub struct MapperCapabilities {
     pub prg_bank_size_kb: usize,
     /// Smallest CHR bank size granularity in KB.
     pub chr_bank_size_kb: usize,
+    /// Whether the mapper hardware executes the trainer via JSR $7003 before the
+    /// game's reset vector (Mapper 6 / SMC-801 specific behaviour).
+    pub trainer_jsr: bool,
 }
 
 impl Default for MapperCapabilities {
@@ -140,6 +143,7 @@ impl Default for MapperCapabilities {
             max_prg_ram_kb: 0,
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
+            trainer_jsr: false,
         }
     }
 }

@@ -292,6 +292,11 @@ impl Cartridge {
         self.trainer.as_deref()
     }
 
+    /// Returns `true` if this cartridge has a 512-byte trainer block.
+    pub fn has_trainer(&self) -> bool {
+        self.trainer.is_some()
+    }
+
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {

@@ -210,6 +210,7 @@ impl Mapper for AxROMMapper {
             max_prg_ram_kb: if self.prg_ram.is_some() { 8 } else { 0 },
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
+            trainer_jsr: false,
         }
     }
 }

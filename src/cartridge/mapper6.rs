@@ -493,6 +493,7 @@ impl Mapper for Mapper6Mapper {
             max_prg_ram_kb: 32,
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 8,
+            trainer_jsr: true,
         }
     }
 
@@ -984,6 +985,7 @@ mod tests {
         assert!(caps.has_chr_banking, "mapper 6 has CHR banking");
         assert!(caps.has_dynamic_mirroring, "mapper 6 has dynamic mirroring");
         assert!(caps.has_irq, "mapper 6 has IRQ counter");
+        assert!(caps.trainer_jsr, "mapper 6 executes trainer via JSR $7003");
         assert_eq!(caps.prg_bank_size_kb, 8);
         assert_eq!(caps.chr_bank_size_kb, 8);
         assert_eq!(mapper.wram_size(), 32 * 1024);

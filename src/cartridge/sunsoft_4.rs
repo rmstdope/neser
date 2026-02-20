@@ -306,6 +306,7 @@ impl Mapper for Sunsoft4Mapper {
             max_prg_ram_kb: self.prg_ram.size() / 1024,
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 2,
+            trainer_jsr: false,
         }
     }
 }
