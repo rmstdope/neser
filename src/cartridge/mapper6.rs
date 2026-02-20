@@ -2,22 +2,26 @@
 //!
 //! Sub-issue #627: Core latch-based banking modes 0–7 + register scaffolding.
 //! Sub-issue #628: 2M/4M PRG banking mode ($43FC-$43FF, $4504-$4507).
+//! Sub-issue #629: 1 KiB CHR banking mode + CHR nametable banking.
 //!
 //! Spec: <https://www.nesdev.org/wiki/INES_Mapper_006>
 //!       <https://www.nesdev.org/wiki/Super_Magic_Card>
 //!
 //! Known Limitations:
-//! - 1 KiB CHR banking mode ($4510-$451B) not yet implemented (sub-issue #629).
 //! - IRQ counter ($4501-$4503) not yet implemented (sub-issue #630).
 //! - Trainer initialization at $7000-$71FF not yet implemented (sub-issue #631).
+use std::cell::Cell;
+
 use crate::cartridge::common::{BankedRom, ChrMemory};
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
 const PRG_BANK_SIZE_8K: usize = 0x2000;
 const CHR_BANK_SIZE_8K: usize = 0x2000;
+const CHR_BANK_SIZE_4K: usize = 0x1000;
+const CHR_BANK_SIZE_1K: usize = 0x0400;
 const WRAM_BANK_SIZE_8K: usize = 0x2000;
 const WRAM_SIZE_32K: usize = 0x8000;
-const CHR_RAM_SIZE_32K: usize = 0x8000;
+const CHR_RAM_SIZE_256K: usize = 0x40000;
 
 /// 16 KiB bank index for the lower half of 32 KiB PRG bank #3 (= 8 KiB banks 12–15).
 /// Modes 5, 6, and 7 fix PRG at this bank pair.
@@ -47,11 +51,18 @@ pub struct Mapper6Mapper {
     prg_rom: BankedRom,
     chr_memory: ChrMemory,
     wram: Vec<u8>,
-    latch_mode: u8,        // D7-D5 of $42FC-$42FF: 0-7
-    latch_value: u8,       // last value written to the latch at $8000-$FFFF
-    latch_enabled: bool,   // A1 of $42FC-$42FF: PRG write-protected ↔ latch enabled
-    mirroring_type: u8,    // (A0 << 1) | D4; 0=SingleScreenLower, 1=Upper, 2=Vertical, 3=Horizontal
-    wram_bank: u8,         // bits 5-4 of $4500: 0-3, selects 8 KiB WRAM bank
+    latch_mode: u8,             // D7-D5 of $42FC-$42FF: 0-7
+    latch_value: u8,            // last value written to the latch at $8000-$FFFF
+    latch_enabled: bool,        // A1 of $42FC-$42FF: PRG write-protected ↔ latch enabled
+    mirroring_type: u8, // (A0 << 1) | D4; 0=SingleScreenLower, 1=Upper, 2=Vertical, 3=Horizontal
+    wram_bank: u8,      // bits 5-4 of $4500: 0-3, selects 8 KiB WRAM bank
+    chr_mode_1kb: bool, // $4500 bit 0: false=8 KiB (default), true=1 KiB
+    chr_nt_active: bool, // $4500 bit 1 inverted: true=CHR nametables via $4518-$451B
+    mmc4_disabled: bool, // $4500 bit 2: true=direct 1 KiB, false=MMC4 latch mode
+    chr_1k_regs: [u8; 8], // $4510-$4517: 1 KiB bank per PPU $0000-$1FFF slot
+    chr_nt_regs: [u8; 4], // $4518-$451B: 1 KiB bank per nametable $2000-$2FFF slot
+    mmc4_latch0_fd: Cell<bool>, // lower 4 KiB latch: true=FD, false=FE
+    mmc4_latch1_fd: Cell<bool>, // upper 4 KiB latch: true=FD, false=FE
     prg_2m_slots: [u8; 4], // shadow 8 KiB PRG banks for 2M mode (always updated on $8000-$FFFF writes)
     prg_4m_slots: [u8; 4], // 8 KiB PRG banks for 4M mode (updated via $4504-$4507)
     mode_2m_active: bool,  // true when $43FE was the last $43FC-$43FF write
@@ -104,13 +115,20 @@ impl Mapper6Mapper {
 
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_8K),
-            chr_memory: ChrMemory::new_ram(CHR_RAM_SIZE_32K),
+            chr_memory: ChrMemory::new_ram(CHR_RAM_SIZE_256K),
             wram: vec![0; WRAM_SIZE_32K],
             latch_mode,
             latch_value: 0,
             latch_enabled: true,
             mirroring_type,
             wram_bank: 0,
+            chr_mode_1kb: false,
+            chr_nt_active: false,
+            mmc4_disabled: false,
+            chr_1k_regs: [0; 8],
+            chr_nt_regs: [0; 4],
+            mmc4_latch0_fd: Cell::new(true),
+            mmc4_latch1_fd: Cell::new(true),
             prg_2m_slots: [0; 4],
             prg_4m_slots: [0; 4],
             mode_2m_active: false,
@@ -224,6 +242,62 @@ impl Mapper6Mapper {
     fn wram_index(&self, addr: u16) -> usize {
         self.wram_bank as usize * WRAM_BANK_SIZE_8K + (addr - 0x6000) as usize
     }
+
+    /// Compute the flat CHR memory index for `addr`, routing to the active CHR mode:
+    /// - 8 KiB latch mode (`!chr_mode_1kb`)
+    /// - 1 KiB direct mode (`chr_mode_1kb && mmc4_disabled`)
+    /// - MMC4 latch mode  (`chr_mode_1kb && !mmc4_disabled`)
+    fn chr_index_for_addr(&self, addr: u16) -> usize {
+        if !self.chr_mode_1kb {
+            self.chr_bank_8k() * CHR_BANK_SIZE_8K + (addr & 0x1FFF) as usize
+        } else if self.mmc4_disabled {
+            self.chr_index_1kb_direct(addr)
+        } else {
+            self.chr_index_mmc4(addr)
+        }
+    }
+
+    /// Flat CHR index for 1 KiB direct mode: each 1 KiB PPU slot (`$0000–$1FFF`)
+    /// maps independently to a CHR bank selected by `chr_1k_regs[slot]`.
+    fn chr_index_1kb_direct(&self, addr: u16) -> usize {
+        let slot = (addr / CHR_BANK_SIZE_1K as u16) as usize;
+        let bank = self.chr_1k_regs[slot] as usize;
+        bank * CHR_BANK_SIZE_1K + (addr & 0x03FF) as usize
+    }
+
+    /// Flat CHR index for MMC4 latch mode: two 4 KiB halves each switch between
+    /// an FD and FE bank based on PPU tile-fetch trigger addresses.
+    ///
+    /// `chr_1k_regs` layout (FD=index+0, FE=index+2, bank = register >> 2):
+    /// - lower half (`$0000–$0FFF`): base index 0 (`chr_1k_regs[0/2]`)
+    /// - upper half (`$1000–$1FFF`): base index 4 (`chr_1k_regs[4/6]`)
+    fn chr_index_mmc4(&self, addr: u16) -> usize {
+        let is_upper_half = addr >= 0x1000;
+        let latch_fd = if is_upper_half {
+            self.mmc4_latch1_fd.get()
+        } else {
+            self.mmc4_latch0_fd.get()
+        };
+        let reg_base: usize = if is_upper_half { 4 } else { 0 };
+        let fd_fe_offset: usize = if latch_fd { 0 } else { 2 };
+        let bank_4k = (self.chr_1k_regs[reg_base + fd_fe_offset] >> 2) as usize;
+        bank_4k * CHR_BANK_SIZE_4K + (addr & 0x0FFF) as usize
+    }
+
+    /// Update MMC4-style latches if `addr` is a tile-fetch trigger address.
+    /// Only active when 1 KiB CHR mode and MMC4 are both enabled.
+    fn update_mmc4_latches(&self, addr: u16) {
+        if !self.chr_mode_1kb || self.mmc4_disabled {
+            return;
+        }
+        match addr {
+            0x0FD8..=0x0FDF => self.mmc4_latch0_fd.set(true),
+            0x0FE8..=0x0FEF => self.mmc4_latch0_fd.set(false),
+            0x1FD8..=0x1FDF => self.mmc4_latch1_fd.set(true),
+            0x1FE8..=0x1FEF => self.mmc4_latch1_fd.set(false),
+            _ => {}
+        }
+    }
 }
 
 impl Mapper for Mapper6Mapper {
@@ -250,8 +324,15 @@ impl Mapper for Mapper6Mapper {
         match addr {
             0x42FC..=0x42FF => self.apply_mode_register(addr, value),
             0x43FC..=0x43FF => self.apply_2m4m_register(addr),
-            0x4500 => self.wram_bank = (value >> 4) & 0x03,
+            0x4500 => {
+                self.wram_bank = (value >> 4) & 0x03;
+                self.chr_mode_1kb = (value & 0x01) != 0;
+                self.chr_nt_active = (value & 0x02) == 0;
+                self.mmc4_disabled = (value & 0x04) != 0;
+            }
             0x4504..=0x4507 => self.prg_4m_slots[(addr - 0x4504) as usize] = value & 0x3F,
+            0x4510..=0x4517 => self.chr_1k_regs[(addr - 0x4510) as usize] = value,
+            0x4518..=0x451B => self.chr_nt_regs[(addr - 0x4518) as usize] = value,
             0x6000..=0x7FFF => {
                 let index = self.wram_index(addr);
                 if index < self.wram.len() {
@@ -272,17 +353,37 @@ impl Mapper for Mapper6Mapper {
     }
 
     fn read_chr(&self, addr: u16) -> u8 {
-        let bank = self.chr_bank_8k();
-        let index = bank * CHR_BANK_SIZE_8K + (addr & 0x1FFF) as usize;
-        self.chr_memory.read_at_index(index)
+        let index = self.chr_index_for_addr(addr);
+        let value = self.chr_memory.read_at_index(index);
+        self.update_mmc4_latches(addr);
+        value
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
         if !self.chr_write_protected() {
-            let bank = self.chr_bank_8k();
-            let index = bank * CHR_BANK_SIZE_8K + (addr & 0x1FFF) as usize;
+            let index = self.chr_index_for_addr(addr);
             self.chr_memory.write_at_index(index, value);
         }
+    }
+
+    fn read_nametable(&mut self, addr: u16) -> Option<u8> {
+        if !self.chr_nt_active {
+            return None;
+        }
+        let slot = ((addr - 0x2000) / CHR_BANK_SIZE_1K as u16) as usize;
+        if slot >= 4 {
+            return None;
+        }
+        let bank = self.chr_nt_regs[slot] as usize;
+        let offset = (addr & 0x03FF) as usize;
+        Some(
+            self.chr_memory
+                .read_at_index(bank * CHR_BANK_SIZE_1K + offset),
+        )
+    }
+
+    fn ppu_address_changed(&mut self, addr: u16) {
+        self.update_mmc4_latches(addr);
     }
 
     fn get_mirroring(&self) -> NametableLayout {
@@ -317,7 +418,11 @@ impl Mapper for Mapper6Mapper {
         // byte  2: latch_enabled (bit 0) | mirroring_type (bits 2-1) | wram_bank (bits 5-4)
         // bytes 3-6:  prg_2m_slots[0-3]
         // bytes 7-10: prg_4m_slots[0-3]
-        // byte 11: mode flags: bit 0 = mode_2m_active, bit 1 = mode_4m_active
+        // byte 11: mode flags: bit 0=mode_2m_active, bit 1=mode_4m_active
+        // bytes 12-19: chr_1k_regs[0-7]
+        // bytes 20-23: chr_nt_regs[0-3]
+        // byte 24: chr flags: bit 0=chr_mode_1kb, bit 1=chr_nt_active, bit 2=mmc4_disabled
+        //                     bit 3=mmc4_latch0_fd, bit 4=mmc4_latch1_fd
         let mut v = vec![
             self.latch_mode & 0x07,
             self.latch_value,
@@ -326,6 +431,15 @@ impl Mapper for Mapper6Mapper {
         v.extend_from_slice(&self.prg_2m_slots);
         v.extend_from_slice(&self.prg_4m_slots);
         v.push((self.mode_2m_active as u8) | ((self.mode_4m_active as u8) << 1));
+        v.extend_from_slice(&self.chr_1k_regs);
+        v.extend_from_slice(&self.chr_nt_regs);
+        v.push(
+            (self.chr_mode_1kb as u8)
+                | ((self.chr_nt_active as u8) << 1)
+                | ((self.mmc4_disabled as u8) << 2)
+                | ((self.mmc4_latch0_fd.get() as u8) << 3)
+                | ((self.mmc4_latch1_fd.get() as u8) << 4),
+        );
         v
     }
 
@@ -346,6 +460,19 @@ impl Mapper for Mapper6Mapper {
         if data.len() >= 12 {
             self.mode_2m_active = (data[11] & 0x01) != 0;
             self.mode_4m_active = (data[11] & 0x02) != 0;
+        }
+        if data.len() >= 20 {
+            self.chr_1k_regs.copy_from_slice(&data[12..20]);
+        }
+        if data.len() >= 24 {
+            self.chr_nt_regs.copy_from_slice(&data[20..24]);
+        }
+        if data.len() >= 25 {
+            self.chr_mode_1kb = (data[24] & 0x01) != 0;
+            self.chr_nt_active = (data[24] & 0x02) != 0;
+            self.mmc4_disabled = (data[24] & 0x04) != 0;
+            self.mmc4_latch0_fd.set((data[24] & 0x08) != 0);
+            self.mmc4_latch1_fd.set((data[24] & 0x10) != 0);
         }
     }
 
@@ -931,5 +1058,247 @@ mod tests {
         assert_eq!(restored.read_prg(0xA000), 11);
         assert_eq!(restored.read_prg(0xC000), 17);
         assert_eq!(restored.read_prg(0xE000), 28);
+    }
+
+    // ── 1 KiB CHR banking ($4510-$4517, $4500 bit 0 = C) ─────────────────────
+    //
+    // $4500 encoding (write): [P M WW I m n C]
+    //   bit 0: C — CHR mode: 0=8 KiB (default), 1=1 KiB
+    //   bit 1: n — Nametable source: 0=CHR via $4518-$451B, 1=CIRAM
+    //   bit 2: m — MMC4 mode: 0=enabled, 1=disabled
+    //   bits 5-4: WW — 8 KiB WRAM bank
+    //
+    // 1 KiB direct mode (m=1, C=1, i.e. $4500=0x05):
+    //   $4510-$4517 each directly select a 1 KiB CHR bank for PPU $0000-$1FFF.
+    //   Data: [CCCCCCCC] = 8-bit 1 KiB bank index (0-255).
+
+    #[test]
+    fn test_4510_selects_1kb_chr_bank_for_slot0() {
+        // In 1 KiB direct mode, $4510 sets the 1 KiB bank for PPU $0000-$03FF.
+        // Write 0x42 to bank 3 at offset 0, then verify read uses bank 3.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x05); // 1 KiB direct mode (C=1, m=1)
+        mapper.write_prg(0x4510, 3); // slot 0 = 1 KiB bank 3
+        mapper.write_chr(0x0000, 0x42); // write to bank 3, offset 0
+        mapper.write_prg(0x4510, 5); // switch slot 0 to bank 5
+        mapper.write_chr(0x0000, 0x99); // write to bank 5, offset 0
+        mapper.write_prg(0x4510, 3); // back to bank 3
+        assert_eq!(mapper.read_chr(0x0000), 0x42); // bank 3 still has 0x42
+    }
+
+    #[test]
+    fn test_4511_selects_1kb_chr_bank_for_slot1() {
+        // $4511 controls PPU $0400-$07FF in 1 KiB direct mode.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x05); // 1 KiB direct
+        mapper.write_prg(0x4511, 7); // slot 1 = 1 KiB bank 7
+        mapper.write_chr(0x0400, 0xAB); // write to bank 7, offset 0
+        mapper.write_prg(0x4511, 2); // switch slot 1 to bank 2
+        mapper.write_chr(0x0400, 0xCD); // write to bank 2, offset 0
+        mapper.write_prg(0x4511, 7); // back to bank 7
+        assert_eq!(mapper.read_chr(0x0400), 0xAB); // bank 7 still has 0xAB
+    }
+
+    #[test]
+    fn test_1kb_chr_all_eight_slots_independent() {
+        // All 8 slots ($4510-$4517) must independently control their 1 KiB region.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x05); // 1 KiB direct
+        // Assign distinct banks to all 8 slots and write distinct markers.
+        for slot in 0u16..8 {
+            let bank = slot as u8 + 10; // banks 10-17
+            mapper.write_prg(0x4510 + slot, bank);
+            mapper.write_chr(slot * 0x0400, bank); // offset 0 of each slot's region
+        }
+        // Verify each slot returns its own bank's marker.
+        for slot in 0u16..8 {
+            let bank = slot as u8 + 10;
+            mapper.write_prg(0x4510 + slot, bank);
+            assert_eq!(mapper.read_chr(slot * 0x0400), bank);
+        }
+    }
+
+    #[test]
+    fn test_8kb_chr_mode_restored_when_4500_bit0_cleared() {
+        // Clearing bit 0 of $4500 reverts to 8 KiB latch-based CHR banking.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        // In 8 KiB mode (latch mode 1, CC=0), chr bank = 0.
+        mapper.write_chr(0x0000, 0x11); // bank 0, offset 0
+        // Switch to 1 KiB mode and set slot 0 to bank 5.
+        mapper.write_prg(0x4500, 0x05);
+        mapper.write_prg(0x4510, 5);
+        mapper.write_chr(0x0000, 0x55); // bank 5, offset 0
+        // Revert to 8 KiB mode: bit 0 = 0.
+        mapper.write_prg(0x4500, 0x04); // C=0 → 8 KiB mode
+        // CHR bank 0 at $0000 must return 0x11 (original 8 KiB bank 0 value).
+        assert_eq!(mapper.read_chr(0x0000), 0x11);
+    }
+
+    // ── CHR nametable banking ($4518-$451B, $4500 bit 1 = n) ─────────────────
+    //
+    // When $4500 bit 1 (n) = 0, PPU $2000-$2FFF nametable reads are supplied
+    // from CHR memory via four 1 KiB bank registers $4518-$451B.
+
+    #[test]
+    fn test_chr_nametable_4518_supplies_ppu_2000_region() {
+        // $4518 selects the 1 KiB CHR bank for nametable $2000-$23FF.
+        // Setting $4518=3 and writing to $0C00 (bank 3 in 1 KiB direct mode)
+        // makes read_nametable($2000) return the same data.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x05); // 1 KiB direct, n=0 (CHR NT)
+        mapper.write_prg(0x4518, 3); // nametable $2000 → 1 KiB bank 3
+        mapper.write_prg(0x4510, 3); // slot 0 also → bank 3
+        mapper.write_chr(0x0000, 0x42); // writes to bank 3, offset 0
+        assert_eq!(mapper.read_nametable(0x2000), Some(0x42));
+    }
+
+    #[test]
+    fn test_chr_nametable_4519_supplies_ppu_2400_region() {
+        // $4519 selects the 1 KiB CHR bank for nametable $2400-$27FF.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x05); // 1 KiB direct, n=0
+        mapper.write_prg(0x4519, 4); // nametable $2400 → bank 4
+        mapper.write_prg(0x4511, 4); // slot 1 also → bank 4
+        mapper.write_chr(0x0400, 0x77); // bank 4, offset 0
+        assert_eq!(mapper.read_nametable(0x2400), Some(0x77));
+    }
+
+    #[test]
+    fn test_chr_nametable_returns_none_when_bit1_set() {
+        // When $4500 bit 1 (n) = 1, read_nametable returns None (CIRAM).
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x07); // bit 2=1 (MMC4 off), bit 1=1 (CIRAM), bit 0=1
+        assert_eq!(mapper.read_nametable(0x2000), None);
+    }
+
+    // ── MMC4 latch mode ($4500 bit 2 = m = 0, 1 KiB mode active) ────────────
+    //
+    // When C=1 and m=0 ($4500=0x01): MMC4-style 4 KiB CHR banks with FD/FE latching.
+    // $4510/$4511 = FD/FE banks for lower half ($0000-$0FFF); data [CCCC CC..] → bank = value>>2
+    // $4514/$4515 = FD/FE banks for upper half ($1000-$1FFF)
+    // ppu_address_changed($0FDx) → latch0 = FD; ppu_address_changed($0FEx) → latch0 = FE
+
+    #[test]
+    fn test_mmc4_latch0_fd_triggers_on_0fd8_read() {
+        // After ppu_address_changed($0FD8) lower 4 KiB uses the FD bank from $4510.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x01); // 1 KiB + MMC4 enabled
+        mapper.write_prg(0x4510, 2 << 2); // FD bank = 4K bank 2 (value=0x08, bank=0x08>>2=2)
+        mapper.write_prg(0x4512, 3 << 2); // FE bank = 4K bank 3 (value=0x0C, bank=0x0C>>2=3)
+        // Activate FD latch for lower half; write a marker to 4 KiB bank 2.
+        mapper.ppu_address_changed(0x0FD8);
+        mapper.write_chr(0x0000, 0x55);
+        // Switch to FE latch; write a different marker to 4 KiB bank 3.
+        mapper.ppu_address_changed(0x0FE8);
+        mapper.write_chr(0x0000, 0x77);
+        // Switch back to FD; reading from bank 2 must yield 0x55.
+        mapper.ppu_address_changed(0x0FD8);
+        assert_eq!(mapper.read_chr(0x0000), 0x55);
+    }
+
+    #[test]
+    fn test_mmc4_latch0_fe_triggers_on_0fe8_read() {
+        // After ppu_address_changed($0FE8) lower 4 KiB uses the FE bank from $4512.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x01);
+        mapper.write_prg(0x4510, 0 << 2); // FD bank = 4K bank 0
+        mapper.write_prg(0x4512, 5 << 2); // FE bank = 4K bank 5
+        mapper.ppu_address_changed(0x0FD8); // set FD first
+        mapper.write_chr(0x0000, 0xAA); // bank 0, offset 0
+        mapper.ppu_address_changed(0x0FE8); // switch to FE
+        mapper.write_chr(0x0000, 0xBB); // bank 5, offset 0
+        mapper.ppu_address_changed(0x0FE8);
+        assert_eq!(mapper.read_chr(0x0000), 0xBB); // bank 5 must be active
+    }
+
+    #[test]
+    fn test_mmc4_latch1_fd_triggers_on_1fd8_read() {
+        // ppu_address_changed($1FD8) switches upper half ($1000-$1FFF) to FD bank.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x01);
+        mapper.write_prg(0x4514, 1 << 2); // FD bank = 4K bank 1
+        mapper.write_prg(0x4516, 2 << 2); // FE bank = 4K bank 2
+        mapper.ppu_address_changed(0x1FD8); // FD for upper half
+        mapper.write_chr(0x1000, 0x33); // bank 1, upper offset 0
+        mapper.ppu_address_changed(0x1FE8); // switch to FE
+        mapper.write_chr(0x1000, 0x44); // bank 2, upper offset 0
+        mapper.ppu_address_changed(0x1FD8);
+        assert_eq!(mapper.read_chr(0x1000), 0x33); // back to bank 1
+    }
+
+    #[test]
+    fn test_mmc4_latch1_fe_triggers_on_1fe8_read() {
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x01);
+        mapper.write_prg(0x4514, 4 << 2); // FD bank = 4K bank 4
+        mapper.write_prg(0x4516, 6 << 2); // FE bank = 4K bank 6
+        mapper.ppu_address_changed(0x1FD8);
+        mapper.write_chr(0x1000, 0xAA); // bank 4
+        mapper.ppu_address_changed(0x1FE8);
+        mapper.write_chr(0x1000, 0xCC); // bank 6
+        mapper.ppu_address_changed(0x1FE8);
+        assert_eq!(mapper.read_chr(0x1000), 0xCC); // bank 6 must be active
+    }
+
+    #[test]
+    fn test_mmc4_disabled_uses_1kb_direct_mode() {
+        // $4500 bit 2 = 1 → MMC4 disabled; $4510-$4517 are direct 1 KiB bank selectors.
+        // In MMC4 mode (bit 2=0), $4510 would select a 4 KiB bank;
+        // in direct mode (bit 2=1), $4510 selects a 1 KiB bank.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x05); // C=1 + m=1 → direct 1 KiB
+        mapper.write_prg(0x4510, 2); // slot 0 = 1 KiB bank 2
+        mapper.write_chr(0x0000, 0x42); // write to 1 KiB bank 2, offset 0
+        mapper.write_prg(0x4510, 3);
+        mapper.write_chr(0x0000, 0x99); // write to 1 KiB bank 3, offset 0
+        mapper.write_prg(0x4510, 2);
+        assert_eq!(mapper.read_chr(0x0000), 0x42); // bank 2 still has 0x42
+    }
+
+    // ── Snapshot for 1 KiB CHR registers ─────────────────────────────────────
+
+    #[test]
+    fn test_1kb_chr_snapshot_preserves_all_registers() {
+        // registers_snapshot/restore_registers must round-trip chr_1k_regs,
+        // chr_nt_regs, and the $4500 mode flags.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg.clone(), 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x05); // 1 KiB direct
+        for i in 0u16..8 {
+            mapper.write_prg(0x4510 + i, (i as u8) * 3 + 1); // banks 1,4,7,10,13,16,19,22
+        }
+        for i in 0u16..4 {
+            mapper.write_prg(0x4518 + i, (i as u8) * 5 + 2); // nt banks 2,7,12,17
+        }
+        let snap = mapper.registers_snapshot();
+        let mut restored = create_m6(prg, 0, NametableLayout::Horizontal);
+        restored.restore_registers(&snap);
+        // Verify all 8 CHR slot banks are preserved.
+        for i in 0u16..8 {
+            let expected_bank = (i as u8) * 3 + 1;
+            restored.write_prg(0x4510 + i, expected_bank); // re-set for read isolation
+            restored.write_chr(i * 0x0400, expected_bank); // write to expected bank
+            restored.write_prg(0x4510 + i, expected_bank + 1); // switch to neighbor
+            restored.write_chr(i * 0x0400, expected_bank + 100); // write to neighbor
+            restored.write_prg(0x4510 + i, expected_bank); // back
+            assert_eq!(restored.read_chr(i * 0x0400), expected_bank);
+        }
+        // Verify nametable bank 0 is preserved.
+        let expected_nt0 = 2u8;
+        restored.write_prg(0x4510, expected_nt0); // set slot 0 = same as nt bank 0
+        restored.write_chr(0x0000, 0x7F); // writes to nt bank 0
+        assert_eq!(restored.read_nametable(0x2000), Some(0x7F));
     }
 }
