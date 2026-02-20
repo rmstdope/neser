@@ -175,6 +175,7 @@ impl SuperMagicCardMapper {
     ///   `$42FF = $20 | (horizontal ? 0x10 : 0x00)` — latch mode 1, latch enabled, mirroring
     ///   `$43FC = $00`  — 4M PRG banking mode active
     ///   `$4504–$4507 = [N-4, N-3, N-2, N-1]` — last four 8 KiB PRG banks
+    ///   `$4510–$4517 = [0, 1, 2, 3, 4, 5, 6, 7]` — identity mapping: slot N → CHR bank N
     ///
     /// The `submapper` field encodes the trainer load address (submapper 0 → $7000).
     pub fn new_mapper17(
@@ -233,7 +234,7 @@ impl SuperMagicCardMapper {
             chr_mode_1kb: true,
             chr_nt_active: false,
             mmc4_disabled: true,
-            chr_1k_regs: [0; 8],
+            chr_1k_regs: [0, 1, 2, 3, 4, 5, 6, 7],
             chr_nt_regs: [0; 4],
             mmc4_latch0_fd: Cell::new(true),
             mmc4_latch1_fd: Cell::new(true),
@@ -1907,6 +1908,29 @@ mod tests {
             3,
             "CHR $0000 should read from 1 KiB bank 3"
         );
+    }
+
+    #[test]
+    fn test_mapper17_chr_ram_power_on_uses_identity_bank_mapping() {
+        // Spec: at power-on each of the 8 × 1 KiB CHR-RAM slots must map to its own
+        // bank (identity: slot N → bank N).  With all slots aliased to bank 0, a write
+        // to slot 1 ($0400) overwrites slot 0 ($0000), scrambling the pattern table.
+        let prg = vec![0u8; 512 * 1024];
+        let mut mapper = create_m17(prg, 0, NametableLayout::Vertical);
+
+        // Write distinct sentinel values to the first byte of each 1 KiB slot
+        for slot in 0u16..8 {
+            mapper.write_chr(slot * 0x0400, slot as u8);
+        }
+
+        // Each slot must read back its own sentinel — not the last write aliased to bank 0
+        for slot in 0u16..8 {
+            assert_eq!(
+                mapper.read_chr(slot * 0x0400),
+                slot as u8,
+                "slot {slot}: CHR-RAM bank aliasing at power-on — expected identity mapping"
+            );
+        }
     }
 
     #[test]
