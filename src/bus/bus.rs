@@ -188,13 +188,15 @@ impl Bus {
         cartridge.borrow_mut().reset();
     }
 
-    /// Returns `true` if the currently mapped cartridge has a 512-byte trainer block.
-    pub fn cartridge_has_trainer(&self) -> bool {
+    /// Returns the trainer entry point address if the cartridge has a trainer
+    /// and the active mapper supports trainer execution (e.g. Mapper 6 → $7003).
+    /// Returns `None` for mappers that do not implement trainer execution,
+    /// or when no cartridge is mapped.
+    pub fn cartridge_trainer_entry_point(&self) -> Option<u16> {
         self.cartridge
             .borrow()
             .as_ref()
-            .map(|c| c.borrow().has_trainer())
-            .unwrap_or(false)
+            .and_then(|c| c.borrow().trainer_entry_point())
     }
 
     #[cfg(test)]

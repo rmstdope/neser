@@ -238,12 +238,10 @@ impl Cpu {
         self.y = value;
     }
 
-    #[cfg(test)]
     pub fn set_sp(&mut self, value: u8) {
         self.sp = value;
     }
 
-    #[cfg(test)]
     pub fn set_pc(&mut self, value: u16) {
         self.pc = value;
     }

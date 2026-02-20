@@ -395,6 +395,16 @@ pub trait Mapper {
     /// don't use the helper types.
     fn initialize_ram(&mut self, _mode: crate::console::RamInitMode) {}
 
+    /// Return the CPU address where the trainer entry point lives, if this
+    /// mapper supports trainer execution on hard reset.
+    ///
+    /// Mapper 6 loads 512-byte trainer data into WRAM at $7000–$71FF and
+    /// requires a JSR to $7003 before the game's RESET vector runs.
+    /// All other mappers return `None` (no trainer entry point).
+    fn trainer_entry_point(&self) -> Option<u16> {
+        None
+    }
+
     /// Whether the mapper is currently asserting IRQ.
     ///
     /// This is used to model mapper-generated IRQs (e.g., MMC3 scanline IRQ).

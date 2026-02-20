@@ -297,6 +297,20 @@ impl Cartridge {
         self.trainer.is_some()
     }
 
+    /// Returns the mapper-specific trainer entry point if this cartridge has a
+    /// trainer and the mapper supports trainer execution.
+    ///
+    /// Only mappers that explicitly implement [`Mapper::trainer_entry_point`] (e.g. Mapper 6)
+    /// will return a non-`None` value. For all other mappers, or when no trainer
+    /// is present, this returns `None`.
+    pub fn trainer_entry_point(&self) -> Option<u16> {
+        if self.trainer.is_some() {
+            self.mapper.trainer_entry_point()
+        } else {
+            None
+        }
+    }
+
     /// Create a cartridge directly from components (for testing)
     #[cfg(test)]
     pub fn from_parts(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {

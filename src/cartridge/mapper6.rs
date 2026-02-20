@@ -464,6 +464,10 @@ impl Mapper for Mapper6Mapper {
         self.irq_pending_flag
     }
 
+    fn trainer_entry_point(&self) -> Option<u16> {
+        Some(0x7003)
+    }
+
     fn cpu_cycle(&mut self) {
         if !self.irq_pa12_mode {
             self.tick_irq_counter();

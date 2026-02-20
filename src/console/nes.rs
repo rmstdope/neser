@@ -191,16 +191,17 @@ impl Nes {
         self.ppu.borrow_mut().run_ppu_cycles(1);
     }
 
-    /// On hard reset with a trainer: simulate JSR $7003 so trainer code runs
-    /// before the game's reset vector. Pushes (game_vector − 1) to the stack
-    /// and redirects PC to $7003. The trainer must end with RTS to return.
+    /// On hard reset with a mapper-6 trainer: simulate JSR to the mapper's
+    /// trainer entry point so the trainer code runs before the game's reset
+    /// vector. Pushes (game_vector − 1) to the stack and redirects PC.
+    /// The trainer must end with RTS to return to the game.
     fn start_trainer_if_present(&mut self) {
-        if !self.bus.borrow().cartridge_has_trainer() {
-            return;
+        let entry_point = self.bus.borrow().cartridge_trainer_entry_point();
+        if let Some(trainer_pc) = entry_point {
+            let game_vector = self.cpu.pc();
+            self.push_return_address(game_vector.wrapping_sub(1));
+            self.cpu.set_pc(trainer_pc);
         }
-        let game_vector = self.cpu.pc();
-        self.push_return_address(game_vector.wrapping_sub(1));
-        self.cpu.set_pc(0x7003);
     }
 
     /// Push a 16-bit return address (hi byte first, then lo) to the CPU stack.
