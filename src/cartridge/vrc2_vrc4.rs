@@ -59,10 +59,29 @@ impl Vrc2Vrc4Variant {
         }
     }
 
+    /// Returns true if the variant supports all four mirroring modes (H, V, 1-lower, 1-upper).
+    ///
+    /// Mapper 23 iNES 1.0 (Combined) and VRC2b/VRC4f (submapper 1/3) use only 1-bit mirroring
+    /// for VRC2b compatibility. Wai Wai World (VRC2b) writes $FF to the mirroring register
+    /// expecting Horizontal (bit 0 only); VRC4 2-bit masking would give SingleScreenUpper.
+    /// Only the pure VRC4e submapper (NES 2.0 sub 2) supports all four modes.
+    fn has_four_mode_mirroring(&self) -> bool {
+        match self {
+            Vrc2Vrc4Variant::Mapper21(_) => true,
+            Vrc2Vrc4Variant::Mapper22 => false,
+            Vrc2Vrc4Variant::Mapper23(Mapper23PinMode::Vrc4eOnly) => true,
+            Vrc2Vrc4Variant::Mapper23(_) => false,
+            Vrc2Vrc4Variant::Mapper25(_) => true,
+        }
+    }
+
     /// Returns the mask applied to the high nibble when writing a CHR bank register.
-    /// VRC2 uses 4 high bits (0x0F); VRC4 uses 5 high bits (0x1F).
+    /// VRC2 supports 4 high bits (0x0F); VRC4 supports 5 high bits (0x1F) for 512KB CHR.
     fn chr_high_nibble_mask(&self) -> u8 {
-        if self.has_irq() { 0x1F } else { 0x0F }
+        match self {
+            Vrc2Vrc4Variant::Mapper22 => 0x0F,
+            _ => 0x1F,
+        }
     }
 
     /// VRC2a (mapper 22) wires CHR data lines shifted right by 1; the low register
@@ -336,19 +355,19 @@ impl Vrc2Vrc4Mapper {
     }
 
     fn apply_mirroring_register(&mut self) {
-        self.mirroring = if !self.variant.has_irq() {
-            // VRC2: only horizontal or vertical mirroring; bit 1 is ignored.
-            match self.mirroring_reg & 0x01 {
-                0 => NametableLayout::Vertical,
-                _ => NametableLayout::Horizontal,
-            }
-        } else {
+        self.mirroring = if self.variant.has_four_mode_mirroring() {
             match self.mirroring_reg & 0x03 {
                 0x0 => NametableLayout::Vertical,
                 0x1 => NametableLayout::Horizontal,
                 0x2 => NametableLayout::SingleScreenLower,
                 0x3 => NametableLayout::SingleScreenUpper,
                 _ => self.mirroring,
+            }
+        } else {
+            // 1-bit mirroring: only H/V, bit 1 is ignored.
+            match self.mirroring_reg & 0x01 {
+                0 => NametableLayout::Vertical,
+                _ => NametableLayout::Horizontal,
             }
         };
     }
@@ -1492,6 +1511,63 @@ mod tests {
             mapper.read_chr(0x0000),
             0,
             "VRC2a: CHR high nibble bit 4 must be ignored — bank should be 0, not 32 or 128"
+        );
+    }
+
+    // =========================================================================
+    // Mapper 23 VRC2b mirroring compatibility (Wai Wai World)
+    // =========================================================================
+
+    /// NESdev: "VRC2-using games are usually well-behaved and only write 0 or 1 to this
+    /// register, but Wai Wai World in one instance writes $FF instead."
+    ///
+    /// Wai Wai World is VRC2b (iNES mapper 23, no submapper). VRC2 only uses bit 0
+    /// for mirroring (0 = Vertical, 1 = Horizontal). Writing $FF must give Horizontal,
+    /// not SingleScreenUpper ($FF & 0x03 = 3), which VRC4 2-bit masking would produce.
+    #[test]
+    fn test_mapper23_combined_mirroring_ff_gives_horizontal() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, NametableLayout::Vertical);
+
+        mapper.write_prg(0x9000, 0xFF);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "mapper 23 iNES 1.0: mirroring $FF must use VRC2 1-bit mask → Horizontal, not SingleScreenUpper"
+        );
+    }
+
+    /// Mapper 23 iNES 1.0 combined: value 0x02 (bit 1 set, bit 0 clear) must give
+    /// Vertical (1-bit VRC2 mask: 0x02 & 0x01 = 0), not SingleScreenLower (VRC4 2-bit).
+    #[test]
+    fn test_mapper23_combined_mirroring_ignores_bit1() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0x9000, 0x02);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "mapper 23 iNES 1.0: mirroring $02 must use VRC2 1-bit mask → Vertical, not SingleScreenLower"
+        );
+    }
+
+    /// Mapper 23 submapper 2 (VRC4e only) must still support full 4-mode mirroring.
+    /// Writing 0x02 to $9000 must give SingleScreenLower (VRC4 behavior).
+    #[test]
+    fn test_mapper23_submapper2_vrc4e_mirroring_supports_single_screen() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(23, 2, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0x9000, 0x02);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::SingleScreenLower,
+            "mapper 23 submapper 2 (VRC4e): mirroring $02 must give SingleScreenLower"
         );
     }
 }
