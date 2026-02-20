@@ -471,6 +471,7 @@ impl Mapper for MMC1Mapper {
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 4,
             trainer_jsr: false,
+            ..Default::default()
         }
     }
 }

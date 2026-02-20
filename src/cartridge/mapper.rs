@@ -131,6 +131,10 @@ pub struct MapperCapabilities {
     /// Whether the mapper hardware executes the trainer via JSR $7003 before the
     /// game's reset vector (Mapper 6 / SMC-801 specific behaviour).
     pub trainer_jsr: bool,
+    /// CPU address at which the 512-byte iNES trainer block is loaded.
+    /// Default is $7000 (standard for Mapper 6). Mapper 17 submappers 1–3
+    /// use $5D00, $5E00, and $5F00 (scratch RAM) respectively.
+    pub trainer_load_address: u16,
 }
 
 impl Default for MapperCapabilities {
@@ -144,6 +148,7 @@ impl Default for MapperCapabilities {
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
             trainer_jsr: false,
+            trainer_load_address: 0x7000,
         }
     }
 }

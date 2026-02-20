@@ -307,6 +307,7 @@ impl Mapper for Sunsoft4Mapper {
             prg_bank_size_kb: 16,
             chr_bank_size_kb: 2,
             trainer_jsr: false,
+            ..Default::default()
         }
     }
 }

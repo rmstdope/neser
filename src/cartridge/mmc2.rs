@@ -302,6 +302,7 @@ impl Mapper for MMC2Mapper {
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 4,
             trainer_jsr: false,
+            ..Default::default()
         }
     }
 }
