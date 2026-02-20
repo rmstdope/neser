@@ -48,15 +48,15 @@ pub struct Mapper6Mapper {
     prg_rom: BankedRom,
     chr_memory: ChrMemory,
     wram: Vec<u8>,
-    latch_mode: u8,       // D7-D5 of $42FC-$42FF: 0-7
-    latch_value: u8,      // last value written to the latch at $8000-$FFFF
-    latch_enabled: bool,  // A1 of $42FC-$42FF: PRG write-protected ↔ latch enabled
-    mirroring_type: u8,   // (A0 << 1) | D4; 0=SingleScreenLower, 1=Upper, 2=Vertical, 3=Horizontal
-    wram_bank: u8,        // bits 5-4 of $4500: 0-3, selects 8 KiB WRAM bank
-    prg_2m_slots: [u8; 4],  // shadow 8 KiB PRG banks for 2M mode (always updated on $8000-$FFFF writes)
-    prg_4m_slots: [u8; 4],  // 8 KiB PRG banks for 4M mode (updated via $4504-$4507)
-    mode_2m_active: bool,   // true when $43FE was the last $43FC-$43FF write
-    mode_4m_active: bool,   // true when $43FC was the last $43FC-$43FF write
+    latch_mode: u8,        // D7-D5 of $42FC-$42FF: 0-7
+    latch_value: u8,       // last value written to the latch at $8000-$FFFF
+    latch_enabled: bool,   // A1 of $42FC-$42FF: PRG write-protected ↔ latch enabled
+    mirroring_type: u8,    // (A0 << 1) | D4; 0=SingleScreenLower, 1=Upper, 2=Vertical, 3=Horizontal
+    wram_bank: u8,         // bits 5-4 of $4500: 0-3, selects 8 KiB WRAM bank
+    prg_2m_slots: [u8; 4], // shadow 8 KiB PRG banks for 2M mode (always updated on $8000-$FFFF writes)
+    prg_4m_slots: [u8; 4], // 8 KiB PRG banks for 4M mode (updated via $4504-$4507)
+    mode_2m_active: bool,  // true when $43FE was the last $43FC-$43FF write
+    mode_4m_active: bool,  // true when $43FC was the last $43FC-$43FF write
 }
 
 /// Map a switched 16 KiB bank `b` to an 8 KiB slot index where slots 0–1 follow
@@ -213,7 +213,7 @@ impl Mapper6Mapper {
     /// Address encoding: A0=M (0=enable, 1=disable), A1=N (0=4M, 1=2M when M=0).
     /// Data bits 1-0 (CC): CHR bank update (mirrors latch CC — handled by latch writes).
     fn apply_2m4m_register(&mut self, addr: u16) {
-        let m = addr & 1;  // A0
+        let m = addr & 1; // A0
         let n = (addr >> 1) & 1; // A1
         if m != 0 {
             // M=1 → disable both modes
@@ -239,10 +239,18 @@ impl Mapper for Mapper6Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => self.wram.get(self.wram_index(addr)).copied().unwrap_or(0),
-            0x8000..=0x9FFF => self.prg_rom.read_with_base(self.bank_for_slot(0), 0x8000, addr),
-            0xA000..=0xBFFF => self.prg_rom.read_with_base(self.bank_for_slot(1), 0xA000, addr),
-            0xC000..=0xDFFF => self.prg_rom.read_with_base(self.bank_for_slot(2), 0xC000, addr),
-            0xE000..=0xFFFF => self.prg_rom.read_with_base(self.bank_for_slot(3), 0xE000, addr),
+            0x8000..=0x9FFF => self
+                .prg_rom
+                .read_with_base(self.bank_for_slot(0), 0x8000, addr),
+            0xA000..=0xBFFF => self
+                .prg_rom
+                .read_with_base(self.bank_for_slot(1), 0xA000, addr),
+            0xC000..=0xDFFF => self
+                .prg_rom
+                .read_with_base(self.bank_for_slot(2), 0xC000, addr),
+            0xE000..=0xFFFF => self
+                .prg_rom
+                .read_with_base(self.bank_for_slot(3), 0xE000, addr),
             _ => 0,
         }
     }
@@ -801,7 +809,7 @@ mod tests {
         let prg = banked_data(0x2000, 32);
         let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
         mapper.write_prg(0x43FE, 0x00);
-        mapper.write_prg(0x8000, 3 << 2);  // slot 0 = bank 3
+        mapper.write_prg(0x8000, 3 << 2); // slot 0 = bank 3
         mapper.write_prg(0xA000, 11 << 2); // slot 1 = bank 11
         mapper.write_prg(0xC000, 17 << 2); // slot 2 = bank 17
         mapper.write_prg(0xE000, 28 << 2); // slot 3 = bank 28
@@ -848,7 +856,7 @@ mod tests {
         let prg = banked_data(0x2000, 64);
         let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
         mapper.write_prg(0x43FC, 0x00); // enable 4M mode
-        mapper.write_prg(0x4504, 15);   // slot 0 = bank 15
+        mapper.write_prg(0x4504, 15); // slot 0 = bank 15
         assert_eq!(mapper.read_prg(0x8000), 15);
     }
 
@@ -884,7 +892,7 @@ mod tests {
         let prg = banked_data(0x2000, 64);
         let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
         mapper.write_prg(0x43FC, 0x00);
-        mapper.write_prg(0x4504, 5);  // slot 0 = bank 5
+        mapper.write_prg(0x4504, 5); // slot 0 = bank 5
         mapper.write_prg(0x4505, 20); // slot 1 = bank 20
         mapper.write_prg(0x4506, 45); // slot 2 = bank 45
         mapper.write_prg(0x4507, 63); // slot 3 = bank 63
@@ -919,11 +927,11 @@ mod tests {
         // must preserve mode_2m_active and prg_2m_slots exactly.
         let prg = banked_data(0x2000, 32);
         let mut mapper = create_m6(prg.clone(), 1, NametableLayout::Vertical);
-        mapper.write_prg(0x43FE, 0x00);   // enable 2M
+        mapper.write_prg(0x43FE, 0x00); // enable 2M
         mapper.write_prg(0x8000, 3 << 2); // slot 0 = bank 3
-        mapper.write_prg(0xA000, 11 << 2);// slot 1 = bank 11
-        mapper.write_prg(0xC000, 17 << 2);// slot 2 = bank 17
-        mapper.write_prg(0xE000, 28 << 2);// slot 3 = bank 28
+        mapper.write_prg(0xA000, 11 << 2); // slot 1 = bank 11
+        mapper.write_prg(0xC000, 17 << 2); // slot 2 = bank 17
+        mapper.write_prg(0xE000, 28 << 2); // slot 3 = bank 28
         let snap = mapper.registers_snapshot();
         let mut restored = create_m6(prg, 1, NametableLayout::Horizontal);
         restored.restore_registers(&snap);
