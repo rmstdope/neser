@@ -3,13 +3,15 @@
 //! Sub-issue #627: Core latch-based banking modes 0–7 + register scaffolding.
 //! Sub-issue #628: 2M/4M PRG banking mode ($43FC-$43FF, $4504-$4507).
 //! Sub-issue #629: 1 KiB CHR banking mode + CHR nametable banking.
+//! Sub-issue #630: IRQ counter ($4501-$4503, $4500 bit 3).
+//! Sub-issue #631: Trainer initialization at $7000-$71FF.
 //!
 //! Spec: <https://www.nesdev.org/wiki/INES_Mapper_006>
 //!       <https://www.nesdev.org/wiki/Super_Magic_Card>
 //!
 //! Known Limitations:
-//! - IRQ counter ($4501-$4503) not yet implemented (sub-issue #630).
-//! - Trainer initialization at $7000-$71FF not yet implemented (sub-issue #631).
+//! - JSR $7003 execution before game reset vector not yet implemented
+//!   (requires CPU/console-layer changes; tracked separately).
 use std::cell::Cell;
 
 use crate::cartridge::common::{BankedRom, ChrMemory};
@@ -63,12 +65,12 @@ pub struct Mapper6Mapper {
     chr_nt_regs: [u8; 4], // $4518-$451B: 1 KiB bank per nametable $2000-$2FFF slot
     mmc4_latch0_fd: Cell<bool>, // lower 4 KiB latch: true=FD, false=FE
     mmc4_latch1_fd: Cell<bool>, // upper 4 KiB latch: true=FD, false=FE
-    irq_counter: u16,          // 16-bit upward counting IRQ counter
-    irq_latch_lo: u8,          // LSB written to $4502 (loaded on $4503 write)
-    irq_enabled: bool,         // counting active (enabled by $4503, disabled by $4501)
-    irq_pending_flag: bool,    // IRQ asserted (set on $FFFF→$0000 wrap)
-    irq_pa12_mode: bool,       // $4500 bit 3: false=M2 (cpu_cycle), true=PA12 (ppu_address_changed)
-    prev_a12: bool,            // previous A12 state for rising edge detection
+    irq_counter: u16,   // 16-bit upward counting IRQ counter
+    irq_latch_lo: u8,   // LSB written to $4502 (loaded on $4503 write)
+    irq_enabled: bool,  // counting active (enabled by $4503, disabled by $4501)
+    irq_pending_flag: bool, // IRQ asserted (set on $FFFF→$0000 wrap)
+    irq_pa12_mode: bool, // $4500 bit 3: false=M2 (cpu_cycle), true=PA12 (ppu_address_changed)
+    prev_a12: bool,     // previous A12 state for rising edge detection
     prg_2m_slots: [u8; 4], // shadow 8 KiB PRG banks for 2M mode (always updated on $8000-$FFFF writes)
     prg_4m_slots: [u8; 4], // 8 KiB PRG banks for 4M mode (updated via $4504-$4507)
     mode_2m_active: bool,  // true when $43FE was the last $43FC-$43FF write
@@ -1468,7 +1470,10 @@ mod tests {
         mapper.write_prg(0x4502, 0xFE); // counter = $FFFE
         mapper.write_prg(0x4503, 0xFF);
         mapper.cpu_cycle(); // $FFFE -> $FFFF (no wrap)
-        assert!(!mapper.irq_pending(), "IRQ must not fire at $FFFF (no wrap yet)");
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ must not fire at $FFFF (no wrap yet)"
+        );
     }
 
     #[test]
@@ -1482,7 +1487,10 @@ mod tests {
             assert!(!mapper.irq_pending(), "must not fire before wrap");
         }
         mapper.cpu_cycle(); // 65536th tick: $FFFF -> $0000
-        assert!(mapper.irq_pending(), "IRQ must fire after 65536 ticks from zero");
+        assert!(
+            mapper.irq_pending(),
+            "IRQ must fire after 65536 ticks from zero"
+        );
     }
 
     #[test]
@@ -1498,7 +1506,10 @@ mod tests {
         for _ in 0..131072 {
             mapper.cpu_cycle();
         }
-        assert!(!mapper.irq_pending(), "counting must stay disabled after $4501");
+        assert!(
+            !mapper.irq_pending(),
+            "counting must stay disabled after $4501"
+        );
     }
 
     #[test]
@@ -1552,7 +1563,10 @@ mod tests {
         mapper.write_prg(0x4503, 0xFF);
         mapper.ppu_address_changed(0x0000); // A12 = 0
         mapper.ppu_address_changed(0x1000); // A12 = 1 -> rising edge -> tick
-        assert!(mapper.irq_pending(), "IRQ must fire on A12 rising edge in PA12 mode");
+        assert!(
+            mapper.irq_pending(),
+            "IRQ must fire on A12 rising edge in PA12 mode"
+        );
     }
 
     #[test]
@@ -1567,7 +1581,10 @@ mod tests {
         mapper.write_prg(0x4502, 0xFF);
         mapper.write_prg(0x4503, 0xFF); // reload, re-enable
         mapper.ppu_address_changed(0x1000); // A12 still high -> no rising edge
-        assert!(!mapper.irq_pending(), "held-high A12 must not trigger another tick");
+        assert!(
+            !mapper.irq_pending(),
+            "held-high A12 must not trigger another tick"
+        );
     }
 
     #[test]
@@ -1582,7 +1599,10 @@ mod tests {
         mapper.write_prg(0x4502, 0xFF);
         mapper.write_prg(0x4503, 0xFF);
         mapper.ppu_address_changed(0x0000); // falling edge
-        assert!(!mapper.irq_pending(), "falling A12 edge must not trigger tick");
+        assert!(
+            !mapper.irq_pending(),
+            "falling A12 edge must not trigger tick"
+        );
     }
 
     #[test]
@@ -1592,7 +1612,10 @@ mod tests {
         mapper.write_prg(0x4502, 0xFF);
         mapper.write_prg(0x4503, 0xFF);
         mapper.cpu_cycle(); // must not increment in PA12 mode
-        assert!(!mapper.irq_pending(), "cpu_cycle must be a no-op in PA12 mode");
+        assert!(
+            !mapper.irq_pending(),
+            "cpu_cycle must be a no-op in PA12 mode"
+        );
     }
 
     #[test]
@@ -1614,6 +1637,76 @@ mod tests {
             restored.cpu_cycle();
         }
         restored.cpu_cycle(); // wrap
-        assert!(restored.irq_pending(), "IRQ must fire at wrap after restore");
+        assert!(
+            restored.irq_pending(),
+            "IRQ must fire at wrap after restore"
+        );
+    }
+
+    // ── Trainer initialization ($7000–$71FF) ──────────────────────────────────
+    //
+    // A 512-byte trainer block from the iNES header must be loadable into
+    // Mapper 6 WRAM at CPU addresses $7000–$71FF (WRAM bank 0, offset $1000).
+    // The bus layer writes trainer bytes via write_prg($7000+i, byte); this
+    // test validates that the mapper correctly stores and retrieves them.
+
+    #[test]
+    fn test_trainer_bytes_written_to_7000_are_readable() {
+        // Given a Mapper 6 instance
+        let mut mapper = create_m6(vec![0u8; 256 * 1024], 1, NametableLayout::Vertical);
+        // When 512 trainer bytes are written to $7000–$71FF (as the bus does on map_cartridge)
+        for i in 0u16..512 {
+            mapper.write_prg(0x7000 + i, (i as u8).wrapping_add(0xA5));
+        }
+        // Then each byte is readable at the same address
+        for i in 0u16..512 {
+            let expected = (i as u8).wrapping_add(0xA5);
+            let actual = mapper.read_prg(0x7000 + i);
+            assert_eq!(
+                actual,
+                expected,
+                "Trainer byte mismatch at ${:04X}: expected ${:02X} got ${:02X}",
+                0x7000 + i,
+                expected,
+                actual
+            );
+        }
+    }
+
+    #[test]
+    fn test_trainer_bytes_at_7000_are_independent_of_wram_bank1() {
+        // Given a Mapper 6 instance with trainer bytes in bank 0 at $7000–$71FF
+        let mut mapper = create_m6(vec![0u8; 256 * 1024], 1, NametableLayout::Vertical);
+        for i in 0u16..512 {
+            mapper.write_prg(0x7000 + i, 0xAA);
+        }
+        // When WRAM bank 1 is selected (bits 5-4 of $4500 = 0b0001_0000 = 0x10)
+        mapper.write_prg(0x4500, 0x10); // wram_bank = 1
+        for i in 0u16..512 {
+            mapper.write_prg(0x7000 + i, 0xBB); // write different bytes into bank 1
+        }
+        // Then switching back to bank 0 restores the original trainer bytes
+        mapper.write_prg(0x4500, 0x00); // wram_bank = 0
+        for i in 0u16..512 {
+            assert_eq!(
+                mapper.read_prg(0x7000 + i),
+                0xAA,
+                "Trainer bytes in bank 0 should not be overwritten by bank 1 writes"
+            );
+        }
+    }
+
+    #[test]
+    fn test_trainer_region_is_writable_and_readable() {
+        // Given a Mapper 6 instance
+        let mut mapper = create_m6(vec![0u8; 256 * 1024], 1, NametableLayout::Vertical);
+        // When a byte is written to the last trainer address ($71FF)
+        mapper.write_prg(0x71FF, 0x42);
+        // Then it is readable at the same address
+        assert_eq!(mapper.read_prg(0x71FF), 0x42);
+        // And when a byte is written to the first trainer address ($7000)
+        mapper.write_prg(0x7000, 0x24);
+        // Then it is readable at the same address
+        assert_eq!(mapper.read_prg(0x7000), 0x24);
     }
 }
