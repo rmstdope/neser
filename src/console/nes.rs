@@ -1879,10 +1879,10 @@ mod tests {
         let prg_len = prg_size_units as usize * 16 * 1024;
         let mut prg = vec![0xEA_u8; prg_len]; // NOP sled
         // Submapper 1 → latch_mode 1 (UN1ROM+CHRSW):
-        //   $C000–$FFFF fixed to last 16 KiB bank of PRG
-        //   Last 16 KiB = last 2 × 8 KiB banks = offset prg_len − 16384
-        //   $FFFC is at offset 0x3FFC = 16380 within the last 16 KiB block
-        let reset_vec_offset = prg_len - 16384 + 16380;
+        //   $C000–$FFFF fixed to absolute 16 KiB bank #7 (8 KiB banks 14+15)
+        //   Bank #7 starts at offset 7 * 16384 within PRG.
+        //   $FFFC is at offset 0x3FFC = 16380 within a 16 KiB bank.
+        let reset_vec_offset = 7 * 16384 + 16380;
         prg[reset_vec_offset] = (game_reset_vector & 0xFF) as u8;
         prg[reset_vec_offset + 1] = (game_reset_vector >> 8) as u8;
         rom.extend(prg);
