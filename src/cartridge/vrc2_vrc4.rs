@@ -54,6 +54,18 @@ impl Vrc2Vrc4Variant {
             Vrc2Vrc4Variant::Mapper25 => true,
         }
     }
+
+    /// Returns the mask applied to the high nibble when writing a CHR bank register.
+    /// VRC2 uses 4 high bits (0x0F); VRC4 uses 5 high bits (0x1F).
+    fn chr_high_nibble_mask(&self) -> u8 {
+        if self.has_irq() { 0x1F } else { 0x0F }
+    }
+
+    /// VRC2a (mapper 22) wires CHR data lines shifted right by 1; the low register
+    /// bit is not connected to the CHR ROM address lines.
+    fn shifts_chr_bank_right(&self) -> bool {
+        *self == Vrc2Vrc4Variant::Mapper22
+    }
 }
 
 /// Controls which address line mapping(s) are active for mapper 21.
@@ -112,8 +124,6 @@ impl Vrc2Vrc4Mapper {
     const CHR_LOW_NIBBLE_MASK: u16 = 0x000F;
     /// Mask to preserve the high 5 bits of a 9-bit CHR bank value.
     const CHR_HIGH_BITS_MASK: u16 = 0x01F0;
-    /// Mask for the 5-bit CHR high-nibble value written to bits [8:4].
-    const CHR_HIGH_VALUE_MASK: u8 = 0x1F;
 
     /// Starting value for the IRQ scanline prescaler (341 master clocks per scanline).
     const IRQ_PRESCALER_INIT: i32 = 341;
@@ -275,12 +285,20 @@ impl Vrc2Vrc4Mapper {
     }
 
     fn apply_mirroring_register(&mut self) {
-        self.mirroring = match self.mirroring_reg & 0x03 {
-            0x0 => NametableLayout::Vertical,
-            0x1 => NametableLayout::Horizontal,
-            0x2 => NametableLayout::SingleScreenLower,
-            0x3 => NametableLayout::SingleScreenUpper,
-            _ => self.mirroring,
+        self.mirroring = if !self.variant.has_irq() {
+            // VRC2: only horizontal or vertical mirroring; bit 1 is ignored.
+            match self.mirroring_reg & 0x01 {
+                0 => NametableLayout::Vertical,
+                _ => NametableLayout::Horizontal,
+            }
+        } else {
+            match self.mirroring_reg & 0x03 {
+                0x0 => NametableLayout::Vertical,
+                0x1 => NametableLayout::Horizontal,
+                0x2 => NametableLayout::SingleScreenLower,
+                0x3 => NametableLayout::SingleScreenUpper,
+                _ => self.mirroring,
+            }
         };
     }
 
@@ -338,9 +356,10 @@ impl Vrc2Vrc4Mapper {
     /// Update a single 1KB CHR bank slot with either the low or high nibble of
     /// the 9-bit bank number.  Low nibble sets bits [3:0]; high nibble sets bits [8:4].
     fn write_chr_bank_nibble(&mut self, bank_idx: usize, is_high_nibble: bool, value: u8) {
+        let high_mask = self.variant.chr_high_nibble_mask();
         if is_high_nibble {
             self.chr_banks_1k[bank_idx] = (self.chr_banks_1k[bank_idx] & Self::CHR_LOW_NIBBLE_MASK)
-                | (((value & Self::CHR_HIGH_VALUE_MASK) as u16) << 4);
+                | (((value & high_mask) as u16) << 4);
         } else {
             self.chr_banks_1k[bank_idx] =
                 (self.chr_banks_1k[bank_idx] & Self::CHR_HIGH_BITS_MASK) | (value & 0x0F) as u16;
@@ -483,7 +502,12 @@ impl Mapper for Vrc2Vrc4Mapper {
         let bank_offset = (addr as usize) % Self::CHR_BANK_SIZE_1K;
 
         let bank: u16 = self.chr_banks_1k.get(bank_slot).copied().unwrap_or(0);
-        self.read_chr_1k(self.chr_bank_index_1k(bank), bank_offset)
+        let effective_bank = if self.variant.shifts_chr_bank_right() {
+            bank >> 1
+        } else {
+            bank
+        };
+        self.read_chr_1k(self.chr_bank_index_1k(effective_bank), bank_offset)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
@@ -1137,6 +1161,102 @@ mod tests {
         assert!(
             !mapper.irq_pending(),
             "submapper 1 (VRC4a only) must ignore VRC4c $F040 address for latch high"
+        );
+    }
+
+    // =========================================================================
+    // Mapper 22 (VRC2a) specific spec tests — issue #645
+    // =========================================================================
+
+    /// NESdev spec: "On VRC2a (mapper 22), the low bit is ignored (right shift value by 1)."
+    /// When a CHR bank register is written, the effective bank number used for
+    /// PPU reads must be (stored_value >> 1).
+    #[test]
+    fn test_vrc2a_mapper22_chr_bank_right_shifted_by_1() {
+        // 16 banks × 1KB, each bank filled with its index byte
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 16);
+        let mut mapper = create_vrc_mapper(22, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // VRC2a address normalisation: CPU A1 → chip A0, CPU A0 → chip A1 (swapped).
+        // To write CHR bank 0 low nibble (chip pos 0 = $B000):
+        //   chip A0=0, chip A1=0 → CPU: A1 = chip A0 = 0, CPU A0 = chip A1 = 0 → $B000
+        // Write 0x02 (binary 0010). Without the shift the game would select bank 2;
+        // with the spec-mandated >> 1 shift it must select bank 1.
+        mapper.write_prg(0xB000, 0x02);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            1,
+            "VRC2a CHR bank must be right-shifted by 1: writing 0x02 must select bank 1, not bank 2"
+        );
+
+        // Write 0x04 → effective bank 2
+        mapper.write_prg(0xB000, 0x04);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            2,
+            "VRC2a CHR bank must be right-shifted by 1: writing 0x04 must select bank 2"
+        );
+
+        // Odd values: low bit is discarded — 0x03 >> 1 = 1 → bank 1
+        mapper.write_prg(0xB000, 0x03);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            1,
+            "VRC2a CHR bank: bit 0 is discarded, 0x03 >> 1 must select bank 1"
+        );
+    }
+
+    /// NESdev spec: "VRC2 supports only vertical or horizontal mirroring. Bit 1 is ignored."
+    /// Writing values 2 or 3 to the mirroring register on mapper 22 must not
+    /// produce single-screen mirroring — only bit 0 is honoured.
+    #[test]
+    fn test_vrc2a_mapper22_mirroring_ignores_bit1() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = create_vrc_mapper(22, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // VRC2a $9000: chip pos 0 (CPU A1=0, A0=0) → $9000
+        // value 0b10 (2): bit 1 set, bit 0 clear → must yield Vertical (same as value 0)
+        mapper.write_prg(0x9000, 0b10);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "VRC2a: mirroring value 2 (bit1=1,bit0=0) must behave as Vertical (bit 1 ignored)"
+        );
+
+        // value 0b11 (3): bit 1 set, bit 0 set → must yield Horizontal (same as value 1)
+        mapper.write_prg(0x9000, 0b11);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "VRC2a: mirroring value 3 (bit1=1,bit0=1) must behave as Horizontal (bit 1 ignored)"
+        );
+    }
+
+    /// NESdev spec: "VRC2 only has 4 high bits of CHR select. $B001 bit 4 is ignored."
+    /// Writing a high nibble value with bit 4 set on VRC2a must NOT advance the bank
+    /// beyond what 4 bits allow — bit 4 must be silently discarded.
+    ///
+    /// Test uses 48 CHR banks so that 256 % 48 = 16 ≠ 0, meaning a raw 9-bit stored
+    /// value of 0x100 does NOT accidentally wrap back to bank 0.
+    #[test]
+    fn test_vrc2a_mapper22_chr_high_nibble_4_bits_only() {
+        // 48 × 1KB banks (256 % 48 = 16, so a 9-bit stored value 0x100 would map to
+        // bank 16 without the fix, proving the mask is checked).
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 48);
+        let mut mapper = create_vrc_mapper(22, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Write high nibble = 0x10 (only bit 4 set) to CHR bank 0.
+        // VRC2a chip pos 1 (chip A0=1): CPU A1 = chip A0 = 1, CPU A0 = chip A1 = 0 → $B002.
+        // With 5-bit mask: stored = 0x100 = 256 → >> 1 = 128 → 128 % 48 = 32 → bank 32 (≠ 0).
+        // With 4-bit mask: bit 4 discarded → stored = 0x000 → >> 1 = 0 → bank 0 ✓.
+        mapper.write_prg(0xB002, 0x10); // high nibble, bit 4 only
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "VRC2a: CHR high nibble bit 4 must be ignored — bank should be 0, not 32 or 128"
         );
     }
 }
