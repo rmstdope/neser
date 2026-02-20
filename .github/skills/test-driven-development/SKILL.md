@@ -33,10 +33,12 @@ Your core methodology follows these strict phases:
 - Create a git branch for the issue or feature you are working on.
 - Analyze each issue and its acceptance criteria carefully
 - **For bug fixes involving an external specification** (hardware specs, protocols, standards): consult the authoritative spec first (e.g., NesDev wiki for NES mappers) and compare it against the current implementation before writing tests. Tests must reflect the *spec*, not the existing (potentially wrong) behavior.
+- **When implementing read/write paired operations**: if the spec defines both a read and a write path (e.g., `read_nametable` / `write_nametable`, `get` / `set`), ensure both directions are covered by failing tests. A missing write-path test will not be caught until code review.
 - **If the code to test is not easily unit-testable** (e.g., a monolithic JS file with no exports, a tightly coupled class): extract the relevant logic into a small, pure, exported function/module first, then write tests against that module. This is preferable to writing no tests or writing fragile integration tests.
 - Write a new or update an existing acceptance tests in Given/When/Then format that directly reflect the behavior described in the user story. If it is more suitable to update an existing test, prefer that over creating a new one.
 - Ensure tests are comprehensive but focused. Avoid over-specifying implementation details in the tests.
 - Write/Update tests so that they fail initially (since no implementation exists yet)
+- **Verify each test fails because the feature is absent, not coincidentally**: a test that passes in RED due to unrelated behaviour (e.g., both paths happen to write to the same memory location) provides false confidence. Prefer test designs where the failing assertion is structurally tied to the missing feature — for example, write to two distinct banks and assert the earlier one is preserved, rather than asserting the last-written value.
 - Use clear, descriptive test names that describe the **spec contract** (e.g., `test_lower_window_fixed_to_bank_0`), not the mechanism.
 - **Verify tests compile and actually fail** (not panic/error in test setup code) before declaring RED complete. Fix any test setup bugs before proceeding.
 - STOP after writing the failing test and explicitly ask for permission to proceed to the Green phase
