@@ -219,6 +219,7 @@ impl<const CHR_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
             prg_bank_size_kb: 32,
             chr_bank_size_kb: CHR_BANK_KB,
             trainer_jsr: false,
+            ..Default::default()
         }
     }
 }
@@ -368,6 +369,7 @@ impl<const PRG_BANK_KB: usize, const MAPPER_NUM: u8> Mapper
             prg_bank_size_kb: PRG_BANK_KB,
             chr_bank_size_kb: 8,
             trainer_jsr: false,
+            ..Default::default()
         }
     }
 }
@@ -533,6 +535,7 @@ impl<
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
             trainer_jsr: false,
+            ..Default::default()
         }
     }
 }

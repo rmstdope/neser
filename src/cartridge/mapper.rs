@@ -9,7 +9,6 @@ use super::cnrom::CNROMMapper;
 use super::colordreams::ColorDreamsMapper;
 use super::cprom::CpromMapper;
 use super::gxrom::GxROMMapper;
-use super::mapper6::Mapper6Mapper;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
@@ -23,6 +22,7 @@ use super::nrom::NROMMapper;
 use super::rom_db;
 use super::sunsoft_4::Sunsoft4Mapper;
 use super::sunsoft_fme7::SunsoftFme7Mapper;
+use super::super_magic_card::SuperMagicCardMapper;
 use super::uxrom::UxROMMapper;
 use super::vrc2_vrc4::Vrc2Vrc4Mapper;
 use super::vrc6::VRC6Mapper;
@@ -131,6 +131,10 @@ pub struct MapperCapabilities {
     /// Whether the mapper hardware executes the trainer via JSR $7003 before the
     /// game's reset vector (Mapper 6 / SMC-801 specific behaviour).
     pub trainer_jsr: bool,
+    /// CPU address at which the 512-byte iNES trainer block is loaded.
+    /// Default is $7000 (standard for Mapper 6). Mapper 17 submappers 1–3
+    /// use $5D00, $5E00, and $5F00 (scratch RAM) respectively.
+    pub trainer_load_address: u16,
 }
 
 impl Default for MapperCapabilities {
@@ -144,6 +148,7 @@ impl Default for MapperCapabilities {
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
             trainer_jsr: false,
+            trainer_load_address: 0x7000,
         }
     }
 }
@@ -727,7 +732,7 @@ pub fn supported_mappers() -> &'static [u8] {
     SUPPORTED_MAPPERS
 }
 
-fn resolve_mapper6_submapper(mapper_number: u16, submapper: u8) -> u8 {
+fn resolve_smc_submapper(mapper_number: u16, submapper: u8) -> u8 {
     match mapper_number {
         8 => 4,
         6 if submapper == 0 => 1,
@@ -771,9 +776,9 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
     }
 
     if mapper_number == 6 || mapper_number == 8 {
-        let submapper = resolve_mapper6_submapper(mapper_number, metadata.submapper);
+        let submapper = resolve_smc_submapper(mapper_number, metadata.submapper);
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(Mapper6Mapper::new(
+        return Ok(Box::new(SuperMagicCardMapper::new(
             prg_rom, chr_rom, mirroring, submapper,
         )));
     }
@@ -781,7 +786,7 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
     if mapper_number == 17 {
         let submapper = metadata.submapper;
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        return Ok(Box::new(Mapper6Mapper::new_mapper17(
+        return Ok(Box::new(SuperMagicCardMapper::new_mapper17(
             prg_rom, chr_rom, mirroring, submapper,
         )));
     }

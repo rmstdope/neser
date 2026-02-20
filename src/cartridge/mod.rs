@@ -11,7 +11,6 @@ mod cprom;
 mod gxrom;
 mod ines;
 mod mapper;
-mod mapper6;
 mod mapper_templates;
 mod mmc1;
 mod mmc2;
@@ -26,6 +25,7 @@ mod nrom;
 mod rom_db;
 mod sunsoft_4;
 mod sunsoft_fme7;
+mod super_magic_card;
 #[cfg(test)]
 pub mod test_helpers;
 mod uxrom;

@@ -130,14 +130,14 @@ impl Bus {
         // Wrap cartridge in Rc<RefCell<>> for shared access between CPU and PPU
         let cartridge_rc = Rc::new(RefCell::new(cartridge));
 
-        // Load trainer data into cartridge PRG-RAM at $7000-$71FF if present
+        // Load trainer data into cartridge memory at the mapper-specified address
         if let Some(trainer_bytes) = trainer_data {
             let mut cart = cartridge_rc.borrow_mut();
             let mapper = cart.mapper_mut();
-            // Write each byte of trainer data to $7000-$71FF
+            let base = mapper.capabilities().trainer_load_address;
             // Trainer data is always exactly 512 bytes from parsing validation
             for (i, byte) in trainer_bytes.iter().enumerate() {
-                mapper.write_prg(0x7000 + i as u16, *byte);
+                mapper.write_prg(base + i as u16, *byte);
             }
         }
 
@@ -2147,6 +2147,47 @@ mod tests {
                 actual, 0,
                 "RAM at ${:04X} should be zero without trainer, got ${:02X}",
                 addr, actual
+            );
+        }
+    }
+
+    #[test]
+    fn test_mapper17_submapper1_trainer_loaded_at_5d00() {
+        // Mapper 17 submapper 1 routes the trainer to $5D00 (scratch RAM)
+        let mut memory = create_test_memory();
+
+        // Build a Mapper 17 (iNES mapper byte = 17) ROM with trainer
+        // NES 2.0: byte 7 bits 3-2 = 0b10, byte 8 bits 7-4 = submapper = 1
+        let mut rom = vec![
+            b'N', b'E', b'S', 0x1A, // magic
+            1,    // PRG 16KB units
+            0,    // no CHR ROM → CHR-RAM
+            0x14, // flags6: trainer bit | mapper bits 3-0 = 0x1 (17 & 0x0F)
+            0x18, // flags7: NES 2.0 (bits 3-2=0b10) | mapper bits 7-4 = 0x1 (17 >> 4)
+            0x10, // flags8: submapper 1 (bits 7-4) | mapper bits 11-8 = 0
+            0, 0, 0, 0, 0, 0, 0,
+        ];
+        for i in 0..512u16 {
+            rom.push(i as u8); // trainer bytes
+        }
+        rom.extend(vec![0xFF; 16 * 1024]); // PRG ROM
+
+        let cartridge = crate::cartridge::Cartridge::load_from_file(
+            &rom,
+            "bus-m17-sub1-trainer.nes",
+            Rc::new(RefCell::new(crate::app_context::AppContext::new())),
+        )
+        .unwrap();
+        memory.map_cartridge(cartridge);
+
+        // Trainer bytes should be at $5D00–$5EFF
+        for i in 0..512u16 {
+            let addr = 0x5D00 + i;
+            assert_eq!(
+                memory.read(addr, false),
+                i as u8,
+                "trainer byte mismatch at ${:04X}",
+                addr
             );
         }
     }

@@ -198,6 +198,7 @@ impl Mapper for BnromNinaMapper {
             prg_bank_size_kb: 32,
             chr_bank_size_kb: 8,
             trainer_jsr: false,
+            ..Default::default()
         }
     }
 }

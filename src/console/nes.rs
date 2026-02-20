@@ -1845,7 +1845,7 @@ mod tests {
     /// Builds a minimal valid iNES ROM for Mapper 6 (submapper 1).
     /// The game reset vector at $FFFC–$FFFD is set to `game_reset_vector`.
     /// When `include_trainer` is true, a 512-byte trainer block is included.
-    fn build_mapper6_rom(game_reset_vector: u16, include_trainer: bool) -> Vec<u8> {
+    fn build_smc_rom(game_reset_vector: u16, include_trainer: bool) -> Vec<u8> {
         // 256KB PRG ROM (16 × 16 KiB). CHR RAM (0 CHR ROM).
         // Mapper 6: byte6 bits[7:4] = 0x6.  Trainer flag = bit 2 of byte 6.
         let prg_size_units = 16u8;
@@ -1892,7 +1892,7 @@ mod tests {
     #[test]
     fn test_hard_reset_with_trainer_sets_pc_to_7003() {
         let game_vector = 0xC000u16;
-        let rom = build_mapper6_rom(game_vector, true);
+        let rom = build_smc_rom(game_vector, true);
         let mut nes = Nes::new(crate::app_context::AppContext::new());
         nes.insert_cartridge(load_test_cartridge(&rom));
         nes.reset(false); // hard reset
@@ -1906,7 +1906,7 @@ mod tests {
     #[test]
     fn test_hard_reset_with_trainer_pushes_game_vector_to_stack() {
         let game_vector = 0xC123u16;
-        let rom = build_mapper6_rom(game_vector, true);
+        let rom = build_smc_rom(game_vector, true);
         let mut nes = Nes::new(crate::app_context::AppContext::new());
         nes.insert_cartridge(load_test_cartridge(&rom));
         nes.reset(false); // hard reset
@@ -1933,7 +1933,7 @@ mod tests {
     #[test]
     fn test_soft_reset_with_trainer_does_not_jump_to_7003() {
         let game_vector = 0xC000u16;
-        let rom = build_mapper6_rom(game_vector, true);
+        let rom = build_smc_rom(game_vector, true);
         let mut nes = Nes::new(crate::app_context::AppContext::new());
         nes.insert_cartridge(load_test_cartridge(&rom));
         nes.reset(false); // hard reset — goes to $7003
@@ -1948,7 +1948,7 @@ mod tests {
     #[test]
     fn test_hard_reset_without_trainer_uses_game_reset_vector() {
         let game_vector = 0xD000u16;
-        let rom = build_mapper6_rom(game_vector, false);
+        let rom = build_smc_rom(game_vector, false);
         let mut nes = Nes::new(crate::app_context::AppContext::new());
         nes.insert_cartridge(load_test_cartridge(&rom));
         nes.reset(false); // hard reset — no trainer

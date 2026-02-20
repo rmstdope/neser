@@ -701,6 +701,7 @@ impl Mapper for VRC6Mapper {
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 1,
             trainer_jsr: false,
+            ..Default::default()
         }
     }
 }

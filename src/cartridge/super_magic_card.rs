@@ -49,28 +49,30 @@ const PRG_BANK3_LOWER_HALF: usize = 6; // 16 KiB index → 8 KiB banks 12 & 13
 ///   $4504-$4507 — 4M PRG slot registers; data bits 5-0 select 8 KiB bank per slot.
 ///   $6000-$7FFF — 8 KiB window into 32 KiB banked WRAM
 ///   $8000-$FFFF — latch write when latch is enabled; always updates 2M shadow slots
-pub struct Mapper6Mapper {
+pub struct SuperMagicCardMapper {
     prg_rom: BankedRom,
     chr_memory: ChrMemory,
     wram: Vec<u8>,
-    latch_mode: u8,             // D7-D5 of $42FC-$42FF: 0-7
-    latch_value: u8,            // last value written to the latch at $8000-$FFFF
-    latch_enabled: bool,        // A1 of $42FC-$42FF: PRG write-protected ↔ latch enabled
-    mirroring_type: u8, // (A0 << 1) | D4; 0=SingleScreenLower, 1=Upper, 2=Vertical, 3=Horizontal
-    wram_bank: u8,      // bits 5-4 of $4500: 0-3, selects 8 KiB WRAM bank
-    chr_mode_1kb: bool, // $4500 bit 0: false=8 KiB (default), true=1 KiB
-    chr_nt_active: bool, // $4500 bit 1 inverted: true=CHR nametables via $4518-$451B
-    mmc4_disabled: bool, // $4500 bit 2: true=direct 1 KiB, false=MMC4 latch mode
+    scratch_ram: Vec<u8>, // 4 KiB scratch RAM at CPU $5000–$5FFF (Mapper 17 only)
+    trainer_load_address: u16, // CPU address where the trainer is loaded (default $7000)
+    latch_mode: u8,       // D7-D5 of $42FC-$42FF: 0-7
+    latch_value: u8,      // last value written to the latch at $8000-$FFFF
+    latch_enabled: bool,  // A1 of $42FC-$42FF: PRG write-protected ↔ latch enabled
+    mirroring_type: u8,   // (A0 << 1) | D4; 0=SingleScreenLower, 1=Upper, 2=Vertical, 3=Horizontal
+    wram_bank: u8,        // bits 5-4 of $4500: 0-3, selects 8 KiB WRAM bank
+    chr_mode_1kb: bool,   // $4500 bit 0: false=8 KiB (default), true=1 KiB
+    chr_nt_active: bool,  // $4500 bit 1 inverted: true=CHR nametables via $4518-$451B
+    mmc4_disabled: bool,  // $4500 bit 2: true=direct 1 KiB, false=MMC4 latch mode
     chr_1k_regs: [u8; 8], // $4510-$4517: 1 KiB bank per PPU $0000-$1FFF slot
     chr_nt_regs: [u8; 4], // $4518-$451B: 1 KiB bank per nametable $2000-$2FFF slot
     mmc4_latch0_fd: Cell<bool>, // lower 4 KiB latch: true=FD, false=FE
     mmc4_latch1_fd: Cell<bool>, // upper 4 KiB latch: true=FD, false=FE
-    irq_counter: u16,   // 16-bit upward counting IRQ counter
-    irq_latch_lo: u8,   // LSB written to $4502 (loaded on $4503 write)
-    irq_enabled: bool,  // counting active (enabled by $4503, disabled by $4501)
+    irq_counter: u16,     // 16-bit upward counting IRQ counter
+    irq_latch_lo: u8,     // LSB written to $4502 (loaded on $4503 write)
+    irq_enabled: bool,    // counting active (enabled by $4503, disabled by $4501)
     irq_pending_flag: bool, // IRQ asserted (set on $FFFF→$0000 wrap)
-    irq_pa12_mode: bool, // $4500 bit 3: false=M2 (cpu_cycle), true=PA12 (ppu_address_changed)
-    prev_a12: bool,     // previous A12 state for rising edge detection
+    irq_pa12_mode: bool,  // $4500 bit 3: false=M2 (cpu_cycle), true=PA12 (ppu_address_changed)
+    prev_a12: bool,       // previous A12 state for rising edge detection
     prg_2m_slots: [u8; 4], // shadow 8 KiB PRG banks for 2M mode (always updated on $8000-$FFFF writes)
     prg_4m_slots: [u8; 4], // 8 KiB PRG banks for 4M mode (updated via $4504-$4507)
     mode_2m_active: bool,  // true when $43FE was the last $43FC-$43FF write
@@ -103,7 +105,7 @@ fn prg_slot_from_addr(addr: u16) -> usize {
     ((addr - 0x8000) / 0x2000) as usize
 }
 
-impl Mapper6Mapper {
+impl SuperMagicCardMapper {
     /// Create a new Mapper 6 instance.
     ///
     /// # Arguments
@@ -139,6 +141,8 @@ impl Mapper6Mapper {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_8K),
             chr_memory,
             wram: vec![0; WRAM_SIZE_32K],
+            scratch_ram: Vec::new(),
+            trainer_load_address: 0x7000,
             latch_mode,
             latch_value: 0,
             latch_enabled: true,
@@ -177,7 +181,7 @@ impl Mapper6Mapper {
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
         mirroring: NametableLayout,
-        _submapper: u8,
+        submapper: u8,
     ) -> Self {
         let num_banks_8k = prg_rom.len() / PRG_BANK_SIZE_8K;
         let n = num_banks_8k as u8;
@@ -207,10 +211,20 @@ impl Mapper6Mapper {
             ChrMemory::new(chr_rom)
         };
 
+        // Trainer load address from submapper (0→$7000, 1→$5D00, 2→$5E00, 3→$5F00)
+        let trainer_load_address = match submapper {
+            1 => 0x5D00,
+            2 => 0x5E00,
+            3 => 0x5F00,
+            _ => 0x7000,
+        };
+
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_8K),
             chr_memory,
             wram: vec![0; WRAM_SIZE_32K],
+            scratch_ram: vec![0; 0x1000], // 4 KiB scratch RAM at $5000–$5FFF
+            trainer_load_address,
             latch_mode: 1,
             latch_value: 0,
             latch_enabled: true,
@@ -422,9 +436,14 @@ impl Mapper6Mapper {
     }
 }
 
-impl Mapper for Mapper6Mapper {
+impl Mapper for SuperMagicCardMapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
+            0x5000..=0x5FFF => self
+                .scratch_ram
+                .get((addr - 0x5000) as usize)
+                .copied()
+                .unwrap_or(0),
             0x6000..=0x7FFF => self.wram.get(self.wram_index(addr)).copied().unwrap_or(0),
             0x8000..=0x9FFF => self
                 .prg_rom
@@ -442,8 +461,27 @@ impl Mapper for Mapper6Mapper {
         }
     }
 
+    fn read_prg_open_bus(&self, addr: u16, open_bus: u8) -> u8 {
+        if (0x5000..=0x5FFF).contains(&addr) && !self.scratch_ram.is_empty() {
+            self.read_prg(addr)
+        } else {
+            // Default: $4020-$5FFF returns open bus, $6000+ reads PRG
+            if addr < 0x6000 {
+                open_bus
+            } else {
+                self.read_prg(addr)
+            }
+        }
+    }
+
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
+            0x5000..=0x5FFF => {
+                let idx = (addr - 0x5000) as usize;
+                if idx < self.scratch_ram.len() {
+                    self.scratch_ram[idx] = value;
+                }
+            }
             0x42FC..=0x42FF => self.apply_mode_register(addr, value),
             0x43FC..=0x43FF => self.apply_2m4m_register(addr),
             0x4500 => {
@@ -577,6 +615,7 @@ impl Mapper for Mapper6Mapper {
             prg_bank_size_kb: 8,
             chr_bank_size_kb: 8,
             trainer_jsr: true,
+            trainer_load_address: self.trainer_load_address,
         }
     }
 
@@ -1893,6 +1932,91 @@ mod tests {
             mapper.read_prg(0x8000),
             3,
             "latch mode 1 should select 16KiB bank 3 at $8000"
+        );
+    }
+
+    // ── Mapper 17 scratch RAM ($5000–$5FFF) and trainer load address ───────────
+
+    #[test]
+    fn test_mapper17_scratch_ram_is_readable_and_writable() {
+        // Mapper 17 has 4 KiB scratch RAM at $5000–$5FFF
+        let mut mapper = create_m17(vec![0u8; 64 * 1024], 0, NametableLayout::Vertical);
+        mapper.write_prg(0x5000, 0xAB);
+        mapper.write_prg(0x5FFF, 0xCD);
+        assert_eq!(mapper.read_prg(0x5000), 0xAB, "$5000 scratch RAM read");
+        assert_eq!(mapper.read_prg(0x5FFF), 0xCD, "$5FFF scratch RAM read");
+    }
+
+    #[test]
+    fn test_mapper17_submapper0_trainer_load_address_is_7000() {
+        let prg = vec![0u8; 64 * 1024];
+        let mapper = create_m17(prg, 0, NametableLayout::Vertical);
+        assert_eq!(
+            mapper.capabilities().trainer_load_address,
+            0x7000,
+            "submapper 0 trainer loads at $7000"
+        );
+    }
+
+    #[test]
+    fn test_mapper17_submapper1_trainer_load_address_is_5d00() {
+        let prg = vec![0u8; 64 * 1024];
+        let mapper = create_m17(prg, 1, NametableLayout::Vertical);
+        assert_eq!(
+            mapper.capabilities().trainer_load_address,
+            0x5D00,
+            "submapper 1 trainer loads at $5D00"
+        );
+    }
+
+    #[test]
+    fn test_mapper17_submapper2_trainer_load_address_is_5e00() {
+        let prg = vec![0u8; 64 * 1024];
+        let mapper = create_m17(prg, 2, NametableLayout::Vertical);
+        assert_eq!(
+            mapper.capabilities().trainer_load_address,
+            0x5E00,
+            "submapper 2 trainer loads at $5E00"
+        );
+    }
+
+    #[test]
+    fn test_mapper17_submapper3_trainer_load_address_is_5f00() {
+        let prg = vec![0u8; 64 * 1024];
+        let mapper = create_m17(prg, 3, NametableLayout::Vertical);
+        assert_eq!(
+            mapper.capabilities().trainer_load_address,
+            0x5F00,
+            "submapper 3 trainer loads at $5F00"
+        );
+    }
+
+    #[test]
+    fn test_mapper17_trainer_written_to_5d00_is_readable() {
+        // Submapper 1: bus writes trainer via write_prg($5D00+i, byte)
+        let mut mapper = create_m17(vec![0u8; 64 * 1024], 1, NametableLayout::Vertical);
+        for i in 0u16..512 {
+            mapper.write_prg(0x5D00 + i, i as u8);
+        }
+        for i in 0u16..512 {
+            assert_eq!(
+                mapper.read_prg(0x5D00 + i),
+                i as u8,
+                "trainer byte at ${:04X}",
+                0x5D00 + i
+            );
+        }
+    }
+
+    #[test]
+    fn test_mapper6_trainer_load_address_is_7000() {
+        // Mapper 6 default trainer address must remain $7000
+        let prg = vec![0u8; 64 * 1024];
+        let mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        assert_eq!(
+            mapper.capabilities().trainer_load_address,
+            0x7000,
+            "mapper 6 trainer always loads at $7000"
         );
     }
 }
