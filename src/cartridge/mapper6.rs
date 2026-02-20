@@ -19,10 +19,9 @@ const WRAM_BANK_SIZE_8K: usize = 0x2000;
 const WRAM_SIZE_32K: usize = 0x8000;
 const CHR_RAM_SIZE_32K: usize = 0x8000;
 
-/// 16 KiB bank indices for the lower and upper halves of 32 KiB PRG bank #3.
-/// Modes 5, 6, and 7 fix PRG at this bank pair (= 8 KiB banks 12–15).
+/// 16 KiB bank index for the lower half of 32 KiB PRG bank #3 (= 8 KiB banks 12–15).
+/// Modes 5, 6, and 7 fix PRG at this bank pair.
 const PRG_BANK3_LOWER_HALF: usize = 6; // 16 KiB index → 8 KiB banks 12 & 13
-const PRG_BANK3_UPPER_HALF: usize = 7; // 16 KiB index → 8 KiB banks 14 & 15
 
 /// Mapper 6 — Front Fareast Magic Card (SMC-801)
 ///
@@ -117,14 +116,6 @@ impl Mapper6Mapper {
             mode_2m_active: false,
             mode_4m_active: false,
         }
-    }
-
-    fn last_8k_bank(&self) -> usize {
-        self.prg_rom.num_banks().saturating_sub(1)
-    }
-
-    fn last_16k_bank(&self) -> usize {
-        self.prg_rom.num_banks().saturating_sub(2)
     }
 
     /// Return the 8 KiB bank index for PRG slot `slot` (0-3) using the 1M latch.
@@ -268,10 +259,11 @@ impl Mapper for Mapper6Mapper {
                 }
             }
             0x8000..=0xFFFF => {
-                // Always update 2M shadow slot (spec: "2M registers always accept writes")
-                let slot = prg_slot_from_addr(addr);
-                self.prg_2m_slots[slot] = (value >> 2) & 0x3F;
+                // $8000-$FFFF writes are register writes only when write-protection is active.
+                // Both the 2M shadow slot and the latch are updated together on each write.
                 if self.latch_enabled {
+                    let slot = prg_slot_from_addr(addr);
+                    self.prg_2m_slots[slot] = (value >> 2) & 0x3F;
                     self.latch_value = value;
                 }
             }
