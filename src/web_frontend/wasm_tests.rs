@@ -115,7 +115,8 @@ fn render_frame_returns_expected_size() {
     nes.load_rom(&rom, "test.nes")
         .expect("valid rom should load");
     let frame = nes.render_frame();
-    assert_eq!(frame.len(), 256 * 240 * 3);
+    // Render with default 8 pixels overscan removal
+    assert_eq!(frame.len(), 256 * (240 - 16) * 3);
 }
 
 #[wasm_bindgen_test]
@@ -125,7 +126,8 @@ fn render_frame_rgba_returns_expected_size() {
     nes.load_rom(&rom, "test.nes")
         .expect("valid rom should load");
     let frame = nes.render_frame_rgba();
-    assert_eq!(frame.len(), 256 * 240 * 4);
+    // Render with default 8 pixels overscan removal
+    assert_eq!(frame.len(), 256 * (240 - 16) * 4);
     // Alpha should be opaque for all pixels.
     assert!(frame.iter().skip(3).step_by(4).all(|a| *a == 0xFF));
 }
@@ -134,14 +136,16 @@ fn render_frame_rgba_returns_expected_size() {
 fn render_frame_without_rom_succeeds() {
     let mut nes = WasmNes::new();
     let frame = nes.render_frame();
-    assert_eq!(frame.len(), 256 * 240 * 3);
+    // Render with default 8 pixels overscan removal
+    assert_eq!(frame.len(), 256 * (240 - 16) * 3);
 }
 
 #[wasm_bindgen_test]
 fn render_frame_rgba_without_rom_succeeds() {
     let mut nes = WasmNes::new();
     let frame = nes.render_frame_rgba();
-    assert_eq!(frame.len(), 256 * 240 * 4);
+    // Render with default 8 pixels overscan removal
+    assert_eq!(frame.len(), 256 * (240 - 16) * 4);
     assert!(frame.iter().skip(3).step_by(4).all(|a| *a == 0xFF));
 }
 
