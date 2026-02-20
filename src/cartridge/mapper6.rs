@@ -63,6 +63,12 @@ pub struct Mapper6Mapper {
     chr_nt_regs: [u8; 4], // $4518-$451B: 1 KiB bank per nametable $2000-$2FFF slot
     mmc4_latch0_fd: Cell<bool>, // lower 4 KiB latch: true=FD, false=FE
     mmc4_latch1_fd: Cell<bool>, // upper 4 KiB latch: true=FD, false=FE
+    irq_counter: u16,          // 16-bit upward counting IRQ counter
+    irq_latch_lo: u8,          // LSB written to $4502 (loaded on $4503 write)
+    irq_enabled: bool,         // counting active (enabled by $4503, disabled by $4501)
+    irq_pending_flag: bool,    // IRQ asserted (set on $FFFF→$0000 wrap)
+    irq_pa12_mode: bool,       // $4500 bit 3: false=M2 (cpu_cycle), true=PA12 (ppu_address_changed)
+    prev_a12: bool,            // previous A12 state for rising edge detection
     prg_2m_slots: [u8; 4], // shadow 8 KiB PRG banks for 2M mode (always updated on $8000-$FFFF writes)
     prg_4m_slots: [u8; 4], // 8 KiB PRG banks for 4M mode (updated via $4504-$4507)
     mode_2m_active: bool,  // true when $43FE was the last $43FC-$43FF write
@@ -129,6 +135,12 @@ impl Mapper6Mapper {
             chr_nt_regs: [0; 4],
             mmc4_latch0_fd: Cell::new(true),
             mmc4_latch1_fd: Cell::new(true),
+            irq_counter: 0,
+            irq_latch_lo: 0,
+            irq_enabled: false,
+            irq_pending_flag: false,
+            irq_pa12_mode: false,
+            prev_a12: false,
             prg_2m_slots: [0; 4],
             prg_4m_slots: [0; 4],
             mode_2m_active: false,
@@ -298,6 +310,31 @@ impl Mapper6Mapper {
             _ => {}
         }
     }
+
+    /// Returns `true` if address bit 12 has just risen (low→high transition).
+    fn pa12_rising_edge(&mut self, addr: u16) -> bool {
+        let a12 = (addr & 0x1000) != 0;
+        let rising = a12 && !self.prev_a12;
+        self.prev_a12 = a12;
+        rising
+    }
+
+    /// Increment the IRQ counter by one; set `irq_pending_flag` on $FFFF → $0000 wrap.
+    fn tick_irq_counter(&mut self) {
+        if !self.irq_enabled {
+            return;
+        }
+        let (next, wrapped) = self.irq_counter.overflowing_add(1);
+        self.irq_counter = next;
+        if wrapped {
+            self.irq_pending_flag = true;
+        }
+    }
+
+    /// Acknowledge a pending IRQ (clear the pending flag).
+    fn acknowledge_irq(&mut self) {
+        self.irq_pending_flag = false;
+    }
 }
 
 impl Mapper for Mapper6Mapper {
@@ -329,6 +366,23 @@ impl Mapper for Mapper6Mapper {
                 self.chr_mode_1kb = (value & 0x01) != 0;
                 self.chr_nt_active = (value & 0x02) == 0;
                 self.mmc4_disabled = (value & 0x04) != 0;
+                self.irq_pa12_mode = (value & 0x08) != 0;
+            }
+            0x4501 => {
+                // Acknowledge IRQ and disable counting.
+                self.acknowledge_irq();
+                self.irq_enabled = false;
+            }
+            0x4502 => {
+                // Store counter LSB; acknowledge IRQ.
+                self.acknowledge_irq();
+                self.irq_latch_lo = value;
+            }
+            0x4503 => {
+                // Store counter MSB; acknowledge IRQ; load counter; enable counting.
+                self.acknowledge_irq();
+                self.irq_counter = (u16::from(value) << 8) | u16::from(self.irq_latch_lo);
+                self.irq_enabled = true;
             }
             0x4504..=0x4507 => self.prg_4m_slots[(addr - 0x4504) as usize] = value & 0x3F,
             0x4510..=0x4517 => self.chr_1k_regs[(addr - 0x4510) as usize] = value,
@@ -399,6 +453,19 @@ impl Mapper for Mapper6Mapper {
 
     fn ppu_address_changed(&mut self, addr: u16) {
         self.update_mmc4_latches(addr);
+        if self.irq_pa12_mode && self.pa12_rising_edge(addr) {
+            self.tick_irq_counter();
+        }
+    }
+
+    fn irq_pending(&self) -> bool {
+        self.irq_pending_flag
+    }
+
+    fn cpu_cycle(&mut self) {
+        if !self.irq_pa12_mode {
+            self.tick_irq_counter();
+        }
     }
 
     fn get_mirroring(&self) -> NametableLayout {
@@ -417,7 +484,7 @@ impl Mapper for Mapper6Mapper {
 
     fn capabilities(&self) -> MapperCapabilities {
         MapperCapabilities {
-            has_irq: false,
+            has_irq: true,
             has_chr_banking: true,
             has_dynamic_mirroring: true,
             has_expansion_audio: false,
@@ -438,6 +505,10 @@ impl Mapper for Mapper6Mapper {
         // bytes 20-23: chr_nt_regs[0-3]
         // byte 24: chr flags: bit 0=chr_mode_1kb, bit 1=chr_nt_active, bit 2=mmc4_disabled
         //                     bit 3=mmc4_latch0_fd, bit 4=mmc4_latch1_fd
+        // bytes 25-26: irq_counter (lo, hi)
+        // byte 27: irq_latch_lo
+        // byte 28: irq flags: bit 0=irq_enabled, bit 1=irq_pending_flag,
+        //                     bit 2=irq_pa12_mode, bit 3=prev_a12
         let mut v = vec![
             self.latch_mode & 0x07,
             self.latch_value,
@@ -454,6 +525,15 @@ impl Mapper for Mapper6Mapper {
                 | ((self.mmc4_disabled as u8) << 2)
                 | ((self.mmc4_latch0_fd.get() as u8) << 3)
                 | ((self.mmc4_latch1_fd.get() as u8) << 4),
+        );
+        v.push(self.irq_counter as u8);
+        v.push((self.irq_counter >> 8) as u8);
+        v.push(self.irq_latch_lo);
+        v.push(
+            (self.irq_enabled as u8)
+                | ((self.irq_pending_flag as u8) << 1)
+                | ((self.irq_pa12_mode as u8) << 2)
+                | ((self.prev_a12 as u8) << 3),
         );
         v
     }
@@ -488,6 +568,14 @@ impl Mapper for Mapper6Mapper {
             self.mmc4_disabled = (data[24] & 0x04) != 0;
             self.mmc4_latch0_fd.set((data[24] & 0x08) != 0);
             self.mmc4_latch1_fd.set((data[24] & 0x10) != 0);
+        }
+        if data.len() >= 29 {
+            self.irq_counter = u16::from(data[25]) | (u16::from(data[26]) << 8);
+            self.irq_latch_lo = data[27];
+            self.irq_enabled = (data[28] & 0x01) != 0;
+            self.irq_pending_flag = (data[28] & 0x02) != 0;
+            self.irq_pa12_mode = (data[28] & 0x04) != 0;
+            self.prev_a12 = (data[28] & 0x08) != 0;
         }
     }
 
@@ -893,6 +981,7 @@ mod tests {
         let caps = mapper.capabilities();
         assert!(caps.has_chr_banking, "mapper 6 has CHR banking");
         assert!(caps.has_dynamic_mirroring, "mapper 6 has dynamic mirroring");
+        assert!(caps.has_irq, "mapper 6 has IRQ counter");
         assert_eq!(caps.prg_bank_size_kb, 8);
         assert_eq!(caps.chr_bank_size_kb, 8);
         assert_eq!(mapper.wram_size(), 32 * 1024);
@@ -1343,5 +1432,188 @@ mod tests {
         restored.write_prg(0x4510, expected_nt0); // set slot 0 = same as nt bank 0
         restored.write_chr(0x0000, 0x7F); // writes to nt bank 0
         assert_eq!(restored.read_nametable(0x2000), Some(0x7F));
+    }
+    // ── IRQ counter ($4501-$4503, $4500 bit 3) ────────────────────────────────
+    //
+    // 16-bit upward-counting counter. IRQ fires on $FFFF → $0000 wrap.
+    // $4501: acknowledge IRQ + disable counting
+    // $4502: store counter LSB; acknowledge IRQ
+    // $4503: store counter MSB; acknowledge IRQ; enable counting
+    // $4500 bit 3 (I): 0=M2 clock (clock_irq), 1=PA12 clock (ppu_address_changed A12 rise)
+
+    fn make_irq_mapper() -> Box<dyn Mapper> {
+        create_m6(vec![0u8; 256 * 1024], 1, NametableLayout::Vertical)
+    }
+
+    #[test]
+    fn test_irq_not_pending_initially() {
+        let mapper = make_irq_mapper();
+        assert!(!mapper.irq_pending(), "IRQ must not be pending at power-on");
+    }
+
+    #[test]
+    fn test_irq_fires_on_ffff_to_0000_wrap_in_m2_mode() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x00); // M2 mode (bit 3 = 0)
+        mapper.write_prg(0x4502, 0xFF); // counter LSB = $FF
+        mapper.write_prg(0x4503, 0xFF); // counter MSB = $FF -> counter = $FFFF, counting enabled
+        mapper.cpu_cycle(); // $FFFF -> $0000: IRQ fires
+        assert!(mapper.irq_pending(), "IRQ must be pending after $FFFF wrap");
+    }
+
+    #[test]
+    fn test_irq_does_not_fire_before_wrap() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x00);
+        mapper.write_prg(0x4502, 0xFE); // counter = $FFFE
+        mapper.write_prg(0x4503, 0xFF);
+        mapper.cpu_cycle(); // $FFFE -> $FFFF (no wrap)
+        assert!(!mapper.irq_pending(), "IRQ must not fire at $FFFF (no wrap yet)");
+    }
+
+    #[test]
+    fn test_irq_fires_after_full_65536_cycles_from_zero() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x00);
+        mapper.write_prg(0x4502, 0x00);
+        mapper.write_prg(0x4503, 0x00); // counter = $0000, counting enabled
+        for _ in 0..65535 {
+            mapper.cpu_cycle();
+            assert!(!mapper.irq_pending(), "must not fire before wrap");
+        }
+        mapper.cpu_cycle(); // 65536th tick: $FFFF -> $0000
+        assert!(mapper.irq_pending(), "IRQ must fire after 65536 ticks from zero");
+    }
+
+    #[test]
+    fn test_4501_clears_irq_and_disables_counting() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x00);
+        mapper.write_prg(0x4502, 0xFF);
+        mapper.write_prg(0x4503, 0xFF);
+        mapper.cpu_cycle(); // fires IRQ
+        assert!(mapper.irq_pending());
+        mapper.write_prg(0x4501, 0x00); // acknowledge + disable
+        assert!(!mapper.irq_pending(), "IRQ must be cleared by $4501");
+        for _ in 0..131072 {
+            mapper.cpu_cycle();
+        }
+        assert!(!mapper.irq_pending(), "counting must stay disabled after $4501");
+    }
+
+    #[test]
+    fn test_4502_acknowledges_irq() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x00);
+        mapper.write_prg(0x4502, 0xFF);
+        mapper.write_prg(0x4503, 0xFF);
+        mapper.cpu_cycle(); // fires IRQ
+        assert!(mapper.irq_pending());
+        mapper.write_prg(0x4502, 0x00); // acknowledge
+        assert!(!mapper.irq_pending(), "IRQ must be cleared by $4502");
+    }
+
+    #[test]
+    fn test_4503_acknowledges_irq_and_reloads_counter() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x00);
+        mapper.write_prg(0x4502, 0xFF);
+        mapper.write_prg(0x4503, 0xFF);
+        mapper.cpu_cycle(); // fires IRQ
+        assert!(mapper.irq_pending());
+        mapper.write_prg(0x4502, 0x34);
+        mapper.write_prg(0x4503, 0x12); // acknowledge + reload -> counter = $1234
+        assert!(!mapper.irq_pending(), "IRQ must be cleared by $4503");
+        // $FFFF - $1234 + 1 = $EDCC ticks to wrap
+        for _ in 0..0xEDCBu32 {
+            mapper.cpu_cycle();
+            assert!(!mapper.irq_pending());
+        }
+        mapper.cpu_cycle(); // wrap
+        assert!(mapper.irq_pending(), "IRQ must fire again after reload");
+    }
+
+    #[test]
+    fn test_irq_does_not_count_when_disabled_by_4501() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x00);
+        mapper.write_prg(0x4502, 0xFF);
+        mapper.write_prg(0x4503, 0xFF); // counter = $FFFF, enabled
+        mapper.write_prg(0x4501, 0x00); // disable before any tick
+        mapper.cpu_cycle(); // would wrap, but disabled
+        assert!(!mapper.irq_pending(), "disabled counter must not fire IRQ");
+    }
+
+    #[test]
+    fn test_pa12_mode_fires_on_a12_rising_edge() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x08); // PA12 mode (bit 3 = 1)
+        mapper.write_prg(0x4502, 0xFF);
+        mapper.write_prg(0x4503, 0xFF);
+        mapper.ppu_address_changed(0x0000); // A12 = 0
+        mapper.ppu_address_changed(0x1000); // A12 = 1 -> rising edge -> tick
+        assert!(mapper.irq_pending(), "IRQ must fire on A12 rising edge in PA12 mode");
+    }
+
+    #[test]
+    fn test_pa12_mode_no_irq_on_held_high() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x08);
+        mapper.write_prg(0x4502, 0xFF);
+        mapper.write_prg(0x4503, 0xFF);
+        mapper.ppu_address_changed(0x0000); // A12 low
+        mapper.ppu_address_changed(0x1000); // rising edge: IRQ fires
+        assert!(mapper.irq_pending());
+        mapper.write_prg(0x4502, 0xFF);
+        mapper.write_prg(0x4503, 0xFF); // reload, re-enable
+        mapper.ppu_address_changed(0x1000); // A12 still high -> no rising edge
+        assert!(!mapper.irq_pending(), "held-high A12 must not trigger another tick");
+    }
+
+    #[test]
+    fn test_pa12_mode_no_irq_on_falling_edge() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x08);
+        mapper.write_prg(0x4502, 0xFF);
+        mapper.write_prg(0x4503, 0xFF);
+        mapper.ppu_address_changed(0x0000); // A12 low
+        mapper.ppu_address_changed(0x1000); // rising edge: IRQ fires
+        assert!(mapper.irq_pending());
+        mapper.write_prg(0x4502, 0xFF);
+        mapper.write_prg(0x4503, 0xFF);
+        mapper.ppu_address_changed(0x0000); // falling edge
+        assert!(!mapper.irq_pending(), "falling A12 edge must not trigger tick");
+    }
+
+    #[test]
+    fn test_m2_mode_cpu_cycle_does_not_affect_pa12_mode() {
+        let mut mapper = make_irq_mapper();
+        mapper.write_prg(0x4500, 0x08); // PA12 mode
+        mapper.write_prg(0x4502, 0xFF);
+        mapper.write_prg(0x4503, 0xFF);
+        mapper.cpu_cycle(); // must not increment in PA12 mode
+        assert!(!mapper.irq_pending(), "cpu_cycle must be a no-op in PA12 mode");
+    }
+
+    #[test]
+    fn test_irq_snapshot_preserves_irq_state() {
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg.clone(), 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x00); // M2 mode
+        mapper.write_prg(0x4502, 0x34);
+        mapper.write_prg(0x4503, 0x12); // counter = $1234, enabled
+        mapper.cpu_cycle(); // counter = $1235
+        let snap = mapper.registers_snapshot();
+        let mut restored = create_m6(prg, 1, NametableLayout::Vertical);
+        restored.restore_registers(&snap);
+        // After restore: 1 tick -> $1236, no IRQ.
+        restored.cpu_cycle();
+        assert!(!restored.irq_pending(), "IRQ must not fire at $1236");
+        // $FFFF - $1236 + 1 = $EDCA ticks remaining to wrap.
+        for _ in 0..0xEDC9u32 {
+            restored.cpu_cycle();
+        }
+        restored.cpu_cycle(); // wrap
+        assert!(restored.irq_pending(), "IRQ must fire at wrap after restore");
     }
 }
