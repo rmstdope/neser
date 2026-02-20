@@ -164,6 +164,78 @@ impl Mapper6Mapper {
         }
     }
 
+    /// Create a new Mapper 17 instance (Front Fareast Super Magic Card).
+    ///
+    /// Initializes with the register state the hardware writes at power-on:
+    ///   `$4500 = $47`  — play mode, WRAM bank 0, 1 KiB CHR, CIRAM nametables, MMC4 disabled
+    ///   `$42FF = $20 | (horizontal ? 0x10 : 0x00)` — latch mode 1, latch enabled, mirroring
+    ///   `$43FC = $00`  — 4M PRG banking mode active
+    ///   `$4504–$4507 = [N-4, N-3, N-2, N-1]` — last four 8 KiB PRG banks
+    ///
+    /// The `submapper` field encodes the trainer load address (submapper 0 → $7000).
+    pub fn new_mapper17(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: NametableLayout,
+        _submapper: u8,
+    ) -> Self {
+        let num_banks_8k = prg_rom.len() / PRG_BANK_SIZE_8K;
+        let n = num_banks_8k as u8;
+
+        // $42FF = $20 | (horizontalMirroring ? 0x10 : 0x00)
+        // addr=$42FF → A1=1 (latch_enabled), A0=1 (mirroring_type bit 1 = 1)
+        // D7-D5 = 001 → latch_mode = 1; D4 = mirroring MSB
+        let d4 = u8::from(matches!(mirroring, NametableLayout::Horizontal));
+        let mirroring_type = (1 << 1) | d4;
+
+        // $43FC = $00 → 4M banking mode active
+        let mode_4m_active = true;
+
+        // $4504–$4507 = [N-4, N-3, N-2, N-1]
+        let prg_4m_slots = [
+            n.wrapping_sub(4),
+            n.wrapping_sub(3),
+            n.wrapping_sub(2),
+            n.wrapping_sub(1),
+        ];
+
+        // $4500 = $47: chr_mode_1kb=true (bit 0), chr_nt_active=false (bit 1 set → CIRAM),
+        //              mmc4_disabled=true (bit 2), irq_pa12_mode=false (bit 3=0), wram_bank=0
+        let chr_memory = if chr_rom.is_empty() {
+            ChrMemory::new_ram(CHR_RAM_SIZE_256K)
+        } else {
+            ChrMemory::new(chr_rom)
+        };
+
+        Self {
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_8K),
+            chr_memory,
+            wram: vec![0; WRAM_SIZE_32K],
+            latch_mode: 1,
+            latch_value: 0,
+            latch_enabled: true,
+            mirroring_type,
+            wram_bank: 0,
+            chr_mode_1kb: true,
+            chr_nt_active: false,
+            mmc4_disabled: true,
+            chr_1k_regs: [0; 8],
+            chr_nt_regs: [0; 4],
+            mmc4_latch0_fd: Cell::new(true),
+            mmc4_latch1_fd: Cell::new(true),
+            irq_counter: 0,
+            irq_latch_lo: 0,
+            irq_enabled: false,
+            irq_pending_flag: false,
+            irq_pa12_mode: false,
+            prev_a12: false,
+            prg_2m_slots: [0; 4],
+            prg_4m_slots,
+            mode_2m_active: false,
+            mode_4m_active,
+        }
+    }
+
     /// Return the 8 KiB bank index for PRG slot `slot` (0-3) using the 1M latch.
     fn latch_bank_for_slot(&self, slot: usize) -> usize {
         match self.latch_mode {
@@ -626,6 +698,11 @@ mod tests {
     fn create_m6(prg: Vec<u8>, submapper: u8, mirroring: NametableLayout) -> Box<dyn Mapper> {
         create_mapper(MapperContext::new(6, prg, vec![], mirroring).with_submapper(submapper))
             .expect("Failed to create Mapper 6")
+    }
+
+    fn create_m17(prg: Vec<u8>, submapper: u8, mirroring: NametableLayout) -> Box<dyn Mapper> {
+        create_mapper(MapperContext::new(17, prg, vec![], mirroring).with_submapper(submapper))
+            .expect("Failed to create Mapper 17")
     }
 
     // ── Initial state ──────────────────────────────────────────────────────────
@@ -1723,5 +1800,99 @@ mod tests {
         mapper.write_prg(0x7000, 0x24);
         // Then it is readable at the same address
         assert_eq!(mapper.read_prg(0x7000), 0x24);
+    }
+
+    // ── Mapper 17 ─────────────────────────────────────────────────────────────
+    //
+    // Mapper 17 is the Front Fareast Super Magic Card variant with a fixed
+    // power-on register state that differs from Mapper 6.
+    // References: https://www.nesdev.org/wiki/INES_Mapper_017
+    //             https://www.nesdev.org/wiki/Super_Magic_Card
+
+    #[test]
+    fn test_mapper17_initial_prg_banks_point_to_last_four_8k_banks() {
+        // Given a Mapper 17 ROM with 8 × 8 KiB banks (banks 0–7)
+        // $4504–$4507 must be initialised to [N-4, N-3, N-2, N-1] = [4, 5, 6, 7]
+        let prg = banked_data(PRG_BANK_SIZE_8K, 8);
+        let mapper = create_m17(prg, 0, NametableLayout::Vertical);
+
+        assert_eq!(mapper.read_prg(0x8000), 4, "$8000 should map to bank 4");
+        assert_eq!(mapper.read_prg(0xA000), 5, "$A000 should map to bank 5");
+        assert_eq!(mapper.read_prg(0xC000), 6, "$C000 should map to bank 6");
+        assert_eq!(mapper.read_prg(0xE000), 7, "$E000 should map to bank 7");
+    }
+
+    #[test]
+    fn test_mapper17_initial_mirroring_vertical() {
+        // $42FF = $20 | 0x00 for vertical → mirroring_type 2 = Vertical
+        let prg = vec![0u8; 64 * 1024];
+        let mapper = create_m17(prg, 0, NametableLayout::Vertical);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Vertical);
+    }
+
+    #[test]
+    fn test_mapper17_initial_mirroring_horizontal() {
+        // $42FF = $20 | 0x10 for horizontal → mirroring_type 3 = Horizontal
+        let prg = vec![0u8; 64 * 1024];
+        let mapper = create_m17(prg, 0, NametableLayout::Horizontal);
+        assert_eq!(mapper.get_mirroring(), NametableLayout::Horizontal);
+    }
+
+    #[test]
+    fn test_mapper17_4m_mode_active_at_start_prg_slots_switchable_via_4504() {
+        // 4M mode is on at power-on; writes to $4504–$4507 must change PRG banks
+        let prg = banked_data(PRG_BANK_SIZE_8K, 16);
+        let mut mapper = create_m17(prg, 0, NametableLayout::Vertical);
+
+        // Switch slot 0 ($8000) to bank 2
+        mapper.write_prg(0x4504, 2);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            2,
+            "4M slot 0 should switch to bank 2"
+        );
+    }
+
+    #[test]
+    fn test_mapper17_1kb_chr_mode_active_at_start() {
+        // $4500 bit 0 = 1 → 1 KiB CHR banking active; writes to $4510 switch CHR bank 0
+        let prg = vec![0u8; 64 * 1024];
+        let chr = banked_data(CHR_BANK_SIZE_1K, 8);
+        let mapper_ctx = MapperContext::new(17, prg, chr, NametableLayout::Vertical);
+        let mut mapper = create_mapper(mapper_ctx).expect("Mapper 17 with CHR-ROM");
+
+        // Select bank 3 for PPU $0000–$03FF
+        mapper.write_prg(0x4510, 3);
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            3,
+            "CHR $0000 should read from 1 KiB bank 3"
+        );
+    }
+
+    #[test]
+    fn test_mapper17_capabilities_include_irq_and_trainer_jsr() {
+        let prg = vec![0u8; 64 * 1024];
+        let mapper = create_m17(prg, 0, NametableLayout::Vertical);
+        let caps = mapper.capabilities();
+        assert!(caps.has_irq, "Mapper 17 must support IRQ");
+        assert!(caps.trainer_jsr, "Mapper 17 must use JSR trainer execution");
+    }
+
+    #[test]
+    fn test_mapper17_latch_mode_1_is_used_for_prg_switching_when_4m_disabled() {
+        // Disable 4M mode, then verify latch-mode-1 PRG switching works:
+        // mode 1 uses bits 5-2 of latch value for 16 KiB bank select
+        let prg = banked_data(PRG_BANK_SIZE_16K, 16);
+        let mut mapper = create_m17(prg, 0, NametableLayout::Vertical);
+        // Disable 4M mode by writing $43FF (N=1 → 2M/4M disabled)
+        mapper.write_prg(0x43FF, 0x02);
+        // Select 16 KiB bank 3 via mode-1 latch (bits 5-2 = 0011 → bank 3)
+        mapper.write_prg(0x8000, 3 << 2);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            3,
+            "latch mode 1 should select 16KiB bank 3 at $8000"
+        );
     }
 }
