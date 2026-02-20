@@ -1,28 +1,28 @@
-//! Mapper 6 — Front Fareast Magic Card (SMC) 1M latch-based banking
+//! Mapper 6 — Front Fareast Magic Card (SMC) 1M/2M/4M PRG banking
 //!
 //! Sub-issue #627: Core latch-based banking modes 0–7 + register scaffolding.
+//! Sub-issue #628: 2M/4M PRG banking mode ($43FC-$43FF, $4504-$4507).
 //!
 //! Spec: <https://www.nesdev.org/wiki/INES_Mapper_006>
 //!       <https://www.nesdev.org/wiki/Super_Magic_Card>
 //!
 //! Known Limitations:
-//! - 2M/4M PRG banking mode ($43FC-$43FF) not yet implemented (sub-issue #628).
 //! - 1 KiB CHR banking mode ($4510-$451B) not yet implemented (sub-issue #629).
 //! - IRQ counter ($4501-$4503) not yet implemented (sub-issue #630).
 //! - Trainer initialization at $7000-$71FF not yet implemented (sub-issue #631).
 use crate::cartridge::common::{BankedRom, ChrMemory};
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 
-const PRG_BANK_SIZE_16K: usize = 0x4000;
+const PRG_BANK_SIZE_8K: usize = 0x2000;
 const CHR_BANK_SIZE_8K: usize = 0x2000;
 const WRAM_BANK_SIZE_8K: usize = 0x2000;
 const WRAM_SIZE_32K: usize = 0x8000;
 const CHR_RAM_SIZE_32K: usize = 0x8000;
 
 /// 16 KiB bank indices for the lower and upper halves of 32 KiB PRG bank #3.
-/// Modes 5, 6, and 7 fix PRG at this bank pair.
-const PRG_BANK3_LOWER_HALF: usize = 6;
-const PRG_BANK3_UPPER_HALF: usize = 7;
+/// Modes 5, 6, and 7 fix PRG at this bank pair (= 8 KiB banks 12–15).
+const PRG_BANK3_LOWER_HALF: usize = 6; // 16 KiB index → 8 KiB banks 12 & 13
+const PRG_BANK3_UPPER_HALF: usize = 7; // 16 KiB index → 8 KiB banks 14 & 15
 
 /// Mapper 6 — Front Fareast Magic Card (SMC-801)
 ///
@@ -39,18 +39,41 @@ const PRG_BANK3_UPPER_HALF: usize = 7;
 /// Registers:
 ///   $42FC-$42FF — 1M mode register; address bits A1/A0 encode latch-enable and
 ///                 mirroring LSB, data bits D7-D5/D4 encode mode and mirroring MSB.
+///   $43FC-$43FF — 2M/4M mode register; A0=M (1=disable), A1=N (1=2M when M=0).
 ///   $4500       — SMC mode register (bits 5-4: WRAM bank select)
+///   $4504-$4507 — 4M PRG slot registers; data bits 5-0 select 8 KiB bank per slot.
 ///   $6000-$7FFF — 8 KiB window into 32 KiB banked WRAM
-///   $8000-$FFFF — latch write when latch is enabled (PRG write-protected)
+///   $8000-$FFFF — latch write when latch is enabled; always updates 2M shadow slots
 pub struct Mapper6Mapper {
     prg_rom: BankedRom,
     chr_memory: ChrMemory,
     wram: Vec<u8>,
-    latch_mode: u8,      // D7-D5 of $42FC-$42FF: 0-7
-    latch_value: u8,     // last value written to the latch at $8000-$FFFF
-    latch_enabled: bool, // A1 of $42FC-$42FF: PRG write-protected ↔ latch enabled
-    mirroring_type: u8,  // (A0 << 1) | D4; 0=SingleScreenLower, 1=Upper, 2=Vertical, 3=Horizontal
-    wram_bank: u8,       // bits 5-4 of $4500: 0-3, selects 8 KiB WRAM bank
+    latch_mode: u8,       // D7-D5 of $42FC-$42FF: 0-7
+    latch_value: u8,      // last value written to the latch at $8000-$FFFF
+    latch_enabled: bool,  // A1 of $42FC-$42FF: PRG write-protected ↔ latch enabled
+    mirroring_type: u8,   // (A0 << 1) | D4; 0=SingleScreenLower, 1=Upper, 2=Vertical, 3=Horizontal
+    wram_bank: u8,        // bits 5-4 of $4500: 0-3, selects 8 KiB WRAM bank
+    prg_2m_slots: [u8; 4],  // shadow 8 KiB PRG banks for 2M mode (always updated on $8000-$FFFF writes)
+    prg_4m_slots: [u8; 4],  // 8 KiB PRG banks for 4M mode (updated via $4504-$4507)
+    mode_2m_active: bool,   // true when $43FE was the last $43FC-$43FF write
+    mode_4m_active: bool,   // true when $43FC was the last $43FC-$43FF write
+}
+
+/// Map a switched 16 KiB bank `b` to an 8 KiB slot index where slots 0–1 follow
+/// the switched bank and slots 2–3 are fixed at the last 16 KiB bank.
+/// Used by latch modes 0 (UNROM), 1 (UN1ROM), and 2 (UOROM).
+fn lower_switched_upper_fixed(b: usize, slot: usize, last_lo: usize, last_hi: usize) -> usize {
+    match slot {
+        0 => b * 2,
+        1 => b * 2 + 1,
+        2 => last_lo,
+        _ => last_hi,
+    }
+}
+
+/// Derive the 8 KiB PRG slot index (0–3) from a CPU address in $8000–$FFFF.
+fn prg_slot_from_addr(addr: u16) -> usize {
+    ((addr - 0x8000) / 0x2000) as usize
 }
 
 impl Mapper6Mapper {
@@ -81,7 +104,7 @@ impl Mapper6Mapper {
         let mirroring_type = (1 << 1) | d4;
 
         Self {
-            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_16K),
+            prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_8K),
             chr_memory: ChrMemory::new_ram(CHR_RAM_SIZE_32K),
             wram: vec![0; WRAM_SIZE_32K],
             latch_mode,
@@ -89,32 +112,73 @@ impl Mapper6Mapper {
             latch_enabled: true,
             mirroring_type,
             wram_bank: 0,
+            prg_2m_slots: [0; 4],
+            prg_4m_slots: [0; 4],
+            mode_2m_active: false,
+            mode_4m_active: false,
         }
     }
 
-    fn last_16k_bank(&self) -> usize {
+    fn last_8k_bank(&self) -> usize {
         self.prg_rom.num_banks().saturating_sub(1)
     }
 
-    fn prg_bank_8000(&self) -> usize {
+    fn last_16k_bank(&self) -> usize {
+        self.prg_rom.num_banks().saturating_sub(2)
+    }
+
+    /// Return the 8 KiB bank index for PRG slot `slot` (0-3) using the 1M latch.
+    fn latch_bank_for_slot(&self, slot: usize) -> usize {
+        let num = self.prg_rom.num_banks();
+        let last_lo = num.saturating_sub(2);
+        let last_hi = num.saturating_sub(1);
         match self.latch_mode {
-            0 => (self.latch_value & 0x07) as usize, // UNROM: bits 2-0
-            1 => ((self.latch_value >> 2) & 0x0F) as usize, // UN1ROM+CHRSW: bits 5-2
-            2 => (self.latch_value & 0x0F) as usize, // UOROM: bits 3-0
-            3 => self.last_16k_bank(),               // Reversed: fixed last
-            4 => ((self.latch_value >> 4) & 0x03) as usize * 2, // GNROM: PP → 32 KiB bank, lower half
-            5 | 6 | 7 => PRG_BANK3_LOWER_HALF,                  // fixed 32 KiB bank #3, lower half
-            _ => 0, // latch_mode is always 0–7 (masked to 3 bits); unreachable in practice
+            0 => {
+                // UNROM: bits 2-0 → 16 KiB bank at $8000; last at $C000
+                let b = (self.latch_value & 0x07) as usize;
+                lower_switched_upper_fixed(b, slot, last_lo, last_hi)
+            }
+            1 => {
+                // UN1ROM+CHRSW: bits 5-2 → 16 KiB bank at $8000; last at $C000
+                let b = ((self.latch_value >> 2) & 0x0F) as usize;
+                lower_switched_upper_fixed(b, slot, last_lo, last_hi)
+            }
+            2 => {
+                // UOROM: bits 3-0 → 16 KiB bank at $8000; last at $C000
+                let b = (self.latch_value & 0x0F) as usize;
+                lower_switched_upper_fixed(b, slot, last_lo, last_hi)
+            }
+            3 => {
+                // Reverse UOROM: bits 3-0 → $C000 bank; fixed last at $8000
+                let b = (self.latch_value & 0x0F) as usize;
+                match slot {
+                    0 => last_lo,
+                    1 => last_hi,
+                    2 => b * 2,
+                    _ => b * 2 + 1,
+                }
+            }
+            4 => {
+                // GNROM: bits 5-4 → 32 KiB bank (PP)
+                let pp = ((self.latch_value >> 4) & 0x03) as usize;
+                pp * 4 + slot
+            }
+            _ => {
+                // Modes 5-7: fixed 32 KiB bank #3 (16 KiB banks 6+7 = 8 KiB banks 12-15)
+                PRG_BANK3_LOWER_HALF * 2 + slot
+            }
         }
     }
 
-    fn prg_bank_c000(&self) -> usize {
-        match self.latch_mode {
-            0 | 1 | 2 => self.last_16k_bank(),       // fixed last
-            3 => (self.latch_value & 0x0F) as usize, // Reversed: switchable
-            4 => ((self.latch_value >> 4) & 0x03) as usize * 2 + 1, // GNROM: upper half
-            5 | 6 | 7 => PRG_BANK3_UPPER_HALF,       // fixed 32 KiB bank #3, upper half
-            _ => 0, // latch_mode is always 0–7 (masked to 3 bits); unreachable in practice
+    /// Return the 8 KiB bank index for PRG slot `slot` (0-3),
+    /// honouring 4M > 2M > latch priority.
+    fn bank_for_slot(&self, slot: usize) -> usize {
+        if self.mode_4m_active {
+            self.prg_4m_slots[slot] as usize
+        } else if self.mode_2m_active {
+            self.prg_2m_slots[slot] as usize
+        } else {
+            self.latch_bank_for_slot(slot)
         }
     }
 
@@ -125,7 +189,7 @@ impl Mapper6Mapper {
             3 => ((self.latch_value >> 4) & 0x03) as usize, // CC = bits 5-4
             4 | 5 => (self.latch_value & 0x03) as usize,    // CC = bits 1-0
             6 => (self.latch_value & 0x01) as usize,        // C = bit 0
-            _ => 0, // latch_mode is always 0–7 (masked to 3 bits); unreachable in practice
+            _ => 0,
         }
     }
 
@@ -134,18 +198,36 @@ impl Mapper6Mapper {
     }
 
     /// Decode a write to the 1M mode register ($42FC–$42FF) and apply it.
-    ///
-    /// Address encoding:  A1 = latch enable,  A0 = mirroring LSB
-    /// Data encoding:     D7-D5 = latch mode, D4 = mirroring MSB
-    /// `mirroring_type = (A0 << 1) | D4`
     fn apply_mode_register(&mut self, addr: u16, value: u8) {
-        let latch_enable = (addr >> 1) & 1; // A1
-        let mirroring_lsb = (addr & 1) as u8; // A0
-        let mode = (value >> 5) & 0x07; // D7-D5
-        let mirroring_msb = (value >> 4) & 0x01; // D4
+        let latch_enable = (addr >> 1) & 1;
+        let mirroring_lsb = (addr & 1) as u8;
+        let mode = (value >> 5) & 0x07;
+        let mirroring_msb = (value >> 4) & 0x01;
         self.latch_enabled = latch_enable != 0;
         self.latch_mode = mode;
         self.mirroring_type = (mirroring_lsb << 1) | mirroring_msb;
+    }
+
+    /// Decode a write to the 2M/4M mode register ($43FC–$43FF) and apply it.
+    ///
+    /// Address encoding: A0=M (0=enable, 1=disable), A1=N (0=4M, 1=2M when M=0).
+    /// Data bits 1-0 (CC): CHR bank update (mirrors latch CC — handled by latch writes).
+    fn apply_2m4m_register(&mut self, addr: u16) {
+        let m = addr & 1;  // A0
+        let n = (addr >> 1) & 1; // A1
+        if m != 0 {
+            // M=1 → disable both modes
+            self.mode_2m_active = false;
+            self.mode_4m_active = false;
+        } else if n != 0 {
+            // M=0, N=1 → 2M mode
+            self.mode_2m_active = true;
+            self.mode_4m_active = false;
+        } else {
+            // M=0, N=0 → 4M mode
+            self.mode_2m_active = false;
+            self.mode_4m_active = true;
+        }
     }
 
     fn wram_index(&self, addr: u16) -> usize {
@@ -157,12 +239,10 @@ impl Mapper for Mapper6Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         match addr {
             0x6000..=0x7FFF => self.wram.get(self.wram_index(addr)).copied().unwrap_or(0),
-            0x8000..=0xBFFF => self
-                .prg_rom
-                .read_with_base(self.prg_bank_8000(), 0x8000, addr),
-            0xC000..=0xFFFF => self
-                .prg_rom
-                .read_with_base(self.prg_bank_c000(), 0xC000, addr),
+            0x8000..=0x9FFF => self.prg_rom.read_with_base(self.bank_for_slot(0), 0x8000, addr),
+            0xA000..=0xBFFF => self.prg_rom.read_with_base(self.bank_for_slot(1), 0xA000, addr),
+            0xC000..=0xDFFF => self.prg_rom.read_with_base(self.bank_for_slot(2), 0xC000, addr),
+            0xE000..=0xFFFF => self.prg_rom.read_with_base(self.bank_for_slot(3), 0xE000, addr),
             _ => 0,
         }
     }
@@ -170,14 +250,23 @@ impl Mapper for Mapper6Mapper {
     fn write_prg(&mut self, addr: u16, value: u8) {
         match addr {
             0x42FC..=0x42FF => self.apply_mode_register(addr, value),
-            0x4500 => self.wram_bank = (value >> 4) & 0x03, // bits 5-4 select the 8 KiB WRAM bank
+            0x43FC..=0x43FF => self.apply_2m4m_register(addr),
+            0x4500 => self.wram_bank = (value >> 4) & 0x03,
+            0x4504..=0x4507 => self.prg_4m_slots[(addr - 0x4504) as usize] = value & 0x3F,
             0x6000..=0x7FFF => {
                 let index = self.wram_index(addr);
                 if index < self.wram.len() {
                     self.wram[index] = value;
                 }
             }
-            0x8000..=0xFFFF if self.latch_enabled => self.latch_value = value,
+            0x8000..=0xFFFF => {
+                // Always update 2M shadow slot (spec: "2M registers always accept writes")
+                let slot = prg_slot_from_addr(addr);
+                self.prg_2m_slots[slot] = (value >> 2) & 0x3F;
+                if self.latch_enabled {
+                    self.latch_value = value;
+                }
+            }
             _ => {}
         }
     }
@@ -217,20 +306,27 @@ impl Mapper for Mapper6Mapper {
             has_dynamic_mirroring: true,
             has_expansion_audio: false,
             max_prg_ram_kb: 32,
-            prg_bank_size_kb: 16,
+            prg_bank_size_kb: 8,
             chr_bank_size_kb: 8,
         }
     }
 
     fn registers_snapshot(&self) -> Vec<u8> {
-        // byte 0: latch_mode (bits 2-0)
-        // byte 1: latch_value
-        // byte 2: latch_enabled (bit 0) | mirroring_type (bits 2-1) | wram_bank (bits 5-4)
-        vec![
+        // byte  0: latch_mode (bits 2-0)
+        // byte  1: latch_value
+        // byte  2: latch_enabled (bit 0) | mirroring_type (bits 2-1) | wram_bank (bits 5-4)
+        // bytes 3-6:  prg_2m_slots[0-3]
+        // bytes 7-10: prg_4m_slots[0-3]
+        // byte 11: mode flags: bit 0 = mode_2m_active, bit 1 = mode_4m_active
+        let mut v = vec![
             self.latch_mode & 0x07,
             self.latch_value,
             (self.latch_enabled as u8) | (self.mirroring_type << 1) | (self.wram_bank << 4),
-        ]
+        ];
+        v.extend_from_slice(&self.prg_2m_slots);
+        v.extend_from_slice(&self.prg_4m_slots);
+        v.push((self.mode_2m_active as u8) | ((self.mode_4m_active as u8) << 1));
+        v
     }
 
     fn restore_registers(&mut self, data: &[u8]) {
@@ -240,6 +336,16 @@ impl Mapper for Mapper6Mapper {
             self.latch_enabled = (data[2] & 0x01) != 0;
             self.mirroring_type = (data[2] >> 1) & 0x03;
             self.wram_bank = (data[2] >> 4) & 0x03;
+        }
+        if data.len() >= 7 {
+            self.prg_2m_slots.copy_from_slice(&data[3..7]);
+        }
+        if data.len() >= 11 {
+            self.prg_4m_slots.copy_from_slice(&data[7..11]);
+        }
+        if data.len() >= 12 {
+            self.mode_2m_active = (data[11] & 0x01) != 0;
+            self.mode_4m_active = (data[11] & 0x02) != 0;
         }
     }
 
@@ -270,6 +376,8 @@ mod tests {
     use super::*;
     use crate::cartridge::mapper::{MapperContext, create_mapper};
     use crate::cartridge::test_helpers::banked_data;
+
+    const PRG_BANK_SIZE_16K: usize = 0x4000;
 
     fn create_m6(prg: Vec<u8>, submapper: u8, mirroring: NametableLayout) -> Box<dyn Mapper> {
         create_mapper(MapperContext::new(6, prg, vec![], mirroring).with_submapper(submapper))
@@ -643,8 +751,185 @@ mod tests {
         let caps = mapper.capabilities();
         assert!(caps.has_chr_banking, "mapper 6 has CHR banking");
         assert!(caps.has_dynamic_mirroring, "mapper 6 has dynamic mirroring");
-        assert_eq!(caps.prg_bank_size_kb, 16);
+        assert_eq!(caps.prg_bank_size_kb, 8);
         assert_eq!(caps.chr_bank_size_kb, 8);
         assert_eq!(mapper.wram_size(), 32 * 1024);
+    }
+
+    // ── 2M PRG banking ($43FE enables; writes to $8000-$FFFF set 8 KiB slots) ─
+
+    #[test]
+    fn test_2m_mode_slot0_reads_8kb_bank_via_8000_write() {
+        // $43FE enables 2M mode; data [PPPPPPCC] → slot 0 = PPPPPP = value >> 2.
+        // banked_data(0x2000, 32): each 8 KiB bank k filled with k.
+        let prg = banked_data(0x2000, 32); // 32 × 8 KiB = 256 KiB
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FE, 0x00); // enable 2M mode (A1=N=1, A0=M=0)
+        mapper.write_prg(0x8000, 9 << 2); // slot 0 = 8 KiB bank 9
+        assert_eq!(mapper.read_prg(0x8000), 9);
+    }
+
+    #[test]
+    fn test_2m_mode_slot1_independently_bankable() {
+        let prg = banked_data(0x2000, 32);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FE, 0x00);
+        mapper.write_prg(0xA000, 7 << 2); // slot 1 = bank 7
+        assert_eq!(mapper.read_prg(0xA000), 7);
+    }
+
+    #[test]
+    fn test_2m_mode_slot2_independently_bankable() {
+        let prg = banked_data(0x2000, 32);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FE, 0x00);
+        mapper.write_prg(0xC000, 15 << 2); // slot 2 = bank 15
+        assert_eq!(mapper.read_prg(0xC000), 15);
+    }
+
+    #[test]
+    fn test_2m_mode_slot3_independently_bankable() {
+        let prg = banked_data(0x2000, 32);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FE, 0x00);
+        mapper.write_prg(0xE000, 20 << 2); // slot 3 = bank 20
+        assert_eq!(mapper.read_prg(0xE000), 20);
+    }
+
+    #[test]
+    fn test_2m_mode_all_four_slots_independent() {
+        let prg = banked_data(0x2000, 32);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FE, 0x00);
+        mapper.write_prg(0x8000, 3 << 2);  // slot 0 = bank 3
+        mapper.write_prg(0xA000, 11 << 2); // slot 1 = bank 11
+        mapper.write_prg(0xC000, 17 << 2); // slot 2 = bank 17
+        mapper.write_prg(0xE000, 28 << 2); // slot 3 = bank 28
+        assert_eq!(mapper.read_prg(0x8000), 3);
+        assert_eq!(mapper.read_prg(0xA000), 11);
+        assert_eq!(mapper.read_prg(0xC000), 17);
+        assert_eq!(mapper.read_prg(0xE000), 28);
+    }
+
+    #[test]
+    fn test_2m_slot_shadow_registers_updated_even_when_mode_disabled() {
+        // Per spec, 2M registers ALWAYS accept writes (even when 2M mode inactive).
+        // A write to $8000-$FFFF while 2M is disabled still updates the shadow slot.
+        let prg = banked_data(0x2000, 32);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        // 2M disabled at start; write slot 0 shadow = bank 7
+        mapper.write_prg(0x8000, 7 << 2);
+        // Now enable 2M — slot 0 should already be bank 7 from the shadow write
+        mapper.write_prg(0x43FE, 0x00);
+        assert_eq!(mapper.read_prg(0x8000), 7);
+    }
+
+    #[test]
+    fn test_43fd_disables_2m_mode_and_latch_takes_over() {
+        // $43FD: A0=M=1 → disable 2M/4M; fallback to latch-based banking.
+        let prg = banked_data(0x2000, 32);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FE, 0x00);
+        mapper.write_prg(0x8000, 7 << 2); // 2M slot 0 = bank 7; latch = 0x1C
+        // In 2M mode slot 0 = bank 7 → data 7
+        assert_eq!(mapper.read_prg(0x8000), 7);
+        // Disable 2M/4M
+        mapper.write_prg(0x43FD, 0x00);
+        // Latch mode 1: bank = (0x1C >> 2) & 0xF = 7 → 8 KiB bank 7*2=14 → data 14
+        assert_eq!(mapper.read_prg(0x8000), 14);
+    }
+
+    // ── 4M PRG banking ($43FC enables; $4504-$4507 set 8 KiB slots) ───────────
+
+    #[test]
+    fn test_4m_mode_slot0_via_4504_write() {
+        // $43FC enables 4M mode (A1=N=0, A0=M=0); data [..PPPPPP] = 6-bit bank.
+        // banked_data(0x2000, 64): 64 × 8 KiB = 512 KiB, bank k filled with k.
+        let prg = banked_data(0x2000, 64);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FC, 0x00); // enable 4M mode
+        mapper.write_prg(0x4504, 15);   // slot 0 = bank 15
+        assert_eq!(mapper.read_prg(0x8000), 15);
+    }
+
+    #[test]
+    fn test_4m_mode_slot1_via_4505_write() {
+        let prg = banked_data(0x2000, 64);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FC, 0x00);
+        mapper.write_prg(0x4505, 22); // slot 1 = bank 22
+        assert_eq!(mapper.read_prg(0xA000), 22);
+    }
+
+    #[test]
+    fn test_4m_mode_slot2_via_4506_write() {
+        let prg = banked_data(0x2000, 64);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FC, 0x00);
+        mapper.write_prg(0x4506, 40); // slot 2 = bank 40
+        assert_eq!(mapper.read_prg(0xC000), 40);
+    }
+
+    #[test]
+    fn test_4m_mode_slot3_via_4507_write() {
+        let prg = banked_data(0x2000, 64);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FC, 0x00);
+        mapper.write_prg(0x4507, 55); // slot 3 = bank 55
+        assert_eq!(mapper.read_prg(0xE000), 55);
+    }
+
+    #[test]
+    fn test_4m_mode_all_four_slots_independent() {
+        let prg = banked_data(0x2000, 64);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FC, 0x00);
+        mapper.write_prg(0x4504, 5);  // slot 0 = bank 5
+        mapper.write_prg(0x4505, 20); // slot 1 = bank 20
+        mapper.write_prg(0x4506, 45); // slot 2 = bank 45
+        mapper.write_prg(0x4507, 63); // slot 3 = bank 63
+        assert_eq!(mapper.read_prg(0x8000), 5);
+        assert_eq!(mapper.read_prg(0xA000), 20);
+        assert_eq!(mapper.read_prg(0xC000), 45);
+        assert_eq!(mapper.read_prg(0xE000), 63);
+    }
+
+    #[test]
+    fn test_4m_mode_chr_not_changed_by_4504_writes() {
+        // 4M $4504 writes carry no CC bits; CHR must remain from latch.
+        let prg = banked_data(0x2000, 64);
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        // Latch mode 1: set CHR bank 2 and PRG bank 0
+        mapper.write_prg(0x8000, 0x02); // latch: BBBB=0, CC=2 → CHR bank 2
+        mapper.write_chr(0x0000, 0x42); // mark CHR bank 2
+        // Enable 4M and assign slot 0 via $4504
+        mapper.write_prg(0x43FC, 0x00);
+        mapper.write_prg(0x4504, 40); // PRG slot 0 = bank 40
+        // PRG should now reflect 4M slot 0
+        assert_eq!(mapper.read_prg(0x8000), 40);
+        // CHR bank 2 must still be active (latch CC bits unchanged)
+        assert_eq!(mapper.read_chr(0x0000), 0x42);
+    }
+
+    // ── Snapshot roundtrip for 2M/4M state ────────────────────────────────────
+
+    #[test]
+    fn test_2m_4m_snapshot_includes_mode_and_slots() {
+        // After enabling 2M mode and setting all slot banks, a snapshot+restore
+        // must preserve mode_2m_active and prg_2m_slots exactly.
+        let prg = banked_data(0x2000, 32);
+        let mut mapper = create_m6(prg.clone(), 1, NametableLayout::Vertical);
+        mapper.write_prg(0x43FE, 0x00);   // enable 2M
+        mapper.write_prg(0x8000, 3 << 2); // slot 0 = bank 3
+        mapper.write_prg(0xA000, 11 << 2);// slot 1 = bank 11
+        mapper.write_prg(0xC000, 17 << 2);// slot 2 = bank 17
+        mapper.write_prg(0xE000, 28 << 2);// slot 3 = bank 28
+        let snap = mapper.registers_snapshot();
+        let mut restored = create_m6(prg, 1, NametableLayout::Horizontal);
+        restored.restore_registers(&snap);
+        assert_eq!(restored.read_prg(0x8000), 3);
+        assert_eq!(restored.read_prg(0xA000), 11);
+        assert_eq!(restored.read_prg(0xC000), 17);
+        assert_eq!(restored.read_prg(0xE000), 28);
     }
 }
