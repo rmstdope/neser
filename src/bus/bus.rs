@@ -188,6 +188,15 @@ impl Bus {
         cartridge.borrow_mut().reset();
     }
 
+    /// Returns `true` if the currently mapped cartridge has a 512-byte trainer block.
+    pub fn cartridge_has_trainer(&self) -> bool {
+        self.cartridge
+            .borrow()
+            .as_ref()
+            .map(|c| c.borrow().has_trainer())
+            .unwrap_or(false)
+    }
+
     #[cfg(test)]
     #[allow(dead_code)]
     pub fn cpu_ram_ref(&self) -> Rc<RefCell<Vec<u8>>> {
