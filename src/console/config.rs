@@ -257,16 +257,6 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
-        flag: "--no-debugger",
-        help: Some("Do not open debugger on startup (equivalent to --debugger false)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--disable-debugger",
-        help: Some("Do not open debugger on startup (equivalent to --debugger false)"),
-        has_value: false,
-    },
-    CliFlag {
         flag: "--load-state",
         help: Some(
             "Load save-state on startup (optionally: true/false, default when flag present: true)",
@@ -284,8 +274,13 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
-        flag: "--record",
-        help: Some("Record controller input to <ROM>.autorun file"),
+        flag: "--create-recording",
+        help: Some("Record controller input to <ROM>.autorun file (replaces existing)"),
+        has_value: false,
+    },
+    CliFlag {
+        flag: "--extend-recording",
+        help: Some("Extend an existing autorun recording with new input"),
         has_value: false,
     },
     CliFlag {
@@ -294,18 +289,8 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
-        flag: "--extend",
-        help: Some("Extend an existing autorun recording (requires --record)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--headless",
-        help: Some("Run playback without display (requires --playback)"),
-        has_value: false,
-    },
-    CliFlag {
-        flag: "--overwrite-recording",
-        help: Some("Replace existing autorun recording (requires --record)"),
+        flag: "--playback-headless",
+        help: Some("Play back controller input from <ROM>.autorun file without display"),
         has_value: false,
     },
     CliFlag {
@@ -318,11 +303,6 @@ const CLI_FLAGS: &[CliFlag] = &[
         help: Some(
             "Add breakpoints on startup: pc=ADDR, cycle=N, frame=N, write=ADDR (comma-separated)",
         ),
-        has_value: true,
-    },
-    CliFlag {
-        flag: "--frame",
-        help: Some("Add a frame breakpoint on startup (break at first instruction of frame N)"),
         has_value: true,
     },
     CliFlag {
@@ -492,7 +472,7 @@ pub struct Config {
 /// which enables recording and playback of controller input for deterministic testing
 /// and automation.
 ///
-/// The mode is typically derived from command-line flags (`--record`, `--playback`)
+/// The mode is typically derived from command-line flags (`--create-recording`, `--extend-recording`, `--playback`, `--playback-headless`)
 /// and determines how controller input is processed:
 /// - In `None` mode, controller input is handled interactively as normal
 /// - In `Record` mode, controller input is captured and saved to an `.autorun` file
@@ -500,27 +480,26 @@ pub struct Config {
 ///
 /// Additional behavior is configured via related fields on [`Config`]:
 ///
-/// - [`Config::autorun_headless`]: Run without display during playback (for CI/testing)
+/// - [`Config::autorun_headless`]: Run without display during playback (set by `--playback-headless`)
 /// - [`Config::autorun_extend`]: When `Record` is active, load an existing recording,
-///   play it back to the end, then continue recording new input (effectively appending
-///   to the existing recording)
+///   play it back to the end, then continue recording new input (set by `--extend-recording`)
 /// - [`Config::autorun_overwrite`]: When `Record` is active, replace any existing
-///   recording file instead of failing if it already exists
+///   recording file instead of failing if it already exists (set by `--create-recording`)
 ///
 /// # Example Usage
 ///
 /// ```bash
-/// # Record gameplay to game.autorun
-/// neser --record game.nes
+/// # Record gameplay to game.autorun (overwrite if exists)
+/// neser --create-recording game.nes
+///
+/// # Extend existing recording
+/// neser --extend-recording game.nes
 ///
 /// # Play back and verify checksum
 /// neser --playback game.nes
 ///
-/// # Extend existing recording
-/// neser --record --extend game.nes
-///
 /// # Headless playback for CI
-/// neser --playback --headless game.nes
+/// neser --playback-headless game.nes
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AutorunMode {
@@ -719,12 +698,9 @@ impl Config {
             self.gamepads_enabled = false;
         }
 
-        // Debugger: --debugger true/false, --no-debugger, --disable-debugger
+        // Debugger: --debugger true/false
         if let Some(debugger) = Self::parse_bool_arg(args, "--debugger")? {
             self.debugger_enabled = debugger;
-        }
-        if Self::has_negation_flag(args, &["--no-debugger", "--disable-debugger"]) {
-            self.debugger_enabled = false;
         }
 
         // Load state: --load-state true/false, --no-load-state, --disable-load-state
@@ -844,54 +820,36 @@ impl Config {
         }
 
         // Autorun mode flags
-        let has_record = args.iter().any(|arg| arg == "--record");
+        let has_create_recording = args.iter().any(|arg| arg == "--create-recording");
+        let has_extend_recording = args.iter().any(|arg| arg == "--extend-recording");
         let has_playback = args.iter().any(|arg| arg == "--playback");
+        let has_playback_headless = args.iter().any(|arg| arg == "--playback-headless");
 
-        if has_record && has_playback {
-            return Err("Cannot specify both --record and --playback".to_string());
-        }
-
-        if has_record {
-            self.autorun_mode = AutorunMode::Record;
-        } else if has_playback {
-            self.autorun_mode = AutorunMode::Playback;
-        }
-
-        // Autorun option flags
-        self.autorun_headless = args.iter().any(|arg| arg == "--headless");
-        self.autorun_extend = args.iter().any(|arg| arg == "--extend");
-        self.autorun_overwrite = args.iter().any(|arg| arg == "--overwrite-recording");
-
-        // Validate autorun flag combinations
-        if self.autorun_headless && self.autorun_mode != AutorunMode::Playback {
-            return Err("--headless requires --playback".to_string());
-        }
-        if self.autorun_extend && self.autorun_mode != AutorunMode::Record {
-            return Err("--extend requires --record".to_string());
-        }
-        if self.autorun_overwrite && self.autorun_mode != AutorunMode::Record {
-            return Err("--overwrite-recording requires --record".to_string());
-        }
-        if self.autorun_extend && self.autorun_overwrite {
+        if has_create_recording && has_extend_recording {
             return Err(
-                "Cannot specify both --extend and --overwrite-recording (mutually exclusive)"
-                    .to_string(),
+                "Cannot specify both --create-recording and --extend-recording".to_string(),
             );
+        }
+        if (has_create_recording || has_extend_recording) && (has_playback || has_playback_headless)
+        {
+            return Err("Cannot specify both a recording flag and a playback flag".to_string());
+        }
+
+        if has_create_recording {
+            self.autorun_mode = AutorunMode::Record;
+            self.autorun_overwrite = true;
+        } else if has_extend_recording {
+            self.autorun_mode = AutorunMode::Record;
+            self.autorun_extend = true;
+        } else if has_playback || has_playback_headless {
+            self.autorun_mode = AutorunMode::Playback;
+            self.autorun_headless = has_playback_headless;
         }
 
         // Breakpoints from --breakpoint flag (comma-separated list)
         if let Some(value) = Self::parse_string_arg(args, "--breakpoint") {
             self.breakpoints =
                 parse_breakpoint_list(&value).map_err(|e| format!("--breakpoint: {e}"))?;
-        }
-
-        // Frame breakpoint from --frame flag
-        if let Some(value) = Self::parse_string_arg(args, "--frame") {
-            let frame = value
-                .trim()
-                .parse::<u64>()
-                .map_err(|_| format!("Invalid --frame value: {value}"))?;
-            self.breakpoints.push(BreakpointKind::Frame(frame));
         }
 
         Ok(())
@@ -913,7 +871,7 @@ impl Config {
         println!(
             "  neser --debugger game.nes                    # Enable debugger (no value = true)"
         );
-        println!("  neser --frame=120 game.nes                   # Break on frame 120");
+        println!("  neser --breakpoint frame=120 game.nes           # Break on frame 120");
         println!("  neser --audio game.nes                       # Enable audio (no value = true)");
         println!("  neser --audio=1 game.nes                     # Enable audio (equals syntax)");
         println!("  neser --audio false game.nes                 # Disable audio (value-based)");
@@ -3269,7 +3227,11 @@ filter=invalid-shader
     #[test]
     fn test_cli_frame_flag_adds_frame_breakpoint() {
         use crate::debugging::breakpoints::BreakpointKind;
-        let args = vec!["neser".to_string(), "--frame".to_string(), "42".to_string()];
+        let args = vec![
+            "neser".to_string(),
+            "--breakpoint".to_string(),
+            "frame=42".to_string(),
+        ];
         let config = parse_config(args);
         assert!(
             config.breakpoints.contains(&BreakpointKind::Frame(42)),
@@ -3367,6 +3329,192 @@ filter=invalid-shader
         assert!(
             result.is_err(),
             "expected error for invalid cycle value in breakpoint"
+        );
+    }
+
+    // --- Issue #649: Config argument cleanup ---
+
+    // --frame should no longer be a standalone flag
+    #[test]
+    fn test_cli_frame_standalone_flag_is_rejected() {
+        let args = vec!["neser".to_string(), "--frame".to_string(), "42".to_string()];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--frame should be rejected; use --breakpoint frame=N instead"
+        );
+    }
+
+    // --no-debugger and --disable-debugger should be removed
+    #[test]
+    fn test_cli_no_debugger_flag_is_rejected() {
+        let args = vec!["neser".to_string(), "--no-debugger".to_string()];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--no-debugger should be rejected; use --debugger false instead"
+        );
+    }
+
+    #[test]
+    fn test_cli_disable_debugger_flag_is_rejected() {
+        let args = vec!["neser".to_string(), "--disable-debugger".to_string()];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--disable-debugger should be rejected; use --debugger false instead"
+        );
+    }
+
+    // Old autorunner flags should be rejected
+    #[test]
+    fn test_cli_record_standalone_flag_is_rejected() {
+        let args = vec!["neser".to_string(), "--record".to_string()];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--record should be rejected; use --create-recording or --extend-recording instead"
+        );
+    }
+
+    #[test]
+    fn test_cli_extend_standalone_flag_is_rejected() {
+        let args = vec!["neser".to_string(), "--extend".to_string()];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--extend should be rejected; use --extend-recording instead"
+        );
+    }
+
+    #[test]
+    fn test_cli_headless_standalone_flag_is_rejected() {
+        let args = vec!["neser".to_string(), "--headless".to_string()];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--headless should be rejected; use --playback-headless instead"
+        );
+    }
+
+    #[test]
+    fn test_cli_overwrite_recording_standalone_flag_is_rejected() {
+        let args = vec!["neser".to_string(), "--overwrite-recording".to_string()];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--overwrite-recording should be rejected; use --create-recording instead"
+        );
+    }
+
+    // New autorunner flags should work
+    #[test]
+    fn test_cli_create_recording_sets_record_mode_and_overwrite() {
+        let args = vec!["neser".to_string(), "--create-recording".to_string()];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_mode,
+            AutorunMode::Record,
+            "--create-recording should set Record mode"
+        );
+        assert!(
+            config.autorun_overwrite,
+            "--create-recording should set autorun_overwrite"
+        );
+        assert!(
+            !config.autorun_extend,
+            "--create-recording should not set autorun_extend"
+        );
+    }
+
+    #[test]
+    fn test_cli_extend_recording_sets_record_mode_and_extend() {
+        let args = vec!["neser".to_string(), "--extend-recording".to_string()];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_mode,
+            AutorunMode::Record,
+            "--extend-recording should set Record mode"
+        );
+        assert!(
+            config.autorun_extend,
+            "--extend-recording should set autorun_extend"
+        );
+        assert!(
+            !config.autorun_overwrite,
+            "--extend-recording should not set autorun_overwrite"
+        );
+    }
+
+    #[test]
+    fn test_cli_playback_headless_sets_playback_mode_and_headless() {
+        let args = vec!["neser".to_string(), "--playback-headless".to_string()];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_mode,
+            AutorunMode::Playback,
+            "--playback-headless should set Playback mode"
+        );
+        assert!(
+            config.autorun_headless,
+            "--playback-headless should set autorun_headless"
+        );
+    }
+
+    #[test]
+    fn test_cli_playback_still_works() {
+        let args = vec!["neser".to_string(), "--playback".to_string()];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_mode,
+            AutorunMode::Playback,
+            "--playback should still set Playback mode"
+        );
+        assert!(
+            !config.autorun_headless,
+            "--playback alone should not set autorun_headless"
+        );
+    }
+
+    #[test]
+    fn test_cli_create_recording_and_playback_are_mutually_exclusive() {
+        let args = vec![
+            "neser".to_string(),
+            "--create-recording".to_string(),
+            "--playback".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--create-recording and --playback should be mutually exclusive"
+        );
+    }
+
+    #[test]
+    fn test_cli_extend_recording_and_playback_are_mutually_exclusive() {
+        let args = vec![
+            "neser".to_string(),
+            "--extend-recording".to_string(),
+            "--playback".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--extend-recording and --playback should be mutually exclusive"
+        );
+    }
+
+    #[test]
+    fn test_cli_create_recording_and_extend_recording_are_mutually_exclusive() {
+        let args = vec![
+            "neser".to_string(),
+            "--create-recording".to_string(),
+            "--extend-recording".to_string(),
+        ];
+        let result = config_new(args);
+        assert!(
+            result.is_err(),
+            "--create-recording and --extend-recording should be mutually exclusive"
         );
     }
 }

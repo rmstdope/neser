@@ -45,7 +45,7 @@ impl AutorunState {
                             })?;
                         } else {
                             return Err(format!(
-                                "Recording already exists: {} (use --overwrite-recording to replace)",
+                                "Recording already exists: {} (use --create-recording to replace)",
                                 autorun_path.display()
                             ));
                         }
