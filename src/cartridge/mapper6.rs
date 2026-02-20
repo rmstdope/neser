@@ -382,6 +382,21 @@ impl Mapper for Mapper6Mapper {
         )
     }
 
+    fn write_nametable(&mut self, addr: u16, value: u8) -> bool {
+        if !self.chr_nt_active {
+            return false;
+        }
+        let slot = ((addr - 0x2000) / CHR_BANK_SIZE_1K as u16) as usize;
+        if slot >= 4 {
+            return false;
+        }
+        let bank = self.chr_nt_regs[slot] as usize;
+        let offset = (addr & 0x03FF) as usize;
+        self.chr_memory
+            .write_at_index(bank * CHR_BANK_SIZE_1K + offset, value);
+        true
+    }
+
     fn ppu_address_changed(&mut self, addr: u16) {
         self.update_mmc4_latches(addr);
     }
@@ -1178,11 +1193,39 @@ mod tests {
         assert_eq!(mapper.read_nametable(0x2000), None);
     }
 
+    #[test]
+    fn test_write_nametable_routes_to_chr_when_chr_nt_active() {
+        // When chr_nt_active is true (n=0), writes to $2000-$2FFF must update
+        // the CHR bank selected by $4518-$451B so that subsequent reads return
+        // the written value.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x05); // 1 KiB direct, n=0 (CHR NT active)
+        mapper.write_prg(0x4518, 6); // nametable $2000 → 1 KiB bank 6
+        mapper.write_nametable(0x2000, 0xBE); // write via nametable interface
+        assert_eq!(mapper.read_nametable(0x2000), Some(0xBE));
+    }
+
+    #[test]
+    fn test_write_nametable_ignored_when_ciram_mode() {
+        // When chr_nt_active is false (n=1, CIRAM mode), write_nametable returns
+        // false and does not modify CHR memory.
+        let prg = vec![0u8; 256 * 1024];
+        let mut mapper = create_m6(prg, 1, NametableLayout::Vertical);
+        mapper.write_prg(0x4500, 0x07); // n=1 → CIRAM
+        mapper.write_prg(0x4518, 6); // set bank 6, but NT mode is CIRAM
+        let handled = mapper.write_nametable(0x2000, 0xBE);
+        assert!(
+            !handled,
+            "write_nametable should return false in CIRAM mode"
+        );
+    }
+
     // ── MMC4 latch mode ($4500 bit 2 = m = 0, 1 KiB mode active) ────────────
     //
     // When C=1 and m=0 ($4500=0x01): MMC4-style 4 KiB CHR banks with FD/FE latching.
-    // $4510/$4511 = FD/FE banks for lower half ($0000-$0FFF); data [CCCC CC..] → bank = value>>2
-    // $4514/$4515 = FD/FE banks for upper half ($1000-$1FFF)
+    // $4510/$4512 = FD/FE banks for lower half ($0000-$0FFF); data [CCCC CC..] → bank = value>>2
+    // $4514/$4516 = FD/FE banks for upper half ($1000-$1FFF)
     // ppu_address_changed($0FDx) → latch0 = FD; ppu_address_changed($0FEx) → latch0 = FE
 
     #[test]
