@@ -717,14 +717,22 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     4, // MMC3 is constructed with CRC-specific behavior.
-    0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 13, 15, 16, 19, 21, 22, 23, 24, 25, 26, 34, 66, 68, 69, 71, 78,
-    206,
+    0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 19, 21, 22, 23, 24, 25, 26, 34, 66, 68, 69, 71,
+    78, 206,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
 #[cfg(test)]
 pub fn supported_mappers() -> &'static [u8] {
     SUPPORTED_MAPPERS
+}
+
+fn resolve_mapper6_submapper(mapper_number: u16, submapper: u8) -> u8 {
+    match mapper_number {
+        8 => 4,
+        6 if submapper == 0 => 1,
+        _ => submapper,
+    }
 }
 
 /// Create a mapper instance based on mapper metadata.
@@ -762,12 +770,8 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         )));
     }
 
-    if mapper_number == 6 {
-        let submapper = if metadata.submapper == 0 {
-            1
-        } else {
-            metadata.submapper
-        };
+    if mapper_number == 6 || mapper_number == 8 {
+        let submapper = resolve_mapper6_submapper(mapper_number, metadata.submapper);
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
         return Ok(Box::new(Mapper6Mapper::new(
             prg_rom, chr_rom, mirroring, submapper,
@@ -826,6 +830,7 @@ mod tests {
         assert!(supported.contains(&4));
         assert!(supported.contains(&5));
         assert!(supported.contains(&7));
+        assert!(supported.contains(&8));
     }
 
     #[test]
@@ -839,6 +844,53 @@ mod tests {
 
         let mapper = create_mapper(metadata).expect("MMC5 mapper should be created");
         assert_eq!(mapper.wram_size(), 16 * 1024);
+    }
+
+    #[test]
+    fn create_mapper_accepts_mapper_8_as_mapper_6_alias() {
+        // Given mapper 8 metadata (iNES synonym for mapper 6 submapper 4)
+        // and PRG-ROM where each 16 KiB bank returns its own index byte.
+        let prg_rom = (0u8..16)
+            .flat_map(|bank| std::iter::repeat_n(bank, 16 * 1024))
+            .collect();
+        let chr_rom = vec![0u8; 8 * 1024];
+        let metadata = MapperContext::new(8, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // When creating a mapper instance
+        let mut mapper =
+            create_mapper(metadata).expect("Mapper 8 should be created as mapper 6 alias");
+
+        // and selecting 32 KiB PRG bank 1 using bits 5-4 (mode 4 behavior)
+        mapper.write_prg(0x8000, 0x10);
+
+        // Then mapper 8 follows mapper 6 submapper 4 PRG behavior:
+        // lower half -> 16 KiB bank 2, upper half -> 16 KiB bank 3.
+        assert_eq!(mapper.read_prg(0x8000), 2);
+        assert_eq!(mapper.read_prg(0xC000), 3);
+
+        // Then mapper 6-specific capabilities are available
+        let caps = mapper.capabilities();
+        assert!(caps.has_irq);
+        assert!(caps.has_chr_banking);
+        assert!(caps.trainer_jsr);
+    }
+
+    #[test]
+    fn mapper_8_reads_chr_rom_banks_in_mode_4() {
+        // Given mapper 8 metadata with 4 x 8 KiB CHR-ROM banks.
+        let prg_rom = vec![0u8; 32 * 1024];
+        let chr_rom = (0u8..4)
+            .flat_map(|bank| std::iter::repeat_n(0x10 + bank, 8 * 1024))
+            .collect();
+        let metadata = MapperContext::new(8, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // When selecting CHR bank 1 through mode 4 latch bits 1-0
+        let mut mapper =
+            create_mapper(metadata).expect("Mapper 8 should be created as mapper 6 alias");
+        mapper.write_prg(0x8000, 0x01);
+
+        // Then reads come from CHR-ROM bank 1.
+        assert_eq!(mapper.read_chr(0x0000), 0x11);
     }
 
     #[test]

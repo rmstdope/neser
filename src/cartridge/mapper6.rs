@@ -108,12 +108,12 @@ impl Mapper6Mapper {
     ///
     /// # Arguments
     /// * `prg_rom`   — PRG-ROM data (up to 256 KiB for iNES 1.0 submapper 1)
-    /// * `_chr_rom`  — ignored; mapper always uses 32 KiB CHR-RAM
+    /// * `chr_rom`   — CHR-ROM data when present; otherwise mapper uses CHR-RAM
     /// * `mirroring` — initial nametable mirroring from the iNES header
     /// * `submapper` — iNES 2.0 submapper (0 is remapped to 1 per spec)
     pub fn new(
         prg_rom: Vec<u8>,
-        _chr_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
         mirroring: NametableLayout,
         submapper: u8,
     ) -> Self {
@@ -129,10 +129,15 @@ impl Mapper6Mapper {
         let d4 = u8::from(matches!(mirroring, NametableLayout::Horizontal));
         // A0 = 1 (addr $42FF has bit 0 set)
         let mirroring_type = (1 << 1) | d4;
+        let chr_memory = if chr_rom.is_empty() {
+            ChrMemory::new_ram(CHR_RAM_SIZE_256K)
+        } else {
+            ChrMemory::new(chr_rom)
+        };
 
         Self {
             prg_rom: BankedRom::new(prg_rom, PRG_BANK_SIZE_8K),
-            chr_memory: ChrMemory::new_ram(CHR_RAM_SIZE_256K),
+            chr_memory,
             wram: vec![0; WRAM_SIZE_32K],
             latch_mode,
             latch_value: 0,
