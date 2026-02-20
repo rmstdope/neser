@@ -917,7 +917,7 @@ impl Cpu {
     /// Read a byte from memory at PC and increment PC
     fn read_byte_from_pc(&mut self) -> u8 {
         let value = self.read(self.pc);
-        self.pc += 1;
+        self.pc = self.pc.wrapping_add(1);
         value
     }
 
@@ -2314,6 +2314,26 @@ mod tests {
         let chr_rom = vec![0; 0x2000];
         let cartridge = Cartridge::from_parts(prg_rom, chr_rom, NametableLayout::Horizontal);
         cpu.bus.borrow_mut().map_cartridge(cartridge);
+    }
+
+    #[test]
+    fn test_read_byte_from_pc_wraps_program_counter_at_ffff() {
+        let (ppu, apu, memory) = create_test_memory();
+        let mut cpu = Cpu::new(
+            TimingMode::Ntsc,
+            Rc::clone(&memory),
+            Rc::clone(&ppu),
+            Rc::clone(&apu),
+        );
+
+        map_minimal_cartridge_for_reset_vector(&mut cpu);
+
+        cpu.pc = 0xFFFF;
+
+        let value = cpu.read_byte_from_pc();
+
+        assert_eq!(value, 0x00);
+        assert_eq!(cpu.pc, 0x0000);
     }
 
     #[test]
