@@ -20,6 +20,7 @@ use super::namco118::Namco118Mapper;
 use super::namco163::Namco163Mapper;
 use super::nina_tengen::NinaTengenMapper;
 use super::nrom::NROMMapper;
+use super::ntdec_2722::Ntdec2722Mapper;
 use super::rom_db;
 use super::sunsoft_4::Sunsoft4Mapper;
 use super::sunsoft_fme7::SunsoftFme7Mapper;
@@ -701,6 +702,7 @@ mapper_registry! {
     32 => IremG101Mapper::new,
     33 => TaitoTc0190Mapper::new,
     34 => BnromNinaMapper::new,
+    40 => Ntdec2722Mapper::new,
     66 => GxROMMapper::new,
     69 => SunsoftFme7Mapper::new,
     71 => CamericaMapper::new,

@@ -367,6 +367,7 @@ impl Nes {
     /// registers, and PPU state. Useful for debugging and comparing against reference logs.
     ///
     /// Format: `PC  OPCODE  INSTRUCTION                 A:XX X:XX Y:XX P:XX SP:XX PPU:SSS,PPP CYC:C`
+    #[allow(dead_code)]
     pub fn trace(&mut self, tracing: &Tracing) -> String {
         let nestest = tracing.nestest;
         let cpu_state = self.cpu.state();
