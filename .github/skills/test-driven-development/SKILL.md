@@ -74,9 +74,10 @@ Your core methodology follows these strict phases:
 - Include reference to the user story or feature being implemented
 - Use conventional commit format when appropriate
 - Run all pre-merge checks locally before creating a PR:
-  - **Rust**: `cargo fmt -- --check`, `cargo clippy --all-features`, `cargo test --lib --bins --tests --examples`
+  - **Rust**: `cargo fmt -- --check`, `cargo clippy --all-features -- -D warnings`, `cargo test --lib --bins --tests --examples`
   - **Web/JS** (if web/ was changed): `npm test` from the `web/` directory
-  - If a check fails due to a **pre-existing issue unrelated to your changes**, verify on the base branch (e.g., `git stash && cargo fmt -- --check`) and document the finding rather than fixing it
+  - **Never filter or grep pre-merge check output** — run each command unfiltered and read the full output to confirm zero errors and zero warnings before declaring checks passed.
+  - If a check fails due to a **pre-existing issue unrelated to your changes**, verify on the base branch (e.g., `git stash && cargo clippy --all-features -- -D warnings`) and document the finding rather than fixing it
 - When creating a PR with a complex body (e.g., containing markdown backticks or multi-line text), use `gh pr create --body-file <file>` or a shell heredoc to avoid quoting issues
 - If more iterations are needed before the issue is completed, loop back to the RED phase
 - If the issue is fully implemented, create a PR with a clear description of the changes and link to the relevant issue
