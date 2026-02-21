@@ -113,6 +113,12 @@ impl Mapper for Mapper50 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
+        // Registers are only in $4020-$5FFF; ignore writes to PRG ROM/RAM space.
+        // Without this guard, writes to $C000-$FFFF (e.g. from RMW instructions)
+        // with bit14=1, bit5=1, bit8=0 would accidentally match $4020 via the mask.
+        if addr > 0x5FFF {
+            return;
+        }
         match addr & 0x4120 {
             0x4020 => {
                 // PRG bank register (scrambled [HLLM])
