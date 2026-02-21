@@ -215,6 +215,10 @@ impl Cartridge {
         info.mapper = Self::resolve_mapper_with_db_override(info.mapper, db_entry.as_ref());
         info.submapper =
             Self::resolve_submapper_with_db_override(info.submapper, db_entry.as_ref());
+        crate::debugging::log_info(format!(
+            "Loading ROM with CRC32 {:08X}, mapper {}, submapper {}",
+            crc32, info.mapper, info.submapper
+        ));
 
         let mut cart = Self {
             mapper: Self::create_mapper(&info, prg_rom, chr_rom)?,

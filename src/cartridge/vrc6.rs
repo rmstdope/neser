@@ -252,6 +252,7 @@ pub struct VRC6Mapper {
     chr_banks_1k: [u8; 8],
 
     b003: u8,
+    prg_ram_enabled: bool,
     mirroring: NametableLayout,
 
     // --- VRC IRQ (used by VRC6) ---
@@ -292,6 +293,7 @@ impl VRC6Mapper {
             prg_bank_8k: 0,
             chr_banks_1k: [0; 8],
             b003: 0,
+            prg_ram_enabled: false,
             mirroring,
 
             irq_latch: 0,
@@ -351,12 +353,16 @@ impl VRC6Mapper {
     }
 
     fn update_mirroring_from_b003(&mut self) {
+        // bit 7 (W): PRG RAM enable
+        self.prg_ram_enabled = (self.b003 & 0x80) != 0;
+
         // Commercial VRC6 games use banking mode 0 and write values where (b003 & 0x0F)
-        // is one of: 0, 4, 8, C.
+        // is one of: 0, 4, 8, C (vertical, horizontal, 1-screen A, 1-screen B).
         self.mirroring = match self.b003 & 0x0F {
             0x0 => NametableLayout::Vertical,
             0x4 => NametableLayout::Horizontal,
-            0x8 | 0xC => NametableLayout::SingleScreen,
+            0x8 => NametableLayout::SingleScreen,        // 1-screen A (CIRAM lower bank)
+            0xC => NametableLayout::SingleScreenUpper,  // 1-screen B (CIRAM upper bank)
             _ => self.mirroring,
         };
     }
@@ -413,9 +419,11 @@ impl VRC6Mapper {
 
 impl Mapper for VRC6Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
-        // PRG-RAM at $6000-$7FFF
-        if let Some(value) = self.prg_ram.try_read(addr) {
-            return value;
+        // PRG-RAM at $6000-$7FFF, enabled by $B003 bit 7 (W)
+        if self.prg_ram_enabled {
+            if let Some(value) = self.prg_ram.try_read(addr) {
+                return value;
+            }
         }
 
         match addr {
@@ -444,8 +452,8 @@ impl Mapper for VRC6Mapper {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        // PRG-RAM at $6000-$7FFF
-        if self.prg_ram.try_write(addr, value) {
+        // PRG-RAM at $6000-$7FFF, enabled by $B003 bit 7 (W)
+        if self.prg_ram_enabled && self.prg_ram.try_write(addr, value) {
             return;
         }
 
@@ -603,9 +611,9 @@ impl Mapper for VRC6Mapper {
         snapshot.push(match self.mirroring {
             NametableLayout::Horizontal => 0,
             NametableLayout::Vertical => 1,
-            NametableLayout::SingleScreen => 2,
-            NametableLayout::FourScreen => 3,
-            _ => 0,
+            NametableLayout::SingleScreen | NametableLayout::SingleScreenLower => 2,
+            NametableLayout::SingleScreenUpper => 3,
+            NametableLayout::FourScreen => 4,
         });
         snapshot.push(self.audio.global_halt as u8);
         snapshot.push(self.audio.global_shift);
@@ -641,6 +649,7 @@ impl Mapper for VRC6Mapper {
             self.prg_bank_8k = data[1];
             self.chr_banks_1k.copy_from_slice(&data[2..10]);
             self.b003 = data[10];
+            self.prg_ram_enabled = (self.b003 & 0x80) != 0;
             self.irq_latch = data[11];
             self.irq_counter = data[12];
             let flags = data[13];
@@ -653,7 +662,8 @@ impl Mapper for VRC6Mapper {
                 0 => NametableLayout::Horizontal,
                 1 => NametableLayout::Vertical,
                 2 => NametableLayout::SingleScreen,
-                3 => NametableLayout::FourScreen,
+                3 => NametableLayout::SingleScreenUpper,
+                4 => NametableLayout::FourScreen,
                 _ => NametableLayout::Horizontal,
             };
         }
