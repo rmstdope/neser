@@ -285,16 +285,6 @@ impl MMC3Mapper {
         self.prg_ram_enabled && !self.prg_ram_write_protected
     }
 
-    /// Size in bytes of one 8KB PRG bank.
-    pub fn prg_bank_size_bytes(&self) -> usize {
-        Self::PRG_BANK_SIZE
-    }
-
-    /// Size in bytes of one 1KB CHR bank.
-    pub fn chr_1k_bank_size_bytes(&self) -> usize {
-        Self::CHR_BANK_SIZE
-    }
-
     // ============================================================================
     // PPU A12 Edge Detection for IRQ Timing
     // ============================================================================
