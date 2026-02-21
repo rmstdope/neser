@@ -12,6 +12,7 @@ pub struct CpuRegsSnapshot {
     pub pixel: u16,
     pub interrupt: Option<crate::cpu::InterruptKind>,
     pub nmi_vector: u16,
+    pub reset_vector: u16,
     pub irq_vector: u16,
 }
 
