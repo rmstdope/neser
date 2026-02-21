@@ -12,6 +12,7 @@ mod gxrom;
 mod ines;
 mod irem_g101;
 mod mapper;
+mod mapper42;
 mod mapper_templates;
 mod mmc1;
 mod mmc2;
