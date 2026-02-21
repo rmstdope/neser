@@ -697,6 +697,7 @@ mapper_registry! {
     22 => vrc2_vrc4_22,
     24 => vrc6_24,
     26 => vrc6_26,
+    32 => IremG101Mapper::new,
     34 => BnromNinaMapper::new,
     66 => GxROMMapper::new,
     69 => SunsoftFme7Mapper::new,
@@ -805,11 +806,10 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         return Ok(Box::new(mapper));
     }
 
-    if mapper_number == 32 {
-        let submapper = metadata.submapper;
+    if mapper_number == 32 && metadata.submapper == 1 {
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
         return Ok(Box::new(IremG101Mapper::new_with_submapper(
-            prg_rom, chr_rom, mirroring, submapper,
+            prg_rom, chr_rom, mirroring, 1,
         )));
     }
 
