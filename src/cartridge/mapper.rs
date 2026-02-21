@@ -24,6 +24,7 @@ use super::rom_db;
 use super::sunsoft_4::Sunsoft4Mapper;
 use super::sunsoft_fme7::SunsoftFme7Mapper;
 use super::super_magic_card::SuperMagicCardMapper;
+use super::taito_tc0190::TaitoTc0190Mapper;
 use super::uxrom::UxROMMapper;
 use super::vrc2_vrc4::Vrc2Vrc4Mapper;
 use super::vrc6::VRC6Mapper;
@@ -698,6 +699,7 @@ mapper_registry! {
     24 => vrc6_24,
     26 => vrc6_26,
     32 => IremG101Mapper::new,
+    33 => TaitoTc0190Mapper::new,
     34 => BnromNinaMapper::new,
     66 => GxROMMapper::new,
     69 => SunsoftFme7Mapper::new,
@@ -709,8 +711,8 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     4, // MMC3 is constructed with CRC-specific behavior.
-    0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 34, 66, 68,
-    69, 71, 78, 206,
+    0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34, 66,
+    68, 69, 71, 78, 206,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
