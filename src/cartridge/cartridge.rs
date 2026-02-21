@@ -100,9 +100,8 @@ impl Cartridge {
         info: &crate::cartridge::ines::InesHeader,
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
-        mirroring: NametableLayout,
     ) -> Result<Box<dyn Mapper>, CartridgeError> {
-        let mut context = MapperContext::new(info.mapper, prg_rom, chr_rom, mirroring)
+        let mut context = MapperContext::new(info.mapper, prg_rom, chr_rom, info.mirroring)
             .with_prg_ram_banks(Self::prg_ram_banks_8k(info.prg_ram_size_bytes))
             .with_battery_backed_prg_ram(info.battery_backed_prg_ram);
 
@@ -126,6 +125,24 @@ impl Cartridge {
         db_entry
             .and_then(|entry| entry.nametable_layout)
             .unwrap_or(header_mirroring)
+    }
+
+    fn resolve_mapper_with_db_override(
+        header_mapper: u16,
+        db_entry: Option<&crate::cartridge::RomDbEntry>,
+    ) -> u16 {
+        db_entry
+            .and_then(|entry| entry.mapper)
+            .unwrap_or(header_mapper)
+    }
+
+    fn resolve_submapper_with_db_override(
+        header_submapper: u8,
+        db_entry: Option<&crate::cartridge::RomDbEntry>,
+    ) -> u8 {
+        db_entry
+            .and_then(|entry| entry.submapper)
+            .unwrap_or(header_submapper)
     }
 
     fn configure_paths_from_rom(&mut self, rom_path: PathBuf) {
@@ -189,15 +206,18 @@ impl Cartridge {
     ) -> Result<Self, CartridgeError> {
         let app_context = app_context.into_shared();
         let rom_path = path.as_ref().to_path_buf();
-        let (info, prg_rom, chr_rom, trainer, crc32) =
+        let (mut info, prg_rom, chr_rom, trainer, crc32) =
             crate::cartridge::parse_rom(data).map_err(Self::map_parse_error)?;
 
         let db_entry = app_context.borrow().get_db_entry_by_crc(crc32);
-        let mirroring =
+        info.mirroring =
             Self::resolve_mirroring_mode_with_db_override(info.mirroring, db_entry.as_ref());
+        info.mapper = Self::resolve_mapper_with_db_override(info.mapper, db_entry.as_ref());
+        info.submapper =
+            Self::resolve_submapper_with_db_override(info.submapper, db_entry.as_ref());
 
         let mut cart = Self {
-            mapper: Self::create_mapper(&info, prg_rom, chr_rom, mirroring)?,
+            mapper: Self::create_mapper(&info, prg_rom, chr_rom)?,
             crc32,
             rom_timing_mode: info.timing_mode.normalize_rom_timing_mode(),
             rom_path: None,
@@ -714,6 +734,70 @@ mod tests {
         );
 
         assert_eq!(resolved, NametableLayout::Vertical);
+    }
+
+    #[test]
+    fn test_db_mapper_overrides_header_mapper() {
+        let db_entry = crate::cartridge::RomDbEntry {
+            rom_id: None,
+            name: None,
+            country: None,
+            crc: None,
+            console_type: None,
+            console_region: None,
+            rom_class: None,
+            mapper: Some(4),
+            submapper: None,
+            nametable_layout: None,
+            prg_rom_size: None,
+            prg_rom_crc: None,
+            prg_nvram_size: None,
+            prg_ram_size: None,
+            chr_rom_size: None,
+            chr_rom_crc: None,
+            chr_nvram_size: None,
+            chr_ram_size: None,
+            battery: None,
+            vs_hardware_type: None,
+            vs_ppu_type: None,
+            expansion_type: None,
+        };
+
+        let resolved = Cartridge::resolve_mapper_with_db_override(23, Some(&db_entry));
+
+        assert_eq!(resolved, 4);
+    }
+
+    #[test]
+    fn test_db_submapper_overrides_header_submapper() {
+        let db_entry = crate::cartridge::RomDbEntry {
+            rom_id: None,
+            name: None,
+            country: None,
+            crc: None,
+            console_type: None,
+            console_region: None,
+            rom_class: None,
+            mapper: None,
+            submapper: Some(2),
+            nametable_layout: None,
+            prg_rom_size: None,
+            prg_rom_crc: None,
+            prg_nvram_size: None,
+            prg_ram_size: None,
+            chr_rom_size: None,
+            chr_rom_crc: None,
+            chr_nvram_size: None,
+            chr_ram_size: None,
+            battery: None,
+            vs_hardware_type: None,
+            vs_ppu_type: None,
+            expansion_type: None,
+        };
+
+        let resolved = Cartridge::resolve_submapper_with_db_override(7, Some(&db_entry));
+
+        assert_eq!(resolved, 2);
     }
 
     #[test]
