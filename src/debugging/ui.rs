@@ -496,7 +496,10 @@ fn cpu_register_lines(snapshot: &DebuggerSnapshot) -> Vec<String> {
         format!("A:  {:02X}  X:  {:02X}  Y:  {:02X}", r.a, r.x, r.y),
         format!("P:  {:02X}  {}", r.p, format_status_flags(r.p)),
         format!("INT: {interrupt}"),
-        format!("VEC: NMI {:04X}  IRQ {:04X}", r.nmi_vector, r.irq_vector),
+        format!(
+            "VEC: NMI {:04X}  RST {:04X}  IRQ {:04X}",
+            r.nmi_vector, r.reset_vector, r.irq_vector
+        ),
         format!("CYC: {}", r.cycles),
         format!(
             "Frame: {} Scanline: {} Pixel: {}",
@@ -640,6 +643,11 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("P:  A5")));
         // N(7)=1, V(6)=0, U(5)=1, B(4)=0, D(3)=0, I(2)=1, Z(1)=0, C(0)=1
         assert!(lines.iter().any(|l| l.contains("N-U--I-C")));
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("VEC:") && l.contains("NMI") && l.contains("RST") && l.contains("IRQ"))
+        );
         // PPU info integrated after separator
         assert!(lines.iter().any(|l| l == "---"));
         assert!(

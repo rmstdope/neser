@@ -86,13 +86,19 @@ fn normalize_prg_hexdump_base(base: u16) -> u16 {
     aligned.clamp(0x8000, 0xFF00)
 }
 
-fn read_vectors_for_snapshot(nes: &Nes) -> (u16, u16) {
+fn read_vectors_for_snapshot(nes: &Nes) -> (u16, u16, u16) {
     let memory = nes.bus.borrow();
     let nmi_lo = memory.read_cpu_for_debugger(0xFFFA) as u16;
     let nmi_hi = memory.read_cpu_for_debugger(0xFFFB) as u16;
+    let reset_lo = memory.read_cpu_for_debugger(0xFFFC) as u16;
+    let reset_hi = memory.read_cpu_for_debugger(0xFFFD) as u16;
     let irq_lo = memory.read_cpu_for_debugger(0xFFFE) as u16;
     let irq_hi = memory.read_cpu_for_debugger(0xFFFF) as u16;
-    ((nmi_hi << 8) | nmi_lo, (irq_hi << 8) | irq_lo)
+    (
+        (nmi_hi << 8) | nmi_lo,
+        (reset_hi << 8) | reset_lo,
+        (irq_hi << 8) | irq_lo,
+    )
 }
 
 fn build_snapshot(
@@ -114,7 +120,7 @@ fn build_snapshot(
             .collect::<Vec<u8>>()
     };
 
-    let (nmi_vector, irq_vector) = read_vectors_for_snapshot(nes);
+    let (nmi_vector, reset_vector, irq_vector) = read_vectors_for_snapshot(nes);
 
     let (frame_count, scanline, pixel) = {
         let ppu = nes.ppu.borrow();
@@ -134,6 +140,7 @@ fn build_snapshot(
         pixel,
         interrupt: nes.cpu.current_interrupt(),
         nmi_vector,
+        reset_vector,
         irq_vector,
     };
 
@@ -238,11 +245,15 @@ mod tests {
         // For a 32 KiB NROM mapping, CPU $8000-$FFFF maps to prg_rom[0x0000..0x8000).
         // So vectors at $FFFA/$FFFE correspond to the last bytes of PRG ROM.
         let nmi_vector = 0x1234u16;
+        let reset_vector = 0x5678u16;
         let irq_vector = 0xABCDu16;
         let [nmi_lo, nmi_hi] = nmi_vector.to_le_bytes();
+        let [reset_lo, reset_hi] = reset_vector.to_le_bytes();
         let [irq_lo, irq_hi] = irq_vector.to_le_bytes();
         prg_rom[0x7FFA] = nmi_lo;
         prg_rom[0x7FFB] = nmi_hi;
+        prg_rom[0x7FFC] = reset_lo;
+        prg_rom[0x7FFD] = reset_hi;
         prg_rom[0x7FFE] = irq_lo;
         prg_rom[0x7FFF] = irq_hi;
 
@@ -279,6 +290,7 @@ mod tests {
         assert_eq!(snap.cpu_regs.p, 0x24);
 
         assert_eq!(snap.cpu_regs.nmi_vector, nmi_vector);
+        assert_eq!(snap.cpu_regs.reset_vector, reset_vector);
         assert_eq!(snap.cpu_regs.irq_vector, irq_vector);
 
         assert!(snap.prg_hexdump_base >= 0x8000);

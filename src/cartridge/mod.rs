@@ -27,6 +27,7 @@ mod rom_db;
 mod sunsoft_4;
 mod sunsoft_fme7;
 mod super_magic_card;
+mod taito_tc0190;
 #[cfg(test)]
 pub mod test_helpers;
 mod uxrom;

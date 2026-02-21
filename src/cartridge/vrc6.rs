@@ -361,8 +361,8 @@ impl VRC6Mapper {
         self.mirroring = match self.b003 & 0x0F {
             0x0 => NametableLayout::Vertical,
             0x4 => NametableLayout::Horizontal,
-            0x8 => NametableLayout::SingleScreen,        // 1-screen A (CIRAM lower bank)
-            0xC => NametableLayout::SingleScreenUpper,  // 1-screen B (CIRAM upper bank)
+            0x8 => NametableLayout::SingleScreen, // 1-screen A (CIRAM lower bank)
+            0xC => NametableLayout::SingleScreenUpper, // 1-screen B (CIRAM upper bank)
             _ => self.mirroring,
         };
     }
