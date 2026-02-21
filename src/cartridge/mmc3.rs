@@ -198,8 +198,14 @@ impl MMC3Mapper {
         self.prg_rom.get(addr).copied().unwrap_or(0)
     }
 
+    /// Reads one byte from a 1 KiB CHR bank. `bank_index` is wrapped modulo
+    /// the total CHR bank count so out-of-range values mirror correctly.
     fn read_chr_bank_1k(&self, bank_index: usize, bank_offset: usize) -> u8 {
-        let addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
+        let count = self.chr_bank_count_1k();
+        if count == 0 {
+            return 0;
+        }
+        let addr = (bank_index % count) * Self::CHR_BANK_SIZE + bank_offset;
         self.chr_memory.read_at_index(addr)
     }
 
@@ -211,6 +217,72 @@ impl MMC3Mapper {
     #[cfg(test)]
     fn irq_counter(&self) -> u8 {
         self.irq_counter
+    }
+
+    // ============================================================================
+    // Public accessors for MMC3-based multicart composition (mappers 44, 47, 49)
+    // ============================================================================
+
+    /// Returns the raw 8KB PRG bank index for the given address, based on the
+    /// current bank register state. Callers (multicart mappers) apply AND/OR masking.
+    pub fn mapped_prg_bank(&self, addr: u16) -> usize {
+        let prg_count = self.prg_bank_count();
+        if prg_count == 0 {
+            return 0;
+        }
+        let fixed_last = prg_count.saturating_sub(1);
+        let fixed_second_last = prg_count.saturating_sub(2);
+        let r6 = self.prg_bank_index(self.regs[6]);
+        let r7 = self.prg_bank_index(self.regs[7]);
+        match addr {
+            0x8000..=0x9FFF => {
+                if self.prg_mode() {
+                    fixed_second_last
+                } else {
+                    r6
+                }
+            }
+            0xA000..=0xBFFF => r7,
+            0xC000..=0xDFFF => {
+                if self.prg_mode() {
+                    r6
+                } else {
+                    fixed_second_last
+                }
+            }
+            0xE000..=0xFFFF => fixed_last,
+            _ => 0,
+        }
+    }
+
+    /// Returns the raw 1KB CHR bank index for the given PPU address, based on
+    /// the current bank register state. Callers apply AND/OR masking.
+    pub fn mapped_chr_1k_bank(&self, addr: u16) -> usize {
+        let chr_addr = (addr & 0x1FFF) as usize;
+        let (bank_index, _) = self.map_chr_addr_to_bank_1k(chr_addr);
+        bank_index
+    }
+
+    /// Reads a byte from PRG ROM at the given 8KB bank and byte offset.
+    pub fn read_prg_at_bank(&self, bank: usize, offset: usize) -> u8 {
+        self.read_prg_rom_bank(bank, offset)
+    }
+
+    /// Reads a byte from CHR memory at the given 1KB bank and byte offset.
+    pub fn read_chr_1k_at(&self, bank: usize, offset: usize) -> u8 {
+        self.read_chr_bank_1k(bank, offset)
+    }
+
+    /// Writes a byte to CHR-RAM at the given 1KB bank and byte offset.
+    pub fn write_chr_1k_at(&mut self, bank: usize, offset: usize, value: u8) {
+        let mapped_addr = bank * Self::CHR_BANK_SIZE + offset;
+        self.chr_memory.write_at_index(mapped_addr, value);
+    }
+
+    /// Returns true if the PRG-RAM window is enabled and writable (used by
+    /// multicart mappers that gate the block register behind PRG-RAM control).
+    pub fn is_prg_ram_writable(&self) -> bool {
+        self.prg_ram_enabled && !self.prg_ram_write_protected
     }
 
     // ============================================================================

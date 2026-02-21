@@ -11,6 +11,12 @@ use super::cprom::CpromMapper;
 use super::gxrom::GxROMMapper;
 use super::irem_g101::IremG101Mapper;
 use super::mapper42::Mapper42;
+use super::mapper44::Mapper44;
+use super::mapper45::Mapper45;
+use super::mapper46::Mapper46;
+use super::mapper47::Mapper47;
+use super::mapper49::Mapper49;
+use super::mapper50::Mapper50;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
@@ -705,6 +711,12 @@ mapper_registry! {
     34 => BnromNinaMapper::new,
     40 => Ntdec2722Mapper::new,
     42 => Mapper42::new,
+    44 => Mapper44::new,
+    45 => Mapper45::new,
+    46 => Mapper46::new,
+    47 => Mapper47::new,
+    49 => Mapper49::new,
+    50 => Mapper50::new,
     66 => GxROMMapper::new,
     69 => SunsoftFme7Mapper::new,
     71 => CamericaMapper::new,
@@ -716,7 +728,7 @@ mapper_registry! {
 const SUPPORTED_MAPPERS: &[u8] = &[
     4, // MMC3 is constructed with CRC-specific behavior.
     0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34, 40,
-    42, 66, 68, 69, 71, 78, 206,
+    42, 44, 45, 46, 47, 49, 50, 66, 68, 69, 71, 78, 206,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
