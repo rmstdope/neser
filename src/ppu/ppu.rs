@@ -1565,6 +1565,31 @@ mod tests {
     }
 
     #[test]
+    fn test_vblank_suppression_still_marks_frame_complete() {
+        // When $2002 is read just before VBlank (suppressing the VBlank flag),
+        // the PPU frame must still be marked complete so the emulator render loop
+        // doesn't spin forever waiting for a frame that never arrives.
+        let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
+
+        // Advance to scanline 241, pixel 0 (one PPU cycle before VBlank would be set).
+        ppu.run_ppu_cycles(241 * 341);
+
+        // Reading $2002 here triggers VBlank suppression for this frame.
+        let _ = ppu.get_status();
+        assert!(!ppu.poll_frame_complete()); // Frame not complete yet (still at dot 0)
+
+        // Advance to dot 1 where VBlank is *supposed* to start.
+        ppu.run_ppu_cycles(1);
+
+        // Even though VBlank is suppressed (CPU sees no VBlank flag this frame),
+        // the frame must still be marked complete for rendering.
+        assert!(ppu.poll_frame_complete(), "frame_complete must be set even when VBlank is suppressed");
+
+        // Confirm VBlank flag is indeed suppressed (CPU should not see VBlank).
+        assert!(!ppu.is_in_vblank(), "VBlank flag should be suppressed");
+    }
+
+    #[test]
     fn test_status_read_on_vblank_start_clears_vblank_flag() {
         let mut ppu = Ppu::new_for_testing(TimingMode::Ntsc);
 

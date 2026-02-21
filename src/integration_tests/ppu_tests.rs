@@ -154,13 +154,13 @@ mod tests {
     setup_rom_crc_test!(
         test_full_palette,
         "roms/automated_tests/full_palette/full_palette.nes",
-        [(20, 416290266)]
+        [(20, 1088707371)]
     );
 
     setup_rom_crc_test!(
         test_full_palette_smooth,
         "roms/automated_tests/full_palette/full_palette_smooth.nes",
-        [(20, 187585076)]
+        [(20, 3951169934)]
     );
 
     setup_rom_crc_test!(
@@ -169,12 +169,12 @@ mod tests {
         [
             // Capture 5s intervals during 30s of flowing palette changes
             // to get a good variety of colors in the test coverage.
-            (60 * 5, 1372430990),
-            (60 * 10, 1684106237),
-            (60 * 15, 3565760089),
-            (60 * 20, 2344543026),
-            (60 * 25, 3472227176),
-            (60 * 30, 483238337),
+            (60 * 5, 1173975945),
+            (60 * 10, 2466726507),
+            (60 * 15, 323663815),
+            (60 * 20, 4246641473),
+            (60 * 25, 3307063340),
+            (60 * 30, 1135778393),
         ]
     );
 
@@ -314,7 +314,11 @@ AA AA 01 01 10 10 01 01 00 00\n\
             "demo_ntsc",
         );
 
-        const WARMUP_FRAMES: u32 = 25;
+        // One extra warmup frame vs. the PAL test: the NTSC ROM triggers VBlank suppression
+        // once during boot (a $2002 read lands at dot 241/0). The suppressed frame is now
+        // correctly counted by the emulator, so we need 26 warmup frames instead of 25
+        // to reach the same NMI-driven rendering state.
+        const WARMUP_FRAMES: u32 = 26;
         let (line_frame_a, line_frame_b, upper_line, lower_line) =
             capture_nmi_sync_lines(&mut nes, WARMUP_FRAMES);
 

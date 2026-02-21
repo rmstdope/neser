@@ -131,14 +131,18 @@ fn tick_vblank_and_nmi(ppu: &mut Ppu) {
         );
     }
 
-    if scanline == VBLANK_START_SCANLINE
-        && pixel == FIRST_VISIBLE_PIXEL
-        && !ppu.vblank_suppressed_for_frame
-    {
-        // Hardware quirk/timing: VBlank flag is set at dot 1, but the NMI edge is observed
-        // slightly later. We latch the NMI edge at dot 2 (see below).
-        ppu.status.enter_vblank();
-        ppu.set_vblank_for_nmi();
+    if scanline == VBLANK_START_SCANLINE && pixel == FIRST_VISIBLE_PIXEL {
+        // The frame is always complete at the VBlank start boundary, even when the CPU-visible
+        // VBlank flag is suppressed. Without this, the emulator render loop would spin forever
+        // when VBlank suppression is triggered (e.g., by reading $2002 at dot 241/0).
+        ppu.status.set_frame_complete(true);
+
+        if !ppu.vblank_suppressed_for_frame {
+            // Hardware quirk/timing: VBlank flag is set at dot 1, but the NMI edge is observed
+            // slightly later. We latch the NMI edge at dot 2 (see below).
+            ppu.status.enter_vblank();
+            ppu.set_vblank_for_nmi();
+        }
     }
 
     // Latch the VBlank-start NMI edge one dot after the VBlank flag is set.
