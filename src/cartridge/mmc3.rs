@@ -198,8 +198,14 @@ impl MMC3Mapper {
         self.prg_rom.get(addr).copied().unwrap_or(0)
     }
 
+    /// Reads one byte from a 1 KiB CHR bank. `bank_index` is wrapped modulo
+    /// the total CHR bank count so out-of-range values mirror correctly.
     fn read_chr_bank_1k(&self, bank_index: usize, bank_offset: usize) -> u8 {
-        let addr = bank_index * Self::CHR_BANK_SIZE + bank_offset;
+        let count = self.chr_bank_count_1k();
+        if count == 0 {
+            return 0;
+        }
+        let addr = (bank_index % count) * Self::CHR_BANK_SIZE + bank_offset;
         self.chr_memory.read_at_index(addr)
     }
 

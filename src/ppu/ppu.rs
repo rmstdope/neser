@@ -1583,7 +1583,10 @@ mod tests {
 
         // Even though VBlank is suppressed (CPU sees no VBlank flag this frame),
         // the frame must still be marked complete for rendering.
-        assert!(ppu.poll_frame_complete(), "frame_complete must be set even when VBlank is suppressed");
+        assert!(
+            ppu.poll_frame_complete(),
+            "frame_complete must be set even when VBlank is suppressed"
+        );
 
         // Confirm VBlank flag is indeed suppressed (CPU should not see VBlank).
         assert!(!ppu.is_in_vblank(), "VBlank flag should be suppressed");

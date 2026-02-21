@@ -4,7 +4,8 @@
 //! - Main: <https://www.nesdev.org/wiki/INES_Mapper_045>
 //!
 //! Known Limitations:
-//! - No known gameplay-blocking functional limitations are currently documented.
+//! - IRQ behavior is inherited from the inner MMC3 (see `mmc3.rs` Known Limitations).
+//! - Board-specific clone quirks that deviate from the NesDev spec are not modeled.
 
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
@@ -27,12 +28,12 @@ use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
 ///   - CCCC (bits[7:4]): additional CHR_OR bits [11:8] and CHR_AND formula
 ///   - MMMM (bits[3:0]): determines CHR_AND via shift
 ///   - CHR_AND = if shift < 8 { 0xFF >> shift } else { 0 }, where shift = 15 - (reg2 & 0x0F)
-/// - Reg3: [LLPP PPPP]
-///   - Lock bit (bit 7): once set, outer regs are frozen
+/// - Reg3: [xLPP PPPP]
+///   - Lock bit (bit 6): once set, outer regs are frozen
 ///   - PRG_AND = !(reg3 & 0x3F) & 0x3F  (inverted lower 6 bits)
 ///
 /// Note: Reg2 bit[6] = CHR_OR bit 10, bit[5] = CHR_OR bit 9 (per NesDev)
-/// When reg3 bit7 (lock) is set, writes to $6000 no longer update registers.
+/// When reg3 bit6 (lock) is set, writes to $6000 no longer update registers.
 pub struct Mapper45 {
     mmc3: MMC3Mapper,
     regs: [u8; 4],
@@ -50,7 +51,7 @@ impl Mapper45 {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self {
             mmc3: MMC3Mapper::new(prg_rom, chr_rom, mirroring),
-            regs: [0xFF, 0x00, 0x00, 0x00],
+            regs: [0x00, 0x00, 0x00, 0x00],
             write_ptr: 0,
             locked: false,
         }
@@ -76,10 +77,10 @@ impl Mapper45 {
         }
     }
 
-    /// Computes CHR_OR from reg0 (bits[7:0]) and reg2 (bits[6:4] = chr_or[10:8]).
+    /// Computes CHR_OR from reg0 (CHR_OR[7:0]) and reg2 upper nibble (CHR_OR[11:8]).
     fn chr_or(&self) -> usize {
         let lo = self.regs[0] as usize;
-        let hi = ((self.regs[2] >> 4) & 0x07) as usize; // bits [10:8]
+        let hi = ((self.regs[2] >> 4) & 0x0F) as usize; // reg2[7:4] → CHR_OR[11:8] (CHR A21:A18)
         lo | (hi << 8)
     }
 }
@@ -98,11 +99,12 @@ impl Mapper for Mapper45 {
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x6000..=0x7FFF).contains(&addr) {
             if addr == 0x6001 || (addr & 0x1FFF) == 0x0001 {
-                // Any $6001 write resets the register pointer
+                // Any $6001 write resets the register pointer and clears the lock bit.
                 self.write_ptr = 0;
+                self.locked = false;
             } else if !self.locked {
                 self.regs[self.write_ptr] = value;
-                if self.write_ptr == 3 && (value & 0x80) != 0 {
+                if self.write_ptr == 3 && (value & 0x40) != 0 {
                     self.locked = true;
                 }
                 self.write_ptr = (self.write_ptr + 1) % 4;
@@ -358,12 +360,15 @@ mod tests {
     #[test]
     fn lock_bit_prevents_further_writes() {
         let mut m = make_direct();
-        // Write reg0..reg3 to set known state; reg3 bit7=1 locks
+        // NesDev spec: reg3 bit 6 (L) is the lock bit.
         m.write_prg(0x6000, 0x00); // reg0
         m.write_prg(0x6000, 0x05); // reg1: PRG_OR=5
         m.write_prg(0x6000, 0x0F); // reg2
-        m.write_prg(0x6000, 0x80); // reg3: lock bit set
-        assert!(m.locked, "Lock bit must be set after writing 0x80 to reg3");
+        m.write_prg(0x6000, 0x40); // reg3: bit 6 = lock
+        assert!(
+            m.locked,
+            "Lock bit must be set after writing 0x40 (bit 6) to reg3"
+        );
         // Try to write reg0 again — should be ignored
         m.write_prg(0x6000, 0xFF);
         assert_eq!(m.regs[0], 0x00, "Reg0 must not change after lock");
@@ -371,13 +376,43 @@ mod tests {
     }
 
     #[test]
+    fn lock_bit_is_bit6_not_bit7() {
+        // NesDev spec: bit 6 of reg3 is the lock, NOT bit 7.
+        // Brain Series 12-in-1 writes reg3=0xBF (bit7=1, bit6=0) to indicate NO lock.
+        let mut m = make_direct();
+        m.write_prg(0x6000, 0x00); // reg0
+        m.write_prg(0x6000, 0x00); // reg1
+        m.write_prg(0x6000, 0x00); // reg2
+        m.write_prg(0x6000, 0x80); // reg3: bit 7 set, bit 6 clear — must NOT lock
+        assert!(
+            !m.locked,
+            "bit 7 alone must NOT set the lock; only bit 6 locks"
+        );
+    }
+
+    #[test]
+    fn reg3_0xbf_does_not_lock() {
+        // Brain Series 12-in-1 menu writes reg3=0xBF (0b1011_1111).
+        // bit7=1, bit6=0 → must NOT lock, so sub-game selection writes can proceed.
+        let mut m = make_direct();
+        m.write_prg(0x6000, 0x00); // reg0
+        m.write_prg(0x6000, 0x00); // reg1
+        m.write_prg(0x6000, 0x00); // reg2
+        m.write_prg(0x6000, 0xBF); // reg3: Brain Series menu value
+        assert!(!m.locked, "reg3=0xBF must NOT lock the mapper (bit 6 = 0)");
+        // Outer reg writes must still work
+        m.write_prg(0x6000, 0x42); // reg0 must accept this
+        assert_eq!(m.regs[0], 0x42, "reg0 must be writable when not locked");
+    }
+
+    #[test]
     fn lock_does_not_prevent_mmc3_writes() {
         let mut m = make_direct();
-        // Lock
+        // Lock via bit 6
         m.write_prg(0x6000, 0x00);
         m.write_prg(0x6000, 0x00);
         m.write_prg(0x6000, 0x00);
-        m.write_prg(0x6000, 0x80);
+        m.write_prg(0x6000, 0x40);
         // MMC3 writes must still work
         m.write_prg(0x8000, 0b0000_0110); // R6
         m.write_prg(0x8001, 7);
@@ -386,6 +421,87 @@ mod tests {
             m.read_prg(0x8000),
             7,
             "MMC3 writes must still work after lock"
+        );
+    }
+
+    // --- Power-on state ---
+
+    #[test]
+    fn initial_reg0_is_zero() {
+        // NES hardware spec: all outer bank registers reset to 0x00 at power-on.
+        // reg0 = 0x00 means CHR_OR[7:0] = 0.
+        let m = make_direct();
+        assert_eq!(m.regs[0], 0x00, "reg0 must be 0x00 at power-on (not 0xFF)");
+    }
+
+    // --- $6001 lock clearing ---
+
+    #[test]
+    fn write_to_6001_clears_lock() {
+        // NesDev spec: writing any value to $6001 clears the Lock bit,
+        // making the next write to $6000 go to register #0.
+        let mut m = make_direct();
+        // Lock the mapper
+        m.write_prg(0x6000, 0x01); // reg0
+        m.write_prg(0x6000, 0x00); // reg1
+        m.write_prg(0x6000, 0x00); // reg2
+        m.write_prg(0x6000, 0x40); // reg3: bit 6 = lock
+        assert!(m.locked, "must be locked before test");
+        // Write to $6001 must clear the lock
+        m.write_prg(0x6001, 0x00);
+        assert!(!m.locked, "$6001 write must clear the lock bit");
+        // After clearing lock, $6000 write must go to reg0
+        m.write_prg(0x6000, 0x42);
+        assert_eq!(
+            m.regs[0], 0x42,
+            "reg0 must be writable after $6001 clears lock"
+        );
+    }
+
+    // --- CHR bank out-of-bounds wrapping ---
+
+    #[test]
+    fn chr_bank_wraps_modulo_rom_size() {
+        // NES hardware: CHR bank numbers that exceed ROM size must wrap (modulo),
+        // not return zero. Uses 7 banks (non-power-of-two) so that
+        // the wrapped result (9 % 7 = 2) differs from the out-of-bounds result (0).
+        let prg = banked_data(8 * 1024, 8);
+        let chr = banked_data(1024, 7); // banks 0-6; bank N filled with byte N
+        let mut m = Mapper45::new(prg, chr, NametableLayout::Vertical);
+        // CHR_OR = 9, CHR_AND = 0 → all CHR maps to bank 9
+        // 9 % 7 = 2 → bank 2 → first byte = 0x02
+        m.write_prg(0x6000, 9); // reg0: CHR_OR = 9
+        m.write_prg(0x6000, 0); // reg1
+        m.write_prg(0x6000, 0); // reg2: CHR_AND = 0, CHR_OR hi = 0
+        m.write_prg(0x6000, 0); // reg3: no lock
+        assert_eq!(
+            m.read_chr(0x0000),
+            2,
+            "CHR bank 9 must wrap to bank 9%7=2; reads bank-2 marker 0x02"
+        );
+    }
+
+    // --- chr_or() uses reg2 bit 7 (CHR A21/bank bit 11) ---
+
+    #[test]
+    fn chr_or_uses_reg2_bit7_for_bank_bit11() {
+        // NesDev spec: reg2[7:4] contributes CHR_OR[11:8] (CHR A21:A18).
+        // reg2=0x80 → upper nibble = 0x8 → CHR_OR = 0x800 = 2048, 2048 % 3 = 2
+        // → reads bank 2 (marker 0x02).
+        let prg = banked_data(8 * 1024, 8);
+        let chr = banked_data(1024, 3); // banks 0-2; bank N filled with byte N
+        let mut m = Mapper45::new(prg, chr, NametableLayout::Vertical);
+        // reg0=0x00, reg2=0x80 (only bit 7 set → CHR_OR[11]=1 → CHR_OR=0x800=2048)
+        // CHR_AND = 0 (lower nibble of reg2 = 0) → bank = chr_or = 2048
+        // 2048 % 3 = 2 → reads bank 2 (value 0x02)
+        m.write_prg(0x6000, 0x00); // reg0: CHR_OR lo = 0
+        m.write_prg(0x6000, 0x00); // reg1
+        m.write_prg(0x6000, 0x80); // reg2: bit7=1 → CHR_OR[11]=1
+        m.write_prg(0x6000, 0x00); // reg3: no lock
+        assert_eq!(
+            m.read_chr(0x0000),
+            2,
+            "reg2 bit 7 must set CHR_OR[11]; 0x800 % 3 = 2 → bank 2 marker 0x02"
         );
     }
 }
