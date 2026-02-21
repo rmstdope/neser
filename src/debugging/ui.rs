@@ -643,11 +643,10 @@ mod tests {
         assert!(lines.iter().any(|l| l.contains("P:  A5")));
         // N(7)=1, V(6)=0, U(5)=1, B(4)=0, D(3)=0, I(2)=1, Z(1)=0, C(0)=1
         assert!(lines.iter().any(|l| l.contains("N-U--I-C")));
-        assert!(
-            lines
-                .iter()
-                .any(|l| l.contains("VEC:") && l.contains("NMI") && l.contains("RST") && l.contains("IRQ"))
-        );
+        assert!(lines.iter().any(|l| l.contains("VEC:")
+            && l.contains("NMI")
+            && l.contains("RST")
+            && l.contains("IRQ")));
         // PPU info integrated after separator
         assert!(lines.iter().any(|l| l == "---"));
         assert!(

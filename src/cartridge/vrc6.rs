@@ -420,10 +420,10 @@ impl VRC6Mapper {
 impl Mapper for VRC6Mapper {
     fn read_prg(&self, addr: u16) -> u8 {
         // PRG-RAM at $6000-$7FFF, enabled by $B003 bit 7 (W)
-        if self.prg_ram_enabled {
-            if let Some(value) = self.prg_ram.try_read(addr) {
-                return value;
-            }
+        if self.prg_ram_enabled
+            && let Some(value) = self.prg_ram.try_read(addr)
+        {
+            return value;
         }
 
         match addr {

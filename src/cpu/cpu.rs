@@ -107,6 +107,7 @@ pub enum InterruptKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub struct CpuRegisters {
     pub a: u8,
     pub x: u8,
@@ -121,6 +122,7 @@ impl Cpu {
         self.interrupt_stack.last().copied()
     }
 
+    #[allow(dead_code)]
     pub fn state(&self) -> CpuRegisters {
         CpuRegisters {
             a: self.a,
