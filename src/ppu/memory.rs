@@ -569,6 +569,52 @@ mod tests {
         assert_eq!(mem.read_palette(0x3F1C), 0x3F);
     }
 
+    // NES spec: writes to $3F10/$3F14/$3F18/$3F1C must also update $3F00/$3F04/$3F08/$3F0C
+    // (sprite bg-color mirrors to BG palette bg-color — they are the same physical storage)
+    #[test]
+    fn test_write_to_3f10_mirrors_to_3f00() {
+        let mut mem = Memory::default();
+        mem.write_palette(0x3F10, 0x25);
+        assert_eq!(
+            mem.read_palette(0x3F00),
+            0x25 & 0x3F,
+            "write to $3F10 must mirror to $3F00"
+        );
+    }
+
+    #[test]
+    fn test_write_to_3f14_mirrors_to_3f04() {
+        let mut mem = Memory::default();
+        mem.write_palette(0x3F14, 0x27);
+        assert_eq!(
+            mem.read_palette(0x3F04),
+            0x27 & 0x3F,
+            "write to $3F14 must mirror to $3F04"
+        );
+    }
+
+    #[test]
+    fn test_write_to_3f18_mirrors_to_3f08() {
+        let mut mem = Memory::default();
+        mem.write_palette(0x3F18, 0x15);
+        assert_eq!(
+            mem.read_palette(0x3F08),
+            0x15 & 0x3F,
+            "write to $3F18 must mirror to $3F08"
+        );
+    }
+
+    #[test]
+    fn test_write_to_3f1c_mirrors_to_3f0c() {
+        let mut mem = Memory::default();
+        mem.write_palette(0x3F1C, 0x0E);
+        assert_eq!(
+            mem.read_palette(0x3F0C),
+            0x0E & 0x3F,
+            "write to $3F1C must mirror to $3F0C"
+        );
+    }
+
     #[test]
     fn test_vertical_mirroring() {
         let mut mem = Memory::default();
