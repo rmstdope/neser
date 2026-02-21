@@ -9,6 +9,7 @@ use super::cnrom::CNROMMapper;
 use super::colordreams::ColorDreamsMapper;
 use super::cprom::CpromMapper;
 use super::gxrom::GxROMMapper;
+use super::irem_g101::IremG101Mapper;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
@@ -707,8 +708,8 @@ mapper_registry! {
 #[cfg(test)]
 const SUPPORTED_MAPPERS: &[u8] = &[
     4, // MMC3 is constructed with CRC-specific behavior.
-    0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 34, 66, 68, 69,
-    71, 78, 206,
+    0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 34, 66, 68,
+    69, 71, 78, 206,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -802,6 +803,14 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
             mirroring,
         );
         return Ok(Box::new(mapper));
+    }
+
+    if mapper_number == 32 {
+        let submapper = metadata.submapper;
+        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
+        return Ok(Box::new(IremG101Mapper::new_with_submapper(
+            prg_rom, chr_rom, mirroring, submapper,
+        )));
     }
 
     if let Some(mut mapper) = create_registry_mapper(metadata) {

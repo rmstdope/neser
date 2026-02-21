@@ -10,6 +10,7 @@ mod common;
 mod cprom;
 mod gxrom;
 mod ines;
+mod irem_g101;
 mod mapper;
 mod mapper_templates;
 mod mmc1;
