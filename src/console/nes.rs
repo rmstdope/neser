@@ -243,10 +243,10 @@ impl Nes {
     }
 
     /// Run a single CPU tick, optionally emitting a trace line before execution.
-    pub fn run(&mut self, tracing: &Tracing) -> u8 {
-        if tracing.enabled {
-            println!("{}", self.trace(tracing));
-        }
+    pub fn run(&mut self, _tracing: &Tracing) -> u8 {
+        // if tracing.enabled {
+        //     println!("{}", self.trace(tracing));
+        // }
 
         self.run_cpu_tick()
     }

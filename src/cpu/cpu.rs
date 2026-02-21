@@ -360,6 +360,12 @@ impl Cpu {
         let mut nmi_hijack = self.nmi_pending;
 
         let pc = self.pc;
+        let sp = self.sp;
+        let p = self.p;
+        let cycle = self.total_cycles;
+        let frame = self.ppu.borrow().timing().frame_count();
+        let scanline = self.ppu.borrow().timing().scanline();
+        let pixel = self.ppu.borrow().timing().pixel();
         self.dummy_read(pc);
         nmi_hijack |= self.nmi_pending;
         self.dummy_read(pc);
@@ -390,6 +396,20 @@ impl Cpu {
             self.interrupt_stack.push(InterruptKind::Irq);
             self.pc = self.read_u16(IRQ_VECTOR);
         }
+        trace_cpu!(1;
+            "{} PC={:04X}                         A={:02X} X={:02X} Y={:02X} P={:02X} SP={:02X} cyc={:<3} F/S/P={}/{:03}/{:03}",
+            if nmi_hijack { "NMI " } else { "IRQ " },
+            pc,
+            self.a,
+            self.x,
+            self.y,
+            p,
+            sp,
+            cycle,
+            frame,
+            scanline,
+            pixel
+        );
     }
 
     /// If an OAM DMA is pending (triggered by a write to $4014), execute it and
@@ -1569,7 +1589,7 @@ impl Cpu {
             // Set up tick tracking for this instruction
             self.current_tick_info = Some((1, op.cycles));
             trace_cpu!(1;
-                "exec PC={:04X} {} {:14}  A={:02X}  X={:02X}  Y={:02X}  P={:02X}  SP={:02X}  cyc={:<3}",
+                "exec PC={:04X} {:08} {:14} A={:02X} X={:02X} Y={:02X} P={:02X} SP={:02X} cyc={:<3} F/S/P={}/{:03}/{:03}",
                 pc,
                 hex_dump,
                 asm,
@@ -1578,7 +1598,10 @@ impl Cpu {
                 self.y,
                 self.p,
                 self.sp,
-                self.total_cycles
+                self.total_cycles,
+                self.ppu.borrow().timing().frame_count(),
+                self.ppu.borrow().timing().scanline(),
+                self.ppu.borrow().timing().pixel()
             );
         }
 

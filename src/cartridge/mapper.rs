@@ -646,20 +646,8 @@ fn probe_mapper_state_snapshot<T: MapperStateSnapshot + ?Sized>(_mapper: &T) {
 #[inline]
 fn probe_mapper_composable<T: MapperComposable + ?Sized>(_mapper: &T) {}
 
-fn vrc2_vrc4_21(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Vrc2Vrc4Mapper {
-    Vrc2Vrc4Mapper::new(21, prg_rom, chr_rom, mirroring)
-}
-
 fn vrc2_vrc4_22(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Vrc2Vrc4Mapper {
     Vrc2Vrc4Mapper::new(22, prg_rom, chr_rom, mirroring)
-}
-
-fn vrc2_vrc4_23(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Vrc2Vrc4Mapper {
-    Vrc2Vrc4Mapper::new(23, prg_rom, chr_rom, mirroring)
-}
-
-fn vrc2_vrc4_25(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Vrc2Vrc4Mapper {
-    Vrc2Vrc4Mapper::new(25, prg_rom, chr_rom, mirroring)
 }
 
 fn vrc6_24(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> VRC6Mapper {
@@ -705,11 +693,8 @@ mapper_registry! {
     15 => Multicart15Mapper::new,
     16 => BandaiFcgMapper::new,
     19 => Namco163Mapper::new,
-    21 => vrc2_vrc4_21,
     22 => vrc2_vrc4_22,
-    23 => vrc2_vrc4_23,
     24 => vrc6_24,
-    25 => vrc2_vrc4_25,
     26 => vrc6_26,
     34 => BnromNinaMapper::new,
     66 => GxROMMapper::new,
@@ -806,10 +791,16 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         )));
     }
 
-    if mapper_number == 21 {
+    if mapper_number == 21 || mapper_number == 23 || mapper_number == 25 {
         let submapper = metadata.submapper;
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
-        let mapper = Vrc2Vrc4Mapper::new_with_submapper(21, submapper, prg_rom, chr_rom, mirroring);
+        let mapper = Vrc2Vrc4Mapper::new_with_submapper(
+            mapper_number as u8,
+            submapper,
+            prg_rom,
+            chr_rom,
+            mirroring,
+        );
         return Ok(Box::new(mapper));
     }
 

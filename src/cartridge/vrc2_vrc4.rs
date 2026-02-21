@@ -37,28 +37,56 @@ use crate::trace_mapper;
 /// - Supports all address line variants via mapper number
 /// - VRC IRQ system fully implemented for VRC4 variants
 /// - No expansion audio (see VRC6 for audio)
+///
+/// Each variant carries its active pin mode, which determines how the CPU address
+/// lines are mapped to the chip's register address inputs. This varies by submapper
+/// (NES 2.0) or defaults to combined OR of all known wirings (iNES 1.0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Vrc2Vrc4Variant {
-    Mapper21, // VRC4a, VRC4c
-    Mapper22, // VRC2a (no IRQ)
-    Mapper23, // VRC2b, VRC4e (has IRQ, typically treated as VRC4)
-    Mapper25, // VRC4b, VRC4d
+    Mapper21(Mapper21PinMode), // VRC4a, VRC4c
+    Mapper22,                  // VRC2a (no IRQ)
+    Mapper23(Mapper23PinMode), // VRC4f, VRC4e, VRC2b
+    Mapper25(Mapper25PinMode), // VRC4b, VRC4d, VRC2c
 }
 
 impl Vrc2Vrc4Variant {
     fn has_irq(&self) -> bool {
         match self {
-            Vrc2Vrc4Variant::Mapper21 => true,
-            Vrc2Vrc4Variant::Mapper22 => false, // VRC2 has no IRQ
-            Vrc2Vrc4Variant::Mapper23 => true,
-            Vrc2Vrc4Variant::Mapper25 => true,
+            Vrc2Vrc4Variant::Mapper21(_) => true,
+            Vrc2Vrc4Variant::Mapper22 => false,
+            Vrc2Vrc4Variant::Mapper23(Mapper23PinMode::Vrc2bOnly) => false,
+            Vrc2Vrc4Variant::Mapper23(_) => true,
+            Vrc2Vrc4Variant::Mapper25(Mapper25PinMode::Vrc2cOnly) => false,
+            Vrc2Vrc4Variant::Mapper25(_) => true,
+        }
+    }
+
+    /// Returns true if the variant supports all four mirroring modes (H, V, 1-lower, 1-upper).
+    ///
+    /// Mapper 23 iNES 1.0 (Combined), VRC4f (submapper 1), and VRC2b (submapper 3) use
+    /// 1-bit mirroring for VRC2b compatibility. Wai Wai World (VRC2b) writes $FF to the
+    /// mirroring register expecting Horizontal (bit 0 only); VRC4 2-bit masking would give
+    /// SingleScreenUpper. Only the pure VRC4e submapper (NES 2.0 sub 2) supports all four modes.
+    fn has_four_mode_mirroring(&self) -> bool {
+        match self {
+            Vrc2Vrc4Variant::Mapper21(_) => true,
+            Vrc2Vrc4Variant::Mapper22 => false,
+            Vrc2Vrc4Variant::Mapper23(Mapper23PinMode::Vrc4eOnly) => true,
+            Vrc2Vrc4Variant::Mapper23(_) => false,
+            Vrc2Vrc4Variant::Mapper25(Mapper25PinMode::Vrc2cOnly) => false,
+            Vrc2Vrc4Variant::Mapper25(_) => true,
         }
     }
 
     /// Returns the mask applied to the high nibble when writing a CHR bank register.
-    /// VRC2 uses 4 high bits (0x0F); VRC4 uses 5 high bits (0x1F).
+    /// VRC2 supports 4 high bits (0x0F); VRC4 supports 5 high bits (0x1F) for 512KB CHR.
     fn chr_high_nibble_mask(&self) -> u8 {
-        if self.has_irq() { 0x1F } else { 0x0F }
+        match self {
+            Vrc2Vrc4Variant::Mapper22 => 0x0F,
+            Vrc2Vrc4Variant::Mapper23(Mapper23PinMode::Vrc2bOnly) => 0x0F,
+            Vrc2Vrc4Variant::Mapper25(Mapper25PinMode::Vrc2cOnly) => 0x0F,
+            _ => 0x1F,
+        }
     }
 
     /// VRC2a (mapper 22) wires CHR data lines shifted right by 1; the low register
@@ -79,10 +107,39 @@ enum Mapper21PinMode {
     Vrc4cOnly, // Submapper 2: A6→chip A0, A7→chip A1
 }
 
+/// Controls which address line mapping(s) are active for mapper 23.
+///
+/// iNES 1.0 uses Combined (both VRC2b/VRC4f and VRC4e active simultaneously).
+/// NES 2.0 submapper 1 = VRC4f only, submapper 2 = VRC4e only, submapper 3 = VRC2b only.
+///
+/// VRC4f and VRC2b share the same pin wiring (A0→chipA0, A1→chipA1) but differ in
+/// chip capabilities: VRC4f has IRQ, 5-bit CHR, and $9002 PRG swap; VRC2b has none of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mapper23PinMode {
+    Combined,  // VRC2b/VRC4f (A0,A1) + VRC4e (A2,A3): A0|A2→chipA0, A1|A3→chipA1
+    Vrc4fOnly, // Submapper 1: A0→chip A0, A1→chip A1 (VRC4 capabilities)
+    Vrc2bOnly, // Submapper 3: A0→chip A0, A1→chip A1 (VRC2 capabilities — no IRQ, 4-bit CHR)
+    Vrc4eOnly, // Submapper 2: A2→chip A0, A3→chip A1
+}
+
+/// Controls which address line mapping(s) are active for mapper 25.
+///
+/// iNES 1.0 uses Combined (both VRC2c/VRC4b and VRC4d active simultaneously).
+/// NES 2.0 submapper 1 = VRC4b only, submapper 2 = VRC4d only, submapper 3 = VRC2c only.
+///
+/// VRC4b and VRC2c share the same pin wiring (A1→chipA0, A0→chipA1) but differ in
+/// chip capabilities: VRC4b has IRQ, 5-bit CHR, and $9002 PRG swap; VRC2c has none of these.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mapper25PinMode {
+    Combined,  // VRC2c/VRC4b (A1,A0) + VRC4d (A3,A2): A1|A3→chipA0, A0|A2→chipA1
+    Vrc4bOnly, // Submapper 1: A1→chip A0, A0→chip A1 (VRC4 capabilities)
+    Vrc2cOnly, // Submapper 3: A1→chip A0, A0→chip A1 (VRC2 capabilities — no IRQ, 4-bit CHR)
+    Vrc4dOnly, // Submapper 2: A3→chip A0, A2→chip A1
+}
+
 pub struct Vrc2Vrc4Mapper {
+    /// Mapper variant including its active address-line pin mode.
     variant: Vrc2Vrc4Variant,
-    /// Mapper 21 only: which address line pin wiring is active.
-    pin_mode: Mapper21PinMode,
 
     prg_rom: Vec<u8>,
     chr_memory: ChrMemory,
@@ -159,26 +216,29 @@ impl Vrc2Vrc4Mapper {
         mirroring: NametableLayout,
     ) -> Self {
         let variant = match mapper_number {
-            21 => Vrc2Vrc4Variant::Mapper21,
-            22 => Vrc2Vrc4Variant::Mapper22,
-            23 => Vrc2Vrc4Variant::Mapper23,
-            25 => Vrc2Vrc4Variant::Mapper25,
-            _ => Vrc2Vrc4Variant::Mapper21,
-        };
-
-        let pin_mode = if variant == Vrc2Vrc4Variant::Mapper21 {
-            match submapper {
+            21 => Vrc2Vrc4Variant::Mapper21(match submapper {
                 1 => Mapper21PinMode::Vrc4aOnly,
                 2 => Mapper21PinMode::Vrc4cOnly,
                 _ => Mapper21PinMode::Combined,
-            }
-        } else {
-            Mapper21PinMode::Combined
+            }),
+            22 => Vrc2Vrc4Variant::Mapper22,
+            23 => Vrc2Vrc4Variant::Mapper23(match submapper {
+                1 => Mapper23PinMode::Vrc4fOnly,
+                2 => Mapper23PinMode::Vrc4eOnly,
+                3 => Mapper23PinMode::Vrc2bOnly,
+                _ => Mapper23PinMode::Combined,
+            }),
+            25 => Vrc2Vrc4Variant::Mapper25(match submapper {
+                1 => Mapper25PinMode::Vrc4bOnly,
+                2 => Mapper25PinMode::Vrc4dOnly,
+                3 => Mapper25PinMode::Vrc2cOnly,
+                _ => Mapper25PinMode::Combined,
+            }),
+            _ => Vrc2Vrc4Variant::Mapper21(Mapper21PinMode::Combined),
         };
 
         Self {
             variant,
-            pin_mode,
             prg_rom,
             chr_memory: ChrMemory::new(chr_rom),
             prg_ram: PrgRam::new(DEFAULT_PRG_RAM_SIZE),
@@ -237,26 +297,31 @@ impl Vrc2Vrc4Mapper {
     /// Normalize register address based on the mapper variant.
     ///
     /// Each mapper variant has different CPU address line connections to the chip's
-    /// register address inputs:
-    /// - Mapper 21: CPU A1→chip A0, CPU A2→chip A1 (VRC4a/VRC4c)
-    /// - Mapper 22: CPU A1→chip A0, CPU A0→chip A1 (VRC2a) - swapped from normal
-    /// - Mapper 23: CPU (A0|A1)→chip A0, CPU (A2|A3)→chip A1 (VRC2b/VRC4e) - uses OR of address lines
-    /// - Mapper 25: CPU A1→chip A0, CPU A3→chip A1 (VRC4b/VRC4d)
+    /// register address inputs (chip A0 and chip A1 select the register within a page):
+    /// - Mapper 21 VRC4a: CPU A1→chip A0, CPU A2→chip A1
+    /// - Mapper 21 VRC4c: CPU A6→chip A0, CPU A7→chip A1
+    /// - Mapper 22 VRC2a: CPU A1→chip A0, CPU A0→chip A1 (A0/A1 swapped)
+    /// - Mapper 23 VRC4f/VRC2b: CPU A0→chip A0, CPU A1→chip A1
+    /// - Mapper 23 VRC4e:       CPU A2→chip A0, CPU A3→chip A1
+    /// - Mapper 25 VRC4b/VRC2c: CPU A1→chip A0, CPU A0→chip A1
+    /// - Mapper 25 VRC4d:       CPU A3→chip A0, CPU A2→chip A1
+    ///
+    /// iNES 1.0 combined mode ORs all known wirings for a mapper together.
     fn normalize_reg_addr(&self, addr: u16) -> u16 {
-        // Base address uses A12-A15 for register selection
+        // Base address uses A12-A15 for register page selection.
         let base = addr & 0xF000;
 
         match self.variant {
-            Vrc2Vrc4Variant::Mapper21 => {
+            Vrc2Vrc4Variant::Mapper21(pin_mode) => {
                 // VRC4a: CPU A1→chip A0, CPU A2→chip A1  ($x000, $x002, $x004, $x006)
                 // VRC4c: CPU A6→chip A0, CPU A7→chip A1  ($x000, $x040, $x080, $x0C0)
                 // pin_mode selects which wiring(s) are active (submapper or combined for iNES 1.0).
-                let a0 = match self.pin_mode {
+                let a0 = match pin_mode {
                     Mapper21PinMode::Vrc4aOnly => (addr >> 1) & 0x01,
                     Mapper21PinMode::Vrc4cOnly => (addr >> 6) & 0x01,
                     Mapper21PinMode::Combined => ((addr >> 1) | (addr >> 6)) & 0x01,
                 };
-                let a1 = match self.pin_mode {
+                let a1 = match pin_mode {
                     Mapper21PinMode::Vrc4aOnly => (addr >> 2) & 0x01,
                     Mapper21PinMode::Vrc4cOnly => (addr >> 7) & 0x01,
                     Mapper21PinMode::Combined => ((addr >> 2) | (addr >> 7)) & 0x01,
@@ -264,40 +329,60 @@ impl Vrc2Vrc4Mapper {
                 base | (a1 << 1) | a0
             }
             Vrc2Vrc4Variant::Mapper22 => {
-                // VRC2a: CPU A1→chip A0, CPU A0→chip A1 (swapped on bits 0-1)
+                // VRC2a: CPU A1→chip A0, CPU A0→chip A1 (A0/A1 swapped vs. standard)
                 let a0 = (addr >> 1) & 0x01;
                 let a1 = addr & 0x01;
                 base | (a1 << 1) | a0
             }
-            Vrc2Vrc4Variant::Mapper23 => {
-                // VRC2b/VRC4e: CPU (A0|A1)→chip A0, CPU (A2|A3)→chip A1
-                let a0 = ((addr & 0x01) | ((addr >> 1) & 0x01)) & 0x01;
-                let a1 = (((addr >> 2) & 0x01) | ((addr >> 3) & 0x01)) & 0x01;
+            Vrc2Vrc4Variant::Mapper23(pin_mode) => {
+                // VRC4f/VRC2b: A0→chip A0, A1→chip A1
+                // VRC4e:       A2→chip A0, A3→chip A1
+                // Combined (iNES 1.0): chip A0 = A0|A2, chip A1 = A1|A3
+                let a0 = match pin_mode {
+                    Mapper23PinMode::Vrc4fOnly | Mapper23PinMode::Vrc2bOnly => addr & 0x01,
+                    Mapper23PinMode::Vrc4eOnly => (addr >> 2) & 0x01,
+                    Mapper23PinMode::Combined => (addr & 0x01) | ((addr >> 2) & 0x01),
+                };
+                let a1 = match pin_mode {
+                    Mapper23PinMode::Vrc4fOnly | Mapper23PinMode::Vrc2bOnly => (addr >> 1) & 0x01,
+                    Mapper23PinMode::Vrc4eOnly => (addr >> 3) & 0x01,
+                    Mapper23PinMode::Combined => ((addr >> 1) & 0x01) | ((addr >> 3) & 0x01),
+                };
                 base | (a1 << 1) | a0
             }
-            Vrc2Vrc4Variant::Mapper25 => {
-                // VRC4b/VRC4d: CPU A1→chip A0, CPU A3→chip A1 (bits 1 and 3)
-                let a0 = (addr >> 1) & 0x01;
-                let a1 = (addr >> 3) & 0x01;
+            Vrc2Vrc4Variant::Mapper25(pin_mode) => {
+                // VRC4b/VRC2c: A1→chip A0, A0→chip A1 (A0/A1 swapped vs. mapper 23)
+                // VRC4d:       A3→chip A0, A2→chip A1
+                // Combined (iNES 1.0): chip A0 = A1|A3, chip A1 = A0|A2
+                let a0 = match pin_mode {
+                    Mapper25PinMode::Vrc4bOnly | Mapper25PinMode::Vrc2cOnly => (addr >> 1) & 0x01,
+                    Mapper25PinMode::Vrc4dOnly => (addr >> 3) & 0x01,
+                    Mapper25PinMode::Combined => ((addr >> 1) & 0x01) | ((addr >> 3) & 0x01),
+                };
+                let a1 = match pin_mode {
+                    Mapper25PinMode::Vrc4bOnly | Mapper25PinMode::Vrc2cOnly => addr & 0x01,
+                    Mapper25PinMode::Vrc4dOnly => (addr >> 2) & 0x01,
+                    Mapper25PinMode::Combined => (addr & 0x01) | ((addr >> 2) & 0x01),
+                };
                 base | (a1 << 1) | a0
             }
         }
     }
 
     fn apply_mirroring_register(&mut self) {
-        self.mirroring = if !self.variant.has_irq() {
-            // VRC2: only horizontal or vertical mirroring; bit 1 is ignored.
-            match self.mirroring_reg & 0x01 {
-                0 => NametableLayout::Vertical,
-                _ => NametableLayout::Horizontal,
-            }
-        } else {
+        self.mirroring = if self.variant.has_four_mode_mirroring() {
             match self.mirroring_reg & 0x03 {
                 0x0 => NametableLayout::Vertical,
                 0x1 => NametableLayout::Horizontal,
                 0x2 => NametableLayout::SingleScreenLower,
                 0x3 => NametableLayout::SingleScreenUpper,
                 _ => self.mirroring,
+            }
+        } else {
+            // 1-bit mirroring: only H/V, bit 1 is ignored.
+            match self.mirroring_reg & 0x01 {
+                0 => NametableLayout::Vertical,
+                _ => NametableLayout::Horizontal,
             }
         };
     }
@@ -536,10 +621,10 @@ impl Mapper for Vrc2Vrc4Mapper {
 
     fn mapper_number(&self) -> u8 {
         match self.variant {
-            Vrc2Vrc4Variant::Mapper21 => 21,
+            Vrc2Vrc4Variant::Mapper21(_) => 21,
             Vrc2Vrc4Variant::Mapper22 => 22,
-            Vrc2Vrc4Variant::Mapper23 => 23,
-            Vrc2Vrc4Variant::Mapper25 => 25,
+            Vrc2Vrc4Variant::Mapper23(_) => 23,
+            Vrc2Vrc4Variant::Mapper25(_) => 25,
         }
     }
 
@@ -753,13 +838,13 @@ mod tests {
 
         let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, NametableLayout::Horizontal);
 
-        // Mapper 23 normalisation: (A0|A1)→chip A0, (A2|A3)→chip A1
-        // Chip positions: 0=$F000, 1=$F001 or $F002, 2=$F004 or $F008, 3=$F005 or $F006
-        // Set latch = 0xFE via split nibble writes:
+        // Mapper 23 correct normalisation: chip A0 = CPU A0|A2, chip A1 = CPU A1|A3
+        // (VRC2b/VRC4f: A0→chipA0, A1→chipA1; VRC4e: A2→chipA0, A3→chipA1)
+        // VRC2b/VRC4f register addresses: $F000 (pos 0), $F001 (pos 1), $F002 (pos 2), $F003 (pos 3)
         mapper.write_prg(0xF000, 0x0E); // chip pos 0: latch bits [3:0] = 0xE
-        mapper.write_prg(0xF001, 0x0F); // chip pos 1 (A0=1): latch bits [7:4] = 0xF → latch = 0xFE
-        // IRQ Control at chip pos 2 (A2=1 → $F004):
-        mapper.write_prg(0xF004, 0b0000_0110); // M=1, E=1, A=0
+        mapper.write_prg(0xF001, 0x0F); // chip pos 1 (VRC2b A0=1): latch bits [7:4] = 0xF → latch = 0xFE
+        // IRQ Control at chip pos 2 (VRC2b A1=1 → $F002):
+        mapper.write_prg(0xF002, 0b0000_0110); // M=1, E=1, A=0
 
         // After enable, counter reloaded to 0xFE
         // Cycle 1: 0xFE -> 0xFF (no IRQ)
@@ -769,8 +854,8 @@ mod tests {
         mapper.cpu_cycle();
         assert!(mapper.irq_pending());
 
-        // IRQ Acknowledge at chip pos 3 (A0=1, A2=1 → $F005)
-        mapper.write_prg(0xF005, 0);
+        // IRQ Acknowledge at chip pos 3 (VRC2b A0=1, A1=1 → $F003)
+        mapper.write_prg(0xF003, 0);
         assert!(!mapper.irq_pending());
     }
 
@@ -1234,6 +1319,190 @@ mod tests {
         );
     }
 
+    // =========================================================================
+    // Mapper 23 address normalisation spec tests (issue #654)
+    // =========================================================================
+
+    /// NESdev spec: mapper 23 combines VRC2b (A0→chipA0, A1→chipA1) and
+    /// VRC4e (A2→chipA0, A3→chipA1). Combined: chipA0 = CPU_A0|A2, chipA1 = CPU_A1|A3.
+    ///
+    /// VRC4e: $B004 (A2=1) → chip pos 1 = high nibble of CHR bank 0.
+    /// Bug: current wrong mapping A2→chipA1 makes $B004 hit pos 2 (low nibble CHR bank 1).
+    #[test]
+    fn test_mapper23_vrc4e_chr_high_nibble_via_b004() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 32);
+        let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0xB000, 0x0F); // low nibble CHR bank 0 = 0xF
+        // VRC4e: $B004 (A2=1) → chipA0=1, chipA1=0 → chip pos 1 = high nibble CHR bank 0
+        mapper.write_prg(0xB004, 0x01); // high nibble = 1 → bank = 0x10 | 0x0F = 0x1F = 31
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            31,
+            "VRC4e $B004 must be chip pos 1 (high nibble CHR bank 0), yielding bank 31"
+        );
+    }
+
+    /// VRC2b: $B002 (A1=1) → chip pos 2 = low nibble of CHR bank 1.
+    /// Bug: current wrong mapping A1→chipA0 makes $B002 hit pos 1 (high nibble CHR bank 0)
+    /// — colliding with $B001.
+    #[test]
+    fn test_mapper23_vrc2b_chr_low_nibble_bank1_via_b002() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 32);
+        let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // VRC2b: $B002 (A1=1) → chipA0=0, chipA1=1 → chip pos 2 = low nibble CHR bank 1
+        mapper.write_prg(0xB002, 0x07);
+        assert_eq!(
+            mapper.read_chr(0x0400),
+            7,
+            "VRC2b $B002 must be chip pos 2 (low nibble CHR bank 1)"
+        );
+    }
+
+    /// VRC4e addresses for IRQ: $F004 (latch high, chip pos 1), $F008 (control, chip pos 2),
+    /// $F00C (ack, chip pos 3).
+    #[test]
+    fn test_mapper23_vrc4e_irq_register_addresses() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 8);
+        let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0xF000, 0x0E); // pos 0: latch low = 0xE (A0=0, A2=0)
+        // VRC4e: $F004 (A2=1) → chipA0=1, chipA1=0 → chip pos 1 = latch high
+        mapper.write_prg(0xF004, 0x0F); // latch high = 0xF → latch = 0xFE
+        // VRC4e: $F008 (A3=1) → chipA0=0, chipA1=1 → chip pos 2 = IRQ control
+        mapper.write_prg(0xF008, 0b0000_0110); // M=1 (cycle mode), E=1 (enable)
+
+        mapper.cpu_cycle(); // 0xFE → 0xFF
+        assert!(!mapper.irq_pending());
+        mapper.cpu_cycle(); // 0xFF → overflow → IRQ
+        assert!(
+            mapper.irq_pending(),
+            "VRC4e IRQ via $F008 control must fire after overflow"
+        );
+
+        // VRC4e: $F00C (A2=1, A3=1) → chipA0=1, chipA1=1 → chip pos 3 = acknowledge
+        mapper.write_prg(0xF00C, 0);
+        assert!(!mapper.irq_pending(), "VRC4e $F00C must acknowledge IRQ");
+    }
+
+    /// NES 2.0 submapper 2 = VRC4e only (A2→chipA0, A3→chipA1).
+    /// $B004 (A2=1) → chip pos 1 = high nibble CHR bank 0.
+    #[test]
+    fn test_mapper23_submapper2_vrc4e_chr_addressing() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 32);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(23, 2, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0xB000, 0x0F);
+        mapper.write_prg(0xB004, 0x01); // VRC4e: A2=1 → chip pos 1 (high nibble CHR bank 0)
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            31,
+            "submapper 2 (VRC4e): $B004 must set high nibble of CHR bank 0"
+        );
+    }
+
+    /// NES 2.0 submapper 1 = VRC4f only (A0→chipA0, A1→chipA1).
+    /// $B001 (A0=1) → chip pos 1 = high nibble CHR bank 0.
+    #[test]
+    fn test_mapper23_submapper1_vrc4f_chr_addressing() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 32);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(23, 1, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0xB000, 0x0F);
+        mapper.write_prg(0xB001, 0x01); // VRC4f: A0=1 → chip pos 1 (high nibble CHR bank 0)
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            31,
+            "submapper 1 (VRC4f): $B001 must set high nibble of CHR bank 0"
+        );
+    }
+
+    // =========================================================================
+    // Mapper 25 address normalisation spec tests (issue #654)
+    // =========================================================================
+
+    /// NESdev spec: mapper 25 combines VRC2c/VRC4b (A1→chipA0, A0→chipA1) and
+    /// VRC4d (A3→chipA0, A2→chipA1). Combined: chipA0 = CPU_A1|A3, chipA1 = CPU_A0|A2.
+    ///
+    /// VRC4d: $B008 (A3=1) → chip pos 1 = high nibble of CHR bank 0.
+    /// Bug: current impl uses only A3→chipA1, making $B008 hit pos 2 (low nibble CHR bank 1).
+    #[test]
+    fn test_mapper25_vrc4d_chr_high_nibble_via_b008() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 32);
+        let mut mapper = create_vrc_mapper(25, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0xB000, 0x0F); // low nibble CHR bank 0 = 0xF
+        // VRC4d: $B008 (A3=1) → chipA0=1, chipA1=0 → chip pos 1 = high nibble CHR bank 0
+        mapper.write_prg(0xB008, 0x01); // high nibble = 1 → bank = 0x1F = 31
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            31,
+            "VRC4d $B008 must be chip pos 1 (high nibble CHR bank 0), yielding bank 31"
+        );
+    }
+
+    /// VRC4b: $B001 (A0=1) → chip pos 2 = low nibble of CHR bank 1.
+    /// Bug: current impl maps A0 to neither chipA0 nor chipA1, so $B001 hits pos 0 (collision).
+    #[test]
+    fn test_mapper25_vrc4b_chr_low_nibble_bank1_via_b001() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 32);
+        let mut mapper = create_vrc_mapper(25, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // VRC4b: $B001 (A0=1) → chipA0=0, chipA1=1 → chip pos 2 = low nibble CHR bank 1
+        mapper.write_prg(0xB001, 0x07);
+        assert_eq!(
+            mapper.read_chr(0x0400),
+            7,
+            "VRC4b $B001 must be chip pos 2 (low nibble CHR bank 1)"
+        );
+    }
+
+    /// NES 2.0 submapper 2 = VRC4d only (A3→chipA0, A2→chipA1).
+    /// $B008 (A3=1) → chip pos 1 = high nibble CHR bank 0.
+    #[test]
+    fn test_mapper25_submapper2_vrc4d_chr_addressing() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 32);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(25, 2, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0xB000, 0x0F);
+        mapper.write_prg(0xB008, 0x01); // VRC4d: A3=1 → chip pos 1
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            31,
+            "submapper 2 (VRC4d): $B008 must set high nibble of CHR bank 0"
+        );
+    }
+
+    /// NES 2.0 submapper 1 = VRC4b only (A1→chipA0, A0→chipA1).
+    /// $B002 (A1=1) → chip pos 1 = high nibble CHR bank 0.
+    #[test]
+    fn test_mapper25_submapper1_vrc4b_chr_addressing() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 32);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(25, 1, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0xB000, 0x0F);
+        mapper.write_prg(0xB002, 0x01); // VRC4b: A1=1 → chip pos 1 (high nibble CHR bank 0)
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            31,
+            "submapper 1 (VRC4b): $B002 must set high nibble of CHR bank 0"
+        );
+    }
+
     /// NESdev spec: "VRC2 only has 4 high bits of CHR select. $B001 bit 4 is ignored."
     /// Writing a high nibble value with bit 4 set on VRC2a must NOT advance the bank
     /// beyond what 4 bits allow — bit 4 must be silently discarded.
@@ -1257,6 +1526,250 @@ mod tests {
             mapper.read_chr(0x0000),
             0,
             "VRC2a: CHR high nibble bit 4 must be ignored — bank should be 0, not 32 or 128"
+        );
+    }
+
+    // =========================================================================
+    // Mapper 23 VRC2b mirroring compatibility (Wai Wai World)
+    // =========================================================================
+
+    /// NESdev: "VRC2-using games are usually well-behaved and only write 0 or 1 to this
+    /// register, but Wai Wai World in one instance writes $FF instead."
+    ///
+    /// Wai Wai World is VRC2b (iNES mapper 23, no submapper). VRC2 only uses bit 0
+    /// for mirroring (0 = Vertical, 1 = Horizontal). Writing $FF must give Horizontal,
+    /// not SingleScreenUpper ($FF & 0x03 = 3), which VRC4 2-bit masking would produce.
+    #[test]
+    fn test_mapper23_combined_mirroring_ff_gives_horizontal() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, NametableLayout::Vertical);
+
+        mapper.write_prg(0x9000, 0xFF);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "mapper 23 iNES 1.0: mirroring $FF must use VRC2 1-bit mask → Horizontal, not SingleScreenUpper"
+        );
+    }
+
+    /// Mapper 23 iNES 1.0 combined: value 0x02 (bit 1 set, bit 0 clear) must give
+    /// Vertical (1-bit VRC2 mask: 0x02 & 0x01 = 0), not SingleScreenLower (VRC4 2-bit).
+    #[test]
+    fn test_mapper23_combined_mirroring_ignores_bit1() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper = create_vrc_mapper(23, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0x9000, 0x02);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "mapper 23 iNES 1.0: mirroring $02 must use VRC2 1-bit mask → Vertical, not SingleScreenLower"
+        );
+    }
+
+    /// Mapper 23 submapper 2 (VRC4e only) must still support full 4-mode mirroring.
+    /// Writing 0x02 to $9000 must give SingleScreenLower (VRC4 behavior).
+    #[test]
+    fn test_mapper23_submapper2_vrc4e_mirroring_supports_single_screen() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(23, 2, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0x9000, 0x02);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::SingleScreenLower,
+            "mapper 23 submapper 2 (VRC4e): mirroring $02 must give SingleScreenLower"
+        );
+    }
+
+    // =========================================================================
+    // Mapper 23 submapper 3 (VRC2b) spec correctness — 4 discrepancies
+    // =========================================================================
+
+    /// NESdev: VRC2b has no IRQ device.
+    /// Setting up the IRQ counter and enabling it must never trigger an IRQ.
+    ///
+    /// VRC2b (mapper 23 sub 3) pin wiring: A0→chipA0, A1→chipA1.
+    /// IRQ latch low  = chip pos 0 → CPU $F000.
+    /// IRQ latch high = chip pos 1 (A0=1, A1=0) → CPU $F001.
+    /// IRQ control    = chip pos 2 (A0=0, A1=1) → CPU $F002.
+    #[test]
+    fn test_mapper23_submapper3_vrc2b_no_irq() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(23, 3, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // Load latch = $FF so counter = $FF → fires on first cycle tick in cycle mode.
+        mapper.write_prg(0xF000, 0xFF); // latch low nibble
+        mapper.write_prg(0xF001, 0xFF); // latch high nibble (chip pos 1 → CPU $F001)
+        // Enable IRQ in cycle mode (E=bit 1, M=bit 2 → value 0x06; also set A=bit 0 → 0x07).
+        mapper.write_prg(0xF002, 0x07); // chip pos 2 (A0=0,A1=1) → CPU $F002
+
+        // Tick enough cycles that a VRC4 chip would definitely assert IRQ.
+        for _ in 0..260 {
+            mapper.cpu_cycle();
+        }
+
+        assert!(
+            !mapper.irq_pending(),
+            "VRC2b (mapper 23 sub 3) has no IRQ hardware — irq_pending must stay false"
+        );
+    }
+
+    /// NESdev: "VRC2 only has 4 high bits of CHR select. $B001 bit 4 is ignored."
+    /// Writing high nibble 0x10 (only bit 4 set) to VRC2b must discard bit 4 → bank 0.
+    ///
+    /// 48 CHR banks: 256 % 48 = 16 ≠ 0, so a spurious 9-bit stored value would
+    /// map to bank 16, not bank 0 — proving the mask is enforced.
+    ///
+    /// VRC2b pin wiring: A0→chipA0, A1→chipA1.
+    /// CHR bank 0 high nibble = chip pos 1 (chipA0=1, chipA1=0) → CPU $B001.
+    #[test]
+    fn test_mapper23_submapper3_vrc2b_chr_ignores_bit4() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 48);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(23, 3, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // High nibble, bit 4 only. With 5-bit mask: bank = 256 % 48 = 16.
+        // With 4-bit mask: bit 4 discarded → bank 0.
+        mapper.write_prg(0xB001, 0x10); // chip pos 1 (A0=1, A1=0) → CPU $B001
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "VRC2b: CHR high nibble bit 4 must be ignored — bank should be 0, not 16"
+        );
+    }
+
+    /// NESdev: "$9002 is VRC4-only; all four $9xxx positions are mirroring on VRC2."
+    /// Writing 0x01 to the chip-position-2 register on VRC2b must update mirroring
+    /// (bit 0 = 1 → Horizontal), not set PRG swap mode or enable WRAM.
+    ///
+    /// VRC2b: A0→chipA0, A1→chipA1.
+    /// Chip pos 2 (chipA0=0, chipA1=1) → CPU $9002.
+    #[test]
+    fn test_mapper23_submapper3_vrc2b_9002_is_mirroring_not_swap() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(23, 3, prg_rom, chr_rom, NametableLayout::Vertical);
+
+        // Write 0x01 to chip pos 2 (CPU $9002). On VRC2b this is a mirroring write:
+        // 1-bit mask → bit 0 = 1 → Horizontal. On VRC4 it would be PRG swap/WRAM control.
+        mapper.write_prg(0x9002, 0x01);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "VRC2b: chip pos 2 ($9002) must update mirroring, not PRG swap mode"
+        );
+    }
+
+    /// NESdev: VRC2 has a 1-bit latch at $6000–$6FFF that is always accessible
+    /// (no WRAM enable gate). The PRG RAM latch must be readable/writable without
+    /// first enabling WRAM via a $9002 write.
+    #[test]
+    fn test_mapper23_submapper3_vrc2b_prg_ram_always_accessible() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(23, 3, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        // No $9002 WRAM-enable write — VRC2b must still allow $6000 access.
+        mapper.write_prg(0x6000, 0xAB);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAB,
+            "VRC2b: $6000 latch must be accessible without WRAM-enable write"
+        );
+    }
+
+    // =========================================================================
+    // Mapper 25 submapper 3 (VRC2c) spec correctness — same 4 discrepancies
+    // =========================================================================
+
+    /// NESdev: VRC2c has no IRQ device.
+    ///
+    /// VRC2c (mapper 25 sub 3) pin wiring: A1→chipA0, A0→chipA1.
+    /// IRQ latch low  = chip pos 0 → CPU $F000.
+    /// IRQ latch high = chip pos 1 (chipA0=1, chipA1=0): CPU A0=chipA1=0, A1=chipA0=1 → $F002.
+    /// IRQ control    = chip pos 2 (chipA0=0, chipA1=1): CPU A0=chipA1=1, A1=chipA0=0 → $F001.
+    #[test]
+    fn test_mapper25_submapper3_vrc2c_no_irq() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(25, 3, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0xF000, 0xFF); // latch low nibble (pos 0 → same address)
+        mapper.write_prg(0xF002, 0xFF); // latch high nibble (chip pos 1 → CPU $F002)
+        mapper.write_prg(0xF001, 0x07); // IRQ control: enable+cycle (chip pos 2 → CPU $F001)
+
+        for _ in 0..260 {
+            mapper.cpu_cycle();
+        }
+
+        assert!(
+            !mapper.irq_pending(),
+            "VRC2c (mapper 25 sub 3) has no IRQ hardware — irq_pending must stay false"
+        );
+    }
+
+    /// NESdev: VRC2c CHR high nibble is 4 bits only; bit 4 must be ignored.
+    ///
+    /// VRC2c pin wiring: A1→chipA0, A0→chipA1.
+    /// CHR bank 0 high nibble = chip pos 1 (chipA0=1, chipA1=0):
+    /// CPU A0=chipA1=0, A1=chipA0=1 → $B002.
+    #[test]
+    fn test_mapper25_submapper3_vrc2c_chr_ignores_bit4() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 48);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(25, 3, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0xB002, 0x10); // chip pos 1 (A1=1, A0=0) → CPU $B002
+        assert_eq!(
+            mapper.read_chr(0x0000),
+            0,
+            "VRC2c: CHR high nibble bit 4 must be ignored — bank should be 0, not 16"
+        );
+    }
+
+    /// NESdev: "$9002 is VRC4-only; all four $9xxx positions are mirroring on VRC2."
+    /// VRC2c: chip pos 2 (chipA0=0, chipA1=1): CPU A0=chipA1=1, A1=chipA0=0 → $9001.
+    /// Writing 0x01 to CPU $9001 must give Horizontal mirroring, not PRG swap/WRAM.
+    #[test]
+    fn test_mapper25_submapper3_vrc2c_9001_is_mirroring_not_swap() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(25, 3, prg_rom, chr_rom, NametableLayout::Vertical);
+
+        mapper.write_prg(0x9001, 0x01); // chip pos 2 (swapped wiring) → CPU $9001
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "VRC2c: chip pos 2 ($9001 CPU) must update mirroring, not PRG swap mode"
+        );
+    }
+
+    /// NESdev: VRC2c has an always-accessible $6000 latch (no WRAM enable gate).
+    #[test]
+    fn test_mapper25_submapper3_vrc2c_prg_ram_always_accessible() {
+        let prg_rom = banked_data(8 * 1024, 2);
+        let chr_rom = banked_data(1024, 2);
+        let mut mapper =
+            create_vrc_mapper_with_submapper(25, 3, prg_rom, chr_rom, NametableLayout::Horizontal);
+
+        mapper.write_prg(0x6000, 0xCD);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xCD,
+            "VRC2c: $6000 latch must be accessible without WRAM-enable write"
         );
     }
 }
