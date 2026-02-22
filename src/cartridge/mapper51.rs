@@ -1,0 +1,551 @@
+//! Mapper 051 - 11-in-1 Ball Games
+//!
+//! Specifications:
+//! - Main: <https://www.nesdev.org/wiki/INES_Mapper_051>
+//! - Reference: Mesen2 `Bmc51.h`
+//!
+//! Known Limitations:
+//! - No known gameplay-blocking functional limitations are currently documented.
+
+use crate::cartridge::NametableLayout;
+use crate::cartridge::common::ChrMemory;
+use crate::cartridge::mapper::{Mapper, MapperCapabilities};
+
+/// Mapper 051 - 11-in-1 Ball Games
+///
+/// Hardware: JY-010 PCB
+///
+/// Specifications:
+/// - Main: <https://www.nesdev.org/wiki/INES_Mapper_051>
+/// - Reference: Mesen2 `Bmc51.h`
+/// - PRG-ROM: 512 KiB (8 KiB banks)
+/// - CHR: 8 KiB fixed (ROM or RAM)
+///
+/// Registers:
+/// - `bank` (4-bit): set by writes to $8000-$BFFF, $C000-$DFFF, $E000-$FFFF
+/// - `mode` (2-bit): set by writes to $6000-$7FFF (full rewrite) or $C000-$DFFF (bit 1 only)
+///   - bit 0: 0 = 16KB mode, 1 = 32KB mode
+///   - bit 1: contributes to mirroring condition
+///
+/// Initial state (power-on/reset): `bank = 0`, `mode = 1` (32KB mode, Vertical mirroring)
+///
+/// PRG banking:
+///   32KB mode (`mode & 0x01` set):
+///     $6000: 8KB bank `0x23 | (bank << 2)`
+///     $8000-$FFFF: 32KB bank at `bank << 2`
+///   16KB mode (`mode & 0x01` clear):
+///     $6000: 8KB bank `0x2F | (bank << 2)`
+///     $8000-$BFFF: 16KB bank `(bank << 2) | mode`
+///     $C000-$FFFF: 16KB bank `(bank << 2) | 0x0E`
+///
+/// Mirroring: `mode == 0x03` → Horizontal; else Vertical
+///
+/// CHR: Fixed 8KB bank 0
+pub struct Mapper51 {
+    prg_rom: Vec<u8>,
+    chr_memory: ChrMemory,
+    bank: u8,
+    mode: u8,
+}
+
+impl Mapper51 {
+    const MAPPER_NUMBER: u8 = 51;
+    const PRG_BANK_SIZE: usize = 0x2000; // 8 KiB
+    const PRG_BANK_MASK: usize = Self::PRG_BANK_SIZE - 1;
+
+    pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: NametableLayout) -> Self {
+        Self {
+            prg_rom,
+            chr_memory: ChrMemory::new(chr_rom),
+            bank: 0,
+            mode: 1,
+        }
+    }
+
+    /// Alias kept for compatibility with the mapper factory (submapper value is ignored).
+    pub fn new_with_submapper(
+        prg_rom: Vec<u8>,
+        chr_rom: Vec<u8>,
+        mirroring: NametableLayout,
+        _submapper: u8,
+    ) -> Self {
+        Self::new(prg_rom, chr_rom, mirroring)
+    }
+
+    fn prg_bank_count(&self) -> usize {
+        self.prg_rom.len() / Self::PRG_BANK_SIZE
+    }
+
+    fn wrapped_bank(bank: usize, count: usize) -> usize {
+        if count == 0 { 0 } else { bank % count }
+    }
+
+    fn decode_mode(value: u8) -> u8 {
+        ((value >> 3) & 0x02) | ((value >> 1) & 0x01)
+    }
+
+    fn resolve_prg_bank(&self, addr: u16) -> usize {
+        let bank = self.bank as usize;
+        let raw = if self.mode & 0x01 != 0 {
+            // 32KB mode: $8000-$FFFF mapped to 4 consecutive 8KB pages
+            match addr {
+                0x6000..=0x7FFF => 0x23 | (bank << 2),
+                0x8000..=0x9FFF => bank << 2,
+                0xA000..=0xBFFF => (bank << 2) | 1,
+                0xC000..=0xDFFF => (bank << 2) | 2,
+                0xE000..=0xFFFF => (bank << 2) | 3,
+                _ => 0,
+            }
+        } else {
+            let mode = self.mode as usize;
+            // 16KB mode: $8000 and $C000 are independent 16KB windows
+            match addr {
+                0x6000..=0x7FFF => 0x2F | (bank << 2),
+                0x8000..=0x9FFF => (bank << 2) | mode,
+                0xA000..=0xBFFF => ((bank << 2) | mode) + 1,
+                0xC000..=0xDFFF => (bank << 2) | 0x0E,
+                0xE000..=0xFFFF => (bank << 2) | 0x0F,
+                _ => 0,
+            }
+        };
+        Self::wrapped_bank(raw, self.prg_bank_count())
+    }
+}
+
+impl Mapper for Mapper51 {
+    fn read_prg(&self, addr: u16) -> u8 {
+        match addr {
+            0x6000..=0xFFFF => {
+                let bank = self.resolve_prg_bank(addr);
+                let offset = (addr as usize) & Self::PRG_BANK_MASK;
+                self.prg_rom
+                    .get(bank * Self::PRG_BANK_SIZE + offset)
+                    .copied()
+                    .unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+
+    fn write_prg(&mut self, addr: u16, value: u8) {
+        match addr {
+            0x6000..=0x7FFF => {
+                self.mode = Self::decode_mode(value);
+            }
+            0xC000..=0xDFFF => {
+                self.bank = value & 0x0F;
+                self.mode = (Self::decode_mode(value) & 0x02) | (self.mode & 0x01);
+            }
+            0x8000..=0xBFFF | 0xE000..=0xFFFF => {
+                self.bank = value & 0x0F;
+            }
+            _ => {}
+        }
+    }
+
+    fn read_chr(&self, addr: u16) -> u8 {
+        self.chr_memory.read(addr)
+    }
+
+    fn write_chr(&mut self, addr: u16, value: u8) {
+        self.chr_memory.write(addr, value);
+    }
+
+    fn get_mirroring(&self) -> NametableLayout {
+        if self.mode == 0x03 {
+            NametableLayout::Horizontal
+        } else {
+            NametableLayout::Vertical
+        }
+    }
+
+    fn mapper_number(&self) -> u8 {
+        Self::MAPPER_NUMBER
+    }
+
+    fn wram_size(&self) -> usize {
+        0
+    }
+
+    fn chr_ram_snapshot(&self) -> Vec<u8> {
+        self.chr_memory.snapshot()
+    }
+
+    fn restore_chr_ram(&mut self, data: &[u8]) {
+        self.chr_memory.load_snapshot(data);
+    }
+
+    fn initialize_ram(&mut self, mode: crate::console::RamInitMode) {
+        self.chr_memory.initialize(mode);
+    }
+
+    fn registers_snapshot(&self) -> Vec<u8> {
+        vec![self.bank, self.mode]
+    }
+
+    fn restore_registers(&mut self, data: &[u8]) {
+        if data.len() >= 2 {
+            self.bank = data[0];
+            self.mode = data[1];
+        }
+    }
+
+    fn reset(&mut self) {
+        self.bank = 0;
+        self.mode = 1;
+    }
+
+    fn capabilities(&self) -> MapperCapabilities {
+        MapperCapabilities {
+            has_dynamic_mirroring: true,
+            prg_bank_size_kb: 8,
+            chr_bank_size_kb: 8,
+            ..Default::default()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Mapper51;
+    use crate::cartridge::NametableLayout;
+    use crate::cartridge::mapper::{Mapper, MapperContext, create_mapper};
+    use crate::cartridge::test_helpers::banked_data;
+
+    // 48 banks × 8 KiB = 384 KiB (non-power-of-two to prevent modulo wrap false-passes)
+    const PRG_BANKS: usize = 48;
+
+    fn make_mapper() -> Box<dyn Mapper> {
+        let prg = banked_data(8 * 1024, PRG_BANKS);
+        let chr = banked_data(8 * 1024, 1);
+        create_mapper(MapperContext::new(51, prg, chr, NametableLayout::Vertical))
+            .expect("Mapper 51 should be implemented")
+    }
+
+    fn make_mapper_direct() -> Mapper51 {
+        // Use Horizontal header so mirroring tests verify mode-derived value, not header passthrough
+        let prg = banked_data(8 * 1024, PRG_BANKS);
+        let chr = banked_data(8 * 1024, 1);
+        Mapper51::new(prg, chr, NametableLayout::Horizontal)
+    }
+
+    // --- Factory ---
+
+    #[test]
+    fn mapper_51_is_registered_in_factory() {
+        let result = create_mapper(MapperContext::new(
+            51,
+            banked_data(8 * 1024, PRG_BANKS),
+            banked_data(8 * 1024, 1),
+            NametableLayout::Vertical,
+        ));
+        assert!(
+            result.is_ok(),
+            "Mapper 51 must be registered in the factory"
+        );
+    }
+
+    // --- Default state (bank=0, mode=1 → 32KB mode) ---
+
+    #[test]
+    fn default_6000_window_is_fixed_bank_35() {
+        // mode=1 (32KB), bank=0: 0x23 | (0 << 2) = 35
+        let mapper = make_mapper();
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            35,
+            "$6000 should read bank 35 by default"
+        );
+    }
+
+    #[test]
+    fn default_32kb_mode_maps_8000_to_bank_0() {
+        let mapper = make_mapper();
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "$8000 should read bank 0 in default 32KB mode"
+        );
+    }
+
+    #[test]
+    fn default_32kb_mode_maps_a000_to_bank_1() {
+        let mapper = make_mapper();
+        assert_eq!(
+            mapper.read_prg(0xA000),
+            1,
+            "$A000 should read bank 1 in default 32KB mode"
+        );
+    }
+
+    #[test]
+    fn default_32kb_mode_maps_c000_to_bank_2() {
+        let mapper = make_mapper();
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            2,
+            "$C000 should read bank 2 in default 32KB mode"
+        );
+    }
+
+    #[test]
+    fn default_32kb_mode_maps_e000_to_bank_3() {
+        let mapper = make_mapper();
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            3,
+            "$E000 should read bank 3 in default 32KB mode"
+        );
+    }
+
+    // --- PRG register ($8000-$FFFF) ---
+
+    #[test]
+    fn prg_register_selects_32kb_bank() {
+        // bank=1, mode=1 (32KB): 8KB sub-banks 4, 5, 6, 7
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 1);
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            4,
+            "$8000 should read bank 4 after prg=1"
+        );
+        assert_eq!(
+            mapper.read_prg(0xA000),
+            5,
+            "$A000 should read bank 5 after prg=1"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            6,
+            "$C000 should read bank 6 after prg=1"
+        );
+        assert_eq!(
+            mapper.read_prg(0xE000),
+            7,
+            "$E000 should read bank 7 after prg=1"
+        );
+    }
+
+    #[test]
+    fn prg_register_updates_6000_bank_in_32kb_mode() {
+        // bank=1, mode=1 (32KB): 0x23 | (1 << 2) = 35 | 4 = 39
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 1);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            39,
+            "$6000 should read bank 39 when prg=1 in 32KB mode"
+        );
+    }
+
+    // --- Mode register ($6000-$7FFF) ---
+
+    #[test]
+    fn mode_bit1_clear_switches_to_16kb_mode() {
+        // Write 0x00: mode = ((0>>3)&0x02)|((0>>1)&0x01) = 0 (16KB, Vertical)
+        // bank=0: $8000=(0<<2)|0=0, $A000=1, $C000=(0<<2)|0x0E=14, $E000=15
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x6000, 0x00);
+        assert_eq!(mapper.read_prg(0x8000), 0, "16KB mode $8000 reads bank 0");
+        assert_eq!(mapper.read_prg(0xA000), 1, "16KB mode $A000 reads bank 1");
+        assert_eq!(mapper.read_prg(0xC000), 14, "16KB mode $C000 reads bank 14");
+        assert_eq!(mapper.read_prg(0xE000), 15, "16KB mode $E000 reads bank 15");
+    }
+
+    #[test]
+    fn mode_bit1_clear_6000_window_is_bank_47() {
+        // Write 0x00: mode=0, bank=0: 0x2F | (0 << 2) = 47
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x6000, 0x00);
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            47,
+            "$6000 in 16KB mode with prg=0 should read bank 47"
+        );
+    }
+
+    // --- Mirroring (derived from mode register, not header) ---
+
+    #[test]
+    fn default_mirroring_is_vertical_regardless_of_header() {
+        // Initial mode=1, mode != 0x03 → Vertical
+        // Constructor uses Horizontal header to ensure result is from mode, not header
+        let mapper = make_mapper_direct();
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "Default mode=1 must produce Vertical mirroring"
+        );
+    }
+
+    #[test]
+    fn mode_bit4_set_gives_horizontal_mirroring() {
+        // Write 0x12: mode = ((0x12>>3)&0x02)|((0x12>>1)&0x01) = 2|1 = 3 → Horizontal
+        let mut mapper = make_mapper_direct();
+        mapper.write_prg(0x6000, 0x12);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "mode bit 4 set must produce Horizontal mirroring"
+        );
+    }
+
+    #[test]
+    fn mode_bit4_clear_gives_vertical_mirroring() {
+        // Write 0x00: mode=0, not 0x03 → Vertical
+        let mut mapper = make_mapper_direct();
+        mapper.write_prg(0x6000, 0x00);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "mode bit 4 clear must produce Vertical mirroring"
+        );
+    }
+
+    // --- CHR ---
+
+    #[test]
+    fn chr_reads_from_fixed_bank_0() {
+        // CHR is always fixed at bank 0; use 2-bank CHR so bank 1 would differ
+        let prg = banked_data(8 * 1024, PRG_BANKS);
+        let chr = banked_data(8 * 1024, 2); // bank 0 → 0, bank 1 → 1
+        let mapper = Mapper51::new(prg, chr, NametableLayout::Vertical);
+        assert_eq!(mapper.read_chr(0x0000), 0, "CHR must read from bank 0");
+        assert_eq!(mapper.read_chr(0x1FFF), 0, "CHR end must still be bank 0");
+    }
+
+    // --- Reset ---
+
+    #[test]
+    fn reset_restores_default_state() {
+        let mut mapper = make_mapper_direct();
+        mapper.write_prg(0x8000, 5);
+        mapper.write_prg(0x6000, 0x00);
+        mapper.reset();
+        // After reset: bank=0, mode=1 → same as power-on
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "After reset, $8000 should read bank 0"
+        );
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            35,
+            "After reset, $6000 should read bank 35"
+        );
+    }
+
+    // --- Mesen2-spec: $C000-$DFFF write behavior ---
+
+    #[test]
+    fn c000_write_updates_bank_register() {
+        // $C000 write updates bank (same as $8000 write for bank)
+        let mut mapper = make_mapper();
+        mapper.write_prg(0xC000, 1); // bank=1 from $C000 write
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            4,
+            "$C000 write with value 1 must set bank=1"
+        );
+    }
+
+    #[test]
+    fn c000_write_updates_mode_bit1_from_value_bit4() {
+        // $C000 write: bank = value & 0x0F; mode = ((value>>3)&0x02) | (mode & 0x01)
+        // Write 0x12 to $C000: bank=2, mode bit1 set from value bit4 (0x12 has bit4=1)
+        // With default mode=1 (bit0=1): new mode = ((0x12>>3)&0x02) | (1&0x01) = 2|1 = 3 → Horizontal
+        let mut mapper = make_mapper_direct();
+        mapper.write_prg(0xC000, 0x12); // value bit4=1 → mode bit1 set
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Horizontal,
+            "$C000 write with bit4 set must update mode bit1 → Horizontal"
+        );
+    }
+
+    #[test]
+    fn c000_write_preserves_mode_bit0() {
+        // $C000 write preserves existing mode bit0
+        // Switch to 16KB mode first (bit0=0): write 0x00 to $6000 → mode bit0=0
+        // Then write 0x10 to $C000: mode bit1 from value bit4, mode bit0 stays 0
+        let mut mapper = make_mapper_direct();
+        mapper.write_prg(0x6000, 0x00); // mode = 0 (bit0=0 → 16KB)
+        mapper.write_prg(0xC000, 0x10); // value bit4=1 → mode bit1 set, bit0 unchanged (stays 0)
+        // mode = 2, 16KB mode; Horizontal requires mode==3, so still Vertical
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "$C000 write with only bit4 set must not produce Horizontal (needs both bits)"
+        );
+    }
+
+    #[test]
+    fn mode_bit4_alone_without_mode_bit0_is_not_horizontal() {
+        // Write 0x10 to $6000: mode = ((0x10>>3)&0x02)|((0x10>>1)&0x01) = 2|0 = 2
+        // mode != 3 → Vertical (not Horizontal, even though bit4 of value is set)
+        let mut mapper = make_mapper_direct();
+        mapper.write_prg(0x6000, 0x10);
+        assert_eq!(
+            mapper.get_mirroring(),
+            NametableLayout::Vertical,
+            "Bit 4 alone in mode write must not produce Horizontal mirroring"
+        );
+    }
+
+    #[test]
+    fn bank_register_is_masked_to_4_bits() {
+        // Write 0x1F to $8000: bank = 0x1F & 0x0F = 15 (not 31)
+        // With 48 banks: 15*4=60, 60%48=12
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x8000, 0x1F);
+        assert_eq!(mapper.read_prg(0x8000), 12, "Bank must be masked to 4 bits");
+    }
+
+    #[test]
+    fn mode_write_bit4_selects_8000_offset_in_16kb_mode() {
+        // Write 0x10 to $6000: mode=2 (16KB, bit0=0). bank stays 0.
+        // $8000 = (bank<<2)|mode = (0<<2)|2 = 2. $A000 = 3.
+        let mut mapper = make_mapper();
+        mapper.write_prg(0x6000, 0x10); // mode=2 in Mesen2
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            2,
+            "16KB mode with mode=2: $8000 must be page 2"
+        );
+        assert_eq!(
+            mapper.read_prg(0xA000),
+            3,
+            "16KB mode with mode=2: $A000 must be page 3"
+        );
+    }
+
+    // --- Snapshot ---
+
+    #[test]
+    fn registers_snapshot_and_restore() {
+        let mut mapper = make_mapper_direct();
+        mapper.write_prg(0x8000, 2); // bank=2
+        mapper.write_prg(0x6000, 0x00); // mode=0 (16KB)
+        let snap = mapper.registers_snapshot();
+
+        let mut restored = make_mapper_direct();
+        restored.restore_registers(&snap);
+
+        assert_eq!(
+            restored.read_prg(0x8000),
+            mapper.read_prg(0x8000),
+            "Restored PRG bank must match"
+        );
+        assert_eq!(
+            restored.read_prg(0x6000),
+            mapper.read_prg(0x6000),
+            "Restored $6000 bank must match"
+        );
+        assert_eq!(
+            restored.get_mirroring(),
+            mapper.get_mirroring(),
+            "Restored mirroring must match"
+        );
+    }
+}

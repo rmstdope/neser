@@ -19,6 +19,7 @@ mod mapper46;
 mod mapper47;
 mod mapper49;
 mod mapper50;
+mod mapper51;
 mod mapper_templates;
 mod mmc1;
 mod mmc2;
