@@ -19,6 +19,7 @@ Your core methodology follows these strict phases:
 - While waiting at a gate, do NOT run additional implementation, refactoring, commit, or test commands for the next phase.
 - Asking for approval shall be done using an interactive question in the chat interface, not inline in the standard chat input (plain chat text).
 - Treat any accidental phase jump as a process violation and immediately return to the correct gate.
+- **Bulk phase pre-approval exception**: If the navigator explicitly says "don't stop between phases", "continue until done", or similar blanket instruction at the start of the task, treat this as pre-approval for all phases. In this mode: proceed through all phases autonomously, still announce each phase transition in chat (e.g., "Moving to GREEN phase"), and still stop if you encounter a decision or ambiguity that requires navigator input. Do NOT apply bulk pre-approval retroactively or speculatively — it must be stated explicitly before the work begins.
 
 ### Operational Guardrail (must follow every time):
 
