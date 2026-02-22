@@ -18,6 +18,16 @@ use super::mapper47::Mapper47;
 use super::mapper49::Mapper49;
 use super::mapper50::Mapper50;
 use super::mapper51::Mapper51;
+use super::mapper52::Mapper52;
+use super::mapper53::Mapper53;
+use super::mapper56::Mapper56;
+use super::mapper57::Mapper57;
+use super::mapper58::Mapper58;
+use super::mapper60::Mapper60;
+use super::mapper61::Mapper61;
+use super::mapper62::Mapper62;
+use super::mapper64::Mapper64;
+use super::mapper65::Mapper65;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
@@ -718,6 +728,15 @@ mapper_registry! {
     47 => Mapper47::new,
     49 => Mapper49::new,
     50 => Mapper50::new,
+    52 => Mapper52::new,
+    53 => Mapper53::new,
+    56 => Mapper56::new,
+    57 => Mapper57::new,
+    58 => Mapper58::new,
+    60 => Mapper60::new,
+    62 => Mapper62::new,
+    64 => Mapper64::new,
+    65 => Mapper65::new,
     66 => GxROMMapper::new,
     69 => SunsoftFme7Mapper::new,
     71 => CamericaMapper::new,
@@ -729,7 +748,7 @@ mapper_registry! {
 const SUPPORTED_MAPPERS: &[u8] = &[
     4, // MMC3 is constructed with CRC-specific behavior.
     0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34, 40,
-    42, 44, 45, 46, 47, 49, 50, 51, 66, 68, 69, 71, 78, 206,
+    42, 44, 45, 46, 47, 49, 50, 51, 52, 53, 56, 57, 58, 60, 61, 62, 64, 65, 66, 68, 69, 71, 78, 206,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -836,6 +855,14 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         let submapper = metadata.submapper;
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
         return Ok(Box::new(Mapper51::new_with_submapper(
+            prg_rom, chr_rom, mirroring, submapper,
+        )));
+    }
+
+    if mapper_number == 61 {
+        let submapper = metadata.submapper;
+        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
+        return Ok(Box::new(Mapper61::new_with_submapper(
             prg_rom, chr_rom, mirroring, submapper,
         )));
     }
