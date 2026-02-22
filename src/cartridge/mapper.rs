@@ -17,6 +17,7 @@ use super::mapper46::Mapper46;
 use super::mapper47::Mapper47;
 use super::mapper49::Mapper49;
 use super::mapper50::Mapper50;
+use super::mapper51::Mapper51;
 use super::mmc1::MMC1Mapper;
 use super::mmc2::MMC2Mapper;
 use super::mmc3::MMC3Mapper;
@@ -728,7 +729,7 @@ mapper_registry! {
 const SUPPORTED_MAPPERS: &[u8] = &[
     4, // MMC3 is constructed with CRC-specific behavior.
     0, 1, 2, 3, 5, 6, 7, 8, 9, 10, 11, 13, 15, 16, 17, 19, 21, 22, 23, 24, 25, 26, 32, 33, 34, 40,
-    42, 44, 45, 46, 47, 49, 50, 66, 68, 69, 71, 78, 206,
+    42, 44, 45, 46, 47, 49, 50, 51, 66, 68, 69, 71, 78, 206,
 ];
 
 /// List of supported iNES mapper IDs handled by the factory.
@@ -828,6 +829,14 @@ pub fn create_mapper(metadata: MapperContext) -> io::Result<Box<dyn Mapper>> {
         let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
         return Ok(Box::new(IremG101Mapper::new_with_submapper(
             prg_rom, chr_rom, mirroring, 1,
+        )));
+    }
+
+    if mapper_number == 51 {
+        let submapper = metadata.submapper;
+        let (prg_rom, chr_rom, mirroring) = metadata.into_parts();
+        return Ok(Box::new(Mapper51::new_with_submapper(
+            prg_rom, chr_rom, mirroring, submapper,
         )));
     }
 
