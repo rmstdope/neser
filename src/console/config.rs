@@ -295,7 +295,12 @@ const CLI_FLAGS: &[CliFlag] = &[
     },
     CliFlag {
         flag: "--playback-from-checkpoint",
-        help: Some("Start playback from checkpoint N (0-based index)"),
+        help: Some("Start playback from checkpoint N (0-based index, negative counts from end)"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--playback-headless-from-checkpoint",
+        help: Some("Headless playback from checkpoint N (no display; negative counts from end)"),
         has_value: true,
     },
     CliFlag {
@@ -869,6 +874,12 @@ impl Config {
             if self.autorun_mode == AutorunMode::None {
                 self.autorun_mode = AutorunMode::Playback;
             }
+        }
+
+        if let Some(v) = Self::parse_i64_arg(args, "--playback-headless-from-checkpoint")? {
+            self.autorun_from_checkpoint = Some(v);
+            self.autorun_mode = AutorunMode::Playback;
+            self.autorun_headless = true;
         }
 
         if let Some(v) = Self::parse_u32_arg(args, "--trim-checkpoints")? {
@@ -3686,5 +3697,54 @@ filter=invalid-shader
         ];
         let config = parse_config(args);
         assert_eq!(config.autorun_from_checkpoint, Some(-2));
+    }
+
+    #[test]
+    fn test_cli_playback_headless_from_checkpoint_sets_playback_headless_and_checkpoint() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback-headless-from-checkpoint".to_string(),
+            "3".to_string(),
+            "game".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_mode,
+            AutorunMode::Playback,
+            "--playback-headless-from-checkpoint should set Playback mode"
+        );
+        assert!(
+            config.autorun_headless,
+            "--playback-headless-from-checkpoint should set headless mode"
+        );
+        assert_eq!(
+            config.autorun_from_checkpoint,
+            Some(3),
+            "--playback-headless-from-checkpoint should set checkpoint index"
+        );
+    }
+
+    #[test]
+    fn test_cli_playback_headless_from_checkpoint_equals_syntax() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback-headless-from-checkpoint=5".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_mode, AutorunMode::Playback);
+        assert!(config.autorun_headless);
+        assert_eq!(config.autorun_from_checkpoint, Some(5));
+    }
+
+    #[test]
+    fn test_cli_playback_headless_from_checkpoint_negative_value() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback-headless-from-checkpoint=-1".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_mode, AutorunMode::Playback);
+        assert!(config.autorun_headless);
+        assert_eq!(config.autorun_from_checkpoint, Some(-1));
     }
 }
