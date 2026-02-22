@@ -40,11 +40,11 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 pub struct Mapper56 {
     prg_rom: Vec<u8>,
     chr_memory: ChrMemory,
-    prg_reg: [u8; 3],   // 4-bit PRG bank selects for $8000/$A000/$C000
-    prg_a17: [u8; 4],   // A17 extension bit for each 8KB window (0-3)
-    chr_regs: [u8; 8],  // 7-bit CHR 1KB bank selects
+    prg_reg: [u8; 3],  // 4-bit PRG bank selects for $8000/$A000/$C000
+    prg_a17: [u8; 4],  // A17 extension bit for each 8KB window (0-3)
+    chr_regs: [u8; 8], // 7-bit CHR 1KB bank selects
     mirroring: NametableLayout,
-    bank_select: u8,    // Last value written to $E000
+    bank_select: u8, // Last value written to $E000
     irq_latch: u16,
     irq_counter: u16,
     irq_enabled: bool,
@@ -284,8 +284,9 @@ impl Mapper for Mapper56 {
             NametableLayout::Vertical => 1u8,
             _ => 0u8,
         };
-        let irq_flags =
-            (self.irq_enabled as u8) | ((self.irq_pending as u8) << 1) | ((self.irq_after_ack as u8) << 2);
+        let irq_flags = (self.irq_enabled as u8)
+            | ((self.irq_pending as u8) << 1)
+            | ((self.irq_after_ack as u8) << 2);
         let mut v = vec![
             self.prg_reg[0],
             self.prg_reg[1],
@@ -317,7 +318,11 @@ impl Mapper for Mapper56 {
         self.prg_a17[1] = data[4];
         self.prg_a17[2] = data[5];
         self.prg_a17[3] = data[6];
-        self.mirroring = if data[7] != 0 { NametableLayout::Vertical } else { NametableLayout::Horizontal };
+        self.mirroring = if data[7] != 0 {
+            NametableLayout::Vertical
+        } else {
+            NametableLayout::Horizontal
+        };
         self.bank_select = data[8];
         self.irq_enabled = (data[9] & 1) != 0;
         self.irq_pending = (data[9] & 2) != 0;
@@ -400,7 +405,11 @@ mod tests {
         mapper.write_prg(0xF000, 0x08); // prg_a17[0] = 1, prg_reg[0] = 8
         assert_eq!(mapper.prg_a17[0], 1, "PRG A17 bit must be 1");
         // Effective bank for $8000 = (1<<4)|(8&0xF) = 16+8 = 24
-        assert_eq!(mapper.read_prg(0x8000), 24 % PRG_BANKS as u8, "PRG bank includes A17");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            24 % PRG_BANKS as u8,
+            "PRG bank includes A17"
+        );
     }
 
     #[test]

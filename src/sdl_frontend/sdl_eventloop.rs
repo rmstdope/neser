@@ -374,38 +374,31 @@ impl SdlEventLoop {
     ///
     /// # Arguments
     ///
-    /// * `mode` - The autorun mode to use (`None`, `Record`, or `Playback`). If set to
-    ///   [`AutorunMode::None`], autorun is disabled and no state is initialized.
-    /// * `rom_path` - Path to the currently loaded ROM file. The autorun file will be stored
-    ///   alongside this ROM with a `.autorun` extension (e.g., `game.nes` → `game.autorun`).
-    /// * `overwrite` - If `true` and `mode` is `Record`, any existing `.autorun` file will be
-    ///   replaced. If `false` and the file exists, an error is returned. Ignored for other modes.
-    /// * `extend` - If `true` and `mode` is `Record`, loads any existing `.autorun` file, plays
-    ///   it back to the end, then continues recording new input (appending to the recording).
-    ///   If `false` or no existing file, starts a fresh recording. Ignored for other modes.
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if autorun is successfully initialized or if `mode` is [`AutorunMode::None`].
-    /// Returns `Err(String)` if initialization fails (e.g., I/O errors, invalid autorun file format,
-    /// conflicting options).
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if:
-    /// - The `.autorun` file cannot be read or parsed (in `Playback` or `Record` with `extend`)
-    /// - The `.autorun` file already exists and `overwrite` is `false` (in `Record` mode)
-    /// - File I/O operations fail (permissions, disk full, etc.)
-    /// - The autorun file format version is incompatible
+    /// * `mode` - The autorun mode to use (`None`, `Record`, or `Playback`).
+    /// * `rom_path` - Path to the loaded ROM; the `.autorun` file lives alongside it.
+    /// * `overwrite` - In `Record` mode: back up any existing file and start fresh.
+    /// * `extend` - In `Record` mode: replay from second-to-last checkpoint then continue recording.
+    /// * `from_checkpoint` - In `Playback` mode: start playback from this checkpoint index.
+    /// * `nes` - The NES instance; used to restore saved state when starting from a checkpoint.
     pub fn init_autorun(
         &mut self,
         mode: AutorunMode,
         rom_path: &str,
         overwrite: bool,
         extend: bool,
+        from_checkpoint: Option<usize>,
+        nes: &mut Nes,
     ) -> Result<(), String> {
         if mode != AutorunMode::None {
-            self.autorun_state = Some(AutorunState::new(mode, rom_path, overwrite, extend)?);
+            let (state, pending) =
+                AutorunState::new(mode, rom_path, overwrite, extend, from_checkpoint)?;
+            if let Some(restore) = pending {
+                let save_state = crate::console::SaveState::from_bytes(&restore.state_bytes)
+                    .map_err(|e| format!("Failed to deserialize checkpoint state: {e}"))?;
+                nes.load_state(&save_state)
+                    .map_err(|e| format!("Failed to restore checkpoint state: {e}"))?;
+            }
+            self.autorun_state = Some(state);
         }
         Ok(())
     }
@@ -569,46 +562,86 @@ impl SdlEventLoop {
 
     /// Handle autorun logic after processing input but before rendering.
     ///
-    /// In record mode, captures current button states.
-    fn handle_autorun_after_input(&mut self, nes: &Nes) {
+    /// In record mode, captures current button states. Returns `true` if a checkpoint should be
+    /// captured after the frame is fully rendered.
+    fn handle_autorun_after_input(&mut self, nes: &Nes) -> bool {
         let Some(ref mut autorun_state) = self.autorun_state else {
-            return; // No autorun active
+            return false; // No autorun active
         };
 
         use crate::console::AutorunMode;
 
         // In record mode (or extend mode after playback), capture button states
         if autorun_state.mode() == AutorunMode::Record && !autorun_state.is_extending_playback() {
-            // Capture button states without borrowing self
             let player1 = nes.get_joypad_button_states(1);
             let player2 = nes.get_joypad_button_states(2);
-            autorun_state.record_frame(player1, player2);
+            return autorun_state.record_frame(player1, player2);
+        }
+        false
+    }
+
+    /// Handle autorun actions after a frame has been fully rendered.
+    ///
+    /// * When `checkpoint_due` is true, captures the current screen CRC and emulator state
+    ///   and stores them as a checkpoint in the recording.
+    /// * During playback, verifies any checkpoint that falls on the just-completed frame.
+    fn handle_autorun_after_frame(&mut self, nes: &Nes, checkpoint_due: bool) {
+        use crate::console::AutorunMode;
+
+        if checkpoint_due {
+            let crc = nes.ppu.borrow().screen_buffer().crc32();
+            let state_bytes = nes.save_state().to_bytes().unwrap_or_default();
+            if let Some(ref mut autorun_state) = self.autorun_state {
+                autorun_state.record_checkpoint(crc, state_bytes);
+            }
+        }
+
+        // Verify playback checkpoint CRC if one falls on this frame
+        if let Some(ref mut autorun_state) = self.autorun_state
+            && (autorun_state.mode() == AutorunMode::Playback
+                || autorun_state.is_extending_playback())
+        {
+            let crc = nes.ppu.borrow().screen_buffer().crc32();
+            if let Some(matched) = autorun_state.check_playback_checkpoint(crc) {
+                if matched {
+                    log_info(format!(
+                        "Autorun checkpoint CRC match (0x{:08X}) at frame {}",
+                        crc,
+                        autorun_state.current_frame_index().saturating_sub(1),
+                    ));
+                } else {
+                    log_info(format!(
+                        "Autorun checkpoint CRC MISMATCH at frame {}: got 0x{:08X}",
+                        autorun_state.current_frame_index().saturating_sub(1),
+                        crc,
+                    ));
+                }
+            }
         }
     }
 
-    /// Finish playback by verifying CRC.
-    /// Returns false with AutorunExitCode error to signal the event loop should exit.
+    /// Finish playback by reporting CRC verification results.
+    /// Returns `Err(AutorunExitCode)` to signal the event loop should exit.
     fn finish_playback(&mut self, nes: &Nes) -> Result<bool, AutorunExitCode> {
-        let Some(ref mut autorun_state) = self.autorun_state else {
+        let Some(ref autorun_state) = self.autorun_state else {
             return Ok(true);
         };
 
-        // Get the screen buffer snapshot for CRC verification
-        let snapshot = nes.ppu.borrow().screen_buffer().snapshot();
+        let mismatches = autorun_state.crc_mismatches();
+        let verified = autorun_state.total_checkpoints_verified();
         let crc = nes.ppu.borrow().screen_buffer().crc32();
 
-        match autorun_state.verify_checksum(&snapshot) {
-            Ok(()) => {
-                log_info(format!(
-                    "Autorun playback successful: CRC match (0x{:08X})",
-                    crc
-                ));
-                Err(AutorunExitCode::Success)
-            }
-            Err(e) => {
-                log_info(format!("Autorun playback failed: {}", e));
-                Err(AutorunExitCode::Failure)
-            }
+        if mismatches == 0 {
+            log_info(format!(
+                "Autorun playback successful: {} checkpoints verified, final CRC 0x{:08X}",
+                verified, crc
+            ));
+            Err(AutorunExitCode::Success)
+        } else {
+            log_info(format!(
+                "Autorun playback failed: {mismatches}/{verified} CRC mismatches",
+            ));
+            Err(AutorunExitCode::Failure)
         }
     }
 
@@ -648,7 +681,7 @@ impl SdlEventLoop {
         (current_frame / blink_half_period_frames).is_multiple_of(2)
     }
 
-    /// Finish recording by saving the autorun file with CRC.
+    /// Finish recording by saving the autorun file with a final checkpoint.
     fn finish_recording(&mut self, nes: &Nes) -> Result<(), String> {
         self.save_breakpoints_to_debug_file(nes);
         let Some(ref mut autorun_state) = self.autorun_state else {
@@ -661,13 +694,13 @@ impl SdlEventLoop {
             return Ok(());
         }
 
-        // Calculate final screen buffer CRC
+        // Capture final screen CRC and emulator state for the final checkpoint
         let crc = nes.ppu.borrow().screen_buffer().crc32();
+        let state_bytes = nes.save_state().to_bytes().unwrap_or_default();
 
-        // Save the recording with CRC
-        autorun_state.save_with_checksum(crc)?;
+        autorun_state.save_with_final_checkpoint(crc, state_bytes)?;
         log_info(format!(
-            "Autorun recording saved: {} frames, CRC 0x{:08X}",
+            "Autorun recording saved: {} frames, final CRC 0x{:08X}",
             autorun_state.total_frames(),
             crc
         ));
@@ -1062,7 +1095,7 @@ impl SdlEventLoop {
 
                 // Record button states after input processing (autorun record mode)
                 // This happens after the pause check to ensure we only record frames that are actually emulated
-                self.handle_autorun_after_input(nes);
+                let autorun_checkpoint_due = self.handle_autorun_after_input(nes);
 
                 // 2. Emulate until PPU completes a full frame (reaches VBlank)
                 // The PPU runs at 3x CPU clock (NTSC) or 3.2x (PAL), so run_cpu_tick()
@@ -1120,6 +1153,7 @@ impl SdlEventLoop {
                     last_audio_stats_print = Instant::now();
                 }
                 nes.clear_ready_to_render();
+                self.handle_autorun_after_frame(nes, autorun_checkpoint_due);
 
                 // 3. Render the frame (always present the NES frame; show debugger if requested)
                 let overlay_text = self.overlay_render_text(nes);
@@ -1183,7 +1217,7 @@ impl SdlEventLoop {
                 }
 
                 // After input processing, record if needed
-                self.handle_autorun_after_input(nes);
+                let autorun_checkpoint_due = self.handle_autorun_after_input(nes);
 
                 // Avoid a busy loop while paused.
                 if self.paused {
@@ -1222,6 +1256,7 @@ impl SdlEventLoop {
                 }
 
                 nes.clear_ready_to_render();
+                self.handle_autorun_after_frame(nes, autorun_checkpoint_due);
             }
         }
     }

@@ -42,11 +42,11 @@ pub struct Mapper61 {
     chr_memory: ChrMemory,
     submapper: u8,
     /// Latched register bits from last write address
-    prg_base: u8,  // PPPP = bits[3:0]
+    prg_base: u8, // PPPP = bits[3:0]
     prg_mode: bool, // N = bit[4]; false=NROM-256, true=NROM-128
-    prg_a14: u8,   // p = bit[5]; used when prg_mode=true
-    chr_a13: u8,   // c = bit[6]; submapper 1 only
-    chr_bank: u8,  // CCCC = bits[11:8]
+    prg_a14: u8,    // p = bit[5]; used when prg_mode=true
+    chr_a13: u8,    // c = bit[6]; submapper 1 only
+    chr_bank: u8,   // CCCC = bits[11:8]
     mirroring: NametableLayout,
 }
 
@@ -57,6 +57,7 @@ impl Mapper61 {
     const CHR_BANK_SIZE: usize = 0x2000; // 8 KiB
     const CHR_BANK_MASK: usize = Self::CHR_BANK_SIZE - 1;
 
+    #[allow(dead_code)]
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, mirroring: NametableLayout) -> Self {
         Self::new_with_submapper(prg_rom, chr_rom, mirroring, 0)
     }

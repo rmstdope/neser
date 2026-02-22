@@ -294,6 +294,16 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
+        flag: "--playback-from-checkpoint",
+        help: Some("Start playback from checkpoint N (0-based index)"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--trim-checkpoints",
+        help: Some("Remove last N checkpoints (and their frames) from <ROM>.autorun file and exit"),
+        has_value: true,
+    },
+    CliFlag {
         flag: "--ram-init-mode",
         help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: zero)"),
         has_value: true,
@@ -436,6 +446,10 @@ pub struct Config {
     pub autorun_extend: bool,
     /// Whether to overwrite an existing recording (requires record mode).
     pub autorun_overwrite: bool,
+    /// Start playback from this checkpoint index (0-based). `None` starts from frame 0.
+    pub autorun_from_checkpoint: Option<usize>,
+    /// Trim this many checkpoints from the end of the recording file and exit (no emulation).
+    pub autorun_trim_checkpoints: Option<usize>,
     /// RAM initialization mode (config key: `ram_init_mode`).
     ///
     /// Controls how all emulated RAM is initialized on power-on/hard reset:
@@ -567,6 +581,8 @@ impl Default for Config {
             autorun_headless: false,
             autorun_extend: false,
             autorun_overwrite: false,
+            autorun_from_checkpoint: None,
+            autorun_trim_checkpoints: None,
             // Use Zero for WASM to avoid issues with getrandom in test environments
             #[cfg(target_arch = "wasm32")]
             ram_init_mode: RamInitMode::Zero,
@@ -844,6 +860,14 @@ impl Config {
         } else if has_playback || has_playback_headless {
             self.autorun_mode = AutorunMode::Playback;
             self.autorun_headless = has_playback_headless;
+        }
+
+        if let Some(v) = Self::parse_u32_arg(args, "--playback-from-checkpoint")? {
+            self.autorun_from_checkpoint = Some(v as usize);
+        }
+
+        if let Some(v) = Self::parse_u32_arg(args, "--trim-checkpoints")? {
+            self.autorun_trim_checkpoints = Some(v as usize);
         }
 
         // Breakpoints from --breakpoint flag (comma-separated list)
@@ -3516,5 +3540,29 @@ filter=invalid-shader
             result.is_err(),
             "--create-recording and --extend-recording should be mutually exclusive"
         );
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_sets_autorun_from_checkpoint() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback".to_string(),
+            "game".to_string(),
+            "--playback-from-checkpoint".to_string(),
+            "3".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_from_checkpoint, Some(3));
+    }
+
+    #[test]
+    fn test_cli_trim_checkpoints_sets_autorun_trim_checkpoints() {
+        let args = vec![
+            "neser".to_string(),
+            "--trim-checkpoints".to_string(),
+            "2".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_trim_checkpoints, Some(2));
     }
 }

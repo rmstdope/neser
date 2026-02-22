@@ -29,7 +29,7 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 ///   - M (bits 5:4): mode/outer bits (unused for A20..A19 on standard boards)
 ///   - bit 5 = mirroring (0=Vert, 1=Horz)
 ///   - bit 4 = lock/select: 0=menu/selectable, 1=game running (locks $6000 writes)
-///   NOTE: $6000 writes are blocked once bit 4 is set.
+///     (once bit 4 is set, $6000 writes are blocked)
 ///
 /// - cmd1 ($8000-$FFFF, write): [.... .BBB]
 ///   - BBB (bits 2:0): inner bank selector
@@ -60,7 +60,11 @@ impl Mapper53 {
     pub fn new(prg_rom: Vec<u8>, chr_rom: Vec<u8>, _mirroring: NametableLayout) -> Self {
         Self {
             prg_rom,
-            chr_memory: ChrMemory::new_ram(if chr_rom.is_empty() { 8192 } else { chr_rom.len() }),
+            chr_memory: ChrMemory::new_ram(if chr_rom.is_empty() {
+                8192
+            } else {
+                chr_rom.len()
+            }),
             cmd0: 0,
             cmd1: 0,
         }
@@ -263,8 +267,16 @@ mod tests {
         //   $A000 → 8KB bank 1 → fill value 1
         //   $C000 → 8KB bank 2 → fill value 2
         //   $E000 → 8KB bank 3 → fill value 3
-        assert_eq!(mapper.read_prg(0x8000), 0, "$8000 in 32KB bank 0 (8KB sub-bank 0)");
-        assert_eq!(mapper.read_prg(0xC000), 2, "$C000 in 32KB bank 0 (8KB sub-bank 2)");
+        assert_eq!(
+            mapper.read_prg(0x8000),
+            0,
+            "$8000 in 32KB bank 0 (8KB sub-bank 0)"
+        );
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            2,
+            "$C000 in 32KB bank 0 (8KB sub-bank 2)"
+        );
     }
 
     #[test]
@@ -297,7 +309,10 @@ mod tests {
         mapper.write_prg(0x6000, 0x12); // cmd0: bit4=1, outer=2
         // Now try to change it:
         mapper.write_prg(0x6000, 0x05); // should be blocked
-        assert_eq!(mapper.cmd0, 0x12, "$6000 write must be blocked once bit4 is set");
+        assert_eq!(
+            mapper.cmd0, 0x12,
+            "$6000 write must be blocked once bit4 is set"
+        );
     }
 
     #[test]

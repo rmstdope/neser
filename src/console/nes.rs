@@ -319,6 +319,27 @@ impl Nes {
             .set_button(controller, button, pressed);
     }
 
+    /// Set all joypad button states from a u8 bitmask (for autorun playback).
+    ///
+    /// Each bit corresponds to a [`crate::input::Button`] variant by its discriminant index.
+    #[allow(dead_code)]
+    pub fn set_joypad_button_states(&mut self, port: u8, state: u8) {
+        use crate::input::Button;
+        for button in [
+            Button::A,
+            Button::B,
+            Button::Select,
+            Button::Start,
+            Button::Up,
+            Button::Down,
+            Button::Left,
+            Button::Right,
+        ] {
+            let pressed = (state & (1 << (button as u8))) != 0;
+            self.set_button(port, button, pressed);
+        }
+    }
+
     /// Get joypad button states as a u8 bitmask (for autorun recording).
     pub fn get_joypad_button_states(&self, port: u8) -> u8 {
         self.bus.borrow().get_joypad_button_states(port)
