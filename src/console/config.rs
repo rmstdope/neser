@@ -864,6 +864,10 @@ impl Config {
 
         if let Some(v) = Self::parse_u32_arg(args, "--playback-from-checkpoint")? {
             self.autorun_from_checkpoint = Some(v as usize);
+            // Implies playback mode if no explicit mode was set
+            if self.autorun_mode == AutorunMode::None {
+                self.autorun_mode = AutorunMode::Playback;
+            }
         }
 
         if let Some(v) = Self::parse_u32_arg(args, "--trim-checkpoints")? {
@@ -3611,5 +3615,22 @@ filter=invalid-shader
             Some(3),
             "--trim-checkpoints=N (equals syntax) should be parsed"
         );
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_implies_playback_mode() {
+        // --playback-from-checkpoint alone (without --playback) should enable Playback mode
+        let args = vec![
+            "neser".to_string(),
+            "--playback-from-checkpoint".to_string(),
+            "4".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_mode,
+            AutorunMode::Playback,
+            "--playback-from-checkpoint should imply Playback mode"
+        );
+        assert_eq!(config.autorun_from_checkpoint, Some(4));
     }
 }
