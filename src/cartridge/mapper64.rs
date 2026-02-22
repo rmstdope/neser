@@ -39,18 +39,18 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 pub struct Mapper64 {
     prg_rom: Vec<u8>,
     chr_memory: ChrMemory,
-    regs: [u8; 16],         // R0-R9 at indices 0-9, RF at index 15
-    bank_select: u8,        // last $8000 write
-    chr_a12_inv: bool,      // C bit
-    prg_swap: bool,         // P bit
-    k_bit: bool,            // K bit (full 1KB CHR mode)
+    regs: [u8; 16],    // R0-R9 at indices 0-9, RF at index 15
+    bank_select: u8,   // last $8000 write
+    chr_a12_inv: bool, // C bit
+    prg_swap: bool,    // P bit
+    k_bit: bool,       // K bit (full 1KB CHR mode)
     mirroring: NametableLayout,
     irq_latch: u8,
     irq_counter: u8,
     irq_enabled: bool,
     irq_pending: bool,
-    irq_cpu_mode: bool,     // false=scanline (A12), true=cpu-cycle
-    irq_reload_flag: bool,  // set by $C001 write; cleared on next clock
+    irq_cpu_mode: bool,    // false=scanline (A12), true=cpu-cycle
+    irq_reload_flag: bool, // set by $C001 write; cleared on next clock
     // CPU cycle mode prescaler (clock every 4 CPU cycles)
     cpu_prescaler: u8,
     // PPU A12 scanline filter
@@ -95,9 +95,14 @@ impl Mapper64 {
 
     fn prg_bank_read(&self, bank: usize, offset: usize) -> u8 {
         let count = self.num_prg_banks();
-        if count == 0 { return 0; }
+        if count == 0 {
+            return 0;
+        }
         let b = bank % count;
-        self.prg_rom.get(b * Self::PRG_BANK_SIZE + offset).copied().unwrap_or(0)
+        self.prg_rom
+            .get(b * Self::PRG_BANK_SIZE + offset)
+            .copied()
+            .unwrap_or(0)
     }
 
     fn prg_window_bank(&self, window: usize) -> usize {
@@ -106,9 +111,21 @@ impl Mapper64 {
         let rf = self.regs[15] as usize;
         let last = self.num_prg_banks().saturating_sub(1);
         match window {
-            0 => if self.prg_swap { rf } else { r6 },
+            0 => {
+                if self.prg_swap {
+                    rf
+                } else {
+                    r6
+                }
+            }
             1 => r7,
-            2 => if self.prg_swap { r6 } else { rf },
+            2 => {
+                if self.prg_swap {
+                    r6
+                } else {
+                    rf
+                }
+            }
             3 => last,
             _ => 0,
         }
@@ -122,20 +139,32 @@ impl Mapper64 {
         let eff = if c { slot ^ 4 } else { slot };
         match eff {
             0 => {
-                if k { self.regs[0] as usize }
-                else { (self.regs[0] as usize) & !1 }
+                if k {
+                    self.regs[0] as usize
+                } else {
+                    (self.regs[0] as usize) & !1
+                }
             }
             1 => {
-                if k { self.regs[8] as usize }
-                else { ((self.regs[0] as usize) & !1) | 1 }
+                if k {
+                    self.regs[8] as usize
+                } else {
+                    ((self.regs[0] as usize) & !1) | 1
+                }
             }
             2 => {
-                if k { self.regs[1] as usize }
-                else { (self.regs[1] as usize) & !1 }
+                if k {
+                    self.regs[1] as usize
+                } else {
+                    (self.regs[1] as usize) & !1
+                }
             }
             3 => {
-                if k { self.regs[9] as usize }
-                else { ((self.regs[1] as usize) & !1) | 1 }
+                if k {
+                    self.regs[9] as usize
+                } else {
+                    ((self.regs[1] as usize) & !1) | 1
+                }
             }
             4 => self.regs[2] as usize,
             5 => self.regs[3] as usize,
@@ -247,7 +276,8 @@ impl Mapper for Mapper64 {
             return self.chr_memory.read(addr);
         }
         let safe_bank = bank % chr_count;
-        self.chr_memory.read_at_index(safe_bank * Self::CHR_1K_SIZE + offset)
+        self.chr_memory
+            .read_at_index(safe_bank * Self::CHR_1K_SIZE + offset)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
@@ -339,7 +369,11 @@ impl Mapper for Mapper64 {
             return;
         }
         self.bank_select = data[0];
-        self.mirroring = if data[1] != 0 { NametableLayout::Horizontal } else { NametableLayout::Vertical };
+        self.mirroring = if data[1] != 0 {
+            NametableLayout::Horizontal
+        } else {
+            NametableLayout::Vertical
+        };
         let flags = data[2];
         self.chr_a12_inv = (flags & 1) != 0;
         self.prg_swap = (flags & 2) != 0;
@@ -400,7 +434,7 @@ mod tests {
     }
 
     fn set_prg_bank(mapper: &mut Mapper64, reg: u8, bank: u8) {
-        mapper.write_prg(0x8000, reg);  // select register
+        mapper.write_prg(0x8000, reg); // select register
         mapper.write_prg(0x8001, bank); // set bank value
     }
 
@@ -483,7 +517,7 @@ mod tests {
         // K=1: set via bank_select bit 5
         mapper.write_prg(0x8000, 0x20); // K=1 bit
         // Now set R0 = 3 and R8 = 5
-        set_chr_bank(&mut mapper, 0, 3);  // R0
+        set_chr_bank(&mut mapper, 0, 3); // R0
         mapper.write_prg(0x8000, 0x20 | 8); // K=1, select R8
         mapper.write_prg(0x8001, 5); // R8 = 5
         // slot 0 ($0000): K=1 → bank = R0 = 3
@@ -540,7 +574,10 @@ mod tests {
         }
         assert!(irq_at > 0, "IRQ must fire in CPU cycle mode");
         // 6 clocks × 4 cycles = 24 CPU cycles
-        assert_eq!(irq_at, 24, "IRQ must fire after 6 clocks × 4 cycles = 24 cpu cycles");
+        assert_eq!(
+            irq_at, 24,
+            "IRQ must fire after 6 clocks × 4 cycles = 24 cpu cycles"
+        );
     }
 
     #[test]
@@ -554,8 +591,14 @@ mod tests {
         }
         assert!(mapper.irq_pending());
         mapper.write_prg(0xE000, 0); // disable + ack
-        assert!(!mapper.irq_pending(), "IRQ must be cleared after $E000 write");
-        assert!(!mapper.irq_enabled, "IRQ must be disabled after $E000 write");
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ must be cleared after $E000 write"
+        );
+        assert!(
+            !mapper.irq_enabled,
+            "IRQ must be disabled after $E000 write"
+        );
     }
 
     // --- Scanline (PPU A12) mode ---
@@ -580,6 +623,9 @@ mod tests {
                 break;
             }
         }
-        assert!(fired, "IRQ must fire in scanline mode after enough A12 rising edges");
+        assert!(
+            fired,
+            "IRQ must fire in scanline mode after enough A12 rising edges"
+        );
     }
 }

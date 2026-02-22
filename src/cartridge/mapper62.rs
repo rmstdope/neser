@@ -28,12 +28,12 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 ///   PRG:
 ///   - pp pppp (bits 13:8 of address) = low 6 bits of PRG bank
 ///   - P (bit 6 of address) = high bit of PRG bank
-///   → 7-bit PRG bank (128 × 16KB = 2MB)
+///   - 7-bit PRG bank (128 × 16KB = 2MB)
 ///
 ///   CHR:
 ///   - CCCCC (bits 4:0 of address) = high 5 bits of CHR bank
 ///   - cc (bits 1:0 of data) = low 2 bits of CHR bank
-///   → 7-bit CHR bank (128 × 8KB = 1MB)
+///   - 7-bit CHR bank (128 × 8KB = 1MB)
 ///
 ///   O (bit 5 of address) = PRG mode:
 ///     0: 32KB at $8000-$FFFF (A14 from CPU)
@@ -83,7 +83,7 @@ impl Mapper62 {
         if count == 0 {
             return 0;
         }
-        let bank = if self.prg_mode {
+        if self.prg_mode {
             // NROM-128: 16KB mirror
             (self.prg_bank as usize) % count
         } else {
@@ -91,8 +91,7 @@ impl Mapper62 {
             let base = (self.prg_bank as usize) & !1; // even-align
             let half = if addr >= 0xC000 { 1 } else { 0 };
             (base | half) % count
-        };
-        bank
+        }
     }
 }
 

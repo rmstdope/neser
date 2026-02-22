@@ -8,6 +8,7 @@
 
 use crate::cartridge::mmc3::MMC3Mapper;
 use crate::cartridge::{Mapper, MapperCapabilities, NametableLayout};
+use crate::trace_mapper;
 
 /// Mapper 052 - Realtec 8213 MMC3-based multicart
 ///
@@ -63,6 +64,7 @@ impl Mapper52 {
     }
 
     /// Alias for factory compatibility.
+    #[allow(dead_code)]
     pub fn new_with_submapper(
         prg_rom: Vec<u8>,
         chr_rom: Vec<u8>,
@@ -75,10 +77,14 @@ impl Mapper52 {
     fn apply_prg_block(&self, mmc3_raw_bank: usize) -> usize {
         let b = ((self.outer >> 2) & 0x01) as usize; // B = bit 2
         let p = ((self.outer >> 1) & 0x01) as usize; // P = bit 1
-        let p_bit = (self.outer & 0x01) as usize;    // p = bit 0
+        let p_bit = (self.outer & 0x01) as usize; // p = bit 0
         let s = ((self.outer >> 3) & 0x01) as usize; // S = bit 3
 
-        let a17 = if s != 0 { p_bit } else { (mmc3_raw_bank >> 4) & 1 };
+        let a17 = if s != 0 {
+            p_bit
+        } else {
+            (mmc3_raw_bank >> 4) & 1
+        };
         let low = mmc3_raw_bank & 0x0F;
         (b << 6) | (p << 5) | (a17 << 4) | low
     }
@@ -86,12 +92,19 @@ impl Mapper52 {
     fn apply_chr_block(&self, mmc3_raw_bank: usize) -> usize {
         let b = ((self.outer >> 2) & 0x01) as usize; // B = bit 2
         let c_bit = ((self.outer >> 5) & 0x01) as usize; // C = bit 5
-        let c_lo = ((self.outer >> 4) & 0x01) as usize;  // c = bit 4
-        let t = ((self.outer >> 6) & 0x01) as usize;     // T = bit 6
+        let c_lo = ((self.outer >> 4) & 0x01) as usize; // c = bit 4
+        let t = ((self.outer >> 6) & 0x01) as usize; // T = bit 6
 
-        let a17 = if t != 0 { c_lo } else { (mmc3_raw_bank >> 7) & 1 };
+        let a17 = if t != 0 {
+            c_lo
+        } else {
+            (mmc3_raw_bank >> 7) & 1
+        };
         let low = mmc3_raw_bank & 0x7F;
-        (b << 9) | (c_bit << 8) | (a17 << 7) | low
+        let final_bank = (b << 9) | (c_bit << 8) | (a17 << 7) | low;
+        trace_mapper!(3; "[52] CHR bank: outer=0x{:02X} T={} B={} C={} c={} raw={} -> final={}",
+            self.outer, t, b, c_bit, c_lo, mmc3_raw_bank, final_bank);
+        final_bank
     }
 }
 
@@ -102,6 +115,8 @@ impl Mapper for Mapper52 {
         }
         let raw_bank = self.mmc3.mapped_prg_bank(addr);
         let final_bank = self.apply_prg_block(raw_bank);
+        trace_mapper!(3; "[52] PRG read: addr=${:04X} outer=0x{:02X} raw={} -> final={}",
+            addr, self.outer, raw_bank, final_bank);
         let offset = (addr as usize) & Self::PRG_BANK_MASK;
         self.mmc3.read_prg_at_bank(final_bank, offset)
     }
@@ -112,16 +127,26 @@ impl Mapper for Mapper52 {
             // bit6=0) before any $6000-$7FFF write takes effect. This matches
             // Mesen's CanWriteToWorkRam() guard and the NesDev spec.
             if !self.mmc3.is_prg_ram_writable() {
+                trace_mapper!(2; "[52] $6000 write BLOCKED (WRAM not writable): addr=${:04X} value=0x{:02X}", addr, value);
                 return;
             }
             if self.locked {
                 // Outer register is locked; write goes to MMC3 PRG-RAM (WRAM)
+                trace_mapper!(2; "[52] WRAM write (outer locked): addr=${:04X} value=0x{:02X}", addr, value);
                 self.mmc3.write_prg(addr, value);
             } else {
                 // First (unlocked) write sets the outer register and lock bit.
                 // The outer register is a write-only latch; it does NOT write to WRAM.
                 self.locked = (value & 0x80) != 0;
                 self.outer = value;
+                let snap = self.mmc3.registers_snapshot();
+                // snap[0]=bank_select, snap[1..=8]=regs[0-7]
+                let (bs, r) = (snap[0], &snap[1..=8]);
+                trace_mapper!(1; "[52] OUTER REG <- 0x{:02X} locked={} (B={} P={} p={} S={} C={} c={} T={}) | mmc3: bs=0x{:02X} chr=[{},{},{},{},{},{}] prg=[{},{}]",
+                    value, self.locked,
+                    (value >> 2) & 1, (value >> 1) & 1, value & 1,
+                    (value >> 3) & 1, (value >> 5) & 1, (value >> 4) & 1, (value >> 6) & 1,
+                    bs, r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
             }
         } else {
             self.mmc3.write_prg(addr, value);
@@ -297,7 +322,10 @@ mod tests {
         // MMC3 starts with PRG-RAM enabled and writable by default.
         // Write outer register to verify it takes effect.
         mapper.write_prg(0x6000, 0x02);
-        assert_eq!(mapper.outer, 0x02, "Outer register must update when PRG-RAM is enabled");
+        assert_eq!(
+            mapper.outer, 0x02,
+            "Outer register must update when PRG-RAM is enabled"
+        );
     }
 
     #[test]
@@ -309,11 +337,17 @@ mod tests {
         // Default: prg_ram_enabled=true. Disable WRAM.
         mapper.write_prg(0xA001, 0x00); // disable WRAM
         mapper.write_prg(0x6000, 0x02); // should be blocked
-        assert_eq!(mapper.outer, 0x00, "Outer register must NOT update when WRAM is disabled");
+        assert_eq!(
+            mapper.outer, 0x00,
+            "Outer register must NOT update when WRAM is disabled"
+        );
         // Re-enable WRAM; now write should succeed.
         mapper.write_prg(0xA001, 0x80); // enable WRAM
         mapper.write_prg(0x6000, 0x02);
-        assert_eq!(mapper.outer, 0x02, "Outer register must update when WRAM is enabled");
+        assert_eq!(
+            mapper.outer, 0x02,
+            "Outer register must update when WRAM is enabled"
+        );
     }
 
     #[test]
@@ -322,7 +356,10 @@ mod tests {
         let mut mapper = make_mapper();
         mapper.write_prg(0xA001, 0xC0); // enable + write-protect PRG-RAM
         mapper.write_prg(0x6000, 0x02); // should be blocked (write-protected)
-        assert_eq!(mapper.outer, 0x00, "Outer register must NOT update when WRAM is write-protected");
+        assert_eq!(
+            mapper.outer, 0x00,
+            "Outer register must NOT update when WRAM is write-protected"
+        );
     }
 
     #[test]
@@ -334,8 +371,16 @@ mod tests {
         // With outer register locked, writes go to WRAM
         mapper.write_prg(0x6000, 0xAB);
         mapper.write_prg(0x6001, 0xCD);
-        assert_eq!(mapper.read_prg(0x6000), 0xAB, "WRAM read must return written value");
-        assert_eq!(mapper.read_prg(0x6001), 0xCD, "WRAM read at +1 must return written value");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0xAB,
+            "WRAM read must return written value"
+        );
+        assert_eq!(
+            mapper.read_prg(0x6001),
+            0xCD,
+            "WRAM read at +1 must return written value"
+        );
     }
 
     #[test]
@@ -344,6 +389,10 @@ mod tests {
         // The outer register write is a latch and does NOT write to WRAM
         mapper.write_prg(0x6000, 0x80); // sets outer=0x80, locks; should NOT write to WRAM
         // WRAM should still be 0 (uninitialized)
-        assert_eq!(mapper.read_prg(0x6000), 0x00, "Outer register write must not corrupt WRAM");
+        assert_eq!(
+            mapper.read_prg(0x6000),
+            0x00,
+            "Outer register write must not corrupt WRAM"
+        );
     }
 }

@@ -294,6 +294,21 @@ const CLI_FLAGS: &[CliFlag] = &[
         has_value: false,
     },
     CliFlag {
+        flag: "--playback-from-checkpoint",
+        help: Some("Start playback from checkpoint N (0-based index, negative counts from end)"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--playback-headless-from-checkpoint",
+        help: Some("Headless playback from checkpoint N (no display; negative counts from end)"),
+        has_value: true,
+    },
+    CliFlag {
+        flag: "--trim-checkpoints",
+        help: Some("Remove last N checkpoints (and their frames) from <ROM>.autorun file and exit"),
+        has_value: true,
+    },
+    CliFlag {
         flag: "--ram-init-mode",
         help: Some("RAM initialization mode: zero, random, or seeded-random:SEED (default: zero)"),
         has_value: true,
@@ -436,6 +451,11 @@ pub struct Config {
     pub autorun_extend: bool,
     /// Whether to overwrite an existing recording (requires record mode).
     pub autorun_overwrite: bool,
+    /// Start playback from this checkpoint index (0-based, or negative for from-end).
+    /// Negative: -1 = second-to-last, -2 = third-to-last, etc.
+    pub autorun_from_checkpoint: Option<i64>,
+    /// Trim this many checkpoints from the end of the recording file and exit (no emulation).
+    pub autorun_trim_checkpoints: Option<usize>,
     /// RAM initialization mode (config key: `ram_init_mode`).
     ///
     /// Controls how all emulated RAM is initialized on power-on/hard reset:
@@ -567,6 +587,8 @@ impl Default for Config {
             autorun_headless: false,
             autorun_extend: false,
             autorun_overwrite: false,
+            autorun_from_checkpoint: None,
+            autorun_trim_checkpoints: None,
             // Use Zero for WASM to avoid issues with getrandom in test environments
             #[cfg(target_arch = "wasm32")]
             ram_init_mode: RamInitMode::Zero,
@@ -846,6 +868,24 @@ impl Config {
             self.autorun_headless = has_playback_headless;
         }
 
+        if let Some(v) = Self::parse_i64_arg(args, "--playback-from-checkpoint")? {
+            self.autorun_from_checkpoint = Some(v);
+            // Implies playback mode if no explicit mode was set
+            if self.autorun_mode == AutorunMode::None {
+                self.autorun_mode = AutorunMode::Playback;
+            }
+        }
+
+        if let Some(v) = Self::parse_i64_arg(args, "--playback-headless-from-checkpoint")? {
+            self.autorun_from_checkpoint = Some(v);
+            self.autorun_mode = AutorunMode::Playback;
+            self.autorun_headless = true;
+        }
+
+        if let Some(v) = Self::parse_u32_arg(args, "--trim-checkpoints")? {
+            self.autorun_trim_checkpoints = Some(v as usize);
+        }
+
         // Breakpoints from --breakpoint flag (comma-separated list)
         if let Some(value) = Self::parse_string_arg(args, "--breakpoint") {
             self.breakpoints =
@@ -1038,11 +1078,47 @@ impl Config {
     /// Parse a u32 argument from command-line args.
     fn parse_u32_arg(args: &[String], flag: &str) -> Result<Option<u32>, String> {
         for i in 0..args.len() {
+            // Handle `--flag value`
             if args[i] == flag && i + 1 < args.len() {
                 let value = &args[i + 1];
                 let parsed: u32 = value
                     .parse()
                     .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
+                return Ok(Some(parsed));
+            }
+            // Handle `--flag=value`
+            if let Some((flag_part, value_part)) = args[i].split_once('=')
+                && flag_part == flag
+            {
+                let parsed: u32 = value_part
+                    .parse()
+                    .map_err(|_| format!("Invalid {} value: {}", flag, value_part))?;
+                return Ok(Some(parsed));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Parse an i64 argument from command-line args (supports negative values).
+    ///
+    /// Supports both `--flag value` and `--flag=value` forms.
+    fn parse_i64_arg(args: &[String], flag: &str) -> Result<Option<i64>, String> {
+        for i in 0..args.len() {
+            // Handle `--flag value` (value may start with '-' for negatives)
+            if args[i] == flag && i + 1 < args.len() {
+                let value = &args[i + 1];
+                let parsed: i64 = value
+                    .parse()
+                    .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
+                return Ok(Some(parsed));
+            }
+            // Handle `--flag=value`
+            if let Some((flag_part, value_part)) = args[i].split_once('=')
+                && flag_part == flag
+            {
+                let parsed: i64 = value_part
+                    .parse()
+                    .map_err(|_| format!("Invalid {} value: {}", flag, value_part))?;
                 return Ok(Some(parsed));
             }
         }
@@ -1052,11 +1128,21 @@ impl Config {
     /// Parse an f32 argument from command-line args.
     fn parse_f32_arg(args: &[String], flag: &str) -> Result<Option<f32>, String> {
         for i in 0..args.len() {
+            // Handle `--flag value`
             if args[i] == flag && i + 1 < args.len() {
                 let value = &args[i + 1];
                 let parsed: f32 = value
                     .parse()
                     .map_err(|_| format!("Invalid {} value: {}", flag, value))?;
+                return Ok(Some(parsed));
+            }
+            // Handle `--flag=value`
+            if let Some((flag_part, value_part)) = args[i].split_once('=')
+                && flag_part == flag
+            {
+                let parsed: f32 = value_part
+                    .parse()
+                    .map_err(|_| format!("Invalid {} value: {}", flag, value_part))?;
                 return Ok(Some(parsed));
             }
         }
@@ -3516,5 +3602,149 @@ filter=invalid-shader
             result.is_err(),
             "--create-recording and --extend-recording should be mutually exclusive"
         );
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_sets_autorun_from_checkpoint() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback".to_string(),
+            "game".to_string(),
+            "--playback-from-checkpoint".to_string(),
+            "3".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_from_checkpoint, Some(3));
+    }
+
+    #[test]
+    fn test_cli_trim_checkpoints_sets_autorun_trim_checkpoints() {
+        let args = vec![
+            "neser".to_string(),
+            "--trim-checkpoints".to_string(),
+            "2".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_trim_checkpoints, Some(2));
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_equals_syntax() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback".to_string(),
+            "game".to_string(),
+            "--playback-from-checkpoint=4".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_from_checkpoint,
+            Some(4),
+            "--playback-from-checkpoint=N (equals syntax) should be parsed"
+        );
+    }
+
+    #[test]
+    fn test_cli_trim_checkpoints_equals_syntax() {
+        let args = vec!["neser".to_string(), "--trim-checkpoints=3".to_string()];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_trim_checkpoints,
+            Some(3),
+            "--trim-checkpoints=N (equals syntax) should be parsed"
+        );
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_implies_playback_mode() {
+        // --playback-from-checkpoint alone (without --playback) should enable Playback mode
+        let args = vec![
+            "neser".to_string(),
+            "--playback-from-checkpoint".to_string(),
+            "4".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_mode,
+            AutorunMode::Playback,
+            "--playback-from-checkpoint should imply Playback mode"
+        );
+        assert_eq!(config.autorun_from_checkpoint, Some(4));
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_negative_value() {
+        // Negative value -1 means second-to-last checkpoint
+        let args = vec![
+            "neser".to_string(),
+            "--playback-from-checkpoint".to_string(),
+            "-1".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_from_checkpoint,
+            Some(-1),
+            "--playback-from-checkpoint=-1 should parse as -1"
+        );
+        assert_eq!(config.autorun_mode, AutorunMode::Playback);
+    }
+
+    #[test]
+    fn test_cli_playback_from_checkpoint_negative_equals_syntax() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback-from-checkpoint=-2".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_from_checkpoint, Some(-2));
+    }
+
+    #[test]
+    fn test_cli_playback_headless_from_checkpoint_sets_playback_headless_and_checkpoint() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback-headless-from-checkpoint".to_string(),
+            "3".to_string(),
+            "game".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(
+            config.autorun_mode,
+            AutorunMode::Playback,
+            "--playback-headless-from-checkpoint should set Playback mode"
+        );
+        assert!(
+            config.autorun_headless,
+            "--playback-headless-from-checkpoint should set headless mode"
+        );
+        assert_eq!(
+            config.autorun_from_checkpoint,
+            Some(3),
+            "--playback-headless-from-checkpoint should set checkpoint index"
+        );
+    }
+
+    #[test]
+    fn test_cli_playback_headless_from_checkpoint_equals_syntax() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback-headless-from-checkpoint=5".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_mode, AutorunMode::Playback);
+        assert!(config.autorun_headless);
+        assert_eq!(config.autorun_from_checkpoint, Some(5));
+    }
+
+    #[test]
+    fn test_cli_playback_headless_from_checkpoint_negative_value() {
+        let args = vec![
+            "neser".to_string(),
+            "--playback-headless-from-checkpoint=-1".to_string(),
+        ];
+        let config = parse_config(args);
+        assert_eq!(config.autorun_mode, AutorunMode::Playback);
+        assert!(config.autorun_headless);
+        assert_eq!(config.autorun_from_checkpoint, Some(-1));
     }
 }

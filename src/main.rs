@@ -35,6 +35,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let app_context = Rc::new(RefCell::new(AppContext::new_with_config(parsed_config)));
 
+    // Handle --trim-checkpoints: modify recording file and exit immediately.
+    let trim_n = app_context.borrow().config().autorun_trim_checkpoints;
+    let trim_rom = app_context.borrow().config().rom_path.clone();
+    if let (Some(n), Some(rom_path)) = (trim_n, trim_rom.as_deref()) {
+        use autorun::{autorun_path_for_rom, load_autorun_file, save_autorun_file, trim_recording};
+        use std::path::PathBuf;
+        let path = autorun_path_for_rom(&PathBuf::from(rom_path));
+        let mut file = load_autorun_file(&path)?;
+        let before = file.checkpoints.len();
+        trim_recording(&mut file, n);
+        save_autorun_file(&path, &file)?;
+        println!(
+            "Trimmed {} checkpoint(s): {} → {} checkpoints, {} frames remaining",
+            before.saturating_sub(file.checkpoints.len()),
+            before,
+            file.checkpoints.len(),
+            file.frames.len(),
+        );
+        return Ok(());
+    }
+
     // Initialize global tracing state (only active in debug builds)
     let tracing_config = app_context.borrow().config().tracing;
     debugging::init_tracing(tracing_config);
@@ -142,28 +163,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         SdlEventLoop::new_with_context(headless, audio_for_frontend, app_context.clone())?;
 
     // Initialize autorun if enabled
-    let (autorun_mode, autorun_overwrite, autorun_extend) = {
+    let (autorun_mode, autorun_overwrite, autorun_extend, autorun_from_checkpoint) = {
         let config = app_context.borrow();
         let config = config.config();
         (
             config.autorun_mode,
             config.autorun_overwrite,
             config.autorun_extend,
+            config.autorun_from_checkpoint,
         )
     };
-    if autorun_mode != console::AutorunMode::None {
-        event_loop.init_autorun(autorun_mode, &rom_path, autorun_overwrite, autorun_extend)?;
-    }
-
-    // Request debugger open if enabled via CLI
-    let debugger_enabled = app_context.borrow().config().debugger_enabled;
-    if debugger_enabled {
-        event_loop.request_debugger_open();
-    }
-
-    // Temporary hard-coded breakpoint for debugger development.
-    // event_loop.add_breakpoint(0xE486);
-
     let load_state = app_context.borrow().config().load_state;
     if load_state {
         let state_path = nes_instance
@@ -177,6 +186,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .map_err(|err| format!("Failed to restore save-state: {err}"))?;
     } else {
         nes_instance.reset(false);
+    }
+
+    // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
+    if autorun_mode != console::AutorunMode::None {
+        event_loop.init_autorun(
+            autorun_mode,
+            &rom_path,
+            autorun_overwrite,
+            autorun_extend,
+            autorun_from_checkpoint,
+            &mut nes_instance,
+        )?;
+    }
+
+    // Request debugger open if enabled via CLI
+    let debugger_enabled = app_context.borrow().config().debugger_enabled;
+    if debugger_enabled {
+        event_loop.request_debugger_open();
     }
 
     // Apply channel enable/disable settings

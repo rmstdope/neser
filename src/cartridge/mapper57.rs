@@ -99,11 +99,7 @@ impl Mapper57 {
         if self.prg_mode_32k() {
             // 32KB: use low half or high half of the 32KB block
             let base = bank & !1; // align to even
-            if addr < 0xC000 {
-                base
-            } else {
-                base | 1
-            }
+            if addr < 0xC000 { base } else { base | 1 }
         } else {
             // 16KB mirrored: same bank at both $8000 and $C000
             bank
@@ -134,15 +130,12 @@ impl Mapper for Mapper57 {
     }
 
     fn write_prg(&mut self, addr: u16, value: u8) {
-        match addr {
-            0x8000..=0xFFFF => {
-                if (addr & 0x0800) != 0 {
-                    self.reg1 = value;
-                } else {
-                    self.reg0 = value;
-                }
+        if let 0x8000..=0xFFFF = addr {
+            if (addr & 0x0800) != 0 {
+                self.reg1 = value;
+            } else {
+                self.reg0 = value;
             }
-            _ => {}
         }
     }
 

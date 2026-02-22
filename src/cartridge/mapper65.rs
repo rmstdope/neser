@@ -40,9 +40,9 @@ use crate::cartridge::mapper::{Mapper, MapperCapabilities};
 pub struct Mapper65 {
     prg_rom: Vec<u8>,
     chr_memory: ChrMemory,
-    prg_regs: [u8; 2],  // reg0 ($8000), reg1 ($A000)
-    chr_regs: [u8; 8],  // $B000-$B007
-    prg_mode: bool,     // $9000 bit7: false=mode0, true=mode1
+    prg_regs: [u8; 2], // reg0 ($8000), reg1 ($A000)
+    chr_regs: [u8; 8], // $B000-$B007
+    prg_mode: bool,    // $9000 bit7: false=mode0, true=mode1
     mirroring: NametableLayout,
     irq_enabled: bool,
     irq_pending: bool,
@@ -103,9 +103,7 @@ impl Mapper65 {
                     self.prg_bank_read(self.prg_regs[0] as usize, offset)
                 }
             }
-            0xA000..=0xBFFF => {
-                self.prg_bank_read(self.prg_regs[1] as usize, offset)
-            }
+            0xA000..=0xBFFF => self.prg_bank_read(self.prg_regs[1] as usize, offset),
             0xC000..=0xDFFF => {
                 if self.prg_mode {
                     // mode1: $C000 = reg0
@@ -427,7 +425,10 @@ mod tests {
             mapper.cpu_cycle();
         }
         mapper.cpu_cycle(); // 5th cycle → counter reaches 0 → IRQ
-        assert!(mapper.irq_pending(), "IRQ must fire after reload value cycles");
+        assert!(
+            mapper.irq_pending(),
+            "IRQ must fire after reload value cycles"
+        );
     }
 
     #[test]
@@ -440,7 +441,10 @@ mod tests {
         mapper.cpu_cycle();
         assert!(mapper.irq_pending());
         mapper.write_prg(0x9003, 0x00); // acknowledge (and disable)
-        assert!(!mapper.irq_pending(), "IRQ must be cleared after write to $9003");
+        assert!(
+            !mapper.irq_pending(),
+            "IRQ must be cleared after write to $9003"
+        );
     }
 
     #[test]

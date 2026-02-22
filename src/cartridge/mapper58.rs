@@ -74,7 +74,7 @@ impl Mapper58 {
         if count == 0 {
             return 0;
         }
-        let bank = if self.prg_mode {
+        if self.prg_mode {
             // NROM-128: mirror same 16KB at both $8000 and $C000
             (self.prg_bank as usize) % count
         } else {
@@ -82,8 +82,7 @@ impl Mapper58 {
             let base = (self.prg_bank as usize) & !1; // even-align
             let half = if addr >= 0xC000 { 1 } else { 0 };
             (base | half) % count
-        };
-        bank
+        }
     }
 }
 
@@ -124,7 +123,8 @@ impl Mapper for Mapper58 {
         }
         let bank = (self.chr_bank as usize) % count;
         let offset = (addr as usize) & Self::CHR_BANK_MASK;
-        self.chr_memory.read_at_index(bank * Self::CHR_BANK_SIZE + offset)
+        self.chr_memory
+            .read_at_index(bank * Self::CHR_BANK_SIZE + offset)
     }
 
     fn write_chr(&mut self, addr: u16, value: u8) {
@@ -218,7 +218,11 @@ mod tests {
     fn default_maps_bank_0() {
         let mapper = make_mapper();
         assert_eq!(mapper.read_prg(0x8000), 0);
-        assert_eq!(mapper.read_prg(0xC000), 1, "Default NROM-256: C000 maps to bank 1");
+        assert_eq!(
+            mapper.read_prg(0xC000),
+            1,
+            "Default NROM-256: C000 maps to bank 1"
+        );
     }
 
     #[test]
