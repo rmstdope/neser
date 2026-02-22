@@ -173,6 +173,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             config.autorun_from_checkpoint,
         )
     };
+    let load_state = app_context.borrow().config().load_state;
+    if load_state {
+        let state_path = nes_instance
+            .state_path()
+            .ok_or("No save-state path available for loaded ROM")?;
+        let bytes = fs::read(&state_path)?;
+        let state = SaveState::from_bytes(&bytes)
+            .map_err(|err| format!("Failed to deserialize save-state: {err}"))?;
+        nes_instance
+            .load_state(&state)
+            .map_err(|err| format!("Failed to restore save-state: {err}"))?;
+    } else {
+        nes_instance.reset(false);
+    }
+
+    // Initialize autorun AFTER reset so checkpoint state restore is not overwritten.
     if autorun_mode != console::AutorunMode::None {
         event_loop.init_autorun(
             autorun_mode,
@@ -188,24 +204,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let debugger_enabled = app_context.borrow().config().debugger_enabled;
     if debugger_enabled {
         event_loop.request_debugger_open();
-    }
-
-    // Temporary hard-coded breakpoint for debugger development.
-    // event_loop.add_breakpoint(0xE486);
-
-    let load_state = app_context.borrow().config().load_state;
-    if load_state {
-        let state_path = nes_instance
-            .state_path()
-            .ok_or("No save-state path available for loaded ROM")?;
-        let bytes = fs::read(&state_path)?;
-        let state = SaveState::from_bytes(&bytes)
-            .map_err(|err| format!("Failed to deserialize save-state: {err}"))?;
-        nes_instance
-            .load_state(&state)
-            .map_err(|err| format!("Failed to restore save-state: {err}"))?;
-    } else {
-        nes_instance.reset(false);
     }
 
     // Apply channel enable/disable settings
