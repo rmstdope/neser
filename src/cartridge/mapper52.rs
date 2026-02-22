@@ -108,6 +108,12 @@ impl Mapper for Mapper52 {
 
     fn write_prg(&mut self, addr: u16, value: u8) {
         if (0x6000..=0x7FFF).contains(&addr) {
+            // The MMC3's WRAM interface must be enabled and writeable ($A001 bit7=1,
+            // bit6=0) before any $6000-$7FFF write takes effect. This matches
+            // Mesen's CanWriteToWorkRam() guard and the NesDev spec.
+            if !self.mmc3.is_prg_ram_writable() {
+                return;
+            }
             if self.locked {
                 // Outer register is locked; write goes to MMC3 PRG-RAM (WRAM)
                 self.mmc3.write_prg(addr, value);
@@ -295,13 +301,28 @@ mod tests {
     }
 
     #[test]
-    fn outer_register_not_blocked_by_prg_ram_write_protection() {
-        // FCEUX does not gate outer register writes on A001 write-protection.
-        // The outer register is always writable when unlocked, regardless of $A001.
+    fn outer_register_blocked_when_wram_disabled() {
+        // Per NesDev spec and Mesen: MMC3 WRAM must be enabled ($A001 bit7=1)
+        // before $6000-$7FFF writes take effect. Writes while WRAM is disabled
+        // ($A001=$00) must NOT update the outer register.
+        let mut mapper = make_mapper();
+        // Default: prg_ram_enabled=true. Disable WRAM.
+        mapper.write_prg(0xA001, 0x00); // disable WRAM
+        mapper.write_prg(0x6000, 0x02); // should be blocked
+        assert_eq!(mapper.outer, 0x00, "Outer register must NOT update when WRAM is disabled");
+        // Re-enable WRAM; now write should succeed.
+        mapper.write_prg(0xA001, 0x80); // enable WRAM
+        mapper.write_prg(0x6000, 0x02);
+        assert_eq!(mapper.outer, 0x02, "Outer register must update when WRAM is enabled");
+    }
+
+    #[test]
+    fn outer_register_blocked_when_wram_write_protected() {
+        // Per NesDev spec and Mesen: WRAM must also not be write-protected.
         let mut mapper = make_mapper();
         mapper.write_prg(0xA001, 0xC0); // enable + write-protect PRG-RAM
-        mapper.write_prg(0x6000, 0x02);
-        assert_eq!(mapper.outer, 0x02, "Outer register must update even when PRG-RAM is write-protected");
+        mapper.write_prg(0x6000, 0x02); // should be blocked (write-protected)
+        assert_eq!(mapper.outer, 0x00, "Outer register must NOT update when WRAM is write-protected");
     }
 
     #[test]
